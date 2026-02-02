@@ -244,10 +244,8 @@ export function createAgentEventHandler({
     // Include sessionKey so Control UI can filter tool streams per session.
     const agentPayload = sessionKey ? { ...evt, sessionKey } : evt;
     const last = agentRunSeq.get(evt.runId) ?? 0;
-    if (evt.stream === "tool" && !shouldEmitToolEvents(evt.runId, sessionKey)) {
-      agentRunSeq.set(evt.runId, evt.seq);
-      return;
-    }
+    // Tool events: always broadcast to webchat, but only send to node sessions if verbose is on
+    const emitToolToNode = evt.stream !== "tool" || shouldEmitToolEvents(evt.runId, sessionKey);
     if (evt.seq !== last + 1) {
       broadcast("agent", {
         runId: evt.runId,
@@ -268,7 +266,10 @@ export function createAgentEventHandler({
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
 
     if (sessionKey) {
-      nodeSendToSession(sessionKey, "agent", agentPayload);
+      // Only send tool events to node sessions if verbose is on (webchat always gets them via broadcast)
+      if (emitToolToNode) {
+        nodeSendToSession(sessionKey, "agent", agentPayload);
+      }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
