@@ -73,6 +73,7 @@ import {
 } from "./app-tool-stream";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
+import { refreshClaudeSharedUsage, type ClaudeSharedUsage } from "./controllers/provider-usage";
 import { loadSettings, type UiSettings } from "./storage";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
 
@@ -231,6 +232,9 @@ export class OpenClawApp extends LitElement {
   @state() providerUsage: UsageSummary | null = null;
   @state() providerUsageLoading = false;
   @state() providerUsageError: string | null = null;
+  @state() claudeSharedUsage: ClaudeSharedUsage | null = null;
+  @state() claudeRefreshLoading = false;
+  @state() claudeRefreshError: string | null = null;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
@@ -292,6 +296,10 @@ export class OpenClawApp extends LitElement {
   connect() {
     connectGatewayInternal(this as unknown as Parameters<typeof connectGatewayInternal>[0]);
   }
+
+  onRefreshClaudeUsage = () => {
+    void refreshClaudeSharedUsage(this as unknown as Parameters<typeof refreshClaudeSharedUsage>[0]);
+  };
 
   handleChatScroll(event: Event) {
     handleChatScrollInternal(
