@@ -1,6 +1,10 @@
 import type { GatewayBrowserClient } from "../gateway";
 import type { ProviderUsageSnapshot, UsageSummary } from "../types";
 
+const CLAUDE_SHARED_STORAGE_KEY = "openclaw:claude-shared-usage";
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
 export type ClaudeSharedUsage = {
   fiveHourPercent: number;
   fiveHourResetAt?: number;
@@ -20,6 +24,37 @@ export type ProviderUsageState = {
   claudeRefreshLoading: boolean;
   claudeRefreshError: string | null;
 };
+
+/** Load cached Claude shared usage from localStorage */
+export function loadCachedClaudeSharedUsage(): ClaudeSharedUsage | null {
+  try {
+    const stored = localStorage.getItem(CLAUDE_SHARED_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as ClaudeSharedUsage;
+    // Validate structure
+    if (typeof parsed.fiveHourPercent !== "number" || typeof parsed.fetchedAt !== "number") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Save Claude shared usage to localStorage */
+function saveCachedClaudeSharedUsage(usage: ClaudeSharedUsage): void {
+  try {
+    localStorage.setItem(CLAUDE_SHARED_STORAGE_KEY, JSON.stringify(usage));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/** Check if cached data is stale */
+function isClaudeSharedUsageStale(usage: ClaudeSharedUsage | null): boolean {
+  if (!usage) return true;
+  return Date.now() - usage.fetchedAt > STALE_THRESHOLD_MS;
+}
 
 type BrowserTabsResponse = {
   tabs?: Array<{ targetId: string; url: string }>;
@@ -256,7 +291,7 @@ export async function refreshClaudeSharedUsage(state: ProviderUsageState): Promi
     };
 
     // Store the shared usage
-    state.claudeSharedUsage = {
+    const sharedUsage: ClaudeSharedUsage = {
       fiveHourPercent: usage.five_hour?.utilization ?? 0,
       fiveHourResetAt: usage.five_hour?.resets_at 
         ? new Date(usage.five_hour.resets_at).getTime() 
@@ -267,10 +302,129 @@ export async function refreshClaudeSharedUsage(state: ProviderUsageState): Promi
         : undefined,
       fetchedAt: Date.now(),
     };
+    state.claudeSharedUsage = sharedUsage;
+    saveCachedClaudeSharedUsage(sharedUsage);
     
   } catch (err) {
     state.claudeRefreshError = err instanceof Error ? err.message : String(err);
   } finally {
     state.claudeRefreshLoading = false;
+  }
+}
+
+/**
+ * Silently try to refresh Claude shared usage (no error display).
+ * Used for auto-refresh on load and periodic updates.
+ */
+export async function autoRefreshClaudeSharedUsage(state: ProviderUsageState): Promise<void> {
+  if (!state.client || !state.connected) return;
+  if (state.claudeRefreshLoading) return;
+  
+  // Don't auto-refresh if data is still fresh
+  if (!isClaudeSharedUsageStale(state.claudeSharedUsage)) return;
+  
+  state.claudeRefreshLoading = true;
+  // Don't clear error on auto-refresh - keep showing manual refresh hint if present
+  
+  try {
+    const tabsRes = await state.client.request<BrowserTabsResponse>("browser.request", {
+      method: "GET",
+      path: "/tabs",
+      query: { profile: "chrome" },
+    });
+
+    const tabs = tabsRes?.tabs ?? [];
+    const claudeTab = tabs.find((t) => t.url?.includes("claude.ai"));
+    if (!claudeTab) return; // Silently fail - no claude tab
+
+    const orgRes = await state.client.request<BrowserActResponse>("browser.request", {
+      method: "POST",
+      path: "/act",
+      query: { profile: "chrome" },
+      body: {
+        targetId: claudeTab.targetId,
+        kind: "evaluate",
+        fn: "async () => { const res = await fetch('https://claude.ai/api/organizations'); return await res.json(); }",
+      },
+    });
+
+    if (!orgRes?.ok || !Array.isArray(orgRes.result)) return;
+    
+    const orgs = orgRes.result as Array<{ uuid?: string; capabilities?: string[] }>;
+    const subscriptionOrg = orgs.find((o) => o.capabilities?.includes("claude_max")) ?? orgs[0];
+    const orgId = subscriptionOrg?.uuid?.trim();
+    if (!orgId) return;
+
+    const usageRes = await state.client.request<BrowserActResponse>("browser.request", {
+      method: "POST",
+      path: "/act",
+      query: { profile: "chrome" },
+      body: {
+        targetId: claudeTab.targetId,
+        kind: "evaluate",
+        fn: `async () => { const res = await fetch('https://claude.ai/api/organizations/${orgId}/usage'); return await res.json(); }`,
+      },
+    });
+
+    if (!usageRes?.ok || !usageRes.result) return;
+    
+    const usage = usageRes.result as {
+      five_hour?: { utilization?: number; resets_at?: string };
+      seven_day?: { utilization?: number; resets_at?: string };
+    };
+
+    const sharedUsage: ClaudeSharedUsage = {
+      fiveHourPercent: usage.five_hour?.utilization ?? 0,
+      fiveHourResetAt: usage.five_hour?.resets_at 
+        ? new Date(usage.five_hour.resets_at).getTime() 
+        : undefined,
+      sevenDayPercent: usage.seven_day?.utilization ?? 0,
+      sevenDayResetAt: usage.seven_day?.resets_at 
+        ? new Date(usage.seven_day.resets_at).getTime() 
+        : undefined,
+      fetchedAt: Date.now(),
+    };
+    state.claudeSharedUsage = sharedUsage;
+    state.claudeRefreshError = null; // Clear error on successful auto-refresh
+    saveCachedClaudeSharedUsage(sharedUsage);
+  } catch {
+    // Silently ignore errors on auto-refresh
+  } finally {
+    state.claudeRefreshLoading = false;
+  }
+}
+
+let autoRefreshInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start auto-refresh polling for Claude shared usage.
+ * Should be called after gateway connects.
+ */
+export function startClaudeSharedUsageAutoRefresh(state: ProviderUsageState): void {
+  // Load cached data immediately
+  const cached = loadCachedClaudeSharedUsage();
+  if (cached) {
+    state.claudeSharedUsage = cached;
+  }
+  
+  // Try to refresh on connect
+  void autoRefreshClaudeSharedUsage(state);
+  
+  // Set up periodic refresh
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+  }
+  autoRefreshInterval = setInterval(() => {
+    void autoRefreshClaudeSharedUsage(state);
+  }, AUTO_REFRESH_INTERVAL_MS);
+}
+
+/**
+ * Stop auto-refresh polling.
+ */
+export function stopClaudeSharedUsageAutoRefresh(): void {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
   }
 }
