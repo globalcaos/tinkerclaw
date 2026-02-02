@@ -429,6 +429,14 @@ const ERROR_PATTERNS = {
     "quota exceeded",
     "resource_exhausted",
     "usage limit",
+    // Anthropic daily/monthly token limits
+    /daily.*limit|monthly.*limit|token.*limit.*exceed|limit.*token|exceed.*token.*limit/i,
+    "exceeded your daily",
+    "exceeded your monthly",
+    "daily token limit",
+    "monthly token limit",
+    "limit will reset",
+    "resets at",
   ],
   overloaded: [/overloaded_error|"type"\s*:\s*"overloaded_error"/i, "overloaded"],
   timeout: ["timeout", "timed out", "deadline exceeded", "context deadline exceeded"],
@@ -594,7 +602,11 @@ export function isModelNotFoundErrorMessage(raw: string): boolean {
   }
   // Avoid false positives from file/path not found contexts
   const lower = raw.toLowerCase();
-  if (lower.includes("file not found") || lower.includes("path not found") || lower.includes("command not found")) {
+  if (
+    lower.includes("file not found") ||
+    lower.includes("path not found") ||
+    lower.includes("command not found")
+  ) {
     return false;
   }
   return matchesErrorPatterns(raw, ERROR_PATTERNS.modelNotFound);
