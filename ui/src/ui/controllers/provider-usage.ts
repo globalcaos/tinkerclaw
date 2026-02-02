@@ -1,12 +1,24 @@
 import type { GatewayBrowserClient } from "../gateway";
 import type { ProviderUsageSnapshot, UsageSummary } from "../types";
 
+export type ClaudeSharedUsage = {
+  fiveHourPercent: number;
+  fiveHourResetAt?: number;
+  sevenDayPercent: number;
+  sevenDayResetAt?: number;
+  fetchedAt: number;
+};
+
 export type ProviderUsageState = {
   client: GatewayBrowserClient | null;
   connected: boolean;
   providerUsage: UsageSummary | null;
   providerUsageLoading: boolean;
   providerUsageError: string | null;
+  // Claude shared usage (from browser refresh)
+  claudeSharedUsage: ClaudeSharedUsage | null;
+  claudeRefreshLoading: boolean;
+  claudeRefreshError: string | null;
 };
 
 type BrowserTabsResponse = {
@@ -165,5 +177,108 @@ export async function loadProviderUsage(state: ProviderUsageState) {
     state.providerUsageError = err instanceof Error ? err.message : String(err);
   } finally {
     state.providerUsageLoading = false;
+  }
+}
+
+/**
+ * Refresh Claude shared usage via browser relay.
+ * Requires a Chrome tab with claude.ai open.
+ */
+export async function refreshClaudeSharedUsage(state: ProviderUsageState): Promise<void> {
+  if (!state.client || !state.connected) {
+    state.claudeRefreshError = "Not connected to gateway";
+    return;
+  }
+  if (state.claudeRefreshLoading) return;
+  
+  state.claudeRefreshLoading = true;
+  state.claudeRefreshError = null;
+  
+  try {
+    // Check if Chrome relay is available
+    const tabsRes = await state.client.request<BrowserTabsResponse>("browser.request", {
+      method: "GET",
+      path: "/tabs",
+      query: { profile: "chrome" },
+    });
+
+    const tabs = tabsRes?.tabs ?? [];
+    const claudeTab = tabs.find((t) => t.url?.includes("claude.ai"));
+    
+    if (!claudeTab) {
+      state.claudeRefreshError = "Open claude.ai in Chrome and click the OpenClaw extension icon to connect";
+      return;
+    }
+
+    // Fetch organizations
+    const orgRes = await state.client.request<BrowserActResponse>("browser.request", {
+      method: "POST",
+      path: "/act",
+      query: { profile: "chrome" },
+      body: {
+        targetId: claudeTab.targetId,
+        request: {
+          kind: "evaluate",
+          fn: "async () => { const res = await fetch('https://claude.ai/api/organizations'); return await res.json(); }",
+        },
+      },
+    });
+
+    if (!orgRes?.ok || !Array.isArray(orgRes.result)) {
+      state.claudeRefreshError = "Failed to fetch organizations from Claude";
+      return;
+    }
+    
+    // Find the subscription org (has claude_max capability)
+    const orgs = orgRes.result as Array<{ uuid?: string; capabilities?: string[] }>;
+    const subscriptionOrg = orgs.find((o) => o.capabilities?.includes("claude_max")) ?? orgs[0];
+    const orgId = subscriptionOrg?.uuid?.trim();
+    
+    if (!orgId) {
+      state.claudeRefreshError = "No Claude organization found";
+      return;
+    }
+
+    // Fetch usage
+    const usageRes = await state.client.request<BrowserActResponse>("browser.request", {
+      method: "POST",
+      path: "/act",
+      query: { profile: "chrome" },
+      body: {
+        targetId: claudeTab.targetId,
+        request: {
+          kind: "evaluate",
+          fn: `async () => { const res = await fetch('https://claude.ai/api/organizations/${orgId}/usage'); return await res.json(); }`,
+        },
+      },
+    });
+
+    if (!usageRes?.ok || !usageRes.result) {
+      state.claudeRefreshError = "Failed to fetch usage from Claude";
+      return;
+    }
+    
+    const usage = usageRes.result as {
+      five_hour?: { utilization?: number; resets_at?: string };
+      seven_day?: { utilization?: number; resets_at?: string };
+    };
+
+    // Store the shared usage
+    state.claudeSharedUsage = {
+      fiveHourPercent: usage.five_hour?.utilization ?? 0,
+      fiveHourResetAt: usage.five_hour?.resets_at 
+        ? new Date(usage.five_hour.resets_at).getTime() 
+        : undefined,
+      sevenDayPercent: usage.seven_day?.utilization ?? 0,
+      sevenDayResetAt: usage.seven_day?.resets_at 
+        ? new Date(usage.seven_day.resets_at).getTime() 
+        : undefined,
+      fetchedAt: Date.now(),
+    };
+    
+  } catch (err) {
+    state.claudeRefreshError = err instanceof Error ? err.message : String(err);
+  } finally {
+    state.claudeRefreshLoading = false;
   }
 }
