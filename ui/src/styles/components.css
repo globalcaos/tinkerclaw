@@ -1525,3 +1525,12 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ===========================================
+   Jarvis Voice Transcript
+   =========================================== */
+
+.jarvis-voice {
+  color: #9B59B6;
+  font-style: italic;
+}
