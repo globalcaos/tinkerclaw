@@ -749,7 +749,6 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
           
           return html`
             <div class="usage-provider">
-              <div class="usage-provider__name">${t.displayName}</div>
               ${!hasSharedData && t.estimated.fiveHourPercent > 0 ? html`
                 ${renderUsageBar(t.estimated.fiveHourPercent, t.estimated.fiveHourLabel ?? "5h est.", undefined)}
                 ${renderUsageBar(t.estimated.dailyPercent, t.estimated.dailyLabel ?? "Day est.", undefined)}
