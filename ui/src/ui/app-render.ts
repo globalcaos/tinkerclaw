@@ -17,6 +17,8 @@ import type {
   SessionsListResult,
   SkillStatusReport,
   StatusSummary,
+  UsageSummary,
+  ProviderUsageSnapshot,
 } from "./types";
 import type { ChatQueueItem, CronFormState } from "./ui-types";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
@@ -193,6 +195,7 @@ export function renderApp(state: AppViewState) {
             </a>
           </div>
         </div>
+        ${renderProviderUsagePanel(state.providerUsage, state.providerUsageLoading, state.providerUsageError)}
       </aside>
       <main class="content ${isChat ? "content--chat" : ""}">
         <section class="content-header">
@@ -601,6 +604,70 @@ export function renderApp(state: AppViewState) {
       </main>
       ${renderExecApprovalPrompt(state)}
       ${renderGatewayUrlConfirmation(state)}
+    </div>
+  `;
+}
+
+function formatResetTime(resetAt: number): string {
+  const now = Date.now();
+  const diff = resetAt - now;
+  if (diff <= 0) return "now";
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(mins / 60);
+  if (hours > 0) return `${hours}h ${mins % 60}m`;
+  return `${mins}m`;
+}
+
+function renderUsageBar(percent: number, label: string, resetAt?: number) {
+  const color = percent >= 90 ? "var(--danger)" : percent >= 70 ? "var(--warn)" : "var(--ok)";
+  const resetText = resetAt ? ` (resets ${formatResetTime(resetAt)})` : "";
+  return html`
+    <div class="usage-bar" title="${label}: ${percent.toFixed(0)}%${resetText}">
+      <div class="usage-bar__label">${label}</div>
+      <div class="usage-bar__track">
+        <div class="usage-bar__fill" style="width: ${Math.min(100, percent)}%; background: ${color}"></div>
+      </div>
+      <div class="usage-bar__percent">${percent.toFixed(0)}%</div>
+    </div>
+  `;
+}
+
+function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, error: string | null) {
+  if (loading && !usage) {
+    return html`
+      <div class="nav-group nav-group--usage">
+        <div class="nav-label nav-label--static">
+          <span class="nav-label__text">Model Usage</span>
+        </div>
+        <div class="usage-panel usage-panel--loading">Loading...</div>
+      </div>
+    `;
+  }
+
+  if (error && !usage) {
+    return nothing;
+  }
+
+  if (!usage || usage.providers.length === 0) {
+    return nothing;
+  }
+
+  return html`
+    <div class="nav-group nav-group--usage">
+      <div class="nav-label nav-label--static">
+        <span class="nav-label__text">Model Usage</span>
+      </div>
+      <div class="usage-panel">
+        ${usage.providers.map((provider) => html`
+          <div class="usage-provider">
+            <div class="usage-provider__name">${provider.displayName}</div>
+            ${provider.error
+              ? html`<div class="usage-provider__error">${provider.error}</div>`
+              : provider.windows.map((w) => renderUsageBar(w.usedPercent, w.label, w.resetAt))
+            }
+          </div>
+        `)}
+      </div>
     </div>
   `;
 }

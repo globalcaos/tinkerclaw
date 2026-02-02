@@ -23,6 +23,7 @@ import type {
   SessionsListResult,
   SkillStatusReport,
   StatusSummary,
+  UsageSummary,
 } from "./types";
 import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
@@ -135,6 +136,9 @@ export type AppViewState = {
   debugCallParams: string;
   debugCallResult: string | null;
   debugCallError: string | null;
+  providerUsage: UsageSummary | null;
+  providerUsageLoading: boolean;
+  providerUsageError: string | null;
   logsLoading: boolean;
   logsError: string | null;
   logsFile: string | null;
