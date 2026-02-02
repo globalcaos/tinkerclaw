@@ -737,21 +737,6 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
             ${renderUsageBar(claudeShared.sevenDayPercent, "Week", claudeShared.sevenDayResetAt)}
           </div>
         ` : nothing}
-        <div class="usage-provider">
-            <div class="usage-provider__name">Manus ${manusUsage?.lastTaskAt ? html`<span class="usage-provider__time">${formatTimeAgo(manusUsage.lastTaskAt)}</span>` : nothing}</div>
-            <div class="usage-tokens">
-              <div class="usage-tokens__row">
-                <span class="usage-tokens__label">Today:</span>
-                <span class="usage-tokens__value">${manusUsage?.tasksToday ?? 0}</span>
-                <span class="usage-tokens__detail">tasks (~${manusUsage?.creditsToday ?? 0} credits)</span>
-              </div>
-              <div class="usage-tokens__row">
-                <span class="usage-tokens__label">Total:</span>
-                <span class="usage-tokens__value">${manusUsage?.tasksTotal ?? 0}</span>
-                <span class="usage-tokens__detail">tasks (~${manusUsage?.creditsTotal ?? 0} credits)</span>
-              </div>
-            </div>
-          </div>
         ${hasValidProviders ? validProviders.map((provider) => html`
           <div class="usage-provider">
             <div class="usage-provider__name">${provider.displayName}</div>
@@ -794,6 +779,21 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
             </div>
           `;
         }) : nothing}
+        <div class="usage-provider">
+          <div class="usage-provider__name">Manus ${manusUsage?.lastTaskAt ? html`<span class="usage-provider__time">${formatTimeAgo(manusUsage.lastTaskAt)}</span>` : nothing}</div>
+          <div class="usage-tokens">
+            <div class="usage-tokens__row">
+              <span class="usage-tokens__label">Today:</span>
+              <span class="usage-tokens__value">${manusUsage?.tasksToday ?? 0}</span>
+              <span class="usage-tokens__detail">tasks (~${manusUsage?.creditsToday ?? 0} credits)</span>
+            </div>
+            <div class="usage-tokens__row">
+              <span class="usage-tokens__label">Total:</span>
+              <span class="usage-tokens__value">${manusUsage?.tasksTotal ?? 0}</span>
+              <span class="usage-tokens__detail">tasks (~${manusUsage?.creditsTotal ?? 0} credits)</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;
