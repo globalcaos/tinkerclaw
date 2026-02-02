@@ -8,6 +8,7 @@ import type { MsgContext, TemplateContext } from "../templating.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import {
+  canonicalizeMainSessionAlias,
   DEFAULT_RESET_TRIGGERS,
   deriveSessionMetaPatch,
   evaluateSessionFreshness,
@@ -194,6 +195,7 @@ export async function initSessionState(params: {
   }
 
   sessionKey = resolveSessionKey(sessionScope, sessionCtxForState, mainKey);
+  sessionKey = canonicalizeMainSessionAlias({ cfg, agentId, sessionKey });
   const entry = sessionStore[sessionKey];
   const previousSessionEntry = resetTriggered && entry ? { ...entry } : undefined;
   const now = Date.now();
@@ -343,6 +345,8 @@ export async function initSessionState(params: {
 
   const sessionCtx: TemplateContext = {
     ...ctx,
+    // Ensure the canonicalized session key is used (fixes "main" alias not resolving).
+    SessionKey: sessionKey,
     // Keep BodyStripped aligned with Body (best default for agent prompts).
     // RawBody is reserved for command/directive parsing and may omit context.
     BodyStripped: formatInboundBodyWithSenderMeta({
