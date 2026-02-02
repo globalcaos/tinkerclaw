@@ -1688,3 +1688,12 @@
 .btn--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger), black 10%) !important;
 }
+
+.btn--queue {
+  background: var(--warn) !important;
+  border-color: var(--warn) !important;
+}
+
+.btn--queue:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn), black 10%) !important;
+}

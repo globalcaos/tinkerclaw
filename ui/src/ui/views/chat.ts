@@ -359,20 +359,20 @@ export function renderChat(props: ChatProps) {
           </label>
           <div class="chat-compose__actions">
             <button
-              class="btn ${isBusy && canAbort ? "btn--danger" : ""}"
+              class="btn ${isBusy && canAbort ? "btn--danger btn--busy" : ""}"
               ?disabled=${!props.connected || (!canAbort && props.sending)}
               @click=${canAbort ? props.onAbort : props.onNewSession}
             >
-              ${canAbort ? "Stop" : "New session"}
+              ${isBusy && canAbort 
+                ? html`<span class="btn-dots"><span></span><span></span><span></span></span> Stop`
+                : canAbort ? "Stop" : "New session"}
             </button>
             <button
-              class="btn primary ${isBusy ? "btn--busy" : ""}"
+              class="btn primary ${isBusy ? "btn--queue" : ""}"
               ?disabled=${!props.connected}
               @click=${props.onSend}
             >
-              ${isBusy 
-                ? html`<span class="btn-dots"><span></span><span></span><span></span></span> Queue` 
-                : "Send"}<kbd class="btn-kbd">↵</kbd>
+              ${isBusy ? "Queue" : "Send"}<kbd class="btn-kbd">↵</kbd>
             </button>
           </div>
         </div>
