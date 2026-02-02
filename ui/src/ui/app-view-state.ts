@@ -2,6 +2,7 @@ import type { EventLogEntry } from "./app-events";
 import type { DevicePairingList } from "./controllers/devices";
 import type { ExecApprovalRequest } from "./controllers/exec-approval";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals";
+import type { ClaudeSharedUsage } from "./controllers/provider-usage";
 import type { SkillMessage } from "./controllers/skills";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway";
 import type { Tab } from "./navigation";
@@ -139,6 +140,10 @@ export type AppViewState = {
   providerUsage: UsageSummary | null;
   providerUsageLoading: boolean;
   providerUsageError: string | null;
+  claudeSharedUsage: ClaudeSharedUsage | null;
+  claudeRefreshLoading: boolean;
+  claudeRefreshError: string | null;
+  onRefreshClaudeUsage: () => void;
   logsLoading: boolean;
   logsError: string | null;
   logsFile: string | null;

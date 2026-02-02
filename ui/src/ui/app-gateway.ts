@@ -7,7 +7,7 @@ import type { UiSettings } from "./storage";
 import type { AgentsListResult, PresenceEntry, HealthSnapshot, StatusSummary } from "./types";
 import { CHAT_SESSIONS_ACTIVE_MINUTES, flushChatQueueForEvent } from "./app-chat";
 import { applySettings, loadCron, refreshActiveTab, setLastActiveSessionKey } from "./app-settings";
-import { loadProviderUsage } from "./controllers/provider-usage";
+import { loadProviderUsage, refreshClaudeSharedUsage, type ClaudeSharedUsage } from "./controllers/provider-usage";
 import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream";
 import { loadAgents } from "./controllers/agents";
 import { loadAssistantIdentity } from "./controllers/assistant-identity";
