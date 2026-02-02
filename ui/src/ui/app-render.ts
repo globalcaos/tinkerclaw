@@ -20,7 +20,7 @@ import type {
   UsageSummary,
   ProviderUsageSnapshot,
 } from "./types";
-import type { ManusUsage } from "./controllers/provider-usage";
+import type { ManusUsageSummary } from "./types";
 import type { ChatQueueItem, CronFormState } from "./ui-types";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat";
@@ -203,7 +203,6 @@ export function renderApp(state: AppViewState) {
           claudeShared: state.claudeSharedUsage,
           claudeRefreshLoading: state.claudeRefreshLoading,
           claudeRefreshError: state.claudeRefreshError,
-          manusUsage: state.manusUsage,
           onRefresh: state.onRefreshClaudeUsage,
         })}
       </aside>
@@ -658,12 +657,12 @@ type UsagePanelParams = {
   claudeShared: ClaudeSharedUsage | null;
   claudeRefreshLoading: boolean;
   claudeRefreshError: string | null;
-  manusUsage: ManusUsage | null;
   onRefresh: () => void;
 };
 
 function renderProviderUsagePanel(params: UsagePanelParams) {
-  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, manusUsage, onRefresh } = params;
+  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, onRefresh } = params;
+  const manusUsage = usage?.manusUsage;
   
   if (loading && !usage) {
     return html`

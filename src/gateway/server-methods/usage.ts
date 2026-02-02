@@ -1,12 +1,13 @@
-import type { CostUsageSummary } from "../../infra/session-cost-usage.js";
 import type { ProviderUsageSnapshot } from "../../infra/provider-usage.types.js";
+import type { CostUsageSummary } from "../../infra/session-cost-usage.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { loadConfig } from "../../config/config.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.js";
 import { loadCostUsageSummary } from "../../infra/session-cost-usage.js";
-import { 
-  getTokenUsageSummaries, 
-  setSubscriptionTier, 
+import {
+  getTokenUsageSummaries,
+  getManusUsageSummary,
+  setSubscriptionTier,
   setMonthlyBudget,
   type SubscriptionTier,
 } from "../../infra/token-usage-tracker.js";
@@ -15,13 +16,13 @@ import {
 function initTrackerFromConfig(): void {
   const config = loadConfig();
   const env = config.env ?? {};
-  
+
   // Set subscription tier from ANTHROPIC_SUBSCRIPTION_TIER
   const tier = env.ANTHROPIC_SUBSCRIPTION_TIER as string | undefined;
   if (tier && ["free", "pro", "max_5x", "max_20x", "api"].includes(tier)) {
     setSubscriptionTier(tier as SubscriptionTier);
   }
-  
+
   // Set monthly budget from ANTHROPIC_MONTHLY_BUDGET_USD
   const budgetStr = env.ANTHROPIC_MONTHLY_BUDGET_USD as string | undefined;
   if (budgetStr) {
@@ -109,7 +110,8 @@ export const usageHandlers: GatewayRequestHandlers = {
   "usage.status": async ({ respond }) => {
     const summary = await loadProviderUsageSummary();
     const tokenUsage = getTokenUsageSummaries();
-    respond(true, { ...summary, tokenUsage }, undefined);
+    const manusUsage = getManusUsageSummary();
+    respond(true, { ...summary, tokenUsage, manusUsage }, undefined);
   },
   "usage.cost": async ({ respond, params }) => {
     const config = loadConfig();
