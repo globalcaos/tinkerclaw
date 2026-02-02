@@ -138,6 +138,10 @@ export function renderToolCardSidebar(card: ToolCard, onOpenSidebar?: (content: 
   const level = isExec ? classifyCommand(command) : 'medium';
   const levelInfo = SECURITY_LEVELS[level];
   
+  // Get purpose from args if available (contextual explanation)
+  const args = card.args as Record<string, unknown> | undefined;
+  const purpose = typeof args?.purpose === 'string' ? args.purpose : levelInfo.desc;
+  
   const isError = card.text?.toLowerCase().includes('error') || 
                   card.text?.toLowerCase().includes('failed') ||
                   card.text?.includes('exited with code');
@@ -158,7 +162,7 @@ export function renderToolCardSidebar(card: ToolCard, onOpenSidebar?: (content: 
       <span class="chat-tool-compact__sep">│</span>
       <span class="chat-tool-compact__level">${levelInfo.label}</span>
       <span class="chat-tool-compact__sep">│</span>
-      <span class="chat-tool-compact__desc">${levelInfo.desc}</span>
+      <span class="chat-tool-compact__desc">${purpose}</span>
     </div>
   `;
 }
