@@ -194,6 +194,7 @@ export type ExecElevatedDefaults = {
 
 const execSchema = Type.Object({
   command: Type.String({ description: "Shell command to execute" }),
+  purpose: Type.Optional(Type.String({ description: "Brief explanation of why this command is being run (shown in UI)" })),
   workdir: Type.Optional(Type.String({ description: "Working directory (defaults to cwd)" })),
   env: Type.Optional(Type.Record(Type.String(), Type.String())),
   yieldMs: Type.Optional(
