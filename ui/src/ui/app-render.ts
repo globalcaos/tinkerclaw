@@ -195,7 +195,15 @@ export function renderApp(state: AppViewState) {
             </a>
           </div>
         </div>
-        ${renderProviderUsagePanel(state.providerUsage, state.providerUsageLoading, state.providerUsageError)}
+        ${renderProviderUsagePanel({
+          usage: state.providerUsage,
+          loading: state.providerUsageLoading,
+          error: state.providerUsageError,
+          claudeShared: state.claudeSharedUsage,
+          claudeRefreshLoading: state.claudeRefreshLoading,
+          claudeRefreshError: state.claudeRefreshError,
+          onRefresh: state.onRefreshClaudeUsage,
+        })}
       </aside>
       <main class="content ${isChat ? "content--chat" : ""}">
         <section class="content-header">
@@ -633,7 +641,27 @@ function renderUsageBar(percent: number, label: string, resetAt?: number) {
   `;
 }
 
-function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, error: string | null) {
+type ClaudeSharedUsage = {
+  fiveHourPercent: number;
+  fiveHourResetAt?: number;
+  sevenDayPercent: number;
+  sevenDayResetAt?: number;
+  fetchedAt: number;
+};
+
+type UsagePanelParams = {
+  usage: UsageSummary | null;
+  loading: boolean;
+  error: string | null;
+  claudeShared: ClaudeSharedUsage | null;
+  claudeRefreshLoading: boolean;
+  claudeRefreshError: string | null;
+  onRefresh: () => void;
+};
+
+function renderProviderUsagePanel(params: UsagePanelParams) {
+  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, onRefresh } = params;
+  
   if (loading && !usage) {
     return html`
       <div class="nav-group nav-group--usage">
@@ -659,30 +687,53 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
     `;
   }
 
-  const hasProviders = usage && usage.providers.length > 0;
   const hasTokens = usage?.tokenUsage && usage.tokenUsage.length > 0;
   
   // Filter providers to only those with actual data (no errors)
   const validProviders = usage?.providers.filter(p => !p.error && p.windows.length > 0) ?? [];
   const hasValidProviders = validProviders.length > 0;
   
-  if (!hasValidProviders && !hasTokens) {
+  if (!hasValidProviders && !hasTokens && !claudeShared) {
     return html`
       <div class="nav-group nav-group--usage">
         <div class="nav-label nav-label--static">
           <span class="nav-label__text">Model Usage</span>
+          <button class="usage-refresh-btn" @click=${onRefresh} ?disabled=${claudeRefreshLoading} title="Refresh from Claude">
+            ${claudeRefreshLoading ? "..." : "↻"}
+          </button>
         </div>
-        <div class="usage-panel usage-panel--empty">Collecting data...</div>
+        <div class="usage-panel usage-panel--empty">
+          ${claudeRefreshError ? html`<div class="usage-refresh-hint">${claudeRefreshError}</div>` : "Click ↻ to fetch usage"}
+        </div>
       </div>
     `;
   }
+
+  // Format time ago
+  const formatTimeAgo = (ts: number) => {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    return `${Math.floor(mins / 60)}h ago`;
+  };
 
   return html`
     <div class="nav-group nav-group--usage">
       <div class="nav-label nav-label--static">
         <span class="nav-label__text">Model Usage</span>
+        <button class="usage-refresh-btn" @click=${onRefresh} ?disabled=${claudeRefreshLoading} title="Refresh from Claude">
+          ${claudeRefreshLoading ? "..." : "↻"}
+        </button>
       </div>
       <div class="usage-panel">
+        ${claudeRefreshError ? html`<div class="usage-refresh-hint">${claudeRefreshError}</div>` : nothing}
+        ${claudeShared ? html`
+          <div class="usage-provider">
+            <div class="usage-provider__name">Claude (shared) <span class="usage-provider__time">${formatTimeAgo(claudeShared.fetchedAt)}</span></div>
+            ${renderUsageBar(claudeShared.fiveHourPercent, "5h", claudeShared.fiveHourResetAt)}
+            ${renderUsageBar(claudeShared.sevenDayPercent, "Week", claudeShared.sevenDayResetAt)}
+          </div>
+        ` : nothing}
         ${hasValidProviders ? validProviders.map((provider) => html`
           <div class="usage-provider">
             <div class="usage-provider__name">${provider.displayName}</div>
@@ -690,15 +741,13 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
           </div>
         `) : nothing}
         ${hasTokens ? usage!.tokenUsage!.map((t) => {
-          // Check if this provider has rate limit data from browser
-          const hasRateLimits = usage!.providers.some(
-            (p) => p.provider === t.provider && p.windows.length > 0 && !p.error
-          );
+          // Check if this provider has rate limit data from shared usage
+          const hasSharedData = claudeShared && t.provider === "anthropic";
           
           return html`
             <div class="usage-provider">
-              <div class="usage-provider__name">${t.displayName}</div>
-              ${!hasRateLimits && t.estimated.fiveHourPercent > 0 ? html`
+              <div class="usage-provider__name">${t.displayName} (you)</div>
+              ${!hasSharedData && t.estimated.fiveHourPercent > 0 ? html`
                 ${renderUsageBar(t.estimated.fiveHourPercent, "5h est.", undefined)}
                 ${renderUsageBar(t.estimated.dailyPercent, "Day est.", undefined)}
               ` : nothing}
