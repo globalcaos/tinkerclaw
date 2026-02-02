@@ -46,12 +46,80 @@ export function extractToolCards(message: unknown): ToolCard[] {
   return cards;
 }
 
+/**
+ * Security level classification for exec commands
+ */
+type SecurityLevel = 'safe' | 'low' | 'medium' | 'high' | 'critical';
+
+const SECURITY_LEVELS: Record<SecurityLevel, { emoji: string; label: string; desc: string }> = {
+  safe: { emoji: '🟢', label: 'SAFE', desc: 'Read-only information gathering' },
+  low: { emoji: '🔵', label: 'LOW', desc: 'Project file modifications' },
+  medium: { emoji: '🟡', label: 'MEDIUM', desc: 'Configuration or dependency changes' },
+  high: { emoji: '🟠', label: 'HIGH', desc: 'System-level changes' },
+  critical: { emoji: '🔴', label: 'CRITICAL', desc: 'Potential data loss or security risk' },
+};
+
+const COMMAND_PATTERNS: Record<SecurityLevel, string[]> = {
+  critical: [
+    'sudo', 'rm -rf', 'rm -fr', 'mkfs', 'dd if=', 'dd of=', 'shred',
+    'chmod 777 -R', 'shutdown', 'reboot', 'halt', 'poweroff', 'kill -9 -1',
+    'DROP TABLE', 'DROP DATABASE', 'TRUNCATE', 'curl | sh', 'curl | bash'
+  ],
+  high: [
+    'systemctl start', 'systemctl stop', 'systemctl restart', 'systemctl enable',
+    'apt install', 'apt remove', 'apt purge', 'apt upgrade', 'apt-get install',
+    'brew install', 'brew uninstall', 'dnf install', 'pacman -S',
+    'npm install -g', 'pip install --user', 'useradd', 'userdel', 'usermod',
+    'chown -R', 'chmod -R', 'ufw', 'iptables', 'crontab', 'mount', 'umount'
+  ],
+  medium: [
+    'npm install', 'npm update', 'pnpm install', 'pnpm add', 'yarn install', 'yarn add',
+    'pip install', 'pip3 install', 'composer install', 'bundle install', 'gem install',
+    'go get', 'cargo add', 'git push', 'git pull', 'git merge', 'git rebase', 'git reset',
+    'docker run', 'docker exec', 'docker build', 'docker stop', 'kubectl apply',
+    'chmod', 'chown', 'ln -s', 'make install', 'ssh', 'scp', 'rsync'
+  ],
+  low: [
+    'touch', 'mkdir', 'cp', 'mv', 'rm', 'rmdir', 'git add', 'git commit', 'git stash',
+    'git checkout', 'git branch', 'git switch', 'echo >', 'cat >', 'tee', 'sed -i',
+    'make', 'npm run', 'pnpm run', 'yarn run', 'node', 'python', 'python3',
+    'tar', 'unzip', 'zip', 'gzip'
+  ],
+  safe: [
+    'ls', 'll', 'la', 'dir', 'cat', 'head', 'tail', 'less', 'more', 'grep', 'rg', 'find',
+    'which', 'whereis', 'type', 'pwd', 'cd', 'whoami', 'id', 'groups', 'date', 'cal',
+    'uptime', 'uname', 'hostname', 'echo', 'printf', 'env', 'printenv', 'man', 'help',
+    '--help', '--version', '-v', '-V', 'file', 'stat', 'wc', 'du', 'df', 'free',
+    'top', 'htop', 'ps', 'netstat', 'ss', 'ip addr', 'ping', 'dig', 'nslookup',
+    'git status', 'git log', 'git diff', 'git show', 'git branch -l', 'git remote',
+    'npm list', 'npm view', 'npm outdated', 'pip list', 'pip show',
+    'docker ps', 'docker images', 'docker logs', 'tree', 'jq', 'sort', 'diff'
+  ]
+};
+
+const LEVEL_ORDER: SecurityLevel[] = ['critical', 'high', 'medium', 'low', 'safe'];
+
+function classifyCommand(cmd: string): SecurityLevel {
+  const lower = cmd.trim().toLowerCase();
+  for (const level of LEVEL_ORDER) {
+    for (const pattern of COMMAND_PATTERNS[level]) {
+      if (lower.includes(pattern.toLowerCase())) {
+        return level;
+      }
+    }
+  }
+  return 'medium';
+}
+
+/**
+ * Compact one-line tool card renderer
+ */
 export function renderToolCardSidebar(card: ToolCard, onOpenSidebar?: (content: string) => void) {
   const display = resolveToolDisplay({ name: card.name, args: card.args });
   const detail = formatToolDetail(display);
   const hasText = Boolean(card.text?.trim());
-
   const canClick = Boolean(onOpenSidebar);
+  
   const handleClick = canClick
     ? () => {
         if (hasText) {
@@ -65,53 +133,32 @@ export function renderToolCardSidebar(card: ToolCard, onOpenSidebar?: (content: 
       }
     : undefined;
 
-  const isShort = hasText && (card.text?.length ?? 0) <= TOOL_INLINE_THRESHOLD;
-  const showCollapsed = hasText && !isShort;
-  const showInline = hasText && isShort;
-  const isEmpty = !hasText;
+  const isExec = card.name === 'exec' || card.name === 'bash';
+  const command = detail || display.label;
+  const level = isExec ? classifyCommand(command) : 'medium';
+  const levelInfo = SECURITY_LEVELS[level];
+  
+  const isError = card.text?.toLowerCase().includes('error') || 
+                  card.text?.toLowerCase().includes('failed') ||
+                  card.text?.includes('exited with code');
+  
+  const statusIcon = isError ? '✗' : '✓';
 
   return html`
     <div
-      class="chat-tool-card ${canClick ? "chat-tool-card--clickable" : ""}"
+      class="chat-tool-compact chat-tool-compact--${level} ${canClick ? "chat-tool-compact--clickable" : ""}"
       @click=${handleClick}
       role=${canClick ? "button" : nothing}
       tabindex=${canClick ? "0" : nothing}
-      @keydown=${
-        canClick
-          ? (e: KeyboardEvent) => {
-              if (e.key !== "Enter" && e.key !== " ") return;
-              e.preventDefault();
-              handleClick?.();
-            }
-          : nothing
-      }
+      @keydown=${canClick ? (e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleClick?.(); } } : nothing}
     >
-      <div class="chat-tool-card__header">
-        <div class="chat-tool-card__title">
-          <span class="chat-tool-card__icon">${icons[display.icon]}</span>
-          <span>${display.label}</span>
-        </div>
-        ${
-          canClick
-            ? html`<span class="chat-tool-card__action">${hasText ? "View" : ""} ${icons.check}</span>`
-            : nothing
-        }
-        ${isEmpty && !canClick ? html`<span class="chat-tool-card__status">${icons.check}</span>` : nothing}
-      </div>
-      ${detail ? html`<div class="chat-tool-card__detail">${detail}</div>` : nothing}
-      ${
-        isEmpty
-          ? html`
-              <div class="chat-tool-card__status-text muted">Completed</div>
-            `
-          : nothing
-      }
-      ${
-        showCollapsed
-          ? html`<div class="chat-tool-card__preview mono">${getTruncatedPreview(card.text!)}</div>`
-          : nothing
-      }
-      ${showInline ? html`<div class="chat-tool-card__inline mono">${card.text}</div>` : nothing}
+      <span class="chat-tool-compact__icon">${levelInfo.emoji}</span>
+      <span class="chat-tool-compact__status">${statusIcon}</span>
+      <span class="chat-tool-compact__cmd">${command}</span>
+      <span class="chat-tool-compact__sep">│</span>
+      <span class="chat-tool-compact__level">${levelInfo.label}</span>
+      <span class="chat-tool-compact__sep">│</span>
+      <span class="chat-tool-compact__desc">${levelInfo.desc}</span>
     </div>
   `;
 }
