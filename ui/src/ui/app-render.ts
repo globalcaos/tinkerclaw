@@ -732,7 +732,7 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
         ${claudeRefreshError ? html`<div class="usage-refresh-hint">${claudeRefreshError}</div>` : nothing}
         ${claudeShared ? html`
           <div class="usage-provider">
-            <div class="usage-provider__name">Claude (shared) <span class="usage-provider__time">${formatTimeAgo(claudeShared.fetchedAt)}</span></div>
+            <div class="usage-provider__name">Claude <span class="usage-provider__time">${formatTimeAgo(claudeShared.fetchedAt)}</span></div>
             ${renderUsageBar(claudeShared.fiveHourPercent, "5h", claudeShared.fiveHourResetAt)}
             ${renderUsageBar(claudeShared.sevenDayPercent, "Week", claudeShared.sevenDayResetAt)}
           </div>
@@ -749,7 +749,7 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
           
           return html`
             <div class="usage-provider">
-              <div class="usage-provider__name">${t.displayName} (this chat)</div>
+              <div class="usage-provider__name">${t.displayName}</div>
               ${!hasSharedData && t.estimated.fiveHourPercent > 0 ? html`
                 ${renderUsageBar(t.estimated.fiveHourPercent, t.estimated.fiveHourLabel ?? "5h est.", undefined)}
                 ${renderUsageBar(t.estimated.dailyPercent, t.estimated.dailyLabel ?? "Day est.", undefined)}
