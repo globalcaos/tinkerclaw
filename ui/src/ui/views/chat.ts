@@ -27,6 +27,7 @@ export type ChatProps = {
   showThinking: boolean;
   loading: boolean;
   sending: boolean;
+  runId: string | null;  // Active run ID - shows processing state
   canAbort?: boolean;
   compactionStatus?: CompactionIndicatorStatus | null;
   messages: unknown[];
@@ -174,7 +175,9 @@ function renderAttachmentPreview(props: ChatProps) {
 
 export function renderChat(props: ChatProps) {
   const canCompose = props.connected;
-  const isBusy = props.sending || props.stream !== null;
+  // Show busy state when: sending, streaming, or have active run (processing/thinking)
+  const isBusy = props.sending || props.stream !== null || props.runId !== null;
+  const isProcessing = props.runId !== null && props.stream === null && !props.sending;
   const canAbort = Boolean(props.canAbort && props.onAbort);
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
   const reasoningLevel = activeSession?.reasoningLevel ?? "off";
@@ -356,18 +359,20 @@ export function renderChat(props: ChatProps) {
           </label>
           <div class="chat-compose__actions">
             <button
-              class="btn"
+              class="btn ${isBusy && canAbort ? "btn--danger" : ""}"
               ?disabled=${!props.connected || (!canAbort && props.sending)}
               @click=${canAbort ? props.onAbort : props.onNewSession}
             >
               ${canAbort ? "Stop" : "New session"}
             </button>
             <button
-              class="btn primary"
+              class="btn primary ${isBusy ? "btn--busy" : ""}"
               ?disabled=${!props.connected}
               @click=${props.onSend}
             >
-              ${isBusy ? "Queue" : "Send"}<kbd class="btn-kbd">↵</kbd>
+              ${isBusy 
+                ? html`<span class="btn-dots"><span></span><span></span><span></span></span> Queue` 
+                : "Send"}<kbd class="btn-kbd">↵</kbd>
             </button>
           </div>
         </div>
@@ -455,18 +460,25 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
     }
   }
 
-  if (props.stream !== null) {
+  // Show stream content, or reading indicator when processing
+  const hasStream = props.stream !== null;
+  const hasRunId = props.runId !== null;
+  
+  if (hasStream) {
     const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
-    if (props.stream.trim().length > 0) {
+    if (props.stream!.trim().length > 0) {
       items.push({
         kind: "stream",
         key,
-        text: props.stream,
+        text: props.stream!,
         startedAt: props.streamStartedAt ?? Date.now(),
       });
     } else {
       items.push({ kind: "reading-indicator", key });
     }
+  } else if (hasRunId) {
+    // No stream text yet but we're processing - show thinking indicator
+    items.push({ kind: "reading-indicator", key: `thinking:${props.runId}` });
   }
 
   return groupMessages(items);
