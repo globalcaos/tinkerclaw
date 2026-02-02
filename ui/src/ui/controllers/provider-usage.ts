@@ -1,5 +1,5 @@
 import type { GatewayBrowserClient } from "../gateway";
-import type { ProviderUsageSnapshot, UsageSummary } from "../types";
+import type { BudgetAwarenessContext, ProviderUsageSnapshot, UsageSummary } from "../types";
 
 const CLAUDE_SHARED_STORAGE_KEY = "openclaw:claude-shared-usage";
 const MANUS_USAGE_STORAGE_KEY = "openclaw:manus-usage";
@@ -36,6 +36,8 @@ export type ProviderUsageState = {
   claudeRefreshError: string | null;
   // Manus usage (locally tracked)
   manusUsage: ManusUsage | null;
+  // Budget awareness (from backend)
+  budgetAwareness: BudgetAwarenessContext | null;
 };
 
 /** Load cached Claude shared usage from localStorage */
@@ -285,6 +287,11 @@ export async function loadProviderUsage(state: ProviderUsageState) {
     });
 
     state.providerUsage = result;
+    
+    // Extract budget awareness context
+    if (result.budgetAwareness) {
+      state.budgetAwareness = result.budgetAwareness;
+    }
   } catch (err) {
     // Even on total failure, try to show empty state rather than error
     // The internal tracking might still work

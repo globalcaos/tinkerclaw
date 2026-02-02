@@ -235,6 +235,7 @@ export class OpenClawApp extends LitElement {
   @state() claudeSharedUsage: ClaudeSharedUsage | null = loadCachedClaudeSharedUsage();
   @state() claudeRefreshLoading = false;
   @state() claudeRefreshError: string | null = null;
+  @state() budgetAwareness: import("./types").BudgetAwarenessContext | null = null;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;

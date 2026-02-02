@@ -203,6 +203,7 @@ export function renderApp(state: AppViewState) {
           claudeShared: state.claudeSharedUsage,
           claudeRefreshLoading: state.claudeRefreshLoading,
           claudeRefreshError: state.claudeRefreshError,
+          budgetAwareness: state.budgetAwareness,
           onRefresh: state.onRefreshClaudeUsage,
         })}
       </aside>
@@ -650,6 +651,17 @@ type ClaudeSharedUsage = {
   fetchedAt: number;
 };
 
+type BudgetAwarenessContext = {
+  status: "healthy" | "caution" | "warning" | "critical";
+  monthlyBudgetPercent: number;
+  fiveHourLimitPercent: number;
+  estimatedCostMonth: number;
+  budgetRemaining: number;
+  recommendedThinking: string;
+  alerts: string[];
+  shouldPreferCheaperModel: boolean;
+};
+
 type UsagePanelParams = {
   usage: UsageSummary | null;
   loading: boolean;
@@ -657,11 +669,50 @@ type UsagePanelParams = {
   claudeShared: ClaudeSharedUsage | null;
   claudeRefreshLoading: boolean;
   claudeRefreshError: string | null;
+  budgetAwareness: BudgetAwarenessContext | null;
   onRefresh: () => void;
 };
 
+function renderBudgetStatusBadge(budget: BudgetAwarenessContext | null) {
+  if (!budget) return nothing;
+  
+  const statusColors: Record<string, string> = {
+    healthy: "var(--color-success, #4caf50)",
+    caution: "var(--color-warning-soft, #ffc107)",
+    warning: "var(--color-warning, #ff9800)",
+    critical: "var(--color-error, #f44336)",
+  };
+  
+  const statusEmoji: Record<string, string> = {
+    healthy: "🟢",
+    caution: "🟡",
+    warning: "🟠",
+    critical: "🔴",
+  };
+  
+  const color = statusColors[budget.status] ?? statusColors.healthy;
+  const emoji = statusEmoji[budget.status] ?? "🟢";
+  
+  return html`
+    <div class="budget-status" style="border-left: 3px solid ${color}; padding-left: 8px; margin-bottom: 8px;">
+      <div class="budget-status__header" style="font-weight: 500;">
+        ${emoji} Budget: ${budget.status.toUpperCase()}
+      </div>
+      <div class="budget-status__details" style="font-size: 0.85em; opacity: 0.9;">
+        <span>$${budget.budgetRemaining.toFixed(2)} remaining</span>
+        <span style="margin-left: 8px;">Thinking: ${budget.recommendedThinking}</span>
+      </div>
+      ${budget.alerts.length > 0 ? html`
+        <div class="budget-status__alerts" style="font-size: 0.8em; color: ${color}; margin-top: 4px;">
+          ${budget.alerts.map(alert => html`<div>${alert}</div>`)}
+        </div>
+      ` : nothing}
+    </div>
+  `;
+}
+
 function renderProviderUsagePanel(params: UsagePanelParams) {
-  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, onRefresh } = params;
+  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, budgetAwareness, onRefresh } = params;
   const manusUsage = usage?.manusUsage;
   
   if (loading && !usage) {
@@ -725,6 +776,7 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
         <span class="nav-label__text">Model Usage</span>
       </div>
       <div class="usage-panel">
+        ${renderBudgetStatusBadge(budgetAwareness)}
         ${claudeRefreshError ? html`<div class="usage-refresh-hint">${claudeRefreshError}</div>` : nothing}
         ${claudeShared ? html`
           <div class="usage-provider">
@@ -775,7 +827,18 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
           `;
         }) : nothing}
         <div class="usage-provider">
-          <div class="usage-provider__name">Manus ${manusUsage?.lastTaskAt ? html`<span class="usage-provider__time">${formatTimeAgo(manusUsage.lastTaskAt)}</span>` : nothing}</div>
+          <div class="usage-provider__name">
+            Manus 
+            ${manusUsage?.status && manusUsage.status !== "healthy" ? html`
+              <span class="usage-status-badge usage-status-badge--${manusUsage.status}">
+                ${manusUsage.status === "critical" ? "🔴" : manusUsage.status === "warning" ? "🟠" : "🟡"}
+              </span>
+            ` : nothing}
+            ${manusUsage?.lastTaskAt ? html`<span class="usage-provider__time">${formatTimeAgo(manusUsage.lastTaskAt)}</span>` : nothing}
+          </div>
+          ${manusUsage?.monthlyBudgetPercent !== undefined ? html`
+            ${renderUsageBar(manusUsage.monthlyBudgetPercent, `Month (${manusUsage.monthlyBudget} cr)`, undefined)}
+          ` : nothing}
           <div class="usage-tokens">
             <div class="usage-tokens__row">
               <span class="usage-tokens__label">Today:</span>
@@ -783,11 +846,16 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
               <span class="usage-tokens__detail">tasks (~${manusUsage?.creditsToday ?? 0} credits)</span>
             </div>
             <div class="usage-tokens__row">
-              <span class="usage-tokens__label">Total:</span>
-              <span class="usage-tokens__value">${manusUsage?.tasksTotal ?? 0}</span>
-              <span class="usage-tokens__detail">tasks (~${manusUsage?.creditsTotal ?? 0} credits)</span>
+              <span class="usage-tokens__label">Month:</span>
+              <span class="usage-tokens__value">${manusUsage?.creditsThisMonth ?? 0}</span>
+              <span class="usage-tokens__detail">credits (${(manusUsage?.monthlyBudgetPercent ?? 0).toFixed(0)}%)</span>
             </div>
           </div>
+          ${manusUsage?.alerts && manusUsage.alerts.length > 0 ? html`
+            <div class="usage-alerts">
+              ${manusUsage.alerts.map(alert => html`<div class="usage-alert">${alert}</div>`)}
+            </div>
+          ` : nothing}
         </div>
       </div>
     </div>
