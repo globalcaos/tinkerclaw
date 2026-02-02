@@ -2,7 +2,7 @@ const KEY = "openclaw.control.settings.v1";
 
 import type { ThemeMode } from "./theme";
 
-export type ExecSecurityLevel = "safe" | "low" | "medium" | "high" | "all";
+export type ExecSecurityLevel = "safe" | "low" | "medium" | "high" | "critical";
 
 export type UiSettings = {
   gatewayUrl: string;
@@ -84,7 +84,7 @@ export function loadSettings(): UiSettings {
         parsed.execSecurityLevel === "low" ||
         parsed.execSecurityLevel === "medium" ||
         parsed.execSecurityLevel === "high" ||
-        parsed.execSecurityLevel === "all"
+        parsed.execSecurityLevel === "critical"
           ? parsed.execSecurityLevel
           : defaults.execSecurityLevel,
     };
