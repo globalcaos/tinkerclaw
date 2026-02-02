@@ -593,7 +593,30 @@ export type ManusUsageSummary = {
   creditsToday: number;
   tasksTotal: number;
   creditsTotal: number;
+  creditsThisMonth: number;
   lastTaskAt?: number;
+  // Budget awareness
+  monthlyBudget: number;
+  monthlyBudgetPercent: number;
+  status: "healthy" | "caution" | "warning" | "critical";
+  alerts: string[];
+};
+
+export type BudgetStatus = "healthy" | "caution" | "warning" | "critical";
+export type ThinkingRecommendation = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export type BudgetAwarenessContext = {
+  status: BudgetStatus;
+  monthlyBudgetPercent: number;
+  dailyLimitPercent: number;
+  fiveHourLimitPercent: number;
+  estimatedCostToday: number;
+  estimatedCostMonth: number;
+  recommendedThinking: ThinkingRecommendation;
+  alerts: string[];
+  shouldPreferCheaperModel: boolean;
+  budgetRemaining: number;
+  contextLine: string;
 };
 
 export type UsageSummary = {
@@ -601,4 +624,5 @@ export type UsageSummary = {
   providers: ProviderUsageSnapshot[];
   tokenUsage?: TokenUsageSummary[];
   manusUsage?: ManusUsageSummary;
+  budgetAwareness?: BudgetAwarenessContext;
 };
