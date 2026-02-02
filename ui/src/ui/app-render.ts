@@ -20,6 +20,7 @@ import type {
   UsageSummary,
   ProviderUsageSnapshot,
 } from "./types";
+import type { ManusUsage } from "./controllers/provider-usage";
 import type { ChatQueueItem, CronFormState } from "./ui-types";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat";
@@ -202,6 +203,7 @@ export function renderApp(state: AppViewState) {
           claudeShared: state.claudeSharedUsage,
           claudeRefreshLoading: state.claudeRefreshLoading,
           claudeRefreshError: state.claudeRefreshError,
+          manusUsage: state.manusUsage,
           onRefresh: state.onRefreshClaudeUsage,
         })}
       </aside>
@@ -656,11 +658,12 @@ type UsagePanelParams = {
   claudeShared: ClaudeSharedUsage | null;
   claudeRefreshLoading: boolean;
   claudeRefreshError: string | null;
+  manusUsage: ManusUsage | null;
   onRefresh: () => void;
 };
 
 function renderProviderUsagePanel(params: UsagePanelParams) {
-  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, onRefresh } = params;
+  const { usage, loading, error, claudeShared, claudeRefreshLoading, claudeRefreshError, manusUsage, onRefresh } = params;
   
   if (loading && !usage) {
     return html`
@@ -732,6 +735,23 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
             <div class="usage-provider__name">Claude (shared) <span class="usage-provider__time">${formatTimeAgo(claudeShared.fetchedAt)}</span></div>
             ${renderUsageBar(claudeShared.fiveHourPercent, "5h", claudeShared.fiveHourResetAt)}
             ${renderUsageBar(claudeShared.sevenDayPercent, "Week", claudeShared.sevenDayResetAt)}
+          </div>
+        ` : nothing}
+        ${manusUsage ? html`
+          <div class="usage-provider">
+            <div class="usage-provider__name">Manus ${manusUsage.lastTaskAt ? html`<span class="usage-provider__time">${formatTimeAgo(manusUsage.lastTaskAt)}</span>` : nothing}</div>
+            <div class="usage-tokens">
+              <div class="usage-tokens__row">
+                <span class="usage-tokens__label">Today:</span>
+                <span class="usage-tokens__value">${manusUsage.tasksToday}</span>
+                <span class="usage-tokens__detail">tasks (~${manusUsage.creditsToday} credits)</span>
+              </div>
+              <div class="usage-tokens__row">
+                <span class="usage-tokens__label">Total:</span>
+                <span class="usage-tokens__value">${manusUsage.tasksTotal}</span>
+                <span class="usage-tokens__detail">tasks (~${manusUsage.creditsTotal} credits)</span>
+              </div>
+            </div>
           </div>
         ` : nothing}
         ${hasValidProviders ? validProviders.map((provider) => html`
