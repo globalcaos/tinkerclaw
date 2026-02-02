@@ -177,7 +177,7 @@ export function renderChatControls(state: AppViewState) {
             const next = (e.target as HTMLSelectElement).value;
             state.applySettings({
               ...state.settings,
-              execSecurityLevel: next as "safe" | "low" | "medium" | "high" | "all",
+              execSecurityLevel: next as "safe" | "low" | "medium" | "high" | "critical",
             });
           }}
         >
@@ -185,7 +185,7 @@ export function renderChatControls(state: AppViewState) {
           <option value="low">🔵 Low</option>
           <option value="medium">🟡 Medium</option>
           <option value="high">🟠 High</option>
-          <option value="all">🔴 All</option>
+          <option value="critical">🔴 Critical</option>
         </select>
       </label>
     </div>
