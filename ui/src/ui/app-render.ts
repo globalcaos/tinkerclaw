@@ -748,8 +748,8 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
             <div class="usage-provider">
               <div class="usage-provider__name">${t.displayName} (this chat)</div>
               ${!hasSharedData && t.estimated.fiveHourPercent > 0 ? html`
-                ${renderUsageBar(t.estimated.fiveHourPercent, "5h est.", undefined)}
-                ${renderUsageBar(t.estimated.dailyPercent, "Day est.", undefined)}
+                ${renderUsageBar(t.estimated.fiveHourPercent, t.estimated.fiveHourLabel ?? "5h est.", undefined)}
+                ${renderUsageBar(t.estimated.dailyPercent, t.estimated.dailyLabel ?? "Day est.", undefined)}
               ` : nothing}
               ${t.thisMonth?.budgetPercent !== undefined ? html`
                 ${renderUsageBar(t.thisMonth.budgetPercent, `Month ($${t.thisMonth.budgetUSD})`, undefined)}
