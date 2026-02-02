@@ -73,7 +73,7 @@ import {
 } from "./app-tool-stream";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
-import { refreshClaudeSharedUsage, loadCachedClaudeSharedUsage, type ClaudeSharedUsage } from "./controllers/provider-usage";
+import { refreshClaudeSharedUsage, loadCachedClaudeSharedUsage, loadManusUsage, type ClaudeSharedUsage, type ManusUsage } from "./controllers/provider-usage";
 import { loadSettings, type UiSettings } from "./storage";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
 
@@ -235,6 +235,7 @@ export class OpenClawApp extends LitElement {
   @state() claudeSharedUsage: ClaudeSharedUsage | null = loadCachedClaudeSharedUsage();
   @state() claudeRefreshLoading = false;
   @state() claudeRefreshError: string | null = null;
+  @state() manusUsage: ManusUsage | null = loadManusUsage();
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
