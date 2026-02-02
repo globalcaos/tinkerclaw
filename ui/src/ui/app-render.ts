@@ -646,11 +646,27 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
   }
 
   if (error && !usage) {
-    return nothing;
+    return html`
+      <div class="nav-group nav-group--usage">
+        <div class="nav-label nav-label--static">
+          <span class="nav-label__text">Model Usage</span>
+        </div>
+        <div class="usage-panel">
+          <div class="usage-provider__error">${error}</div>
+        </div>
+      </div>
+    `;
   }
 
   if (!usage || usage.providers.length === 0) {
-    return nothing;
+    return html`
+      <div class="nav-group nav-group--usage">
+        <div class="nav-label nav-label--static">
+          <span class="nav-label__text">Model Usage</span>
+        </div>
+        <div class="usage-panel usage-panel--empty">No usage data available</div>
+      </div>
+    `;
   }
 
   return html`
