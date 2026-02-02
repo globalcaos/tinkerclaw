@@ -67,6 +67,9 @@ export type TokenUsageSummary = {
     dailyLimit: number;
     fiveHourPercent: number;
     dailyPercent: number;
+    // Optional labels for non-Claude providers (e.g., "RPM" for Google)
+    fiveHourLabel?: string;
+    dailyLabel?: string;
   };
 };
 
@@ -147,7 +150,7 @@ export function getSessionStartedAt(): number {
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: "Claude (API)",
   openai: "OpenAI",
-  google: "Google",
+  google: "Gemini",
   openrouter: "OpenRouter",
 };
 
@@ -174,6 +177,13 @@ const MODEL_PRICING: Record<string, { input: number; output: number; cacheRead?:
   // Claude 3.5 (legacy)
   "claude-3-5-sonnet": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   "claude-3-5-haiku": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+  // Gemini 2.0 / 3.0 models (as of 2025)
+  "gemini-3-pro": { input: 1.25, output: 5 },
+  "gemini-3-pro-preview": { input: 1.25, output: 5 },
+  "gemini-2-flash": { input: 0.1, output: 0.4 },
+  "gemini-2-flash-lite": { input: 0.02, output: 0.08 },
+  "gemini-1.5-pro": { input: 1.25, output: 5 },
+  "gemini-1.5-flash": { input: 0.075, output: 0.3 },
   // Default fallback
   default: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 };
@@ -277,15 +287,29 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
     
     const fiveHourOutput = fiveHourEntries.reduce((sum, e) => sum + e.outputTokens, 0);
     const todayOutput = todayEntries.reduce((sum, e) => sum + e.outputTokens, 0);
+    const todayRequests = todayEntries.length;
+    const minuteRequests = minuteEntries.length;
     
-    // Calculate estimated percentages (only for anthropic/claude providers)
+    // Calculate estimated percentages based on provider
     const isClaudeProvider = provider === "anthropic" || provider.includes("claude");
-    const fiveHourPercent = isClaudeProvider && limits.fiveHour !== Infinity 
-      ? Math.min(100, (fiveHourOutput / limits.fiveHour) * 100) 
-      : 0;
-    const dailyPercent = isClaudeProvider && limits.daily !== Infinity 
-      ? Math.min(100, (todayOutput / limits.daily) * 100) 
-      : 0;
+    const isGoogleProvider = provider === "google" || provider.includes("gemini");
+    
+    // Google/Gemini limits (free tier API key)
+    // Free tier: 15 RPM, 1500 RPD, 1M TPM
+    const googleLimits = { rpm: 15, rpd: 1500, tpm: 1_000_000 };
+    
+    let fiveHourPercent = 0;
+    let dailyPercent = 0;
+    
+    if (isClaudeProvider && limits.fiveHour !== Infinity) {
+      fiveHourPercent = Math.min(100, (fiveHourOutput / limits.fiveHour) * 100);
+      dailyPercent = Math.min(100, (todayOutput / limits.daily) * 100);
+    } else if (isGoogleProvider) {
+      // For Google, show daily request % (RPD limit)
+      dailyPercent = Math.min(100, (todayRequests / googleLimits.rpd) * 100);
+      // For 5h, show minute requests as % of RPM (most relevant limit)
+      fiveHourPercent = Math.min(100, (minuteRequests / googleLimits.rpm) * 100);
+    }
     
     // Calculate costs
     const sessionCost = sumCost(sessionEntries);
@@ -315,8 +339,8 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
       fiveHour: {
         outputTokens: fiveHourOutput,
         requestCount: fiveHourEntries.length,
-        estimatedPercent: isClaudeProvider ? fiveHourPercent : undefined,
-        estimatedLimit: isClaudeProvider ? limits.fiveHour : undefined,
+        estimatedPercent: (isClaudeProvider || isGoogleProvider) ? fiveHourPercent : undefined,
+        estimatedLimit: isClaudeProvider ? limits.fiveHour : (isGoogleProvider ? googleLimits.rpm : undefined),
       },
       rollingMinute: {
         inputTokens: minuteStats.inputTokens,
@@ -324,11 +348,14 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
         requestCount: minuteStats.requestCount,
       },
       estimated: {
-        tier: configuredTier,
-        fiveHourLimit: limits.fiveHour,
-        dailyLimit: limits.daily,
+        tier: isGoogleProvider ? "api" : configuredTier,
+        fiveHourLimit: isGoogleProvider ? googleLimits.rpm : limits.fiveHour,
+        dailyLimit: isGoogleProvider ? googleLimits.rpd : limits.daily,
         fiveHourPercent,
         dailyPercent,
+        // Google-specific labels
+        fiveHourLabel: isGoogleProvider ? "RPM" : undefined,
+        dailyLabel: isGoogleProvider ? "RPD" : undefined,
       },
     });
   }

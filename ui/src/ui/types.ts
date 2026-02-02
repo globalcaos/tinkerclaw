@@ -583,6 +583,8 @@ export type TokenUsageSummary = {
     dailyLimit: number;
     fiveHourPercent: number;
     dailyPercent: number;
+    fiveHourLabel?: string;
+    dailyLabel?: string;
   };
 };
 
