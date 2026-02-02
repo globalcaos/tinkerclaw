@@ -542,6 +542,20 @@
   font-size: 13px;
   line-height: 1.5;
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.callout svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
 }
 
 .callout.danger {
@@ -572,6 +586,10 @@
 
 .compaction-indicator--active {
   animation: compaction-pulse 1.5s ease-in-out infinite;
+}
+
+.compaction-indicator--active svg {
+  animation: spin 1s linear infinite;
 }
 
 .compaction-indicator--complete {
