@@ -12,6 +12,7 @@ import { loadConfig, loadConfigSchema } from "./controllers/config";
 import { loadCronJobs, loadCronStatus } from "./controllers/cron";
 import { loadDebug } from "./controllers/debug";
 import { loadDevices } from "./controllers/devices";
+import { loadProviderUsage } from "./controllers/provider-usage";
 import { loadExecApprovals } from "./controllers/exec-approvals";
 import { loadLogs } from "./controllers/logs";
 import { loadNodes } from "./controllers/nodes";
@@ -312,6 +313,7 @@ export async function loadOverview(host: SettingsHost) {
     loadSessions(host as unknown as OpenClawApp),
     loadCronStatus(host as unknown as OpenClawApp),
     loadDebug(host as unknown as OpenClawApp),
+    loadProviderUsage(host as unknown as OpenClawApp),
   ]);
 }
 

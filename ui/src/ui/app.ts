@@ -23,6 +23,7 @@ import type {
   SkillStatusReport,
   StatusSummary,
   NostrProfile,
+  UsageSummary,
 } from "./types";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
 import {
@@ -226,6 +227,10 @@ export class OpenClawApp extends LitElement {
   @state() debugCallParams = "{}";
   @state() debugCallResult: string | null = null;
   @state() debugCallError: string | null = null;
+
+  @state() providerUsage: UsageSummary | null = null;
+  @state() providerUsageLoading = false;
+  @state() providerUsageError: string | null = null;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
