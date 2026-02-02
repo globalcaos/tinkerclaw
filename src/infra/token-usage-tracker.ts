@@ -19,9 +19,24 @@ export type TokenUsageEntry = {
   timestamp: number;
 };
 
+export type ManusTaskEntry = {
+  taskId: string;
+  credits: number;
+  timestamp: number;
+};
+
 export type TokenUsageStore = {
   entries: TokenUsageEntry[];
+  manusTasks: ManusTaskEntry[];
   sessionStartedAt: number;
+};
+
+export type ManusUsageSummary = {
+  tasksToday: number;
+  creditsToday: number;
+  tasksTotal: number;
+  creditsTotal: number;
+  lastTaskAt?: number;
 };
 
 export type TokenUsageSummary = {
@@ -83,7 +98,7 @@ function getTrackerPath(): string {
 
 function loadStore(): TokenUsageStore {
   if (store) return store;
-  
+
   try {
     const trackerPath = getTrackerPath();
     if (fs.existsSync(trackerPath)) {
@@ -92,14 +107,16 @@ function loadStore(): TokenUsageStore {
       // Prune entries older than 7 days
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
       store.entries = store.entries.filter((e) => e.timestamp > cutoff);
+      store.manusTasks = (store.manusTasks ?? []).filter((e) => e.timestamp > cutoff);
       return store;
     }
   } catch {
     // Ignore errors
   }
-  
+
   store = {
     entries: [],
+    manusTasks: [],
     sessionStartedAt: Date.now(),
   };
   return store;
@@ -128,6 +145,42 @@ export function recordTokenUsage(entry: Omit<TokenUsageEntry, "timestamp">): voi
     s.entries = s.entries.slice(-1000);
   }
   saveStore();
+}
+
+/**
+ * Record a Manus task completion.
+ */
+export function recordManusTask(taskId: string, credits: number): void {
+  const s = loadStore();
+  s.manusTasks.push({
+    taskId,
+    credits,
+    timestamp: Date.now(),
+  });
+  // Keep only last 500 Manus tasks
+  if (s.manusTasks.length > 500) {
+    s.manusTasks = s.manusTasks.slice(-500);
+  }
+  saveStore();
+}
+
+/**
+ * Get Manus usage summary (tasks and credits).
+ */
+export function getManusUsageSummary(): ManusUsageSummary {
+  const s = loadStore();
+  const todayStart = new Date().setHours(0, 0, 0, 0);
+
+  const todayTasks = s.manusTasks.filter((t) => t.timestamp >= todayStart);
+  const lastTask = s.manusTasks.length > 0 ? s.manusTasks[s.manusTasks.length - 1] : undefined;
+
+  return {
+    tasksToday: todayTasks.length,
+    creditsToday: todayTasks.reduce((sum, t) => sum + t.credits, 0),
+    tasksTotal: s.manusTasks.length,
+    creditsTotal: s.manusTasks.reduce((sum, t) => sum + t.credits, 0),
+    lastTaskAt: lastTask?.timestamp,
+  };
 }
 
 /**
@@ -168,7 +221,10 @@ const ESTIMATED_LIMITS: Record<SubscriptionTier, { fiveHour: number; daily: numb
 
 // Pricing per 1M tokens (USD) - updated for Claude 4 / 2025 pricing
 // These are approximations; actual prices vary by model
-const MODEL_PRICING: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }> = {
+const MODEL_PRICING: Record<
+  string,
+  { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+> = {
   // Claude 4 Opus
   "claude-opus-4": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
   "claude-opus-4-5": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
@@ -212,7 +268,12 @@ export function getSubscriptionTier(): SubscriptionTier {
 /**
  * Get pricing for a model (looks up by partial match).
  */
-function getPricing(model: string): { input: number; output: number; cacheRead: number; cacheWrite: number } {
+function getPricing(model: string): {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+} {
   const normalized = model.toLowerCase();
   for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
     if (key !== "default" && normalized.includes(key)) {
@@ -256,7 +317,7 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
   const fiveHoursAgo = now - 5 * 60 * 60 * 1000;
   const oneMinuteAgo = now - 60 * 1000;
   const sessionStart = s.sessionStartedAt;
-  
+
   // Group by provider
   const byProvider = new Map<string, TokenUsageEntry[]>();
   for (const entry of s.entries) {
@@ -264,43 +325,43 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
     existing.push(entry);
     byProvider.set(entry.provider, existing);
   }
-  
+
   const summaries: TokenUsageSummary[] = [];
   const limits = ESTIMATED_LIMITS[configuredTier];
-  
+
   for (const [provider, entries] of byProvider) {
     const sessionEntries = entries.filter((e) => e.timestamp >= sessionStart);
     const todayEntries = entries.filter((e) => e.timestamp >= todayStart);
     const monthEntries = entries.filter((e) => e.timestamp >= monthStart);
     const fiveHourEntries = entries.filter((e) => e.timestamp >= fiveHoursAgo);
     const minuteEntries = entries.filter((e) => e.timestamp >= oneMinuteAgo);
-    
+
     const sumEntries = (list: TokenUsageEntry[]) => ({
       inputTokens: list.reduce((sum, e) => sum + e.inputTokens, 0),
       outputTokens: list.reduce((sum, e) => sum + e.outputTokens, 0),
       totalTokens: list.reduce((sum, e) => sum + e.inputTokens + e.outputTokens, 0),
       requestCount: list.length,
     });
-    
-    const sumCost = (list: TokenUsageEntry[]) => 
+
+    const sumCost = (list: TokenUsageEntry[]) =>
       list.reduce((sum, e) => sum + calculateEntryCost(e), 0);
-    
+
     const fiveHourOutput = fiveHourEntries.reduce((sum, e) => sum + e.outputTokens, 0);
     const todayOutput = todayEntries.reduce((sum, e) => sum + e.outputTokens, 0);
     const todayRequests = todayEntries.length;
     const minuteRequests = minuteEntries.length;
-    
+
     // Calculate estimated percentages based on provider
     const isClaudeProvider = provider === "anthropic" || provider.includes("claude");
     const isGoogleProvider = provider === "google" || provider.includes("gemini");
-    
+
     // Google/Gemini limits (free tier API key)
     // Free tier: 15 RPM, 1500 RPD, 1M TPM
     const googleLimits = { rpm: 15, rpd: 1500, tpm: 1_000_000 };
-    
+
     let fiveHourPercent = 0;
     let dailyPercent = 0;
-    
+
     if (isClaudeProvider && limits.fiveHour !== Infinity) {
       fiveHourPercent = Math.min(100, (fiveHourOutput / limits.fiveHour) * 100);
       dailyPercent = Math.min(100, (todayOutput / limits.daily) * 100);
@@ -310,21 +371,20 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
       // For 5h, show minute requests as % of RPM (most relevant limit)
       fiveHourPercent = Math.min(100, (minuteRequests / googleLimits.rpm) * 100);
     }
-    
+
     // Calculate costs
     const sessionCost = sumCost(sessionEntries);
     const todayCost = sumCost(todayEntries);
     const monthCost = sumCost(monthEntries);
-    const budgetPercent = monthlyBudgetUSD > 0 
-      ? Math.min(100, (monthCost / monthlyBudgetUSD) * 100) 
-      : 0;
-    
+    const budgetPercent =
+      monthlyBudgetUSD > 0 ? Math.min(100, (monthCost / monthlyBudgetUSD) * 100) : 0;
+
     // Rolling minute stats
     const minuteStats = sumEntries(minuteEntries);
-    
+
     // Month stats
     const monthStats = sumEntries(monthEntries);
-    
+
     summaries.push({
       provider,
       displayName: PROVIDER_DISPLAY_NAMES[provider] ?? provider,
@@ -339,8 +399,12 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
       fiveHour: {
         outputTokens: fiveHourOutput,
         requestCount: fiveHourEntries.length,
-        estimatedPercent: (isClaudeProvider || isGoogleProvider) ? fiveHourPercent : undefined,
-        estimatedLimit: isClaudeProvider ? limits.fiveHour : (isGoogleProvider ? googleLimits.rpm : undefined),
+        estimatedPercent: isClaudeProvider || isGoogleProvider ? fiveHourPercent : undefined,
+        estimatedLimit: isClaudeProvider
+          ? limits.fiveHour
+          : isGoogleProvider
+            ? googleLimits.rpm
+            : undefined,
       },
       rollingMinute: {
         inputTokens: minuteStats.inputTokens,
@@ -359,7 +423,7 @@ export function getTokenUsageSummaries(): TokenUsageSummary[] {
       },
     });
   }
-  
+
   return summaries;
 }
 

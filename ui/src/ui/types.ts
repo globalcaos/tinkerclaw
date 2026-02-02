@@ -588,8 +588,17 @@ export type TokenUsageSummary = {
   };
 };
 
+export type ManusUsageSummary = {
+  tasksToday: number;
+  creditsToday: number;
+  tasksTotal: number;
+  creditsTotal: number;
+  lastTaskAt?: number;
+};
+
 export type UsageSummary = {
   updatedAt: number;
   providers: ProviderUsageSnapshot[];
   tokenUsage?: TokenUsageSummary[];
+  manusUsage?: ManusUsageSummary;
 };
