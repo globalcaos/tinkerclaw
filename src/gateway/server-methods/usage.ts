@@ -4,7 +4,36 @@ import type { GatewayRequestHandlers } from "./types.js";
 import { loadConfig } from "../../config/config.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.js";
 import { loadCostUsageSummary } from "../../infra/session-cost-usage.js";
-import { getTokenUsageSummaries } from "../../infra/token-usage-tracker.js";
+import { 
+  getTokenUsageSummaries, 
+  setSubscriptionTier, 
+  setMonthlyBudget,
+  type SubscriptionTier,
+} from "../../infra/token-usage-tracker.js";
+
+// Initialize tracker settings from config env vars
+function initTrackerFromConfig(): void {
+  const config = loadConfig();
+  const env = config.env ?? {};
+  
+  // Set subscription tier from ANTHROPIC_SUBSCRIPTION_TIER
+  const tier = env.ANTHROPIC_SUBSCRIPTION_TIER as string | undefined;
+  if (tier && ["free", "pro", "max_5x", "max_20x", "api"].includes(tier)) {
+    setSubscriptionTier(tier as SubscriptionTier);
+  }
+  
+  // Set monthly budget from ANTHROPIC_MONTHLY_BUDGET_USD
+  const budgetStr = env.ANTHROPIC_MONTHLY_BUDGET_USD as string | undefined;
+  if (budgetStr) {
+    const budget = Number(budgetStr);
+    if (Number.isFinite(budget) && budget > 0) {
+      setMonthlyBudget(budget);
+    }
+  }
+}
+
+// Initialize on module load
+initTrackerFromConfig();
 
 const COST_USAGE_CACHE_TTL_MS = 30_000;
 
