@@ -463,6 +463,18 @@ const ERROR_PATTERNS = {
     "messages.1.content.1.tool_use.id",
     "invalid request format",
   ],
+  modelNotFound: [
+    /\b404\b.*(?:model|not found)/i,
+    "model not found",
+    "is not found for api version",
+    "model does not exist",
+    "does not exist or you do not have access",
+    "NOT_FOUND",
+    "invalid_model",
+    "model_not_available",
+    "the model .* does not exist",
+    "no such model",
+  ],
 } as const;
 
 const IMAGE_DIMENSION_ERROR_RE =
@@ -576,6 +588,18 @@ export function isCloudCodeAssistFormatError(raw: string): boolean {
   return !isImageDimensionErrorMessage(raw) && matchesErrorPatterns(raw, ERROR_PATTERNS.format);
 }
 
+export function isModelNotFoundErrorMessage(raw: string): boolean {
+  if (!raw) {
+    return false;
+  }
+  // Avoid false positives from file/path not found contexts
+  const lower = raw.toLowerCase();
+  if (lower.includes("file not found") || lower.includes("path not found") || lower.includes("command not found")) {
+    return false;
+  }
+  return matchesErrorPatterns(raw, ERROR_PATTERNS.modelNotFound);
+}
+
 export function isAuthAssistantError(msg: AssistantMessage | undefined): boolean {
   if (!msg || msg.stopReason !== "error") {
     return false;
@@ -607,6 +631,9 @@ export function classifyFailoverReason(raw: string): FailoverReason | null {
   }
   if (isAuthErrorMessage(raw)) {
     return "auth";
+  }
+  if (isModelNotFoundErrorMessage(raw)) {
+    return "model_not_found";
   }
   return null;
 }
