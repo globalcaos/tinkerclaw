@@ -26,6 +26,7 @@ const allowedTags = [
   "ol",
   "p",
   "pre",
+  "span",
   "strong",
   "table",
   "tbody",
