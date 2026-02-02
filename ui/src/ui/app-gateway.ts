@@ -7,7 +7,7 @@ import type { UiSettings } from "./storage";
 import type { AgentsListResult, PresenceEntry, HealthSnapshot, StatusSummary } from "./types";
 import { CHAT_SESSIONS_ACTIVE_MINUTES, flushChatQueueForEvent } from "./app-chat";
 import { applySettings, loadCron, refreshActiveTab, setLastActiveSessionKey } from "./app-settings";
-import { loadProviderUsage, refreshClaudeSharedUsage, type ClaudeSharedUsage } from "./controllers/provider-usage";
+import { loadProviderUsage, startClaudeSharedUsageAutoRefresh, stopClaudeSharedUsageAutoRefresh, type ClaudeSharedUsage } from "./controllers/provider-usage";
 import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream";
 import { loadAgents } from "./controllers/agents";
 import { loadAssistantIdentity } from "./controllers/assistant-identity";
@@ -135,10 +135,12 @@ export function connectGateway(host: GatewayHost) {
       void loadNodes(host as unknown as OpenClawApp, { quiet: true });
       void loadDevices(host as unknown as OpenClawApp, { quiet: true });
       void loadProviderUsage(host as unknown as OpenClawApp);
+      startClaudeSharedUsageAutoRefresh(host as unknown as OpenClawApp);
       void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
     },
     onClose: ({ code, reason }) => {
       host.connected = false;
+      stopClaudeSharedUsageAutoRefresh();
       // Code 1012 = Service Restart (expected during config saves, don't show as error)
       if (code !== 1012) {
         host.lastError = `disconnected (${code}): ${reason || "no reason"}`;
