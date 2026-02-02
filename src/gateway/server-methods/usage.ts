@@ -7,9 +7,11 @@ import { loadCostUsageSummary } from "../../infra/session-cost-usage.js";
 import {
   getTokenUsageSummaries,
   getManusUsageSummary,
+  getBudgetAwarenessContext,
   recordManusTask,
   setSubscriptionTier,
   setMonthlyBudget,
+  setManusMonthlyCreditBudget,
   type SubscriptionTier,
 } from "../../infra/token-usage-tracker.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
@@ -31,6 +33,15 @@ function initTrackerFromConfig(): void {
     const budget = Number(budgetStr);
     if (Number.isFinite(budget) && budget > 0) {
       setMonthlyBudget(budget);
+    }
+  }
+
+  // Set Manus monthly credit budget from MANUS_MONTHLY_CREDIT_BUDGET
+  const manusBudgetStr = env.MANUS_MONTHLY_CREDIT_BUDGET as string | undefined;
+  if (manusBudgetStr) {
+    const manusBudget = Number(manusBudgetStr);
+    if (Number.isFinite(manusBudget) && manusBudget > 0) {
+      setManusMonthlyCreditBudget(manusBudget);
     }
   }
 }
@@ -113,7 +124,8 @@ export const usageHandlers: GatewayRequestHandlers = {
     const summary = await loadProviderUsageSummary();
     const tokenUsage = getTokenUsageSummaries();
     const manusUsage = getManusUsageSummary();
-    respond(true, { ...summary, tokenUsage, manusUsage }, undefined);
+    const budgetAwareness = getBudgetAwarenessContext();
+    respond(true, { ...summary, tokenUsage, manusUsage, budgetAwareness }, undefined);
   },
   "usage.cost": async ({ respond, params }) => {
     const config = loadConfig();
@@ -123,9 +135,14 @@ export const usageHandlers: GatewayRequestHandlers = {
   },
   "usage.manus.track": async ({ respond, params }) => {
     // Track a Manus task completion
-    // Params: { taskId: string, credits: number }
+    // Params: { taskId: string, credits: number, status?: string, description?: string }
     const taskId = typeof params?.taskId === "string" ? params.taskId : undefined;
     const credits = typeof params?.credits === "number" ? params.credits : undefined;
+    const status =
+      typeof params?.status === "string"
+        ? (params.status as "completed" | "error" | "running")
+        : undefined;
+    const description = typeof params?.description === "string" ? params.description : undefined;
 
     if (!taskId || credits === undefined) {
       respond(
@@ -136,7 +153,7 @@ export const usageHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    recordManusTask(taskId, credits);
+    recordManusTask(taskId, credits, status, description);
     const manusUsage = getManusUsageSummary();
     respond(true, { recorded: true, manusUsage }, undefined);
   },
