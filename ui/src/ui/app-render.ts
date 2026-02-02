@@ -724,15 +724,12 @@ function renderProviderUsagePanel(params: UsagePanelParams) {
     <div class="nav-group nav-group--usage">
       <div class="nav-label nav-label--static">
         <span class="nav-label__text">Model Usage</span>
-        <button class="usage-refresh-btn" @click=${onRefresh} ?disabled=${claudeRefreshLoading} title="Refresh from Claude">
-          ${claudeRefreshLoading ? "..." : "↻"}
-        </button>
       </div>
       <div class="usage-panel">
         ${claudeRefreshError ? html`<div class="usage-refresh-hint">${claudeRefreshError}</div>` : nothing}
         ${claudeShared ? html`
           <div class="usage-provider">
-            <div class="usage-provider__name">Claude <span class="usage-provider__time">${formatTimeAgo(claudeShared.fetchedAt)}</span></div>
+            <div class="usage-provider__name">Claude <span class="usage-provider__time">${formatTimeAgo(claudeShared.fetchedAt)}</span> <button class="usage-refresh-btn" @click=${onRefresh} ?disabled=${claudeRefreshLoading} title="Refresh">${claudeRefreshLoading ? "..." : "↻"}</button></div>
             ${renderUsageBar(claudeShared.fiveHourPercent, "5h", claudeShared.fiveHourResetAt)}
             ${renderUsageBar(claudeShared.sevenDayPercent, "Week", claudeShared.sevenDayResetAt)}
           </div>
