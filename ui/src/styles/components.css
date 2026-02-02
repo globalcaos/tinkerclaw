@@ -1561,7 +1561,7 @@
 .nav-group--usage {
   border-top: 1px solid var(--border);
   padding-top: 12px;
-  margin-top: auto;
+  margin-top: 12px;
 }
 
 .usage-panel {
@@ -1696,4 +1696,10 @@
 
 .btn--queue:hover:not(:disabled) {
   background: color-mix(in srgb, var(--warn), black 10%) !important;
+}
+
+.usage-panel--empty {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11px;
 }
