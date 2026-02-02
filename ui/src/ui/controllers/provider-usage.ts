@@ -135,11 +135,33 @@ export async function loadProviderUsage(state: ProviderUsageState) {
       const browserUsage = await tryClaudeBrowserFetch(state.client);
       if (browserUsage) {
         result.providers[anthropicIdx] = browserUsage;
+      } else {
+        // If browser fallback also failed and we have internal token tracking,
+        // remove the errored provider entry (internal tracking will show instead)
+        const hasInternalTracking = result.tokenUsage?.some(
+          (t) => t.provider === "anthropic" && (t.today.requestCount > 0 || t.fiveHour.requestCount > 0)
+        );
+        if (hasInternalTracking) {
+          // Remove the errored provider - internal tracking is sufficient
+          result.providers.splice(anthropicIdx, 1);
+        }
       }
     }
 
+    // Filter out providers with errors when we have no useful data from them
+    // Keep the error only if there's no internal tracking alternative
+    result.providers = result.providers.filter((p) => {
+      if (!p.error) return true;
+      if (p.windows.length > 0) return true;
+      // Check if we have internal tracking for this provider
+      const hasInternal = result.tokenUsage?.some((t) => t.provider === p.provider);
+      return !hasInternal; // Only show error if no internal tracking
+    });
+
     state.providerUsage = result;
   } catch (err) {
+    // Even on total failure, try to show empty state rather than error
+    // The internal tracking might still work
     state.providerUsageError = err instanceof Error ? err.message : String(err);
   } finally {
     state.providerUsageLoading = false;

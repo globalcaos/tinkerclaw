@@ -645,6 +645,7 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
     `;
   }
 
+  // Only show error if we have NO usage data at all
   if (error && !usage) {
     return html`
       <div class="nav-group nav-group--usage">
@@ -652,7 +653,7 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
           <span class="nav-label__text">Model Usage</span>
         </div>
         <div class="usage-panel">
-          <div class="usage-provider__error">${error}</div>
+          <div class="usage-provider__error">Unable to load usage</div>
         </div>
       </div>
     `;
@@ -682,7 +683,7 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
           <div class="usage-provider">
             <div class="usage-provider__name">${provider.displayName}</div>
             ${provider.error
-              ? html`<div class="usage-provider__error">${provider.error}</div>`
+              ? html`<div class="usage-provider__error" title="${provider.error}">⚠️ API unavailable</div>`
               : provider.windows.map((w) => renderUsageBar(w.usedPercent, w.label, w.resetAt))
             }
           </div>
