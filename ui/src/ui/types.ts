@@ -524,3 +524,23 @@ export type LogEntry = {
   message?: string | null;
   meta?: Record<string, unknown> | null;
 };
+
+// Provider usage types
+export type UsageWindow = {
+  label: string;
+  usedPercent: number;
+  resetAt?: number;
+};
+
+export type ProviderUsageSnapshot = {
+  provider: string;
+  displayName: string;
+  windows: UsageWindow[];
+  plan?: string;
+  error?: string;
+};
+
+export type UsageSummary = {
+  updatedAt: number;
+  providers: ProviderUsageSnapshot[];
+};
