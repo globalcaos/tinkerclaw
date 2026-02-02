@@ -662,13 +662,17 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
   const hasProviders = usage && usage.providers.length > 0;
   const hasTokens = usage?.tokenUsage && usage.tokenUsage.length > 0;
   
-  if (!hasProviders && !hasTokens) {
+  // Filter providers to only those with actual data (no errors)
+  const validProviders = usage?.providers.filter(p => !p.error && p.windows.length > 0) ?? [];
+  const hasValidProviders = validProviders.length > 0;
+  
+  if (!hasValidProviders && !hasTokens) {
     return html`
       <div class="nav-group nav-group--usage">
         <div class="nav-label nav-label--static">
           <span class="nav-label__text">Model Usage</span>
         </div>
-        <div class="usage-panel usage-panel--empty">No usage data</div>
+        <div class="usage-panel usage-panel--empty">Collecting data...</div>
       </div>
     `;
   }
@@ -679,13 +683,10 @@ function renderProviderUsagePanel(usage: UsageSummary | null, loading: boolean, 
         <span class="nav-label__text">Model Usage</span>
       </div>
       <div class="usage-panel">
-        ${hasProviders ? usage!.providers.map((provider) => html`
+        ${hasValidProviders ? validProviders.map((provider) => html`
           <div class="usage-provider">
             <div class="usage-provider__name">${provider.displayName}</div>
-            ${provider.error
-              ? html`<div class="usage-provider__error" title="${provider.error}">⚠️ API unavailable</div>`
-              : provider.windows.map((w) => renderUsageBar(w.usedPercent, w.label, w.resetAt))
-            }
+            ${provider.windows.map((w) => renderUsageBar(w.usedPercent, w.label, w.resetAt))}
           </div>
         `) : nothing}
         ${hasTokens ? usage!.tokenUsage!.map((t) => {
