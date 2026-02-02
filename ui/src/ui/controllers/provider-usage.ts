@@ -2,8 +2,19 @@ import type { GatewayBrowserClient } from "../gateway";
 import type { ProviderUsageSnapshot, UsageSummary } from "../types";
 
 const CLAUDE_SHARED_STORAGE_KEY = "openclaw:claude-shared-usage";
+const MANUS_USAGE_STORAGE_KEY = "openclaw:manus-usage";
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+export type ManusUsage = {
+  tasksToday: number;
+  creditsToday: number;
+  tasksTotal: number;
+  creditsTotal: number;
+  lastTaskAt?: number;
+  /** Day key (YYYY-MM-DD) for resetting daily counts */
+  dayKey: string;
+};
 
 export type ClaudeSharedUsage = {
   fiveHourPercent: number;
@@ -23,6 +34,8 @@ export type ProviderUsageState = {
   claudeSharedUsage: ClaudeSharedUsage | null;
   claudeRefreshLoading: boolean;
   claudeRefreshError: string | null;
+  // Manus usage (locally tracked)
+  manusUsage: ManusUsage | null;
 };
 
 /** Load cached Claude shared usage from localStorage */
@@ -54,6 +67,76 @@ function saveCachedClaudeSharedUsage(usage: ClaudeSharedUsage): void {
 function isClaudeSharedUsageStale(usage: ClaudeSharedUsage | null): boolean {
   if (!usage) return true;
   return Date.now() - usage.fetchedAt > STALE_THRESHOLD_MS;
+}
+
+/** Get current day key for Manus daily reset */
+function getManusToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Load Manus usage from localStorage */
+export function loadManusUsage(): ManusUsage | null {
+  try {
+    const stored = localStorage.getItem(MANUS_USAGE_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as ManusUsage;
+    // Reset daily counts if day changed
+    const today = getManusToday();
+    if (parsed.dayKey !== today) {
+      return {
+        tasksToday: 0,
+        creditsToday: 0,
+        tasksTotal: parsed.tasksTotal ?? 0,
+        creditsTotal: parsed.creditsTotal ?? 0,
+        lastTaskAt: parsed.lastTaskAt,
+        dayKey: today,
+      };
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Save Manus usage to localStorage */
+function saveManusUsage(usage: ManusUsage): void {
+  try {
+    localStorage.setItem(MANUS_USAGE_STORAGE_KEY, JSON.stringify(usage));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/** Track a Manus task completion */
+export function trackManusTask(state: ProviderUsageState, creditsUsed: number = 5): void {
+  const today = getManusToday();
+  const current = state.manusUsage ?? {
+    tasksToday: 0,
+    creditsToday: 0,
+    tasksTotal: 0,
+    creditsTotal: 0,
+    dayKey: today,
+  };
+  
+  // Reset daily if day changed
+  const isNewDay = current.dayKey !== today;
+  
+  const updated: ManusUsage = {
+    tasksToday: isNewDay ? 1 : current.tasksToday + 1,
+    creditsToday: isNewDay ? creditsUsed : current.creditsToday + creditsUsed,
+    tasksTotal: current.tasksTotal + 1,
+    creditsTotal: current.creditsTotal + creditsUsed,
+    lastTaskAt: Date.now(),
+    dayKey: today,
+  };
+  
+  state.manusUsage = updated;
+  saveManusUsage(updated);
+}
+
+/** Initialize Manus usage from localStorage */
+export function initManusUsage(state: ProviderUsageState): void {
+  state.manusUsage = loadManusUsage();
 }
 
 type BrowserTabsResponse = {
