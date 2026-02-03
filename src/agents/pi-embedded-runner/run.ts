@@ -49,6 +49,7 @@ import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
+import { smartRouter } from "../smart-router.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import { describeUnknownError } from "./utils.js";
