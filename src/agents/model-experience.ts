@@ -148,7 +148,9 @@ export class ModelExperienceEngine {
 
         // Update Scores
         const stats = this.data.models[modelId];
-        if (!stats) return; // Should we auto-add unknown models? Maybe later.
+        if (!stats) {
+            return; // Should we auto-add unknown models? Maybe later.
+        }
 
         stats.totalUses++;
 
@@ -175,27 +177,39 @@ export class ModelExperienceEngine {
 
         // Frontend
         if (has("css") || has("html") || has("react") || has("vue") || has("ui") || has("frontend") || has("dom") ||
-            hasCN("前端") || hasCN("界面") || hasCN("样式") || hasCN("网页")) return "frontend";
+            hasCN("前端") || hasCN("界面") || hasCN("样式") || hasCN("网页")) {
+            return "frontend";
+        }
 
         // Backend
         if (has("python") || has("node") || has("express") || has("api") || has("sql") || has("db") || has("backend") || has("server") || has("database") ||
-            hasCN("后端") || hasCN("服务端") || hasCN("数据库") || hasCN("接口")) return "backend";
+            hasCN("后端") || hasCN("服务端") || hasCN("数据库") || hasCN("接口")) {
+            return "backend";
+        }
 
         // Architecture / Complex
         if (has("architecture") || has("design") || has("system") || has("complex") || has("plan") || lower.includes("structure") ||
-            hasCN("架构") || hasCN("设计") || hasCN("方案") || hasCN("系统")) return "architecture";
+            hasCN("架构") || hasCN("设计") || hasCN("方案") || hasCN("系统")) {
+            return "architecture";
+        }
 
         // Debugging
         if (has("debug") || has("fix") || has("bug") || has("issue") || has("crash") || has("exception") || has("error") || has("trace") || has("stack") ||
-            hasCN("调试") || hasCN("报错") || hasCN("错误") || hasCN("修复") || hasCN("异常") || hasCN("崩溃") || hasCN("排查")) return "debugging";
+            hasCN("调试") || hasCN("报错") || hasCN("错误") || hasCN("修复") || hasCN("异常") || hasCN("崩溃") || hasCN("排查")) {
+            return "debugging";
+        }
 
         // Creative / Writing
         if (has("write") || has("story") || has("creative") || has("generate") || has("draft") || has("novel") ||
-            hasCN("写作") || hasCN("故事") || hasCN("小说") || hasCN("文案") || hasCN("扩写") || hasCN("创作")) return "creative";
+            hasCN("写作") || hasCN("故事") || hasCN("小说") || hasCN("文案") || hasCN("扩写") || hasCN("创作")) {
+            return "creative";
+        }
 
         // General Coding (fallback)
         if (has("code") || has("function") || has("ts") || has("js") || has("script") ||
-            hasCN("代码") || hasCN("脚本") || hasCN("编程") || hasCN("写一段") || hasCN("实现")) return "coding";
+            hasCN("代码") || hasCN("脚本") || hasCN("编程") || hasCN("写一段") || hasCN("实现")) {
+            return "coding";
+        }
 
         return "general";
     }
