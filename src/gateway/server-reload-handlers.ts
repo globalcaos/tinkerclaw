@@ -60,6 +60,10 @@ export function createGatewayReloadHandlers(params: {
       nextState.heartbeatRunner.updateConfig(nextConfig);
     }
 
+    if (plan.reloadBindings) {
+      params.logReload.info("agent bindings reloaded");
+    }
+
     resetDirectoryCache();
 
     if (plan.restartCron) {
