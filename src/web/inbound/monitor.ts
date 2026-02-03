@@ -34,11 +34,23 @@ export async function monitorWebInbox(options: {
   debounceMs?: number;
   /** Optional debounce gating predicate. */
   shouldDebounce?: (msg: WebInboundMessage) => boolean;
+  /** Request full history sync from WhatsApp (OPT-IN, default false). */
+  syncFullHistory?: boolean;
+  /** Callback for history sync events. */
+  onHistorySync?: (data: {
+    chats: number;
+    contacts: number;
+    messages: number;
+    isLatest?: boolean;
+    progress?: number | null;
+    syncType?: number | null;
+  }) => void;
 }) {
   const inboundLogger = getChildLogger({ module: "web-inbound" });
   const inboundConsoleLog = createSubsystemLogger("gateway/channels/whatsapp").child("inbound");
   const sock = await createWaSocket(false, options.verbose, {
     authDir: options.authDir,
+    syncFullHistory: options.syncFullHistory,
   });
   await waitForWaConnection(sock);
   const connectedAtMs = Date.now();
@@ -340,6 +352,50 @@ export async function monitorWebInbox(options: {
     }
   };
   sock.ev.on("messages.upsert", handleMessagesUpsert);
+
+  // History sync handler (only active when syncFullHistory is enabled)
+  if (options.syncFullHistory) {
+    const handleHistorySet = (data: {
+      chats: Array<unknown>;
+      contacts: Array<unknown>;
+      messages: Array<unknown>;
+      isLatest?: boolean;
+      progress?: number | null;
+      syncType?: number | null;
+    }) => {
+      const chatCount = data.chats?.length ?? 0;
+      const contactCount = data.contacts?.length ?? 0;
+      const messageCount = data.messages?.length ?? 0;
+
+      inboundLogger.info(
+        {
+          chats: chatCount,
+          contacts: contactCount,
+          messages: messageCount,
+          isLatest: data.isLatest,
+          progress: data.progress,
+          syncType: data.syncType,
+        },
+        "history sync received",
+      );
+      inboundConsoleLog.info(
+        `📜 History sync: ${messageCount} messages, ${chatCount} chats, ${contactCount} contacts` +
+          (data.progress != null ? ` (${Math.round(data.progress * 100)}%)` : "") +
+          (data.isLatest ? " [latest]" : ""),
+      );
+
+      // Call the optional callback
+      options.onHistorySync?.({
+        chats: chatCount,
+        contacts: contactCount,
+        messages: messageCount,
+        isLatest: data.isLatest,
+        progress: data.progress,
+        syncType: data.syncType,
+      });
+    };
+    sock.ev.on("messaging-history.set", handleHistorySet);
+  }
 
   const handleConnectionUpdate = (
     update: Partial<import("@whiskeysockets/baileys").ConnectionState>,

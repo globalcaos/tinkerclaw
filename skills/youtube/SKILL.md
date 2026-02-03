@@ -1,7 +1,8 @@
 ---
 name: youtube
+version: 2.0.0
 description: |
-  The most comprehensive YouTube skill for AI agents. Extract transcripts for FREE (zero API quota!), search with filters, batch video details, read comments, download videos/audio. We analyzed 15+ YouTube tools and built the one that does everything.
+  The most comprehensive YouTube skill for AI agents. Extract transcripts for FREE (zero API quota!), search with filters, batch video details, read comments, download videos/audio with full format control. We analyzed 15+ YouTube tools and built the one that does everything.
 homepage: https://github.com/openclaw/openclaw/tree/main/skills/youtube
 metadata:
   {
@@ -30,11 +31,19 @@ metadata:
   }
 ---
 
-# YouTube Research Pro
+# YouTube Research Pro v2.0.0
 
 **The most comprehensive YouTube skill for AI agents.**
 
 We analyzed 15+ YouTube MCP servers and found each does one thing well, but none does everything. So we built the skill we wished existed.
+
+## What's New in v2.0.0
+
+- 🎬 **`formats` command** — List all available video/audio formats
+- 🛡️ **Better error handling** — Clear messages for private, age-restricted, unavailable videos
+- 🎵 **Enhanced audio** — FLAC/WAV support, quality control, thumbnail embedding
+- 📺 **More resolutions** — Added 1440p and 4K options
+- 🍪 **Cookie support** — Download age-restricted content with browser cookies
 
 ## Why This Skill?
 
@@ -58,6 +67,7 @@ Most tools use the YouTube Data API for transcripts = **100 quota units per requ
 |---------|-------|--------------|
 | `transcript VIDEO` | **FREE** | Get video transcript |
 | `transcript-list VIDEO` | **FREE** | List available languages |
+| `formats VIDEO` | **FREE** | List available video/audio formats |
 | `download VIDEO` | **FREE** | Download video (yt-dlp) |
 | `download-audio VIDEO` | **FREE** | Extract audio only |
 | `search QUERY` | 100 | Search videos |
@@ -142,24 +152,85 @@ uv run {baseDir}/scripts/youtube.py comments VIDEO_ID --replies
 uv run {baseDir}/scripts/youtube.py comments VIDEO_ID --order time -l 50
 ```
 
-## Downloads (requires yt-dlp)
+## Downloads (v2.0 - Enhanced!)
+
+### List Available Formats
 
 ```bash
-# Video (best quality)
+# See all available formats for a video
+uv run {baseDir}/scripts/youtube.py formats VIDEO_ID
+
+# Get as JSON for parsing
+uv run {baseDir}/scripts/youtube.py formats VIDEO_ID --json
+```
+
+### Download Video
+
+```bash
+# Best quality (default)
 uv run {baseDir}/scripts/youtube.py download VIDEO_ID
 
 # Specific resolution
 uv run {baseDir}/scripts/youtube.py download VIDEO_ID -r 720p
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID -r 1080p
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID -r 4k
+
+# Specific format (from formats command)
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID -f 137+140
+
+# Custom output directory
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID -o ~/Videos
 
 # With subtitles
 uv run {baseDir}/scripts/youtube.py download VIDEO_ID -s en
 
-# Audio only (MP3)
+# With metadata embedded
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID --embed-metadata
+```
+
+### Download Audio Only
+
+```bash
+# MP3 (default)
 uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID
 
-# Audio as M4A
+# Other formats
 uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID -f m4a
+uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID -f flac
+uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID -f opus
+
+# Best quality
+uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID -q 0
+
+# With thumbnail embedded (great for music)
+uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID --embed-thumbnail
+
+# With metadata
+uv run {baseDir}/scripts/youtube.py download-audio VIDEO_ID --embed-metadata
 ```
+
+### Handling Age-Restricted Videos
+
+```bash
+# Use browser cookies
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID --cookies-from-browser chrome
+
+# Use exported cookies file
+uv run {baseDir}/scripts/youtube.py download VIDEO_ID --cookies ~/cookies.txt
+```
+
+## Error Messages
+
+The skill provides clear error messages for common issues:
+
+| Error | What It Means |
+|-------|---------------|
+| `This video is private` | Video set to private by owner |
+| `Video is age-restricted` | Need to login; use --cookies-from-browser |
+| `Video is unavailable` | Deleted or region-blocked |
+| `Blocked due to copyright` | DMCA takedown |
+| `Members-only video` | Requires channel membership |
+| `Cannot download live streams` | Wait until stream ends |
 
 ## User Data
 
@@ -176,6 +247,7 @@ uv run {baseDir}/scripts/youtube.py channel
 | Full | Alias |
 |------|-------|
 | `transcript` | `tr` |
+| `formats` | `fmt`, `F` |
 | `search` | `s` |
 | `video` | `v` |
 | `comments` | `c` |
@@ -193,6 +265,8 @@ uv run {baseDir}/scripts/youtube.py channel
 **Podcasts:** Download audio for offline listening
 
 **Analysis:** Get channel stats → compare competitors
+
+**Archiving:** Download videos with metadata and thumbnails
 
 ## Multi-Account
 
