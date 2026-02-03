@@ -107,8 +107,9 @@ export class SmartRouter {
             stats.models[modelId] = { requests: 0, inputTokens: 0, outputTokens: 0 };
         }
         stats.models[modelId].requests += 1;
-        stats.models[modelId].inputTokens += inputTokens;
-        stats.models[modelId].outputTokens += outputTokens;
+        // [Xiao Ke Fix] Ensure tokens are added even if 0 is reported (fallback calculation later)
+        stats.models[modelId].inputTokens += (inputTokens || 0);
+        stats.models[modelId].outputTokens += (outputTokens || 0);
         this.saveUsage(stats);
     }
 
