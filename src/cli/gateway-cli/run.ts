@@ -22,7 +22,7 @@ import { forceFreePortAndWait } from "../ports.js";
 import { ensureDevGatewayConfig } from "./dev.js";
 import { runGatewayLoop } from "./run-loop.js";
 import { startSecretsProxy } from "../../security/secrets-proxy.js";
-import { startGatewayContainer, stopGatewayContainer } from "../../security/gateway-container.js";
+import { startGatewayContainer, stopGatewayContainer, isGatewayContainerRunning, getGatewayContainerLogs } from "../../security/gateway-container.js";
 import {
   describeUnknownError,
   extractGatewayMiskeys,
@@ -270,14 +270,60 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       const proxyPort = 8080;
       const proxyUrl = `http://host.docker.internal:${proxyPort}`;
       
-      const proxyServer = await startSecretsProxy({ port: proxyPort });
-      gatewayLog.info(`Secrets proxy started on port ${proxyPort}`);
+      // Start secrets proxy first
+      let proxyServer: Awaited<ReturnType<typeof startSecretsProxy>>;
+      try {
+        proxyServer = await startSecretsProxy({ port: proxyPort });
+        gatewayLog.info(`Secrets proxy started on port ${proxyPort}`);
+      } catch (err) {
+        gatewayLog.error(`Failed to start secrets proxy: ${String(err)}`);
+        defaultRuntime.exit(1);
+        return;
+      }
       
-      const containerName = await startGatewayContainer({
-        proxyUrl,
-        env: process.env,
-      });
-      gatewayLog.info(`Gateway container started: ${containerName}`);
+      // Start gateway container
+      let containerName: string;
+      try {
+        containerName = await startGatewayContainer({
+          proxyUrl,
+          env: process.env,
+          // TODO: Read bind mounts from config
+          // binds: config?.gateway?.secretsProxy?.binds || [],
+        });
+        gatewayLog.info(`Gateway container started: ${containerName}`);
+      } catch (err) {
+        gatewayLog.error(`Failed to start gateway container: ${String(err)}`);
+        proxyServer.close();
+        defaultRuntime.exit(1);
+        return;
+      }
+      
+      // P1 Fix: Wait for container to be ready with timeout
+      const HEALTH_CHECK_INTERVAL = 1000;
+      const HEALTH_CHECK_TIMEOUT = 30000;
+      const startTime = Date.now();
+      let containerReady = false;
+      
+      while (Date.now() - startTime < HEALTH_CHECK_TIMEOUT) {
+        const isRunning = await isGatewayContainerRunning();
+        if (isRunning) {
+          containerReady = true;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
+      }
+      
+      if (!containerReady) {
+        gatewayLog.error("Gateway container failed to start within timeout");
+        const logs = await getGatewayContainerLogs(20);
+        gatewayLog.error(`Container logs:\n${logs}`);
+        await stopGatewayContainer();
+        proxyServer.close();
+        defaultRuntime.exit(1);
+        return;
+      }
+      
+      gatewayLog.info("Gateway container is ready and healthy");
       
       // Set up graceful shutdown handlers
       const shutdown = async () => {
@@ -302,10 +348,29 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       
       gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
       
+      // P1 Fix: Monitor container health periodically
+      const healthCheckLoop = async () => {
+        while (true) {
+          await new Promise(resolve => setTimeout(resolve, 10000)); // Check every 10s
+          const isRunning = await isGatewayContainerRunning();
+          if (!isRunning) {
+            gatewayLog.error("Gateway container stopped unexpectedly");
+            const logs = await getGatewayContainerLogs(50);
+            gatewayLog.error(`Final container logs:\n${logs}`);
+            await shutdown();
+            return;
+          }
+        }
+      };
+      
+      // Run health check loop (non-blocking)
+      void healthCheckLoop();
+      
       // Keep process alive
       await new Promise(() => {});
       return;
     }
+
 
     await runGatewayLoop({
       runtime: defaultRuntime,

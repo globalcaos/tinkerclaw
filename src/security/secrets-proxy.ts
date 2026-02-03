@@ -6,25 +6,40 @@ import { loadAllowlist, isDomainAllowed } from "./secrets-proxy-allowlist.js";
 
 const logger = createSubsystemLogger("security/secrets-proxy");
 
+// DoS Protection Limits (from SECURITY.MD)
 const PLACEHOLDER_LIMITS = {
-  maxDepth: 5, // Simple depth limit for nested replacements if we ever add them
-  maxReplacements: 100,
+  maxDepth: 10,
+  maxReplacements: 50,
   timeoutMs: 100,
 };
 
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB max request body
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+// Methods that should NOT have a body per HTTP spec
+const BODYLESS_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
 /**
  * Replaces {{VAR_NAME}} with process.env.VAR_NAME.
- * Only replaces top-level for now to avoid complexity/security risks.
+ * Includes DoS protection with replacement limits.
  */
 function replacePlaceholders(text: string): string {
   let count = 0;
-  return text.replace(/\{\{(\w+)\}\}/g, (_, name) => {
+  const startTime = Date.now();
+  
+  return text.replace(/\{\{(\w+)\}\}/g, (match, name) => {
+    // Check timeout
+    if (Date.now() - startTime > PLACEHOLDER_LIMITS.timeoutMs) {
+      logger.warn(`Placeholder replacement timeout reached`);
+      return match; // Return original on timeout
+    }
+    
+    // Check replacement limit
     if (count++ >= PLACEHOLDER_LIMITS.maxReplacements) {
+      logger.warn(`Placeholder replacement limit reached (${PLACEHOLDER_LIMITS.maxReplacements})`);
       return `{{LIMIT_REACHED:${name}}}`;
     }
+    
     return process.env[name] ?? "";
   });
 }
@@ -72,47 +87,82 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
         return;
       }
 
-      // Read body with size limit and replace placeholders
-      const chunks: Buffer[] = [];
-      let totalSize = 0;
-      for await (const chunk of req) {
-        totalSize += chunk.length;
-        if (totalSize > MAX_BODY_SIZE) {
-          res.statusCode = 413;
-          res.end(`Request body too large (max ${MAX_BODY_SIZE / 1024 / 1024}MB)`);
-          return;
+      const method = (req.method || "GET").toUpperCase();
+      const hasBody = !BODYLESS_METHODS.has(method);
+
+      // P0 Fix: Only read and process body for methods that should have one
+      let modifiedBody: string | undefined;
+      if (hasBody) {
+        const chunks: Buffer[] = [];
+        let totalSize = 0;
+        for await (const chunk of req) {
+          totalSize += chunk.length;
+          if (totalSize > MAX_BODY_SIZE) {
+            res.statusCode = 413;
+            res.end(`Request body too large (max ${MAX_BODY_SIZE / 1024 / 1024}MB)`);
+            return;
+          }
+          chunks.push(chunk);
         }
-        chunks.push(chunk);
+        
+        if (chunks.length > 0) {
+          const rawBody = Buffer.concat(chunks).toString("utf8");
+          modifiedBody = replacePlaceholders(rawBody);
+        }
+      } else {
+        // Drain the body for bodyless methods (ignore any sent body)
+        for await (const _ of req) {
+          // Discard
+        }
       }
-      const rawBody = Buffer.concat(chunks).toString("utf8");
-      const modifiedBody = replacePlaceholders(rawBody);
 
       // Prepare headers - filter out hop-by-hop and the special target header
       const headers: Record<string, string> = {};
       for (const [key, value] of Object.entries(req.headers)) {
+        const lowerKey = key.toLowerCase();
         if (
-          key.toLowerCase() === "x-target-url" ||
-          key.toLowerCase() === "host" ||
-          key.toLowerCase() === "connection"
+          lowerKey === "x-target-url" ||
+          lowerKey === "host" ||
+          lowerKey === "connection" ||
+          lowerKey === "transfer-encoding" ||
+          lowerKey === "content-length" // Let undici recalculate
         ) {
           continue;
         }
         if (typeof value === "string") {
           headers[key] = replacePlaceholders(value);
+        } else if (Array.isArray(value)) {
+          // P1 Fix: Handle string[] headers by joining
+          headers[key] = value.map(v => replacePlaceholders(v)).join(", ");
         }
       }
 
-      logger.info(`Proxying request: ${req.method} ${targetUrl}`);
+      logger.info(`Proxying request: ${method} ${targetUrl}`);
 
+      // P0 Fix: Only pass body for methods that should have one
       const response = await request(targetUrl, {
-        method: (req.method as any) || "POST",
+        method: method as any,
         headers,
-        body: modifiedBody,
+        body: hasBody ? modifiedBody : undefined,
       });
 
       res.statusCode = response.statusCode;
+      
+      // P1 Fix: Properly handle response headers (string | string[] | undefined)
       for (const [key, value] of Object.entries(response.headers)) {
-        if (value) {
+        if (value === undefined || value === null) {
+          continue;
+        }
+        
+        // Skip hop-by-hop headers
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === "transfer-encoding" || lowerKey === "connection") {
+          continue;
+        }
+        
+        if (typeof value === "string") {
+          res.setHeader(key, value);
+        } else if (Array.isArray(value)) {
           res.setHeader(key, value);
         }
       }
