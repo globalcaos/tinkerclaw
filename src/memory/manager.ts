@@ -730,4 +730,35 @@ export class MemoryIndexManager {
       timeoutMs: 10000,
     };
   }
+
+  /** Close the memory manager, releasing all resources. */
+  async close(): Promise<void> {
+    this.closed = true;
+    if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
+    if (this.watchTimer) {
+      clearTimeout(this.watchTimer);
+      this.watchTimer = null;
+    }
+    if (this.sessionWatchTimer) {
+      clearTimeout(this.sessionWatchTimer);
+      this.sessionWatchTimer = null;
+    }
+    if (this.sessionUnsubscribe) {
+      this.sessionUnsubscribe();
+      this.sessionUnsubscribe = null;
+    }
+    if (this.intervalTimer) {
+      clearInterval(this.intervalTimer);
+      this.intervalTimer = null;
+    }
+    await this.store.close();
+  }
+
+  /** Get vector dimensions, if available */
+  get vectorDims(): number | undefined {
+    return this.vector.dims;
+  }
 }

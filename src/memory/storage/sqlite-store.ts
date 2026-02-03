@@ -56,8 +56,11 @@ export class SQLiteMemoryStore implements MemoryStore {
 
     // Load vector extension
     try {
-      loadSqliteVecExtension(this.db);
-      this.vectorReady = true;
+      const result = await loadSqliteVecExtension({ db: this.db });
+      this.vectorReady = result.ok;
+      if (!result.ok) {
+        console.warn("Failed to load sqlite-vec extension:", result.error);
+      }
     } catch (err) {
       console.warn("Failed to load sqlite-vec extension:", err);
       this.vectorReady = false;

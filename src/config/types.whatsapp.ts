@@ -92,6 +92,11 @@ export type WhatsAppConfig = {
   debounceMs?: number;
   /** Heartbeat visibility settings for this channel. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
+  /**
+   * Request full history sync from WhatsApp on connect (OPT-IN, default false).
+   * Warning: This can download thousands of messages and consume significant memory.
+   */
+  syncFullHistory?: boolean;
 };
 
 export type WhatsAppAccountConfig = {
@@ -158,4 +163,9 @@ export type WhatsAppAccountConfig = {
   debounceMs?: number;
   /** Heartbeat visibility settings for this account. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
+  /**
+   * Request full history sync from WhatsApp on connect (OPT-IN, default false).
+   * Warning: This can download thousands of messages and consume significant memory.
+   */
+  syncFullHistory?: boolean;
 };
