@@ -147,10 +147,18 @@ export class SmartRouter {
         const lowerTask = taskDescription.toLowerCase();
 
         // 1. Manual Overrides (Highest Priority)
-        if (lowerTask.startsWith("!kimi") || lowerTask.startsWith("kimi:") || lowerTask.startsWith("kimi：")) return "moonshot/kimi-k2.5-thinking";
-        if (lowerTask.startsWith("!flash") || lowerTask.startsWith("flash:") || lowerTask.startsWith("flash：")) return "google/gemini-3-flash-preview";
-        if (lowerTask.startsWith("!pro") || lowerTask.startsWith("pro:") || lowerTask.startsWith("pro：")) return "google/gemini-3-pro-preview";
-        if (lowerTask.startsWith("!deepseek") || lowerTask.startsWith("deepseek:") || lowerTask.startsWith("deepseek：")) return "deepseek/deepseek-chat";
+        if (lowerTask.startsWith("!kimi") || lowerTask.startsWith("kimi:") || lowerTask.startsWith("kimi：")) {
+            return "moonshot/kimi-k2.5-thinking";
+        }
+        if (lowerTask.startsWith("!flash") || lowerTask.startsWith("flash:") || lowerTask.startsWith("flash：")) {
+            return "google/gemini-3-flash-preview";
+        }
+        if (lowerTask.startsWith("!pro") || lowerTask.startsWith("pro:") || lowerTask.startsWith("pro：")) {
+            return "google/gemini-3-pro-preview";
+        }
+        if (lowerTask.startsWith("!deepseek") || lowerTask.startsWith("deepseek:") || lowerTask.startsWith("deepseek：")) {
+            return "deepseek/deepseek-chat";
+        }
 
         // 2. Determine Task Category
         const category = this.experience.detectCategory(taskDescription);
@@ -167,7 +175,9 @@ export class SmartRouter {
 
         // 4. Waterline Filtering
         const validModels = chain.filter(modelId => {
-            if (!this.config) return true;
+            if (!this.config) {
+                return true;
+            }
             const limit = this.config.strategies.context_waterline.models[modelId] || 
                           this.config.strategies.context_waterline.default_limit;
             return contextTokens < limit;
