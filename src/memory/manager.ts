@@ -40,7 +40,7 @@ import {
   parseEmbedding,
 } from "./internal.js";
 import { SQLiteMemoryStore } from "./storage/sqlite-store.js";
-import { MemoryStore } from "./storage/types.js";
+import { MemoryStore, StoredChunk } from "./storage/types.js";
 import { syncMemoryFiles } from "./sync-memory-files.js";
 
 type MemorySource = "memory" | "sessions";
@@ -622,9 +622,8 @@ export class MemoryIndexManager {
   private async indexFile(entry: MemoryFileEntry) {
     const content = await fs.readFile(entry.absPath, "utf-8");
     const chunks = chunkMarkdown(content, {
-      maxTokens: this.settings.chunking.tokens,
+      tokens: this.settings.chunking.tokens,
       overlap: this.settings.chunking.overlap,
-      path: entry.path,
     });
 
     if (chunks.length === 0) return;
@@ -675,7 +674,7 @@ export class MemoryIndexManager {
         continue;
       }
       // Fetch
-      const embed = await this.provider.embed([text]);
+      const embed = await this.provider.embedBatch([text]);
       if (embed[0]) {
         await this.store.setCachedEmbedding(cacheKey, embed[0]);
         results.push(embed[0]);
