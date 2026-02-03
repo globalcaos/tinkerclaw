@@ -48,12 +48,14 @@ export class SmartRouter {
         this.loadConfig();
     }
 
-    private loadConfig() {
+    private loadConfig(): void {
         if (fs.existsSync(this.configFilePath)) {
             try {
-                this.config = JSON.parse(fs.readFileSync(this.configFilePath, "utf-8"));
-            } catch (e) {
-                console.warn("Failed to load router config:", e);
+                const content = fs.readFileSync(this.configFilePath, "utf-8");
+                this.config = JSON.parse(content) as RouterConfig;
+            } catch (e: unknown) {
+                const error = e instanceof Error ? e.message : String(e);
+                console.warn(`Failed to load router config: ${error}`);
             }
         }
     }
@@ -98,7 +100,7 @@ export class SmartRouter {
         }
     }
 
-    public incrementUsage(modelId: string, inputTokens: number = 0, outputTokens: number = 0) {
+    public incrementUsage(modelId: string, inputTokens = 0, outputTokens = 0): void {
         const stats = this.loadUsage();
         if (!stats.models[modelId]) {
             stats.models[modelId] = { requests: 0, inputTokens: 0, outputTokens: 0 };
