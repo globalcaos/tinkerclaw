@@ -366,16 +366,15 @@ export async function browserCookies(
   if (opts?.profile) {
     q.set("profile", opts.profile);
   }
+  const queryString = q.toString();
   const result = await fetchBrowserJson<BrowserCookiesResult>(
-    withBaseUrl(baseUrl, `/cookies?${q.toString()}`),
+    withBaseUrl(baseUrl, queryString ? `/cookies?${queryString}` : "/cookies"),
     { timeoutMs: 10000 },
   );
   // Filter by domain if specified
   if (opts?.domain) {
     const domainFilter = opts.domain.toLowerCase();
-    result.cookies = result.cookies.filter((c) =>
-      c.domain.toLowerCase().includes(domainFilter),
-    );
+    result.cookies = result.cookies.filter((c) => c.domain.toLowerCase().includes(domainFilter));
   }
   return result;
 }
