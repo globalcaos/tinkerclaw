@@ -8,12 +8,14 @@
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import * as lancedb from "@lancedb/lancedb";
+import { rerankers } from "@lancedb/lancedb";
 import { Type } from "@sinclair/typebox";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { stringEnum } from "openclaw/plugin-sdk";
 import {
   MEMORY_CATEGORIES,
+  type HybridConfig,
   type MemoryCategory,
   memoryConfigSchema,
   vectorDimsForModel,
@@ -47,10 +49,12 @@ class MemoryDB {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
+  private reranker: rerankers.RRFReranker | null = null;
 
   constructor(
     private readonly dbPath: string,
     private readonly vectorDim: number,
+    private readonly hybridConfig: HybridConfig = { enabled: true, vectorWeight: 0.7, textWeight: 0.3 },
   ) {}
 
   private async ensureInitialized(): Promise<void> {
@@ -84,6 +88,22 @@ class MemoryDB {
       ]);
       await this.table.delete('id = "__schema__"');
     }
+
+    // Create FTS index for hybrid search if enabled
+    if (this.hybridConfig.enabled) {
+      try {
+        const indices = await this.table.listIndices();
+        const hasFtsIndex = indices.some((idx) => idx.name === "text_idx");
+        if (!hasFtsIndex) {
+          await this.table.createIndex("text", { config: lancedb.Index.fts() });
+        }
+        // Initialize RRF reranker for hybrid search
+        this.reranker = await rerankers.RRFReranker.create();
+      } catch {
+        // FTS index creation may fail on empty tables or if already exists
+        // This is not critical - search will fall back to vector-only
+      }
+    }
   }
 
   async store(entry: Omit<MemoryEntry, "id" | "createdAt">): Promise<MemoryEntry> {
@@ -99,10 +119,35 @@ class MemoryDB {
     return fullEntry;
   }
 
-  async search(vector: number[], limit = 5, minScore = 0.5): Promise<MemorySearchResult[]> {
+  async search(
+    vector: number[],
+    limit = 5,
+    minScore = 0.5,
+    queryText?: string,
+  ): Promise<MemorySearchResult[]> {
     await this.ensureInitialized();
 
-    const results = await this.table!.vectorSearch(vector).limit(limit).toArray();
+    let results: Record<string, unknown>[];
+
+    // Use hybrid search if enabled and we have query text
+    if (this.hybridConfig.enabled && queryText && this.reranker) {
+      try {
+        results = await this.table!
+          .query()
+          .nearestTo(vector)
+          .fullTextSearch(queryText, { columns: "text" })
+          .rerank(this.reranker)
+          .limit(limit)
+          .toArray();
+      } catch {
+        // Fallback to vector-only search if hybrid fails
+        // (e.g., FTS index not ready, empty table)
+        results = await this.table!.vectorSearch(vector).limit(limit).toArray();
+      }
+    } else {
+      // Pure vector search
+      results = await this.table!.vectorSearch(vector).limit(limit).toArray();
+    }
 
     // LanceDB uses L2 distance by default; convert to similarity score
     const mapped = results.map((row) => {
@@ -237,10 +282,13 @@ const memoryPlugin = {
     const cfg = memoryConfigSchema.parse(api.pluginConfig);
     const resolvedDbPath = api.resolvePath(cfg.dbPath!);
     const vectorDim = vectorDimsForModel(cfg.embedding.model ?? "text-embedding-3-small");
-    const db = new MemoryDB(resolvedDbPath, vectorDim);
+    const hybridConfig = cfg.hybrid ?? { enabled: true, vectorWeight: 0.7, textWeight: 0.3 };
+    const db = new MemoryDB(resolvedDbPath, vectorDim, hybridConfig);
     const embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model!);
 
-    api.logger.info(`memory-lancedb: plugin registered (db: ${resolvedDbPath}, lazy init)`);
+    api.logger.info(
+      `memory-lancedb: plugin registered (db: ${resolvedDbPath}, hybrid: ${hybridConfig.enabled}, lazy init)`,
+    );
 
     // ========================================================================
     // Tools
@@ -260,7 +308,7 @@ const memoryPlugin = {
           const { query, limit = 5 } = params as { query: string; limit?: number };
 
           const vector = await embeddings.embed(query);
-          const results = await db.search(vector, limit, 0.1);
+          const results = await db.search(vector, limit, 0.1, query);
 
           if (results.length === 0) {
             return {
@@ -374,7 +422,7 @@ const memoryPlugin = {
 
           if (query) {
             const vector = await embeddings.embed(query);
-            const results = await db.search(vector, 5, 0.7);
+            const results = await db.search(vector, 5, 0.7, query);
 
             if (results.length === 0) {
               return {
@@ -446,7 +494,7 @@ const memoryPlugin = {
           .option("--limit <n>", "Max results", "5")
           .action(async (query, opts) => {
             const vector = await embeddings.embed(query);
-            const results = await db.search(vector, parseInt(opts.limit), 0.3);
+            const results = await db.search(vector, parseInt(opts.limit), 0.3, query);
             // Strip vectors for output
             const output = results.map((r) => ({
               id: r.entry.id,
@@ -482,7 +530,7 @@ const memoryPlugin = {
 
         try {
           const vector = await embeddings.embed(event.prompt);
-          const results = await db.search(vector, 3, 0.3);
+          const results = await db.search(vector, 3, 0.3, event.prompt);
 
           if (results.length === 0) {
             return;
