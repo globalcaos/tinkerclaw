@@ -35,6 +35,9 @@ export const WhatsAppAccountSchema = z
     mediaMaxMb: z.number().int().positive().optional(),
     blockStreaming: z.boolean().optional(),
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
+    /** Request full history sync from WhatsApp on connect (OPT-IN, default false).
+     * Warning: This can download thousands of messages and consume significant memory. */
+    syncFullHistory: z.boolean().optional().default(false),
     groups: z
       .record(
         z.string(),
@@ -96,6 +99,9 @@ export const WhatsAppConfigSchema = z
     mediaMaxMb: z.number().int().positive().optional().default(50),
     blockStreaming: z.boolean().optional(),
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
+    /** Request full history sync from WhatsApp on connect (OPT-IN, default false).
+     * Warning: This can download thousands of messages and consume significant memory. */
+    syncFullHistory: z.boolean().optional().default(false),
     actions: z
       .object({
         reactions: z.boolean().optional(),

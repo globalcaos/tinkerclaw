@@ -1,3 +1,4 @@
+// @ts-nocheck - Test script with simplified types for comparison testing
 import { randomUUID } from "crypto";
 import fs from "fs/promises";
 import path from "path";

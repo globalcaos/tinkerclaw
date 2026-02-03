@@ -94,7 +94,7 @@ async function safeSaveCreds(
 export async function createWaSocket(
   printQr: boolean,
   verbose: boolean,
-  opts: { authDir?: string; onQr?: (qr: string) => void } = {},
+  opts: { authDir?: string; onQr?: (qr: string) => void; syncFullHistory?: boolean } = {},
 ): Promise<ReturnType<typeof makeWASocket>> {
   const baseLogger = getChildLogger(
     { module: "baileys" },
@@ -109,6 +109,7 @@ export async function createWaSocket(
   maybeRestoreCredsFromBackup(authDir);
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const { version } = await fetchLatestBaileysVersion();
+  const syncFullHistory = opts.syncFullHistory ?? false;
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -118,7 +119,7 @@ export async function createWaSocket(
     logger,
     printQRInTerminal: false,
     browser: ["openclaw", "cli", VERSION],
-    syncFullHistory: false,
+    syncFullHistory,
     markOnlineOnConnect: false,
   });
 
