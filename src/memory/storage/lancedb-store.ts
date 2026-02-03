@@ -261,9 +261,9 @@ export class LanceDBMemoryStore implements MemoryStore {
     const sourceCounts: Array<{ source: string; files: number; chunks: number }> = [];
 
     for (const source of sources) {
-      const f = await this.filesTable.query().where(`source = '${source}'`).countRows();
-      const c = await this.table.query().where(`source = '${source}'`).countRows();
-      sourceCounts.push({ source, files: f, chunks: c });
+      const fRows = await this.filesTable.query().where(`source = '${source}'`).toArray();
+      const cRows = await this.table.query().where(`source = '${source}'`).toArray();
+      sourceCounts.push({ source, files: fRows.length, chunks: cRows.length });
     }
 
     return {

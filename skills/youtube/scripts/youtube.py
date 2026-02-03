@@ -6,16 +6,18 @@
 #     "google-auth-oauthlib>=1.0.0",
 #     "google-auth-httplib2>=0.1.0",
 #     "youtube-transcript-api>=0.6.0",
+#     "yt-dlp>=2024.0.0",
 # ]
 # ///
 """
-YouTube Research Pro CLI - Comprehensive YouTube access for OpenClaw.
+YouTube Research Pro CLI v2.0.0 - Comprehensive YouTube access for OpenClaw.
 
 Features:
   - Search, video details, channel info (YouTube Data API)
   - Transcript extraction (FREE - no API quota!)
-  - Download via yt-dlp integration
+  - Full download via yt-dlp integration (video, audio, formats)
   - Batch operations
+  - Graceful error handling (private, age-restricted, unavailable)
 
 Usage:
     uv run youtube.py <command> [options]
@@ -40,16 +42,19 @@ Commands:
     playlist-items ID       List videos in a playlist
     liked                   List your liked videos
     
-    # Download (yt-dlp required)
-    download ID             Download video
-    download-audio ID       Download audio only
+    # Download (yt-dlp)
+    formats ID              List available formats for a video
+    download ID             Download video (best quality or specified)
+    download-audio ID       Extract audio only (MP3/M4A/FLAC/etc)
 
 Examples:
     uv run youtube.py search "AI news 2026" -l 5
     uv run youtube.py transcript dQw4w9WgXcQ
     uv run youtube.py transcript dQw4w9WgXcQ --timestamps
     uv run youtube.py video dQw4w9WgXcQ abc123 xyz789  # batch
-    uv run youtube.py download dQw4w9WgXcQ -o ~/Videos
+    uv run youtube.py formats dQw4w9WgXcQ              # list formats
+    uv run youtube.py download dQw4w9WgXcQ -r 720p
+    uv run youtube.py download-audio dQw4w9WgXcQ -f mp3 --embed-thumbnail
 """
 
 import argparse
@@ -552,6 +557,113 @@ def find_ytdlp():
     return shutil.which('yt-dlp')
 
 
+def run_ytdlp(cmd: List[str], url: str) -> int:
+    """Run yt-dlp with proper error handling."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            stderr = result.stderr.lower()
+            
+            # Parse common errors
+            if 'private video' in stderr:
+                print("❌ Error: This video is private.", file=sys.stderr)
+            elif 'sign in to confirm your age' in stderr or 'age-restricted' in stderr:
+                print("❌ Error: This video is age-restricted. Use --cookies or login.", file=sys.stderr)
+                print("   Tip: Export cookies from browser with 'yt-dlp --cookies-from-browser chrome'", file=sys.stderr)
+            elif 'video unavailable' in stderr or 'video is unavailable' in stderr:
+                print("❌ Error: Video is unavailable (deleted or region-blocked).", file=sys.stderr)
+            elif 'copyright' in stderr:
+                print("❌ Error: Video blocked due to copyright.", file=sys.stderr)
+            elif 'live event' in stderr:
+                print("❌ Error: Cannot download live streams (wait until it ends).", file=sys.stderr)
+            elif 'members-only' in stderr or 'member' in stderr:
+                print("❌ Error: This is a members-only video.", file=sys.stderr)
+            elif 'premiere' in stderr:
+                print("❌ Error: Video is a premiere that hasn't started yet.", file=sys.stderr)
+            elif 'format' in stderr and 'not available' in stderr:
+                print("❌ Error: Requested format not available. Use 'formats' command to see options.", file=sys.stderr)
+            else:
+                print(f"❌ Error: {result.stderr.strip()}", file=sys.stderr)
+            
+            return result.returncode
+        
+        # Success - show stdout
+        if result.stdout:
+            print(result.stdout)
+        
+        return 0
+        
+    except FileNotFoundError:
+        print("❌ Error: yt-dlp not found. Install with: brew install yt-dlp", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"❌ Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_formats(args):
+    """List available formats for a video."""
+    ytdlp = find_ytdlp()
+    if not ytdlp:
+        print("Error: yt-dlp not found. Install with: brew install yt-dlp", file=sys.stderr)
+        sys.exit(1)
+    
+    video_id = extract_video_id(args.video_id)
+    url = f"https://youtube.com/watch?v={video_id}"
+    
+    if args.json:
+        # Get detailed format info as JSON
+        cmd = [ytdlp, '-J', '--no-download', url]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Error: {result.stderr}", file=sys.stderr)
+                sys.exit(1)
+            
+            data = json.loads(result.stdout)
+            formats = []
+            for f in data.get('formats', []):
+                fmt = {
+                    'id': f.get('format_id'),
+                    'ext': f.get('ext'),
+                    'resolution': f.get('resolution', 'audio only'),
+                    'fps': f.get('fps'),
+                    'vcodec': f.get('vcodec'),
+                    'acodec': f.get('acodec'),
+                    'filesize': f.get('filesize') or f.get('filesize_approx'),
+                    'tbr': f.get('tbr'),  # total bitrate
+                    'note': f.get('format_note'),
+                }
+                formats.append(fmt)
+            print(json.dumps(formats, indent=2))
+            
+        except json.JSONDecodeError:
+            print("Error: Failed to parse format info", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Human-readable format list
+        cmd = [ytdlp, '-F', url]
+        print(f"📋 Available formats for: {url}\n")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            stderr = result.stderr.lower()
+            if 'private' in stderr:
+                print("❌ Error: This video is private.", file=sys.stderr)
+            elif 'unavailable' in stderr:
+                print("❌ Error: Video is unavailable.", file=sys.stderr)
+            else:
+                print(f"Error: {result.stderr}", file=sys.stderr)
+            sys.exit(1)
+        
+        print(result.stdout)
+        print("\n💡 Tips:")
+        print("   - Use 'download -f FORMAT_ID' to download specific format")
+        print("   - Use 'download -r 720p' for quick resolution selection")
+        print("   - Combine: '-f 137+140' for video+audio merge")
+
+
 def cmd_download(args):
     """Download video using yt-dlp."""
     ytdlp = find_ytdlp()
@@ -562,27 +674,56 @@ def cmd_download(args):
     video_id = extract_video_id(args.video_id)
     url = f"https://youtube.com/watch?v={video_id}"
     
-    cmd = [ytdlp]
+    cmd = [ytdlp, '--progress']
     
+    # Output path
     if args.output:
-        cmd.extend(['-o', f"{args.output}/%(title)s.%(ext)s"])
+        output_dir = Path(args.output).expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        cmd.extend(['-o', f"{output_dir}/%(title)s.%(ext)s"])
     
-    if args.resolution:
+    # Format selection
+    if args.format_id:
+        cmd.extend(['-f', args.format_id])
+    elif args.resolution:
         res_map = {
             '480p': 'bestvideo[height<=480]+bestaudio/best[height<=480]',
             '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
             '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+            '1440p': 'bestvideo[height<=1440]+bestaudio/best[height<=1440]',
+            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
             'best': 'bestvideo+bestaudio/best',
         }
         cmd.extend(['-f', res_map.get(args.resolution, 'best')])
     
+    # Subtitles
     if args.subtitles:
         cmd.extend(['--write-auto-subs', '--sub-lang', args.subtitles])
     
+    # Cookies for age-restricted videos
+    if args.cookies:
+        cmd.extend(['--cookies', args.cookies])
+    elif args.cookies_from_browser:
+        cmd.extend(['--cookies-from-browser', args.cookies_from_browser])
+    
+    # Embed metadata
+    if args.embed_metadata:
+        cmd.append('--embed-metadata')
+    
+    # Restrict filename chars (for compatibility)
+    if args.restrict_filenames:
+        cmd.append('--restrict-filenames')
+    
     cmd.append(url)
     
-    print(f"Downloading: {url}")
-    subprocess.run(cmd)
+    print(f"⬇️  Downloading: {url}")
+    if args.resolution:
+        print(f"   Resolution: {args.resolution}")
+    
+    exit_code = run_ytdlp(cmd, url)
+    if exit_code == 0:
+        print("✅ Download complete!")
+    sys.exit(exit_code)
 
 
 def cmd_download_audio(args):
@@ -595,18 +736,45 @@ def cmd_download_audio(args):
     video_id = extract_video_id(args.video_id)
     url = f"https://youtube.com/watch?v={video_id}"
     
-    cmd = [ytdlp, '-x']
+    cmd = [ytdlp, '-x', '--progress']
     
-    if args.format:
-        cmd.extend(['--audio-format', args.format])
+    # Audio format
+    audio_format = args.format or 'mp3'
+    cmd.extend(['--audio-format', audio_format])
     
+    # Audio quality
+    if args.quality:
+        cmd.extend(['--audio-quality', args.quality])
+    
+    # Output path
     if args.output:
-        cmd.extend(['-o', f"{args.output}/%(title)s.%(ext)s"])
+        output_dir = Path(args.output).expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        cmd.extend(['-o', f"{output_dir}/%(title)s.%(ext)s"])
+    
+    # Cookies for age-restricted videos
+    if args.cookies:
+        cmd.extend(['--cookies', args.cookies])
+    elif args.cookies_from_browser:
+        cmd.extend(['--cookies-from-browser', args.cookies_from_browser])
+    
+    # Embed thumbnail in audio file
+    if args.embed_thumbnail:
+        cmd.append('--embed-thumbnail')
+    
+    # Embed metadata
+    if args.embed_metadata:
+        cmd.append('--embed-metadata')
     
     cmd.append(url)
     
-    print(f"Downloading audio: {url}")
-    subprocess.run(cmd)
+    print(f"🎵 Extracting audio: {url}")
+    print(f"   Format: {audio_format}")
+    
+    exit_code = run_ytdlp(cmd, url)
+    if exit_code == 0:
+        print("✅ Audio extraction complete!")
+    sys.exit(exit_code)
 
 
 # ============================================================================
@@ -693,19 +861,37 @@ def main():
     liked_p.set_defaults(func=cmd_liked)
 
     # ---- Downloads ----
+    fmt_p = subparsers.add_parser('formats', aliases=['fmt', 'F'], help='List available formats')
+    fmt_p.add_argument('video_id', help='Video ID or URL')
+    fmt_p.set_defaults(func=cmd_formats)
+    # Note: --json is inherited from global parser
+
     dl_p = subparsers.add_parser('download', aliases=['dl'], help='Download video (yt-dlp)')
     dl_p.add_argument('video_id', help='Video ID or URL')
     dl_p.add_argument('-o', '--output', help='Output directory')
-    dl_p.add_argument('-r', '--resolution', choices=['480p', '720p', '1080p', 'best'],
+    dl_p.add_argument('-r', '--resolution', choices=['480p', '720p', '1080p', '1440p', '4k', 'best'],
                       default='best', help='Video resolution')
+    dl_p.add_argument('-f', '--format-id', help='Specific format ID (from formats command)')
     dl_p.add_argument('-s', '--subtitles', help='Download subtitles (language code)')
+    dl_p.add_argument('--cookies', help='Path to cookies file (for age-restricted)')
+    dl_p.add_argument('--cookies-from-browser', choices=['chrome', 'firefox', 'safari', 'edge', 'brave'],
+                      help='Extract cookies from browser')
+    dl_p.add_argument('--embed-metadata', action='store_true', help='Embed video metadata')
+    dl_p.add_argument('--restrict-filenames', action='store_true', help='Restrict filename chars')
     dl_p.set_defaults(func=cmd_download)
 
     dla_p = subparsers.add_parser('download-audio', aliases=['dla'], help='Download audio only')
     dla_p.add_argument('video_id', help='Video ID or URL')
     dla_p.add_argument('-o', '--output', help='Output directory')
-    dla_p.add_argument('-f', '--format', choices=['mp3', 'm4a', 'opus', 'best'],
+    dla_p.add_argument('-f', '--format', choices=['mp3', 'm4a', 'opus', 'wav', 'flac', 'best'],
                        default='mp3', help='Audio format')
+    dla_p.add_argument('-q', '--quality', choices=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+                       help='Audio quality (0=best, 9=worst)')
+    dla_p.add_argument('--cookies', help='Path to cookies file (for age-restricted)')
+    dla_p.add_argument('--cookies-from-browser', choices=['chrome', 'firefox', 'safari', 'edge', 'brave'],
+                       help='Extract cookies from browser')
+    dla_p.add_argument('--embed-thumbnail', action='store_true', help='Embed thumbnail in audio')
+    dla_p.add_argument('--embed-metadata', action='store_true', help='Embed audio metadata')
     dla_p.set_defaults(func=cmd_download_audio)
 
     args = parser.parse_args()
