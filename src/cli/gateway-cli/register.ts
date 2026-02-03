@@ -29,6 +29,7 @@ import {
   renderBeaconLines,
 } from "./discover.js";
 import { addGatewayRunCommand } from "./run.js";
+import { addGatewayAllowlistCommands } from "./allowlist-cli.js";
 
 function styleHealthChannelLine(line: string, rich: boolean): string {
   if (!rich) {
@@ -356,4 +357,6 @@ export function registerGatewayCli(program: Command) {
         }
       }, "gateway discover failed");
     });
+
+  addGatewayAllowlistCommands(gateway);
 }
