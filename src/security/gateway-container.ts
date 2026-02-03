@@ -10,23 +10,92 @@ const GATEWAY_CONTAINER_NAME = "openclaw-gateway-secure";
 export type GatewayContainerOptions = {
   proxyUrl: string;
   env?: Record<string, string | undefined>;
+  /** Bind mounts in format ["host:container:ro"] */
+  binds?: string[];
 };
 
 /**
+ * P1 Fix: Comprehensive list of secret env var patterns.
+ * Includes suffixes, prefixes, and exact matches for common secrets.
+ */
+const SECRET_SUFFIXES = [
+  "_API_KEY",
+  "_TOKEN",
+  "_SECRET",
+  "_PASSWORD",
+  "_CREDENTIAL",
+  "_CREDENTIALS",
+  "_KEY",
+  "_PRIVATE_KEY",
+];
+
+const SECRET_PREFIXES = [
+  "AWS_",           // AWS credentials: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
+  "AZURE_",         // Azure credentials
+  "GCP_",           // Google Cloud credentials
+  "GOOGLE_",        // Google credentials
+];
+
+const SECRET_EXACT_MATCHES = new Set([
+  // AWS specific
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  // Database
+  "DATABASE_URL",
+  "DATABASE_PASSWORD",
+  "DB_PASSWORD",
+  "REDIS_URL",
+  "REDIS_PASSWORD",
+  "MONGO_URL",
+  "MONGODB_URI",
+  "POSTGRES_PASSWORD",
+  "MYSQL_PASSWORD",
+  // Auth
+  "PASSWORD",
+  "COOKIE",
+  "SESSION_SECRET",
+  "JWT_SECRET",
+  "AUTH_SECRET",
+  // Generic
+  "PRIVATE_KEY",
+  "SECRET",
+  "CREDENTIALS",
+]);
+
+/**
  * Filters environment variables to exclude secrets.
- * Excludes variables ending with _API_KEY, _TOKEN, _SECRET.
+ * P1 Fix: Now covers AWS credentials and other common secret patterns.
  */
 function filterSecretEnv(env: Record<string, string | undefined>): Record<string, string> {
   const filtered: Record<string, string> = {};
-  const secretSuffixes = ["_API_KEY", "_TOKEN", "_SECRET"];
-
+  
   for (const [key, value] of Object.entries(env)) {
     if (!value) continue;
     
-    const isSecret = secretSuffixes.some((suffix) => key.toUpperCase().endsWith(suffix));
-    if (!isSecret) {
-      filtered[key] = value;
+    const upperKey = key.toUpperCase();
+    
+    // Check exact matches first
+    if (SECRET_EXACT_MATCHES.has(upperKey)) {
+      logger.debug(`Filtered secret env var (exact match): ${key}`);
+      continue;
     }
+    
+    // Check suffixes
+    const hasSuffix = SECRET_SUFFIXES.some((suffix) => upperKey.endsWith(suffix));
+    if (hasSuffix) {
+      logger.debug(`Filtered secret env var (suffix): ${key}`);
+      continue;
+    }
+    
+    // Check prefixes (these cloud provider env vars often contain credentials)
+    const hasPrefix = SECRET_PREFIXES.some((prefix) => upperKey.startsWith(prefix));
+    if (hasPrefix) {
+      logger.debug(`Filtered secret env var (prefix): ${key}`);
+      continue;
+    }
+    
+    filtered[key] = value;
   }
 
   return filtered;
@@ -59,6 +128,18 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
     "-e", `PROXY_URL=${opts.proxyUrl}`,
   ];
 
+  // Add bind mounts for tools/skills
+  for (const bind of opts.binds || []) {
+    // Validate bind mount format
+    if (bind.includes(":")) {
+      args.push("-v", bind);
+      logger.info(`Adding bind mount: ${bind}`);
+    } else {
+      logger.warn(`Invalid bind mount format (expected host:container[:ro]): ${bind}`);
+    }
+  }
+
+  // Add filtered environment variables
   for (const [key, value] of Object.entries(filteredEnv)) {
     args.push("-e", `${key}=${value}`);
   }
@@ -73,3 +154,25 @@ export async function startGatewayContainer(opts: GatewayContainerOptions): Prom
 
   return GATEWAY_CONTAINER_NAME;
 }
+
+/**
+ * Checks if the gateway container is running and healthy.
+ */
+export async function isGatewayContainerRunning(): Promise<boolean> {
+  const state = await dockerContainerState(GATEWAY_CONTAINER_NAME);
+  return state.exists && state.running;
+}
+
+/**
+ * Gets the gateway container logs.
+ */
+export async function getGatewayContainerLogs(lines: number = 50): Promise<string> {
+  try {
+    const result = await execDocker(["logs", "--tail", String(lines), GATEWAY_CONTAINER_NAME]);
+    // execDocker returns {stdout, stderr, code} - combine for logs
+    return result.stdout + (result.stderr ? "\n" + result.stderr : "");
+  } catch (err) {
+    return `Failed to get logs: ${String(err)}`;
+  }
+}
+
