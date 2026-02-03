@@ -675,6 +675,12 @@ export async function runEmbeddedPiAgent(
               agentDir: params.agentDir,
             });
           }
+
+          // [Xiao Ke Fix] Actually log the real usage tokens into usage-stats.json after completion
+          if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+            smartRouter.incrementUsage(`${provider}/${modelId}`, usage.inputTokens, usage.outputTokens);
+          }
+
           return {
             payloads: payloads.length ? payloads : undefined,
             meta: {
