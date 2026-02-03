@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
+import { recordTokenUsage } from "../../infra/token-usage-tracker.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
@@ -43,13 +44,12 @@ import {
   pickFallbackThinkingLevel,
   type FailoverReason,
 } from "../pi-embedded-helpers.js";
+import { smartRouter } from "../smart-router.js";
 import { normalizeUsage, type UsageLike } from "../usage.js";
-import { recordTokenUsage } from "../../infra/token-usage-tracker.js";
 import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
-import { smartRouter } from "../smart-router.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import { describeUnknownError } from "./utils.js";
@@ -626,7 +626,7 @@ export async function runEmbeddedPiAgent(
           }
 
           const usage = normalizeUsage(lastAssistant?.usage as UsageLike);
-          
+
           // Record token usage for tracking
           if (usage && (usage.input || usage.output)) {
             recordTokenUsage({
@@ -638,7 +638,7 @@ export async function runEmbeddedPiAgent(
               cacheWriteTokens: usage.cacheWrite,
             });
           }
-          
+
           const agentMeta: EmbeddedPiAgentMeta = {
             sessionId: sessionIdUsed,
             provider: lastAssistant?.provider ?? provider,
@@ -677,8 +677,12 @@ export async function runEmbeddedPiAgent(
           }
 
           // [Xiao Ke Fix] Actually log the real usage tokens into usage-stats.json after completion
-          if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
-            smartRouter.incrementUsage(`${provider}/${modelId}`, usage.inputTokens, usage.outputTokens);
+          if (usage && ((usage.input ?? 0) > 0 || (usage.output ?? 0) > 0)) {
+            smartRouter.incrementUsage(
+              `${provider}/${modelId}`,
+              usage.input ?? 0,
+              usage.output ?? 0,
+            );
           }
 
           return {
