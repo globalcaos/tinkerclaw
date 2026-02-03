@@ -5,42 +5,76 @@
 #     "google-api-python-client>=2.0.0",
 #     "google-auth-oauthlib>=1.0.0",
 #     "google-auth-httplib2>=0.1.0",
+#     "youtube-transcript-api>=0.6.0",
 # ]
 # ///
 """
-YouTube Data API CLI - Self-contained script for OpenClaw skill.
+YouTube Research Pro CLI - Comprehensive YouTube access for OpenClaw.
+
+Features:
+  - Search, video details, channel info (YouTube Data API)
+  - Transcript extraction (FREE - no API quota!)
+  - Download via yt-dlp integration
+  - Batch operations
 
 Usage:
     uv run youtube.py <command> [options]
 
 Commands:
+    # Authentication
     auth                    Authenticate with YouTube (opens browser)
     accounts                List authenticated accounts
+    
+    # Video Info (API required)
+    search QUERY            Search YouTube videos
+    video ID [ID...]        Get video details (batch supported)
     channel [ID]            Get channel info (yours if no ID)
+    comments ID             Get video comments
+    
+    # Transcripts (FREE - no API quota)
+    transcript ID           Get video transcript/captions
+    
+    # User Data (API required)
     subscriptions           List your subscriptions
     playlists               List your playlists
     playlist-items ID       List videos in a playlist
-    search QUERY            Search YouTube videos
-    video ID                Get video details
-    captions ID             List available captions for a video
     liked                   List your liked videos
+    
+    # Download (yt-dlp required)
+    download ID             Download video
+    download-audio ID       Download audio only
 
 Examples:
-    uv run youtube.py auth
-    uv run youtube.py search "python tutorial" -l 5
-    uv run youtube.py video dQw4w9WgXcQ -v
+    uv run youtube.py search "AI news 2026" -l 5
+    uv run youtube.py transcript dQw4w9WgXcQ
+    uv run youtube.py transcript dQw4w9WgXcQ --timestamps
+    uv run youtube.py video dQw4w9WgXcQ abc123 xyz789  # batch
+    uv run youtube.py download dQw4w9WgXcQ -o ~/Videos
 """
 
 import argparse
+import json
 import os
 import sys
 import pickle
+import subprocess
+import shutil
 from pathlib import Path
+from typing import Optional, List
 
+# YouTube Data API imports
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+
+# Transcript API (FREE - no quota!)
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import (
+    TranscriptsDisabled,
+    NoTranscriptFound,
+    VideoUnavailable,
+)
 
 SCOPES = [
     'https://www.googleapis.com/auth/youtube.readonly',
@@ -49,10 +83,9 @@ SCOPES = [
 ]
 
 CONFIG_DIR = Path.home() / '.config' / 'youtube-skill'
-# Support multiple credential locations for flexibility
 CREDENTIAL_PATHS = [
     Path.home() / '.config' / 'youtube-skill' / 'credentials.json',
-    Path.home() / '.config' / 'gogcli' / 'credentials.json',  # Shared with gog
+    Path.home() / '.config' / 'gogcli' / 'credentials.json',
 ]
 DEFAULT_ACCOUNT = 'default'
 
@@ -110,6 +143,25 @@ def get_youtube_service(account=None):
     return build('youtube', 'v3', credentials=creds)
 
 
+def extract_video_id(url_or_id: str) -> str:
+    """Extract video ID from URL or return as-is if already an ID."""
+    if 'youtube.com' in url_or_id or 'youtu.be' in url_or_id:
+        import re
+        patterns = [
+            r'(?:v=|/v/|youtu\.be/)([a-zA-Z0-9_-]{11})',
+            r'(?:embed/)([a-zA-Z0-9_-]{11})',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url_or_id)
+            if match:
+                return match.group(1)
+    return url_or_id
+
+
+# ============================================================================
+# AUTHENTICATION COMMANDS
+# ============================================================================
+
 def cmd_auth(args):
     """Authenticate with YouTube."""
     token_file = get_token_file()
@@ -117,7 +169,7 @@ def cmd_auth(args):
         token_file.unlink()
     get_youtube_service()
     acc_name = _current_account if _current_account != DEFAULT_ACCOUNT else 'default'
-    print(f"YouTube authentication successful! (account: {acc_name})")
+    print(f"✓ YouTube authentication successful! (account: {acc_name})")
 
 
 def cmd_accounts(args):
@@ -129,161 +181,262 @@ def cmd_accounts(args):
     found = False
     for f in CONFIG_DIR.glob('token*.pickle'):
         name = f.stem.replace('token.', '').replace('token', 'default')
-        print(f"  - {name}")
+        print(f"  ✓ {name}")
         found = True
     if not found:
         print("  (none)")
 
 
-def cmd_subscriptions(args):
-    """List subscriptions."""
-    youtube = get_youtube_service()
-    request = youtube.subscriptions().list(
-        part='snippet',
-        mine=True,
-        maxResults=args.limit
-    )
-    response = request.execute()
+# ============================================================================
+# TRANSCRIPT COMMANDS (FREE - NO API QUOTA!)
+# ============================================================================
 
-    for item in response.get('items', []):
-        snippet = item['snippet']
-        print(f"{snippet['title']}")
-        if args.verbose:
-            print(f"  Channel: {snippet['resourceId']['channelId']}")
-            print(f"  Description: {snippet['description'][:100]}...")
+def cmd_transcript(args):
+    """Get video transcript - FREE, no API quota used!"""
+    video_id = extract_video_id(args.video_id)
+    
+    try:
+        # Try to get transcript in preferred language, fall back to any available
+        ytt_api = YouTubeTranscriptApi()
+        transcript_list = ytt_api.list(video_id)
+        
+        transcript = None
+        lang_used = None
+        
+        # Try preferred language first
+        for lang in args.language.split(','):
+            try:
+                transcript = transcript_list.find_transcript([lang.strip()])
+                lang_used = lang.strip()
+                break
+            except NoTranscriptFound:
+                continue
+        
+        # Fall back to any available transcript
+        if not transcript:
+            try:
+                transcript = transcript_list.find_generated_transcript(['en'])
+                lang_used = 'en (auto-generated)'
+            except NoTranscriptFound:
+                # Get first available
+                for t in transcript_list:
+                    transcript = t
+                    lang_used = f"{t.language_code} ({'auto' if t.is_generated else 'manual'})"
+                    break
+        
+        if not transcript:
+            print("No transcript available for this video.", file=sys.stderr)
+            sys.exit(1)
+        
+        fetched = transcript.fetch()
+        
+        if args.json:
+            # Convert to serializable format
+            entries = [{'text': s.text, 'start': s.start, 'duration': s.duration} 
+                       for s in fetched.snippets]
+            print(json.dumps(entries, indent=2, ensure_ascii=False))
+            return
+        
+        print(f"# Transcript ({lang_used})")
+        print(f"# Video: https://youtube.com/watch?v={video_id}")
+        print()
+        
+        if args.timestamps:
+            for snippet in fetched.snippets:
+                start = snippet.start
+                mins = int(start // 60)
+                secs = int(start % 60)
+                print(f"[{mins:02d}:{secs:02d}] {snippet.text}")
+        else:
+            # Join all text for clean reading
+            full_text = ' '.join(snippet.text for snippet in fetched.snippets)
+            # Clean up whitespace
+            import re
+            full_text = re.sub(r'\s+', ' ', full_text).strip()
+            print(full_text)
+            
+    except TranscriptsDisabled:
+        print("Transcripts are disabled for this video.", file=sys.stderr)
+        sys.exit(1)
+    except VideoUnavailable:
+        print("Video is unavailable.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error fetching transcript: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
-def cmd_playlists(args):
-    """List playlists."""
-    youtube = get_youtube_service()
-    request = youtube.playlists().list(
-        part='snippet,contentDetails',
-        mine=True,
-        maxResults=args.limit
-    )
-    response = request.execute()
+def cmd_transcript_list(args):
+    """List available transcripts for a video."""
+    video_id = extract_video_id(args.video_id)
+    
+    try:
+        ytt_api = YouTubeTranscriptApi()
+        transcript_list = ytt_api.list(video_id)
+        
+        print(f"Available transcripts for {video_id}:")
+        print()
+        
+        manual = []
+        generated = []
+        
+        for transcript in transcript_list:
+            entry = {
+                'lang': transcript.language_code,
+                'name': transcript.language,
+                'translatable': transcript.is_translatable,
+            }
+            if transcript.is_generated:
+                generated.append(entry)
+            else:
+                manual.append(entry)
+        
+        if manual:
+            print("Manual captions:")
+            for t in manual:
+                trans = " (translatable)" if t['translatable'] else ""
+                print(f"  ✓ {t['lang']} - {t['name']}{trans}")
+        
+        if generated:
+            print("\nAuto-generated:")
+            for t in generated:
+                trans = " (translatable)" if t['translatable'] else ""
+                print(f"  ◦ {t['lang']} - {t['name']}{trans}")
+                
+    except TranscriptsDisabled:
+        print("Transcripts are disabled for this video.", file=sys.stderr)
+        sys.exit(1)
+    except VideoUnavailable:
+        print("Video is unavailable.", file=sys.stderr)
+        sys.exit(1)
 
-    for item in response.get('items', []):
-        snippet = item['snippet']
-        count = item['contentDetails']['itemCount']
-        print(f"{snippet['title']} ({count} videos)")
-        if args.verbose:
-            print(f"  ID: {item['id']}")
-            print(f"  Description: {snippet['description'][:100]}...")
 
-
-def cmd_playlist_items(args):
-    """List items in a playlist."""
-    youtube = get_youtube_service()
-    request = youtube.playlistItems().list(
-        part='snippet',
-        playlistId=args.playlist_id,
-        maxResults=args.limit
-    )
-    response = request.execute()
-
-    for item in response.get('items', []):
-        snippet = item['snippet']
-        video_id = snippet['resourceId']['videoId']
-        print(f"{snippet['title']}")
-        print(f"  https://youtube.com/watch?v={video_id}")
-
+# ============================================================================
+# VIDEO INFO COMMANDS (API required)
+# ============================================================================
 
 def cmd_search(args):
     """Search YouTube."""
     youtube = get_youtube_service()
-    request = youtube.search().list(
-        part='snippet',
-        q=args.query,
-        type='video',
-        maxResults=args.limit
-    )
-    response = request.execute()
+    
+    params = {
+        'part': 'snippet',
+        'q': args.query,
+        'type': 'video',
+        'maxResults': args.limit,
+    }
+    
+    if args.order:
+        params['order'] = args.order
+    if args.published_after:
+        params['publishedAfter'] = args.published_after
+    if args.duration:
+        params['videoDuration'] = args.duration
+    
+    response = youtube.search().list(**params).execute()
+
+    if args.json:
+        print(json.dumps(response.get('items', []), indent=2, ensure_ascii=False))
+        return
 
     for item in response.get('items', []):
         snippet = item['snippet']
         video_id = item['id']['videoId']
-        print(f"{snippet['title']}")
-        print(f"  https://youtube.com/watch?v={video_id}")
+        print(f"📺 {snippet['title']}")
+        print(f"   https://youtube.com/watch?v={video_id}")
+        print(f"   Channel: {snippet['channelTitle']} | {snippet['publishedAt'][:10]}")
         if args.verbose:
-            print(f"  Channel: {snippet['channelTitle']}")
-            print(f"  Published: {snippet['publishedAt']}")
+            print(f"   {snippet.get('description', '')[:150]}...")
+        print()
 
 
 def cmd_video(args):
-    """Get video details."""
+    """Get video details - supports batch mode."""
     youtube = get_youtube_service()
-    request = youtube.videos().list(
-        part='snippet,contentDetails,statistics',
-        id=args.video_id
-    )
-    response = request.execute()
+    
+    video_ids = [extract_video_id(v) for v in args.video_ids]
+    
+    # Batch in groups of 50 (API limit)
+    all_items = []
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i:i+50]
+        response = youtube.videos().list(
+            part='snippet,contentDetails,statistics',
+            id=','.join(batch)
+        ).execute()
+        all_items.extend(response.get('items', []))
 
-    if not response.get('items'):
-        print("Video not found")
+    if args.json:
+        print(json.dumps(all_items, indent=2, ensure_ascii=False))
         return
 
-    item = response['items'][0]
-    snippet = item['snippet']
-    stats = item.get('statistics', {})
-
-    print(f"Title: {snippet['title']}")
-    print(f"Channel: {snippet['channelTitle']}")
-    print(f"Published: {snippet['publishedAt']}")
-    print(f"Views: {stats.get('viewCount', 'N/A')}")
-    print(f"Likes: {stats.get('likeCount', 'N/A')}")
-    print(f"Duration: {item['contentDetails']['duration']}")
-    if args.verbose:
-        print(f"\nDescription:\n{snippet['description']}")
-
-
-def cmd_captions(args):
-    """List video captions."""
-    youtube = get_youtube_service()
-    request = youtube.captions().list(
-        part='snippet',
-        videoId=args.video_id
-    )
-    response = request.execute()
-
-    if not response.get('items'):
-        print("No captions available")
-        return
-
-    for item in response['items']:
+    for item in all_items:
         snippet = item['snippet']
-        kind = 'auto' if snippet['trackKind'] == 'ASR' else 'manual'
-        print(f"{snippet['language']} - {snippet['name']} ({kind})")
-        print(f"  ID: {item['id']}")
+        stats = item.get('statistics', {})
+        content = item.get('contentDetails', {})
+        
+        print(f"📺 {snippet['title']}")
+        print(f"   ID: {item['id']}")
+        print(f"   Channel: {snippet['channelTitle']}")
+        print(f"   Published: {snippet['publishedAt'][:10]}")
+        print(f"   Duration: {content.get('duration', 'N/A')}")
+        print(f"   Views: {int(stats.get('viewCount', 0)):,}")
+        print(f"   Likes: {int(stats.get('likeCount', 0)):,}")
+        if args.verbose:
+            print(f"\n   Description:\n   {snippet['description'][:500]}...")
+        print()
 
 
-def cmd_liked(args):
-    """List liked videos."""
+def cmd_comments(args):
+    """Get video comments."""
     youtube = get_youtube_service()
-    request = youtube.videos().list(
-        part='snippet',
-        myRating='like',
-        maxResults=args.limit
-    )
-    response = request.execute()
+    video_id = extract_video_id(args.video_id)
+    
+    params = {
+        'part': 'snippet',
+        'videoId': video_id,
+        'maxResults': args.limit,
+        'order': args.order,
+        'textFormat': 'plainText',
+    }
+    
+    response = youtube.commentThreads().list(**params).execute()
+
+    if args.json:
+        print(json.dumps(response.get('items', []), indent=2, ensure_ascii=False))
+        return
 
     for item in response.get('items', []):
-        snippet = item['snippet']
-        print(f"{snippet['title']}")
-        print(f"  https://youtube.com/watch?v={item['id']}")
+        comment = item['snippet']['topLevelComment']['snippet']
+        print(f"💬 {comment['authorDisplayName']}")
+        print(f"   {comment['textDisplay'][:200]}")
+        print(f"   👍 {comment['likeCount']} | {comment['publishedAt'][:10]}")
+        
+        # Show replies if requested
+        if args.replies and item['snippet']['totalReplyCount'] > 0:
+            replies_response = youtube.comments().list(
+                part='snippet',
+                parentId=item['id'],
+                maxResults=3
+            ).execute()
+            for reply in replies_response.get('items', []):
+                r = reply['snippet']
+                print(f"      ↳ {r['authorDisplayName']}: {r['textDisplay'][:100]}")
+        print()
 
 
 def cmd_channel(args):
     """Get channel info."""
     youtube = get_youtube_service()
+    
     if args.channel_id:
         request = youtube.channels().list(
-            part='snippet,statistics',
+            part='snippet,statistics,contentDetails',
             id=args.channel_id
         )
     else:
         request = youtube.channels().list(
-            part='snippet,statistics',
+            part='snippet,statistics,contentDetails',
             mine=True
         )
     response = request.execute()
@@ -292,80 +445,268 @@ def cmd_channel(args):
         print("Channel not found")
         return
 
+    if args.json:
+        print(json.dumps(response['items'], indent=2, ensure_ascii=False))
+        return
+
     for item in response['items']:
         snippet = item['snippet']
         stats = item.get('statistics', {})
-        print(f"Channel: {snippet['title']}")
-        print(f"  ID: {item['id']}")
-        print(f"  Subscribers: {stats.get('subscriberCount', 'hidden')}")
-        print(f"  Videos: {stats.get('videoCount', 'N/A')}")
-        print(f"  Views: {stats.get('viewCount', 'N/A')}")
+        print(f"📢 {snippet['title']}")
+        print(f"   ID: {item['id']}")
+        print(f"   Subscribers: {int(stats.get('subscriberCount', 0)):,}")
+        print(f"   Videos: {stats.get('videoCount', 'N/A')}")
+        print(f"   Total Views: {int(stats.get('viewCount', 0)):,}")
         if args.verbose:
-            print(f"\nDescription:\n{snippet['description']}")
+            print(f"\n   Description:\n   {snippet.get('description', '')[:300]}...")
 
+
+# ============================================================================
+# USER DATA COMMANDS
+# ============================================================================
+
+def cmd_subscriptions(args):
+    """List subscriptions."""
+    youtube = get_youtube_service()
+    response = youtube.subscriptions().list(
+        part='snippet',
+        mine=True,
+        maxResults=args.limit
+    ).execute()
+
+    if args.json:
+        print(json.dumps(response.get('items', []), indent=2, ensure_ascii=False))
+        return
+
+    for item in response.get('items', []):
+        snippet = item['snippet']
+        print(f"📢 {snippet['title']}")
+        print(f"   Channel: {snippet['resourceId']['channelId']}")
+
+
+def cmd_playlists(args):
+    """List playlists."""
+    youtube = get_youtube_service()
+    response = youtube.playlists().list(
+        part='snippet,contentDetails',
+        mine=True,
+        maxResults=args.limit
+    ).execute()
+
+    if args.json:
+        print(json.dumps(response.get('items', []), indent=2, ensure_ascii=False))
+        return
+
+    for item in response.get('items', []):
+        snippet = item['snippet']
+        count = item['contentDetails']['itemCount']
+        print(f"📋 {snippet['title']} ({count} videos)")
+        print(f"   ID: {item['id']}")
+
+
+def cmd_playlist_items(args):
+    """List items in a playlist."""
+    youtube = get_youtube_service()
+    response = youtube.playlistItems().list(
+        part='snippet',
+        playlistId=args.playlist_id,
+        maxResults=args.limit
+    ).execute()
+
+    if args.json:
+        print(json.dumps(response.get('items', []), indent=2, ensure_ascii=False))
+        return
+
+    for item in response.get('items', []):
+        snippet = item['snippet']
+        video_id = snippet['resourceId']['videoId']
+        print(f"📺 {snippet['title']}")
+        print(f"   https://youtube.com/watch?v={video_id}")
+
+
+def cmd_liked(args):
+    """List liked videos."""
+    youtube = get_youtube_service()
+    response = youtube.videos().list(
+        part='snippet',
+        myRating='like',
+        maxResults=args.limit
+    ).execute()
+
+    if args.json:
+        print(json.dumps(response.get('items', []), indent=2, ensure_ascii=False))
+        return
+
+    for item in response.get('items', []):
+        snippet = item['snippet']
+        print(f"❤️ {snippet['title']}")
+        print(f"   https://youtube.com/watch?v={item['id']}")
+
+
+# ============================================================================
+# DOWNLOAD COMMANDS (yt-dlp required)
+# ============================================================================
+
+def find_ytdlp():
+    """Find yt-dlp binary."""
+    return shutil.which('yt-dlp')
+
+
+def cmd_download(args):
+    """Download video using yt-dlp."""
+    ytdlp = find_ytdlp()
+    if not ytdlp:
+        print("Error: yt-dlp not found. Install with: brew install yt-dlp", file=sys.stderr)
+        sys.exit(1)
+    
+    video_id = extract_video_id(args.video_id)
+    url = f"https://youtube.com/watch?v={video_id}"
+    
+    cmd = [ytdlp]
+    
+    if args.output:
+        cmd.extend(['-o', f"{args.output}/%(title)s.%(ext)s"])
+    
+    if args.resolution:
+        res_map = {
+            '480p': 'bestvideo[height<=480]+bestaudio/best[height<=480]',
+            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+            'best': 'bestvideo+bestaudio/best',
+        }
+        cmd.extend(['-f', res_map.get(args.resolution, 'best')])
+    
+    if args.subtitles:
+        cmd.extend(['--write-auto-subs', '--sub-lang', args.subtitles])
+    
+    cmd.append(url)
+    
+    print(f"Downloading: {url}")
+    subprocess.run(cmd)
+
+
+def cmd_download_audio(args):
+    """Download audio only using yt-dlp."""
+    ytdlp = find_ytdlp()
+    if not ytdlp:
+        print("Error: yt-dlp not found. Install with: brew install yt-dlp", file=sys.stderr)
+        sys.exit(1)
+    
+    video_id = extract_video_id(args.video_id)
+    url = f"https://youtube.com/watch?v={video_id}"
+    
+    cmd = [ytdlp, '-x']
+    
+    if args.format:
+        cmd.extend(['--audio-format', args.format])
+    
+    if args.output:
+        cmd.extend(['-o', f"{args.output}/%(title)s.%(ext)s"])
+    
+    cmd.append(url)
+    
+    print(f"Downloading audio: {url}")
+    subprocess.run(cmd)
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 def main():
     global _current_account
 
     parser = argparse.ArgumentParser(
-        description='YouTube Data API CLI',
+        description='YouTube Research Pro - Comprehensive YouTube access',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
     )
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
-    parser.add_argument('-a', '--account', default=DEFAULT_ACCOUNT,
-                        help='Account name (default, work, etc.)')
+    parser.add_argument('-a', '--account', default=DEFAULT_ACCOUNT, help='Account name')
+    parser.add_argument('--json', action='store_true', help='Output as JSON')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
 
-    # auth
-    auth_parser = subparsers.add_parser('auth', help='Authenticate with YouTube')
-    auth_parser.set_defaults(func=cmd_auth)
+    # ---- Auth ----
+    auth_p = subparsers.add_parser('auth', help='Authenticate with YouTube')
+    auth_p.set_defaults(func=cmd_auth)
+    
+    acc_p = subparsers.add_parser('accounts', help='List authenticated accounts')
+    acc_p.set_defaults(func=cmd_accounts)
 
-    # accounts
-    acc_parser = subparsers.add_parser('accounts', help='List authenticated accounts')
-    acc_parser.set_defaults(func=cmd_accounts)
+    # ---- Transcripts (FREE!) ----
+    trans_p = subparsers.add_parser('transcript', aliases=['tr', 'trans'], 
+                                     help='Get video transcript (FREE - no API quota!)')
+    trans_p.add_argument('video_id', help='Video ID or URL')
+    trans_p.add_argument('-l', '--language', default='en', help='Language code(s), comma-separated')
+    trans_p.add_argument('-t', '--timestamps', action='store_true', help='Include timestamps')
+    trans_p.set_defaults(func=cmd_transcript)
+    
+    transl_p = subparsers.add_parser('transcript-list', aliases=['trl'], 
+                                      help='List available transcripts')
+    transl_p.add_argument('video_id', help='Video ID or URL')
+    transl_p.set_defaults(func=cmd_transcript_list)
 
-    # channel
-    ch_parser = subparsers.add_parser('channel', aliases=['ch'], help='Get channel info')
-    ch_parser.add_argument('channel_id', nargs='?', help='Channel ID (omit for your channel)')
-    ch_parser.set_defaults(func=cmd_channel)
+    # ---- Search ----
+    search_p = subparsers.add_parser('search', aliases=['s'], help='Search YouTube')
+    search_p.add_argument('query', help='Search query')
+    search_p.add_argument('-l', '--limit', type=int, default=10, help='Max results')
+    search_p.add_argument('-o', '--order', choices=['relevance', 'date', 'viewCount', 'rating'],
+                          help='Sort order')
+    search_p.add_argument('--published-after', help='Filter by publish date (ISO format)')
+    search_p.add_argument('--duration', choices=['short', 'medium', 'long'],
+                          help='Filter by duration')
+    search_p.set_defaults(func=cmd_search)
 
-    # subscriptions
-    subs_parser = subparsers.add_parser('subscriptions', aliases=['subs'], help='List subscriptions')
-    subs_parser.add_argument('-l', '--limit', type=int, default=25, help='Max results')
-    subs_parser.set_defaults(func=cmd_subscriptions)
+    # ---- Video ----
+    video_p = subparsers.add_parser('video', aliases=['v'], help='Get video details')
+    video_p.add_argument('video_ids', nargs='+', help='Video ID(s) or URL(s)')
+    video_p.set_defaults(func=cmd_video)
 
-    # playlists
-    pl_parser = subparsers.add_parser('playlists', aliases=['pl'], help='List playlists')
-    pl_parser.add_argument('-l', '--limit', type=int, default=25, help='Max results')
-    pl_parser.set_defaults(func=cmd_playlists)
+    # ---- Comments ----
+    comm_p = subparsers.add_parser('comments', aliases=['c'], help='Get video comments')
+    comm_p.add_argument('video_id', help='Video ID or URL')
+    comm_p.add_argument('-l', '--limit', type=int, default=20, help='Max results')
+    comm_p.add_argument('-o', '--order', choices=['relevance', 'time'], default='relevance')
+    comm_p.add_argument('-r', '--replies', action='store_true', help='Include replies')
+    comm_p.set_defaults(func=cmd_comments)
 
-    # playlist items
-    pli_parser = subparsers.add_parser('playlist-items', aliases=['pli'], help='List playlist items')
-    pli_parser.add_argument('playlist_id', help='Playlist ID')
-    pli_parser.add_argument('-l', '--limit', type=int, default=25, help='Max results')
-    pli_parser.set_defaults(func=cmd_playlist_items)
+    # ---- Channel ----
+    ch_p = subparsers.add_parser('channel', aliases=['ch'], help='Get channel info')
+    ch_p.add_argument('channel_id', nargs='?', help='Channel ID (omit for yours)')
+    ch_p.set_defaults(func=cmd_channel)
 
-    # search
-    search_parser = subparsers.add_parser('search', help='Search YouTube')
-    search_parser.add_argument('query', help='Search query')
-    search_parser.add_argument('-l', '--limit', type=int, default=10, help='Max results')
-    search_parser.set_defaults(func=cmd_search)
+    # ---- User Data ----
+    subs_p = subparsers.add_parser('subscriptions', aliases=['subs'], help='List subscriptions')
+    subs_p.add_argument('-l', '--limit', type=int, default=25, help='Max results')
+    subs_p.set_defaults(func=cmd_subscriptions)
 
-    # video
-    video_parser = subparsers.add_parser('video', help='Get video details')
-    video_parser.add_argument('video_id', help='Video ID')
-    video_parser.set_defaults(func=cmd_video)
+    pl_p = subparsers.add_parser('playlists', aliases=['pl'], help='List playlists')
+    pl_p.add_argument('-l', '--limit', type=int, default=25, help='Max results')
+    pl_p.set_defaults(func=cmd_playlists)
 
-    # captions
-    cap_parser = subparsers.add_parser('captions', aliases=['caps'], help='List video captions')
-    cap_parser.add_argument('video_id', help='Video ID')
-    cap_parser.set_defaults(func=cmd_captions)
+    pli_p = subparsers.add_parser('playlist-items', aliases=['pli'], help='List playlist items')
+    pli_p.add_argument('playlist_id', help='Playlist ID')
+    pli_p.add_argument('-l', '--limit', type=int, default=25, help='Max results')
+    pli_p.set_defaults(func=cmd_playlist_items)
 
-    # liked
-    liked_parser = subparsers.add_parser('liked', help='List liked videos')
-    liked_parser.add_argument('-l', '--limit', type=int, default=25, help='Max results')
-    liked_parser.set_defaults(func=cmd_liked)
+    liked_p = subparsers.add_parser('liked', help='List liked videos')
+    liked_p.add_argument('-l', '--limit', type=int, default=25, help='Max results')
+    liked_p.set_defaults(func=cmd_liked)
+
+    # ---- Downloads ----
+    dl_p = subparsers.add_parser('download', aliases=['dl'], help='Download video (yt-dlp)')
+    dl_p.add_argument('video_id', help='Video ID or URL')
+    dl_p.add_argument('-o', '--output', help='Output directory')
+    dl_p.add_argument('-r', '--resolution', choices=['480p', '720p', '1080p', 'best'],
+                      default='best', help='Video resolution')
+    dl_p.add_argument('-s', '--subtitles', help='Download subtitles (language code)')
+    dl_p.set_defaults(func=cmd_download)
+
+    dla_p = subparsers.add_parser('download-audio', aliases=['dla'], help='Download audio only')
+    dla_p.add_argument('video_id', help='Video ID or URL')
+    dla_p.add_argument('-o', '--output', help='Output directory')
+    dla_p.add_argument('-f', '--format', choices=['mp3', 'm4a', 'opus', 'best'],
+                       default='mp3', help='Audio format')
+    dla_p.set_defaults(func=cmd_download_audio)
 
     args = parser.parse_args()
     _current_account = args.account
