@@ -63,6 +63,8 @@ export class MediaStreamHandler {
   private ttsPlaying = new Map<string, boolean>();
   /** Active TTS playback controllers per stream */
   private ttsActiveControllers = new Map<string, AbortController>();
+  /** Expected account SID for provider validation (optional) */
+  private expectedAccountSid: string | undefined;
 
   constructor(config: MediaStreamConfig) {
     this.config = config;
@@ -70,8 +72,16 @@ export class MediaStreamHandler {
 
   /**
    * Handle WebSocket upgrade for media stream connections.
+   * @param expectedAccountSid - If set, validates that the stream's accountSid matches
    */
-  handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+  handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    expectedAccountSid?: string,
+  ): void {
+    this.expectedAccountSid = expectedAccountSid;
+
     if (!this.wss) {
       this.wss = new WebSocketServer({ noServer: true });
       this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
@@ -135,9 +145,22 @@ export class MediaStreamHandler {
   /**
    * Handle stream start event.
    */
-  private async handleStart(ws: WebSocket, message: TwilioMediaMessage): Promise<StreamSession> {
+  private async handleStart(
+    ws: WebSocket,
+    message: TwilioMediaMessage,
+  ): Promise<StreamSession | null> {
     const streamSid = message.streamSid || "";
     const callSid = message.start?.callSid || "";
+    const accountSid = message.start?.accountSid || "";
+
+    // Validate accountSid if expected
+    if (this.expectedAccountSid && accountSid !== this.expectedAccountSid) {
+      console.warn(
+        `[MediaStream] Stream rejected: accountSid mismatch (expected: ${this.expectedAccountSid}, got: ${accountSid})`,
+      );
+      ws.close(1008, "Account validation failed");
+      return null;
+    }
 
     console.log(`[MediaStream] Stream started: ${streamSid} (call: ${callSid})`);
 
