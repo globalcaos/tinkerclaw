@@ -252,10 +252,11 @@ export function createBrowserTool(opts?: {
         throw new Error('node is only supported with target="node".');
       }
 
-      if (!target && !requestedNode && profile === "chrome") {
-        // Chrome extension relay takeover is a host Chrome feature; prefer host unless explicitly targeting a node.
-        target = "host";
-      }
+      // Note: Chrome extension relay (profile="chrome") can work via either:
+      // 1. Local host browser control (if available and relay is running)
+      // 2. Node Host browser proxy (if a browser-capable node is connected)
+      // Let resolveBrowserNodeTarget() decide based on gateway.nodes.browser.mode config.
+      // In Docker/headless environments, Node Host routing is typically preferred.
 
       const nodeTarget = await resolveBrowserNodeTarget({
         requestedNode: requestedNode ?? undefined,
@@ -729,7 +730,7 @@ export function createBrowserTool(opts?: {
                 targetId,
               },
             })) as { ok: boolean; targetId: string; cookies: unknown[] };
-            // Filter by domain if specified
+            // Server endpoint doesn't support domain filtering, so filter client-side
             if (domain && Array.isArray(result.cookies)) {
               const domainFilter = domain.toLowerCase();
               result.cookies = result.cookies.filter((c) => {
