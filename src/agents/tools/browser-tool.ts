@@ -10,6 +10,7 @@ import {
 } from "../../browser/client-actions.js";
 import {
   browserCloseTab,
+  browserCookies,
   browserFocusTab,
   browserOpenTab,
   browserProfiles,
@@ -715,6 +716,39 @@ export function createBrowserTool(opts?: {
             }
             throw err;
           }
+        }
+        case "cookies": {
+          const targetId = readStringParam(params, "targetId");
+          const domain = readStringParam(params, "domain");
+          if (proxyRequest) {
+            const result = (await proxyRequest({
+              method: "GET",
+              path: "/cookies",
+              profile,
+              query: {
+                targetId,
+              },
+            })) as { ok: boolean; targetId: string; cookies: unknown[] };
+            // Filter by domain if specified
+            if (domain && Array.isArray(result.cookies)) {
+              const domainFilter = domain.toLowerCase();
+              result.cookies = result.cookies.filter((c) => {
+                const cookieDomain =
+                  typeof c === "object" && c && "domain" in c
+                    ? String((c as { domain: unknown }).domain).toLowerCase()
+                    : "";
+                return cookieDomain.includes(domainFilter);
+              });
+            }
+            return jsonResult(result);
+          }
+          return jsonResult(
+            await browserCookies(baseUrl, {
+              targetId: targetId ?? undefined,
+              domain: domain ?? undefined,
+              profile,
+            }),
+          );
         }
         default:
           throw new Error(`Unknown action: ${action}`);
