@@ -21,6 +21,8 @@ import { formatCliCommand } from "../command-format.js";
 import { forceFreePortAndWait } from "../ports.js";
 import { ensureDevGatewayConfig } from "./dev.js";
 import { runGatewayLoop } from "./run-loop.js";
+import { startSecretsProxy } from "../../security/secrets-proxy.js";
+import { startGatewayContainer, stopGatewayContainer } from "../../security/gateway-container.js";
 import {
   describeUnknownError,
   extractGatewayMiskeys,
@@ -47,6 +49,7 @@ type GatewayRunOpts = {
   rawStreamPath?: unknown;
   dev?: boolean;
   reset?: boolean;
+  secure?: boolean;
 };
 
 const gatewayLog = createSubsystemLogger("gateway");
@@ -258,6 +261,52 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   }
 
   try {
+    if (opts.secure) {
+      gatewayLog.info("Starting in SECURE mode (Docker + Secrets Proxy)");
+      
+      // Set secure mode environment variable for this process
+      process.env.OPENCLAW_SECURE_MODE = "1";
+      
+      const proxyPort = 8080;
+      const proxyUrl = `http://host.docker.internal:${proxyPort}`;
+      
+      const proxyServer = await startSecretsProxy({ port: proxyPort });
+      gatewayLog.info(`Secrets proxy started on port ${proxyPort}`);
+      
+      const containerName = await startGatewayContainer({
+        proxyUrl,
+        env: process.env,
+      });
+      gatewayLog.info(`Gateway container started: ${containerName}`);
+      
+      // Set up graceful shutdown handlers
+      const shutdown = async () => {
+        gatewayLog.info("Shutting down secure gateway...");
+        try {
+          await stopGatewayContainer();
+          gatewayLog.info("Gateway container stopped");
+        } catch (err) {
+          gatewayLog.error(`Error stopping container: ${String(err)}`);
+        }
+        try {
+          proxyServer.close();
+          gatewayLog.info("Secrets proxy stopped");
+        } catch (err) {
+          gatewayLog.error(`Error stopping proxy: ${String(err)}`);
+        }
+        defaultRuntime.exit(0);
+      };
+      
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      
+      gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
+      
+      // Keep process alive
+      await new Promise(() => {});
+      return;
+    }
+
     await runGatewayLoop({
       runtime: defaultRuntime,
       start: async () =>
@@ -349,6 +398,7 @@ export function addGatewayRunCommand(cmd: Command): Command {
     .option("--compact", 'Alias for "--ws-log compact"', false)
     .option("--raw-stream", "Log raw model stream events to jsonl", false)
     .option("--raw-stream-path <path>", "Raw stream jsonl path")
+    .option("--secure", "Run gateway inside a secure Docker container with secrets proxy", false)
     .action(async (opts) => {
       await runGatewayCommand(opts);
     });
