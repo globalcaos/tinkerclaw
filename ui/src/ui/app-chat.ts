@@ -91,8 +91,10 @@ async function sendChatMessageNow(
     refreshSessions?: boolean;
   },
 ) {
+  console.log("[DEBUG] sendChatMessageNow called:", { message, sessionKey: host.sessionKey });
   resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
   const runId = await sendChatMessage(host as unknown as OpenClawApp, message, opts?.attachments);
+  console.log("[DEBUG] sendChatMessage returned:", { runId });
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {
     host.chatMessage = opts.previousDraft;
@@ -145,7 +147,11 @@ export async function handleSendChat(
   messageOverride?: string,
   opts?: { restoreDraft?: boolean },
 ) {
-  if (!host.connected) return;
+  console.log("[DEBUG] handleSendChat called:", { messageOverride, connected: host.connected, chatRunId: host.chatRunId });
+  if (!host.connected) {
+    console.log("[DEBUG] Not connected, returning early");
+    return;
+  }
   const previousDraft = host.chatMessage;
   const message = (messageOverride ?? host.chatMessage).trim();
   const attachments = host.chatAttachments ?? [];
@@ -161,17 +167,21 @@ export async function handleSendChat(
   }
 
   const refreshSessions = isChatResetCommand(message);
+  console.log("[DEBUG] message:", message, "refreshSessions:", refreshSessions, "isBusy:", host.chatSending || Boolean(host.chatRunId));
   if (messageOverride == null) {
     host.chatMessage = "";
     // Clear attachments when sending
     host.chatAttachments = [];
   }
 
+  console.log("[DEBUG] About to check isChatBusy");
   if (isChatBusy(host)) {
+    console.log("[DEBUG] Chat is busy, enqueueing");
     enqueueChatMessage(host, message, attachmentsToSend, refreshSessions);
     return;
   }
 
+  console.log("[DEBUG] Chat not busy, calling sendChatMessageNow");
   await sendChatMessageNow(host, message, {
     previousDraft: messageOverride == null ? previousDraft : undefined,
     restoreDraft: Boolean(messageOverride && opts?.restoreDraft),
