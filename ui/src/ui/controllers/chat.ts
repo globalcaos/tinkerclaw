@@ -56,10 +56,17 @@ export async function sendChatMessage(
   message: string,
   attachments?: ChatAttachment[],
 ): Promise<string | null> {
-  if (!state.client || !state.connected) return null;
+  console.log("[DEBUG] sendChatMessage:", { hasClient: !!state.client, connected: state.connected, message });
+  if (!state.client || !state.connected) {
+    console.log("[DEBUG] sendChatMessage: no client or not connected, returning null");
+    return null;
+  }
   const msg = message.trim();
   const hasAttachments = attachments && attachments.length > 0;
-  if (!msg && !hasAttachments) return null;
+  if (!msg && !hasAttachments) {
+    console.log("[DEBUG] sendChatMessage: empty message and no attachments, returning null");
+    return null;
+  }
 
   const now = Date.now();
 
@@ -110,6 +117,7 @@ export async function sendChatMessage(
     : undefined;
 
   try {
+    console.log("[DEBUG] Sending chat.send request:", { sessionKey: state.sessionKey, message: msg, runId });
     await state.client.request("chat.send", {
       sessionKey: state.sessionKey,
       message: msg,
@@ -117,8 +125,10 @@ export async function sendChatMessage(
       idempotencyKey: runId,
       attachments: apiAttachments,
     });
+    console.log("[DEBUG] chat.send request succeeded");
     return runId;
   } catch (err) {
+    console.log("[DEBUG] chat.send request failed:", err);
     const error = String(err);
     state.chatRunId = null;
     state.chatStream = null;

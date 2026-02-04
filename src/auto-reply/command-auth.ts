@@ -15,6 +15,13 @@ export type CommandAuthorization = {
 };
 
 function resolveProviderFromContext(ctx: MsgContext, cfg: OpenClawConfig): ChannelId | undefined {
+  // Check for internal webchat channel first - it's not a registered channel plugin
+  // but should be recognized as a valid provider to avoid fallback to other channels
+  const rawProvider = ctx.Provider ?? ctx.Surface ?? ctx.OriginatingChannel;
+  if (rawProvider === "webchat" || rawProvider === "internal") {
+    return undefined; // Return undefined for webchat - it has no channel dock, so no enforceOwner
+  }
+
   const direct =
     normalizeAnyChannelId(ctx.Provider) ??
     normalizeAnyChannelId(ctx.Surface) ??
@@ -175,6 +182,9 @@ export function resolveCommandAuthorization(params: {
   const enforceOwner = Boolean(dock?.commands?.enforceOwnerForCommands);
   const isOwner = !enforceOwner || allowAll || ownerList.length === 0 || Boolean(matchedSender);
   const isAuthorizedSender = commandAuthorized && isOwner;
+  console.log(
+    `[DEBUG] resolveCommandAuthorization: providerId=${providerId} commandAuthorized=${commandAuthorized} enforceOwner=${enforceOwner} allowAll=${allowAll} ownerList.length=${ownerList.length} matchedSender=${matchedSender} isOwner=${isOwner} isAuthorizedSender=${isAuthorizedSender}`,
+  );
 
   return {
     providerId,
