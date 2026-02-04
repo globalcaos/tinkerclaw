@@ -370,10 +370,14 @@ export async function handleInlineActions(params: {
     skillCommands,
   });
   if (!commandResult.shouldContinue) {
+    console.log(
+      `[DEBUG] handleInlineActions: commandResult.shouldContinue=false, reply=${JSON.stringify(commandResult.reply)?.slice(0, 200)}`,
+    );
     typing.cleanup();
     return { kind: "reply", reply: commandResult.reply };
   }
 
+  console.log(`[DEBUG] handleInlineActions: returning kind=continue`);
   return {
     kind: "continue",
     directives,

@@ -499,6 +499,9 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       let agentRunStarted = false;
+      console.log(
+        `[DEBUG] chat.send: starting dispatchInboundMessage for message="${parsedMessage}" sessionKey="${p.sessionKey}" runId="${clientRunId}"`,
+      );
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -509,9 +512,13 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           disableBlockStreaming: true,
           onAgentRunStart: () => {
+            console.log(`[DEBUG] chat.send: onAgentRunStart called for runId="${clientRunId}"`);
             agentRunStarted = true;
           },
           onModelSelected: (ctx) => {
+            console.log(
+              `[DEBUG] chat.send: onModelSelected called: provider="${ctx.provider}" model="${ctx.model}"`,
+            );
             prefixContext.provider = ctx.provider;
             prefixContext.model = extractShortModelName(ctx.model);
             prefixContext.modelFull = `${ctx.provider}/${ctx.model}`;
@@ -520,6 +527,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       })
         .then(() => {
+          console.log(
+            `[DEBUG] chat.send: dispatchInboundMessage completed. agentRunStarted=${agentRunStarted} finalReplyParts=${finalReplyParts.length}`,
+          );
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -569,6 +579,9 @@ export const chatHandlers: GatewayRequestHandlers = {
           });
         })
         .catch((err) => {
+          console.error(
+            `[DEBUG] chat.send: dispatchInboundMessage failed with error: ${String(err)}`,
+          );
           const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
