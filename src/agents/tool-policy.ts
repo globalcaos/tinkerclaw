@@ -53,6 +53,7 @@ export const TOOL_GROUPS: Record<string, string[]> = {
     "web_search",
     "web_fetch",
     "image",
+    "whatsapp_history",
   ],
 };
 
