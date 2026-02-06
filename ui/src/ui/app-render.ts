@@ -149,6 +149,22 @@ export function renderApp(state: AppViewState) {
             <span>Health</span>
             <span class="mono">${state.connected ? "OK" : "Offline"}</span>
           </div>
+          <button
+            class="nav-item__icon-btn"
+            style="margin-left: 0.5rem; height: 32px; width: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 99px; background: var(--surface-1); color: var(--text-2); cursor: pointer;"
+            title="openclaw gateway restart"
+            @click=${async () => {
+              if (!confirm("Restart OpenClaw Gateway? This will disconnect active sessions.")) return;
+              try {
+                // @ts-expect-error - client is possibly null
+                await state.client?.request("restart", {});
+              } catch (err) {
+                alert("Restart failed: " + String(err));
+              }
+            }}
+          >
+            ${icons.zap}
+          </button>
           ${renderThemeToggle(state)}
         </div>
       </header>

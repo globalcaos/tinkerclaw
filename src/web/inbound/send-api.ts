@@ -1,15 +1,32 @@
-import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
-import type { ActiveWebSendOptions } from "../active-listener.js";
+import type {
+  AnyMessageContent,
+  GroupMetadata,
+  WAPresence,
+  WASocket,
+} from "@whiskeysockets/baileys";
+import type { ActiveWebSendOptions, MessageKey } from "../active-listener.js";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
 import { toWhatsappJid } from "../../utils.js";
 
-export function createWebSendApi(params: {
-  sock: {
-    sendMessage: (jid: string, content: AnyMessageContent) => Promise<unknown>;
-    sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
-  };
-  defaultAccountId: string;
-}) {
+type BaileysSock = {
+  sendMessage: (jid: string, content: AnyMessageContent, options?: unknown) => Promise<unknown>;
+  sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
+  groupCreate: (subject: string, participants: string[]) => Promise<GroupMetadata>;
+  groupUpdateSubject: (jid: string, subject: string) => Promise<void>;
+  groupUpdateDescription: (jid: string, description: string) => Promise<void>;
+  updateProfilePicture: (jid: string, img: Buffer) => Promise<void>;
+  groupParticipantsUpdate: (
+    jid: string,
+    participants: string[],
+    action: "add" | "remove" | "promote" | "demote",
+  ) => Promise<{ status: string; jid: string | undefined; content?: unknown }[]>;
+  groupLeave: (jid: string) => Promise<void>;
+  groupInviteCode: (jid: string) => Promise<string | undefined>;
+  groupRevokeInvite: (jid: string) => Promise<string | undefined>;
+  groupMetadata: (jid: string) => Promise<GroupMetadata>;
+};
+
+export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: string }) {
   return {
     sendMessage: async (
       to: string,
@@ -107,6 +124,240 @@ export function createWebSendApi(params: {
     sendComposingTo: async (to: string): Promise<void> => {
       const jid = toWhatsappJid(to);
       await params.sock.sendPresenceUpdate("composing", jid);
+    },
+    createGroup: async (
+      subject: string,
+      participants: string[],
+    ): Promise<{ groupId: string; subject: string }> => {
+      const participantJids = participants.map((p) => toWhatsappJid(p));
+      const result = await params.sock.groupCreate(subject, participantJids);
+      recordChannelActivity({
+        channel: "whatsapp",
+        accountId: params.defaultAccountId,
+        direction: "outbound",
+      });
+      return {
+        groupId: result.id,
+        subject: result.subject,
+      };
+    },
+
+    // Edit an existing message
+    editMessage: async (
+      chatJid: string,
+      messageId: string,
+      newText: string,
+      fromMe = true,
+      participant?: string,
+    ): Promise<void> => {
+      const jid = toWhatsappJid(chatJid);
+      await params.sock.sendMessage(jid, {
+        text: newText,
+        edit: {
+          remoteJid: jid,
+          id: messageId,
+          fromMe,
+          participant: participant ? toWhatsappJid(participant) : undefined,
+        },
+      } as AnyMessageContent);
+    },
+
+    // Delete/unsend a message
+    deleteMessage: async (
+      chatJid: string,
+      messageId: string,
+      fromMe = true,
+      participant?: string,
+    ): Promise<void> => {
+      const jid = toWhatsappJid(chatJid);
+      await params.sock.sendMessage(jid, {
+        delete: {
+          remoteJid: jid,
+          id: messageId,
+          fromMe,
+          participant: participant ? toWhatsappJid(participant) : undefined,
+        },
+      } as AnyMessageContent);
+    },
+
+    // Reply to a message (quote)
+    replyMessage: async (
+      to: string,
+      text: string,
+      quotedKey: MessageKey,
+      mediaBuffer?: Buffer,
+      mediaType?: string,
+    ): Promise<{ messageId: string }> => {
+      const jid = toWhatsappJid(to);
+      let payload: AnyMessageContent;
+      if (mediaBuffer && mediaType) {
+        if (mediaType.startsWith("image/")) {
+          payload = { image: mediaBuffer, caption: text || undefined, mimetype: mediaType };
+        } else if (mediaType.startsWith("audio/")) {
+          payload = { audio: mediaBuffer, ptt: true, mimetype: mediaType };
+        } else if (mediaType.startsWith("video/")) {
+          payload = { video: mediaBuffer, caption: text || undefined, mimetype: mediaType };
+        } else {
+          payload = {
+            document: mediaBuffer,
+            fileName: "file",
+            caption: text || undefined,
+            mimetype: mediaType,
+          };
+        }
+      } else {
+        payload = { text };
+      }
+      const quoted = {
+        key: {
+          remoteJid: toWhatsappJid(quotedKey.remoteJid),
+          id: quotedKey.id,
+          fromMe: quotedKey.fromMe,
+          participant: quotedKey.participant ? toWhatsappJid(quotedKey.participant) : undefined,
+        },
+        // Baileys requires a message property for quote context generation.
+        // Since we don't have the original message content, provide a minimal placeholder.
+        message: { conversation: "" },
+      };
+      const result = await params.sock.sendMessage(jid, payload, { quoted });
+      recordChannelActivity({
+        channel: "whatsapp",
+        accountId: params.defaultAccountId,
+        direction: "outbound",
+      });
+      const messageIdResult =
+        typeof result === "object" && result && "key" in result
+          ? String((result as { key?: { id?: string } }).key?.id ?? "unknown")
+          : "unknown";
+      return { messageId: messageIdResult };
+    },
+
+    // Send a sticker
+    sendSticker: async (to: string, stickerBuffer: Buffer): Promise<{ messageId: string }> => {
+      const jid = toWhatsappJid(to);
+      const result = await params.sock.sendMessage(jid, {
+        sticker: stickerBuffer,
+      } as AnyMessageContent);
+      recordChannelActivity({
+        channel: "whatsapp",
+        accountId: params.defaultAccountId,
+        direction: "outbound",
+      });
+      const messageId =
+        typeof result === "object" && result && "key" in result
+          ? String((result as { key?: { id?: string } }).key?.id ?? "unknown")
+          : "unknown";
+      return { messageId };
+    },
+
+    // Group management
+    groupUpdateSubject: async (groupJid: string, newSubject: string): Promise<void> => {
+      const jid = toWhatsappJid(groupJid);
+      await params.sock.groupUpdateSubject(jid, newSubject);
+    },
+
+    groupUpdateDescription: async (groupJid: string, description: string): Promise<void> => {
+      const jid = toWhatsappJid(groupJid);
+      await params.sock.groupUpdateDescription(jid, description);
+    },
+
+    groupUpdateIcon: async (groupJid: string, imageBuffer: Buffer): Promise<void> => {
+      const jid = toWhatsappJid(groupJid);
+      await params.sock.updateProfilePicture(jid, imageBuffer);
+    },
+
+    groupAddParticipants: async (
+      groupJid: string,
+      participants: string[],
+    ): Promise<{ [jid: string]: string }> => {
+      const jid = toWhatsappJid(groupJid);
+      const participantJids = participants.map((p) => toWhatsappJid(p));
+      const result = await params.sock.groupParticipantsUpdate(jid, participantJids, "add");
+      const statusMap: { [jid: string]: string } = {};
+      for (const r of result) {
+        if (r.jid) statusMap[r.jid] = r.status;
+      }
+      return statusMap;
+    },
+
+    groupRemoveParticipants: async (
+      groupJid: string,
+      participants: string[],
+    ): Promise<{ [jid: string]: string }> => {
+      const jid = toWhatsappJid(groupJid);
+      const participantJids = participants.map((p) => toWhatsappJid(p));
+      const result = await params.sock.groupParticipantsUpdate(jid, participantJids, "remove");
+      const statusMap: { [jid: string]: string } = {};
+      for (const r of result) {
+        if (r.jid) statusMap[r.jid] = r.status;
+      }
+      return statusMap;
+    },
+
+    groupPromoteParticipants: async (
+      groupJid: string,
+      participants: string[],
+    ): Promise<{ [jid: string]: string }> => {
+      const jid = toWhatsappJid(groupJid);
+      const participantJids = participants.map((p) => toWhatsappJid(p));
+      const result = await params.sock.groupParticipantsUpdate(jid, participantJids, "promote");
+      const statusMap: { [jid: string]: string } = {};
+      for (const r of result) {
+        if (r.jid) statusMap[r.jid] = r.status;
+      }
+      return statusMap;
+    },
+
+    groupDemoteParticipants: async (
+      groupJid: string,
+      participants: string[],
+    ): Promise<{ [jid: string]: string }> => {
+      const jid = toWhatsappJid(groupJid);
+      const participantJids = participants.map((p) => toWhatsappJid(p));
+      const result = await params.sock.groupParticipantsUpdate(jid, participantJids, "demote");
+      const statusMap: { [jid: string]: string } = {};
+      for (const r of result) {
+        if (r.jid) statusMap[r.jid] = r.status;
+      }
+      return statusMap;
+    },
+
+    groupLeave: async (groupJid: string): Promise<void> => {
+      const jid = toWhatsappJid(groupJid);
+      await params.sock.groupLeave(jid);
+    },
+
+    groupGetInviteCode: async (groupJid: string): Promise<string> => {
+      const jid = toWhatsappJid(groupJid);
+      const code = await params.sock.groupInviteCode(jid);
+      return code ?? "";
+    },
+
+    groupRevokeInviteCode: async (groupJid: string): Promise<string> => {
+      const jid = toWhatsappJid(groupJid);
+      const code = await params.sock.groupRevokeInvite(jid);
+      return code ?? "";
+    },
+
+    groupMetadata: async (
+      groupJid: string,
+    ): Promise<{
+      id: string;
+      subject: string;
+      description?: string;
+      participants: Array<{ id: string; admin?: string }>;
+    }> => {
+      const jid = toWhatsappJid(groupJid);
+      const meta = await params.sock.groupMetadata(jid);
+      return {
+        id: meta.id,
+        subject: meta.subject,
+        description: meta.desc,
+        participants: meta.participants.map((p) => ({
+          id: p.id,
+          admin: p.admin ?? undefined,
+        })),
+      };
     },
   } as const;
 }

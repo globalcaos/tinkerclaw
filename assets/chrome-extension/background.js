@@ -35,6 +35,77 @@ const autoReattachTabs = new Set()
 /** @type {Map<number, NodeJS.Timeout>} */
 const reattachTimeouts = new Map()
 
+// IMPROVED: Persist auto-reattach tabs across extension restarts
+async function saveAutoReattachTabs() {
+  try {
+    await chrome.storage.local.set({ autoReattachTabIds: Array.from(autoReattachTabs) })
+  } catch (err) {
+    console.warn('[OpenClaw] Failed to persist auto-reattach tabs:', err)
+  }
+}
+
+async function loadAutoReattachTabs() {
+  try {
+    const stored = await chrome.storage.local.get(['autoReattachTabIds'])
+    const ids = stored.autoReattachTabIds
+    if (Array.isArray(ids)) {
+      for (const id of ids) {
+        if (typeof id === 'number') autoReattachTabs.add(id)
+      }
+      console.log(`[OpenClaw] Loaded ${autoReattachTabs.size} tabs for auto-reattach from storage`)
+    }
+  } catch (err) {
+    console.warn('[OpenClaw] Failed to load auto-reattach tabs:', err)
+  }
+}
+
+// IMPROVED: Restore attachments on extension startup
+async function restoreAttachments() {
+  if (autoReattachTabs.size === 0) return
+  
+  console.log(`[OpenClaw] Attempting to restore ${autoReattachTabs.size} tab attachments...`)
+  
+  // Verify tabs still exist and attempt to reattach
+  const toRemove = []
+  for (const tabId of autoReattachTabs) {
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      if (!tab || tab.status === 'loading') {
+        console.log(`[OpenClaw] Tab ${tabId} not ready, will retry later`)
+        continue
+      }
+      
+      // Try to connect relay and attach
+      try {
+        await ensureRelayConnection()
+        await attachTab(tabId, { skipAttachedEvent: false })
+        console.log(`[OpenClaw] Successfully restored attachment for tab ${tabId}`)
+      } catch (attachErr) {
+        console.warn(`[OpenClaw] Failed to restore tab ${tabId}:`, attachErr)
+        // Keep in set for manual retry
+        setBadge(tabId, 'error')
+        void chrome.action.setTitle({
+          tabId,
+          title: 'OpenClaw Browser Relay: connection failed (click to retry)',
+        })
+      }
+    } catch (err) {
+      // Tab no longer exists
+      console.log(`[OpenClaw] Tab ${tabId} no longer exists, removing from auto-reattach`)
+      toRemove.push(tabId)
+    }
+  }
+  
+  // Clean up non-existent tabs
+  for (const id of toRemove) {
+    autoReattachTabs.delete(id)
+  }
+  
+  if (toRemove.length > 0) {
+    await saveAutoReattachTabs()
+  }
+}
+
 function nowStack() {
   try {
     return new Error().stack || ''
@@ -233,6 +304,7 @@ async function attachTab(tabId, opts = {}) {
   tabs.set(tabId, { state: 'connected', sessionId, targetId, attachOrder, autoReattach: true })
   tabBySession.set(sessionId, tabId)
   autoReattachTabs.add(tabId) // NEW: Mark for auto-reattach
+  void saveAutoReattachTabs() // IMPROVED: Persist to storage
   
   void chrome.action.setTitle({
     tabId,
@@ -305,6 +377,7 @@ async function detachTab(tabId, reason, opts = {}) {
   // Permanent detach (user clicked to toggle off)
   if (opts.permanent) {
     autoReattachTabs.delete(tabId)
+    void saveAutoReattachTabs() // IMPROVED: Persist removal
   }
   
   setBadge(tabId, 'off')
@@ -543,7 +616,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // NEW: Clean up when tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const wasTracked = autoReattachTabs.has(tabId)
   autoReattachTabs.delete(tabId)
+  if (wasTracked) {
+    void saveAutoReattachTabs() // IMPROVED: Persist removal
+  }
   const timeout = reattachTimeouts.get(tabId)
   if (timeout) {
     clearTimeout(timeout)
@@ -552,6 +629,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 })
 
 chrome.action.onClicked.addListener(() => void connectOrToggleForActiveTab())
+
+// IMPROVED: Load persisted tabs and restore attachments on startup
+;(async () => {
+  await loadAutoReattachTabs()
+  // Delay restoration to let Chrome stabilize
+  setTimeout(() => void restoreAttachments(), 1500)
+})()
 
 chrome.runtime.onInstalled.addListener(() => {
   // Useful: first-time instructions.

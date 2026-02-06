@@ -9,9 +9,27 @@ import type { DmConfig } from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
 export type WhatsAppActionConfig = {
+  // Messaging
   reactions?: boolean;
   sendMessage?: boolean;
   polls?: boolean;
+  edit?: boolean;
+  unsend?: boolean;
+  reply?: boolean;
+  sticker?: boolean;
+  // Group management
+  groupCreate?: boolean;
+  renameGroup?: boolean;
+  setGroupDescription?: boolean;
+  setGroupIcon?: boolean;
+  addParticipant?: boolean;
+  removeParticipant?: boolean;
+  promoteParticipant?: boolean;
+  demoteParticipant?: boolean;
+  leaveGroup?: boolean;
+  getInviteCode?: boolean;
+  revokeInviteCode?: boolean;
+  groupMetadata?: boolean;
 };
 
 export type WhatsAppConfig = {
@@ -136,6 +154,8 @@ export type WhatsAppAccountConfig = {
   blockStreaming?: boolean;
   /** Merge streamed block replies before sending. */
   blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
+  /** Per-action tool gating (default: true for all). */
+  actions?: WhatsAppActionConfig;
   groups?: Record<
     string,
     {
