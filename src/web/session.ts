@@ -13,6 +13,7 @@ import { danger, success } from "../globals.js";
 import { getChildLogger, toPinoLikeLogger } from "../logging.js";
 import { ensureDir, resolveUserPath } from "../utils.js";
 import { VERSION } from "../version.js";
+import { bindHistoryCapture } from "../whatsapp-history/live-capture.js";
 import {
   maybeRestoreCredsFromBackup,
   resolveDefaultWebAuthDir,
@@ -136,6 +137,9 @@ export async function createWaSocket(
   sessionLogger.info("[WA-DEBUG] Socket created, binding store");
 
   store.bind(sock.ev);
+
+  // Bind SQLite history capture for persistent, searchable message storage
+  bindHistoryCapture(sock.ev);
 
   sock.ev.on("creds.update", () => {
     sessionLogger.info("[WA-DEBUG] creds.update event received");
