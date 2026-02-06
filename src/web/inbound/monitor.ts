@@ -418,8 +418,24 @@ export async function monitorWebInbox(options: {
 
   const sendApi = createWebSendApi({
     sock: {
-      sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
+      sendMessage: (jid: string, content: AnyMessageContent, opts?: unknown) =>
+        sock.sendMessage(jid, content, opts as Parameters<typeof sock.sendMessage>[2]),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
+      groupCreate: (subject: string, participants: string[]) =>
+        sock.groupCreate(subject, participants),
+      groupUpdateSubject: (jid: string, subject: string) => sock.groupUpdateSubject(jid, subject),
+      groupUpdateDescription: (jid: string, description: string) =>
+        sock.groupUpdateDescription(jid, description),
+      updateProfilePicture: (jid: string, img: Buffer) => sock.updateProfilePicture(jid, img),
+      groupParticipantsUpdate: (
+        jid: string,
+        participants: string[],
+        action: "add" | "remove" | "promote" | "demote",
+      ) => sock.groupParticipantsUpdate(jid, participants, action),
+      groupLeave: (jid: string) => sock.groupLeave(jid),
+      groupInviteCode: (jid: string) => sock.groupInviteCode(jid),
+      groupRevokeInvite: (jid: string) => sock.groupRevokeInvite(jid),
+      groupMetadata: (jid: string) => sock.groupMetadata(jid),
     },
     defaultAccountId: options.accountId,
   });
