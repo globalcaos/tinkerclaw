@@ -11,6 +11,33 @@ import {
 
 const ToolPolicyBySenderSchema = z.record(z.string(), ToolPolicySchema).optional();
 
+const WhatsAppActionsSchema = z
+  .object({
+    // Messaging
+    reactions: z.boolean().optional(),
+    sendMessage: z.boolean().optional(),
+    polls: z.boolean().optional(),
+    edit: z.boolean().optional(),
+    unsend: z.boolean().optional(),
+    reply: z.boolean().optional(),
+    sticker: z.boolean().optional(),
+    // Group management
+    groupCreate: z.boolean().optional(),
+    renameGroup: z.boolean().optional(),
+    setGroupDescription: z.boolean().optional(),
+    setGroupIcon: z.boolean().optional(),
+    addParticipant: z.boolean().optional(),
+    removeParticipant: z.boolean().optional(),
+    promoteParticipant: z.boolean().optional(),
+    demoteParticipant: z.boolean().optional(),
+    leaveGroup: z.boolean().optional(),
+    getInviteCode: z.boolean().optional(),
+    revokeInviteCode: z.boolean().optional(),
+    groupMetadata: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 export const WhatsAppAccountSchema = z
   .object({
     name: z.string().optional(),
@@ -38,6 +65,7 @@ export const WhatsAppAccountSchema = z
     /** Request full history sync from WhatsApp on connect (OPT-IN, default false).
      * Warning: This can download thousands of messages and consume significant memory. */
     syncFullHistory: z.boolean().optional().default(false),
+    actions: WhatsAppActionsSchema,
     groups: z
       .record(
         z.string(),
@@ -102,14 +130,7 @@ export const WhatsAppConfigSchema = z
     /** Request full history sync from WhatsApp on connect (OPT-IN, default false).
      * Warning: This can download thousands of messages and consume significant memory. */
     syncFullHistory: z.boolean().optional().default(false),
-    actions: z
-      .object({
-        reactions: z.boolean().optional(),
-        sendMessage: z.boolean().optional(),
-        polls: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
+    actions: WhatsAppActionsSchema,
     groups: z
       .record(
         z.string(),
