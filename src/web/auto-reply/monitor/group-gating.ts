@@ -88,15 +88,27 @@ export function applyGroupGating(params: {
   }
 
   const mentionDebug = debugMention(params.msg, mentionConfig, params.authDir);
+
+  // Check triggerPrefix as an alternative to @mention in groups.
+  // This allows "Jarvis hello" to trigger the bot without needing to @mention.
+  const triggerPrefix =
+    params.cfg.channels?.whatsapp?.triggerPrefix ?? params.cfg.channels?.defaults?.triggerPrefix;
+  const bodyTrimmed = (params.msg.body ?? "").trim().toLowerCase();
+  const triggerPrefixMatched = triggerPrefix
+    ? bodyTrimmed.startsWith(triggerPrefix.toLowerCase())
+    : false;
+
   params.replyLogger.debug(
     {
       conversationId: params.conversationId,
       wasMentioned: mentionDebug.wasMentioned,
+      triggerPrefixMatched,
+      triggerPrefix,
       ...mentionDebug.details,
     },
     "group mention debug",
   );
-  const wasMentioned = mentionDebug.wasMentioned;
+  const wasMentioned = mentionDebug.wasMentioned || triggerPrefixMatched;
   const activation = resolveGroupActivationFor({
     cfg: params.cfg,
     agentId: params.agentId,
