@@ -1,6 +1,9 @@
 ---
 name: chatgpt-exporter-ultimate
+version: 1.0.2
 description: Export ALL your ChatGPT conversations instantly — no 24h wait, no extensions. Works via browser relay OR standalone bookmarklet. Extracts full message history with timestamps, roles, and metadata. One command, one JSON file, done.
+homepage: https://github.com/openclaw/openclaw
+repository: https://github.com/openclaw/openclaw
 ---
 
 # ChatGPT Exporter ULTIMATE
