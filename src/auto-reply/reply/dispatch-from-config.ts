@@ -187,9 +187,10 @@ export async function dispatchReplyFromConfig(params: {
   }
 
   // Check triggerPrefix filter (e.g., "Jarvis" prefix requirement)
+  // Use RawBody/BodyForCommands (clean message without envelope) for prefix check
   const triggerPrefix = resolveTriggerPrefix(cfg, channel);
   if (triggerPrefix) {
-    const messageBody = ctx.Body ?? ctx.BodyForAgent ?? "";
+    const messageBody = ctx.BodyForCommands ?? ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "";
     const prefixCheck = checkTriggerPrefix(messageBody, triggerPrefix);
     if (!prefixCheck.pass) {
       logVerbose(`Skipped message (triggerPrefix "${triggerPrefix}" not found)`);

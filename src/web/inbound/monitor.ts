@@ -168,6 +168,13 @@ export async function monitorWebInbox(options: {
       return;
     }
     for (const msg of upsert.messages ?? []) {
+      // DEBUG: Log every message received from Baileys
+      const debugRemoteJid = msg.key?.remoteJid ?? "unknown";
+      const debugFromMe = msg.key?.fromMe ?? false;
+      inboundLogger.info(
+        { remoteJid: debugRemoteJid, fromMe: debugFromMe, type: upsert.type },
+        "DEBUG: Baileys message received",
+      );
       recordChannelActivity({
         channel: "whatsapp",
         accountId: options.accountId,
@@ -194,11 +201,14 @@ export async function monitorWebInbox(options: {
       if (!from) {
         continue;
       }
+      // Fix: When fromMe is true, the sender is US (selfE164), not the chat's remoteJid
       const senderE164 = group
         ? participantJid
           ? await resolveInboundJid(participantJid)
           : null
-        : from;
+        : msg.key?.fromMe
+          ? selfE164
+          : from;
 
       let groupSubject: string | undefined;
       let groupParticipants: string[] | undefined;
@@ -210,6 +220,9 @@ export async function monitorWebInbox(options: {
       const messageTimestampMs = msg.messageTimestamp
         ? Number(msg.messageTimestamp) * 1000
         : undefined;
+
+      // Extract message body early for access control (triggerPrefix check on outbound DMs).
+      const earlyBody = extractText(msg.message ?? undefined) ?? "";
 
       const access = await checkInboundAccessControl({
         accountId: options.accountId,
@@ -223,6 +236,7 @@ export async function monitorWebInbox(options: {
         connectedAtMs,
         sock: { sendMessage: (jid, content) => sock.sendMessage(jid, content) },
         remoteJid,
+        messageBody: earlyBody,
       });
       if (!access.allowed) {
         continue;
