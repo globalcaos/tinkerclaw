@@ -21,6 +21,16 @@ import {
   discoverAllSessions,
   type DiscoveredSession,
 } from "../../infra/session-cost-usage.js";
+import {
+  getTokenUsageSummaries,
+  getManusUsageSummary,
+  getBudgetAwarenessContext,
+  recordManusTask,
+  setSubscriptionTier,
+  setMonthlyBudget,
+  setManusMonthlyCreditBudget,
+  type SubscriptionTier,
+} from "../../infra/token-usage-tracker.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   ErrorCodes,
@@ -33,6 +43,39 @@ import {
   loadCombinedSessionStoreForGateway,
   loadSessionEntry,
 } from "../session-utils.js";
+
+// Initialize tracker settings from config env vars
+function initTrackerFromConfig(): void {
+  const config = loadConfig();
+  const env = config.env ?? {};
+
+  // Set subscription tier from ANTHROPIC_SUBSCRIPTION_TIER
+  const tier = env.ANTHROPIC_SUBSCRIPTION_TIER as string | undefined;
+  if (tier && ["free", "pro", "max_5x", "max_20x", "api"].includes(tier)) {
+    setSubscriptionTier(tier as SubscriptionTier);
+  }
+
+  // Set monthly budget from ANTHROPIC_MONTHLY_BUDGET_USD
+  const budgetStr = env.ANTHROPIC_MONTHLY_BUDGET_USD as string | undefined;
+  if (budgetStr) {
+    const budget = Number(budgetStr);
+    if (Number.isFinite(budget) && budget > 0) {
+      setMonthlyBudget(budget);
+    }
+  }
+
+  // Set Manus monthly credit budget from MANUS_MONTHLY_CREDIT_BUDGET
+  const manusBudgetStr = env.MANUS_MONTHLY_CREDIT_BUDGET as string | undefined;
+  if (manusBudgetStr) {
+    const manusBudget = Number(manusBudgetStr);
+    if (Number.isFinite(manusBudget) && manusBudget > 0) {
+      setManusMonthlyCreditBudget(manusBudget);
+    }
+  }
+}
+
+// Initialize on module load
+initTrackerFromConfig();
 
 const COST_USAGE_CACHE_TTL_MS = 30_000;
 
@@ -818,5 +861,35 @@ export const usageHandlers: GatewayRequestHandlers = {
     });
 
     respond(true, { logs: logs ?? [] }, undefined);
+  },
+  "usage.manus.track": async ({ respond, params }) => {
+    // Track a Manus task completion
+    const taskId = typeof params?.taskId === "string" ? params.taskId : undefined;
+    const credits = typeof params?.credits === "number" ? params.credits : undefined;
+    const status =
+      typeof params?.status === "string"
+        ? (params.status as "completed" | "error" | "running")
+        : undefined;
+    const description = typeof params?.description === "string" ? params.description : undefined;
+
+    if (!taskId || credits === undefined) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "Missing required params: taskId, credits"),
+      );
+      return;
+    }
+
+    recordManusTask({ taskId, credits, status, description });
+    const summary = getManusUsageSummary();
+    respond(true, { recorded: true, summary }, undefined);
+  },
+  "usage.budget": async ({ respond }) => {
+    // Return budget awareness context for the agent
+    const context = getBudgetAwarenessContext();
+    const tokenSummaries = getTokenUsageSummaries();
+    const manusSummary = getManusUsageSummary();
+    respond(true, { context, tokenSummaries, manusSummary }, undefined);
   },
 };
