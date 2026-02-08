@@ -52,10 +52,29 @@ The upstream OpenClaw is excellent. This fork is for **tinkerers** who want:
 - Budget-aware AI (knows its own costs)
 - Minimal webchat UI
 
-**Skills**
-- `youtube-ultimate` — Transcripts, search, download (no API key!)
-- `google-sheets` — Workspace integration
-- `healthcheck` — System security audits
+**Skills** — See [Published Skills](#-published-skills) below
+
+---
+
+## 📦 Published Skills
+
+Skills developed in this fork, available on [ClawHub](https://clawhub.com):
+
+| Skill | Description | Install |
+|-------|-------------|---------|
+| [**agent-memory-ultimate**](https://clawhub.com/skill/agent-memory-ultimate) | Complete memory system for AI agents. Human-like architecture with daily logs, sleep consolidation, SQLite + FTS5, importers for WhatsApp/ChatGPT/VCF. | `clawhub install agent-memory-ultimate` |
+| [**agent-boundaries-ultimate**](https://clawhub.com/skill/agent-boundaries-ultimate) | Privacy, security, and ethical boundaries. Evolves beyond Asimov's Three Laws for digital agents. OPSEC, authorization, inter-agent etiquette. Community contributions welcome. | `clawhub install agent-boundaries-ultimate` |
+| [**shell-security-ultimate**](https://clawhub.com/skill/shell-security-ultimate) | Security-first command execution. Classifies commands by risk level (SAFE→CRITICAL), enforces transparency. Explains coded vs prompted behaviors. | `clawhub install shell-security-ultimate` |
+| [**whatsapp-ultimate**](https://clawhub.com/skill/whatsapp-ultimate) | Full WhatsApp integration. Messaging, media, polls, stickers, voice notes, group management, and persistent searchable history with SQLite. | `clawhub install whatsapp-ultimate` |
+| [**youtube-ultimate**](https://clawhub.com/skill/youtube-ultimate) | The most comprehensive YouTube skill. FREE transcripts (zero API quota!), search with filters, batch video details, comments, downloads. | `clawhub install youtube-ultimate` |
+
+### Contributing to Skills
+
+We learn from community experience. To contribute lessons to `agent-boundaries-ultimate`:
+
+1. Open an issue with label `community-lesson`
+2. Use the template in [CONTRIBUTE.md](skills/agent-boundaries-ultimate/CONTRIBUTE.md)
+3. Accepted lessons are credited and added to next release
 
 ---
 
