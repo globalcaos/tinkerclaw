@@ -21,6 +21,8 @@ import type {
 export interface MediaStreamConfig {
   /** STT provider for transcription */
   sttProvider: OpenAIRealtimeSTTProvider;
+  /** Validate whether to accept a media stream for the given call ID */
+  shouldAcceptStream?: (params: { callId: string; streamSid: string; token?: string }) => boolean;
   /** Callback when transcript is received */
   onTranscript?: (callId: string, transcript: string) => void;
   /** Callback for partial transcripts (streaming UI) */
@@ -63,8 +65,6 @@ export class MediaStreamHandler {
   private ttsPlaying = new Map<string, boolean>();
   /** Active TTS playback controllers per stream */
   private ttsActiveControllers = new Map<string, AbortController>();
-  /** Expected account SID for provider validation (optional) */
-  private expectedAccountSid: string | undefined;
 
   constructor(config: MediaStreamConfig) {
     this.config = config;
@@ -72,16 +72,8 @@ export class MediaStreamHandler {
 
   /**
    * Handle WebSocket upgrade for media stream connections.
-   * @param expectedAccountSid - If set, validates that the stream's accountSid matches
    */
-  handleUpgrade(
-    request: IncomingMessage,
-    socket: Duplex,
-    head: Buffer,
-    expectedAccountSid?: string,
-  ): void {
-    this.expectedAccountSid = expectedAccountSid;
-
+  handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
     if (!this.wss) {
       this.wss = new WebSocketServer({ noServer: true });
       this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
@@ -97,6 +89,7 @@ export class MediaStreamHandler {
    */
   private async handleConnection(ws: WebSocket, _request: IncomingMessage): Promise<void> {
     let session: StreamSession | null = null;
+    const streamToken = this.getStreamToken(_request);
 
     ws.on("message", async (data: Buffer) => {
       try {
@@ -108,7 +101,7 @@ export class MediaStreamHandler {
             break;
 
           case "start":
-            session = await this.handleStart(ws, message);
+            session = await this.handleStart(ws, message, streamToken);
             break;
 
           case "media":
@@ -148,21 +141,25 @@ export class MediaStreamHandler {
   private async handleStart(
     ws: WebSocket,
     message: TwilioMediaMessage,
+    streamToken?: string,
   ): Promise<StreamSession | null> {
     const streamSid = message.streamSid || "";
     const callSid = message.start?.callSid || "";
-    const accountSid = message.start?.accountSid || "";
-
-    // Validate accountSid if expected
-    if (this.expectedAccountSid && accountSid !== this.expectedAccountSid) {
-      console.warn(
-        `[MediaStream] Stream rejected: accountSid mismatch (expected: ${this.expectedAccountSid}, got: ${accountSid})`,
-      );
-      ws.close(1008, "Account validation failed");
-      return null;
-    }
 
     console.log(`[MediaStream] Stream started: ${streamSid} (call: ${callSid})`);
+    if (!callSid) {
+      console.warn("[MediaStream] Missing callSid; closing stream");
+      ws.close(1008, "Missing callSid");
+      return null;
+    }
+    if (
+      this.config.shouldAcceptStream &&
+      !this.config.shouldAcceptStream({ callId: callSid, streamSid, token: streamToken })
+    ) {
+      console.warn(`[MediaStream] Rejecting stream for unknown call: ${callSid}`);
+      ws.close(1008, "Unknown call");
+      return null;
+    }
 
     // Create STT session
     const sttSession = this.config.sttProvider.createSession();
@@ -210,6 +207,18 @@ export class MediaStreamHandler {
     session.sttSession.close();
     this.sessions.delete(session.streamSid);
     this.config.onDisconnect?.(session.callId);
+  }
+
+  private getStreamToken(request: IncomingMessage): string | undefined {
+    if (!request.url || !request.headers.host) {
+      return undefined;
+    }
+    try {
+      const url = new URL(request.url, `http://${request.headers.host}`);
+      return url.searchParams.get("token") ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**

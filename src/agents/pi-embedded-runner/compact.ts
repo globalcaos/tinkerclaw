@@ -42,8 +42,10 @@ import {
 } from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { resolveSandboxContext } from "../sandbox.js";
+import { repairSessionFileIfNeeded } from "../session-file-repair.js";
 import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";
 import { acquireSessionWriteLock } from "../session-write-lock.js";
+import { detectRuntimeShell } from "../shell-utils.js";
 import {
   applySkillEnvOverrides,
   applySkillEnvOverridesFromSnapshot,
@@ -87,6 +89,8 @@ export type CompactEmbeddedPiSessionParams = {
   groupSpace?: string | null;
   /** Parent session key for subagent policy inheritance. */
   spawnedBy?: string | null;
+  /** Whether the sender is an owner (required for owner-only tools). */
+  senderIsOwner?: boolean;
   sessionFile: string;
   workspaceDir: string;
   agentDir?: string;
@@ -226,6 +230,7 @@ export async function compactEmbeddedPiSessionDirect(
       groupChannel: params.groupChannel,
       groupSpace: params.groupSpace,
       spawnedBy: params.spawnedBy,
+      senderIsOwner: params.senderIsOwner,
       agentDir,
       workspaceDir: effectiveWorkspace,
       config: params.config,
@@ -304,6 +309,7 @@ export async function compactEmbeddedPiSessionDirect(
       arch: os.arch(),
       node: process.version,
       model: `${provider}/${modelId}`,
+      shell: detectRuntimeShell(),
       channel: runtimeChannel,
       capabilities: runtimeCapabilities,
       channelActions,
@@ -350,6 +356,7 @@ export async function compactEmbeddedPiSessionDirect(
       userTime,
       userTimeFormat,
       contextFiles,
+      memoryCitationsMode: params.config?.memory?.citations,
     });
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
 
@@ -357,6 +364,10 @@ export async function compactEmbeddedPiSessionDirect(
       sessionFile: params.sessionFile,
     });
     try {
+      await repairSessionFileIfNeeded({
+        sessionFile: params.sessionFile,
+        warn: (message) => log.warn(message),
+      });
       await prewarmSessionFile(params.sessionFile);
       const transcriptPolicy = resolveTranscriptPolicy({
         modelApi: model.api,
@@ -374,7 +385,8 @@ export async function compactEmbeddedPiSessionDirect(
         settingsManager,
         minReserveTokens: resolveCompactionReserveTokensFloor(params.config),
       });
-      const additionalExtensionPaths = buildEmbeddedExtensionPaths({
+      // Call for side effects (sets compaction/pruning runtime state)
+      buildEmbeddedExtensionPaths({
         cfg: params.config,
         sessionManager,
         provider,
@@ -396,11 +408,10 @@ export async function compactEmbeddedPiSessionDirect(
         thinkingLevel: mapThinkingLevel(params.thinkLevel),
         tools: builtInTools,
         customTools,
-        additionalExtensionPaths,
         sessionManager,
         settingsManager,
       });
-      applySystemPromptOverrideToSession(session, systemPromptOverride);
+      applySystemPromptOverrideToSession(session, systemPromptOverride());
 
       try {
         const prior = await sanitizeSessionHistory({
