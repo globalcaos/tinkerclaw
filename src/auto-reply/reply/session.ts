@@ -315,6 +315,10 @@ export async function initSessionState(params: {
     parentSessionKey !== sessionKey &&
     sessionStore[parentSessionKey]
   ) {
+    console.warn(
+      `[session-init] forking from parent session: parentKey=${parentSessionKey} → sessionKey=${sessionKey} ` +
+        `parentTokens=${sessionStore[parentSessionKey].totalTokens ?? "?"}`,
+    );
     const forked = forkSessionFromParent({
       parentEntry: sessionStore[parentSessionKey],
     });
@@ -322,6 +326,7 @@ export async function initSessionState(params: {
       sessionId = forked.sessionId;
       sessionEntry.sessionId = forked.sessionId;
       sessionEntry.sessionFile = forked.sessionFile;
+      console.warn(`[session-init] forked session created: file=${forked.sessionFile}`);
     }
   }
   if (!sessionEntry.sessionFile) {
@@ -335,6 +340,12 @@ export async function initSessionState(params: {
     sessionEntry.compactionCount = 0;
     sessionEntry.memoryFlushCompactionCount = undefined;
     sessionEntry.memoryFlushAt = undefined;
+    // Clear stale token metrics from previous session so /status doesn't
+    // display the old session's context usage after /new or /reset.
+    sessionEntry.totalTokens = undefined;
+    sessionEntry.inputTokens = undefined;
+    sessionEntry.outputTokens = undefined;
+    sessionEntry.contextTokens = undefined;
   }
   // Preserve per-session overrides while resetting compaction state on /new.
   sessionStore[sessionKey] = { ...sessionStore[sessionKey], ...sessionEntry };
