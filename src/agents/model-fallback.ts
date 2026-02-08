@@ -13,9 +13,9 @@ import {
   isTimeoutError,
 } from "./failover-error.js";
 import {
+  buildConfiguredAllowlistKeys,
   buildModelAliasIndex,
   modelKey,
-  parseModelRef,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "./model-selection.js";
@@ -51,28 +51,6 @@ function shouldRethrowAbort(err: unknown): boolean {
   return isAbortError(err) && !isTimeoutError(err);
 }
 
-function buildAllowedModelKeys(
-  cfg: OpenClawConfig | undefined,
-  defaultProvider: string,
-): Set<string> | null {
-  const rawAllowlist = (() => {
-    const modelMap = cfg?.agents?.defaults?.models ?? {};
-    return Object.keys(modelMap);
-  })();
-  if (rawAllowlist.length === 0) {
-    return null;
-  }
-  const keys = new Set<string>();
-  for (const raw of rawAllowlist) {
-    const parsed = parseModelRef(String(raw ?? ""), defaultProvider);
-    if (!parsed) {
-      continue;
-    }
-    keys.add(modelKey(parsed.provider, parsed.model));
-  }
-  return keys.size > 0 ? keys : null;
-}
-
 function resolveImageFallbackCandidates(params: {
   cfg: OpenClawConfig | undefined;
   defaultProvider: string;
@@ -82,7 +60,10 @@ function resolveImageFallbackCandidates(params: {
     cfg: params.cfg ?? {},
     defaultProvider: params.defaultProvider,
   });
-  const allowlist = buildAllowedModelKeys(params.cfg, params.defaultProvider);
+  const allowlist = buildConfiguredAllowlistKeys({
+    cfg: params.cfg,
+    defaultProvider: params.defaultProvider,
+  });
   const seen = new Set<string>();
   const candidates: ModelCandidate[] = [];
 
@@ -166,7 +147,10 @@ function resolveFallbackCandidates(params: {
     cfg: params.cfg ?? {},
     defaultProvider,
   });
-  const allowlist = buildAllowedModelKeys(params.cfg, defaultProvider);
+  const allowlist = buildConfiguredAllowlistKeys({
+    cfg: params.cfg,
+    defaultProvider,
+  });
   const seen = new Set<string>();
   const candidates: ModelCandidate[] = [];
 
@@ -305,21 +289,21 @@ export async function runWithModelFallback<T>(params: {
         status: described.status,
         code: described.code,
       });
-      
+
       // Log failover attempt
       const nextCandidate = candidates[i + 1];
       if (nextCandidate) {
         console.warn(
           `[model-fallback] ${candidate.provider}/${candidate.model} failed (${described.reason ?? "error"}), ` +
-          `trying ${nextCandidate.provider}/${nextCandidate.model}...`
+            `trying ${nextCandidate.provider}/${nextCandidate.model}...`,
         );
       } else {
         console.warn(
           `[model-fallback] ${candidate.provider}/${candidate.model} failed (${described.reason ?? "error"}), ` +
-          `no more fallbacks available`
+            `no more fallbacks available`,
         );
       }
-      
+
       await params.onError?.({
         provider: candidate.provider,
         model: candidate.model,

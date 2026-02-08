@@ -1,6 +1,6 @@
 const KEY = "openclaw.control.settings.v1";
 
-import type { ThemeMode } from "./theme";
+import type { ThemeMode } from "./theme.ts";
 
 export type ExecSecurityLevel = "safe" | "low" | "medium" | "high" | "critical";
 
@@ -40,7 +40,9 @@ export function loadSettings(): UiSettings {
 
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return defaults;
+    if (!raw) {
+      return defaults;
+    }
     const parsed = JSON.parse(raw) as Partial<UiSettings>;
     return {
       gatewayUrl:
