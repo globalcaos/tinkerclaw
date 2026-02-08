@@ -23,12 +23,9 @@ import {
 } from "../../infra/session-cost-usage.js";
 import {
   getTokenUsageSummaries,
-  getManusUsageSummary,
   getBudgetAwarenessContext,
-  recordManusTask,
   setSubscriptionTier,
   setMonthlyBudget,
-  setManusMonthlyCreditBudget,
   type SubscriptionTier,
 } from "../../infra/token-usage-tracker.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
@@ -61,15 +58,6 @@ function initTrackerFromConfig(): void {
     const budget = Number(budgetStr);
     if (Number.isFinite(budget) && budget > 0) {
       setMonthlyBudget(budget);
-    }
-  }
-
-  // Set Manus monthly credit budget from MANUS_MONTHLY_CREDIT_BUDGET
-  const manusBudgetStr = env.MANUS_MONTHLY_CREDIT_BUDGET as string | undefined;
-  if (manusBudgetStr) {
-    const manusBudget = Number(manusBudgetStr);
-    if (Number.isFinite(manusBudget) && manusBudget > 0) {
-      setManusMonthlyCreditBudget(manusBudget);
     }
   }
 }
@@ -862,34 +850,10 @@ export const usageHandlers: GatewayRequestHandlers = {
 
     respond(true, { logs: logs ?? [] }, undefined);
   },
-  "usage.manus.track": async ({ respond, params }) => {
-    // Track a Manus task completion
-    const taskId = typeof params?.taskId === "string" ? params.taskId : undefined;
-    const credits = typeof params?.credits === "number" ? params.credits : undefined;
-    const status =
-      typeof params?.status === "string"
-        ? (params.status as "completed" | "error" | "running")
-        : undefined;
-    const description = typeof params?.description === "string" ? params.description : undefined;
-
-    if (!taskId || credits === undefined) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "Missing required params: taskId, credits"),
-      );
-      return;
-    }
-
-    recordManusTask({ taskId, credits, status, description });
-    const summary = getManusUsageSummary();
-    respond(true, { recorded: true, summary }, undefined);
-  },
   "usage.budget": async ({ respond }) => {
-    // Return budget awareness context for the agent
+    // Return budget awareness context for the agent (Anthropic tracking)
     const context = getBudgetAwarenessContext();
     const tokenSummaries = getTokenUsageSummaries();
-    const manusSummary = getManusUsageSummary();
-    respond(true, { context, tokenSummaries, manusSummary }, undefined);
+    respond(true, { context, tokenSummaries }, undefined);
   },
 };
