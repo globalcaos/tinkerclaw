@@ -6,16 +6,14 @@
  * Provides seamless auto-recall and auto-capture via lifecycle hooks.
  */
 
+import type * as LanceDB from "@lancedb/lancedb";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import * as lancedb from "@lancedb/lancedb";
-import { rerankers } from "@lancedb/lancedb";
 import { Type } from "@sinclair/typebox";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { stringEnum } from "openclaw/plugin-sdk";
 import {
   MEMORY_CATEGORIES,
-  type HybridConfig,
   type MemoryCategory,
   memoryConfigSchema,
   vectorDimsForModel,
@@ -24,6 +22,19 @@ import {
 // ============================================================================
 // Types
 // ============================================================================
+
+let lancedbImportPromise: Promise<typeof import("@lancedb/lancedb")> | null = null;
+const loadLanceDB = async (): Promise<typeof import("@lancedb/lancedb")> => {
+  if (!lancedbImportPromise) {
+    lancedbImportPromise = import("@lancedb/lancedb");
+  }
+  try {
+    return await lancedbImportPromise;
+  } catch (err) {
+    // Common on macOS today: upstream package may not ship darwin native bindings.
+    throw new Error(`memory-lancedb: failed to load LanceDB. ${String(err)}`, { cause: err });
+  }
+};
 
 type MemoryEntry = {
   id: string;
@@ -45,29 +56,14 @@ type MemorySearchResult = {
 
 const TABLE_NAME = "memories";
 
-type Logger = {
-  info: (msg: string) => void;
-  warn: (msg: string) => void;
-  debug?: (msg: string) => void;
-};
-
 class MemoryDB {
-  private db: lancedb.Connection | null = null;
-  private table: lancedb.Table | null = null;
+  private db: LanceDB.Connection | null = null;
+  private table: LanceDB.Table | null = null;
   private initPromise: Promise<void> | null = null;
-  private reranker: rerankers.RRFReranker | null = null;
-  private ftsReady = false;
 
   constructor(
     private readonly dbPath: string,
     private readonly vectorDim: number,
-    private readonly hybridConfig: HybridConfig = {
-      enabled: true,
-      reranker: "rrf",
-      vectorWeight: 0.7,
-      textWeight: 0.3,
-    },
-    private readonly logger?: Logger,
   ) {}
 
   private async ensureInitialized(): Promise<void> {
@@ -83,6 +79,7 @@ class MemoryDB {
   }
 
   private async doInitialize(): Promise<void> {
+    const lancedb = await loadLanceDB();
     this.db = await lancedb.connect(this.dbPath);
     const tables = await this.db.tableNames();
 
@@ -101,33 +98,6 @@ class MemoryDB {
       ]);
       await this.table.delete('id = "__schema__"');
     }
-
-    // Create FTS index for hybrid search if enabled
-    if (this.hybridConfig.enabled) {
-      try {
-        const indices = await this.table.listIndices();
-        // Check if FTS index exists by looking for index on the "text" column
-        // LanceDB names indices as "{column}_idx" but we check columns to be safe
-        const hasFtsIndex = indices.some(
-          (idx) =>
-            idx.name === "text_idx" ||
-            (idx.columns && idx.columns.includes("text") && idx.indexType === "FTS"),
-        );
-        if (!hasFtsIndex) {
-          await this.table.createIndex("text", { config: lancedb.Index.fts() });
-        }
-        this.ftsReady = true;
-
-        // Initialize RRF reranker for hybrid search (only if using RRF mode)
-        if (this.hybridConfig.reranker !== "linear") {
-          this.reranker = await rerankers.RRFReranker.create();
-        }
-      } catch (err) {
-        // FTS index creation may fail on empty tables or if already exists
-        // This is not critical - search will fall back to vector-only
-        this.logger?.debug?.(`memory-lancedb: FTS index setup failed: ${String(err)}`);
-      }
-    }
   }
 
   async store(entry: Omit<MemoryEntry, "id" | "createdAt">): Promise<MemoryEntry> {
@@ -143,64 +113,13 @@ class MemoryDB {
     return fullEntry;
   }
 
-  async search(
-    vector: number[],
-    limit = 5,
-    minScore = 0.5,
-    queryText?: string,
-  ): Promise<MemorySearchResult[]> {
+  async search(vector: number[], limit = 5, minScore = 0.5): Promise<MemorySearchResult[]> {
     await this.ensureInitialized();
 
-    let results: Record<string, unknown>[];
-
-    // Use hybrid search if enabled and we have query text
-    if (this.hybridConfig.enabled && queryText && this.ftsReady) {
-      try {
-        if (this.hybridConfig.reranker === "linear") {
-          // Linear combination: run vector + FTS separately and combine with weights
-          results = await this.linearCombinationSearch(vector, queryText, limit);
-        } else if (this.reranker) {
-          // RRF reranking via LanceDB built-in
-          results = await this.table!.query()
-            .nearestTo(vector)
-            .fullTextSearch(queryText, { columns: "text" })
-            .rerank(this.reranker)
-            .limit(limit)
-            .toArray();
-        } else {
-          // Fallback to vector-only
-          this.logger?.debug?.("memory-lancedb: reranker not ready, falling back to vector search");
-          results = await this.table!.vectorSearch(vector).limit(limit).toArray();
-        }
-      } catch (err) {
-        // Fallback to vector-only search if hybrid fails
-        this.logger?.debug?.(
-          `memory-lancedb: hybrid search failed, falling back to vector-only: ${String(err)}`,
-        );
-        results = await this.table!.vectorSearch(vector).limit(limit).toArray();
-      }
-    } else {
-      // Pure vector search
-      results = await this.table!.vectorSearch(vector).limit(limit).toArray();
-    }
+    const results = await this.table!.vectorSearch(vector).limit(limit).toArray();
 
     // LanceDB uses L2 distance by default; convert to similarity score
     const mapped = results.map((row) => {
-      // For linear combination results, _combinedScore is already set
-      if (row._combinedScore !== undefined) {
-        return {
-          entry: {
-            id: row.id as string,
-            text: row.text as string,
-            vector: row.vector as number[],
-            importance: row.importance as number,
-            category: row.category as MemoryEntry["category"],
-            createdAt: row.createdAt as number,
-          },
-          score: row._combinedScore as number,
-        };
-      }
-
       const distance = row._distance ?? 0;
       // Use inverse for a 0-1 range: sim = 1 / (1 + d)
       const score = 1 / (1 + distance);
@@ -218,70 +137,6 @@ class MemoryDB {
     });
 
     return mapped.filter((r) => r.score >= minScore);
-  }
-
-  /**
-   * Linear combination search: runs vector and FTS searches separately,
-   * then combines results using configured weights.
-   */
-  private async linearCombinationSearch(
-    vector: number[],
-    queryText: string,
-    limit: number,
-  ): Promise<Record<string, unknown>[]> {
-    const vectorWeight = this.hybridConfig.vectorWeight ?? 0.7;
-    const textWeight = this.hybridConfig.textWeight ?? 0.3;
-
-    // Run both searches in parallel
-    const [vectorResults, ftsResults] = await Promise.all([
-      this.table!.vectorSearch(vector)
-        .limit(limit * 2)
-        .toArray(),
-      this.table!.search(queryText, "text")
-        .limit(limit * 2)
-        .toArray(),
-    ]);
-
-    // Build score maps
-    const scoreMap = new Map<
-      string,
-      { row: Record<string, unknown>; vectorScore: number; ftsScore: number }
-    >();
-
-    // Process vector results
-    for (const row of vectorResults) {
-      const id = row.id as string;
-      const distance = (row._distance as number) ?? 0;
-      const vectorScore = 1 / (1 + distance); // Convert L2 distance to similarity
-      scoreMap.set(id, { row, vectorScore, ftsScore: 0 });
-    }
-
-    // Process FTS results and merge
-    for (const row of ftsResults) {
-      const id = row.id as string;
-      // FTS returns _score (BM25), normalize to 0-1 range
-      const rawScore = (row._score as number) ?? 0;
-      // BM25 scores typically range 0-20+, use sigmoid-like normalization
-      const ftsScore = rawScore / (1 + rawScore);
-
-      const existing = scoreMap.get(id);
-      if (existing) {
-        existing.ftsScore = ftsScore;
-      } else {
-        scoreMap.set(id, { row, vectorScore: 0, ftsScore });
-      }
-    }
-
-    // Compute combined scores and sort
-    const combined = [...scoreMap.entries()]
-      .map(([_id, { row, vectorScore, ftsScore }]) => ({
-        ...row,
-        _combinedScore: vectorWeight * vectorScore + textWeight * ftsScore,
-      }))
-      .toSorted((a, b) => b._combinedScore - a._combinedScore)
-      .slice(0, limit);
-
-    return combined;
   }
 
   async delete(id: string): Promise<boolean> {
@@ -340,7 +195,7 @@ const MEMORY_TRIGGERS = [
   /always|never|important/i,
 ];
 
-function shouldCapture(text: string): boolean {
+export function shouldCapture(text: string): boolean {
   if (text.length < 10 || text.length > 500) {
     return false;
   }
@@ -364,7 +219,7 @@ function shouldCapture(text: string): boolean {
   return MEMORY_TRIGGERS.some((r) => r.test(text));
 }
 
-function detectCategory(text: string): MemoryCategory {
+export function detectCategory(text: string): MemoryCategory {
   const lower = text.toLowerCase();
   if (/prefer|radši|like|love|hate|want/i.test(lower)) {
     return "preference";
@@ -396,22 +251,10 @@ const memoryPlugin = {
     const cfg = memoryConfigSchema.parse(api.pluginConfig);
     const resolvedDbPath = api.resolvePath(cfg.dbPath!);
     const vectorDim = vectorDimsForModel(cfg.embedding.model ?? "text-embedding-3-small");
-    const hybridConfig = cfg.hybrid ?? {
-      enabled: true,
-      reranker: "rrf",
-      vectorWeight: 0.7,
-      textWeight: 0.3,
-    };
-    const db = new MemoryDB(resolvedDbPath, vectorDim, hybridConfig, api.logger);
+    const db = new MemoryDB(resolvedDbPath, vectorDim);
     const embeddings = new Embeddings(cfg.embedding.apiKey, cfg.embedding.model!);
 
-    const rerankerDesc =
-      hybridConfig.reranker === "linear"
-        ? `linear (vec=${hybridConfig.vectorWeight}, text=${hybridConfig.textWeight})`
-        : "rrf";
-    api.logger.info(
-      `memory-lancedb: plugin registered (db: ${resolvedDbPath}, hybrid: ${hybridConfig.enabled}, reranker: ${rerankerDesc}, lazy init)`,
-    );
+    api.logger.info(`memory-lancedb: plugin registered (db: ${resolvedDbPath}, lazy init)`);
 
     // ========================================================================
     // Tools
@@ -431,7 +274,7 @@ const memoryPlugin = {
           const { query, limit = 5 } = params as { query: string; limit?: number };
 
           const vector = await embeddings.embed(query);
-          const results = await db.search(vector, limit, 0.1, query);
+          const results = await db.search(vector, limit, 0.1);
 
           if (results.length === 0) {
             return {
@@ -545,7 +388,7 @@ const memoryPlugin = {
 
           if (query) {
             const vector = await embeddings.embed(query);
-            const results = await db.search(vector, 5, 0.7, query);
+            const results = await db.search(vector, 5, 0.7);
 
             if (results.length === 0) {
               return {
@@ -617,7 +460,7 @@ const memoryPlugin = {
           .option("--limit <n>", "Max results", "5")
           .action(async (query, opts) => {
             const vector = await embeddings.embed(query);
-            const results = await db.search(vector, parseInt(opts.limit), 0.3, query);
+            const results = await db.search(vector, parseInt(opts.limit), 0.3);
             // Strip vectors for output
             const output = results.map((r) => ({
               id: r.entry.id,
@@ -653,7 +496,7 @@ const memoryPlugin = {
 
         try {
           const vector = await embeddings.embed(event.prompt);
-          const results = await db.search(vector, 3, 0.3, event.prompt);
+          const results = await db.search(vector, 3, 0.3);
 
           if (results.length === 0) {
             return;
