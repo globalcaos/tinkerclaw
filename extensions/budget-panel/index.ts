@@ -137,18 +137,21 @@ export default function register(api: OpenClawPluginApi) {
             monthly: { used: 0, limit: 4000, pct: 0 },
             addon: 0,
           };
-        // Handle the actual manus-usage.json structure
+        // Handle manus-usage.json structure (from manus-usage-fetch.py)
         const daily = manusData.credits?.daily_refresh || {};
         const monthly = manusData.credits?.breakdown?.monthly || {};
-        const dailyUsed = daily.limit ? daily.limit - (daily.current || 0) : 0;
-        const monthlyUsed = monthly.used || 0;
-        const monthlyLimit = monthly.limit || 4000;
+        // Support both formats: new (daily.used) and legacy (daily.current = remaining)
+        const dailyUsed =
+          daily.used ?? (daily.limit ? daily.limit - (daily.current ?? daily.limit) : 0);
+        const dailyLimit = daily.limit || 300;
+        const monthlyUsed = monthly.used || manusData.credits_used || 0;
+        const monthlyLimit = monthly.limit || manusData.credits_budget || 4000;
         const addon = manusData.credits?.breakdown?.addon || 0;
         return {
           daily: {
             used: dailyUsed,
-            limit: daily.limit || 300,
-            pct: daily.limit ? (dailyUsed / daily.limit) * 100 : 0,
+            limit: dailyLimit,
+            pct: dailyLimit ? (dailyUsed / dailyLimit) * 100 : 0,
           },
           monthly: {
             used: monthlyUsed,
