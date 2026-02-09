@@ -301,8 +301,14 @@ export async function monitorWebInbox(options: {
       }
 
       const chatJid = remoteJid;
+      let presenceSubscribed = false;
       const sendComposing = async () => {
         try {
+          // WhatsApp requires presence subscription before composing works in groups
+          if (!presenceSubscribed && chatJid.endsWith("@g.us")) {
+            await sock.presenceSubscribe(chatJid);
+            presenceSubscribed = true;
+          }
           await sock.sendPresenceUpdate("composing", chatJid);
         } catch (err) {
           logVerbose(`Presence update failed: ${String(err)}`);
