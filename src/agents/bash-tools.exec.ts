@@ -19,11 +19,7 @@ import {
   resolveExecApprovals,
   resolveExecApprovalsFromFile,
 } from "../infra/exec-approvals.js";
-import {
-  type ExecSecurityLevel,
-  validateCommandSecurityLevel,
-  SECURITY_LEVEL_INFO,
-} from "../infra/exec-security-level.js";
+import { validateCommandSecurityLevel, SECURITY_LEVEL_INFO } from "../infra/exec-security-level.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { buildNodeShellCommand } from "../infra/node-shell.js";
 import {
