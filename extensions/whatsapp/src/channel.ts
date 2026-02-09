@@ -4,6 +4,7 @@ import {
   collectWhatsAppStatusIssues,
   createActionGate,
   DEFAULT_ACCOUNT_ID,
+  escapeRegExp,
   formatPairingApproveHint,
   getChatChannelMeta,
   isWhatsAppGroupJid,
@@ -32,8 +33,6 @@ import {
 import { getWhatsAppRuntime } from "./runtime.js";
 
 const meta = getChatChannelMeta("whatsapp");
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
   id: "whatsapp",
@@ -313,13 +312,18 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
             }
           } catch {
             // Not JSON, try comma-separated
-            participants = participantsRaw.split(",").map((p) => p.trim()).filter(Boolean);
+            participants = participantsRaw
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean);
           }
         }
 
         if (participants.length === 0) {
           return {
-            content: [{ type: "text", text: "Error: participants array is required (E.164 format)" }],
+            content: [
+              { type: "text", text: "Error: participants array is required (E.164 format)" },
+            ],
           };
         }
 
@@ -331,9 +335,11 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Edit message
       if (action === "edit") {
-        const chatJid = readStringParam(params, "chatJid") ?? readStringParam(params, "to", { required: true });
+        const chatJid =
+          readStringParam(params, "chatJid") ?? readStringParam(params, "to", { required: true });
         const messageId = readStringParam(params, "messageId", { required: true });
-        const newText = readStringParam(params, "message") ?? readStringParam(params, "text", { required: true });
+        const newText =
+          readStringParam(params, "message") ?? readStringParam(params, "text", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           {
             action: "edit",
@@ -350,7 +356,8 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Delete/unsend message
       if (action === "unsend") {
-        const chatJid = readStringParam(params, "chatJid") ?? readStringParam(params, "to", { required: true });
+        const chatJid =
+          readStringParam(params, "chatJid") ?? readStringParam(params, "to", { required: true });
         const messageId = readStringParam(params, "messageId", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           {
@@ -368,8 +375,11 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
       // Reply to message (quote)
       if (action === "reply") {
         const to = readStringParam(params, "to", { required: true });
-        const text = readStringParam(params, "message") ?? readStringParam(params, "text", { required: true });
-        const quotedMessageId = readStringParam(params, "replyTo") ?? readStringParam(params, "messageId", { required: true });
+        const text =
+          readStringParam(params, "message") ?? readStringParam(params, "text", { required: true });
+        const quotedMessageId =
+          readStringParam(params, "replyTo") ??
+          readStringParam(params, "messageId", { required: true });
         const quotedFromMe = typeof params.quotedFromMe === "boolean" ? params.quotedFromMe : false;
         const quotedParticipant = readStringParam(params, "quotedParticipant");
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
@@ -393,7 +403,9 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
       // Send sticker
       if (action === "sticker") {
         const to = readStringParam(params, "to", { required: true });
-        const stickerPath = readStringParam(params, "filePath") ?? readStringParam(params, "path", { required: true });
+        const stickerPath =
+          readStringParam(params, "filePath") ??
+          readStringParam(params, "path", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "sticker", to, stickerPath, accountId: accountId ?? undefined },
           cfg,
@@ -402,7 +414,8 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Rename group
       if (action === "renameGroup") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         const newName = readStringParam(params, "name", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "renameGroup", groupJid, newName, accountId: accountId ?? undefined },
@@ -412,8 +425,11 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Set group icon
       if (action === "setGroupIcon") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
-        const imagePath = readStringParam(params, "filePath") ?? readStringParam(params, "path", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const imagePath =
+          readStringParam(params, "filePath") ??
+          readStringParam(params, "path", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "setGroupIcon", groupJid, imagePath, accountId: accountId ?? undefined },
           cfg,
@@ -422,7 +438,8 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Add participants
       if (action === "addParticipant") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         const participantsRaw = params.participants;
         let participants: string[] = [];
         if (Array.isArray(participantsRaw)) {
@@ -434,7 +451,10 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
               participants = parsed.map((p) => String(p).trim()).filter(Boolean);
             }
           } catch {
-            participants = participantsRaw.split(",").map((p) => p.trim()).filter(Boolean);
+            participants = participantsRaw
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean);
           }
         }
         if (participants.length === 0) {
@@ -448,7 +468,8 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Remove participants
       if (action === "removeParticipant") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         const participantsRaw = params.participants;
         let participants: string[] = [];
         if (Array.isArray(participantsRaw)) {
@@ -460,21 +481,30 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
               participants = parsed.map((p) => String(p).trim()).filter(Boolean);
             }
           } catch {
-            participants = participantsRaw.split(",").map((p) => p.trim()).filter(Boolean);
+            participants = participantsRaw
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean);
           }
         }
         if (participants.length === 0) {
           return { content: [{ type: "text", text: "Error: participants array required" }] };
         }
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
-          { action: "removeParticipant", groupJid, participants, accountId: accountId ?? undefined },
+          {
+            action: "removeParticipant",
+            groupJid,
+            participants,
+            accountId: accountId ?? undefined,
+          },
           cfg,
         );
       }
 
       // Leave group
       if (action === "leaveGroup") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "leaveGroup", groupJid, accountId: accountId ?? undefined },
           cfg,
@@ -483,17 +513,24 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Set group description
       if (action === "setGroupDescription") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         const description = readStringParam(params, "description", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
-          { action: "setGroupDescription", groupJid, description, accountId: accountId ?? undefined },
+          {
+            action: "setGroupDescription",
+            groupJid,
+            description,
+            accountId: accountId ?? undefined,
+          },
           cfg,
         );
       }
 
       // Promote participants to admin
       if (action === "promoteParticipant") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         const participantsRaw = params.participants;
         let participants: string[] = [];
         if (Array.isArray(participantsRaw)) {
@@ -505,21 +542,30 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
               participants = parsed.map((p) => String(p).trim()).filter(Boolean);
             }
           } catch {
-            participants = participantsRaw.split(",").map((p) => p.trim()).filter(Boolean);
+            participants = participantsRaw
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean);
           }
         }
         if (participants.length === 0) {
           return { content: [{ type: "text", text: "Error: participants array required" }] };
         }
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
-          { action: "promoteParticipant", groupJid, participants, accountId: accountId ?? undefined },
+          {
+            action: "promoteParticipant",
+            groupJid,
+            participants,
+            accountId: accountId ?? undefined,
+          },
           cfg,
         );
       }
 
       // Demote participants from admin
       if (action === "demoteParticipant") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         const participantsRaw = params.participants;
         let participants: string[] = [];
         if (Array.isArray(participantsRaw)) {
@@ -531,21 +577,30 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
               participants = parsed.map((p) => String(p).trim()).filter(Boolean);
             }
           } catch {
-            participants = participantsRaw.split(",").map((p) => p.trim()).filter(Boolean);
+            participants = participantsRaw
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean);
           }
         }
         if (participants.length === 0) {
           return { content: [{ type: "text", text: "Error: participants array required" }] };
         }
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
-          { action: "demoteParticipant", groupJid, participants, accountId: accountId ?? undefined },
+          {
+            action: "demoteParticipant",
+            groupJid,
+            participants,
+            accountId: accountId ?? undefined,
+          },
           cfg,
         );
       }
 
       // Get invite code
       if (action === "getInviteCode") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "getInviteCode", groupJid, accountId: accountId ?? undefined },
           cfg,
@@ -554,7 +609,8 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Revoke invite code
       if (action === "revokeInviteCode") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "revokeInviteCode", groupJid, accountId: accountId ?? undefined },
           cfg,
@@ -563,7 +619,8 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
 
       // Get group info/metadata
       if (action === "getGroupInfo") {
-        const groupJid = readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
+        const groupJid =
+          readStringParam(params, "groupJid") ?? readStringParam(params, "to", { required: true });
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           { action: "getGroupInfo", groupJid, accountId: accountId ?? undefined },
           cfg,
@@ -578,7 +635,9 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
         return await getWhatsAppRuntime().channel.whatsapp.handleWhatsAppAction(
           {
             action: "react",
-            chatJid: readStringParam(params, "chatJid") ?? readStringParam(params, "to", { required: true }),
+            chatJid:
+              readStringParam(params, "chatJid") ??
+              readStringParam(params, "to", { required: true }),
             messageId,
             emoji,
             remove,
