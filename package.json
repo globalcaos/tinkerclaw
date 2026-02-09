@@ -214,6 +214,9 @@
       "node-llama-cpp",
       "protobufjs",
       "sharp"
+    ],
+    "ignoredBuiltDependencies": [
+      "better-sqlite3"
     ]
   }
 }
