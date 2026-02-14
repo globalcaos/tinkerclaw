@@ -186,10 +186,14 @@ export async function dispatchReplyFromConfig(params: {
     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
   }
 
+  const inboundAudio = isInboundAudioContext(ctx);
+
   // Check triggerPrefix filter (e.g., "Jarvis" prefix requirement)
   // Use RawBody/BodyForCommands (clean message without envelope) for prefix check
+  // Audio messages bypass triggerPrefix: voice notes have no text body to match against,
+  // and the transcript isn't available yet at this point.
   const triggerPrefix = resolveTriggerPrefix(cfg, channel);
-  if (triggerPrefix) {
+  if (triggerPrefix && !inboundAudio) {
     const messageBody = ctx.BodyForCommands ?? ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "";
     const prefixCheck = checkTriggerPrefix(messageBody, triggerPrefix);
     if (!prefixCheck.pass) {
@@ -201,8 +205,6 @@ export async function dispatchReplyFromConfig(params: {
     // ctx.Body = prefixCheck.strippedBody;
     // ctx.BodyForAgent = prefixCheck.strippedBody;
   }
-
-  const inboundAudio = isInboundAudioContext(ctx);
   const sessionTtsAuto = resolveSessionTtsAuto(ctx, cfg);
   const hookRunner = getGlobalHookRunner();
   if (hookRunner?.hasHooks("message_received")) {
