@@ -21,6 +21,7 @@ import {
 } from "./extract.js";
 import { downloadInboundMedia } from "./media.js";
 import { createWebSendApi } from "./send-api.js";
+import { wasSentByBot, forgetSentMessageId } from "./sent-ids.js";
 
 export async function monitorWebInbox(options: {
   verbose: boolean;
@@ -195,6 +196,11 @@ export async function monitorWebInbox(options: {
 
       const group = isJidGroup(remoteJid) === true;
       if (id) {
+        // Skip messages we sent ourselves (echo prevention for media/voice notes)
+        if (wasSentByBot(id)) {
+          forgetSentMessageId(id);
+          continue;
+        }
         const dedupeKey = `${options.accountId}:${remoteJid}:${id}`;
         if (isRecentInboundMessage(dedupeKey)) {
           continue;
