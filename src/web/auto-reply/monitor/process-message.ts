@@ -357,6 +357,20 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
+  // Track whether the thinking reaction was sent so we can clean it up.
+  let thinkingReactionSent = false;
+  const removeThinkingReaction = () => {
+    if (thinkingReactionSent && params.msg.id && params.msg.chatId) {
+      thinkingReactionSent = false;
+      sendReactionWhatsApp(params.msg.chatId, params.msg.id, "", {
+        verbose: false,
+        fromMe: false,
+        participant: params.msg.senderJid,
+        accountId: params.msg.accountId,
+      }).catch(() => {});
+    }
+  };
+
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -395,15 +409,7 @@ export async function processMessage(params: {
           logVerboseMessage: shouldLog,
         });
         if (info.kind === "final") {
-          // Remove the "thinking" reaction now that we have a reply
-          if (params.msg.id && params.msg.chatId) {
-            sendReactionWhatsApp(params.msg.chatId, params.msg.id, "", {
-              verbose: false,
-              fromMe: false,
-              participant: params.msg.senderJid,
-              accountId: params.msg.accountId,
-            }).catch(() => {});
-          }
+          removeThinkingReaction();
           const fromDisplay =
             params.msg.chatType === "group" ? conversationId : (params.msg.from ?? "unknown");
           const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
@@ -432,6 +438,7 @@ export async function processMessage(params: {
         // (Baileys #866), so a reaction on the triggering message is the
         // next best thing — visible, instant, and auto-removed on reply.
         if (params.msg.id && params.msg.chatId) {
+          thinkingReactionSent = true;
           sendReactionWhatsApp(params.msg.chatId, params.msg.id, "🤔", {
             verbose: false,
             fromMe: false,
@@ -449,6 +456,10 @@ export async function processMessage(params: {
       onModelSelected,
     },
   });
+
+  // Always remove the thinking reaction when processing completes,
+  // regardless of path (final delivery, silent reply, or error).
+  removeThinkingReaction();
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {
