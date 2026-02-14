@@ -401,7 +401,7 @@ export async function processMessage(params: {
               verbose: false,
               fromMe: false,
               participant: params.msg.senderJid,
-              accountId: params.connectionId,
+              accountId: params.msg.accountId,
             }).catch(() => {});
           }
           const fromDisplay =
@@ -428,14 +428,15 @@ export async function processMessage(params: {
       onReplyStart: async () => {
         await params.msg.sendComposing();
         // Send a "thinking" reaction as a visible progress indicator.
-        // WhatsApp linked devices can't show typing indicators in groups,
-        // so a reaction on the triggering message is the next best thing.
+        // WhatsApp linked devices can't show typing indicators in groups
+        // (Baileys #866), so a reaction on the triggering message is the
+        // next best thing — visible, instant, and auto-removed on reply.
         if (params.msg.id && params.msg.chatId) {
           sendReactionWhatsApp(params.msg.chatId, params.msg.id, "🤔", {
             verbose: false,
             fromMe: false,
             participant: params.msg.senderJid,
-            accountId: params.connectionId,
+            accountId: params.msg.accountId,
           }).catch(() => {});
         }
       },
