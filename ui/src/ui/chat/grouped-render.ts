@@ -224,6 +224,7 @@ function renderGroupedMessage(
     "chat-bubble",
     canCopyMarkdown ? "has-copy" : "",
     opts.isStreaming ? "streaming" : "",
+    markdown ? "chat-bubble--text" : "", // fork: text bubbles get visible styling
     "fade-in",
   ]
     .filter(Boolean)
