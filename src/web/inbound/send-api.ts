@@ -12,6 +12,7 @@ import { trackSentMessageId } from "./sent-ids.js";
 type BaileysSock = {
   sendMessage: (jid: string, content: AnyMessageContent, options?: unknown) => Promise<unknown>;
   sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
+  presenceSubscribe: (jid: string, tcToken?: Buffer) => Promise<void>;
   groupCreate: (subject: string, participants: string[]) => Promise<GroupMetadata>;
   groupUpdateSubject: (jid: string, subject: string) => Promise<void>;
   groupUpdateDescription: (jid: string, description: string) => Promise<void>;
@@ -39,7 +40,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
   const trackedSendMessage: BaileysSock["sendMessage"] = async (jid, content, options) => {
     const result = await originalSendMessage(jid, content, options);
     const msgId = (result as { key?: { id?: string } } | undefined)?.key?.id;
-    if (msgId) trackSentMessageId(msgId);
+    if (msgId) {trackSentMessageId(msgId);}
     return result;
   };
   const sock = { ...params.sock, sendMessage: trackedSendMessage };
@@ -141,6 +142,14 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
     },
     sendComposingTo: async (to: string): Promise<void> => {
       const jid = toWhatsappJid(to);
+      // WhatsApp requires presence subscription before composing works in groups
+      if (jid.endsWith("@g.us")) {
+        try {
+          await params.sock.presenceSubscribe(jid);
+        } catch {
+          // Best-effort; some groups may reject subscription
+        }
+      }
       await params.sock.sendPresenceUpdate("composing", jid);
     },
     createGroup: async (
