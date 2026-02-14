@@ -1,22 +1,41 @@
 import type { IncomingMessage } from "node:http";
-import { timingSafeEqual } from "node:crypto";
-import type { GatewayAuthConfig, GatewayTailscaleMode } from "../config/config.js";
+import type {
+  GatewayAuthConfig,
+  GatewayTailscaleMode,
+  GatewayTrustedProxyConfig,
+} from "../config/config.js";
 import { readTailscaleWhoisIdentity, type TailscaleWhoisIdentity } from "../infra/tailscale.js";
-import { isTrustedProxyAddress, parseForwardedForClientIp, resolveGatewayClientIp } from "./net.js";
-export type ResolvedGatewayAuthMode = "token" | "password";
+import { safeEqualSecret } from "../security/secret-equal.js";
+import {
+  AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
+  type AuthRateLimiter,
+  type RateLimitCheckResult,
+} from "./auth-rate-limit.js";
+import {
+  isLoopbackAddress,
+  isTrustedProxyAddress,
+  parseForwardedForClientIp,
+  resolveGatewayClientIp,
+} from "./net.js";
+
+export type ResolvedGatewayAuthMode = "none" | "token" | "password" | "trusted-proxy";
 
 export type ResolvedGatewayAuth = {
   mode: ResolvedGatewayAuthMode;
   token?: string;
   password?: string;
   allowTailscale: boolean;
+  trustedProxy?: GatewayTrustedProxyConfig;
 };
 
 export type GatewayAuthResult = {
   ok: boolean;
-  method?: "token" | "password" | "tailscale" | "device-token";
+  method?: "none" | "token" | "password" | "tailscale" | "device-token" | "trusted-proxy";
   user?: string;
   reason?: string;
+  /** Present when the request was blocked by the rate limiter. */
+  rateLimited?: boolean;
+  /** Milliseconds the client should wait before retrying (when rate-limited). */
   retryAfterMs?: number;
 };
 
@@ -33,108 +52,8 @@ type TailscaleUser = {
 
 type TailscaleWhoisLookup = (ip: string) => Promise<TailscaleWhoisIdentity | null>;
 
-type AuthRateLimitState = {
-  count: number;
-  lastAttemptMs: number;
-  blockedUntilMs: number;
-};
-
-const AUTH_RATE_LIMIT_BASE_MS = 1000;
-const AUTH_RATE_LIMIT_MAX_MS = 30_000;
-const AUTH_RATE_LIMIT_RESET_MS = 10 * 60 * 1000;
-const AUTH_RATE_LIMIT_MAX_ENTRIES = 5000;
-const authRateLimitState = new Map<string, AuthRateLimitState>();
-
-function computeAuthBackoffMs(count: number): number {
-  const exponent = Math.max(0, count - 1);
-  return Math.min(AUTH_RATE_LIMIT_MAX_MS, AUTH_RATE_LIMIT_BASE_MS * 2 ** exponent);
-}
-
-function pruneAuthRateLimitState(now: number): void {
-  if (authRateLimitState.size <= AUTH_RATE_LIMIT_MAX_ENTRIES) {
-    return;
-  }
-  for (const [key, state] of authRateLimitState) {
-    if (now - state.lastAttemptMs > AUTH_RATE_LIMIT_RESET_MS) {
-      authRateLimitState.delete(key);
-    }
-  }
-}
-
-function resolveAuthRateLimitKey(req?: IncomingMessage, trustedProxies?: string[]): string | null {
-  const clientIp = resolveRequestClientIp(req, trustedProxies);
-  return clientIp ? clientIp : null;
-}
-
-function checkAuthRateLimit(key: string, now: number): { allowed: boolean; retryAfterMs?: number } {
-  const state = authRateLimitState.get(key);
-  if (!state) {
-    return { allowed: true };
-  }
-  if (now - state.lastAttemptMs > AUTH_RATE_LIMIT_RESET_MS) {
-    authRateLimitState.delete(key);
-    return { allowed: true };
-  }
-  if (now < state.blockedUntilMs) {
-    return { allowed: false, retryAfterMs: state.blockedUntilMs - now };
-  }
-  return { allowed: true };
-}
-
-function recordAuthFailure(key: string, now: number): number {
-  const prev = authRateLimitState.get(key);
-  if (prev && now - prev.lastAttemptMs <= AUTH_RATE_LIMIT_RESET_MS) {
-    const count = prev.count + 1;
-    const backoffMs = computeAuthBackoffMs(count);
-    authRateLimitState.set(key, {
-      count,
-      lastAttemptMs: now,
-      blockedUntilMs: now + backoffMs,
-    });
-    return backoffMs;
-  }
-  const backoffMs = computeAuthBackoffMs(1);
-  authRateLimitState.set(key, {
-    count: 1,
-    lastAttemptMs: now,
-    blockedUntilMs: now + backoffMs,
-  });
-  pruneAuthRateLimitState(now);
-  return backoffMs;
-}
-
-function clearAuthFailures(key: string): void {
-  authRateLimitState.delete(key);
-}
-
-function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
-
 function normalizeLogin(login: string): string {
   return login.trim().toLowerCase();
-}
-
-function isLoopbackAddress(ip: string | undefined): boolean {
-  if (!ip) {
-    return false;
-  }
-  if (ip === "127.0.0.1") {
-    return true;
-  }
-  if (ip.startsWith("127.")) {
-    return true;
-  }
-  if (ip === "::1") {
-    return true;
-  }
-  if (ip.startsWith("::ffff:127.")) {
-    return true;
-  }
-  return false;
 }
 
 function getHostName(hostHeader?: string): string {
@@ -278,21 +197,31 @@ export function resolveGatewayAuth(params: {
 }): ResolvedGatewayAuth {
   const authConfig = params.authConfig ?? {};
   const env = params.env ?? process.env;
-  const token =
-    authConfig.token ?? env.OPENCLAW_GATEWAY_TOKEN ?? env.CLAWDBOT_GATEWAY_TOKEN ?? undefined;
-  const password =
-    authConfig.password ??
-    env.OPENCLAW_GATEWAY_PASSWORD ??
-    env.CLAWDBOT_GATEWAY_PASSWORD ??
-    undefined;
-  const mode: ResolvedGatewayAuth["mode"] = authConfig.mode ?? (password ? "password" : "token");
+  const token = authConfig.token ?? env.OPENCLAW_GATEWAY_TOKEN ?? undefined;
+  const password = authConfig.password ?? env.OPENCLAW_GATEWAY_PASSWORD ?? undefined;
+  const trustedProxy = authConfig.trustedProxy;
+
+  let mode: ResolvedGatewayAuth["mode"];
+  if (authConfig.mode) {
+    mode = authConfig.mode;
+  } else if (password) {
+    mode = "password";
+  } else if (token) {
+    mode = "token";
+  } else {
+    mode = "none";
+  }
+
   const allowTailscale =
-    authConfig.allowTailscale ?? (params.tailscaleMode === "serve" && mode !== "password");
+    authConfig.allowTailscale ??
+    (params.tailscaleMode === "serve" && mode !== "password" && mode !== "trusted-proxy");
+
   return {
     mode,
     token,
     password,
     allowTailscale,
+    trustedProxy,
   };
 }
 
@@ -308,6 +237,61 @@ export function assertGatewayAuthConfigured(auth: ResolvedGatewayAuth): void {
   if (auth.mode === "password" && !auth.password) {
     throw new Error("gateway auth mode is password, but no password was configured");
   }
+  if (auth.mode === "trusted-proxy") {
+    if (!auth.trustedProxy) {
+      throw new Error(
+        "gateway auth mode is trusted-proxy, but no trustedProxy config was provided (set gateway.auth.trustedProxy)",
+      );
+    }
+    if (!auth.trustedProxy.userHeader || auth.trustedProxy.userHeader.trim() === "") {
+      throw new Error(
+        "gateway auth mode is trusted-proxy, but trustedProxy.userHeader is empty (set gateway.auth.trustedProxy.userHeader)",
+      );
+    }
+  }
+}
+
+/**
+ * Check if the request came from a trusted proxy and extract user identity.
+ * Returns the user identity if valid, or null with a reason if not.
+ */
+function authorizeTrustedProxy(params: {
+  req?: IncomingMessage;
+  trustedProxies?: string[];
+  trustedProxyConfig: GatewayTrustedProxyConfig;
+}): { user: string } | { reason: string } {
+  const { req, trustedProxies, trustedProxyConfig } = params;
+
+  if (!req) {
+    return { reason: "trusted_proxy_no_request" };
+  }
+
+  const remoteAddr = req.socket?.remoteAddress;
+  if (!remoteAddr || !isTrustedProxyAddress(remoteAddr, trustedProxies)) {
+    return { reason: "trusted_proxy_untrusted_source" };
+  }
+
+  const requiredHeaders = trustedProxyConfig.requiredHeaders ?? [];
+  for (const header of requiredHeaders) {
+    const value = headerValue(req.headers[header.toLowerCase()]);
+    if (!value || value.trim() === "") {
+      return { reason: `trusted_proxy_missing_header_${header}` };
+    }
+  }
+
+  const userHeaderValue = headerValue(req.headers[trustedProxyConfig.userHeader.toLowerCase()]);
+  if (!userHeaderValue || userHeaderValue.trim() === "") {
+    return { reason: "trusted_proxy_user_missing" };
+  }
+
+  const user = userHeaderValue.trim();
+
+  const allowUsers = trustedProxyConfig.allowUsers ?? [];
+  if (allowUsers.length > 0 && !allowUsers.includes(user)) {
+    return { reason: "trusted_proxy_user_not_allowed" };
+  }
+
+  return { user };
 }
 
 export async function authorizeGatewayConnect(params: {
@@ -316,11 +300,52 @@ export async function authorizeGatewayConnect(params: {
   req?: IncomingMessage;
   trustedProxies?: string[];
   tailscaleWhois?: TailscaleWhoisLookup;
+  /** Optional rate limiter instance; when provided, failed attempts are tracked per IP. */
+  rateLimiter?: AuthRateLimiter;
+  /** Client IP used for rate-limit tracking. Falls back to proxy-aware request IP resolution. */
+  clientIp?: string;
+  /** Optional limiter scope; defaults to shared-secret auth scope. */
+  rateLimitScope?: string;
 }): Promise<GatewayAuthResult> {
   const { auth, connectAuth, req, trustedProxies } = params;
   const tailscaleWhois = params.tailscaleWhois ?? readTailscaleWhoisIdentity;
   const localDirect = isLocalDirectRequest(req, trustedProxies);
-  const rateLimitKey = resolveAuthRateLimitKey(req, trustedProxies);
+
+  if (auth.mode === "trusted-proxy") {
+    if (!auth.trustedProxy) {
+      return { ok: false, reason: "trusted_proxy_config_missing" };
+    }
+    if (!trustedProxies || trustedProxies.length === 0) {
+      return { ok: false, reason: "trusted_proxy_no_proxies_configured" };
+    }
+
+    const result = authorizeTrustedProxy({
+      req,
+      trustedProxies,
+      trustedProxyConfig: auth.trustedProxy,
+    });
+
+    if ("user" in result) {
+      return { ok: true, method: "trusted-proxy", user: result.user };
+    }
+    return { ok: false, reason: result.reason };
+  }
+
+  const limiter = params.rateLimiter;
+  const ip =
+    params.clientIp ?? resolveRequestClientIp(req, trustedProxies) ?? req?.socket?.remoteAddress;
+  const rateLimitScope = params.rateLimitScope ?? AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET;
+  if (limiter) {
+    const rlCheck: RateLimitCheckResult = limiter.check(ip, rateLimitScope);
+    if (!rlCheck.allowed) {
+      return {
+        ok: false,
+        reason: "rate_limited",
+        rateLimited: true,
+        retryAfterMs: rlCheck.retryAfterMs,
+      };
+    }
+  }
 
   if (auth.allowTailscale && !localDirect) {
     const tailscaleCheck = await resolveVerifiedTailscaleUser({
@@ -328,9 +353,7 @@ export async function authorizeGatewayConnect(params: {
       tailscaleWhois,
     });
     if (tailscaleCheck.ok) {
-      if (rateLimitKey) {
-        clearAuthFailures(rateLimitKey);
-      }
+      limiter?.reset(ip, rateLimitScope);
       return {
         ok: true,
         method: "tailscale",
@@ -339,33 +362,19 @@ export async function authorizeGatewayConnect(params: {
     }
   }
 
-  if ((auth.mode === "token" || auth.mode === "password") && rateLimitKey) {
-    const now = Date.now();
-    const limit = checkAuthRateLimit(rateLimitKey, now);
-    if (!limit.allowed) {
-      return { ok: false, reason: "rate_limited", retryAfterMs: limit.retryAfterMs };
-    }
-  }
-
   if (auth.mode === "token") {
     if (!auth.token) {
       return { ok: false, reason: "token_missing_config" };
     }
     if (!connectAuth?.token) {
-      if (rateLimitKey) {
-        recordAuthFailure(rateLimitKey, Date.now());
-      }
+      limiter?.recordFailure(ip, rateLimitScope);
       return { ok: false, reason: "token_missing" };
     }
-    if (!safeEqual(connectAuth.token, auth.token)) {
-      if (rateLimitKey) {
-        recordAuthFailure(rateLimitKey, Date.now());
-      }
+    if (!safeEqualSecret(connectAuth.token, auth.token)) {
+      limiter?.recordFailure(ip, rateLimitScope);
       return { ok: false, reason: "token_mismatch" };
     }
-    if (rateLimitKey) {
-      clearAuthFailures(rateLimitKey);
-    }
+    limiter?.reset(ip, rateLimitScope);
     return { ok: true, method: "token" };
   }
 
@@ -375,22 +384,17 @@ export async function authorizeGatewayConnect(params: {
       return { ok: false, reason: "password_missing_config" };
     }
     if (!password) {
-      if (rateLimitKey) {
-        recordAuthFailure(rateLimitKey, Date.now());
-      }
+      limiter?.recordFailure(ip, rateLimitScope);
       return { ok: false, reason: "password_missing" };
     }
-    if (!safeEqual(password, auth.password)) {
-      if (rateLimitKey) {
-        recordAuthFailure(rateLimitKey, Date.now());
-      }
+    if (!safeEqualSecret(password, auth.password)) {
+      limiter?.recordFailure(ip, rateLimitScope);
       return { ok: false, reason: "password_mismatch" };
     }
-    if (rateLimitKey) {
-      clearAuthFailures(rateLimitKey);
-    }
+    limiter?.reset(ip, rateLimitScope);
     return { ok: true, method: "password" };
   }
 
+  limiter?.recordFailure(ip, rateLimitScope);
   return { ok: false, reason: "unauthorized" };
 }
