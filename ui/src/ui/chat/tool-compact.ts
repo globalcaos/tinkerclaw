@@ -146,6 +146,36 @@ export function isCompactTool(_name: string): boolean {
   return true;
 }
 
+/** Merge call+result pairs into single cards (same tool name, adjacent) */
+export function mergeToolCards(
+  cards: Array<{ kind: "call" | "result"; name: string; args?: unknown; text?: string }>,
+): Array<{ kind: "call" | "result"; name: string; args?: unknown; text?: string }> {
+  const merged: typeof cards = [];
+  const callMap = new Map<string, number>(); // name → index in merged
+
+  for (const card of cards) {
+    if (card.kind === "call") {
+      callMap.set(card.name, merged.length);
+      merged.push({ ...card });
+    } else if (card.kind === "result") {
+      const callIdx = callMap.get(card.name);
+      if (callIdx !== undefined) {
+        // Merge into the call card — promote to result with args preserved
+        merged[callIdx] = {
+          kind: "result",
+          name: card.name,
+          args: merged[callIdx].args,
+          text: card.text,
+        };
+        callMap.delete(card.name);
+      } else {
+        merged.push(card);
+      }
+    }
+  }
+  return merged;
+}
+
 /** Render a compact tool row with optional security badge */
 export function renderCompactToolRow(card: ToolCard, onOpenSidebar?: (content: string) => void) {
   const display = resolveToolDisplay({ name: card.name, args: card.args });
