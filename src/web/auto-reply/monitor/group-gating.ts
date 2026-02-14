@@ -64,7 +64,11 @@ export function applyGroupGating(params: {
   );
   const activationCommand = parseActivationCommand(commandBody);
   const owner = isOwnerSender(params.baseMentionConfig, params.msg);
-  const shouldBypassMention = owner && hasControlCommand(commandBody, params.cfg);
+  // Owner media messages (voice notes, images, etc.) bypass mention/prefix requirement
+  // because media can't carry a text prefix like "Jarvis".
+  const ownerMediaMessage = owner && Boolean(params.msg.mediaType);
+  const shouldBypassMention =
+    (owner && hasControlCommand(commandBody, params.cfg)) || ownerMediaMessage;
 
   if (activationCommand.hasCommand && !owner) {
     params.logVerbose(`Ignoring /activation from non-owner in group ${params.conversationId}`);
