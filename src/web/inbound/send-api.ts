@@ -61,9 +61,10 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
             ...(gifPlayback ? { gifPlayback: true } : {}),
           };
         } else {
+          const fileName = sendOptions?.fileName?.trim() || "file";
           payload = {
             document: mediaBuffer,
-            fileName: "file",
+            fileName,
             caption: text || undefined,
             mimetype: mediaType,
           };

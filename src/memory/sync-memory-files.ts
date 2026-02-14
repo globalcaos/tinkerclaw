@@ -1,6 +1,7 @@
-import type { MemoryStore } from "./storage/types.js";
+import type { DatabaseSync } from "node:sqlite";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { buildFileEntry, listMemoryFiles, type MemoryFileEntry } from "./internal.js";
+import { deleteStaleIndexedPaths } from "./sync-stale.js";
 
 const log = createSubsystemLogger("memory");
 
@@ -14,13 +15,18 @@ type ProgressState = {
 export async function syncMemoryFiles(params: {
   workspaceDir: string;
   extraPaths?: string[];
-  store: MemoryStore;
+  db: DatabaseSync;
   needsFullReindex: boolean;
   progress?: ProgressState;
   batchEnabled: boolean;
   concurrency: number;
   runWithConcurrency: <T>(tasks: Array<() => Promise<T>>, concurrency: number) => Promise<T[]>;
   indexFile: (entry: MemoryFileEntry) => Promise<void>;
+  vectorTable: string;
+  ftsTable: string;
+  ftsEnabled: boolean;
+  ftsAvailable: boolean;
+  model: string;
 }) {
   const files = await listMemoryFiles(params.workspaceDir, params.extraPaths);
   const fileEntries = await Promise.all(
@@ -45,8 +51,10 @@ export async function syncMemoryFiles(params: {
   }
 
   const tasks = fileEntries.map((entry) => async () => {
-    const hash = await params.store.getFileHash(entry.path, "memory");
-    if (!params.needsFullReindex && hash === entry.hash) {
+    const record = params.db
+      .prepare(`SELECT hash FROM files WHERE path = ? AND source = ?`)
+      .get(entry.path, "memory") as { hash: string } | undefined;
+    if (!params.needsFullReindex && record?.hash === entry.hash) {
       if (params.progress) {
         params.progress.completed += 1;
         params.progress.report({
@@ -67,12 +75,14 @@ export async function syncMemoryFiles(params: {
   });
 
   await params.runWithConcurrency(tasks, params.concurrency);
-
-  const stalePaths = await params.store.listFilePaths("memory");
-  for (const path of stalePaths) {
-    if (activePaths.has(path)) {
-      continue;
-    }
-    await params.store.removeFile(path, "memory");
-  }
+  deleteStaleIndexedPaths({
+    db: params.db,
+    source: "memory",
+    activePaths,
+    vectorTable: params.vectorTable,
+    ftsTable: params.ftsTable,
+    ftsEnabled: params.ftsEnabled,
+    ftsAvailable: params.ftsAvailable,
+    model: params.model,
+  });
 }
