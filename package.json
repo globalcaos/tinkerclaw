@@ -218,7 +218,8 @@
       "esbuild",
       "node-llama-cpp",
       "protobufjs",
-      "sharp"
+      "sharp",
+      "better-sqlite3"
     ]
   }
 }
