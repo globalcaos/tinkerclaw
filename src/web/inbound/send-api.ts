@@ -7,6 +7,7 @@ import type {
 import type { ActiveWebSendOptions, MessageKey } from "../active-listener.js";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
 import { toWhatsappJid } from "../../utils.js";
+import { trackSentMessageId } from "./sent-ids.js";
 
 type BaileysSock = {
   sendMessage: (jid: string, content: AnyMessageContent, options?: unknown) => Promise<unknown>;
@@ -33,6 +34,16 @@ type BaileysSock = {
 };
 
 export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: string }) {
+  // Wrap sendMessage to track sent IDs for echo prevention
+  const originalSendMessage = params.sock.sendMessage.bind(params.sock);
+  const trackedSendMessage: BaileysSock["sendMessage"] = async (jid, content, options) => {
+    const result = await originalSendMessage(jid, content, options);
+    const msgId = (result as { key?: { id?: string } } | undefined)?.key?.id;
+    if (msgId) trackSentMessageId(msgId);
+    return result;
+  };
+  const sock = { ...params.sock, sendMessage: trackedSendMessage };
+
   return {
     sendMessage: async (
       to: string,
@@ -72,7 +83,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
       } else {
         payload = { text };
       }
-      const result = await params.sock.sendMessage(jid, payload);
+      const result = await sock.sendMessage(jid, payload);
       const accountId = sendOptions?.accountId ?? params.defaultAccountId;
       recordChannelActivity({
         channel: "whatsapp",
@@ -90,7 +101,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
       poll: { question: string; options: string[]; maxSelections?: number },
     ): Promise<{ messageId: string }> => {
       const jid = toWhatsappJid(to);
-      const result = await params.sock.sendMessage(jid, {
+      const result = await sock.sendMessage(jid, {
         poll: {
           name: poll.question,
           values: poll.options,
@@ -116,7 +127,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
       participant?: string,
     ): Promise<void> => {
       const jid = toWhatsappJid(chatJid);
-      await params.sock.sendMessage(jid, {
+      await sock.sendMessage(jid, {
         react: {
           text: emoji,
           key: {
@@ -158,7 +169,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
       participant?: string,
     ): Promise<void> => {
       const jid = toWhatsappJid(chatJid);
-      await params.sock.sendMessage(jid, {
+      await sock.sendMessage(jid, {
         text: newText,
         edit: {
           remoteJid: jid,
@@ -177,7 +188,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
       participant?: string,
     ): Promise<void> => {
       const jid = toWhatsappJid(chatJid);
-      await params.sock.sendMessage(jid, {
+      await sock.sendMessage(jid, {
         delete: {
           remoteJid: jid,
           id: messageId,
@@ -226,7 +237,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
         // Since we don't have the original message content, provide a minimal placeholder.
         message: { conversation: "" },
       };
-      const result = await params.sock.sendMessage(jid, payload, { quoted });
+      const result = await sock.sendMessage(jid, payload, { quoted });
       recordChannelActivity({
         channel: "whatsapp",
         accountId: params.defaultAccountId,
@@ -242,7 +253,7 @@ export function createWebSendApi(params: { sock: BaileysSock; defaultAccountId: 
     // Send a sticker
     sendSticker: async (to: string, stickerBuffer: Buffer): Promise<{ messageId: string }> => {
       const jid = toWhatsappJid(to);
-      const result = await params.sock.sendMessage(jid, {
+      const result = await sock.sendMessage(jid, {
         sticker: stickerBuffer,
       } as AnyMessageContent);
       recordChannelActivity({
