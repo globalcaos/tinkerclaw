@@ -30,6 +30,7 @@ import { readChannelAllowFromStore } from "../../../pairing/pairing-store.js";
 import { jidToE164, normalizeE164 } from "../../../utils.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
+import { sendReactionWhatsApp } from "../../outbound.js";
 import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import { elide } from "../util.js";
@@ -394,6 +395,15 @@ export async function processMessage(params: {
           logVerboseMessage: shouldLog,
         });
         if (info.kind === "final") {
+          // Remove the "thinking" reaction now that we have a reply
+          if (params.msg.id && params.msg.chatId) {
+            sendReactionWhatsApp(params.msg.chatId, params.msg.id, "", {
+              verbose: false,
+              fromMe: false,
+              participant: params.msg.senderJid,
+              accountId: params.connectionId,
+            }).catch(() => {});
+          }
           const fromDisplay =
             params.msg.chatType === "group" ? conversationId : (params.msg.from ?? "unknown");
           const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
@@ -415,7 +425,20 @@ export async function processMessage(params: {
           `Failed sending web ${label} to ${params.msg.from ?? conversationId}: ${formatError(err)}`,
         );
       },
-      onReplyStart: params.msg.sendComposing,
+      onReplyStart: async () => {
+        await params.msg.sendComposing();
+        // Send a "thinking" reaction as a visible progress indicator.
+        // WhatsApp linked devices can't show typing indicators in groups,
+        // so a reaction on the triggering message is the next best thing.
+        if (params.msg.id && params.msg.chatId) {
+          sendReactionWhatsApp(params.msg.chatId, params.msg.id, "🤔", {
+            verbose: false,
+            fromMe: false,
+            participant: params.msg.senderJid,
+            accountId: params.connectionId,
+          }).catch(() => {});
+        }
+      },
     },
     replyOptions: {
       disableBlockStreaming:
