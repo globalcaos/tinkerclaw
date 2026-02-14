@@ -141,26 +141,9 @@ function classifyExecCommand(command: string): SecurityLevel {
   return "medium";
 }
 
-/** Tools that render as compact one-liner rows */
-const COMPACT_TOOLS = new Set([
-  "exec",
-  "read",
-  "write",
-  "edit",
-  "process",
-  "memory_search",
-  "memory_get",
-  "web_search",
-  "web_fetch",
-  "image",
-  "tts",
-  "whatsapp_history",
-  "session_status",
-]);
-
-/** Check if a tool should render compact */
-export function isCompactTool(name: string): boolean {
-  return COMPACT_TOOLS.has(name.toLowerCase());
+/** Check if a tool should render compact — default: ALL tools are compact */
+export function isCompactTool(_name: string): boolean {
+  return true;
 }
 
 /** Render a compact tool row with optional security badge */
