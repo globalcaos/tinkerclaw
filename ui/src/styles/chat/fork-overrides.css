@@ -2,23 +2,34 @@
 
 /* Reduce gap between message groups */
 .chat-group {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   gap: 8px;
 }
 
-/* Tighter bubbles */
+/* Remove bubble boxes for assistant/system — plain text */
 .chat-bubble {
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 4px 0;
+  border-radius: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .chat-bubble.has-copy {
-  padding-right: 28px;
+  padding-right: 24px;
+}
+
+/* Keep user bubbles visible (right-aligned, colored) */
+.chat-group.user .chat-bubble {
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--accent-subtle) !important;
+  border: 1px solid transparent !important;
 }
 
 /* Tighter gap between messages in a group */
 .chat-group-messages {
-  gap: 1px;
+  gap: 0;
 }
 
 /* Smaller footer */
@@ -36,9 +47,10 @@
   max-width: 100%;
 }
 
-/* System messages: tighter */
+/* System messages: compact, muted */
 .chat-group.system .chat-bubble,
 .chat-group.other .chat-bubble {
-  padding: 4px 8px;
+  padding: 2px 0;
   font-size: 12px;
+  color: var(--muted);
 }
