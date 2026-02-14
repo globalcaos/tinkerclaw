@@ -206,6 +206,8 @@ export async function dispatchReplyFromConfig(params: {
           ctx.Body = transcript;
           ctx.BodyForAgent = transcript;
           ctx.RawBody = transcript;
+          ctx.CommandBody = transcript;
+          ctx.BodyForCommands = transcript;
         } else {
           logVerbose("Audio preflight: no transcript returned, skipping triggerPrefix check for audio");
           messageBody = ""; // will fail prefix check below
