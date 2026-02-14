@@ -143,7 +143,7 @@ export async function createWaSocket(
     browser: ["OpenClaw", "Chrome", "1.0.0"],
     syncFullHistory,
     shouldSyncHistoryMessage: () => true,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
   });
   sessionLogger.info("[WA-DEBUG] Socket created, binding store");
 

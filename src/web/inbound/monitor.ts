@@ -334,11 +334,12 @@ export async function monitorWebInbox(options: {
         try {
           // WhatsApp requires presence subscription before composing works in groups
           if (!presenceSubscribed && chatJid.endsWith("@g.us")) {
-            inboundLogger.info({ chatJid }, "[TYPING] Subscribing to group presence");
             await sock.presenceSubscribe(chatJid);
             presenceSubscribed = true;
           }
-          inboundLogger.info({ chatJid }, "[TYPING] Sending composing");
+          // Ensure bot appears "available" before composing — WhatsApp may
+          // not relay typing indicators from devices that appear offline.
+          await sock.sendPresenceUpdate("available");
           await sock.sendPresenceUpdate("composing", chatJid);
         } catch (err) {
           inboundLogger.warn({ chatJid, error: String(err) }, "[TYPING] Presence update failed");
