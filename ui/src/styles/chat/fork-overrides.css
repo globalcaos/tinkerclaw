@@ -57,12 +57,25 @@
   max-width: 100%;
 }
 
-/* System messages: compact, muted */
+/* System messages: compact, collapsed, muted */
 .chat-group.system .chat-bubble,
 .chat-group.other .chat-bubble {
   padding: 1px 0;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
+  max-height: 1.6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: max-height 200ms ease-out;
+}
+
+/* Expand on click (toggled via JS or hover for now) */
+.chat-group.system .chat-bubble:hover,
+.chat-group.other .chat-bubble:hover {
+  max-height: 500px;
+  white-space: normal;
 }
 
 /* Chat thread: tighter padding */
