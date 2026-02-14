@@ -262,8 +262,8 @@ function renderGroupedMessage(
     return nothing;
   }
 
-  // fork: collapsible system messages
-  if (role === "system" && markdown) {
+  // fork: collapsible system messages (detected by text prefix, since they may have role=user)
+  if (markdown && (role === "system" || markdown.trimStart().startsWith("System:"))) {
     return html`<div class="chat-bubble">${renderCollapsibleSystem(markdown)}</div>`;
   }
 
