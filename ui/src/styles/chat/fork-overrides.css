@@ -6,17 +6,26 @@
   gap: 8px;
 }
 
-/* Remove bubble boxes for assistant/system — plain text */
+/* Default: no bubble box (tool-only messages, etc.) */
 .chat-bubble {
-  padding: 4px 0;
+  padding: 2px 0;
   border-radius: 0;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
 }
 
-.chat-bubble.has-copy {
-  padding-right: 24px;
+/* Text messages (assistant reports) get a visible bubble */
+.chat-bubble.chat-bubble--text {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: inset 0 1px 0 var(--card-highlight) !important;
+}
+
+.chat-bubble.chat-bubble--text.has-copy {
+  padding-right: 28px;
 }
 
 /* Keep user bubbles visible (right-aligned, colored) */
