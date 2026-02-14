@@ -383,6 +383,7 @@ export async function monitorWebInbox(options: {
         mediaPath,
         mediaType,
         mediaFileName,
+        isOfflineRecovery: upsert.type === "append",
       };
       try {
         const task = Promise.resolve(debouncer.enqueue(inboundMessage));

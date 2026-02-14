@@ -177,6 +177,17 @@ export async function processMessage(params: {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
+  // Annotate offline-recovered messages so the agent knows to review before acting.
+  if (params.msg.isOfflineRecovery) {
+    const ageMs = params.msg.timestamp ? Date.now() - params.msg.timestamp : undefined;
+    const ageLabel = ageMs != null ? `${Math.round(ageMs / 60_000)} minutes` : "unknown time";
+    combinedBody =
+      `[OFFLINE RECOVERY — This message was sent ${ageLabel} ago while you were offline. ` +
+      `Read ALL recovered messages before responding. Do NOT act on each one individually. ` +
+      `Summarize what was missed, acknowledge receipt, and ask for confirmation before taking action.]\n` +
+      combinedBody;
+  }
+
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
     sessionKey: params.route.sessionKey,
