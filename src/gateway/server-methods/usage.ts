@@ -12,7 +12,10 @@ import type {
 } from "../../infra/session-cost-usage.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { loadConfig } from "../../config/config.js";
-import { resolveSessionFilePath } from "../../config/sessions/paths.js";
+import {
+  resolveSessionFilePath,
+  resolveSessionFilePathOptions,
+} from "../../config/sessions/paths.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.js";
 import {
   loadCostUsageSummary,
@@ -295,7 +298,7 @@ export const usageHandlers: GatewayRequestHandlers = {
     const specificKey = typeof p.key === "string" ? p.key.trim() : null;
 
     // Load session store for named sessions
-    const { store } = loadCombinedSessionStoreForGateway(config);
+    const { storePath, store } = loadCombinedSessionStoreForGateway(config);
     const now = Date.now();
 
     // Merge discovered sessions with store entries
@@ -335,9 +338,21 @@ export const usageHandlers: GatewayRequestHandlers = {
       const sessionId = storeEntry?.sessionId ?? keyRest;
 
       // Resolve the session file path
-      const sessionFile = resolveSessionFilePath(sessionId, storeEntry, {
-        agentId: agentIdFromKey,
-      });
+      let sessionFile: string;
+      try {
+        const pathOpts = resolveSessionFilePathOptions({
+          storePath: storePath !== "(multiple)" ? storePath : undefined,
+          agentId: agentIdFromKey,
+        });
+        sessionFile = resolveSessionFilePath(sessionId, storeEntry, pathOpts);
+      } catch {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `Invalid session reference: ${specificKey}`),
+        );
+        return;
+      }
 
       try {
         const stats = fs.statSync(sessionFile);
@@ -485,11 +500,13 @@ export const usageHandlers: GatewayRequestHandlers = {
     };
 
     for (const merged of limitedEntries) {
+      const agentId = parseAgentSessionKey(merged.key)?.agentId;
       const usage = await loadSessionCostSummary({
         sessionId: merged.sessionId,
         sessionEntry: merged.storeEntry,
         sessionFile: merged.sessionFile,
         config,
+        agentId,
         startMs,
         endMs,
       });
@@ -508,7 +525,6 @@ export const usageHandlers: GatewayRequestHandlers = {
         aggregateTotals.missingCostEntries += usage.missingCostEntries;
       }
 
-      const agentId = parseAgentSessionKey(merged.key)?.agentId;
       const channel = merged.storeEntry?.channel ?? merged.storeEntry?.origin?.provider;
       const chatType = merged.storeEntry?.chatType ?? merged.storeEntry?.origin?.chatType;
 
@@ -760,21 +776,32 @@ export const usageHandlers: GatewayRequestHandlers = {
     }
 
     const config = loadConfig();
-    const { entry } = loadSessionEntry(key);
+    const { entry, storePath } = loadSessionEntry(key);
 
     // For discovered sessions (not in store), try using key as sessionId directly
     const parsed = parseAgentSessionKey(key);
     const agentId = parsed?.agentId;
     const rawSessionId = parsed?.rest ?? key;
     const sessionId = entry?.sessionId ?? rawSessionId;
-    const sessionFile =
-      entry?.sessionFile ?? resolveSessionFilePath(rawSessionId, entry, { agentId });
+    let sessionFile: string;
+    try {
+      const pathOpts = resolveSessionFilePathOptions({ storePath, agentId });
+      sessionFile = resolveSessionFilePath(sessionId, entry, pathOpts);
+    } catch {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `Invalid session key: ${key}`),
+      );
+      return;
+    }
 
     const timeseries = await loadSessionUsageTimeSeries({
       sessionId,
       sessionEntry: entry,
       sessionFile,
       config,
+      agentId,
       maxPoints: 200,
     });
 
@@ -802,15 +829,25 @@ export const usageHandlers: GatewayRequestHandlers = {
         : 200;
 
     const config = loadConfig();
-    const { entry } = loadSessionEntry(key);
+    const { entry, storePath } = loadSessionEntry(key);
 
     // For discovered sessions (not in store), try using key as sessionId directly
     const parsed = parseAgentSessionKey(key);
     const agentId = parsed?.agentId;
     const rawSessionId = parsed?.rest ?? key;
     const sessionId = entry?.sessionId ?? rawSessionId;
-    const sessionFile =
-      entry?.sessionFile ?? resolveSessionFilePath(rawSessionId, entry, { agentId });
+    let sessionFile: string;
+    try {
+      const pathOpts = resolveSessionFilePathOptions({ storePath, agentId });
+      sessionFile = resolveSessionFilePath(sessionId, entry, pathOpts);
+    } catch {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `Invalid session key: ${key}`),
+      );
+      return;
+    }
 
     const { loadSessionLogs } = await import("../../infra/session-cost-usage.js");
     const logs = await loadSessionLogs({
@@ -818,6 +855,7 @@ export const usageHandlers: GatewayRequestHandlers = {
       sessionEntry: entry,
       sessionFile,
       config,
+      agentId,
       limit,
     });
 
