@@ -57,9 +57,12 @@ function extractImages(message: unknown): ImageBlock[] {
 export function renderReadingIndicatorGroup(assistant?: AssistantIdentity) {
   return html`
     <div class="chat-group assistant">
+      ${renderAvatar("assistant", assistant)}
       <div class="chat-group-messages">
         <div class="chat-bubble chat-reading-indicator" aria-hidden="true">
-          <span class="chat-reading-indicator__dots"> <span></span><span></span><span></span> </span>
+          <span class="chat-reading-indicator__dots">
+            <span></span><span></span><span></span>
+          </span>
         </div>
       </div>
     </div>
@@ -72,8 +75,15 @@ export function renderStreamingGroup(
   onOpenSidebar?: (content: string) => void,
   assistant?: AssistantIdentity,
 ) {
+  const timestamp = new Date(startedAt).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const name = assistant?.name ?? "Assistant";
+
   return html`
     <div class="chat-group assistant">
+      ${renderAvatar("assistant", assistant)}
       <div class="chat-group-messages">
         ${renderGroupedMessage(
           {
@@ -84,6 +94,10 @@ export function renderStreamingGroup(
           { isStreaming: true, showReasoning: false },
           onOpenSidebar,
         )}
+        <div class="chat-group-footer">
+          <span class="chat-sender-name">${name}</span>
+          <span class="chat-group-timestamp">${timestamp}</span>
+        </div>
       </div>
     </div>
   `;
@@ -115,6 +129,10 @@ export function renderMessageGroup(
 
   return html`
     <div class="chat-group ${roleClass}">
+      ${renderAvatar(group.role, {
+        name: assistantName,
+        avatar: opts.assistantAvatar ?? null,
+      })}
       <div class="chat-group-messages">
         ${group.messages.map((item, index) =>
           renderGroupedMessage(
@@ -126,6 +144,10 @@ export function renderMessageGroup(
             opts.onOpenSidebar,
           ),
         )}
+        <div class="chat-group-footer">
+          <span class="chat-sender-name">${who}</span>
+          <span class="chat-group-timestamp">${timestamp}</span>
+        </div>
       </div>
     </div>
   `;
