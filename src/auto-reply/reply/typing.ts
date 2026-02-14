@@ -103,7 +103,6 @@ export function createTypingController(params: {
       log?.(`[TYPING-DEBUG] triggerTyping: sealed, skipping`);
       return;
     }
-    log?.(`[TYPING-DEBUG] triggerTyping: calling onReplyStart (exists=${!!onReplyStart})`);
     await onReplyStart?.();
   };
 
