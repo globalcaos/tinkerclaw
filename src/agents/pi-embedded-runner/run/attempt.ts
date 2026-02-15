@@ -701,7 +701,7 @@ export async function runEmbeddedAttempt(
               ccStore.close();
             }
           } catch (ccErr) {
-            log.warn(`[continuous-compact] failed, falling back: ${ccErr}`);
+            log.warn(`[continuous-compact] failed, falling back: ${String(ccErr)}`);
           }
         }
 
