@@ -172,14 +172,6 @@ export type WhatsAppAccountConfig = {
   blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
   /** Per-action tool gating (default: true for all). */
   actions?: WhatsAppActionConfig;
-  groups?: Record<
-    string,
-    {
-      requireMention?: boolean;
-      tools?: GroupToolPolicyConfig;
-      toolsBySender?: GroupToolPolicyBySenderConfig;
-    }
-  >;
   groups?: Record<string, WhatsAppGroupConfig>;
   /** Acknowledgment reaction sent immediately upon message receipt. */
   ackReaction?: WhatsAppAckReactionConfig;
