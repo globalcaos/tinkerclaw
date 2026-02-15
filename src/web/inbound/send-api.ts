@@ -22,6 +22,7 @@ export function createWebSendApi(params: {
   sock: {
     sendMessage: (jid: string, content: AnyMessageContent) => Promise<unknown>;
     sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
+    presenceSubscribe?: (jid: string) => Promise<unknown>; // FORK: group presence
   };
   defaultAccountId: string;
 }) {
