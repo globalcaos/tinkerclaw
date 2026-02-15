@@ -31,6 +31,12 @@ import {
   listChannelSupportedActions,
   resolveChannelMessageToolHints,
 } from "../../channel-tools.js";
+import {
+  resolveContinuousCompactConfig,
+  getOrCreateEmbeddingProvider,
+} from "../../continuous-compact/config.js";
+import { assembleContextWithContinuousCompact } from "../../continuous-compact/context-assembler.js";
+import { openSessionVectorStore } from "../../continuous-compact/session-store.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
@@ -651,19 +657,69 @@ export async function runEmbeddedAttempt(
         const validated = transcriptPolicy.validateAnthropicTurns
           ? validateAnthropicTurns(validatedGemini)
           : validatedGemini;
-        const truncated = limitHistoryTurns(
-          validated,
-          getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
-        );
-        // Re-run tool_use/tool_result pairing repair after truncation, since
-        // limitHistoryTurns can orphan tool_result blocks by removing the
-        // assistant message that contained the matching tool_use.
-        const limited = transcriptPolicy.repairToolUseResultPairing
-          ? sanitizeToolUseResultPairing(truncated)
-          : truncated;
-        cacheTrace?.recordStage("session:limited", { messages: limited });
-        if (limited.length > 0) {
-          activeSession.agent.replaceMessages(limited);
+        // Continuous compacting: rolling window + topic-aware embedding retrieval
+        const ccConfig = resolveContinuousCompactConfig(params.config);
+        let ccUsed = false;
+
+        if (ccConfig.enabled) {
+          try {
+            const ccStore = openSessionVectorStore(agentDir, params.sessionId);
+            const ccEmbedder = await getOrCreateEmbeddingProvider(params.config, agentDir);
+            if (ccEmbedder) {
+              const assembled = await assembleContextWithContinuousCompact({
+                messages: validated,
+                currentPrompt: params.prompt ?? "",
+                sessionId: params.sessionId,
+                store: ccStore,
+                embedder: ccEmbedder,
+                config: ccConfig,
+              });
+
+              // Inject retrieved context into system prompt
+              if (assembled.retrievedContext) {
+                params.extraSystemPrompt = params.extraSystemPrompt
+                  ? `${params.extraSystemPrompt}\n\n${assembled.retrievedContext}`
+                  : assembled.retrievedContext;
+              }
+
+              const ccLimited = transcriptPolicy.repairToolUseResultPairing
+                ? sanitizeToolUseResultPairing(assembled.messages)
+                : assembled.messages;
+              cacheTrace?.recordStage("session:limited", { messages: ccLimited });
+              if (ccLimited.length > 0) {
+                activeSession.agent.replaceMessages(ccLimited);
+              }
+
+              log.info(
+                `[continuous-compact] session=${params.sessionId} ` +
+                  `activeWindow=${assembled.messages.length} ` +
+                  `indexed=${assembled.newlyIndexedCount} ` +
+                  `totalIndexed=${assembled.totalIndexedCount} ` +
+                  `tokens≈${assembled.estimatedTokens}`,
+              );
+              ccUsed = true;
+              ccStore.close();
+            }
+          } catch (ccErr) {
+            log.warn(`[continuous-compact] failed, falling back: ${ccErr}`);
+          }
+        }
+
+        if (!ccUsed) {
+          const truncated = limitHistoryTurns(
+            validated,
+            getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
+          );
+          // Re-run tool_use/tool_result pairing repair after truncation, since
+          // limitHistoryTurns can orphan tool_result blocks by removing the
+          // assistant message that contained the matching tool_use.
+          const limited = transcriptPolicy.repairToolUseResultPairing
+            ? sanitizeToolUseResultPairing(truncated)
+            : truncated;
+          cacheTrace?.recordStage("session:limited", { messages: limited });
+          if (limited.length > 0) {
+            activeSession.agent.replaceMessages(limited);
+          }
         }
       } catch (err) {
         await flushPendingToolResultsAfterIdle({
