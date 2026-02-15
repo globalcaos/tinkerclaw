@@ -11,6 +11,7 @@ import { jidToE164, resolveJidToE164 } from "../../utils.js";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 import { checkInboundAccessControl } from "./access-control.js";
 import { isRecentInboundMessage } from "./dedupe.js";
+
 import {
   describeReplyContext,
   extractLocationData,
@@ -244,6 +245,11 @@ export async function monitorWebInbox(options: {
         if (isRecentInboundMessage(dedupeKey)) {
           continue;
         }
+      }
+      // Skip messages we sent ourselves — prevents echo loops where the bot
+      // re-ingests its own voice notes or media as new inbound messages.
+      if (id && wasSentByBot(id)) {
+        continue;
       }
       const participantJid = msg.key?.participant ?? undefined;
       const from = group ? remoteJid : await resolveInboundJid(remoteJid);
@@ -534,6 +540,7 @@ export async function monitorWebInbox(options: {
     sock: {
       sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
+      presenceSubscribe: (jid: string) => sock.presenceSubscribe(jid),
     },
     defaultAccountId: options.accountId,
   });
