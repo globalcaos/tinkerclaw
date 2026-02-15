@@ -1,6 +1,8 @@
 import { completeSimple, type TextContent } from "@mariozechner/pi-ai";
 import { EdgeTTS } from "node-edge-tts";
-import { rmSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
+import { promisify } from "node:util";
 import type { OpenClawConfig } from "../config/config.js";
 import type {
   ResolvedTtsConfig,
@@ -16,6 +18,8 @@ import {
   type ModelRef,
 } from "../agents/model-selection.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_ELEVENLABS_BASE_URL = "https://api.elevenlabs.io";
 const TEMP_FILE_CLEANUP_DELAY_MS = 5 * 60 * 1000; // 5 minutes
@@ -139,7 +143,12 @@ export function parseTtsDirectives(
             if (!policy.allowProvider) {
               break;
             }
-            if (rawValue === "openai" || rawValue === "elevenlabs" || rawValue === "edge") {
+            if (
+              rawValue === "openai" ||
+              rawValue === "elevenlabs" ||
+              rawValue === "edge" ||
+              rawValue === "sherpa-onnx"
+            ) {
               overrides.provider = rawValue;
             } else {
               warnings.push(`unsupported provider "${rawValue}"`);
@@ -670,4 +679,119 @@ export async function edgeTTS(params: {
     timeout: config.timeoutMs ?? timeoutMs,
   });
   await tts.ttsPromise(text, outputPath);
+}
+
+/** Default Jarvis metallic effects chain for sherpa-onnx post-processing. */
+export const DEFAULT_SHERPA_EFFECTS_CHAIN =
+  "asetrate=22050*1.05,aresample=22050,flanger=delay=0:depth=2:regen=50:width=71:speed=0.5,aecho=0.8:0.88:15:0.5,highpass=f=200,treble=g=6";
+
+export const DEFAULT_SHERPA_OUTPUT_CODEC = "-c:a libopus -b:a 64k";
+
+/**
+ * Generate speech using sherpa-onnx-offline-tts + optional ffmpeg post-processing.
+ * Produces OGG/Opus output suitable for WhatsApp voice notes.
+ */
+export async function sherpaOnnxTTS(params: {
+  text: string;
+  outputPath: string;
+  config: ResolvedTtsConfig["sherpaOnnx"];
+  timeoutMs: number;
+}): Promise<void> {
+  const { text, outputPath, config, timeoutMs } = params;
+
+  if (!existsSync(config.bin)) {
+    throw new Error(`sherpa-onnx binary not found: ${config.bin}`);
+  }
+  if (!existsSync(config.modelDir)) {
+    throw new Error(`sherpa-onnx model directory not found: ${config.modelDir}`);
+  }
+
+  // Build LD_LIBRARY_PATH for sherpa-onnx shared libs
+  const env = { ...process.env };
+  if (config.libPath) {
+    env.LD_LIBRARY_PATH = config.libPath + (env.LD_LIBRARY_PATH ? `:${env.LD_LIBRARY_PATH}` : "");
+  }
+
+  const modelDir = config.modelDir.replace(/\/+$/, "");
+  // Derive model files from the model directory (piper VITS convention)
+  const onnxFiles = await findOnnxModel(modelDir);
+
+  const rawWav = outputPath.replace(/\.[^.]+$/, ".raw.wav");
+
+  try {
+    // Step 1: Generate raw WAV with sherpa-onnx
+    const sherpaArgs = [
+      `--vits-model=${onnxFiles.model}`,
+      `--vits-tokens=${onnxFiles.tokens}`,
+      `--vits-data-dir=${onnxFiles.dataDir}`,
+      `--vits-length-scale=${config.lengthScale}`,
+      `--output-filename=${rawWav}`,
+      text,
+    ];
+
+    await execFileAsync(config.bin, sherpaArgs, {
+      env,
+      timeout: timeoutMs,
+    });
+
+    if (!existsSync(rawWav)) {
+      throw new Error("sherpa-onnx produced no output");
+    }
+
+    // Step 2: Apply effects + encode to OGG/Opus via ffmpeg
+    const ffmpegArgs = ["-y", "-i", rawWav];
+
+    if (config.effectsChain) {
+      ffmpegArgs.push("-af", config.effectsChain);
+    }
+
+    // Parse output codec args (e.g. "-c:a libopus -b:a 64k")
+    const codecArgs = config.outputCodec.split(/\s+/).filter(Boolean);
+    ffmpegArgs.push(...codecArgs, outputPath);
+
+    await execFileAsync("ffmpeg", ffmpegArgs, {
+      timeout: timeoutMs,
+    });
+
+    if (!existsSync(outputPath)) {
+      throw new Error("ffmpeg produced no output");
+    }
+  } finally {
+    // Clean up intermediate WAV
+    try {
+      if (existsSync(rawWav)) {
+        rmSync(rawWav, { force: true });
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+/** Find the ONNX model, tokens file, and espeak-ng-data dir inside a model directory. */
+async function findOnnxModel(
+  modelDir: string,
+): Promise<{ model: string; tokens: string; dataDir: string }> {
+  const { readdirSync } = await import("node:fs");
+  const files = readdirSync(modelDir);
+  const onnxFile = files.find((f) => f.endsWith(".onnx") && !f.endsWith(".onnx.json"));
+  if (!onnxFile) {
+    throw new Error(`No .onnx model file found in ${modelDir}`);
+  }
+
+  const tokensFile = files.includes("tokens.txt") ? "tokens.txt" : undefined;
+  if (!tokensFile) {
+    throw new Error(`No tokens.txt found in ${modelDir}`);
+  }
+
+  const dataDir = files.includes("espeak-ng-data") ? "espeak-ng-data" : undefined;
+  if (!dataDir) {
+    throw new Error(`No espeak-ng-data directory found in ${modelDir}`);
+  }
+
+  return {
+    model: `${modelDir}/${onnxFile}`,
+    tokens: `${modelDir}/${tokensFile}`,
+    dataDir: `${modelDir}/${dataDir}`,
+  };
 }
