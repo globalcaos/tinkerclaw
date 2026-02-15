@@ -22,6 +22,7 @@ export async function sendMessageWhatsApp(
   options: {
     verbose: boolean;
     mediaUrl?: string;
+    mediaLocalRoots?: readonly string[];
     gifPlayback?: boolean;
     accountId?: string;
   },
@@ -51,7 +52,9 @@ export async function sendMessageWhatsApp(
     let mediaType: string | undefined;
     let documentFileName: string | undefined;
     if (options.mediaUrl) {
-      const media = await loadWebMedia(options.mediaUrl);
+      const media = await loadWebMedia(options.mediaUrl, {
+        localRoots: options.mediaLocalRoots,
+      });
       const caption = text || undefined;
       mediaBuffer = media.buffer;
       mediaType = media.contentType;

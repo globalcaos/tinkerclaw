@@ -15,6 +15,8 @@ import {
   recordAllowlistUse,
   resolveExecApprovals,
   resolveExecApprovalsFromFile,
+  buildSafeShellCommand,
+  buildSafeBinsShellCommand,
 } from "../infra/exec-approvals.js";
 import { buildNodeShellCommand } from "../infra/node-shell.js";
 import {
@@ -78,6 +80,7 @@ export type ExecToolDefaults = {
   sessionKey?: string;
   messageProvider?: string;
   notifyOnExit?: boolean;
+  notifyOnExitEmptySuccess?: boolean;
   cwd?: string;
 };
 
@@ -134,6 +137,7 @@ export function createExecTool(
   const defaultPathPrepend = normalizePathPrepend(defaults?.pathPrepend);
   const safeBins = resolveSafeBins(defaults?.safeBins);
   const notifyOnExit = defaults?.notifyOnExit !== false;
+  const notifyOnExitEmptySuccess = defaults?.notifyOnExitEmptySuccess === true;
   const notifySessionKey = defaults?.sessionKey?.trim() || undefined;
   const approvalRunningNoticeMs = resolveApprovalRunningNoticeMs(defaults?.approvalRunningNoticeMs);
   // Derive agentId only when sessionKey is an agent session key.
@@ -171,6 +175,7 @@ export function createExecTool(
       const maxOutput = DEFAULT_MAX_OUTPUT;
       const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
       const warnings: string[] = [];
+      let execCommandOverride: string | undefined;
       const backgroundRequested = params.background === true;
       const yieldRequested = typeof params.yieldMs === "number";
       if (!allowBackground && (backgroundRequested || yieldRequested)) {
@@ -314,7 +319,16 @@ export function createExecTool(
         });
         applyShellPath(env, shellPath);
       }
-      applyPathPrepend(env, defaultPathPrepend);
+
+      // `tools.exec.pathPrepend` is only meaningful when exec runs locally (gateway) or in the sandbox.
+      // Node hosts intentionally ignore request-scoped PATH overrides, so don't pretend this applies.
+      if (host === "node" && defaultPathPrepend.length > 0) {
+        warnings.push(
+          "Warning: tools.exec.pathPrepend is ignored for host=node. Configure PATH on the node host/service instead.",
+        );
+      } else {
+        applyPathPrepend(env, defaultPathPrepend);
+      }
 
       if (host === "node") {
         const approvals = resolveExecApprovals(agentId, { security, ask });
@@ -360,10 +374,6 @@ export function createExecTool(
         const argv = buildNodeShellCommand(params.command, nodeInfo?.platform);
 
         const nodeEnv = params.env ? { ...params.env } : undefined;
-
-        if (nodeEnv) {
-          applyPathPrepend(nodeEnv, defaultPathPrepend, { requireExisting: true });
-        }
         const baseAllowlistEval = evaluateShellAllowlist({
           command: params.command,
           allowlist: [],
@@ -742,6 +752,7 @@ export function createExecTool(
                 maxOutput,
                 pendingMaxOutput,
                 notifyOnExit: false,
+                notifyOnExitEmptySuccess: false,
                 scopeKey: defaults?.scopeKey,
                 sessionKey: notifySessionKey,
                 timeoutSec: effectiveTimeout,
@@ -805,6 +816,43 @@ export function createExecTool(
           throw new Error("exec denied: allowlist miss");
         }
 
+        // If allowlist uses safeBins, sanitize only those stdin-only segments:
+        // disable glob/var expansion by forcing argv tokens to be literal via single-quoting.
+        if (
+          hostSecurity === "allowlist" &&
+          analysisOk &&
+          allowlistSatisfied &&
+          allowlistEval.segmentSatisfiedBy.some((by) => by === "safeBins")
+        ) {
+          const safe = buildSafeBinsShellCommand({
+            command: params.command,
+            segments: allowlistEval.segments,
+            segmentSatisfiedBy: allowlistEval.segmentSatisfiedBy,
+            platform: process.platform,
+          });
+          if (!safe.ok || !safe.command) {
+            // Fallback: quote everything (safe, but may change glob behavior).
+            const fallback = buildSafeShellCommand({
+              command: params.command,
+              platform: process.platform,
+            });
+            if (!fallback.ok || !fallback.command) {
+              throw new Error(
+                `exec denied: safeBins sanitize failed (${safe.reason ?? "unknown"})`,
+              );
+            }
+            warnings.push(
+              "Warning: safeBins hardening used fallback quoting due to parser mismatch.",
+            );
+            execCommandOverride = fallback.command;
+          } else {
+            warnings.push(
+              "Warning: safeBins hardening disabled glob/variable expansion for stdin-only segments.",
+            );
+            execCommandOverride = safe.command;
+          }
+        }
+
         if (allowlistMatches.length > 0) {
           const seen = new Set<string>();
           for (const match of allowlistMatches) {
@@ -829,6 +877,7 @@ export function createExecTool(
       const usePty = params.pty === true && !sandbox;
       const run = await runExecProcess({
         command: params.command,
+        execCommand: execCommandOverride,
         workdir,
         env,
         sandbox,
@@ -838,6 +887,7 @@ export function createExecTool(
         maxOutput,
         pendingMaxOutput,
         notifyOnExit,
+        notifyOnExitEmptySuccess,
         scopeKey: defaults?.scopeKey,
         sessionKey: notifySessionKey,
         timeoutSec: effectiveTimeout,

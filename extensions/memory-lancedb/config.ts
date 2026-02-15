@@ -21,12 +21,14 @@ export type MemoryConfig = {
   autoCapture?: boolean;
   autoRecall?: boolean;
   hybrid?: HybridConfig;
+  captureMaxChars?: number;
 };
 
 export const MEMORY_CATEGORIES = ["preference", "fact", "decision", "entity", "other"] as const;
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 const DEFAULT_MODEL = "text-embedding-3-small";
+export const DEFAULT_CAPTURE_MAX_CHARS = 500;
 const LEGACY_STATE_DIRS: string[] = [];
 
 function resolveDefaultDbPath(): string {
@@ -130,6 +132,7 @@ export const memoryConfigSchema = {
     assertAllowedKeys(
       cfg,
       ["embedding", "dbPath", "autoCapture", "autoRecall", "hybrid"],
+      ["embedding", "dbPath", "autoCapture", "autoRecall", "captureMaxChars"],
       "memory config",
     );
 
@@ -141,6 +144,15 @@ export const memoryConfigSchema = {
 
     const model = resolveEmbeddingModel(embedding);
 
+    const captureMaxChars =
+      typeof cfg.captureMaxChars === "number" ? Math.floor(cfg.captureMaxChars) : undefined;
+    if (
+      typeof captureMaxChars === "number" &&
+      (captureMaxChars < 100 || captureMaxChars > 10_000)
+    ) {
+      throw new Error("captureMaxChars must be between 100 and 10000");
+    }
+
     return {
       embedding: {
         provider: "openai",
@@ -148,9 +160,10 @@ export const memoryConfigSchema = {
         apiKey: resolveEnvVars(embedding.apiKey),
       },
       dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : DEFAULT_DB_PATH,
-      autoCapture: cfg.autoCapture !== false,
+      autoCapture: cfg.autoCapture === true,
       autoRecall: cfg.autoRecall !== false,
       hybrid: parseHybridConfig(cfg.hybrid),
+      captureMaxChars: captureMaxChars ?? DEFAULT_CAPTURE_MAX_CHARS,
     };
   },
   uiHints: {
@@ -199,6 +212,11 @@ export const memoryConfigSchema = {
       placeholder: "0.3",
       help: "Weight for BM25 keyword search (0-1, only used with 'linear' reranker)",
       advanced: true,
+    captureMaxChars: {
+      label: "Capture Max Chars",
+      help: "Maximum message length eligible for auto-capture",
+      advanced: true,
+      placeholder: String(DEFAULT_CAPTURE_MAX_CHARS),
     },
   },
 };
