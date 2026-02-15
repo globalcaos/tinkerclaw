@@ -45,6 +45,8 @@ export type GetReplyOptions = {
   hasRepliedRef?: { value: boolean };
   /** Maximum security level for exec commands (safe|low|medium|high|critical). */
   execSecurityLevel?: "safe" | "low" | "medium" | "high" | "critical";
+  /** Override agent timeout in seconds (0 = no timeout). Threads through to resolveAgentTimeoutMs. */
+  timeoutOverrideSeconds?: number;
 };
 
 export type ReplyPayload = {
