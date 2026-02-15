@@ -219,7 +219,7 @@ Removed large binary files from history and force-pushed clean repo.
 1. **Accountability** — Clear record of what was executed
 2. **Auditability** — Security levels visible at a glance
 3. **Knowledge transfer** — Lessons persist for future sessions
-4. **Transparency** — Oscar sees exactly what happened
+4. **Transparency** — The user sees exactly what happened
 
 ## Limitations
 
