@@ -13,7 +13,7 @@ This fork replaces compaction with **cognitive memory** — a system that organi
 [![Downloads](https://img.shields.io/badge/downloads-4%2C700%2B-green)](https://clawhub.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[ClawHub Skills](https://clawhub.com) · [Memory Architecture Proposal](https://github.com/openclaw/openclaw/issues/13991)
+[ClawHub Skills](https://clawhub.com) · [Memory Architecture Proposal](https://github.com/openclaw/openclaw/issues/13991) · [Research Papers](docs/papers/)
 
 </div>
 
@@ -61,6 +61,16 @@ Over 50 turns in a day, that's the difference between burning your rate limit by
 | **Local ONNX Embeddings** | ~30ms per embedding, fully offline, zero API cost |
 
 📄 [Full architecture proposal →](https://github.com/openclaw/openclaw/issues/13991)
+
+### Research Papers
+
+The theoretical foundations behind this fork's memory system:
+
+| Paper | Description |
+|---|---|
+| 📄 [Agent Memory](docs/papers/agent-memory.md) | Cognitive memory architecture for persistent AI agents — from daily logs to spreading activation |
+| 📄 [Context Compaction](docs/papers/context-compaction.md) | Why lossy compaction fails and how structured memory eliminates the need for it |
+| 📄 [Humor Embeddings](docs/papers/humor-embeddings.md) | Embedding space bisociation theory — computational humor for AI agents |
 
 ---
 
