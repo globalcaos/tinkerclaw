@@ -132,31 +132,6 @@ export type AgentDefaultsConfig = {
   cliBackends?: Record<string, CliBackendConfig>;
   /** Opt-in: prune old tool results from the LLM context to reduce token usage. */
   contextPruning?: AgentContextPruningConfig;
-  /** Continuous compacting: rolling window + topic-aware embedding retrieval. */
-  continuousCompact?: {
-    /** Enable continuous compacting. Default: false */
-    enabled?: boolean;
-    /** Number of recent turns to keep in active window. Default: 20 */
-    windowSize?: number;
-    /** Max tokens for the active window. Default: 40000 */
-    windowTokenBudget?: number;
-    /** Max retrieved turn chunks to inject. Default: 8 */
-    maxRetrievedTurns?: number;
-    /** Token budget for retrieved content. Default: 15000 */
-    maxRetrievedTokens?: number;
-    /** Min cosine similarity score for retrieval. Default: 0.35 */
-    minScore?: number;
-    /** Apply recency boost to retrieved turns. Default: true */
-    recencyBoost?: boolean;
-    /** Fallback to batch compaction on failure. Default: true */
-    fallbackToBatchCompaction?: boolean;
-    /** Batch size for embedding. Default: 10 */
-    batchSize?: number;
-    /** Min chars per turn to index. Default: 20 */
-    minTurnChars?: number;
-    /** Max chars per turn for embedding input. Default: 8000 */
-    maxEmbedChars?: number;
-  };
   /** Compaction tuning and pre-compaction memory flush behavior. */
   compaction?: AgentCompactionConfig;
   /** Vector memory search configuration (per-agent overrides supported). */

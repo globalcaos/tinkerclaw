@@ -1,4 +1,4 @@
-export type TtsProvider = "elevenlabs" | "openai" | "edge" | "sherpa-onnx";
+export type TtsProvider = "elevenlabs" | "openai" | "edge";
 
 export type TtsMode = "final" | "all";
 
@@ -58,21 +58,6 @@ export type TtsConfig = {
     apiKey?: string;
     model?: string;
     voice?: string;
-  };
-  /** sherpa-onnx local TTS configuration (offline, no cloud). */
-  sherpaOnnx?: {
-    /** Path to the sherpa-onnx-offline-tts binary. */
-    bin?: string;
-    /** Path to the VITS model directory (must contain .onnx, tokens.txt, espeak-ng-data). */
-    modelDir?: string;
-    /** VITS length scale (lower = faster speech). Default: 0.5 (2x speed). */
-    lengthScale?: number;
-    /** ffmpeg audio filter chain for post-processing (e.g. metallic effects). Set to empty string to disable. */
-    effectsChain?: string;
-    /** Output codec arguments for ffmpeg (default: "-c:a libopus -b:a 64k" for OGG/Opus). */
-    outputCodec?: string;
-    /** LD_LIBRARY_PATH addition for sherpa-onnx shared libs. */
-    libPath?: string;
   };
   /** Microsoft Edge (node-edge-tts) configuration. */
   edge?: {
