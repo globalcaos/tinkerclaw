@@ -8,6 +8,10 @@ import type { EventStore } from "./event-store.js";
 import { estimateTokens } from "./event-store.js";
 import type { MetricsCollector } from "./metrics.js";
 import { ftsSearch, combinedSearch, type SearchResult, type SearchFilters } from "./search-index.js";
+import type { TaskState } from "./task-state.js";
+import { taskConditionedScore } from "./task-conditioned-scoring.js";
+import type { EmbeddingCache } from "./embedding-cache.js";
+import type { EmbedFn } from "./embedding-worker.js";
 
 /** Default retrieval budget per recall invocation (tokens). */
 const PULL_MAX_TOKENS = 4000;
@@ -114,11 +118,18 @@ function packUnderBudget(events: ScoredRecallEvent[], maxTokens: number): { pack
  * Main recall function. Searches event store and returns relevant events
  * within the token budget, deduplicated against current context.
  */
+export interface RecallDeps {
+	embeddingCache?: EmbeddingCache;
+	embedFn?: EmbedFn;
+	taskState?: TaskState;
+}
+
 export async function recall(
 	options: RecallOptions,
 	store: EventStore,
 	contextEventIds?: Set<string>,
 	metrics?: MetricsCollector,
+	deps?: RecallDeps,
 ): Promise<RecallResult> {
 	const queries = Array.isArray(options.query) ? options.query : [options.query];
 	const maxTokens = options.maxTokens ?? PULL_MAX_TOKENS;
@@ -126,11 +137,15 @@ export async function recall(
 	const candidateMap = new Map<string, ScoredRecallEvent>();
 
 	for (const q of queries) {
-		const results = await combinedSearch(store, q, 20, options.filters);
+		const results = await combinedSearch(store, q, 20, options.filters, deps?.embeddingCache, deps?.embedFn);
 		for (const r of results) {
+			// Apply task-conditioned scoring if task state available
+			const score = deps?.taskState
+				? taskConditionedScore(r.event, r.score, deps.taskState)
+				: r.score;
 			const existing = candidateMap.get(r.event.id);
-			if (!existing || r.score > existing.score) {
-				candidateMap.set(r.event.id, { event: r.event, score: r.score });
+			if (!existing || score > existing.score) {
+				candidateMap.set(r.event.id, { event: r.event, score });
 			}
 		}
 	}
