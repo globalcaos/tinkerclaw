@@ -67,8 +67,11 @@ function buildContextPruningExtension(params: {
   };
 }
 
-function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" {
-  return cfg?.agents?.defaults?.compaction?.mode === "safeguard" ? "safeguard" : "default";
+function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
+  const mode = cfg?.agents?.defaults?.compaction?.mode;
+  if (mode === "engram") return "engram";
+  if (mode === "safeguard") return "safeguard";
+  return "default";
 }
 
 export function buildEmbeddedExtensionPaths(params: {
@@ -79,7 +82,10 @@ export function buildEmbeddedExtensionPaths(params: {
   model: Model<Api> | undefined;
 }): string[] {
   const paths: string[] = [];
-  if (resolveCompactionMode(params.cfg) === "safeguard") {
+  const compactionMode = resolveCompactionMode(params.cfg);
+  if (compactionMode === "engram") {
+    paths.push(resolvePiExtensionPath("compaction-engram"));
+  } else if (compactionMode === "safeguard") {
     const compactionCfg = params.cfg?.agents?.defaults?.compaction;
     const contextWindowInfo = resolveContextWindowInfo({
       cfg: params.cfg,
