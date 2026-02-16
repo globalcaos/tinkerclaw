@@ -64,21 +64,16 @@ Over 50 turns in a day, that's the difference between burning your rate limit by
 
 ---
 
-## 🤖 24/7 Autonomous Operation
+## 🤖 Autonomous Memory Maintenance
 
-This isn't an agent you poke when you need something. It runs **continuously** with scheduled tasks:
+The agent doesn't just store memories — it **maintains** them. A nightly consolidation cycle runs automatically:
 
-| Schedule | Task | What It Does |
-|---|---|---|
-| 🌅 **7:00 AM** | Morning Briefing | Weather, calendar, overnight alerts |
-| 🔒 **4:30 AM** | Security Scan | CVE checks, open ports, dependency audit |
-| 📰 **5:00 AM** | AI Research | Latest papers, industry news, leaderboard changes |
-| 🔄 **4:45 AM** | Fork Sync Report | Upstream diff, conflict risk, merge readiness |
-| 📊 **8:00 AM** | Engagement Report | GitHub stats, PR status, download trends |
-| 🧹 **4:15 AM** | Memory Consolidation | Compress daily logs → knowledge files |
-| 💬 **5:45 AM** | WhatsApp Digest | Summarize overnight group messages |
+1. **Extract** — Daily interactions compressed into knowledge files (entities, topics, opinions, lessons)
+2. **Decay** — Unused memories lose relevance weight over time, keeping retrieval sharp
+3. **Deduplicate** — Overlapping memories merged, contradictions flagged
+4. **Index** — Updated knowledge graphs and RAPTOR hierarchies
 
-All reports delivered as PDFs to WhatsApp. Zero manual intervention.
+This is the key difference from flat-file memory: it doesn't just accumulate — it *organizes*. Like sleep consolidation in the human brain, the overnight cycle is where raw experience becomes structured knowledge.
 
 ---
 
