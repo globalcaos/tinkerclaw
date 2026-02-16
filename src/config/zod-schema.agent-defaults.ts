@@ -89,22 +89,6 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
-    continuousCompact: z
-      .object({
-        enabled: z.boolean().optional(),
-        windowSize: z.number().int().positive().optional(),
-        windowTokenBudget: z.number().int().positive().optional(),
-        maxRetrievedTurns: z.number().int().positive().optional(),
-        maxRetrievedTokens: z.number().int().positive().optional(),
-        minScore: z.number().min(0).max(1).optional(),
-        recencyBoost: z.boolean().optional(),
-        fallbackToBatchCompaction: z.boolean().optional(),
-        batchSize: z.number().int().positive().optional(),
-        minTurnChars: z.number().int().nonnegative().optional(),
-        maxEmbedChars: z.number().int().positive().optional(),
-      })
-      .strict()
-      .optional(),
     compaction: z
       .object({
         mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),
