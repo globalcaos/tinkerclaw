@@ -13,7 +13,7 @@ This fork replaces compaction with **cognitive memory** — a system that organi
 [![Downloads](https://img.shields.io/badge/downloads-4%2C700%2B-green)](https://clawhub.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[Upstream Docs](https://docs.openclaw.ai) · [ClawHub Skills](https://clawhub.com) · [Discord](https://discord.gg/clawd) · [Memory Architecture Proposal](https://github.com/openclaw/openclaw/issues/13991)
+[ClawHub Skills](https://clawhub.com) · [Memory Architecture Proposal](https://github.com/openclaw/openclaw/issues/13991)
 
 </div>
 
@@ -158,12 +158,8 @@ For full setup instructions, see the [upstream documentation](https://docs.openc
 
 | | |
 |---|---|
-| 🌐 **Website** | [thetinkerzone.com](https://thetinkerzone.com) _(under development)_ |
-| 📺 **YouTube** | [@TheTinkerZone](https://www.youtube.com/@TheTinkerZone-o7t) _(coming soon)_ |
-| 📦 **ClawHub** | [clawhub.com](https://clawhub.com) |
-| 💬 **Discord** | [discord.gg/clawd](https://discord.gg/clawd) |
-| 📄 **Upstream** | [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
-| 📚 **Docs** | [docs.openclaw.ai](https://docs.openclaw.ai) |
+| 🌐 **Website** | [thetinkerzone.com](https://thetinkerzone.com) |
+| 📺 **YouTube** | [@TheTinkerZone](https://www.youtube.com/@TheTinkerZone-o7t) |
 
 ---
 
