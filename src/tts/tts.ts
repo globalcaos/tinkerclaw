@@ -26,8 +26,6 @@ import { stripMarkdown } from "../line/markdown-to-line.js";
 import { isVoiceCompatibleAudio } from "../media/audio.js";
 import { CONFIG_DIR, resolveUserPath } from "../utils.js";
 import {
-  DEFAULT_SHERPA_EFFECTS_CHAIN,
-  DEFAULT_SHERPA_OUTPUT_CODEC,
   edgeTTS,
   elevenLabsTTS,
   inferEdgeExtension,
@@ -39,7 +37,6 @@ import {
   openaiTTS,
   parseTtsDirectives,
   scheduleCleanup,
-  sherpaOnnxTTS,
   summarizeText,
 } from "./tts-core.js";
 export { OPENAI_TTS_MODELS, OPENAI_TTS_VOICES } from "./tts-core.js";
@@ -57,11 +54,6 @@ const DEFAULT_OPENAI_VOICE = "alloy";
 const DEFAULT_EDGE_VOICE = "en-US-MichelleNeural";
 const DEFAULT_EDGE_LANG = "en-US";
 const DEFAULT_EDGE_OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3";
-
-const DEFAULT_SHERPA_BIN = `${process.env.HOME ?? "/root"}/.openclaw/tools/sherpa-onnx-tts/bin/sherpa-onnx-offline-tts`;
-const DEFAULT_SHERPA_MODEL_DIR = `${process.env.HOME ?? "/root"}/.openclaw/tools/sherpa-onnx-tts/models/vits-piper-en_GB-alan-medium`;
-const DEFAULT_SHERPA_LIB_PATH = `${process.env.HOME ?? "/root"}/.openclaw/tools/sherpa-onnx-tts/lib`;
-const DEFAULT_SHERPA_LENGTH_SCALE = 0.5;
 
 const DEFAULT_ELEVENLABS_VOICE_SETTINGS = {
   stability: 0.5,
@@ -121,14 +113,6 @@ export type ResolvedTtsConfig = {
     apiKey?: string;
     model: string;
     voice: string;
-  };
-  sherpaOnnx: {
-    bin: string;
-    modelDir: string;
-    lengthScale: number;
-    effectsChain: string;
-    outputCodec: string;
-    libPath?: string;
   };
   edge: {
     enabled: boolean;
@@ -303,14 +287,6 @@ export function resolveTtsConfig(cfg: OpenClawConfig): ResolvedTtsConfig {
       apiKey: raw.openai?.apiKey,
       model: raw.openai?.model ?? DEFAULT_OPENAI_MODEL,
       voice: raw.openai?.voice ?? DEFAULT_OPENAI_VOICE,
-    },
-    sherpaOnnx: {
-      bin: raw.sherpaOnnx?.bin?.trim() || DEFAULT_SHERPA_BIN,
-      modelDir: (raw.sherpaOnnx?.modelDir?.trim() || DEFAULT_SHERPA_MODEL_DIR).replace(/\/+$/, ""),
-      lengthScale: raw.sherpaOnnx?.lengthScale ?? DEFAULT_SHERPA_LENGTH_SCALE,
-      effectsChain: raw.sherpaOnnx?.effectsChain ?? DEFAULT_SHERPA_EFFECTS_CHAIN,
-      outputCodec: raw.sherpaOnnx?.outputCodec?.trim() || DEFAULT_SHERPA_OUTPUT_CODEC,
-      libPath: raw.sherpaOnnx?.libPath?.trim() || DEFAULT_SHERPA_LIB_PATH,
     },
     edge: {
       enabled: raw.edge?.enabled ?? true,
@@ -530,7 +506,7 @@ export function resolveTtsApiKey(
   return undefined;
 }
 
-export const TTS_PROVIDERS = ["openai", "elevenlabs", "edge", "sherpa-onnx"] as const;
+export const TTS_PROVIDERS = ["openai", "elevenlabs", "edge"] as const;
 
 export function resolveTtsProviderOrder(primary: TtsProvider): TtsProvider[] {
   return [primary, ...TTS_PROVIDERS.filter((provider) => provider !== primary)];
@@ -539,10 +515,6 @@ export function resolveTtsProviderOrder(primary: TtsProvider): TtsProvider[] {
 export function isTtsProviderConfigured(config: ResolvedTtsConfig, provider: TtsProvider): boolean {
   if (provider === "edge") {
     return config.edge.enabled;
-  }
-  if (provider === "sherpa-onnx") {
-    // sherpa-onnx is local; configured if the binary path is set (existence checked at runtime)
-    return Boolean(config.sherpaOnnx.bin);
   }
   return Boolean(resolveTtsApiKey(config, provider));
 }
@@ -652,29 +624,6 @@ export async function textToSpeech(params: {
         };
       }
 
-      if (provider === "sherpa-onnx") {
-        const tempDir = mkdtempSync(path.join(tmpdir(), "tts-"));
-        const audioPath = path.join(tempDir, `voice-${Date.now()}.ogg`);
-
-        await sherpaOnnxTTS({
-          text: params.text,
-          outputPath: audioPath,
-          config: config.sherpaOnnx,
-          timeoutMs: config.timeoutMs,
-        });
-
-        scheduleCleanup(tempDir);
-
-        return {
-          success: true,
-          audioPath,
-          latencyMs: Date.now() - providerStart,
-          provider,
-          outputFormat: "ogg/opus",
-          voiceCompatible: true,
-        };
-      }
-
       const apiKey = resolveTtsApiKey(config, provider);
       if (!apiKey) {
         lastError = `No API key for ${provider}`;
@@ -769,11 +718,6 @@ export async function textToSpeechTelephony(params: {
     try {
       if (provider === "edge") {
         lastError = "edge: unsupported for telephony";
-        continue;
-      }
-
-      if (provider === "sherpa-onnx") {
-        lastError = "sherpa-onnx: unsupported for telephony";
         continue;
       }
 
