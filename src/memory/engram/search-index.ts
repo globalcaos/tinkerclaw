@@ -5,6 +5,8 @@
 
 import type { MemoryEvent, EventKind } from "./event-types.js";
 import type { EventStore } from "./event-store.js";
+import type { EmbeddingCache } from "./embedding-cache.js";
+import type { EmbedFn } from "./embedding-worker.js";
 
 export interface SearchResult {
 	event: MemoryEvent;
@@ -80,17 +82,69 @@ export function ftsSearch(
 }
 
 /**
- * Placeholder for vector search. Will be implemented in Phase 2A with embeddings.
- * For now, falls back to FTS.
+ * Cosine similarity between two Float32Arrays.
+ */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+	if (a.length !== b.length) return 0;
+	let dot = 0;
+	let normA = 0;
+	let normB = 0;
+	for (let i = 0; i < a.length; i++) {
+		dot += a[i] * b[i];
+		normA += a[i] * a[i];
+		normB += b[i] * b[i];
+	}
+	const denom = Math.sqrt(normA) * Math.sqrt(normB);
+	return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Vector search using embedding cache.
+ * Embeds the query, then computes cosine similarity against all cached event embeddings.
  */
 export async function vectorSearch(
-	_store: EventStore,
-	_query: string,
-	_topN: number = 20,
-	_filters?: SearchFilters,
+	store: EventStore,
+	query: string,
+	topN: number = 20,
+	filters?: SearchFilters,
+	embeddingCache?: EmbeddingCache,
+	embedFn?: EmbedFn,
 ): Promise<SearchResult[]> {
-	// Phase 2A will implement actual embedding-based search
-	return [];
+	if (!embeddingCache || !embedFn) return [];
+
+	// Embed query
+	const [queryEmbedding] = await embedFn([query]);
+	if (!queryEmbedding) return [];
+
+	let events = store.readAll();
+
+	// Apply filters
+	if (filters?.taskId) {
+		events = events.filter((e) => e.metadata.taskId === filters.taskId);
+	}
+	if (filters?.kinds) {
+		const kindSet = new Set(filters.kinds);
+		events = events.filter((e) => kindSet.has(e.kind));
+	}
+	if (filters?.since) {
+		events = events.filter((e) => e.timestamp >= filters.since!);
+	}
+	if (filters?.until) {
+		events = events.filter((e) => e.timestamp <= filters.until!);
+	}
+
+	const scored: SearchResult[] = [];
+	for (const event of events) {
+		const emb = embeddingCache.get(event.id);
+		if (!emb) continue;
+		const score = cosineSimilarity(queryEmbedding, emb);
+		if (score > 0) {
+			scored.push({ event, score, matchType: "vector" });
+		}
+	}
+
+	scored.sort((a, b) => b.score - a.score);
+	return scored.slice(0, topN);
 }
 
 /**
@@ -101,9 +155,11 @@ export async function combinedSearch(
 	query: string,
 	topN: number = 20,
 	filters?: SearchFilters,
+	embeddingCache?: EmbeddingCache,
+	embedFn?: EmbedFn,
 ): Promise<SearchResult[]> {
 	const ftsResults = ftsSearch(store, query, topN, filters);
-	const vecResults = await vectorSearch(store, query, topN, filters);
+	const vecResults = await vectorSearch(store, query, topN, filters, embeddingCache, embedFn);
 
 	// Merge and deduplicate by event ID
 	const seen = new Set<string>();
