@@ -1,0 +1,29 @@
+{
+  "needles": [
+    {
+      "type": "sha256_fragment",
+      "content": "The commit hash for the critical fix was a1b2c3d4e5f6789012345678abcdef0123456789",
+      "query": "What was the commit hash for the critical fix?"
+    },
+    {
+      "type": "file_path",
+      "content": "The config file is at /etc/openclaw/agents/prod-alpha/runtime.toml",
+      "query": "Where is the config file located?"
+    },
+    {
+      "type": "error_message",
+      "content": "Error: ENOSPC - write failed at inode 0x7FA3B2, sector 48291, disk /dev/nvme0n1p2",
+      "query": "What was the disk error message?"
+    },
+    {
+      "type": "parameter_string",
+      "content": "Set learning_rate=0.00042 and batch_size=128 with warmup_steps=1500",
+      "query": "What learning rate and batch size were used?"
+    },
+    {
+      "type": "decision_rationale",
+      "content": "We chose PostgreSQL over SQLite because the concurrent write throughput exceeded 10K TPS requirement",
+      "query": "Why was PostgreSQL chosen over SQLite?"
+    }
+  ]
+}
