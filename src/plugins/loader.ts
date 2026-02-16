@@ -21,6 +21,7 @@ import {
   type NormalizedPluginsConfig,
 } from "./config-state.js";
 import { discoverOpenClawPlugins } from "./discovery.js";
+import { registerCognitiveHooks } from "./cognitive-hooks.js";
 import { initializeGlobalHookRunner } from "./hook-runner-global.js";
 import { loadPluginManifestRegistry } from "./manifest-registry.js";
 import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
@@ -466,6 +467,11 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
   if (cacheEnabled) {
     registryCache.set(cacheKey, registry);
   }
+  // FORK-ISOLATED: Register cognitive architecture hooks when ENGRAM mode is active
+  if (options.config?.agents?.defaults?.compaction?.mode === "engram") {
+    registerCognitiveHooks(registry, options.config);
+  }
+
   setActivePluginRegistry(registry, cacheKey);
   initializeGlobalHookRunner(registry);
   return registry;
