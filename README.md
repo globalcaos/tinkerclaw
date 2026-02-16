@@ -1,13 +1,16 @@
 <div align="center">
 
-# 🐾 OpenClaw — Enhanced Fork
+# 🧠 The Tinker Fork — OpenClaw Enhanced
 
-**A superset of [OpenClaw](https://github.com/openclaw/openclaw) with cognitive memory, 8 published skills, and an operating doctrine for compound AI systems.**
+**Compaction is not memory. It's time AI agents learned the difference.**
 
-[![Upstream](https://img.shields.io/badge/upstream-OpenClaw%20190K⭐-blue?logo=github)](https://github.com/openclaw/openclaw)
-[![Merge Cadence](https://img.shields.io/badge/upstream%20sync-several%20times%2Fweek-green)](https://github.com/openclaw/openclaw)
-[![Ahead](https://img.shields.io/badge/commits%20ahead-21%2B-orange)](#whats-different)
-[![ClawHub Downloads](https://img.shields.io/badge/ClawHub%20downloads-4%2C700%2B-purple)](https://clawhub.com)
+Every AI agent today handles long conversations the same way: when context gets too long, compress it. Throw away the details. Hope the summary is good enough. That's not memory — that's *amnesia with extra steps*.
+
+This fork replaces compaction with **cognitive memory** — a system that organizes, retrieves, and consolidates knowledge the way humans do. The result: **60-80% fewer tokens per session**, because the agent loads only what it needs instead of everything it has.
+
+[![Built on OpenClaw](https://img.shields.io/badge/built%20on-OpenClaw-blue?logo=github)](https://github.com/openclaw/openclaw)
+[![Skills on ClawHub](https://img.shields.io/badge/skills-12%20published-purple)](https://clawhub.com)
+[![Downloads](https://img.shields.io/badge/downloads-4%2C700%2B-green)](https://clawhub.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [Upstream Docs](https://docs.openclaw.ai) · [ClawHub Skills](https://clawhub.com) · [Discord](https://discord.gg/clawd) · [Memory Architecture Proposal](https://github.com/openclaw/openclaw/issues/13991)
@@ -16,95 +19,156 @@
 
 ---
 
-## What Is This?
+## 💡 The Insight
 
-This fork stays **days behind upstream** (merging several times a week) while being **21+ commits ahead** with exclusive features. Everything upstream has, plus more.
+Compaction treats context like a cache — when it's full, evict. But persistent AI agents don't need a bigger cache. They need **memory**: the ability to store knowledge once, organize it by type, and retrieve precisely what's relevant for the current task.
 
-Not a competitor — a **superset** for power users who want more from their agent.
+Humans don't re-read their entire diary before answering a question. They *recall*. This fork gives AI agents the same capability.
 
 ---
 
-## Why This Fork?
+## 🧠 From Compaction to Cognition
 
-### 🧠 Cognitive Memory System (7 Phases)
+A full memory architecture built on **SQLite + sqlite-vec + FTS5** that replaces brute-force context loading with intelligent retrieval.
 
-Not flat files. A full cognitive architecture built on **SQLite + sqlite-vec + FTS5**:
+| Compaction (Before) | Cognitive Memory (After) |
+|---|---|
+| Loads entire workspace files every turn | Semantic search loads only relevant snippets |
+| Context grows until forcibly compressed | Rolling window with topic-aware retrieval |
+| Summaries lose detail and nuance | 4 memory types preserve structure |
+| No memory between sessions | Persistent store across sessions and days |
+| Token usage scales with workspace size | Token usage scales with **query relevance** |
 
-| Feature                           | Description                               |
-| --------------------------------- | ----------------------------------------- |
-| **4 Memory Types**                | Episodic, semantic, procedural, strategic |
-| **Spreading Activation**          | +23% on multi-hop benchmarks              |
-| **RAPTOR Hierarchical Summaries** | Zoom in and out across abstraction levels |
-| **Nightly Consolidation**         | Clustering, decay, and memory maintenance |
-| **Cross-Agent Sharing**           | Memory sharing with sensitivity gates     |
-| **Local ONNX Embeddings**         | ~30ms per embedding, zero API calls       |
+### The Token Math
 
-📄 [Read the full architecture proposal →](https://github.com/openclaw/openclaw/issues/13991)
+Whatever your usage pattern — Claude Max, API, or any provider — the savings are proportional:
 
-### 📦 8 Published Skills (4,700+ Downloads)
+- **Typical workspace context per turn:** 15-25K tokens (loading MEMORY.md, TOOLS.md, daily logs, project files)
+- **With cognitive retrieval:** 2-5K tokens (only the snippets that match the current task)
+- **Reduction: 60-80% per turn**, compounding over every interaction
 
-| Skill                            | Description                                                  | Link                                                                |
-| -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------- |
-| 🧠 **agent-memory-ultimate**     | Persistent memory with spreading activation                  | [ClawHub](https://clawhub.com/globalcaos/agent-memory-ultimate)     |
-| 💬 **whatsapp-ultimate**         | Full WhatsApp: messages, media, polls, voice, history search | [ClawHub](https://clawhub.com/globalcaos/whatsapp-ultimate)         |
-| 🎬 **youtube-ultimate**          | FREE transcripts (zero API quota), 4K download, comments     | [ClawHub](https://clawhub.com/globalcaos/youtube-ultimate)          |
-| 🎙️ **jarvis-voice**              | JARVIS-style TTS, fully offline via sherpa-onnx              | [ClawHub](https://clawhub.com/globalcaos/jarvis-voice)              |
-| 📤 **chatgpt-exporter-ultimate** | Export ALL ChatGPT conversations instantly                   | [ClawHub](https://clawhub.com/globalcaos/chatgpt-exporter-ultimate) |
-| 🛡️ **agent-boundaries-ultimate** | AI safety, privacy, ethics, OPSEC                            | [ClawHub](https://clawhub.com/globalcaos/agent-boundaries-ultimate) |
-| 🔒 **shell-security-ultimate**   | Command risk classification (SAFE → CRITICAL)                | [ClawHub](https://clawhub.com/globalcaos/shell-security-ultimate)   |
-| 📊 **token-panel-ultimate**      | Track usage across Claude, ChatGPT, Gemini                   | [ClawHub](https://clawhub.com/globalcaos/token-panel-ultimate)      |
+Over 50 turns in a day, that's the difference between burning your rate limit by mid-afternoon and running comfortably all day. Over a month, it's the difference between needing a higher tier and staying on your current one.
 
-### 📋 Operating Doctrine
+### The Architecture
 
-12 intelligence strategies for compound AI systems — how to structure agent reasoning, tool use, and multi-agent coordination effectively.
+| Component | What It Does |
+|---|---|
+| **4 Memory Types** | Episodic, semantic, procedural, strategic — structured like human cognition |
+| **Spreading Activation** | +23% accuracy on multi-hop reasoning benchmarks |
+| **RAPTOR Hierarchies** | Zoom in/out across abstraction levels |
+| **Nightly Consolidation** | Clustering, decay, deduplication — automatic maintenance |
+| **Cross-Agent Sharing** | Memory sharing between agents with sensitivity gates |
+| **Local ONNX Embeddings** | ~30ms per embedding, fully offline, zero API cost |
 
-### ⚡ Active Development
+📄 [Full architecture proposal →](https://github.com/openclaw/openclaw/issues/13991)
 
-Upstream merges happen **several times per week**, always within days of the latest release. You get upstream stability plus enhanced features.
+---
+
+## 🤖 24/7 Autonomous Operation
+
+This isn't an agent you poke when you need something. It runs **continuously** with scheduled tasks:
+
+| Schedule | Task | What It Does |
+|---|---|---|
+| 🌅 **7:00 AM** | Morning Briefing | Weather, calendar, overnight alerts |
+| 🔒 **4:30 AM** | Security Scan | CVE checks, open ports, dependency audit |
+| 📰 **5:00 AM** | AI Research | Latest papers, industry news, leaderboard changes |
+| 🔄 **4:45 AM** | Fork Sync Report | Upstream diff, conflict risk, merge readiness |
+| 📊 **8:00 AM** | Engagement Report | GitHub stats, PR status, download trends |
+| 🧹 **4:15 AM** | Memory Consolidation | Compress daily logs → knowledge files |
+| 💬 **5:45 AM** | WhatsApp Digest | Summarize overnight group messages |
+
+All reports delivered as PDFs to WhatsApp. Zero manual intervention.
+
+---
+
+## 🛡️ Security by Code, Not by Documentation
+
+The operating doctrine: **if you can enforce it with code, don't rely on documentation.**
+
+- **Email send-blocking**: The agent reads Outlook and creates drafts — but `fetch()` is intercepted to block all send endpoints. Not a prompt rule. A code-enforced gate.
+- **Shell command classification**: Every command rated SAFE → CRITICAL before execution. Dangerous commands blocked automatically.
+- **Privacy code of conduct**: Inter-agent communication requires human-authorized channels only.
+- **Persona drift detection**: SyncScore protocol measures personality consistency and corrects before the agent loses its voice.
+
+---
+
+## 🎙️ Voice — Fully Offline
+
+JARVIS-inspired metallic TTS via sherpa-onnx. Speaks through your speakers. Purple italic transcripts in webchat. No cloud API, no latency, no cost.
+
+---
+
+## 📦 Published Skills
+
+All available on [ClawHub](https://clawhub.com). Install any skill with `clawhub install <name>`.
+
+### Memory & Intelligence
+
+| Skill | Description |
+|---|---|
+| 🧠 [agent-memory-ultimate](https://clawhub.com/globalcaos/agent-memory-ultimate) | Cognitive memory with vector search, knowledge graphs, RAPTOR hierarchy. The core of the 60-80% token savings. |
+| 🛡️ [agent-boundaries-ultimate](https://clawhub.com/globalcaos/agent-boundaries-ultimate) | AI safety, security boundaries, privacy, ethics, OPSEC. Beyond Asimov's Three Laws. |
+| 😄 [ai-humor-ultimate](https://clawhub.com/globalcaos/ai-humor-ultimate) | 12 humor patterns for AI agents based on embedding space bisociation theory. |
+
+### Communication & Messaging
+
+| Skill | Description |
+|---|---|
+| 💬 [whatsapp-ultimate](https://clawhub.com/globalcaos/whatsapp-ultimate) | Full WhatsApp: messages, media, polls, voice notes, reactions, FTS5 history search. |
+| 📧 [outlook-hack](https://clawhub.com/globalcaos/outlook-hack) | Outlook email via browser session. Read, search, draft. Send blocked by code. |
+| 💼 [linkedin-inbox](https://clawhub.com/globalcaos/linkedin-inbox) | LinkedIn inbox monitoring, auto-draft responses, approval workflows. |
+
+### Media & Content
+
+| Skill | Description |
+|---|---|
+| 🎬 [youtube-ultimate](https://clawhub.com/globalcaos/youtube-ultimate) | FREE transcripts (zero API quota), 4K download, comments, batch details. |
+| 📤 [chatgpt-exporter-ultimate](https://clawhub.com/globalcaos/chatgpt-exporter-ultimate) | Export ALL ChatGPT conversations instantly, including Projects. |
+| 🎙️ [jarvis-voice](https://clawhub.com/globalcaos/jarvis-voice) | JARVIS-style offline TTS. Metallic effects, purple transcripts. |
+
+### Operations & Security
+
+| Skill | Description |
+|---|---|
+| 🔒 [shell-security-ultimate](https://clawhub.com/globalcaos/shell-security-ultimate) | Command risk classification (SAFE → CRITICAL). Audit logging. |
+| 📊 [token-panel-ultimate](https://clawhub.com/globalcaos/token-panel-ultimate) | Track usage across Claude, ChatGPT, Gemini, Manus. One dashboard. |
+| 💊 [healthcheck](https://clawhub.com/globalcaos/healthcheck) | Track water intake and sleep with JSON storage. |
+
+---
+
+## ⚡ Staying Current
+
+This fork syncs with upstream **several times per week**, always within days of the latest release. All upstream features and fixes included, enhanced features layered on top.
 
 ---
 
 ## Getting Started
 
-Installation is the same as upstream:
-
 ```bash
+# Install OpenClaw
 npm install -g openclaw@latest
-```
 
-Then clone this fork to get the enhanced features:
-
-```bash
+# Clone this fork for enhanced features
 git clone https://github.com/globalcaos/clawdbot-moltbot-openclaw.git
 cd clawdbot-moltbot-openclaw
-npm install
+pnpm install
 ```
 
 For full setup instructions, see the [upstream documentation](https://docs.openclaw.ai).
 
 ---
 
-## Staying Current
-
-This fork maintains a **tight merge cadence** with upstream:
-
-- 🔄 Merges from upstream **several times per week**
-- 📅 Always within **days** of the latest upstream release
-- ✅ All upstream features and fixes included
-- ➕ Enhanced features layered on top without conflict
-
----
-
 ## Links
 
-|                 |                                                                                                  |
-| --------------- | ------------------------------------------------------------------------------------------------ |
-| 🌐 **Website**  | [thetinkerzone.com](https://thetinkerzone.com) _(under development)_                             |
-| 📺 **YouTube**  | [@TheTinkerZone](https://www.youtube.com/@TheTinkerZone-o7t) _(coming soon — tutorials & demos)_ |
-| 📦 **ClawHub**  | [clawhub.com](https://clawhub.com) _(search globalcaos)_                                         |
-| 💬 **Discord**  | [discord.gg/clawd](https://discord.gg/clawd)                                                     |
-| 📄 **Upstream** | [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)                             |
-| 📚 **Docs**     | [docs.openclaw.ai](https://docs.openclaw.ai)                                                     |
+| | |
+|---|---|
+| 🌐 **Website** | [thetinkerzone.com](https://thetinkerzone.com) _(under development)_ |
+| 📺 **YouTube** | [@TheTinkerZone](https://www.youtube.com/@TheTinkerZone-o7t) _(coming soon)_ |
+| 📦 **ClawHub** | [clawhub.com](https://clawhub.com) |
+| 💬 **Discord** | [discord.gg/clawd](https://discord.gg/clawd) |
+| 📄 **Upstream** | [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
+| 📚 **Docs** | [docs.openclaw.ai](https://docs.openclaw.ai) |
 
 ---
 
@@ -112,4 +176,4 @@ This fork maintains a **tight merge cadence** with upstream:
 
 MIT — same as upstream. See [LICENSE](LICENSE).
 
-Built on top of [OpenClaw](https://github.com/openclaw/openclaw) (190K+ ⭐). All credit to the upstream team and contributors for the incredible foundation.
+Built on [OpenClaw](https://github.com/openclaw/openclaw). All credit to the upstream team for the incredible foundation.
