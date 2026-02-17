@@ -13,7 +13,8 @@
 
 import { sendReactionWhatsApp } from "../../outbound.js";
 
-const THINKING_EMOJI = "🤔";
+const THINKING_EMOJIS = ["🤔", "🧐"] as const;
+const HEARTBEAT_INTERVAL_MS = 1000;
 
 export type ThinkingReactionContext = {
   messageId?: string;
@@ -23,25 +24,25 @@ export type ThinkingReactionContext = {
 };
 
 export type ThinkingReactionController = {
-  /** Send the 🤔 reaction. Safe to call multiple times (idempotent). */
+  /** Start the alternating 🤔↔🧐 heartbeat. Safe to call multiple times (idempotent). */
   start: () => void;
-  /** Remove the 🤔 reaction. Safe to call multiple times (idempotent). */
+  /** Stop the heartbeat and remove the reaction. Safe to call multiple times (idempotent). */
   stop: () => void;
 };
 
 /**
  * Create a thinking reaction controller for a single inbound message.
- * Call `start()` when processing begins and `stop()` when the reply is delivered.
+ * Alternates between 🤔 and 🧐 every ~1s as a visual heartbeat.
+ * If the emoji stops toggling, the user knows processing hung.
  */
 export function createThinkingReaction(ctx: ThinkingReactionContext): ThinkingReactionController {
-  let sent = false;
+  let running = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let emojiIndex = 0;
 
-  const start = () => {
-    if (sent || !ctx.messageId || !ctx.chatId) {
-      return;
-    }
-    sent = true;
-    sendReactionWhatsApp(ctx.chatId, ctx.messageId, THINKING_EMOJI, {
+  const react = (emoji: string) => {
+    if (!ctx.messageId || !ctx.chatId) {return;}
+    sendReactionWhatsApp(ctx.chatId, ctx.messageId, emoji, {
       verbose: false,
       fromMe: false,
       participant: ctx.senderJid,
@@ -49,17 +50,25 @@ export function createThinkingReaction(ctx: ThinkingReactionContext): ThinkingRe
     }).catch(() => {});
   };
 
+  const start = () => {
+    if (running || !ctx.messageId || !ctx.chatId) {return;}
+    running = true;
+    emojiIndex = 0;
+    react(THINKING_EMOJIS[0]);
+    timer = setInterval(() => {
+      emojiIndex = (emojiIndex + 1) % THINKING_EMOJIS.length;
+      react(THINKING_EMOJIS[emojiIndex]);
+    }, HEARTBEAT_INTERVAL_MS);
+  };
+
   const stop = () => {
-    if (!sent || !ctx.messageId || !ctx.chatId) {
-      return;
+    if (!running) {return;}
+    running = false;
+    if (timer) {
+      clearInterval(timer);
+      timer = undefined;
     }
-    sent = false;
-    sendReactionWhatsApp(ctx.chatId, ctx.messageId, "", {
-      verbose: false,
-      fromMe: false,
-      participant: ctx.senderJid,
-      accountId: ctx.accountId,
-    }).catch(() => {});
+    react("");
   };
 
   return { start, stop };

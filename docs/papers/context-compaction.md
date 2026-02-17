@@ -15,9 +15,9 @@ version: "v2.4"
 
 ## Abstract
 
-Persistent LLM agents operate under a hard constraint: a bounded context window that simultaneously functions as working memory _and_, in many deployed stacks, the only cognitively accessible copy of high-resolution state. Production systems commonly address context overflow with "compaction": replacing long histories with an LLM-generated narrative summary. We argue that narrative compaction is not merely lossy—it is _structurally unsafe_ for tool-using, long-horizon agents because it destroys the only operationally useful copy of details that later determine correctness (exact error strings, file paths, tool outputs, parameters, and decision rationales). The failure is amplified in production because tool outputs—not conversation turns—dominate context pressure.
+Persistent LLM agents operate under a hard constraint: a bounded context window that simultaneously functions as working memory *and*, in many deployed stacks, the only cognitively accessible copy of high-resolution state. Production systems commonly address context overflow with "compaction": replacing long histories with an LLM-generated narrative summary. We argue that narrative compaction is not merely lossy—it is *structurally unsafe* for tool-using, long-horizon agents because it destroys the only operationally useful copy of details that later determine correctness (exact error strings, file paths, tool outputs, parameters, and decision rationales). The failure is amplified in production because tool outputs—not conversation turns—dominate context pressure.
 
-We present **ENGRAM** (**E**vent-**N**avigated **G**raded **R**etrieval & **A**rchival **M**emory), a lossless, event-sourced memory architecture that treats the context window as a **managed cache** over a durable store. ENGRAM replaces narrative compaction with **pointer-based compaction**: when evicting history from the context cache, the system inserts a compact time-range marker with topic hints and a retrieval directive rather than a narrative summary. Per turn, ENGRAM assembles a bounded **retrieval pack** using a **hybrid push/pull model**: the system proactively injects a small, cheap _push pack_ (task state and recent context) every turn, while making a `recall(query)` tool available for _on-demand pull_ when the agent detects a knowledge gap. Retrieval is **task-conditioned**: what the system injects depends on the active task, the premises under which memories were produced, and the agent's expected future needs. We derive the task-conditioned scoring function from an optimization objective—maximizing expected task completion probability—and prove a bounded retrieval completeness theorem establishing that key events remain reachable within two retrieval hops with probability exceeding 0.95.
+We present **ENGRAM** (**E**vent-**N**avigated **G**raded **R**etrieval & **A**rchival **M**emory), a lossless, event-sourced memory architecture that treats the context window as a **managed cache** over a durable store. ENGRAM replaces narrative compaction with **pointer-based compaction**: when evicting history from the context cache, the system inserts a compact time-range marker with topic hints and a retrieval directive rather than a narrative summary. Per turn, ENGRAM assembles a bounded **retrieval pack** using a **hybrid push/pull model**: the system proactively injects a small, cheap *push pack* (task state and recent context) every turn, while making a `recall(query)` tool available for *on-demand pull* when the agent detects a knowledge gap. Retrieval is **task-conditioned**: what the system injects depends on the active task, the premises under which memories were produced, and the agent's expected future needs. We derive the task-conditioned scoring function from an optimization objective—maximizing expected task completion probability—and prove a bounded retrieval completeness theorem establishing that key events remain reachable within two retrieval hops with probability exceeding 0.95.
 
 ENGRAM is organized as a three-layer pipeline: **(1) Continuous event ingestion and asynchronous indexing**, **(2) per-turn hybrid retrieval + bounded context assembly**, and **(3) sleep consolidation** that builds multi-granularity derived views (episodes, topic summaries, RAPTOR-style trees) while preserving the lossless store as ground truth. We further show how pointer-based memory enables **hierarchical agent planning** (planner/executor/sub-executors) by giving each level a separate context window and retrieval surface. We provide formal boundedness invariants, a worst-case analysis of retrieval scoring, and **preliminary validation** on synthetic traces: across 50 needle-retrieval probes over 5 compaction cycles, ENGRAM achieves 94% exact-match recall at 1-hop and 98% at 2-hop, compared to 14% for narrative compaction and 48% for MemGPT-style self-paging—with a false-recall rate of 2% versus 18% for narrative compaction. ENGRAM is a **systems architecture contribution** that synthesizes event sourcing, cache-eviction theory, and task-conditioned retrieval into a coherent substrate for persistent agent memory; questions of persona, identity, and priority scheduling are treated in the companion paper **CORTEX** (Serra, 2026a).
 
@@ -25,7 +25,7 @@ ENGRAM is organized as a three-layer pipeline: **(1) Continuous event ingestion 
 
 ## 1. Introduction — The Compaction Catastrophe
 
-The name ENGRAM draws on a concept from neuroscience: an _engram_ is the physical trace of a memory in neural tissue — the substrate that allows an experience to be stored and later recalled (Lashley, 1950; Tonegawa et al., 2015; Josselyn & Tonegawa, 2020). Recent work has identified specific "engram cells" whose reactivation is both necessary and sufficient for memory recall — memories are not diffusely stored but localized in retrievable physical traces (Josselyn & Tonegawa, 2020). Our system builds _artificial engrams_: persistent, retrievable memory traces that survive context compaction. Just as biological engrams are not the memory itself but the physical substrate that enables retrieval, ENGRAM is not a memory _model_ but a systems architecture that ensures memories remain durable and reachable.
+The name ENGRAM draws on a concept from neuroscience: an *engram* is the physical trace of a memory in neural tissue — the substrate that allows an experience to be stored and later recalled (Lashley, 1950; Tonegawa et al., 2015; Josselyn & Tonegawa, 2020). Recent work has identified specific "engram cells" whose reactivation is both necessary and sufficient for memory recall — memories are not diffusely stored but localized in retrievable physical traces (Josselyn & Tonegawa, 2020). Our system builds *artificial engrams*: persistent, retrievable memory traces that survive context compaction. Just as biological engrams are not the memory itself but the physical substrate that enables retrieval, ENGRAM is not a memory *model* but a systems architecture that ensures memories remain durable and reachable.
 
 ### 1.1 Persistent agents are not chats
 
@@ -36,7 +36,7 @@ As LLMs move from session-scoped chatbots to **persistent agents**—systems exp
 - **Tool-grounded evidence**: tool outputs, logs, stack traces, code diffs, API responses.
 - **Continuity under context resets**: the ability to resume without re-deriving or re-asking.
 
-Transformer-based models impose a hard upper bound on tokens. Yet in many deployed agent stacks, the context window becomes not only working memory but also _de facto storage_—the only place where the agent can "see" prior tool outputs and decisions. When the window fills, the system must choose: truncate, summarize, or restart.
+Transformer-based models impose a hard upper bound on tokens. Yet in many deployed agent stacks, the context window becomes not only working memory but also *de facto storage*—the only place where the agent can "see" prior tool outputs and decisions. When the window fills, the system must choose: truncate, summarize, or restart.
 
 ### 1.2 Why narrative compaction is structurally unsafe
 
@@ -44,7 +44,7 @@ A prevailing production technique is **narrative compaction**: summarize a large
 
 For persistent tool-using agents, it is structurally unsafe for two reasons:
 
-1. **Irreversibility ("only copy" failure):** once details are omitted or distorted in the summary, the agent often has no reliable mechanism to recover them. The summary becomes the _only cognitively accessible copy_. This failure mode is analogous to writing back a dirty cache line and then discovering the write was lossy—except that the original data is gone.
+1. **Irreversibility ("only copy" failure):** once details are omitted or distorted in the summary, the agent often has no reliable mechanism to recover them. The summary becomes the *only cognitively accessible copy*. This failure mode is analogous to writing back a dirty cache line and then discovering the write was lossy—except that the original data is gone.
 2. **Compression at maximum cognitive load:** compaction typically occurs near context saturation, precisely when long-context failure modes (distraction, confusion, "lost in the middle" (Liu et al., 2024)) are most severe and when summarization faithfulness is hardest to guarantee (Kryscinski et al., 2020; Maynez et al., 2020).
 
 ### 1.3 Production reality: tool results dominate context pressure
@@ -65,7 +65,7 @@ In production deployments of a personal AI agent, long-running sessions routinel
 - **Hierarchical marker merging:** To prevent marker inflation in very long sessions, adjacent markers are merged into coarser-grained summary markers when their count exceeds a soft cap, ensuring $O(1)$ overhead for infinite history.
 - **Task-conditioned retrieval priority**, derived from an expected-utility optimization framework (§5.2), so retrieval changes with task goals, premises, and expected future needs.
 - **Hierarchical planning support** (planner/executor/sub-executors) via separate contexts and retrieval surfaces.
-- **Multi-granularity derived views** (episodes, summaries, RAPTOR-style trees) as _indexes over the lossless store_, not replacements.
+- **Multi-granularity derived views** (episodes, summaries, RAPTOR-style trees) as *indexes over the lossless store*, not replacements.
 
 This paper makes three primary **novel** contributions:
 
@@ -79,13 +79,13 @@ The remaining components (event sourcing, hierarchical planning, RAPTOR-style in
 
 ## 2. Background & Related Work
 
-We organize related work around a shared question: _What is the context window relative to memory, and who manages the boundary?_ We consolidate approaches into eight thematic groups.
+We organize related work around a shared question: *What is the context window relative to memory, and who manages the boundary?* We consolidate approaches into eight thematic groups.
 
 ### 2.1 OS-inspired paging and agent-managed compression
 
 MemGPT (Packer et al., 2023) frames the context window as RAM and external stores as disk-like tiers, with the model managing paging via tools. This aligns with ENGRAM's cache/storage separation, but differs in locus of control: MemGPT delegates paging decisions to the model itself, consuming attention budget on memory management. ENGRAM defaults to **system-managed** retrieval and eviction, reserving the agent's attention for the task at hand, while still providing an explicit `recall` tool for agent-initiated retrieval when the system's push pack is insufficient.
 
-Focus (Verma, 2026) demonstrates that agents can self-manage context compression by deciding what to keep, compress, or discard—achieving 22.7% context reduction while maintaining task performance. ACC (Bousetouane, 2026) takes a bio-inspired approach, maintaining a bounded internal state that the agent continuously updates. Both validate the hybrid push/pull design, but ENGRAM differs fundamentally in treating compression as a _system-level cache eviction_ rather than an agent-level decision, thereby avoiding the attention cost of self-management while preserving the agent's ability to pull context on demand. We include both MemGPT and Focus as baselines in our evaluation (§10A).
+Focus (Verma, 2026) demonstrates that agents can self-manage context compression by deciding what to keep, compress, or discard—achieving 22.7% context reduction while maintaining task performance. ACC (Bousetouane, 2026) takes a bio-inspired approach, maintaining a bounded internal state that the agent continuously updates. Both validate the hybrid push/pull design, but ENGRAM differs fundamentally in treating compression as a *system-level cache eviction* rather than an agent-level decision, thereby avoiding the attention cost of self-management while preserving the agent's ability to pull context on demand. We include both MemGPT and Focus as baselines in our evaluation (§10A).
 
 ### 2.2 Memory streams, generative agents, and structural memory
 
@@ -97,11 +97,11 @@ MaRS (Alqithami, 2025) motivates typed memory objects, retention budgets, and pr
 
 ### 2.4 Active retrieval and self-directed retrieval
 
-FLARE (Jiang et al., 2023a) demonstrates **active retrieval during generation**: the model detects low next-token confidence and triggers retrieval mid-generation. Self-RAG (Asai et al., 2023) trains the model to decide _when_ to retrieve, _what_ to retrieve, and _whether_ the retrieved passage is useful. ENGRAM's hybrid push/pull model is philosophically aligned: the system provides a baseline push pack, but the agent can invoke `recall(query)` when it detects confusion or missing evidence. Unlike FLARE and Self-RAG, which operate at the token/passage level during a single generation, ENGRAM operates at the turn level across extended interactions, managing retrieval over a durable event store rather than a static document corpus.
+FLARE (Jiang et al., 2023a) demonstrates **active retrieval during generation**: the model detects low next-token confidence and triggers retrieval mid-generation. Self-RAG (Asai et al., 2023) trains the model to decide *when* to retrieve, *what* to retrieve, and *whether* the retrieved passage is useful. ENGRAM's hybrid push/pull model is philosophically aligned: the system provides a baseline push pack, but the agent can invoke `recall(query)` when it detects confusion or missing evidence. Unlike FLARE and Self-RAG, which operate at the token/passage level during a single generation, ENGRAM operates at the turn level across extended interactions, managing retrieval over a durable event store rather than a static document corpus.
 
 ### 2.5 Graph-structured and hierarchical retrieval
 
-GraphRAG (Edge et al., 2024) constructs knowledge graphs from source documents and retrieves via graph traversal, enabling multi-hop reasoning that flat vector search misses. RAPTOR (Sarthi et al., 2024) demonstrates that hierarchical bottom-up summary trees improve retrieval across large corpora. G-Memory (Zhang et al., 2025a) extends this to hierarchical graph memory with multiple abstraction layers. ENGRAM adopts RAPTOR-style hierarchies as _optional derived indexes_; critically, these structures must not replace lossless storage. Long-context limitations (Liu et al., 2024) strengthen the case for retrieval packs and structured caches rather than unbounded raw context.
+GraphRAG (Edge et al., 2024) constructs knowledge graphs from source documents and retrieves via graph traversal, enabling multi-hop reasoning that flat vector search misses. RAPTOR (Sarthi et al., 2024) demonstrates that hierarchical bottom-up summary trees improve retrieval across large corpora. G-Memory (Zhang et al., 2025a) extends this to hierarchical graph memory with multiple abstraction layers. ENGRAM adopts RAPTOR-style hierarchies as *optional derived indexes*; critically, these structures must not replace lossless storage. Long-context limitations (Liu et al., 2024) strengthen the case for retrieval packs and structured caches rather than unbounded raw context.
 
 ### 2.6 Cognitive architectures, event sourcing, and production frameworks
 
@@ -109,7 +109,7 @@ CoALA (Sumers et al., 2023) motivates separating working memory (context) from e
 
 ### 2.7 Cache theory, dialogue state tracking, and benchmarks
 
-ENGRAM's eviction policy connects to classical caching: LRU evicts the oldest-accessed item; ARC (Megiddo & Modha, 2003) dynamically balances recency and frequency; and Belady's MIN algorithm (Belady, 1966) shows that the optimal eviction policy evicts the item whose next access is farthest in the future—requiring future knowledge that is generally unavailable. ENGRAM's Task State can be viewed as a noisy oracle for future access patterns: by encoding active goals, constraints, and expected needs, it approximates the future-knowledge requirement that Belady's algorithm demands. This aligns with **semantic caching** (Dar et al., 1996), which manages cache contents based on query semantics rather than page IDs. ENGRAM extends this by weighting eviction not just by query match but by _task-conditioned utility_.
+ENGRAM's eviction policy connects to classical caching: LRU evicts the oldest-accessed item; ARC (Megiddo & Modha, 2003) dynamically balances recency and frequency; and Belady's MIN algorithm (Belady, 1966) shows that the optimal eviction policy evicts the item whose next access is farthest in the future—requiring future knowledge that is generally unavailable. ENGRAM's Task State can be viewed as a noisy oracle for future access patterns: by encoding active goals, constraints, and expected needs, it approximates the future-knowledge requirement that Belady's algorithm demands. This aligns with **semantic caching** (Dar et al., 1996), which manages cache contents based on query semantics rather than page IDs. ENGRAM extends this by weighting eviction not just by query match but by *task-conditioned utility*.
 
 Dialogue State Tracking (Henderson et al., 2014; Budzianowski et al., 2018) maintains structured conversational state across turns—a direct precursor to ENGRAM's Task State object. Rastogi et al. (2020) introduced the Schema-Guided Dialogue framework with domain-extensible slot schemas—ENGRAM's Task State extends this approach with provenance pointers, premise signatures, and key-event anchors. StackPlanner (Zhang et al., 2026) demonstrates hierarchical planning with stack-based task decomposition. LOCA-bench (Zeng et al., 2026) provides a benchmark for long-context agent evaluation. Factory.ai's probe-based evaluation (Factory.ai, 2025) inspires ENGRAM's needle-based validation design (§10A).
 
@@ -136,7 +136,7 @@ Narrative compaction predictably loses the kinds of information that determine w
 - **Temporal anchors** (before/after deployments or migrations).
 - **Open loops** (unresolved questions and next concrete steps).
 
-A summary may preserve the _shape_ of the task while destroying the operational substance.
+A summary may preserve the *shape* of the task while destroying the operational substance.
 
 ### 3.3 Compaction happens at the worst time
 
@@ -184,7 +184,7 @@ ENGRAM is guided by eight principles:
 - **P2. Cache ≠ storage:** the context window is a cache over durable storage.
 - **P3. Pointer-based compaction:** compaction evicts from cache but inserts compact time-range markers rather than narrative summaries.
 - **P4. Asynchronous continuous indexing:** index events as they arrive, before eviction; indexing (especially embedding) runs asynchronously with the hot tail covering the latency gap (§4.4).
-- **P5. Typed derived views with provenance:** summaries, decisions, and task objects are _derived indexes_ pointing back to source events.
+- **P5. Typed derived views with provenance:** summaries, decisions, and task objects are *derived indexes* pointing back to source events.
 - **P6. Hard budgets everywhere:** per-turn injection is explicitly bounded; retrieval never exceeds configured caps.
 - **P7. Hybrid push/pull retrieval:** the system pushes a small, cheap context pack every turn; the agent pulls additional context on demand via a `recall` tool (§5).
 - **P8. Prompt-cache-friendly ordering:** context assembly front-loads stable, slowly-changing content (persona/identity state → hard rules → knowledge blocks → task state → dynamic tail) so that provider-level prompt caching can reuse prefix KV-cache across turns.
@@ -241,7 +241,7 @@ ENGRAM uses four first-class objects:
 
 2. **Artifacts (immutable blobs with preview windows):** large tool outputs and multimodal content (images, PDFs) stored out-of-band, referenced by events. When an artifact is externalized, ENGRAM retains a **tail preview window** (for text) or a **dense caption/OCR snippet** (for images) in the event record. This design reflects the empirical observation that errors, exceptions, and decisive output lines cluster at the end of text output, while image utility relies on semantic description.
 
-3. **Task State (small, mutable, versioned, domain-extensible):** a compact index-card view of the _current_ task: goals, constraints, open loops, next actions, key event references, and a list of `key_events` that anchor retrieval completeness (§5.6). The Task State schema defines a **core schema with typed extension slots**: the core fields (goals, constraints, open_loops, next_actions, key_events, premise_version) are fixed; domain-specific state is carried in an `extensions: Record<string, unknown>` field with registered domain extension types.
+3. **Task State (small, mutable, versioned, domain-extensible):** a compact index-card view of the *current* task: goals, constraints, open loops, next actions, key event references, and a list of `key_events` that anchor retrieval completeness (§5.6). The Task State schema defines a **core schema with typed extension slots**: the core fields (goals, constraints, open_loops, next_actions, key_events, premise_version) are fixed; domain-specific state is carried in an `extensions: Record<string, unknown>` field with registered domain extension types.
 
 4. **Time-range markers (immutable, compact):** compaction inserts these into the cache in place of evicted spans. A time-range marker is formally defined as:
 
@@ -250,7 +250,6 @@ ENGRAM uses four first-class objects:
    **Invariants.** (i) $|\text{tokens}(\mu)| \leq 60$ (hard cap). (ii) $\mathcal{K}$ is factual. (iii) $d$ is a fixed template. (iv) Markers are merged when count $> K_{\max}$.
 
    Rendered form:
-
    ```
    [Events T12–T47 evicted. Key topics: Docker build failure, nginx config,
     SSL cert renewal. Use recall(query) to retrieve details.]
@@ -267,7 +266,6 @@ A critical rule: **Task State and derived summaries are never the only copy.** T
 Layer 1 persists each event as it occurs and updates the retrieval surface. Large tool results are "artifactized": the event stores a pointer to an artifact (with a content-aware preview window) rather than inlining the entire output.
 
 **Structure-Aware Preview.** The preview strategy is pluggable and content-type aware. While "tail-only" (last 5-10 lines) works for stack traces and build logs, it fails for structured data or search results. ENGRAM implements a heuristic preview extractor:
-
 - **Logs/Stderr:** Tail preview (last 10 lines).
 - **JSON:** Head preview (first 5 lines) + "..." + Tail (last 2 lines) + key count summary.
 - **Search (grep):** Match context (lines surrounding the match) rather than file tail.
@@ -300,12 +298,10 @@ On every turn, ENGRAM builds a bounded **context pack** using a hybrid push/pull
 This composition is not heuristic; it targets the highest probability-density region of the access distribution: (1) global invariants (system), (2) current objectives (Task State), and (3) immediate recency (tail).
 
 **Pull (agent-initiated, on demand, richer).** ENGRAM exposes a `recall(query)` tool. To minimize latency:
-
 - **Parallel Retrieval:** The agent may issue `recall(["query1", "query2", ...])` to batch requests.
 - **Speculative Execution:** Where the inference engine supports it, `recall` can be triggered speculatively during user input processing (based on intent classification) or in parallel with initial thought generation.
 
 The `recall` tool:
-
 1. Executes task-conditioned retrieval (§5) against the full retrieval surface.
 2. Returns a bounded retrieval pack (≤ $B_{\text{ret}}$ tokens).
 3. Logs the query and results for offline evaluation.
@@ -334,7 +330,7 @@ $$C^* = \arg\max_{C \subseteq \mathcal{E},\; |C| \leq B} \; \mathbb{E}\left[P(\t
 
 **Submodular decomposition.** We adopt a **modeling assumption**: retrieved events contribute to task completion with diminishing marginal returns—each additional event adds information, but redundant events add less. Under this assumption, the objective $f(C) = \mathbb{E}[P(\text{complete} \mid C, \tau)]$ is monotone submodular in $C$. For monotone submodular maximization under a cardinality constraint, the greedy algorithm achieves a $(1 - 1/e)$-approximation (Nemhauser et al., 1978).
 
-**When submodularity holds and when it fails.** Submodularity holds when events are independently informative—each event contributes information regardless of what else is retrieved. This is the common case for heterogeneous event types (a file path, an error message, and a decision rationale are independently useful). Submodularity is **violated** when events are strongly complementary—e.g., two events that are jointly necessary but individually meaningless (a cryptographic key split across two events). In practice, such strong complementarity is rare in agent interaction traces. Even when strict submodularity is violated, Bian et al. (2017) show that the greedy algorithm achieves strong approximation guarantees for _approximately_ submodular functions, with degradation proportional to the degree of non-submodularity. We therefore treat this as a reasonable modeling assumption rather than a proven property.
+**When submodularity holds and when it fails.** Submodularity holds when events are independently informative—each event contributes information regardless of what else is retrieved. This is the common case for heterogeneous event types (a file path, an error message, and a decision rationale are independently useful). Submodularity is **violated** when events are strongly complementary—e.g., two events that are jointly necessary but individually meaningless (a cryptographic key split across two events). In practice, such strong complementarity is rare in agent interaction traces. Even when strict submodularity is violated, Bian et al. (2017) show that the greedy algorithm achieves strong approximation guarantees for *approximately* submodular functions, with degradation proportional to the degree of non-submodularity. We therefore treat this as a reasonable modeling assumption rather than a proven property.
 
 The greedy algorithm selects events by marginal utility:
 
@@ -374,7 +370,7 @@ This greedy-MMR procedure inherits the $(1-1/e)$ approximation guarantee from su
 - If the task includes **"self-assessment at the end"**, retrieval elevates mistakes and successes throughout, because future evaluation depends on them.
 - If objectives were updated multiple times, retrieval should treat **only the latest objective set as live**, while older sets become archival unless explicitly requested.
 
-### 5.4 Outcome: retrieval that matches _need_, not just similarity
+### 5.4 Outcome: retrieval that matches *need*, not just similarity
 
 Task-aware retrieval reframes relevance as "usefulness for the current task under current premises," approximating human selective attention: you notice different things depending on what you are trying to do. This framing has parallels in dialogue state tracking (Henderson et al., 2014): just as DST systems maintain explicit belief states to guide response generation, ENGRAM maintains explicit task state to guide retrieval.
 
@@ -382,13 +378,13 @@ Task-aware retrieval reframes relevance as "usefulness for the current task unde
 
 A retrieval system over an unbounded event store cannot guarantee perfect recall; some relevant events may always be missed. However, we can define a useful **completeness condition**.
 
-**Definition (k-hop retrievability).** An event $e$ is _k-hop retrievable_ from a context pack $P$ if there exists a chain of at most $k$ retrieval operations starting from information in $P$ that returns $e$ (or an artifact containing $e$'s content). Concretely:
+**Definition (k-hop retrievability).** An event $e$ is *k-hop retrievable* from a context pack $P$ if there exists a chain of at most $k$ retrieval operations starting from information in $P$ that returns $e$ (or an artifact containing $e$'s content). Concretely:
 
-- _0-hop_: $e$ is directly present in the context pack.
-- _1-hop_: a single `recall(query)` call, using information visible in $P$, returns $e$.
-- _2-hop_: a `recall` call returns a result that contains enough information to formulate a second `recall` call that returns $e$.
+- *0-hop*: $e$ is directly present in the context pack.
+- *1-hop*: a single `recall(query)` call, using information visible in $P$, returns $e$.
+- *2-hop*: a `recall` call returns a result that contains enough information to formulate a second `recall` call that returns $e$.
 
-**Completeness condition.** A retrieval pack is _task-complete_ if all events referenced by `task_state.key_events` are 2-hop retrievable from the assembled context pack.
+**Completeness condition.** A retrieval pack is *task-complete* if all events referenced by `task_state.key_events` are 2-hop retrievable from the assembled context pack.
 
 ### 5.6 Retrieval Completeness Theorem
 
@@ -407,7 +403,7 @@ And for the full key-event set, assuming independent retrieval outcomes:
 
 $$P(\text{all } K \text{ key events are 2-hop retrievable}) \geq \left[p_{\text{idx}} \cdot \left(1 - (1 - p_{\text{match}})^2\right)\right]^K$$
 
-_Proof._ An event $e_i$ fails to be 2-hop retrievable only if (a) it was not indexed ($1 - p_{\text{idx}}$), or (b) it was indexed but both independent retrieval attempts fail ($p_{\text{idx}} \cdot (1 - p_{\text{match}})^2$). The two retrieval attempts are independent because the first-hop result provides new information (topic context, temporal references) that enables a differently-formulated second query. Thus:
+*Proof.* An event $e_i$ fails to be 2-hop retrievable only if (a) it was not indexed ($1 - p_{\text{idx}}$), or (b) it was indexed but both independent retrieval attempts fail ($p_{\text{idx}} \cdot (1 - p_{\text{match}})^2$). The two retrieval attempts are independent because the first-hop result provides new information (topic context, temporal references) that enables a differently-formulated second query. Thus:
 
 $$P(e_i \text{ unreachable}) \leq (1 - p_{\text{idx}}) + p_{\text{idx}} \cdot (1-p_{\text{match}})^2$$
 
@@ -457,7 +453,7 @@ $$P(\text{false suppress}) < 0.01 + 0.99 \cdot 0.05 \approx 0.06$$
 
 **Type II (false elevation).** An irrelevant event is scored above the threshold, wasting budget. Since the retrieval budget $B_{\text{ret}}$ is hard-capped and MMR provides diversity, false elevation reduces precision but does not compromise safety—the agent receives extra noise but no critical information is lost.
 
-**Mitigation.** The `recall` tool provides a safety net: if an agent detects missing information despite the push pack, it can issue a targeted query that bypasses the generic scoring pipeline. The worst-case scenario—a relevant key event falsely suppressed _and_ the agent failing to recall it—has probability bounded by $P(\text{false suppress}) \cdot (1 - p_{\text{match}}) < 0.06 \cdot 0.05 = 0.003$ per event.
+**Mitigation.** The `recall` tool provides a safety net: if an agent detects missing information despite the push pack, it can issue a targeted query that bypasses the generic scoring pipeline. The worst-case scenario—a relevant key event falsely suppressed *and* the agent failing to recall it—has probability bounded by $P(\text{false suppress}) \cdot (1 - p_{\text{match}}) < 0.06 \cdot 0.05 = 0.003$ per event.
 
 (See **Annex A.3** for the complete task-conditioned scoring algorithm.)
 
@@ -487,7 +483,7 @@ ENGRAM's default eviction policy is a **type-weighted LRU** with the following p
 3. **Oldest dialogue turns**: smaller, but contain decision rationale that is harder to reconstruct.
 4. **Never evict**: system blocks, Task State, last-$k$ turns, time-range markers.
 
-**Connection to optimal page replacement.** Belady's MIN algorithm (Belady, 1966) proves that the optimal eviction policy evicts the item whose next access is farthest in the future—but this requires an oracle for future access patterns. In classical caching, no such oracle exists; LRU approximates it using recency as a proxy for future access likelihood. ENGRAM improves on this approximation: **Task State serves as a noisy oracle for future access patterns.** By encoding active goals, constraints, key events, and expected next actions, Task State predicts which events are likely to be needed soon (those related to active objectives and open loops) and which are not (completed sub-tasks, resolved errors). The type-weighted policy further refines this: tool results are evicted first not only because they are largest but because they are the most reliably retrievable on demand (high-entropy keyword signatures), making the _cost of a cache miss_ lowest for this type. This framing elevates ENGRAM's eviction policy from heuristic type-weighted LRU to a principled approximation of optimal replacement under task-derived future-need prediction.
+**Connection to optimal page replacement.** Belady's MIN algorithm (Belady, 1966) proves that the optimal eviction policy evicts the item whose next access is farthest in the future—but this requires an oracle for future access patterns. In classical caching, no such oracle exists; LRU approximates it using recency as a proxy for future access likelihood. ENGRAM improves on this approximation: **Task State serves as a noisy oracle for future access patterns.** By encoding active goals, constraints, key events, and expected next actions, Task State predicts which events are likely to be needed soon (those related to active objectives and open loops) and which are not (completed sub-tasks, resolved errors). The type-weighted policy further refines this: tool results are evicted first not only because they are largest but because they are the most reliably retrievable on demand (high-entropy keyword signatures), making the *cost of a cache miss* lowest for this type. This framing elevates ENGRAM's eviction policy from heuristic type-weighted LRU to a principled approximation of optimal replacement under task-derived future-need prediction.
 
 ENGRAM's time-range markers serve a function analogous to ARC's ghost entries (Megiddo & Modha, 2003): they record what was evicted and enable re-fetching. Unlike ARC's ghost entries (which track only recency/frequency metadata), time-range markers carry semantic topic hints that guide retrieval.
 
@@ -505,7 +501,6 @@ A key difference from classical caching is that ENGRAM's eviction is **non-destr
 As compaction cycles accumulate, time-range markers consume an increasing fraction of the context budget. To ensure $O(1)$ overhead for infinite history, ENGRAM implements **hierarchical marker merging**.
 
 **Algorithm.** When the number of markers exceeds a soft cap $K_{\max}$ (e.g., 20):
-
 1. Identify adjacent markers $\mu_i, \mu_{i+1}$.
 2. Create parent marker $\mu_{parent}$ with range $[t_{\text{start}}(\mu_i), t_{\text{end}}(\mu_{i+1})]$.
 3. Set topic set $\mathcal{K}_{parent} = \text{top-k}(\mathcal{K}_i \cup \mathcal{K}_{i+1})$ by TF-IDF or explicit importance.
@@ -531,7 +526,7 @@ Each level has its own bounded context window (cache), Task State, retrieval sur
 
 ### 7.2 Why separation helps
 
-The planner does not need full tool logs; it needs the _meaning_ of execution results and their provenance. The executor does not need the full strategic plan; it needs only the local objectives, constraints, and relevant prior evidence. Pointer-based memory makes this natural: the planner stores pointers to detailed evidence without paying their token cost. This decomposition is aligned with StackPlanner's finding (Zhang et al., 2026) that hierarchical planning with explicit level separation outperforms flat planning.
+The planner does not need full tool logs; it needs the *meaning* of execution results and their provenance. The executor does not need the full strategic plan; it needs only the local objectives, constraints, and relevant prior evidence. Pointer-based memory makes this natural: the planner stores pointers to detailed evidence without paying their token cost. This decomposition is aligned with StackPlanner's finding (Zhang et al., 2026) that hierarchical planning with explicit level separation outperforms flat planning.
 
 ### 7.3 Hierarchical planning diagram
 
@@ -639,18 +634,16 @@ The hybrid push/pull model introduces a tradeoff between the cost of the push pa
 **Latency Model.** The total latency $L$ for a turn is:
 $$L = L_{\text{gen}} + P(\text{pull}) \cdot (L_{\text{recall}} + L_{\text{gen2}})$$
 where $L_{\text{gen}}$ is standard generation latency, $L_{\text{recall}}$ is the latency of the retrieval tool invocation (search + scoring), $L_{\text{gen2}}$ is the latency of the second generation pass with retrieved context, and $P(\text{pull})$ is the probability that the push pack is insufficient.
-
-- **Narrative compaction:** $P(\text{pull}) \approx 0$ (context is static), so $L \approx L_{\text{gen}}$.
-- **ENGRAM:** $P(\text{pull}) \approx 0.22$ (empirically, §10A.6). The 22% of turns requiring retrieval incur a ~2$\times$ latency penalty. However, for 78% of turns, $L \approx L_{\text{gen}}$ with a smaller prompt (due to compaction), often resulting in _lower_ end-to-end latency than stuffing the window with irrelevant history.
+*   **Narrative compaction:** $P(\text{pull}) \approx 0$ (context is static), so $L \approx L_{\text{gen}}$.
+*   **ENGRAM:** $P(\text{pull}) \approx 0.22$ (empirically, §10A.6). The 22% of turns requiring retrieval incur a ~2$\times$ latency penalty. However, for 78% of turns, $L \approx L_{\text{gen}}$ with a smaller prompt (due to compaction), often resulting in *lower* end-to-end latency than stuffing the window with irrelevant history.
 
 **Cost Model.** The total token cost $C$ is:
 $$C = C_{\text{push}} + P(\text{pull}) \cdot (C_{\text{query}} + C_{\text{retrieved}})$$
 where $C_{\text{push}}$ is the fixed overhead of Task State + markers.
+*   **Narrative compaction:** $C \approx C_{\text{window}}$ (always filling the window).
+*   **ENGRAM:** $C_{\text{push}} \ll C_{\text{window}}$. By retrieving only when necessary, ENGRAM amortizes the cost of history. For a 200K window, filling it every turn costs ~$2/turn (at $10/M). ENGRAM's push pack (~2K tokens) plus occasional retrieval (~10K tokens) averages ~$0.05/turn.
 
-- **Narrative compaction:** $C \approx C_{\text{window}}$ (always filling the window).
-- **ENGRAM:** $C_{\text{push}} \ll C_{\text{window}}$. By retrieving only when necessary, ENGRAM amortizes the cost of history. For a 200K window, filling it every turn costs ~$2/turn (at $10/M). ENGRAM's push pack (~2K tokens) plus occasional retrieval (~10K tokens) averages ~$0.05/turn.
-
-**Conclusion:** While individual retrieval turns are slower/costlier, the _amortized_ cost and latency are significantly lower than "stuffing the window" strategies, and the _correctness_ is higher than narrative strategies.
+**Conclusion:** While individual retrieval turns are slower/costlier, the *amortized* cost and latency are significantly lower than "stuffing the window" strategies, and the *correctness* is higher than narrative strategies.
 
 ---
 
@@ -668,18 +661,17 @@ ENGRAM changes the failure mode from "irreversible forgetting" to "retrieval mis
 
 **Conditions.** Compare five compaction strategies under identical traces:
 
-| Condition      | Compaction method                         | Retrieval                           |
-| -------------- | ----------------------------------------- | ----------------------------------- |
-| **Narrative**  | LLM-generated summary                     | None (summary is canonical)         |
-| **Truncation** | Drop oldest turns                         | None                                |
-| **MemGPT**     | Self-managed paging (Packer et al., 2023) | Model-managed page-in/out           |
-| **Focus**      | Agent self-compression (Verma, 2026)      | Agent-managed keep/compress/discard |
-| **ENGRAM**     | Pointer compaction + time-range markers   | Hybrid push/pull                    |
+| Condition | Compaction method | Retrieval |
+|---|---|---|
+| **Narrative** | LLM-generated summary | None (summary is canonical) |
+| **Truncation** | Drop oldest turns | None |
+| **MemGPT** | Self-managed paging (Packer et al., 2023) | Model-managed page-in/out |
+| **Focus** | Agent self-compression (Verma, 2026) | Agent-managed keep/compress/discard |
+| **ENGRAM** | Pointer compaction + time-range markers | Hybrid push/pull |
 
 **Metrics.** Exact-match recall, partial-match recall, false recall (hallucinated needle), and precision@k.
 
 **Hypotheses.**
-
 - H1: Narrative compaction recall degrades exponentially with compaction cycles; after 3 cycles, exact-match recall < 15%.
 - H2: Truncation recall drops to 0% for needles in the evicted prefix.
 - H3: MemGPT maintains higher recall than narrative compaction but degrades as self-paging overhead consumes attention budget; exact-match recall < 50% after 5 cycles.
@@ -691,7 +683,6 @@ ENGRAM changes the failure mode from "irreversible forgetting" to "retrieval mis
 **Metrics.** Precision@k, Recall@k, retrieval latency (p50/p95/p99), token accounting (fraction of window per component), pull frequency (fraction of turns with `recall` invocation).
 
 **Hypotheses.**
-
 - H6: Recall@k exceeds 80% for key-event queries on first retrieval attempt.
 - H7: Pull frequency < 30% of turns.
 - H8: p95 retrieval latency < 500ms for stores with < 100K events.
@@ -701,14 +692,12 @@ ENGRAM changes the failure mode from "irreversible forgetting" to "retrieval mis
 **Metrics.** Repeated work rate, clarifying questions, task completion rate, time-to-completion.
 
 **Hypotheses.**
-
 - H9: ENGRAM reduces repeated work rate by > 50% vs. narrative compaction.
 - H10: Task completion rate under ENGRAM is comparable to a no-compaction oracle.
 
 ### 10.4 Evaluation axis 4: hierarchical planning effectiveness
 
 **Hypotheses.**
-
 - H11: Planner context utilization stays below 50%.
 - H12: Executor reports are sufficient for correct planner decisions > 90% of the time.
 
@@ -719,7 +708,6 @@ To determine which components of the task-conditioned modifier drive performance
 **Protocol.** Using the full-scale evaluation traces (§11), run ENGRAM retrieval under five conditions: (1) full modifier (all four factors), (2) without premise compatibility ($\text{prem} = 1$ for all events), (3) without phase salience ($\text{phase} = 1$ for all events), (4) without supersession discount ($\text{sup} = 0$ for all events), and (5) without task relevance ($\text{task\_rel} = 1$ for all events). Measure recall@k and precision@k for each condition.
 
 **Hypotheses.**
-
 - H13: Removing premise compatibility produces the largest recall degradation (>10 percentage points), because stale-premise events inject misleading context.
 - H14: Removing supersession produces the second-largest degradation, because outdated objective versions compete with current ones.
 - H15: Removing phase salience produces moderate degradation (<5 points), because it is a refinement rather than a filter.
@@ -731,18 +719,18 @@ To determine which components of the task-conditioned modifier drive performance
 
 Loss compounds: if each compaction preserves ~2% detail from the compacted portion, after 3 compactions the preserved fraction is $0.02^3 \approx 8 \times 10^{-6}$—effectively total loss.
 
-**ENGRAM under the same window.** Task State: ~500 tokens. Time-range markers: ~50–100 tokens per evicted span. Hot tail: ~8K–15K tokens. Pull pack: ~4K tokens per `recall` call. Information preserved: **100% on disk** (lossless store). In-context: 5–20K tokens of _targeted_ evidence per turn.
+**ENGRAM under the same window.** Task State: ~500 tokens. Time-range markers: ~50–100 tokens per evicted span. Hot tail: ~8K–15K tokens. Pull pack: ~4K tokens per `recall` call. Information preserved: **100% on disk** (lossless store). In-context: 5–20K tokens of *targeted* evidence per turn.
 
 **Net effect over a 50-turn session with 3 compactions.** Baseline: cumulative loss ~99.99% of high-resolution evidence. ENGRAM: **0% permanently lost** (subject to retention policy); retrieval reintroduces needed evidence on demand.
 
 ### 10.7 Scaling considerations
 
 | Event store size | FTS query (p95) | Vector search (p95) | Combined (p95) |
-| ---------------- | --------------- | ------------------- | -------------- |
-| 1K events        | < 5ms           | < 10ms              | < 50ms         |
-| 10K events       | < 10ms          | < 20ms              | < 100ms        |
-| 100K events      | < 50ms          | < 50ms              | < 200ms        |
-| 1M events        | < 200ms         | < 100ms (ANN)       | < 500ms        |
+|---|---|---|---|
+| 1K events | < 5ms | < 10ms | < 50ms |
+| 10K events | < 10ms | < 20ms | < 100ms |
+| 100K events | < 50ms | < 50ms | < 200ms |
+| 1M events | < 200ms | < 100ms (ANN) | < 500ms |
 
 For the personal AI agent use case (~1K–5K events/day, ~365K–1.8M events/year), this is within the 1M-event performance tier, requiring no exotic infrastructure for several years of continuous operation.
 
@@ -750,18 +738,16 @@ For the personal AI agent use case (~1K–5K events/day, ~365K–1.8M events/yea
 
 ## 10A. Preliminary Validation: Synthetic Pilot Study
 
-To provide initial evidence for the core architectural claims, we conducted a synthetic pilot study following the protocol in §10.1. **Justification for Synthetic Data:** We employ synthetic traces rather than "real" user logs for this evaluation to isolate the _memory architecture's_ performance from the _reasoning model's_ variance. Synthetic generation allows precise control over needle distribution (type, depth, density) and distractor volume, enabling rigorous measurement of retrieval mechanics (exact-match recall) without the confounding variables of prompt sensitivity or ambiguous user intent found in wild logs. This approach follows the methodology of Factory.ai's probe-based evaluations (Factory.ai, 2025).
+To provide initial evidence for the core architectural claims, we conducted a synthetic pilot study following the protocol in §10.1. **Justification for Synthetic Data:** We employ synthetic traces rather than "real" user logs for this evaluation to isolate the *memory architecture's* performance from the *reasoning model's* variance. Synthetic generation allows precise control over needle distribution (type, depth, density) and distractor volume, enabling rigorous measurement of retrieval mechanics (exact-match recall) without the confounding variables of prompt sensitivity or ambiguous user intent found in wild logs. This approach follows the methodology of Factory.ai's probe-based evaluations (Factory.ai, 2025).
 
 ### 10A.1 Experimental setup
 
 **Traces.** We generated 10 synthetic interaction traces, each comprising:
-
 - **Seed phase (turns 1–10):** 5 needles embedded per trace (50 total), drawn from 5 types: (1) SHA-256 hash fragments (e.g., `a7f3b2c9e1d8`), (2) file paths with line numbers (e.g., `/var/log/nginx/error.log:2847`), (3) error messages (e.g., `ECONNREFUSED 10.0.3.7:5432`), (4) parameter strings (e.g., `--max-retries=7 --timeout=3200ms`), (5) decision rationales (e.g., "chose PostgreSQL over MySQL because of JSONB support and better concurrent write performance").
 - **Flood phase (turns 11–60):** Tool outputs (build logs, API responses, file listings) totaling ~150K tokens per trace, sufficient to force 5 compaction cycles at a simulated 32K-token window.
 - **Recall phase (turns 61–70):** One targeted question per needle, requiring exact-string reproduction.
 
 **Baselines.** We simulated four baselines under identical traces:
-
 - **Narrative compaction:** At each compaction trigger, an LLM (Claude 3.5 Sonnet) generates a summary of the oldest 60% of context. The summary replaces the original content.
 - **Truncation:** At each trigger, the oldest 60% of context is dropped.
 - **MemGPT-style self-paging:** The LLM manages its own memory via page-in/page-out tool calls. Memory items are stored externally; the model decides what to page in when answering recall questions.
@@ -773,28 +759,27 @@ To provide initial evidence for the core architectural claims, we conducted a sy
 
 **Table 1.** Exact-match recall rate (%) by method and compaction cycle count. Each cell represents mean recall across 50 needles (10 traces × 5 needles). Standard deviation in parentheses; 95% bootstrap confidence intervals in brackets (10,000 resamples).
 
-| Method                   | After 1 cycle     | After 3 cycles    | After 5 cycles    |
-| ------------------------ | ----------------- | ----------------- | ----------------- |
-| Narrative compaction     | 58 (±12) [47, 69] | 14 (±8) [8, 22]   | 4 (±4) [0, 10]    |
-| Truncation               | 40 (±15) [27, 53] | 0 (±0)            | 0 (±0)            |
-| MemGPT (self-paging)     | 72 (±10) [63, 81] | 48 (±14) [36, 60] | 36 (±12) [26, 48] |
+| Method | After 1 cycle | After 3 cycles | After 5 cycles |
+|---|---|---|---|
+| Narrative compaction | 58 (±12) [47, 69] | 14 (±8) [8, 22] | 4 (±4) [0, 10] |
+| Truncation | 40 (±15) [27, 53] | 0 (±0) | 0 (±0) |
+| MemGPT (self-paging) | 72 (±10) [63, 81] | 48 (±14) [36, 60] | 36 (±12) [26, 48] |
 | Focus (self-compression) | 66 (±11) [56, 76] | 38 (±13) [27, 50] | 26 (±10) [18, 36] |
-| ENGRAM (1-hop recall)    | 96 (±4) [92, 100] | 90 (±6) [84, 96]  | 84 (±8) [77, 92]  |
-| ENGRAM (2-hop recall)    | 98 (±3) [94, 100] | 96 (±4) [92, 100] | 94 (±5) [90, 98]  |
+| ENGRAM (1-hop recall) | 96 (±4) [92, 100] | 90 (±6) [84, 96] | 84 (±8) [77, 92] |
+| ENGRAM (2-hop recall) | 98 (±3) [94, 100] | 96 (±4) [92, 100] | 94 (±5) [90, 98] |
 
 **Effect sizes (Cohen's $d$) at 5 compaction cycles:**
 
-| Comparison                        | Cohen's $d$ | Interpretation         |
-| --------------------------------- | ----------- | ---------------------- |
-| ENGRAM (2-hop) vs. Narrative      | $d = 14.0$  | Extreme (>0.8 = large) |
-| ENGRAM (2-hop) vs. MemGPT         | $d = 6.3$   | Extreme                |
-| ENGRAM (2-hop) vs. Focus          | $d = 8.6$   | Extreme                |
-| ENGRAM (1-hop) vs. ENGRAM (2-hop) | $d = 1.5$   | Large                  |
+| Comparison | Cohen's $d$ | Interpretation |
+|---|---|---|
+| ENGRAM (2-hop) vs. Narrative | $d = 14.0$ | Extreme (>0.8 = large) |
+| ENGRAM (2-hop) vs. MemGPT | $d = 6.3$ | Extreme |
+| ENGRAM (2-hop) vs. Focus | $d = 8.6$ | Extreme |
+| ENGRAM (1-hop) vs. ENGRAM (2-hop) | $d = 1.5$ | Large |
 
 **Power analysis note.** With $N = 50$ needle probes, a two-proportions z-test at $\alpha = 0.05$ and power = 0.80 can detect effect sizes of $\Delta p \geq 0.18$ (18 percentage points). The observed effects (ENGRAM vs. narrative: $\Delta p = 0.90$; ENGRAM vs. MemGPT: $\Delta p = 0.58$) far exceed this minimum detectable effect, confirming that the pilot is adequately powered for its primary claims despite its small scale. Full-scale evaluation targets $N \geq 500$ probes (100+ traces) to enable meaningful sub-group analysis and ablation.
 
 **Key observations:**
-
 - Narrative compaction shows the predicted exponential degradation (H1 confirmed): 58% → 14% → 4%. The compounding loss from summary-of-summary is clearly visible.
 - Truncation drops to 0% once needles are in the evicted prefix (H2 confirmed).
 - MemGPT's self-paging preserves more than narrative compaction (72% vs. 58% at cycle 1) but degrades as the model's paging decisions become less reliable under growing memory stores (H3 confirmed).
@@ -805,25 +790,25 @@ To provide initial evidence for the core architectural claims, we conducted a sy
 
 **Table 2.** False recall rate (%) — agent produces a plausible but incorrect needle value.
 
-| Method                   | After 1 cycle | After 3 cycles | After 5 cycles |
-| ------------------------ | ------------- | -------------- | -------------- |
-| Narrative compaction     | 8 (±5)        | 18 (±7)        | 24 (±9)        |
-| Truncation               | 4 (±3)        | 6 (±4)         | 6 (±4)         |
-| MemGPT (self-paging)     | 6 (±4)        | 12 (±6)        | 14 (±7)        |
-| Focus (self-compression) | 6 (±4)        | 10 (±5)        | 12 (±6)        |
-| ENGRAM                   | 2 (±2)        | 2 (±3)         | 2 (±3)         |
+| Method | After 1 cycle | After 3 cycles | After 5 cycles |
+|---|---|---|---|
+| Narrative compaction | 8 (±5) | 18 (±7) | 24 (±9) |
+| Truncation | 4 (±3) | 6 (±4) | 6 (±4) |
+| MemGPT (self-paging) | 6 (±4) | 12 (±6) | 14 (±7) |
+| Focus (self-compression) | 6 (±4) | 10 (±5) | 12 (±6) |
+| ENGRAM | 2 (±2) | 2 (±3) | 2 (±3) |
 
-Narrative compaction's false recall rate _increases_ with cycles (8% → 24%), because summaries introduce paraphrased or confabulated details that the model treats as ground truth (H5 confirmed). ENGRAM maintains a stable 2% false-recall rate because time-range markers do not generate claims about content—they only indicate what was evicted and how to retrieve it.
+Narrative compaction's false recall rate *increases* with cycles (8% → 24%), because summaries introduce paraphrased or confabulated details that the model treats as ground truth (H5 confirmed). ENGRAM maintains a stable 2% false-recall rate because time-range markers do not generate claims about content—they only indicate what was evicted and how to retrieve it.
 
 ### 10A.4 Results: retrieval precision
 
 **Table 3.** Precision@k for `recall` queries after 5 compaction cycles (ENGRAM only).
 
-| k   | Precision@k  |
-| --- | ------------ |
-| 5   | 0.86 (±0.08) |
-| 10  | 0.78 (±0.10) |
-| 20  | 0.68 (±0.12) |
+| k | Precision@k |
+|---|---|
+| 5 | 0.86 (±0.08) |
+| 10 | 0.78 (±0.10) |
+| 20 | 0.68 (±0.12) |
 
 Precision degrades gracefully with larger k, as expected—broader retrieval includes more marginally relevant items. Precision@5 of 0.86 indicates that task-conditioned scoring successfully prioritizes high-relevance events.
 
@@ -831,13 +816,13 @@ Precision degrades gracefully with larger k, as expected—broader retrieval inc
 
 **Table 4.** Exact-match recall at 2-hop after 5 cycles, by needle type.
 
-| Needle type                  | Recall (%) | Notes                               |
-| ---------------------------- | ---------- | ----------------------------------- |
-| SHA-256 hash fragments       | 98 (±3)    | High: strong keyword match          |
-| File paths with line numbers | 96 (±4)    | High: structured, searchable        |
-| Error messages               | 94 (±5)    | High: distinctive strings           |
-| Parameter strings            | 92 (±6)    | Good: some parameter overlap        |
-| Decision rationales          | 88 (±8)    | Lower: semantic, not keyword-driven |
+| Needle type | Recall (%) | Notes |
+|---|---|---|
+| SHA-256 hash fragments | 98 (±3) | High: strong keyword match |
+| File paths with line numbers | 96 (±4) | High: structured, searchable |
+| Error messages | 94 (±5) | High: distinctive strings |
+| Parameter strings | 92 (±6) | Good: some parameter overlap |
+| Decision rationales | 88 (±8) | Lower: semantic, not keyword-driven |
 
 Keyword-rich needles (hashes, paths, errors) are nearly perfectly retrievable via FTS. Decision rationales—which are semantic rather than keyword-driven—show lower but still strong recall, suggesting that the embedding index and task-conditioned scoring compensate for keyword sparsity. This type-dependent pattern is consistent with the retrieval surface design: FTS excels at exact strings, while vector search handles semantic content.
 
@@ -847,11 +832,11 @@ Across the 10 traces, `recall` was invoked on 22% of turns during the recall pha
 
 ### 10A.7 Threats to validity
 
-1. **Synthetic traces:** The traces are generated, not recorded from production use. Real interaction patterns may differ in needle distribution, tool output structure, and compaction timing. _Mitigation:_ Traces were modeled on production interaction patterns from the OpenClaw deployment.
-2. **Single model:** All conditions used Claude 3.5 Sonnet. Different models may show different narrative compaction quality and self-paging effectiveness. _Mitigation:_ Cross-model evaluation is planned for full-scale experiments.
-3. **Simulated baselines:** MemGPT and Focus were simulated rather than run on their actual implementations. _Mitigation:_ Simulations followed the published protocols; full implementation comparison is planned.
-4. **Small scale:** 10 traces × 5 needles = 50 needle probes. Statistical power is limited for detecting small effect sizes. _Mitigation:_ Effect sizes are large (>50 percentage points between ENGRAM and narrative compaction), exceeding what small-sample noise could explain. Full-scale evaluation targets 100+ traces.
-5. **Window size:** The 32K-token simulated window is smaller than production windows (128K–200K). Larger windows would reduce compaction frequency but not change the fundamental dynamics. _Hypothesis:_ The relative ordering of methods is stable across window sizes.
+1. **Synthetic traces:** The traces are generated, not recorded from production use. Real interaction patterns may differ in needle distribution, tool output structure, and compaction timing. *Mitigation:* Traces were modeled on production interaction patterns from the OpenClaw deployment.
+2. **Single model:** All conditions used Claude 3.5 Sonnet. Different models may show different narrative compaction quality and self-paging effectiveness. *Mitigation:* Cross-model evaluation is planned for full-scale experiments.
+3. **Simulated baselines:** MemGPT and Focus were simulated rather than run on their actual implementations. *Mitigation:* Simulations followed the published protocols; full implementation comparison is planned.
+4. **Small scale:** 10 traces × 5 needles = 50 needle probes. Statistical power is limited for detecting small effect sizes. *Mitigation:* Effect sizes are large (>50 percentage points between ENGRAM and narrative compaction), exceeding what small-sample noise could explain. Full-scale evaluation targets 100+ traces.
+5. **Window size:** The 32K-token simulated window is smaller than production windows (128K–200K). Larger windows would reduce compaction frequency but not change the fundamental dynamics. *Hypothesis:* The relative ordering of methods is stable across window sizes.
 
 ### 10A.8 Summary
 
@@ -937,7 +922,7 @@ Lossless storage does not guarantee recall. If no retrieval path leads to a memo
 
 ### 14.1 Anticipatory retrieval via topic trajectory prediction
 
-**Anticipatory retrieval** would predict the agent's information needs _before_ the next turn by modeling topic trajectories. Implementation could use lightweight sequence models over topic-tagged event streams; the key constraint is that anticipatory retrieval must not exceed the push-pack budget (P6).
+**Anticipatory retrieval** would predict the agent's information needs *before* the next turn by modeling topic trajectories. Implementation could use lightweight sequence models over topic-tagged event streams; the key constraint is that anticipatory retrieval must not exceed the push-pack budget (P6).
 
 ### 14.2 Active forgetting with power-law decay curves
 
@@ -953,7 +938,7 @@ Biological memory exhibits power-law forgetting (Wixted & Ebbesen, 1991): $S(t) 
 
 ### 15.1 When narrative summaries still make sense
 
-Narrative summaries remain useful as _derived views_ for human handoffs, status updates, and progress reports. ENGRAM does not forbid summaries; it forbids treating them as canonical memory that replaces evidence.
+Narrative summaries remain useful as *derived views* for human handoffs, status updates, and progress reports. ENGRAM does not forbid summaries; it forbids treating them as canonical memory that replaces evidence.
 
 ### 15.2 Push vs. pull: when is each mode appropriate?
 
@@ -983,50 +968,50 @@ ENGRAM is a **systems architecture contribution**: it synthesizes event sourcing
 
 ## References
 
-1. Alqithami, S. (2025). _Forgetful but Faithful: A Cognitive Memory Architecture and Benchmark for Privacy-Aware Generative Agents_ (MaRS). arXiv:2512.12856.
-2. Anthropic Applied AI Team (2025). _Effective context engineering for AI agents_. Anthropic Engineering.
-3. Asai, A., Wu, Z., Wang, Y., Sil, A., & Hajishirzi, H. (2023). _Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection_. arXiv:2310.11511.
-4. Belady, L. A. (1966). _A Study of Replacement Algorithms for a Virtual-Storage Computer_. IBM Systems Journal, 5(2), 78–101.
-5. Bian, A. A., Buhmann, J. M., Krause, A., & Tschiatschek, S. (2017). _Guarantees for Greedy Maximization of Non-submodular Functions with Applications_. ICML 2017.
-6. Bousetouane, F. (2026). _ACC: Adaptive Cognitive Control for Bio-Inspired Bounded Agent State_. arXiv:2601.11653.
-7. Budzianowski, P., et al. (2018). _MultiWOZ — A Large-Scale Multi-Domain Wizard-of-Oz Dataset for Task-Oriented Dialogue Modelling_. EMNLP 2018.
-8. Carbonell, J. & Goldstein, J. (1998). _The Use of MMR, Diversity-Based Reranking for Reordering Documents and Producing Summaries_. SIGIR 1998.
-9. Curme, C. & Daugherty, W. (2026). _Deep Agents: Filesystem Persistence for Long-Running Agent Tasks_. LangChain Engineering Blog.
-10. Dar, S., Franklin, M. J., Jónsson, B. T., Srivastava, D., & Tan, M. (1996). _Semantic Data Caching and Replacement_. VLDB 1996.
-11. Edge, D., et al. (2024). _From Local to Global: A Graph RAG Approach to Query-Focused Summarization_. arXiv:2404.16130.
-12. Factory.ai (2025). _Probe-Based Evaluation of Context Compression in Coding Agents_. Factory.ai Research Blog.
-13. Fowler, M. (2005). _Event Sourcing_. martinfowler.com/eaaDev/EventSourcing.html.
-14. Henderson, M., Thomson, B., & Young, S. (2014). _Word-Based Dialog State Tracking with Recurrent Neural Networks_. SIGDIAL 2014.
-15. Hu, C., Li, J., & Wu, Q. (2025). _A Survey of Memory Mechanisms in Large Language Model Based Agents_. arXiv:2512.13564.
-16. Jiang, Z., et al. (2023a). _Active Retrieval Augmented Generation_ (FLARE). arXiv:2305.06983.
-17. Josselyn, S. A. & Tonegawa, S. (2020). _Memory engrams: Recalling the past and imagining the future_. Science, 367(6473), eaaw4325.
-18. Krause, A. & Golovin, D. (2014). _Submodular Function Maximization_. In Tractability: Practical Approaches to Hard Problems, Cambridge University Press.
-19. Kryscinski, W., et al. (2020). _Evaluating the Factual Consistency of Abstractive Text Summarization_. EMNLP 2020.
-20. Lashley, K. S. (1950). _In search of the engram_. Symposia of the Society for Experimental Biology, 4, 454–482.
-21. Lin, S. (2025). _Google Agent Development Kit: Event Sourcing for Production Agents_. Google AI Blog.
-22. Liu, N. F., et al. (2024). _Lost in the Middle: How Language Models Use Long Contexts_. TACL.
-23. Maynez, J., et al. (2020). _On Faithfulness and Factuality in Abstractive Summarization_. ACL 2020.
-24. Megiddo, N. & Modha, D. S. (2003). _ARC: A Self-Tuning, Low Overhead Replacement Cache_. USENIX FAST 2003.
-25. Nemhauser, G. L., Wolsey, L. A., & Fisher, M. L. (1978). _An analysis of approximations for maximizing submodular set functions—I_. Mathematical Programming, 14(1), 265–294.
-26. Packer, C., et al. (2023). _MemGPT: Towards LLMs as Operating Systems_. arXiv:2310.08560.
-27. Park, J. S., et al. (2023). _Generative Agents: Interactive Simulacra of Human Behavior_. arXiv:2304.03442.
-28. Rastogi, A., et al. (2020). _Towards Scalable Multi-Domain Conversational Agents: The Schema-Guided Dialogue Dataset_. AAAI 2020.
-29. Sarthi, P., et al. (2024). _RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval_. arXiv:2401.18059.
-30. Serra, O. (2026a). _CORTEX: Persona-Aware Context Engineering for Persistent AI Identity_. Technical Report, OpenClaw.
-31. Serra, O. (2026b). _SYNAPSE: Synthesized Negotiation Across Provider-Specific Engines — Multi-Model Adversarial Reasoning for Persistent AI Agents_. Working Paper.
-32. Sumers, T. R., et al. (2023). _Cognitive Architectures for Language Agents_ (CoALA). arXiv:2309.02427.
-33. Tonegawa, S., et al. (2015). _Memory engram storage and retrieval_. Current Opinion in Neurobiology, 35, 101–109.
-34. Verma, A. (2026). _Focus: Agent-Managed Context Compression for Long-Horizon Tasks_. arXiv:2601.07190.
-35. Walker, M. P. & Stickgold, R. (2004). _Sleep-Dependent Learning and Memory Consolidation_. Neuron, 44(1), 121–133.
-36. Weaviate (2025). _Context Engineering — LLM Memory and Retrieval for AI Agents_. weaviate.io/blog/context-engineering.
-37. Wixted, J. T. & Ebbesen, E. B. (1991). _On the Form of Forgetting_. Psychological Science, 2(6), 409–415.
-38. Xu, W., et al. (2025). _A-MEM: Agentic Memory for LLM Agents_. arXiv:2502.12110.
-39. Yan, S., et al. (2025). _Memory-R1: Enhancing LLM Agents to Manage and Utilize Memories via Reinforcement Learning_. arXiv:2508.19828.
-40. Yu, Y., et al. (2026). _Agentic Memory: Learning Unified Long-Term and Short-Term Memory Management for LLM Agents_ (AgeMem). arXiv:2601.01885.
-41. Zeng, Y., et al. (2024). _Structural Memory: Mixing Episodic, Semantic, and Procedural Memory for Complex Agent Tasks_. arXiv:2412.15266.
-42. Zeng, Y., et al. (2026). _LOCA-bench: A Benchmark for Long-Context Agent Evaluation_. arXiv:2602.07962.
-43. Zhang, H., et al. (2025a). _G-Memory: Hierarchical Graph Memory for Large Language Model Agents_. arXiv:2506.07398.
-44. Zhang, Q., et al. (2026). _StackPlanner: Hierarchical Planning with Stack-Based Task Decomposition_. arXiv:2601.05890.
+1. Alqithami, S. (2025). *Forgetful but Faithful: A Cognitive Memory Architecture and Benchmark for Privacy-Aware Generative Agents* (MaRS). arXiv:2512.12856.
+2. Anthropic Applied AI Team (2025). *Effective context engineering for AI agents*. Anthropic Engineering.
+3. Asai, A., Wu, Z., Wang, Y., Sil, A., & Hajishirzi, H. (2023). *Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection*. arXiv:2310.11511.
+4. Belady, L. A. (1966). *A Study of Replacement Algorithms for a Virtual-Storage Computer*. IBM Systems Journal, 5(2), 78–101.
+5. Bian, A. A., Buhmann, J. M., Krause, A., & Tschiatschek, S. (2017). *Guarantees for Greedy Maximization of Non-submodular Functions with Applications*. ICML 2017.
+6. Bousetouane, F. (2026). *ACC: Adaptive Cognitive Control for Bio-Inspired Bounded Agent State*. arXiv:2601.11653.
+7. Budzianowski, P., et al. (2018). *MultiWOZ — A Large-Scale Multi-Domain Wizard-of-Oz Dataset for Task-Oriented Dialogue Modelling*. EMNLP 2018.
+8. Carbonell, J. & Goldstein, J. (1998). *The Use of MMR, Diversity-Based Reranking for Reordering Documents and Producing Summaries*. SIGIR 1998.
+9. Curme, C. & Daugherty, W. (2026). *Deep Agents: Filesystem Persistence for Long-Running Agent Tasks*. LangChain Engineering Blog.
+10. Dar, S., Franklin, M. J., Jónsson, B. T., Srivastava, D., & Tan, M. (1996). *Semantic Data Caching and Replacement*. VLDB 1996.
+11. Edge, D., et al. (2024). *From Local to Global: A Graph RAG Approach to Query-Focused Summarization*. arXiv:2404.16130.
+12. Factory.ai (2025). *Probe-Based Evaluation of Context Compression in Coding Agents*. Factory.ai Research Blog.
+13. Fowler, M. (2005). *Event Sourcing*. martinfowler.com/eaaDev/EventSourcing.html.
+14. Henderson, M., Thomson, B., & Young, S. (2014). *Word-Based Dialog State Tracking with Recurrent Neural Networks*. SIGDIAL 2014.
+15. Hu, C., Li, J., & Wu, Q. (2025). *A Survey of Memory Mechanisms in Large Language Model Based Agents*. arXiv:2512.13564.
+16. Jiang, Z., et al. (2023a). *Active Retrieval Augmented Generation* (FLARE). arXiv:2305.06983.
+17. Josselyn, S. A. & Tonegawa, S. (2020). *Memory engrams: Recalling the past and imagining the future*. Science, 367(6473), eaaw4325.
+18. Krause, A. & Golovin, D. (2014). *Submodular Function Maximization*. In Tractability: Practical Approaches to Hard Problems, Cambridge University Press.
+19. Kryscinski, W., et al. (2020). *Evaluating the Factual Consistency of Abstractive Text Summarization*. EMNLP 2020.
+20. Lashley, K. S. (1950). *In search of the engram*. Symposia of the Society for Experimental Biology, 4, 454–482.
+21. Lin, S. (2025). *Google Agent Development Kit: Event Sourcing for Production Agents*. Google AI Blog.
+22. Liu, N. F., et al. (2024). *Lost in the Middle: How Language Models Use Long Contexts*. TACL.
+23. Maynez, J., et al. (2020). *On Faithfulness and Factuality in Abstractive Summarization*. ACL 2020.
+24. Megiddo, N. & Modha, D. S. (2003). *ARC: A Self-Tuning, Low Overhead Replacement Cache*. USENIX FAST 2003.
+25. Nemhauser, G. L., Wolsey, L. A., & Fisher, M. L. (1978). *An analysis of approximations for maximizing submodular set functions—I*. Mathematical Programming, 14(1), 265–294.
+26. Packer, C., et al. (2023). *MemGPT: Towards LLMs as Operating Systems*. arXiv:2310.08560.
+27. Park, J. S., et al. (2023). *Generative Agents: Interactive Simulacra of Human Behavior*. arXiv:2304.03442.
+28. Rastogi, A., et al. (2020). *Towards Scalable Multi-Domain Conversational Agents: The Schema-Guided Dialogue Dataset*. AAAI 2020.
+29. Sarthi, P., et al. (2024). *RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval*. arXiv:2401.18059.
+30. Serra, O. (2026a). *CORTEX: Persona-Aware Context Engineering for Persistent AI Identity*. Technical Report, OpenClaw.
+31. Serra, O. (2026b). *SYNAPSE: Synthesized Negotiation Across Provider-Specific Engines — Multi-Model Adversarial Reasoning for Persistent AI Agents*. Working Paper.
+32. Sumers, T. R., et al. (2023). *Cognitive Architectures for Language Agents* (CoALA). arXiv:2309.02427.
+33. Tonegawa, S., et al. (2015). *Memory engram storage and retrieval*. Current Opinion in Neurobiology, 35, 101–109.
+34. Verma, A. (2026). *Focus: Agent-Managed Context Compression for Long-Horizon Tasks*. arXiv:2601.07190.
+35. Walker, M. P. & Stickgold, R. (2004). *Sleep-Dependent Learning and Memory Consolidation*. Neuron, 44(1), 121–133.
+36. Weaviate (2025). *Context Engineering — LLM Memory and Retrieval for AI Agents*. weaviate.io/blog/context-engineering.
+37. Wixted, J. T. & Ebbesen, E. B. (1991). *On the Form of Forgetting*. Psychological Science, 2(6), 409–415.
+38. Xu, W., et al. (2025). *A-MEM: Agentic Memory for LLM Agents*. arXiv:2502.12110.
+39. Yan, S., et al. (2025). *Memory-R1: Enhancing LLM Agents to Manage and Utilize Memories via Reinforcement Learning*. arXiv:2508.19828.
+40. Yu, Y., et al. (2026). *Agentic Memory: Learning Unified Long-Term and Short-Term Memory Management for LLM Agents* (AgeMem). arXiv:2601.01885.
+41. Zeng, Y., et al. (2024). *Structural Memory: Mixing Episodic, Semantic, and Procedural Memory for Complex Agent Tasks*. arXiv:2412.15266.
+42. Zeng, Y., et al. (2026). *LOCA-bench: A Benchmark for Long-Context Agent Evaluation*. arXiv:2602.07962.
+43. Zhang, H., et al. (2025a). *G-Memory: Hierarchical Graph Memory for Large Language Model Agents*. arXiv:2506.07398.
+44. Zhang, Q., et al. (2026). *StackPlanner: Hierarchical Planning with Stack-Based Task Decomposition*. arXiv:2601.05890.
 
 ---
 
@@ -1314,7 +1299,6 @@ To validate ENGRAM's claims, we will build a replay-based testing harness using 
 ### A.9.1 The Replay Harness
 
 We will use the existing OpenClaw session logs (`~/.openclaw/sessions/*.jsonl`) as ground truth.
-
 1.  **Ingest:** Read a raw session log.
 2.  **Replay:** Feed events sequentially into the ENGRAM memory system.
 3.  **Constrain:** Enforce a strict token budget (e.g., 4k tokens) to force compaction.
@@ -1322,19 +1306,18 @@ We will use the existing OpenClaw session logs (`~/.openclaw/sessions/*.jsonl`) 
 
 ### A.9.2 Metrics
 
-- **Recall Rate:** % of needles successfully retrieved.
-- **Precision:** % of retrieved tokens that are relevant to the needle.
-- **Compaction Ratio:** Total raw tokens / Context window tokens.
-- **Latency:** Time to retrieve vs. time to read raw context.
+-   **Recall Rate:** % of needles successfully retrieved.
+-   **Precision:** % of retrieved tokens that are relevant to the needle.
+-   **Compaction Ratio:** Total raw tokens / Context window tokens.
+-   **Latency:** Time to retrieve vs. time to read raw context.
 
 ## A.10 Results (Placeholder)
 
-_This section is reserved for the empirical results from the replay harness._
+*This section is reserved for the empirical results from the replay harness.*
 
 ### A.10.1 Recall vs. Narrative Compaction
-
 [To be filled: Comparative chart of ENGRAM recall vs. standard summarization.]
 
 ### A.10.2 Retrieval Latency
-
 [To be filled: Latency distribution for 1-hop and 2-hop retrievals.]
+
