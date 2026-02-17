@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
+import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { type MediaKind, maxBytesForKind, mediaKindFromMime } from "../media/constants.js";
 import { fetchRemoteMedia } from "../media/fetch.js";
 import {
@@ -51,6 +51,24 @@ async function assertLocalMediaAllowed(
     resolved = await fs.realpath(mediaPath);
   } catch {
     resolved = path.resolve(mediaPath);
+  }
+
+  // Hardening: the default allowlist includes `os.tmpdir()`, and tests/CI may
+  // override the state dir into tmp. Avoid accidentally allowing per-agent
+  // `workspace-*` state roots via the tmpdir prefix match; require explicit
+  // localRoots for those.
+  if (localRoots === undefined) {
+    const workspaceRoot = roots.find((root) => path.basename(root) === "workspace");
+    if (workspaceRoot) {
+      const stateDir = path.dirname(workspaceRoot);
+      const rel = path.relative(stateDir, resolved);
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+        const firstSegment = rel.split(path.sep)[0] ?? "";
+        if (firstSegment.startsWith("workspace-")) {
+          throw new Error(`Local media path is not under an allowed directory: ${mediaPath}`);
+        }
+      }
+    }
   }
   for (const root of roots) {
     let resolvedRoot: string;

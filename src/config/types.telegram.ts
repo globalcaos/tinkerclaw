@@ -14,8 +14,12 @@ import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./typ
 export type TelegramActionConfig = {
   reactions?: boolean;
   sendMessage?: boolean;
+  /** Enable poll actions (send polls). */
+  polls?: boolean;
   deleteMessage?: boolean;
   editMessage?: boolean;
+  /** Enable poll actions (sendPoll). */
+  poll?: boolean;
   /** Enable sticker actions (send and search). */
   sticker?: boolean;
 };
@@ -141,6 +145,11 @@ export type TelegramAccountConfig = {
    * Use `"auto"` to derive `[{identity.name}]` from the routed agent.
    */
   responsePrefix?: string;
+  /**
+   * Per-channel ack reaction override.
+   * Telegram expects unicode emoji (e.g., "👀") rather than shortcodes.
+   */
+  ackReaction?: string;
 };
 
 export type TelegramTopicConfig = {
