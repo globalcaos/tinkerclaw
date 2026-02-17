@@ -1,6 +1,5 @@
 import type { AnyMessageContent, proto, WAMessage } from "@whiskeysockets/baileys";
 import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
-import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
 import { createInboundDebouncer } from "../../auto-reply/inbound-debounce.js";
 import { formatLocationText } from "../../channels/location.js";
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
@@ -21,7 +20,8 @@ import {
 } from "./extract.js";
 import { downloadInboundMedia } from "./media.js";
 import { createWebSendApi } from "./send-api.js";
-import { wasSentByBot, forgetSentMessageId } from "./sent-ids.js";
+import { wasSentByBot, forgetSentMessageId } from "./sent-ids.js"; // fork: sent-id tracking
+import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
 
 export async function monitorWebInbox(options: {
   verbose: boolean;
@@ -471,37 +471,11 @@ export async function monitorWebInbox(options: {
 
   const sendApi = createWebSendApi({
     sock: {
-      sendMessage: (jid: string, content: AnyMessageContent, opts?: unknown) =>
-        sock.sendMessage(jid, content, opts as Parameters<typeof sock.sendMessage>[2]),
+      sendMessage: (jid, content, options) =>
+        options === undefined
+          ? sock.sendMessage(jid, content)
+          : sock.sendMessage(jid, content, options),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
-      presenceSubscribe: (jid: string) => sock.presenceSubscribe(jid),
-      groupCreate: (subject: string, participants: string[]) =>
-        sock.groupCreate(subject, participants),
-      groupUpdateSubject: (jid: string, subject: string) => sock.groupUpdateSubject(jid, subject),
-      groupUpdateDescription: (jid: string, description: string) =>
-        sock.groupUpdateDescription(jid, description),
-      updateProfilePicture: (jid: string, img: Buffer) => sock.updateProfilePicture(jid, img),
-      groupParticipantsUpdate: (
-        jid: string,
-        participants: string[],
-        action: "add" | "remove" | "promote" | "demote",
-      ) => sock.groupParticipantsUpdate(jid, participants, action),
-      groupLeave: (jid: string) => sock.groupLeave(jid),
-      groupInviteCode: (jid: string) => sock.groupInviteCode(jid),
-      groupRevokeInvite: (jid: string) => sock.groupRevokeInvite(jid),
-      groupMetadata: (jid: string) => sock.groupMetadata(jid),
-      fetchMessageHistory: (count: number, oldestMsgKey: unknown, oldestMsgTimestamp: number) =>
-        (
-          sock as unknown as {
-            fetchMessageHistory: (count: number, key: unknown, ts: number) => Promise<string>;
-          }
-        ).fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestamp),
-      requestPlaceholderResend: (messageKey: unknown) =>
-        (
-          sock as unknown as {
-            requestPlaceholderResend: (key: unknown) => Promise<string | undefined>;
-          }
-        ).requestPlaceholderResend(messageKey),
     },
     defaultAccountId: options.accountId,
   });
@@ -537,5 +511,64 @@ export async function monitorWebInbox(options: {
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
+    // fork: expanded ActiveWebListener surface for group management + message editing
+    createGroup: async (subject: string, participants: string[]) => {
+      const meta = await sock.groupCreate(subject, participants);
+      return { groupId: meta.id, subject: meta.subject };
+    },
+    editMessage: async (chatJid: string, messageId: string, newText: string, fromMe?: boolean, participant?: string) => {
+      await sock.sendMessage(chatJid, { text: newText, edit: { remoteJid: chatJid, id: messageId, fromMe: fromMe ?? true, participant } as unknown as import("@whiskeysockets/baileys").WAMessageKey });
+    },
+    deleteMessage: async (chatJid: string, messageId: string, fromMe?: boolean, participant?: string) => {
+      await sock.sendMessage(chatJid, { delete: { remoteJid: chatJid, id: messageId, fromMe: fromMe ?? true, participant } as unknown as import("@whiskeysockets/baileys").WAMessageKey });
+    },
+    replyMessage: async (to: string, text: string, quotedKey: import("../active-listener.js").MessageKey, mediaBuffer?: Buffer, mediaType?: string) => {
+      const jid = (await import("../../utils.js")).toWhatsappJid(to);
+      const content: import("@whiskeysockets/baileys").AnyMessageContent = mediaBuffer && mediaType
+        ? mediaType.startsWith("image/") ? { image: mediaBuffer, caption: text || undefined, mimetype: mediaType } as any
+        : mediaType.startsWith("audio/") ? { audio: mediaBuffer, ptt: true, mimetype: mediaType } as any
+        : { document: mediaBuffer, caption: text || undefined, mimetype: mediaType } as any
+        : { text };
+      const result = await sock.sendMessage(jid, content, { quoted: quotedKey } as any);
+      const mid = (result as any)?.key?.id ?? "unknown";
+      return { messageId: String(mid) };
+    },
+    sendSticker: async (to: string, stickerBuffer: Buffer) => {
+      const jid = (await import("../../utils.js")).toWhatsappJid(to);
+      const result = await sock.sendMessage(jid, { sticker: stickerBuffer } as any);
+      const mid = (result as any)?.key?.id ?? "unknown";
+      return { messageId: String(mid) };
+    },
+    groupUpdateSubject: async (groupJid: string, newSubject: string) => { await sock.groupUpdateSubject(groupJid, newSubject); },
+    groupUpdateDescription: async (groupJid: string, description: string) => { await sock.groupUpdateDescription(groupJid, description); },
+    groupUpdateIcon: async (groupJid: string, imageBuffer: Buffer) => { await sock.updateProfilePicture(groupJid, imageBuffer); },
+    groupAddParticipants: async (groupJid: string, participants: string[]) => {
+      const result = await sock.groupParticipantsUpdate(groupJid, participants, "add");
+      return Object.fromEntries(result.map(r => [r.jid ?? "", r.status]));
+    },
+    groupRemoveParticipants: async (groupJid: string, participants: string[]) => {
+      const result = await sock.groupParticipantsUpdate(groupJid, participants, "remove");
+      return Object.fromEntries(result.map(r => [r.jid ?? "", r.status]));
+    },
+    groupPromoteParticipants: async (groupJid: string, participants: string[]) => {
+      const result = await sock.groupParticipantsUpdate(groupJid, participants, "promote");
+      return Object.fromEntries(result.map(r => [r.jid ?? "", r.status]));
+    },
+    groupDemoteParticipants: async (groupJid: string, participants: string[]) => {
+      const result = await sock.groupParticipantsUpdate(groupJid, participants, "demote");
+      return Object.fromEntries(result.map(r => [r.jid ?? "", r.status]));
+    },
+    groupLeave: async (groupJid: string) => { await sock.groupLeave(groupJid); },
+    groupGetInviteCode: async (groupJid: string) => (await sock.groupInviteCode(groupJid)) ?? "",
+    groupRevokeInviteCode: async (groupJid: string) => (await sock.groupRevokeInvite(groupJid)) ?? "",
+    groupMetadata: async (groupJid: string) => {
+      const meta = await sock.groupMetadata(groupJid);
+      return {
+        id: meta.id,
+        subject: meta.subject,
+        description: meta.desc ?? undefined,
+        participants: meta.participants.map(p => ({ id: p.id, admin: p.admin ?? undefined })),
+      };
+    },
   } as const;
 }
