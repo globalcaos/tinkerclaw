@@ -69,8 +69,8 @@ function buildContextPruningExtension(params: {
 
 function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
   const mode = cfg?.agents?.defaults?.compaction?.mode;
-  if (mode === "engram") return "engram";
-  if (mode === "safeguard") return "safeguard";
+  if (mode === "engram") {return "engram";}
+  if (mode === "safeguard") {return "safeguard";}
   return "default";
 }
 
