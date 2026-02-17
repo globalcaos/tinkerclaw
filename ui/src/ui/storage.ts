@@ -1,5 +1,6 @@
 const KEY = "openclaw.control.settings.v1";
 
+import { isSupportedLocale } from "../i18n/index.ts";
 import type { ThemeMode } from "./theme.ts";
 
 export type ExecSecurityLevel = "safe" | "low" | "medium" | "high" | "critical";
@@ -15,7 +16,8 @@ export type UiSettings = {
   splitRatio: number; // Sidebar split ratio (0.4 to 0.7, default 0.6)
   navCollapsed: boolean; // Collapsible sidebar state
   navGroupsCollapsed: Record<string, boolean>; // Which nav groups are collapsed
-  execSecurityLevel: ExecSecurityLevel; // Max level AI can execute
+  execSecurityLevel: ExecSecurityLevel; // Max level AI can execute // fork
+  locale?: string;
 };
 
 export function loadSettings(): UiSettings {
@@ -89,6 +91,7 @@ export function loadSettings(): UiSettings {
         parsed.execSecurityLevel === "critical"
           ? parsed.execSecurityLevel
           : defaults.execSecurityLevel,
+      locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,
     };
   } catch {
     return defaults;
