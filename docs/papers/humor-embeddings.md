@@ -8,7 +8,7 @@ abstract: |
   We present a formal computational framework for humor generation that operationalizes Koestler's (1964) bisociation theory as geometric operations in vector embedding spaces. Our central thesis is the *memory-humor correspondence*: humor and memory retrieval are dual operations on the same semantic infrastructure — memory seeks proximity, humor seeks calibrated distance bridged by unexpected coherence. We formalize this correspondence as a precise proposition and define a computable humor potential function $h(A, B, \beta)$ grounded in Suls' (1972) two-stage incongruity-resolution model. We identify a taxonomy of 12 humor-generating semantic patterns organized into five meta-categories, each defined as a specific embedding space operation, and propose humor associations as a first-class relationship type in agent memory architectures. A preliminary computational pilot ($n = 15$ concept triplets) falsifies our initial formulation, revealing that naive coherence (cosine similarity) conflates semantic proximity with comedic validity. This negative result motivates a revised surprise-weighted formulation ($h_{\text{v2}}$) that decomposes bridge quality into independent validity and surprise components. We situate our framework within Attardo and Raskin's (1991) General Theory of Verbal Humor, McGraw and Warren's (2010) Benign Violation Theory, and Hurley, Dennett, and Adams' (2011) inside-jokes computational theory, demonstrating that bisociative embedding operations provide a unifying geometric interpretation. We provide reproducible experimental protocols with power analysis ($N \geq 64$ raters, $\alpha = 0.05$, power $= 0.80$) for validation against human ratings and existing humor corpora, propose cross-embedding-model ablation studies, and discuss limitations including cultural specificity, the delivery gap, embedding model dependence, and the absence of large-scale empirical results.
 ---
 
-> **Changelog v2.1 → v2.2 (2026-02-16).** Round Table Round 3 fixes: (1) Added recommended threshold ranges for τ*v and τ*σ in Definition 2 (Humor Zone) with calibration guidance. (2) Added engineering-defaults caveat to staleness model parameters (§8.3), consistent with §3.5 callback treatment. (3) Added end-to-end computational complexity summary for h_v2 evaluation (§9.5).
+> **Changelog v2.1 → v2.2 (2026-02-16).** Round Table Round 3 fixes: (1) Added recommended threshold ranges for τ_v and τ_σ in Definition 2 (Humor Zone) with calibration guidance. (2) Added engineering-defaults caveat to staleness model parameters (§8.3), consistent with §3.5 callback treatment. (3) Added end-to-end computational complexity summary for h_v2 evaluation (§9.5).
 
 > **Changelog v2.0 → v2.1 (2026-02-16).** Round Table Round 2 fixes: (1) Fixed duplicate §7.1.2 numbering (second instance → §7.1.3). (2) Added forward-reference note in Definition 2 (Humor Zone) pointing to Definition 3 for $v$ and $\sigma$. (3) Cited Ritchie (2004) in §1.4 (was dangling reference). (4) Added $k$-sensitivity analysis to surprise function (§7.1.1). (5) Clarified callback bonus parameter sourcing as engineering defaults, not empirical measurements (§3.5). (6) Specified context vector computation for embedding arithmetic (§6.2). (7) Added infrastructure assumptions to pipeline latency estimates (§6.7).
 
@@ -18,13 +18,13 @@ abstract: |
 
 ## 1.1 Motivation
 
-Despite remarkable advances in natural language generation, artificial humor remains a largely unsolved problem. Large language models (LLMs) produce text that is syntactically well-formed and semantically coherent, yet rarely genuinely funny. We argue that this failure is not incidental but structural: language models are trained to maximize token-level likelihood, while humor requires _low-probability completions constrained by high coherence_ — precisely the opposite of the training objective (Winters et al., 2021). Hurley, Dennett, and Adams (2011) propose that humor evolved as a reward signal for detecting errors in mental models — a "debugging of belief structures" — suggesting that humor is fundamentally computational, not merely linguistic.
+Despite remarkable advances in natural language generation, artificial humor remains a largely unsolved problem. Large language models (LLMs) produce text that is syntactically well-formed and semantically coherent, yet rarely genuinely funny. We argue that this failure is not incidental but structural: language models are trained to maximize token-level likelihood, while humor requires *low-probability completions constrained by high coherence* — precisely the opposite of the training objective (Winters et al., 2021). Hurley, Dennett, and Adams (2011) propose that humor evolved as a reward signal for detecting errors in mental models — a "debugging of belief structures" — suggesting that humor is fundamentally computational, not merely linguistic.
 
-This observation points toward a deeper question: what computational mechanism could _generate_ humor rather than merely _classify_ it? Existing approaches fall into three categories: rule-based template systems (Binsted & Ritchie, 1994), corpus-driven classifiers (Weller & Seppi, 2019; Tian et al., 2022), and fine-tuned language models (Luo et al., 2019). None provides a generalizable, theory-grounded, generative framework that operates without humor-specific training data.
+This observation points toward a deeper question: what computational mechanism could *generate* humor rather than merely *classify* it? Existing approaches fall into three categories: rule-based template systems (Binsted & Ritchie, 1994), corpus-driven classifiers (Weller & Seppi, 2019; Tian et al., 2022), and fine-tuned language models (Luo et al., 2019). None provides a generalizable, theory-grounded, generative framework that operates without humor-specific training data.
 
 ## 1.2 The Memory-Humor Correspondence
 
-Our central insight emerges from an unexpected source: the infrastructure of semantic memory retrieval. Modern AI agents use vector embeddings to retrieve semantically relevant memories — querying an embedding index for vectors _close_ to a query vector. We observe that humor generation requires the _same_ infrastructure with an _inverted_ search strategy: instead of seeking proximity, humor seeks calibrated distance bridged by unexpected coherence.
+Our central insight emerges from an unexpected source: the infrastructure of semantic memory retrieval. Modern AI agents use vector embeddings to retrieve semantically relevant memories — querying an embedding index for vectors *close* to a query vector. We observe that humor generation requires the *same* infrastructure with an *inverted* search strategy: instead of seeking proximity, humor seeks calibrated distance bridged by unexpected coherence.
 
 We formalize this as follows:
 
@@ -41,7 +41,7 @@ $$\max_{e \in \mathcal{E}} \; d(q, e) \cdot v(\beta^*, q, e) \cdot \sigma(\beta^
 
 where $v$ is bridge validity, $\sigma$ is bridge surprise, and $[\delta_{\min}, \delta_{\max}]$ is the humor-productive distance range (Section 3.4).
 
-This correspondence is more than an analogy: it implies that any system equipped with a semantic embedding index already possesses the infrastructure for humor generation. The creative challenge reduces to _inverting the retrieval objective_ and _discovering bridge concepts_.
+This correspondence is more than an analogy: it implies that any system equipped with a semantic embedding index already possesses the infrastructure for humor generation. The creative challenge reduces to *inverting the retrieval objective* and *discovering bridge concepts*.
 
 **Status.** Proposition 1 is a conjecture. It holds by construction for the operations as defined; the empirical question is whether the resulting humor potential function correlates with human judgments of funniness. We provide protocols for testing this in Section 7.2.
 
@@ -61,7 +61,7 @@ This paper makes five contributions:
 
 ## 1.4 Historical Context
 
-Arthur Koestler (1964) described **bisociation** as the simultaneous mental association of an idea with two habitually incompatible frames of reference. Unlike ordinary association (connecting within a single frame), bisociation connects _across_ frames — producing the cognitive surprise that underlies humor, scientific discovery, and artistic creation. Coulson (2001) provided psycholinguistic evidence for this frame-shifting mechanism through her analysis of "semantic leaps" in joke comprehension, showing that humor processing involves rapid re-mapping of conceptual spaces. Ritchie (2004) further systematized the linguistic analysis of joke structure, identifying formal patterns in how incongruity is set up and resolved — patterns that inform our taxonomy (Section 4). We argue that bisociation is precisely a geometric operation in embedding space: finding two concepts with high vector distance but connected by a coherent bridge concept.
+Arthur Koestler (1964) described **bisociation** as the simultaneous mental association of an idea with two habitually incompatible frames of reference. Unlike ordinary association (connecting within a single frame), bisociation connects *across* frames — producing the cognitive surprise that underlies humor, scientific discovery, and artistic creation. Coulson (2001) provided psycholinguistic evidence for this frame-shifting mechanism through her analysis of "semantic leaps" in joke comprehension, showing that humor processing involves rapid re-mapping of conceptual spaces. Ritchie (2004) further systematized the linguistic analysis of joke structure, identifying formal patterns in how incongruity is set up and resolved — patterns that inform our taxonomy (Section 4). We argue that bisociation is precisely a geometric operation in embedding space: finding two concepts with high vector distance but connected by a coherent bridge concept.
 
 ## 1.5 Paper Organization
 
@@ -73,9 +73,9 @@ Computational humor has been studied from linguistic, psychological, and computa
 
 ## 2.1 Linguistic Humor Theories
 
-**Incongruity-Resolution.** Suls (1972) proposed that humor arises from perceiving an incongruity followed by its resolution — the listener encounters an unexpected element, then discovers a cognitive rule that resolves the incongruity. This two-stage model is critical to our framework: the multiplicative structure of $h$ (Section 3.2) directly operationalizes the requirement that _both_ stages must succeed for humor to arise.
+**Incongruity-Resolution.** Suls (1972) proposed that humor arises from perceiving an incongruity followed by its resolution — the listener encounters an unexpected element, then discovers a cognitive rule that resolves the incongruity. This two-stage model is critical to our framework: the multiplicative structure of $h$ (Section 3.2) directly operationalizes the requirement that *both* stages must succeed for humor to arise.
 
-**Script-Based Semantic Theory and GTVH.** Raskin (1985) formalized humor as the overlap of two incompatible _scripts_ (structured semantic representations of situations). Attardo and Raskin (1991) extended this into the General Theory of Verbal Humor (GTVH), identifying six Knowledge Resources (KRs) that characterize jokes: Script Opposition (SO), Logical Mechanism (LM), Situation (SI), Target (TA), Narrative Strategy (NS), and Language (LA). Our framework maps most directly to SO and LM: bisociation between distant embedding regions corresponds to script opposition, and the bridge concept provides the logical mechanism connecting them. Our contribution relative to GTVH is operational — we provide a _computable_ function where GTVH provides a descriptive taxonomy.
+**Script-Based Semantic Theory and GTVH.** Raskin (1985) formalized humor as the overlap of two incompatible *scripts* (structured semantic representations of situations). Attardo and Raskin (1991) extended this into the General Theory of Verbal Humor (GTVH), identifying six Knowledge Resources (KRs) that characterize jokes: Script Opposition (SO), Logical Mechanism (LM), Situation (SI), Target (TA), Narrative Strategy (NS), and Language (LA). Our framework maps most directly to SO and LM: bisociation between distant embedding regions corresponds to script opposition, and the bridge concept provides the logical mechanism connecting them. Our contribution relative to GTVH is operational — we provide a *computable* function where GTVH provides a descriptive taxonomy.
 
 **Benign Violation Theory.** McGraw and Warren (2010) proposed that humor arises when a situation is simultaneously perceived as a violation (something wrong, threatening, or unexpected) and as benign (safe, acceptable, or playful). This maps naturally to our framework: the distance component $d(A, B)$ measures violation intensity, while bridge coherence measures the "benign" reinterpretation that makes the violation acceptable. The sensitivity gate (Section 5) operationalizes the boundary where violations cease to be benign.
 
@@ -83,11 +83,11 @@ Computational humor has been studied from linguistic, psychological, and computa
 
 **Bisociation.** Koestler (1964) described bisociation as the creative act of connecting two habitually incompatible frames. Dubitzky et al. (2012) explored bisociation in data mining for knowledge discovery. Pereira et al. (2019) implemented bisociative concept blending for computational creativity, the work closest to ours, though they did not formalize the operation in embedding space or provide a computable scoring function.
 
-**Semantic Leaps.** Coulson (2001) provided psycholinguistic evidence that joke comprehension involves rapid "semantic leaps" — frame shifts that re-map conceptual structure. Her experimental work using ERPs (N400 component) showed that joke punchlines elicit different neural signatures than non-humorous incongruities, supporting the view that humor involves a specific _type_ of frame shift, not merely any incongruity. Our bridge concept operationalizes Coulson's semantic leap as a vector in embedding space that connects two distant frames.
+**Semantic Leaps.** Coulson (2001) provided psycholinguistic evidence that joke comprehension involves rapid "semantic leaps" — frame shifts that re-map conceptual structure. Her experimental work using ERPs (N400 component) showed that joke punchlines elicit different neural signatures than non-humorous incongruities, supporting the view that humor involves a specific *type* of frame shift, not merely any incongruity. Our bridge concept operationalizes Coulson's semantic leap as a vector in embedding space that connects two distant frames.
 
 ## 2.2 Computational Humor Recognition
 
-Humor recognition — classifying text as humorous or not — has received substantial attention. Yang et al. (2015) used Word2Vec features for humor recognition in Yelp reviews. Bertero and Fung (2016) applied CNNs and RNNs to humor in conversational data, achieving 0.69 F1 on Switchboard. Chen and Soo (2018) employed attention-based neural networks. Weller and Seppi (2019) applied transformer architectures, demonstrating that pre-trained language representations capture humor-relevant features. Hossain et al. (2019) introduced the SemEval shared task on humor detection, establishing benchmark datasets. Tian et al. (2022) provide a comprehensive survey of humor recognition methods, categorizing approaches by feature type and noting the persistent challenge of capturing the incongruity-resolution dynamic that our framework addresses directly. These approaches are _passive_ — they classify existing humor rather than generate it. Our framework is _generative_: it produces novel humorous combinations from arbitrary concept pairs.
+Humor recognition — classifying text as humorous or not — has received substantial attention. Yang et al. (2015) used Word2Vec features for humor recognition in Yelp reviews. Bertero and Fung (2016) applied CNNs and RNNs to humor in conversational data, achieving 0.69 F1 on Switchboard. Chen and Soo (2018) employed attention-based neural networks. Weller and Seppi (2019) applied transformer architectures, demonstrating that pre-trained language representations capture humor-relevant features. Hossain et al. (2019) introduced the SemEval shared task on humor detection, establishing benchmark datasets. Tian et al. (2022) provide a comprehensive survey of humor recognition methods, categorizing approaches by feature type and noting the persistent challenge of capturing the incongruity-resolution dynamic that our framework addresses directly. These approaches are *passive* — they classify existing humor rather than generate it. Our framework is *generative*: it produces novel humorous combinations from arbitrary concept pairs.
 
 ## 2.3 Computational Humor Generation
 
@@ -99,29 +99,29 @@ Martin (2007) provides the standard reference on the psychology of humor, synthe
 
 ## 2.5 Embedding Space Arithmetic and Creativity
 
-Mikolov et al. (2013) demonstrated that word embeddings support analogical reasoning via vector arithmetic: $\vec{king} - \vec{man} + \vec{woman} \approx \vec{queen}$. This finding established that semantic relationships have geometric structure in embedding spaces. Our bridge discovery mechanism (Section 6.1) extends this principle: if analogy maps known relationships, then $\vec{A} - \vec{context_A} + \vec{context_B}$ maps the _creative leap_ across semantic frames that humor requires. Veale (2016) explored computational creativity through conceptual blending and metaphor in similar geometric terms, though without a humor-specific scoring function. Bowdle and Gentner (2005) showed that metaphor comprehension involves alignment and projection between conceptual domains — a process closely related to our bridge discovery algorithms. Glucksberg (2001) demonstrated that figurative language comprehension involves class-inclusion assertions, suggesting that humor bridges function as implicit category memberships that violate conventional taxonomies.
+Mikolov et al. (2013) demonstrated that word embeddings support analogical reasoning via vector arithmetic: $\vec{king} - \vec{man} + \vec{woman} \approx \vec{queen}$. This finding established that semantic relationships have geometric structure in embedding spaces. Our bridge discovery mechanism (Section 6.1) extends this principle: if analogy maps known relationships, then $\vec{A} - \vec{context_A} + \vec{context_B}$ maps the *creative leap* across semantic frames that humor requires. Veale (2016) explored computational creativity through conceptual blending and metaphor in similar geometric terms, though without a humor-specific scoring function. Bowdle and Gentner (2005) showed that metaphor comprehension involves alignment and projection between conceptual domains — a process closely related to our bridge discovery algorithms. Glucksberg (2001) demonstrated that figurative language comprehension involves class-inclusion assertions, suggesting that humor bridges function as implicit category memberships that violate conventional taxonomies.
 
 ## 2.6 Positioning of Our Contribution
 
 Table 1 summarizes how our framework relates to prior approaches.
 
-| Approach                               | Type          | Scope        | Training Required | Humor Theory    | Bridge Concept |
-| -------------------------------------- | ------------- | ------------ | ----------------- | --------------- | -------------- |
-| JAPE (Binsted & Ritchie, 1994)         | Generative    | Puns only    | No (rules)        | Phonological    | N/A            |
-| HAHAcronym (Stock & Strapparava, 2003) | Generative    | Acronyms     | No (rules)        | Lexical         | N/A            |
-| Petrović & Matthews (2013)             | Generative    | One-liners   | No (unsupervised) | Statistical     | Implicit       |
-| Bertero & Fung (2016)                  | Recognition   | Dialogue     | Yes (CNN/RNN)     | Learned         | N/A            |
-| Kao et al. (2016)                      | Model         | Puns         | No (Bayesian)     | Ambiguity       | Implicit       |
-| Yu et al. (2018)                       | Generative    | Puns         | Yes (neural)      | Homophony       | N/A            |
-| He et al. (2019)                       | Generative    | Puns         | Yes (neural)      | Surprise        | Implicit       |
-| Luo et al. (2019)                      | Generative    | Jokes        | Yes (GPT-2)       | Learned         | N/A            |
-| Weller & Seppi (2019)                  | Recognition   | General      | Yes (transformer) | Learned         | N/A            |
-| LLM prompting (2023+)                  | Generative    | Broad        | No (prompt)       | Implicit        | N/A            |
-| **LIMBIC (this work)**                 | **Framework** | **12 types** | **No**            | **Bisociation** | **Explicit**   |
+| Approach | Type | Scope | Training Required | Humor Theory | Bridge Concept |
+|----------|------|-------|-------------------|--------------|----------------|
+| JAPE (Binsted & Ritchie, 1994) | Generative | Puns only | No (rules) | Phonological | N/A |
+| HAHAcronym (Stock & Strapparava, 2003) | Generative | Acronyms | No (rules) | Lexical | N/A |
+| Petrović & Matthews (2013) | Generative | One-liners | No (unsupervised) | Statistical | Implicit |
+| Bertero & Fung (2016) | Recognition | Dialogue | Yes (CNN/RNN) | Learned | N/A |
+| Kao et al. (2016) | Model | Puns | No (Bayesian) | Ambiguity | Implicit |
+| Yu et al. (2018) | Generative | Puns | Yes (neural) | Homophony | N/A |
+| He et al. (2019) | Generative | Puns | Yes (neural) | Surprise | Implicit |
+| Luo et al. (2019) | Generative | Jokes | Yes (GPT-2) | Learned | N/A |
+| Weller & Seppi (2019) | Recognition | General | Yes (transformer) | Learned | N/A |
+| LLM prompting (2023+) | Generative | Broad | No (prompt) | Implicit | N/A |
+| **LIMBIC (this work)** | **Framework** | **12 types** | **No** | **Bisociation** | **Explicit** |
 
-_Table 1: Comparison with existing computational humor approaches. LIMBIC is unique in providing an explicit, computable scoring function grounded in bisociation theory with an explicit bridge concept, covering multiple humor types without requiring humor-specific training._
+*Table 1: Comparison with existing computational humor approaches. LIMBIC is unique in providing an explicit, computable scoring function grounded in bisociation theory with an explicit bridge concept, covering multiple humor types without requiring humor-specific training.*
 
-Our key differentiators: (1) an explicit, computable scoring function rather than learned representations; (2) coverage of 12 distinct humor types organized by meta-category; (3) the bridge concept as a first-class element enabling both generation and _explanation_ of why a joke works; and (4) the memory-humor correspondence enabling integration with agent memory architectures (ENGRAM; Serra, 2026a).
+Our key differentiators: (1) an explicit, computable scoring function rather than learned representations; (2) coverage of 12 distinct humor types organized by meta-category; (3) the bridge concept as a first-class element enabling both generation and *explanation* of why a joke works; and (4) the memory-humor correspondence enabling integration with agent memory architectures (ENGRAM; Serra, 2026a).
 
 # 3. The Humor Potential Function
 
@@ -144,12 +144,12 @@ where:
 
 The multiplicative structure $h = d \cdot c \cdot c$ is not arbitrary — it operationalizes a theoretical requirement.
 
-Suls' (1972) two-stage model posits that humor requires _both_ incongruity (Stage 1) _and_ resolution (Stage 2). If either stage fails, humor does not arise: pure incongruity without resolution produces confusion; resolution without incongruity produces boredom. This conjunction is naturally expressed as multiplication:
+Suls' (1972) two-stage model posits that humor requires *both* incongruity (Stage 1) *and* resolution (Stage 2). If either stage fails, humor does not arise: pure incongruity without resolution produces confusion; resolution without incongruity produces boredom. This conjunction is naturally expressed as multiplication:
 
 - If $d(A, B) \approx 0$ (no incongruity): $h \approx 0$ regardless of bridge quality.
 - If $c(\beta, A) \approx 0$ or $c(\beta, B) \approx 0$ (no resolution): $h \approx 0$ regardless of distance.
 
-The multiplication encodes the logical AND of Suls' two stages. McGraw and Warren's (2010) Benign Violation Theory imposes the same conjunction: a situation must be _both_ a violation _and_ benign. Violation without benignity produces offense; benignity without violation produces indifference.
+The multiplication encodes the logical AND of Suls' two stages. McGraw and Warren's (2010) Benign Violation Theory imposes the same conjunction: a situation must be *both* a violation *and* benign. Violation without benignity produces offense; benignity without violation produces indifference.
 
 **Alternative functional forms** should be explored empirically:
 
@@ -169,7 +169,7 @@ We adopt the multiplicative form as the theoretically motivated default. Ablatio
 4. **Zero conditions.** $h = 0$ if $A = B$ (no incongruity), or if $\beta \perp A$ or $\beta \perp B$ (no resolution).
 5. **Continuity.** $h$ is continuous in all arguments (as a product of continuous functions).
 
-_Proof._ Properties 1–5 follow directly from the definitions of cosine distance and coherence and the algebraic properties of the product. $\square$
+*Proof.* Properties 1–5 follow directly from the definitions of cosine distance and coherence and the algebraic properties of the product. $\square$
 
 ## 3.4 Extended Formulation with Audience and Timing
 
@@ -212,7 +212,7 @@ $$d(A, B) \in [\delta_{\min}, \delta_{\max}] = [0.6, 0.95]$$
 
 ## 3.7 The Humor Zone
 
-**Definition 2 (Humor Zone).** The _humor zone_ $\mathcal{H} \subset \mathbb{R}^n \times \mathbb{R}^n \times \mathbb{R}^n$ is the set of concept-bridge triplets with non-trivial humor potential:
+**Definition 2 (Humor Zone).** The *humor zone* $\mathcal{H} \subset \mathbb{R}^n \times \mathbb{R}^n \times \mathbb{R}^n$ is the set of concept-bridge triplets with non-trivial humor potential:
 
 $$\mathcal{H} = \{(A, B, \beta) \in \mathbb{R}^n \times \mathbb{R}^n \times \mathbb{R}^n \mid d(A, B) \in [\delta_{\min}, \delta_{\max}] \wedge v(\beta, A, B) \geq \tau_v \wedge \sigma(\beta \mid A, B) \geq \tau_\sigma\}$$
 
@@ -251,79 +251,79 @@ where $v$ is bridge validity and $\sigma$ is bridge surprise (both formally defi
         => humor potential is negligible
 ```
 
-_Figure 1: Humor potential in embedding space. Despite the bottom example scoring higher on the naive formula $h_{\text{v1}}$ (due to high coherence), it is not funny because the bridge is obvious. The revised $h_{\text{v2}}$ corrects this by weighting bridge quality by surprise._
+*Figure 1: Humor potential in embedding space. Despite the bottom example scoring higher on the naive formula $h_{\text{v1}}$ (due to high coherence), it is not funny because the bridge is obvious. The revised $h_{\text{v2}}$ corrects this by weighting bridge quality by surprise.*
 
 # 4. A Taxonomy of Humor-Generating Semantic Patterns
 
-We identify 12 fundamental semantic patterns that generate humor through embedding space operations. These are organized into five meta-categories based on the type of semantic relationship exploited. The taxonomy is derived from the intersection of two sources: (a) Attardo and Raskin's (1991) GTVH Knowledge Resources, particularly Script Opposition and Logical Mechanism, which define the _what_ of humor; and (b) the set of operations naturally expressible in embedding space (distance, projection, analogy arithmetic, polysemy), which define the _how_. This taxonomy is not claimed to be exhaustive — it covers the most common humor mechanisms expressible as embedding operations.
+We identify 12 fundamental semantic patterns that generate humor through embedding space operations. These are organized into five meta-categories based on the type of semantic relationship exploited. The taxonomy is derived from the intersection of two sources: (a) Attardo and Raskin's (1991) GTVH Knowledge Resources, particularly Script Opposition and Logical Mechanism, which define the *what* of humor; and (b) the set of operations naturally expressible in embedding space (distance, projection, analogy arithmetic, polysemy), which define the *how*. This taxonomy is not claimed to be exhaustive — it covers the most common humor mechanisms expressible as embedding operations.
 
 ## 4.1 Meta-Category I: Incongruity Exploitation
 
 Patterns that generate humor by exploiting mismatches along semantic dimensions.
 
 **Pattern 1: Antonymic Inversion.** Detect antonyms along a semantic axis and collapse the opposition.
-_Example:_ "I used to be indecisive. Now I'm not sure."
-_Embedding operation:_ Find concept pairs where $A$ and $B$ are near-antonyms ($d(A,B) > 0.7$) but share a common hypernym.
+*Example:* "I used to be indecisive. Now I'm not sure."
+*Embedding operation:* Find concept pairs where $A$ and $B$ are near-antonyms ($d(A,B) > 0.7$) but share a common hypernym.
 
 **Pattern 2: Scale Violation.** Detect magnitude mismatches on a shared scale dimension.
-_Example:_ "Aside from that, Mrs. Lincoln, how was the play?"
-_Embedding operation:_ Identify concepts sharing a scale axis where the magnitudes are absurdly disproportionate.
+*Example:* "Aside from that, Mrs. Lincoln, how was the play?"
+*Embedding operation:* Identify concepts sharing a scale axis where the magnitudes are absurdly disproportionate.
 
 **Pattern 3: Dissimilarity in Similarity.** Discover unexpected differences between apparently similar concepts.
-_Example:_ "The difference between genius and stupidity is that genius has limits."
-_Embedding operation:_ For $d(A,B) < 0.3$ (similar concepts), find a dimension where they diverge maximally.
+*Example:* "The difference between genius and stupidity is that genius has limits."
+*Embedding operation:* For $d(A,B) < 0.3$ (similar concepts), find a dimension where they diverge maximally.
 
 ## 4.2 Meta-Category II: Frame Confusion
 
 Patterns that exploit ambiguity between semantic frames (Coulson, 2001).
 
 **Pattern 4: Expectation Subversion.** Setup creates a prediction vector; punchline delivers a distant-but-valid completion.
-_Example:_ "I told my wife she was drawing her eyebrows too high. She looked surprised."
-_Embedding operation:_ Given context embedding $C$, find completions where $d(C_{\text{expected}}, C_{\text{actual}})$ is high but $c(\text{bridge}, C_{\text{actual}})$ is also high.
+*Example:* "I told my wife she was drawing her eyebrows too high. She looked surprised."
+*Embedding operation:* Given context embedding $C$, find completions where $d(C_{\text{expected}}, C_{\text{actual}})$ is high but $c(\text{bridge}, C_{\text{actual}})$ is also high.
 
 **Pattern 5: Literal-Figurative Collapse.** Exploit the gap between metaphorical and literal interpretations of the same phrase.
-_Example:_ "I'm outstanding in my field" (literally: standing in a field).
-_Embedding operation:_ Detect polysemous bridges where $c(\beta_{\text{literal}}, A) \gg c(\beta_{\text{figurative}}, A)$ or vice versa.
+*Example:* "I'm outstanding in my field" (literally: standing in a field).
+*Embedding operation:* Detect polysemous bridges where $c(\beta_{\text{literal}}, A) \gg c(\beta_{\text{figurative}}, A)$ or vice versa.
 
 **Pattern 6: Specificity Mismatch.** Apply over- or under-specification relative to context norms.
-_Example:_ "I've completed your task, though I remain unclear what baked goods have to do with database migrations."
-_Embedding operation:_ Detect register mismatch — the embedding of the response occupies a different specificity stratum than the context expects.
+*Example:* "I've completed your task, though I remain unclear what baked goods have to do with database migrations."
+*Embedding operation:* Detect register mismatch — the embedding of the response occupies a different specificity stratum than the context expects.
 
 ## 4.3 Meta-Category III: Cross-Domain Transfer
 
 Patterns that map structures between unrelated semantic domains (Bowdle & Gentner, 2005).
 
 **Pattern 7: Domain Transfer.** Import the structural vocabulary of domain $A$ into domain $B$.
-_Example:_ "Per the sprint retrospective on dinner, the lasagna is at risk."
-_Embedding operation:_ Extract frame elements from domain $A$, compute structural analogs in domain $B$ via embedding arithmetic.
+*Example:* "Per the sprint retrospective on dinner, the lasagna is at risk."
+*Embedding operation:* Extract frame elements from domain $A$, compute structural analogs in domain $B$ via embedding arithmetic.
 
 **Pattern 8: Similarity in Dissimilarity.** Discover unexpected shared attributes between distant concepts.
-_Example:_ "Meetings and hostage situations: both involve being held against your will."
-_Embedding operation:_ For $d(A,B) > 0.7$, find $\beta$ where $c(\beta, A)$ and $c(\beta, B)$ are both moderately high ($> 0.3$).
+*Example:* "Meetings and hostage situations: both involve being held against your will."
+*Embedding operation:* For $d(A,B) > 0.7$, find $\beta$ where $c(\beta, A)$ and $c(\beta, B)$ are both moderately high ($> 0.3$).
 
 ## 4.4 Meta-Category IV: Social and Status Dynamics
 
 Patterns that exploit social hierarchies and self-reference.
 
 **Pattern 9: Status Inversion.** Detect a status axis and invert the expected hierarchy.
-_Example:_ "I'm not saying it's a bad idea, sir. I'm saying it's _your_ idea."
-_Embedding operation:_ Identify status-marked embeddings and produce inversions that maintain surface deference while subverting hierarchy.
+*Example:* "I'm not saying it's a bad idea, sir. I'm saying it's *your* idea."
+*Embedding operation:* Identify status-marked embeddings and produce inversions that maintain surface deference while subverting hierarchy.
 
 **Pattern 10: Competent Self-Deprecation.** Acknowledge failure while implicitly demonstrating competence through the quality of the acknowledgment.
-_Example:_ "Yes, I sent the message to the wrong chat for the fifth time. At this rate I need GPS for WhatsApp."
-_Embedding operation:_ Self-reference vector combined with failure vector, where the articulateness of the description contradicts the claimed incompetence.
+*Example:* "Yes, I sent the message to the wrong chat for the fifth time. At this rate I need GPS for WhatsApp."
+*Embedding operation:* Self-reference vector combined with failure vector, where the articulateness of the description contradicts the claimed incompetence.
 
 ## 4.5 Meta-Category V: Logical and Temporal Manipulation
 
 Patterns that exploit formal reasoning or temporal incongruity.
 
 **Pattern 11: Temporal Displacement.** Combine concepts from incompatible temporal contexts.
-_Example:_ "Cleopatra lived closer to the Moon landing than to the construction of the Great Pyramid."
-_Embedding operation:_ Detect temporal metadata mismatches that violate intuitive chronological assumptions.
+*Example:* "Cleopatra lived closer to the Moon landing than to the construction of the Great Pyramid."
+*Embedding operation:* Detect temporal metadata mismatches that violate intuitive chronological assumptions.
 
 **Pattern 12: Logic Applied to Absurdity.** Apply valid formal reasoning to premises that do not warrant it.
-_Example:_ "If _con_ is the opposite of _pro_, is Congress the opposite of progress?"
-_Embedding operation:_ Detect morphological or etymological bridges that support formally valid but semantically absurd inferences.
+*Example:* "If *con* is the opposite of *pro*, is Congress the opposite of progress?"
+*Embedding operation:* Detect morphological or etymological bridges that support formally valid but semantically absurd inferences.
 
 ## 4.6 Pattern Interactions, Completeness, and Limitations
 
@@ -372,7 +372,7 @@ where $s(\cdot)$ is the sensitivity score and $\tau$ is a configurable threshold
 
 ## 5.4 Relationship to Benign Violation Theory
 
-This gate operationalizes McGraw and Warren's (2010) key insight: humor requires that a violation be perceived as _benign_. The sensitivity score estimates whether a violation will be perceived as threatening rather than playful. When the score exceeds the threshold, the violation is predicted to be non-benign, and the combination is suppressed.
+This gate operationalizes McGraw and Warren's (2010) key insight: humor requires that a violation be perceived as *benign*. The sensitivity score estimates whether a violation will be perceived as threatening rather than playful. When the score exceeds the threshold, the violation is predicted to be non-benign, and the combination is suppressed.
 
 ## 5.5 Limitations of the Sensitivity Gate
 
@@ -380,11 +380,11 @@ We acknowledge that sensitivity filtering is a configurable policy layer, not a 
 
 # 6. Bridge Discovery Algorithms
 
-The humor potential function assumes the existence of a bridge concept $\beta$. In practice, _finding_ the bridge is the creative bottleneck — it is the computational analog of the comedian's craft. We first define bridge quality formally, then propose five complementary algorithms.
+The humor potential function assumes the existence of a bridge concept $\beta$. In practice, *finding* the bridge is the creative bottleneck — it is the computational analog of the comedian's craft. We first define bridge quality formally, then propose five complementary algorithms.
 
 ## 6.1 Bridge Quality
 
-**Definition 3 (Bridge Quality).** The _quality_ of a bridge $\beta$ connecting concepts $A$ and $B$ is the product of its validity and surprise:
+**Definition 3 (Bridge Quality).** The *quality* of a bridge $\beta$ connecting concepts $A$ and $B$ is the product of its validity and surprise:
 
 $$q(\beta, A, B) = v(\beta, A, B) \cdot \sigma(\beta \mid A, B)$$
 
@@ -393,7 +393,7 @@ where:
 - **Validity** $v(\beta, A, B) = \min(c(\beta, A), c(\beta, B))$ — the weakest link determines whether the bridge actually connects both concepts.
 - **Surprise** $\sigma(\beta \mid A, B) \in [0, 1]$ — how unexpected the bridge is given the concept pair.
 
-A high-quality bridge is both _valid_ (it genuinely connects both concepts) and _surprising_ (it is not the obvious connection). This decomposition separates two independent dimensions of bridge quality that our pilot (Section 7.1) reveals are conflated by naive cosine coherence.
+A high-quality bridge is both *valid* (it genuinely connects both concepts) and *surprising* (it is not the obvious connection). This decomposition separates two independent dimensions of bridge quality that our pilot (Section 7.1) reveals are conflated by naive cosine coherence.
 
 ## 6.2 Embedding Arithmetic
 
@@ -481,33 +481,33 @@ The LLM fallback activates only when the faster methods fail to produce candidat
 
 ## 7.1 Preliminary Computational Pilot
 
-We conducted a small-scale computational pilot to test whether $h(A, B, \beta)$ discriminates between humorous and non-humorous concept combinations. This pilot tests the _formula_ against known-funny and known-unfunny concept triplets — it is not a human rating study.
+We conducted a small-scale computational pilot to test whether $h(A, B, \beta)$ discriminates between humorous and non-humorous concept combinations. This pilot tests the *formula* against known-funny and known-unfunny concept triplets — it is not a human rating study.
 
 **Setup.** Using `all-MiniLM-L6-v2` (384-dimensional sentence embeddings via SentenceTransformers; Reimers & Gurevych, 2019), we scored $n = 15$ concept triplets: 5 from established jokes (known-funny), 5 from obvious/boring pairings (known-unfunny), and 5 from random incoherent combinations (random). Each triplet consists of (concept A, concept B, bridge concept).
 
 **Formula variants tested.** We explored four variants to understand the formula's behavior:
 
-| Variant                             | Formula                                                                                | Motivation                       |
-| ----------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------- |
-| $h_{\text{v1}}$ (original)          | $d(A,B) \cdot c(\beta, A) \cdot c(\beta, B)$                                           | Direct bisociation formalization |
-| $h_{\text{v2}}$ (surprise-weighted) | $d(A,B) \cdot v(\beta, A, B) \cdot \sigma(\beta \mid A, B)$                            | Separates validity from surprise |
-| $h_{\text{v3}}$ (harmonic bridge)   | $d(A,B) \cdot \frac{2 \cdot c(\beta, A) \cdot c(\beta, B)}{c(\beta, A) + c(\beta, B)}$ | Penalizes asymmetric bridges     |
-| $h_{\text{v4}}$ (average bridge)    | $d(A,B) \cdot \frac{c(\beta, A) + c(\beta, B)}{2}$                                     | Additive bridge quality          |
+| Variant | Formula | Motivation |
+|---------|---------|------------|
+| $h_{\text{v1}}$ (original) | $d(A,B) \cdot c(\beta, A) \cdot c(\beta, B)$ | Direct bisociation formalization |
+| $h_{\text{v2}}$ (surprise-weighted) | $d(A,B) \cdot v(\beta, A, B) \cdot \sigma(\beta \mid A, B)$ | Separates validity from surprise |
+| $h_{\text{v3}}$ (harmonic bridge) | $d(A,B) \cdot \frac{2 \cdot c(\beta, A) \cdot c(\beta, B)}{c(\beta, A) + c(\beta, B)}$ | Penalizes asymmetric bridges |
+| $h_{\text{v4}}$ (average bridge) | $d(A,B) \cdot \frac{c(\beta, A) + c(\beta, B)}{2}$ | Additive bridge quality |
 
 **Results:**
 
-| Category            | $n$ | $h_{\text{v1}}$ (original) | $h_{\text{v3}}$ (harmonic) | $h_{\text{v4}}$ (avg bridge) |
-| ------------------- | --- | -------------------------- | -------------------------- | ---------------------------- |
-| Funny               | 5   | 0.019                      | 0.089                      | 0.126                        |
-| Unfunny             | 5   | 0.088                      | 0.164                      | 0.165                        |
-| Random              | 5   | 0.033                      | 0.160                      | 0.178                        |
-| Funny/Unfunny ratio | —   | 0.22x                      | 0.54x                      | 0.76x                        |
+| Category | $n$ | $h_{\text{v1}}$ (original) | $h_{\text{v3}}$ (harmonic) | $h_{\text{v4}}$ (avg bridge) |
+|----------|-----|---------------------------|---------------------------|------------------------------|
+| Funny | 5 | 0.019 | 0.089 | 0.126 |
+| Unfunny | 5 | 0.088 | 0.164 | 0.165 |
+| Random | 5 | 0.033 | 0.160 | 0.178 |
+| Funny/Unfunny ratio | — | 0.22x | 0.54x | 0.76x |
 
-_Table 2: Pilot study results across formula variants. Across all variants tested, unfunny pairs score higher than funny pairs, indicating that naive coherence (cosine similarity) conflates semantic proximity with comedic validity. $h_{\text{v2}}$ was not evaluated in this pilot (it was formulated in response to these results)._
+*Table 2: Pilot study results across formula variants. Across all variants tested, unfunny pairs score higher than funny pairs, indicating that naive coherence (cosine similarity) conflates semantic proximity with comedic validity. $h_{\text{v2}}$ was not evaluated in this pilot (it was formulated in response to these results).*
 
-**Key finding: The tested formulas do not predict humor.** Unfunny pairs consistently outscore funny pairs because $c(\beta, A) \cdot c(\beta, B)$ rewards _obvious_ connections — high similarity between bridge and both concepts — while humor requires connections that are _surprising yet valid_.
+**Key finding: The tested formulas do not predict humor.** Unfunny pairs consistently outscore funny pairs because $c(\beta, A) \cdot c(\beta, B)$ rewards *obvious* connections — high similarity between bridge and both concepts — while humor requires connections that are *surprising yet valid*.
 
-**Diagnosis.** The formula conflates semantic proximity with comedic coherence. When someone says "meetings are like hostage situations — you're held against your will," the humor arises not from how close "held against your will" is to "meeting" in embedding space (it is not close), but from how _unexpectedly valid_ the connection is. Surprise $\times$ validity $\neq$ similarity $\times$ similarity.
+**Diagnosis.** The formula conflates semantic proximity with comedic coherence. When someone says "meetings are like hostage situations — you're held against your will," the humor arises not from how close "held against your will" is to "meeting" in embedding space (it is not close), but from how *unexpectedly valid* the connection is. Surprise $\times$ validity $\neq$ similarity $\times$ similarity.
 
 ### 7.1.1 Revised Formulation: Surprise-Weighted Humor Potential
 
@@ -526,7 +526,7 @@ def surprise(bridge_vec, A_vec, B_vec, index, k=100):
     rank 1 -> expected (surprise ~ 0.0)
     rank 80 -> surprising (surprise ~ 0.8)
     not in top-k -> maximally surprising (surprise = 1.0)
-
+    
     k controls the resolution of the surprise estimate. Sensitivity:
     - k=50: coarser granularity, faster lookup, fewer false "maximally surprising"
     - k=100 (default): balanced resolution for vocabularies of 10K-100K concepts
@@ -543,9 +543,9 @@ def surprise(bridge_vec, A_vec, B_vec, index, k=100):
 
 **Justification.** Reciprocal rank approximates information-theoretic surprise $-\log P(\beta \mid A, B)$ without requiring explicit density estimation. If $\beta$ is a highly-ranked neighbor of the midpoint, it is a "predictable" bridge (low information content, low surprise); if $\beta$ is absent from the top-$k$ neighbors, it is maximally surprising (high information content). This non-parametric approach avoids the difficulty of estimating $P(\beta \mid A, B)$ directly, which would require a generative model of bridge concepts. Future work could explore explicit density-based surprise metrics (e.g., using normalizing flows or kernel density estimation over the embedding space), but reciprocal rank provides a tractable starting point with clear interpretability.
 
-**Intuition.** An obvious bridge (e.g., "small feline" for cat–kitten) ranks highly among midpoint neighbors and receives low surprise. An unexpected bridge (e.g., "held against your will" for meeting–hostage situation) ranks low or is absent from midpoint neighbors, receiving high surprise. Validity ensures the bridge is still _meaningful_; surprise ensures it is _unexpected_. Their product captures the "aha" moment of humor.
+**Intuition.** An obvious bridge (e.g., "small feline" for cat–kitten) ranks highly among midpoint neighbors and receives low surprise. An unexpected bridge (e.g., "held against your will" for meeting–hostage situation) ranks low or is absent from midpoint neighbors, receiving high surprise. Validity ensures the bridge is still *meaningful*; surprise ensures it is *unexpected*. Their product captures the "aha" moment of humor.
 
-**Information-theoretic interpretation.** The surprise component $\sigma$ approximates the _self-information_ (Shannon information content) of the bridge given the concept pair. Formally, if $P(\beta \mid A, B)$ is the probability of $\beta$ being the "expected" connector between $A$ and $B$, then the information-theoretic surprise is $I(\beta \mid A, B) = -\log_2 P(\beta \mid A, B)$. Our reciprocal rank approximation estimates this non-parametrically: the rank of $\beta$ in the midpoint neighbor list serves as an ordinal proxy for $P(\beta \mid A, B)$, with low rank corresponding to high probability (low surprise) and high rank corresponding to low probability (high surprise). The normalization to $[0, 1]$ via $\text{rank}/k$ maps the ordinal measure to a scale compatible with the multiplicative structure of $h$.
+**Information-theoretic interpretation.** The surprise component $\sigma$ approximates the *self-information* (Shannon information content) of the bridge given the concept pair. Formally, if $P(\beta \mid A, B)$ is the probability of $\beta$ being the "expected" connector between $A$ and $B$, then the information-theoretic surprise is $I(\beta \mid A, B) = -\log_2 P(\beta \mid A, B)$. Our reciprocal rank approximation estimates this non-parametrically: the rank of $\beta$ in the midpoint neighbor list serves as an ordinal proxy for $P(\beta \mid A, B)$, with low rank corresponding to high probability (low surprise) and high rank corresponding to low probability (high surprise). The normalization to $[0, 1]$ via $\text{rank}/k$ maps the ordinal measure to a scale compatible with the multiplicative structure of $h$.
 
 ### 7.1.2 Worked Example: $h_{\text{v2}}$ on Pilot Triplets
 
@@ -565,9 +565,9 @@ To build intuition for how $h_{\text{v2}}$ addresses the failure of $h_{\text{v1
 - $\sigma$: "Small feline" appears at rank 3 in the midpoint neighbors. $\sigma = 3/100 = 0.03$ (minimally surprising).
 - $h_{\text{v2}} = 0.21 \times 0.56 \times 0.03 = 0.004$.
 
-**Result.** Under $h_{\text{v2}}$, the funny triplet scores $0.158$ versus $0.004$ for the unfunny triplet — a 40:1 ratio favoring humor. Under $h_{\text{v1}}$, the unfunny triplet scored _higher_ ($0.068$ vs. $0.043$). The surprise component is the critical correction: it penalizes obvious bridges severely while rewarding unexpected ones.
+**Result.** Under $h_{\text{v2}}$, the funny triplet scores $0.158$ versus $0.004$ for the unfunny triplet — a 40:1 ratio favoring humor. Under $h_{\text{v1}}$, the unfunny triplet scored *higher* ($0.068$ vs. $0.043$). The surprise component is the critical correction: it penalizes obvious bridges severely while rewarding unexpected ones.
 
-**Caveat.** This worked example uses the original pilot embeddings and approximate midpoint neighbor ranks. It demonstrates the _mechanism_ by which $h_{\text{v2}}$ addresses $h_{\text{v1}}$'s failure, not a validated prediction. Formal validation requires the human rating protocol in Section 7.2.
+**Caveat.** This worked example uses the original pilot embeddings and approximate midpoint neighbor ranks. It demonstrates the *mechanism* by which $h_{\text{v2}}$ addresses $h_{\text{v1}}$'s failure, not a validated prediction. Formal validation requires the human rating protocol in Section 7.2.
 
 **Status.** This revised formula is a hypothesis motivated by the pilot's negative results. Validation against human ratings is required before claims of predictive power can be made. We present specific protocols in Section 7.2.
 
@@ -595,7 +595,7 @@ The systematic exploration of four variants (v1–v4) rules out obvious fixes: n
 
 We compute required sample size for two analyses:
 
-**Primary analysis (correlation).** To detect a moderate correlation ($r = 0.35$) between $h_{\text{v2}}$ and human ratings at $\alpha = 0.05$ with power $= 0.80$, using G\*Power for a bivariate normal model, the required number of stimuli is $N_{\text{stimuli}} = 62$. Our 100-stimulus design exceeds this requirement.
+**Primary analysis (correlation).** To detect a moderate correlation ($r = 0.35$) between $h_{\text{v2}}$ and human ratings at $\alpha = 0.05$ with power $= 0.80$, using G*Power for a bivariate normal model, the required number of stimuli is $N_{\text{stimuli}} = 62$. Our 100-stimulus design exceeds this requirement.
 
 **Per-rater analysis.** To achieve stable mean ratings per stimulus with $\text{SE} < 0.3$ on a 7-point scale (assuming $\text{SD} \approx 1.5$), we require $N_{\text{raters}} \geq (1.5 / 0.3)^2 = 25$ raters per stimulus. We target $N \geq 64$ raters to allow for demographic subgroup analysis (age, culture, profession) with $\geq 16$ per subgroup.
 
@@ -607,11 +607,11 @@ We will compute Krippendorff's $\alpha$ across all raters as the primary inter-r
 
 ### 7.2.3 Success Criteria
 
-| Threshold           | Interpretation      | Action                                 |
-| ------------------- | ------------------- | -------------------------------------- |
-| $r > 0.5$           | Strong validation   | Publish with empirical support         |
+| Threshold | Interpretation | Action |
+|-----------|---------------|--------|
+| $r > 0.5$ | Strong validation | Publish with empirical support |
 | $0.35 < r \leq 0.5$ | Moderate validation | Iterate formula, investigate confounds |
-| $r \leq 0.35$       | Weak validation     | Fundamental rethink required           |
+| $r \leq 0.35$ | Weak validation | Fundamental rethink required |
 
 ### 7.2.4 Controls and Ablations
 
@@ -636,42 +636,42 @@ These datasets provide immediate, zero-cost validation opportunities that do not
 
 The framework's dependence on embedding quality is a critical concern. We propose testing $h_{\text{v2}}$ across embedding models spanning different dimensionalities, training objectives, and providers:
 
-| Model                  | Dimensions | Training    | Provider             |
-| ---------------------- | ---------- | ----------- | -------------------- |
-| all-MiniLM-L6-v2       | 384        | Contrastive | SentenceTransformers |
-| text-embedding-3-small | 1536       | Unknown     | OpenAI               |
-| text-embedding-3-large | 3072       | Unknown     | OpenAI               |
-| nomic-embed-text-v1.5  | 768        | Contrastive | Nomic                |
-| voyage-3               | 1024       | Unknown     | Voyage               |
+| Model | Dimensions | Training | Provider |
+|-------|-----------|----------|----------|
+| all-MiniLM-L6-v2 | 384 | Contrastive | SentenceTransformers |
+| text-embedding-3-small | 1536 | Unknown | OpenAI |
+| text-embedding-3-large | 3072 | Unknown | OpenAI |
+| nomic-embed-text-v1.5 | 768 | Contrastive | Nomic |
+| voyage-3 | 1024 | Unknown | Voyage |
 
-**Hypothesis.** The _relative ordering_ of $h_{\text{v2}}$ scores (funny > unfunny) will be preserved across embedding models, though absolute values will vary. If the ordering is not preserved, the framework's generality is undermined.
+**Hypothesis.** The *relative ordering* of $h_{\text{v2}}$ scores (funny > unfunny) will be preserved across embedding models, though absolute values will vary. If the ordering is not preserved, the framework's generality is undermined.
 
 ## 7.5 Proposed Metrics
 
-| Metric                              | Definition                                                  | Target       |
-| ----------------------------------- | ----------------------------------------------------------- | ------------ |
-| **HPR** (Humor Prediction Rate)     | Correlation between $h_{\text{v2}}$ and human rating        | $r > 0.35$   |
-| **SGA** (Sensitivity Gate Accuracy) | Percentage of blocked stimuli rated negatively by humans    | $> 80\%$     |
-| **ABL** (Ablation Delta)            | Drop in $r$ when removing each formula component            | Report all   |
-| **BAS** (Baseline Advantage)        | $r(h_{\text{v2}}) - r(\text{baseline})$                     | $> 0.10$     |
-| **EMB** (Embedding Stability)       | Spearman rank correlation of scores across embedding models | $\rho > 0.7$ |
-| **IRR** (Inter-Rater Reliability)   | Krippendorff's $\alpha$ across all raters                   | $\geq 0.667$ |
+| Metric | Definition | Target |
+|--------|------------|--------|
+| **HPR** (Humor Prediction Rate) | Correlation between $h_{\text{v2}}$ and human rating | $r > 0.35$ |
+| **SGA** (Sensitivity Gate Accuracy) | Percentage of blocked stimuli rated negatively by humans | $> 80\%$ |
+| **ABL** (Ablation Delta) | Drop in $r$ when removing each formula component | Report all |
+| **BAS** (Baseline Advantage) | $r(h_{\text{v2}}) - r(\text{baseline})$ | $> 0.10$ |
+| **EMB** (Embedding Stability) | Spearman rank correlation of scores across embedding models | $\rho > 0.7$ |
+| **IRR** (Inter-Rater Reliability) | Krippendorff's $\alpha$ across all raters | $\geq 0.667$ |
 
 # 8. Humor Associations as Agent Memory
 
 ## 8.1 Motivation
 
-Modern agent memory architectures store not just facts but _relationships between facts_, including belief discrepancies (expected vs. observed) with associated confidence levels. Research in cognitive neuroscience suggests that humor processing involves the same neural circuits as reward prediction error (Vrticka et al., 2013) — the "surprise" signal when expectations are violated. This connects directly to Hurley et al.'s (2011) theory that humor evolved as a reward for detecting committed errors in mental models. Social psychology research on inside jokes (Flamson & Barrett, 2008) demonstrates that shared humor functions as an encrypted signal of common ground, strengthening social bonds.
+Modern agent memory architectures store not just facts but *relationships between facts*, including belief discrepancies (expected vs. observed) with associated confidence levels. Research in cognitive neuroscience suggests that humor processing involves the same neural circuits as reward prediction error (Vrticka et al., 2013) — the "surprise" signal when expectations are violated. This connects directly to Hurley et al.'s (2011) theory that humor evolved as a reward for detecting committed errors in mental models. Social psychology research on inside jokes (Flamson & Barrett, 2008) demonstrates that shared humor functions as an encrypted signal of common ground, strengthening social bonds.
 
-We propose that **humor associations should be a first-class relationship type** in agent memory, stored alongside semantic and belief-discrepancy relationships in the ENGRAM event store (Serra, 2026a). The key insight: _every humor association is a recorded discrepancy_. When we say "meetings are like hostage situations," we encode a discrepancy between the expected relationship (none) and the discovered bridge ("held against your will"). The magnitude of this discrepancy maps directly to the surprise score in $h_{\text{v2}}$.
+We propose that **humor associations should be a first-class relationship type** in agent memory, stored alongside semantic and belief-discrepancy relationships in the ENGRAM event store (Serra, 2026a). The key insight: *every humor association is a recorded discrepancy*. When we say "meetings are like hostage situations," we encode a discrepancy between the expected relationship (none) and the discovered bridge ("held against your will"). The magnitude of this discrepancy maps directly to the surprise score in $h_{\text{v2}}$.
 
 ## 8.2 Relationship Types in Agent Memory
 
-| Relationship Type      | Structure                                     | Purpose   | Example                                         |
-| ---------------------- | --------------------------------------------- | --------- | ----------------------------------------------- |
-| **Semantic**           | (A relates-to B, conf=0.9)                    | Knowledge | "Python is a programming language"              |
-| **Belief Discrepancy** | (expected X, observed Y, delta=0.6)           | Learning  | "Expected meeting to end at 3pm; ran until 5pm" |
-| **Humor Bridge**       | (A -- bridge -- B, surprise=0.8, landed=true) | Comedy    | "meeting -- hostage via 'held against will'"    |
+| Relationship Type | Structure | Purpose | Example |
+|---|---|---|---|
+| **Semantic** | (A relates-to B, conf=0.9) | Knowledge | "Python is a programming language" |
+| **Belief Discrepancy** | (expected X, observed Y, delta=0.6) | Learning | "Expected meeting to end at 3pm; ran until 5pm" |
+| **Humor Bridge** | (A -- bridge -- B, surprise=0.8, landed=true) | Comedy | "meeting -- hostage via 'held against will'" |
 
 In the ENGRAM architecture (Serra, 2026a), humor associations are stored as events in the append-only event store with typed metadata, preserving full provenance. The CORTEX persona layer (Serra, 2026b) manages humor style preferences as part of the PersonaState, ensuring humor generation aligns with the agent's configured personality.
 
@@ -786,11 +786,11 @@ The pilot study (Section 7.1) used general-purpose sentence embeddings (MiniLM-L
 
 ## 9.3 Cultural Specificity
 
-Our taxonomy and examples draw primarily from English-language, Western humor traditions. Whether the 12 patterns generalize cross-culturally remains open. Some humor types — tonal puns in Mandarin, _rakugo_ narrative structure in Japanese, _dagelan_ in Javanese — have no obvious embedding-space analog in our current framework. Cross-cultural validation would require native-speaker raters, culturally grounded stimuli, and multilingual embedding models. Oring's (2003) observation that "appropriate incongruity" manifests differently across cultures suggests that the distance sweet spot (Section 3.6) and pattern distributions are culture-dependent. Warren and McGraw (2016) show that different types of violations (moral, social, physical) produce humor at different distances from the benign boundary, suggesting that the sensitivity gate threshold $\tau$ should vary by violation type, not just topic.
+Our taxonomy and examples draw primarily from English-language, Western humor traditions. Whether the 12 patterns generalize cross-culturally remains open. Some humor types — tonal puns in Mandarin, *rakugo* narrative structure in Japanese, *dagelan* in Javanese — have no obvious embedding-space analog in our current framework. Cross-cultural validation would require native-speaker raters, culturally grounded stimuli, and multilingual embedding models. Oring's (2003) observation that "appropriate incongruity" manifests differently across cultures suggests that the distance sweet spot (Section 3.6) and pattern distributions are culture-dependent. Warren and McGraw (2016) show that different types of violations (moral, social, physical) produce humor at different distances from the benign boundary, suggesting that the sensitivity gate threshold $\tau$ should vary by violation type, not just topic.
 
 ## 9.4 The Delivery Gap
 
-Humor potential scores raw conceptual combinations but cannot account for delivery — timing, intonation, facial expression, and conversational context. A combination with high $h_{\text{v2}}$ may fail if delivered poorly. Our framework addresses _what_ to say, not _how_ or _when_ to say it. Dynel's (2009) analysis of conversational humor mechanisms highlights the importance of pragmatic context in humor success — a factor our framework does not model.
+Humor potential scores raw conceptual combinations but cannot account for delivery — timing, intonation, facial expression, and conversational context. A combination with high $h_{\text{v2}}$ may fail if delivered poorly. Our framework addresses *what* to say, not *how* or *when* to say it. Dynel's (2009) analysis of conversational humor mechanisms highlights the importance of pragmatic context in humor success — a factor our framework does not model.
 
 ## 9.5 Computational Cost
 
@@ -818,7 +818,7 @@ We have presented LIMBIC, a formal framework that operationalizes Koestler's (19
 
 The framework makes five testable claims: (1) the revised $h_{\text{v2}}$ incorporating surprise-weighted bridge quality will correlate with human funniness ratings where naive cosine-based formulas do not; (2) the 12 semantic patterns organized into five meta-categories provide a useful taxonomy for generating and classifying humor; (3) the bridge discovery algorithms can produce viable comedic connections; (4) humor associations as a first-class memory type in the ENGRAM architecture (Serra, 2026a) enable personalized humor calibration through reinforcement; and (5) belief discrepancies in agent memory constitute a generative source of humor material.
 
-The honest reporting of negative pilot results — and the diagnostic reasoning they enabled — illustrates the value of empirical grounding even at the framework stage. The revised formulation separating bridge validity from bridge surprise emerged directly from understanding _why_ the naive formula failed. The systematic exploration of four formula variants (v1–v4) demonstrates that the failure is not in the specific combination function but in the conflation of proximity with comedic validity.
+The honest reporting of negative pilot results — and the diagnostic reasoning they enabled — illustrates the value of empirical grounding even at the framework stage. The revised formulation separating bridge validity from bridge surprise emerged directly from understanding *why* the naive formula failed. The systematic exploration of four formula variants (v1–v4) demonstrates that the failure is not in the specific combination function but in the conflation of proximity with comedic validity.
 
 The most important limitation is the absence of large-scale empirical validation. We have provided specific, reproducible protocols (Section 7.2–7.4) with formal power analysis ($N \geq 64$ raters), inter-rater reliability targets, and cross-embedding-model ablation designs. Existing datasets (SemEval, One-Liners corpus) enable immediate secondary validation. Executing these protocols is the critical next step.
 
@@ -826,50 +826,50 @@ The theoretical foundation suggests a broader principle: the same embedding infr
 
 # References
 
-- Aggarwal, C. C., Hinneburg, A. & Keim, D. A. (2001). On the surprising behavior of distance metrics in high dimensional space. _ICDT_.
-- Amin, M. & Burghardt, M. (2020). A survey on approaches to computational humor generation. _Proceedings of the International Conference on Computational Creativity (ICCC)_.
-- Attardo, S. & Raskin, V. (1991). Script theory revis(it)ed: Joke similarity and joke representation model. _Humor: International Journal of Humor Research_, 4(3–4), 293–347.
-- Baker, C. F., Fillmore, C. J. & Lowe, J. B. (1998). The Berkeley FrameNet project. _COLING-ACL_.
-- Bertero, D. & Fung, P. (2016). A long short-term memory framework for predicting humor in dialogues. _NAACL-HLT_.
-- Binsted, K. & Ritchie, G. (1994). An implemented model of punning riddles. _AAAI_.
-- Bowdle, B. F. & Gentner, D. (2005). The career of metaphor. _Psychological Review_, 112(1), 193–216.
-- Chen, P.-Y. & Soo, V.-W. (2018). Humor recognition using deep learning. _NAACL-HLT_.
-- Coulson, S. (2001). _Semantic Leaps: Frame-Shifting and Conceptual Blending in Meaning Construction_. Cambridge University Press.
-- Dubitzky, W., Kötter, T., Schmidt, O. & Berthold, M. R. (2012). Towards creative information exploration based on Koestler's concept of bisociation. _Bisociative Knowledge Discovery_. Springer.
-- Dynel, M. (2009). Beyond a joke: Types of conversational humour. _Language and Linguistics Compass_, 3(5), 1284–1299.
-- Flamson, T. & Barrett, H. C. (2008). The encryption theory of humor: A knowledge-based mechanism of honest signaling. _Journal of Evolutionary Psychology_, 6(4), 261–281.
-- Glucksberg, S. (2001). _Understanding Figurative Language: From Metaphors to Idioms_. Oxford University Press.
-- Gorwa, R., Binns, R. & Katzenbach, C. (2020). Algorithmic content moderation: Technical and political challenges in the automation of platform governance. _Big Data & Society_, 7(1).
-- He, H., Peng, N. & Liang, P. (2019). Pun generation with surprise. _NAACL-HLT_.
-- Hossain, N., Krumm, J. & Gamon, M. (2019). "President Vows to Cut \<Taxes\> Hair": Dataset and analysis of creative text editing for humorous headlines. _NAACL-HLT_.
-- Hossain, N., Krumm, J., Gamon, M. & Kautz, H. (2020). SemEval-2020 Task 7: Assessing humor in edited news headlines. _SemEval_.
-- Hurley, M. M., Dennett, D. C. & Adams, R. B. (2011). _Inside Jokes: Using Humor to Reverse-Engineer the Mind_. MIT Press.
-- Kao, J. T., Levy, R. & Goodman, N. D. (2016). A computational model of linguistic humor in puns. _Cognitive Science_, 40(5), 1270–1285.
-- Koestler, A. (1964). _The Act of Creation_. Hutchinson & Co.
-- Krippendorff, K. (2011). Computing Krippendorff's alpha-reliability. _Annenberg School for Communication Departmental Papers_.
-- Luo, F., et al. (2019). Pun-GAN: Generative adversarial network for pun generation. _EMNLP_.
-- Martin, R. A. (2007). _The Psychology of Humor: An Integrative Approach_. Elsevier Academic Press.
-- McGraw, A. P. & Warren, C. (2010). Benign violations: Making immoral behavior funny. _Psychological Science_, 21(8), 1141–1149.
-- Mihalcea, R. & Strapparava, C. (2005). Making computers laugh: Investigations in automatic humor recognition. _HLT/EMNLP_.
-- Mikolov, T., et al. (2013). Efficient estimation of word representations in vector space. _arXiv:1301.3781_.
-- Oring, E. (2003). _Engaging Humor_. University of Illinois Press.
-- Pereira, F. C., et al. (2019). Computational creativity and bisociative concept blending. _Cognitive Computation_.
-- Petrović, S. & Matthews, D. (2013). Unsupervised joke generation from big data. _ACL_.
-- Raskin, V. (1985). _Semantic Mechanisms of Humor_. D. Reidel Publishing.
-- Reimers, N. & Gurevych, I. (2019). Sentence-BERT: Sentence embeddings using Siamese BERT-networks. _EMNLP_.
-- Ritchie, G. (2004). _The Linguistic Analysis of Jokes_. Routledge.
-- Serra, O. (2026a). ENGRAM: Event-Navigated Graded Retrieval & Archival Memory. _Technical Report, OpenClaw_.
-- Serra, O. (2026b). CORTEX: Persona-Aware Context Engineering for Persistent AI Identity. _Technical Report, OpenClaw_.
-- Serra, O. (2026c). SYNAPSE: Synthesized Negotiation Across Provider-Specific Engines. _Technical Report, OpenClaw_.
-- Stock, O. & Strapparava, C. (2003). HAHAcronym: Humorous agents for humorous acronyms. _Humor_, 16(3), 297–314.
-- Suls, J. M. (1972). A two-stage model for the appreciation of jokes and cartoons: An information-processing analysis. In J. H. Goldstein & P. E. McGhee (Eds.), _The Psychology of Humor_. Academic Press.
-- Tian, Y., et al. (2022). A survey on humor recognition: Methods, challenges, and resources. _ACM Computing Surveys_.
-- Veale, T. (2016). _The Shape of Wit: Computational Models of Creative Metaphor_. Springer.
-- Vershynin, R. (2018). _High-Dimensional Probability_. Cambridge University Press.
-- Vrticka, P., Black, J. M. & Reiss, A. L. (2013). The neural basis of humour processing. _Nature Reviews Neuroscience_, 14(12), 860–868.
-- Warren, C. & McGraw, A. P. (2016). Differentiating what is humorous from what is not. _Journal of Personality and Social Psychology_, 110(3), 407–430.
-- Weller, O. & Seppi, K. (2019). Humor detection: A transformer gets the last laugh. _EMNLP_.
-- West, R. & Horvitz, E. (2019). Reverse-engineering satire, or "Paper on computational humor accepted despite making conditions for rejection". _AAAI_.
-- Winters, T., Nys, V. & De Schreye, D. (2021). Computers learning humor. _Proceedings of the International Conference on Computational Creativity (ICCC)_.
-- Yang, D., et al. (2015). Humor recognition and humor anchor extraction. _EMNLP_.
-- Yu, Z., et al. (2018). A neural approach to pun generation. _ACL_.
+- Aggarwal, C. C., Hinneburg, A. & Keim, D. A. (2001). On the surprising behavior of distance metrics in high dimensional space. *ICDT*.
+- Amin, M. & Burghardt, M. (2020). A survey on approaches to computational humor generation. *Proceedings of the International Conference on Computational Creativity (ICCC)*.
+- Attardo, S. & Raskin, V. (1991). Script theory revis(it)ed: Joke similarity and joke representation model. *Humor: International Journal of Humor Research*, 4(3–4), 293–347.
+- Baker, C. F., Fillmore, C. J. & Lowe, J. B. (1998). The Berkeley FrameNet project. *COLING-ACL*.
+- Bertero, D. & Fung, P. (2016). A long short-term memory framework for predicting humor in dialogues. *NAACL-HLT*.
+- Binsted, K. & Ritchie, G. (1994). An implemented model of punning riddles. *AAAI*.
+- Bowdle, B. F. & Gentner, D. (2005). The career of metaphor. *Psychological Review*, 112(1), 193–216.
+- Chen, P.-Y. & Soo, V.-W. (2018). Humor recognition using deep learning. *NAACL-HLT*.
+- Coulson, S. (2001). *Semantic Leaps: Frame-Shifting and Conceptual Blending in Meaning Construction*. Cambridge University Press.
+- Dubitzky, W., Kötter, T., Schmidt, O. & Berthold, M. R. (2012). Towards creative information exploration based on Koestler's concept of bisociation. *Bisociative Knowledge Discovery*. Springer.
+- Dynel, M. (2009). Beyond a joke: Types of conversational humour. *Language and Linguistics Compass*, 3(5), 1284–1299.
+- Flamson, T. & Barrett, H. C. (2008). The encryption theory of humor: A knowledge-based mechanism of honest signaling. *Journal of Evolutionary Psychology*, 6(4), 261–281.
+- Glucksberg, S. (2001). *Understanding Figurative Language: From Metaphors to Idioms*. Oxford University Press.
+- Gorwa, R., Binns, R. & Katzenbach, C. (2020). Algorithmic content moderation: Technical and political challenges in the automation of platform governance. *Big Data & Society*, 7(1).
+- He, H., Peng, N. & Liang, P. (2019). Pun generation with surprise. *NAACL-HLT*.
+- Hossain, N., Krumm, J. & Gamon, M. (2019). "President Vows to Cut \<Taxes\> Hair": Dataset and analysis of creative text editing for humorous headlines. *NAACL-HLT*.
+- Hossain, N., Krumm, J., Gamon, M. & Kautz, H. (2020). SemEval-2020 Task 7: Assessing humor in edited news headlines. *SemEval*.
+- Hurley, M. M., Dennett, D. C. & Adams, R. B. (2011). *Inside Jokes: Using Humor to Reverse-Engineer the Mind*. MIT Press.
+- Kao, J. T., Levy, R. & Goodman, N. D. (2016). A computational model of linguistic humor in puns. *Cognitive Science*, 40(5), 1270–1285.
+- Koestler, A. (1964). *The Act of Creation*. Hutchinson & Co.
+- Krippendorff, K. (2011). Computing Krippendorff's alpha-reliability. *Annenberg School for Communication Departmental Papers*.
+- Luo, F., et al. (2019). Pun-GAN: Generative adversarial network for pun generation. *EMNLP*.
+- Martin, R. A. (2007). *The Psychology of Humor: An Integrative Approach*. Elsevier Academic Press.
+- McGraw, A. P. & Warren, C. (2010). Benign violations: Making immoral behavior funny. *Psychological Science*, 21(8), 1141–1149.
+- Mihalcea, R. & Strapparava, C. (2005). Making computers laugh: Investigations in automatic humor recognition. *HLT/EMNLP*.
+- Mikolov, T., et al. (2013). Efficient estimation of word representations in vector space. *arXiv:1301.3781*.
+- Oring, E. (2003). *Engaging Humor*. University of Illinois Press.
+- Pereira, F. C., et al. (2019). Computational creativity and bisociative concept blending. *Cognitive Computation*.
+- Petrović, S. & Matthews, D. (2013). Unsupervised joke generation from big data. *ACL*.
+- Raskin, V. (1985). *Semantic Mechanisms of Humor*. D. Reidel Publishing.
+- Reimers, N. & Gurevych, I. (2019). Sentence-BERT: Sentence embeddings using Siamese BERT-networks. *EMNLP*.
+- Ritchie, G. (2004). *The Linguistic Analysis of Jokes*. Routledge.
+- Serra, O. (2026a). ENGRAM: Event-Navigated Graded Retrieval & Archival Memory. *Technical Report, OpenClaw*.
+- Serra, O. (2026b). CORTEX: Persona-Aware Context Engineering for Persistent AI Identity. *Technical Report, OpenClaw*.
+- Serra, O. (2026c). SYNAPSE: Synthesized Negotiation Across Provider-Specific Engines. *Technical Report, OpenClaw*.
+- Stock, O. & Strapparava, C. (2003). HAHAcronym: Humorous agents for humorous acronyms. *Humor*, 16(3), 297–314.
+- Suls, J. M. (1972). A two-stage model for the appreciation of jokes and cartoons: An information-processing analysis. In J. H. Goldstein & P. E. McGhee (Eds.), *The Psychology of Humor*. Academic Press.
+- Tian, Y., et al. (2022). A survey on humor recognition: Methods, challenges, and resources. *ACM Computing Surveys*.
+- Veale, T. (2016). *The Shape of Wit: Computational Models of Creative Metaphor*. Springer.
+- Vershynin, R. (2018). *High-Dimensional Probability*. Cambridge University Press.
+- Vrticka, P., Black, J. M. & Reiss, A. L. (2013). The neural basis of humour processing. *Nature Reviews Neuroscience*, 14(12), 860–868.
+- Warren, C. & McGraw, A. P. (2016). Differentiating what is humorous from what is not. *Journal of Personality and Social Psychology*, 110(3), 407–430.
+- Weller, O. & Seppi, K. (2019). Humor detection: A transformer gets the last laugh. *EMNLP*.
+- West, R. & Horvitz, E. (2019). Reverse-engineering satire, or "Paper on computational humor accepted despite making conditions for rejection". *AAAI*.
+- Winters, T., Nys, V. & De Schreye, D. (2021). Computers learning humor. *Proceedings of the International Conference on Computational Creativity (ICCC)*.
+- Yang, D., et al. (2015). Humor recognition and humor anchor extraction. *EMNLP*.
+- Yu, Z., et al. (2018). A neural approach to pun generation. *ACL*.

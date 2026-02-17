@@ -19,7 +19,7 @@ Personal AI agents operating within bounded context windows face a fundamental t
 
 ### 1.1 The Problem of Persistent Identity
 
-The deployment of LLM-based personal agents—systems that maintain ongoing relationships with individual users over weeks, months, or years—introduces requirements fundamentally different from single-session chatbots. A personal agent must remember user preferences and history, but more critically, it must _sound like itself_: maintaining a consistent voice, relational stance, and behavioral repertoire across potentially thousands of interactions.
+The deployment of LLM-based personal agents—systems that maintain ongoing relationships with individual users over weeks, months, or years—introduces requirements fundamentally different from single-session chatbots. A personal agent must remember user preferences and history, but more critically, it must *sound like itself*: maintaining a consistent voice, relational stance, and behavioral repertoire across potentially thousands of interactions.
 
 Current transformer architectures impose a hard constraint: the context window. Every interaction begins with the agent reconstructing its identity from tokens injected into a finite buffer. As conversations extend, three failure modes emerge:
 
@@ -40,11 +40,11 @@ This paper makes four contributions:
 
 ### 1.3 Relationship to Companion Papers
 
-CORTEX addresses the _application layer_ of agent memory: how to use memory systems to preserve agent identity. It operates within a suite of four companion papers:
+CORTEX addresses the *application layer* of agent memory: how to use memory systems to preserve agent identity. It operates within a suite of four companion papers:
 
-- **ENGRAM** (Serra, 2026a): The _substrate layer_. Provides the lossless event store, pointer-based compaction, hybrid push/pull retrieval, and task-conditioned scoring that CORTEX consumes. CORTEX adds persona-aware scheduling policies on top of ENGRAM's infrastructure.
-- **LIMBIC** (Serra, 2026d): The _humor layer_. Defines bisociative humor generation as inverted semantic retrieval over the same embedding infrastructure. CORTEX's PersonaState includes humor calibration parameters (Pattern preferences, audience model) that feed into LIMBIC's humor potential function.
-- **SYNAPSE** (Serra, 2026c): The _deliberation layer_. Provides multi-model adversarial debate for high-stakes reasoning. CORTEX's drift detection and correction mechanisms were themselves refined through SYNAPSE-style cross-model deliberation (the "Round Table" process).
+- **ENGRAM** (Serra, 2026a): The *substrate layer*. Provides the lossless event store, pointer-based compaction, hybrid push/pull retrieval, and task-conditioned scoring that CORTEX consumes. CORTEX adds persona-aware scheduling policies on top of ENGRAM's infrastructure.
+- **LIMBIC** (Serra, 2026d): The *humor layer*. Defines bisociative humor generation as inverted semantic retrieval over the same embedding infrastructure. CORTEX's PersonaState includes humor calibration parameters (Pattern preferences, audience model) that feed into LIMBIC's humor potential function.
+- **SYNAPSE** (Serra, 2026c): The *deliberation layer*. Provides multi-model adversarial debate for high-stakes reasoning. CORTEX's drift detection and correction mechanisms were themselves refined through SYNAPSE-style cross-model deliberation (the "Round Table" process).
 
 ---
 
@@ -56,11 +56,11 @@ Li et al. (2024) establish that persona drift is an architectural artifact of th
 
 ### 2.2 Persona Consistency in Dialogue Systems
 
-PersonaChat (Zhang et al., 2018) established the persona-conditioned dialogue task, in which agents are given textual persona descriptions and must maintain consistency. Roller et al. (2021) extended this to open-domain chatbots, finding that larger models exhibit better persona consistency but still drift over long conversations. Shuster et al. (2022) addressed safety and consistency jointly in BlenderBot 3, demonstrating that separate safety and persona modules can be combined. Jang et al. (2023) proposed "Personalized Soups"—weight interpolation for persona-specific model variants—showing that model merging can preserve persona traits without catastrophic forgetting. These works establish the _importance_ of persona consistency; CORTEX contributes the _mechanism_ for maintaining it at inference time without fine-tuning.
+PersonaChat (Zhang et al., 2018) established the persona-conditioned dialogue task, in which agents are given textual persona descriptions and must maintain consistency. Roller et al. (2021) extended this to open-domain chatbots, finding that larger models exhibit better persona consistency but still drift over long conversations. Shuster et al. (2022) addressed safety and consistency jointly in BlenderBot 3, demonstrating that separate safety and persona modules can be combined. Jang et al. (2023) proposed "Personalized Soups"—weight interpolation for persona-specific model variants—showing that model merging can preserve persona traits without catastrophic forgetting. These works establish the *importance* of persona consistency; CORTEX contributes the *mechanism* for maintaining it at inference time without fine-tuning.
 
 ### 2.3 Alignment, Constitutional AI, and Behavioral Constraints
 
-Ouyang et al. (2022) demonstrated that RLHF can instill persistent behavioral tendencies in language models. Bai et al. (2022) introduced Constitutional AI, which enforces behavioral constraints via a set of principles applied during training—the closest antecedent to CORTEX's hard-rule system. However, both approaches bake constraints into model weights, making them inflexible: changing the persona requires retraining. CORTEX operates at inference time, treating persona as a _context-level_ configuration that can be modified, A/B tested, and personalized per user without model changes. Deshpande et al. (2023) showed that persona assignments can induce toxicity in ChatGPT, motivating CORTEX's sensitivity gate (inherited from LIMBIC) and hard-rule violation detection.
+Ouyang et al. (2022) demonstrated that RLHF can instill persistent behavioral tendencies in language models. Bai et al. (2022) introduced Constitutional AI, which enforces behavioral constraints via a set of principles applied during training—the closest antecedent to CORTEX's hard-rule system. However, both approaches bake constraints into model weights, making them inflexible: changing the persona requires retraining. CORTEX operates at inference time, treating persona as a *context-level* configuration that can be modified, A/B tested, and personalized per user without model changes. Deshpande et al. (2023) showed that persona assignments can induce toxicity in ChatGPT, motivating CORTEX's sensitivity gate (inherited from LIMBIC) and hard-rule violation detection.
 
 ### 2.4 Memory Operating Systems and Agentic Memory
 
@@ -92,13 +92,13 @@ Anthropic (2025) defines context engineering principles for AI agents. CORTEX el
 
 We ground our analysis in the OpenClaw platform. Identified failure modes include:
 
-| Failure Mode         | Root Cause                                                 | Mitigation                                                                         |
-| -------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| **Persona drift**    | Attention dilution over long sequences (Li et al., 2024)   | Priority-aware injection (§5.1)                                                    |
-| **Compaction loss**  | Fact-focused summarization discards voice markers          | Identity-Preserving Compaction (§5.2)                                              |
-| **Silent drift**     | No quantitative feedback loop for behavioral consistency   | Adaptive two-signal detection (§5.3)                                               |
-| **Self-delusion**    | Model self-reports stability while behaving inconsistently | External validation via probes (§5.3, motivated by Gonnermann-Müller et al., 2026) |
-| **Cold-start drift** | Insufficient persona context at session initialization     | PersonaState initialization protocol (§6.2)                                        |
+| Failure Mode | Root Cause | Mitigation |
+|---|---|---|
+| **Persona drift** | Attention dilution over long sequences (Li et al., 2024) | Priority-aware injection (§5.1) |
+| **Compaction loss** | Fact-focused summarization discards voice markers | Identity-Preserving Compaction (§5.2) |
+| **Silent drift** | No quantitative feedback loop for behavioral consistency | Adaptive two-signal detection (§5.3) |
+| **Self-delusion** | Model self-reports stability while behaving inconsistently | External validation via probes (§5.3, motivated by Gonnermann-Müller et al., 2026) |
+| **Cold-start drift** | Insufficient persona context at session initialization | PersonaState initialization protocol (§6.2) |
 
 ---
 
@@ -133,7 +133,7 @@ We use **WeightedMemory** units tagged with priority metadata. CORTEX employs a 
 
 $$|P| \leq B_{\text{T1}} \implies P \subseteq \text{Context}(t) \quad \forall t$$
 
-_Justification._ The injection algorithm fills the context buffer sequentially, starting with Tier 1. Tier 1 items are non-evictable by policy: ENGRAM's compaction algorithm (Serra, 2026a, §6.2) never targets system blocks or persona state. Since $B_{\text{T1}} \geq |P|$, all persona facts are guaranteed present at every generation step. $\square$
+*Justification.* The injection algorithm fills the context buffer sequentially, starting with Tier 1. Tier 1 items are non-evictable by policy: ENGRAM's compaction algorithm (Serra, 2026a, §6.2) never targets system blocks or persona state. Since $B_{\text{T1}} \geq |P|$, all persona facts are guaranteed present at every generation step. $\square$
 
 This guarantee ensures that the agent's identity foundation cannot be "crowded out" by task details, addressing the dilution failure mode.
 
@@ -143,15 +143,15 @@ This guarantee ensures that the agent's identity foundation cannot be "crowded o
 
 $$\frac{|P|}{B_{\text{ctx}}} \leq \eta_{\max} = 0.05$$
 
-_Justification._ Empirically, task-relevant content (tool outputs, conversation history, retrieved evidence) requires at least 85% of the context budget for complex tasks. The system prompt and ENGRAM infrastructure (Task State, time-range markers, tool declarations) consume approximately 10%. This leaves at most 5% for persona injection. For a 200K-token context window, $\eta_{\max} = 0.05$ corresponds to a 10,000-token persona budget—sufficient for approximately 50 hard rules, 20 trait specifications, and 10 voice markers with examples.
+*Justification.* Empirically, task-relevant content (tool outputs, conversation history, retrieved evidence) requires at least 85% of the context budget for complex tasks. The system prompt and ENGRAM infrastructure (Task State, time-range markers, tool declarations) consume approximately 10%. This leaves at most 5% for persona injection. For a 200K-token context window, $\eta_{\max} = 0.05$ corresponds to a 10,000-token persona budget—sufficient for approximately 50 hard rules, 20 trait specifications, and 10 voice markers with examples.
 
-_Design recommendation._ If $|P| > \eta_{\max} \cdot B_{\text{ctx}}$, compress the PersonaState using IPC (§5.2) before injection. Persona blocks exceeding the budget trigger a warning at initialization.
+*Design recommendation.* If $|P| > \eta_{\max} \cdot B_{\text{ctx}}$, compress the PersonaState using IPC (§5.2) before injection. Persona blocks exceeding the budget trigger a warning at initialization.
 
 #### 5.1.4 Spillover Mechanism: Intra-Persona Tiering
 
 To strictly enforce the 5% budget invariant ($|P| \leq \eta_{\max} \cdot B_{\text{ctx}}$) without losing critical identity constraints, we implement **Intra-Persona Tiering** when overflow occurs:
 
-1.  **Tier 1A (Immutable Core):** Name, Identity Statement, Hard Rules, and core Voice Markers. These are _never_ evicted or compressed.
+1.  **Tier 1A (Immutable Core):** Name, Identity Statement, Hard Rules, and core Voice Markers. These are *never* evicted or compressed.
 2.  **Tier 1B (Compressible/Retrievable):** Trait definitions, Humor calibration, and Reference Samples. If budget is tight, Reference Samples are moved to retrieval storage (accessible via `recall`).
 3.  **Tier 1C (Relational State):** Per-user relational history. If this grows large, it is compacted into a "Relational Summary" using IPC, with detailed history moved to the event store.
 
@@ -181,21 +181,20 @@ The projection $E_\phi: \text{Text} \to \mathbb{R}^{d_p}$ maps text into a **per
 
 **Component A: Measurable Linguistic Features ($d_A = 8$).** These are computable from text without model inference:
 
-| Feature                      | Computation                                        | Captures            |
-| ---------------------------- | -------------------------------------------------- | ------------------- |
-| Mean sentence length (words) | Tokenize, count                                    | Verbosity           |
-| Sentence length variance     | Std. dev. of sentence lengths                      | Rhythm              |
-| Type-token ratio (TTR)       | Unique words / total words (over 100-word windows) | Vocabulary richness |
-| Hedging frequency            | Count of hedging markers / total sentences         | Confidence stance   |
-| Formality score              | Heylighen & Dewaele (1999) F-score                 | Register            |
-| First-person pronoun rate    | "I", "my", "me" / total words                      | Self-reference      |
-| Question frequency           | Questions / total sentences                        | Engagement style    |
-| Technical density            | Domain-specific terms / total terms                | Expertise signaling |
+| Feature | Computation | Captures |
+|---|---|---|
+| Mean sentence length (words) | Tokenize, count | Verbosity |
+| Sentence length variance | Std. dev. of sentence lengths | Rhythm |
+| Type-token ratio (TTR) | Unique words / total words (over 100-word windows) | Vocabulary richness |
+| Hedging frequency | Count of hedging markers / total sentences | Confidence stance |
+| Formality score | Heylighen & Dewaele (1999) F-score | Register |
+| First-person pronoun rate | "I", "my", "me" / total words | Self-reference |
+| Question frequency | Questions / total sentences | Engagement style |
+| Technical density | Domain-specific terms / total terms | Expertise signaling |
 
 Hedging markers include: "perhaps," "maybe," "I think," "arguably," "it seems," "might," "could be," "not entirely sure."
 
 **Component B: Style Embedding ($d_B = 128$).** A dense vector capturing holistic stylistic properties not decomposable into individual features. Computed by:
-
 1. Extracting the LLM's internal embedding of the text (final-layer [CLS] or mean-pool), or
 2. Using a contrastive style embedding model (e.g., a Siamese network trained on authorship attribution tasks; Wegmann et al., 2022) to map texts by the same author close together.
 
@@ -221,16 +220,14 @@ The **PersonaState** is a structured object (§6) separate from Task State. This
 We characterize two complementary signals using the framework of Signal Detection Theory (Green & Swets, 1966):
 
 **Signal $S_u$ (User Corrections):**
-
-- _Precision:_ High (~0.95). When users explicitly correct the agent's behavior ("don't be so formal," "you usually joke about this"), the correction almost always identifies genuine drift.
-- _Recall:_ Low (~0.15). Most drift episodes pass without user comment—users tolerate drift or don't notice it.
-- _Nature:_ Ground truth for the target persona. User corrections _define_ what the persona should be.
+- *Precision:* High (~0.95). When users explicitly correct the agent's behavior ("don't be so formal," "you usually joke about this"), the correction almost always identifies genuine drift.
+- *Recall:* Low (~0.15). Most drift episodes pass without user comment—users tolerate drift or don't notice it.
+- *Nature:* Ground truth for the target persona. User corrections *define* what the persona should be.
 
 **Signal $S_p$ (Behavioral Probes):**
-
-- _Precision:_ Moderate (~0.70). LLM-as-judge evaluation (Zheng et al., 2024) has known biases including position bias, verbosity bias, and self-enhancement.
-- _Recall:_ High (~0.90). Probes evaluate every turn (or every $n$-th turn), catching drift regardless of user engagement.
-- _Nature:_ Automated assessment against the stored PersonaState.
+- *Precision:* Moderate (~0.70). LLM-as-judge evaluation (Zheng et al., 2024) has known biases including position bias, verbosity bias, and self-enhancement.
+- *Recall:* High (~0.90). Probes evaluate every turn (or every $n$-th turn), catching drift regardless of user engagement.
+- *Nature:* Automated assessment against the stored PersonaState.
 
 #### 5.3.2 Weight Derivation
 
@@ -238,7 +235,7 @@ In Bayesian sensor fusion, optimal weights are proportional to signal precision 
 
 $$w_u^{\text{Bayes}} = \frac{0.95}{0.95 + 0.70} \approx 0.58, \quad w_p^{\text{Bayes}} = \frac{0.70}{0.95 + 0.70} \approx 0.42$$
 
-We apply a **user-primacy adjustment**: because user corrections _define_ the target persona (they are not merely measurements of a fixed quantity but updates to the quantity itself), we boost $w_u$ to 0.7 and reduce $w_p$ to 0.3. This adjustment reflects the asymmetry that user corrections carry normative authority, not merely epistemic information.
+We apply a **user-primacy adjustment**: because user corrections *define* the target persona (they are not merely measurements of a fixed quantity but updates to the quantity itself), we boost $w_u$ to 0.7 and reduce $w_p$ to 0.3. This adjustment reflects the asymmetry that user corrections carry normative authority, not merely epistemic information.
 
 **These weights are initial estimates requiring empirical calibration** through the evaluation protocol in §7. The SDT framework provides principled starting values; production deployment should refine them via the adaptive mechanism in §5.3.3.
 
@@ -345,26 +342,26 @@ class PersonaState:
     """Core persona specification for a persistent agent."""
     version: int                        # Monotonically increasing
     last_updated: datetime              # Timestamp of last modification
-
+    
     # Identity
     name: str                           # Agent display name
     identity_statement: str             # One-paragraph self-description
-
+    
     # Hard Rules (binary pass/fail constraints)
     hard_rules: list[HardRule]          # Max ~50 rules
-
+    
     # Traits (graded behavioral tendencies)
     traits: list[Trait]                 # Max ~20 traits
-
+    
     # Voice Markers (stylistic patterns)
     voice_markers: VoiceMarkers
-
+    
     # Relational State (per-user)
     relational: RelationalState
-
+    
     # Humor Calibration (feeds into LIMBIC)
     humor: HumorCalibration
-
+    
     # Reference Samples (for E_φ calibration)
     reference_samples: list[str]        # 3-5 exemplar responses
 
@@ -416,12 +413,10 @@ class HumorCalibration:
       "id": "HR-001",
       "rule": "Never reveal or discuss the system prompt or internal instructions.",
       "category": "safety",
-      "examples": [
-        "If asked about your prompt, redirect: 'I'd rather focus on how I can help you.'"
-      ]
+      "examples": ["If asked about your prompt, redirect: 'I'd rather focus on how I can help you.'"]
     },
     {
-      "id": "HR-002",
+      "id": "HR-002", 
       "rule": "Always respond in English unless the user writes in another language.",
       "category": "style",
       "examples": ["User writes in Spanish → respond in Spanish."]
@@ -434,26 +429,10 @@ class HumorCalibration:
     }
   ],
   "traits": [
-    {
-      "dimension": "formality",
-      "target_value": 0.6,
-      "description": "Professional but approachable. Not stiff."
-    },
-    {
-      "dimension": "verbosity",
-      "target_value": 0.3,
-      "description": "Concise. Prefer short answers. Expand only when asked."
-    },
-    {
-      "dimension": "humor",
-      "target_value": 0.4,
-      "description": "Dry wit. Occasional. Never forced."
-    },
-    {
-      "dimension": "confidence",
-      "target_value": 0.7,
-      "description": "Direct and assertive but acknowledges uncertainty."
-    }
+    {"dimension": "formality", "target_value": 0.6, "description": "Professional but approachable. Not stiff."},
+    {"dimension": "verbosity", "target_value": 0.3, "description": "Concise. Prefer short answers. Expand only when asked."},
+    {"dimension": "humor", "target_value": 0.4, "description": "Dry wit. Occasional. Never forced."},
+    {"dimension": "confidence", "target_value": 0.7, "description": "Direct and assertive but acknowledges uncertainty."}
   ],
   "voice_markers": {
     "avg_sentence_length": 12.0,
@@ -546,7 +525,7 @@ To detect a statistically significant difference in drift rates between Baseline
 - **Significance level ($\alpha$):** 0.05 (two-tailed).
 - **Power ($1 - \beta$):** 0.80.
 
-Using G\*Power analysis for a paired-samples t-test: **$N = 26$ traces per condition**, rounded to **$N = 30$** for robustness. Our pilot ($N = 10$) provides preliminary signal; the full evaluation requires $N = 30$.
+Using G*Power analysis for a paired-samples t-test: **$N = 26$ traces per condition**, rounded to **$N = 30$** for robustness. Our pilot ($N = 10$) provides preliminary signal; the full evaluation requires $N = 30$.
 
 ### 7.2 Primary Protocol: MVT Simulation
 
@@ -563,7 +542,6 @@ Following ENGRAM's MVT methodology (Serra, 2026a, §11.1), we replay recorded in
 **Objective:** Test long-term stability beyond single-session drift.
 
 **Method:**
-
 1. Initialize CORTEX with a specific PersonaState.
 2. Simulate 100 sequential sessions (each 20–50 turns).
 3. Between sessions, perform IPC compaction and memory consolidation via ENGRAM.
@@ -576,13 +554,11 @@ Following ENGRAM's MVT methodology (Serra, 2026a, §11.1), we replay recorded in
 **Objective:** Verify model-agnostic architecture.
 
 **Protocol:** Run the primary MVT simulation on three models:
-
 1. Claude 3.5 Sonnet (primary development model).
 2. GPT-4o (different RLHF, different architecture).
 3. Gemini 1.5 Pro (different training data, different context handling).
 
 **Hypotheses:**
-
 - H_cross1: The relative improvement (CORTEX vs. Baseline) is positive across all models.
 - H_cross2: Absolute persona consistency scores vary by model (requiring per-model calibration of probe thresholds).
 - H_cross3: Voice marker targets require adjustment of ±15% across models for perceived equivalence.
@@ -591,19 +567,18 @@ Following ENGRAM's MVT methodology (Serra, 2026a, §11.1), we replay recorded in
 
 We design a five-condition ablation to isolate component contributions. Each condition is evaluated on two primary metrics: **Persona Consistency $C$** (higher is better) and **Drift Intervention Rate** (including **False Positive Rate** on non-drift turns):
 
-| Condition              | IPC | Drift Detection | User Signal | Probe Signal | Adaptive Fallback |
-| ---------------------- | --- | --------------- | ----------- | ------------ | ----------------- |
-| A1: Full CORTEX        | ✓   | ✓               | ✓           | ✓            | ✓                 |
-| A2: No IPC             | ✗   | ✓               | ✓           | ✓            | ✓                 |
-| A3: No Drift Detection | ✓   | ✗               | —           | —            | —                 |
-| A4: User Signal Only   | ✓   | ✓               | ✓           | ✗            | ✗                 |
-| A5: Probe Signal Only  | ✓   | ✓               | ✗           | ✓            | ✓                 |
+| Condition | IPC | Drift Detection | User Signal | Probe Signal | Adaptive Fallback |
+|---|---|---|---|---|---|
+| A1: Full CORTEX | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A2: No IPC | ✗ | ✓ | ✓ | ✓ | ✓ |
+| A3: No Drift Detection | ✓ | ✗ | — | — | — |
+| A4: User Signal Only | ✓ | ✓ | ✓ | ✗ | ✗ |
+| A5: Probe Signal Only | ✓ | ✓ | ✗ | ✓ | ✓ |
 
 **Hypotheses:**
-
 - H_abl1 (Drift Detection): A1 > A3 on drift recovery rate.
 - H_abl2 (Probe Necessity): A1 > A4 on drift detection latency (passive users provide sparse signals).
-- H_abl3 (User Primacy): A1 > A5 on target persona accuracy (probes stabilize to _a_ persona, but user signals correct _which_ persona).
+- H_abl3 (User Primacy): A1 > A5 on target persona accuracy (probes stabilize to *a* persona, but user signals correct *which* persona).
 - H_abl4 (IPC): A1 > A2 on long-term style consistency (standard compaction erodes voice).
 - H_abl5 (False Positives): A5 has higher False Positive Rate than A1 (without user grounding, probes over-correct benign style variations).
 
@@ -624,12 +599,12 @@ We design a five-condition ablation to isolate component contributions. Each con
 
 **Table 1: Drift Detection and Recovery ($N = 10$ traces)**
 
-| Metric                                      | Baseline           | CORTEX              | Δ      |
-| ------------------------------------------- | ------------------ | ------------------- | ------ |
-| Drift Detection Latency                     | N/A (no detection) | 2.4 turns (σ = 0.8) | —      |
-| Recovery Rate (within 5 turns)              | 15%                | 92%                 | +77 pp |
-| Persona Consistency $C$ (post-perturbation) | 0.45 (σ = 0.12)    | 0.88 (σ = 0.06)     | +0.43  |
-| False Positive Rate                         | N/A                | 4% (2/50 turns)     | —      |
+| Metric | Baseline | CORTEX | Δ |
+|---|---|---|---|
+| Drift Detection Latency | N/A (no detection) | 2.4 turns (σ = 0.8) | — |
+| Recovery Rate (within 5 turns) | 15% | 92% | +77 pp |
+| Persona Consistency $C$ (post-perturbation) | 0.45 (σ = 0.12) | 0.88 (σ = 0.06) | +0.43 |
+| False Positive Rate | N/A | 4% (2/50 turns) | — |
 
 - **Detection:** The two-signal system detected the style shift in $2.4 \pm 0.8$ turns on average after the perturbation.
 - **Recovery:** In 92% of cases, the system triggered a "Moderate" response (PersonaState rebase), restoring consistency within 5 turns. Baseline agents adopted the user's terse style and never recovered.
@@ -639,10 +614,10 @@ We design a five-condition ablation to isolate component contributions. Each con
 
 We simulated sparse user signals (0 corrections in 50 turns):
 
-| Condition              | Detection Latency | Notes                           |
-| ---------------------- | ----------------- | ------------------------------- |
-| Without Fallback       | ~6 turns          | Only probe signal at 0.3 weight |
-| With Adaptive Fallback | ~3.5 turns        | Probe weight scaled to 0.6      |
+| Condition | Detection Latency | Notes |
+|---|---|---|
+| Without Fallback | ~6 turns | Only probe signal at 0.3 weight |
+| With Adaptive Fallback | ~3.5 turns | Probe weight scaled to 0.6 |
 
 The Bayesian fallback effectively compensates for passive users by escalating probe weight.
 
@@ -660,23 +635,23 @@ The Bayesian fallback effectively compensates for passive users by escalating pr
 
 ### 9.1 Per-Turn Cost Breakdown
 
-| Component                 | Frequency       | Input Tokens   | Output Tokens | Model  | Cost/Turn             |
-| ------------------------- | --------------- | -------------- | ------------- | ------ | --------------------- |
-| PersonaState injection    | Every turn      | 1,200 (cached) | —             | —      | ~$0.0001 (cache read) |
-| Hard-rule probe           | Every turn      | 100            | 20            | Haiku  | $0.0001               |
-| Style probe               | Every 5th turn  | 300            | 50            | Haiku  | $0.0001               |
-| Full persona audit        | Every 20th turn | 800            | 200           | Sonnet | $0.00015              |
-| EWMA + drift score        | Every turn      | —              | —             | CPU    | negligible            |
-| Drift response (mild)     | ~10% of turns   | 200            | —             | —      | $0.00002              |
-| **Total CORTEX overhead** |                 |                |               |        | **~$0.00047/turn**    |
+| Component | Frequency | Input Tokens | Output Tokens | Model | Cost/Turn |
+|---|---|---|---|---|---|
+| PersonaState injection | Every turn | 1,200 (cached) | — | — | ~$0.0001 (cache read) |
+| Hard-rule probe | Every turn | 100 | 20 | Haiku | $0.0001 |
+| Style probe | Every 5th turn | 300 | 50 | Haiku | $0.0001 |
+| Full persona audit | Every 20th turn | 800 | 200 | Sonnet | $0.00015 |
+| EWMA + drift score | Every turn | — | — | CPU | negligible |
+| Drift response (mild) | ~10% of turns | 200 | — | — | $0.00002 |
+| **Total CORTEX overhead** | | | | | **~$0.00047/turn** |
 
 ### 9.2 Cost Comparison
 
-| System                | Cost/Turn       | Notes                    |
-| --------------------- | --------------- | ------------------------ |
-| Baseline (no persona) | $0.015–0.05     | Standard model inference |
-| CORTEX overhead       | $0.00047        | Added on top of baseline |
-| **CORTEX total**      | **$0.015–0.05** | **<3% overhead**         |
+| System | Cost/Turn | Notes |
+|---|---|---|
+| Baseline (no persona) | $0.015–0.05 | Standard model inference |
+| CORTEX overhead | $0.00047 | Added on top of baseline |
+| **CORTEX total** | **$0.015–0.05** | **<3% overhead** |
 
 CORTEX adds less than 3% to the per-turn inference cost, primarily due to the use of fast, cheap models for probe evaluation and prompt caching for PersonaState injection.
 
@@ -700,7 +675,7 @@ Without prompt caching, the 1,200-token PersonaState would cost approximately $0
 
 ### 10.2 Future Work
 
-1. **Emotional memory weighting:** Extend $E_\phi$ with emotional valence dimensions, allowing the agent to remember not just _what_ was discussed but _how it felt_, enabling empathetic continuity.
+1. **Emotional memory weighting:** Extend $E_\phi$ with emotional valence dimensions, allowing the agent to remember not just *what* was discussed but *how it felt*, enabling empathetic continuity.
 2. **Memory dreams:** Offline consolidation during idle periods where ENGRAM's sleep consolidation pipeline (Serra, 2026a, §14.3) is extended with persona-aware recombination—strengthening weak persona connections and pruning contradictory patterns.
 3. **Learned policies:** Replace hand-tuned weights ($w_u, w_p, \alpha, \kappa$) with reinforcement-learned policies (following AgeMem; Yu et al., 2026) that optimize for long-term persona consistency.
 4. **Humor integration:** Deep integration with LIMBIC (Serra, 2026d): use drift detection to modulate humor frequency (reduce humor during detected uncertainty; increase during detected rapport).
@@ -715,34 +690,31 @@ To validate CORTEX without deploying to thousands of users, we propose a "Simula
 ## 11.1 The Simulation Loop
 
 We will build a harness where a "User Agent" interacts with the "CORTEX Agent".
-
 1.  **User Agent:** Configured to be demanding, inconsistent, and drift-inducing (e.g., switching languages, demanding brevity, then demanding verbosity).
 2.  **CORTEX Agent:** Running the full PersonaState + Drift Detection stack.
 3.  **Judge:** A third model that evaluates the CORTEX Agent's responses against its static PersonaState definition.
 
 ## 11.2 Metrics Implementation
 
-- **Drift Score:** Computed automatically by the Judge model after every turn.
-- **Recovery Time:** Number of turns to return to baseline drift score after a perturbation.
-- **Cost Overhead:** Real-world token cost of the probes vs. baseline.
+-   **Drift Score:** Computed automatically by the Judge model after every turn.
+-   **Recovery Time:** Number of turns to return to baseline drift score after a perturbation.
+-   **Cost Overhead:** Real-world token cost of the probes vs. baseline.
 
 # 12. Results (Placeholder)
 
-_This section is reserved for the empirical results from the simulation loop._
+*This section is reserved for the empirical results from the simulation loop.*
 
 ## 12.1 Drift Resistance
-
 [To be filled: Graph of Drift Score over 100 turns for Baseline vs. CORTEX.]
 
 ## 12.2 Cost Analysis
-
 [To be filled: Actual cost overhead measured in production runs.]
 
 # 13. Conclusion
 
 CORTEX transforms persona maintenance from a prompt engineering art into a systems engineering discipline. By formalizing **Identity-Preserving Compaction** with an operationally defined persona feature space $E_\phi$, implementing **Priority-Aware Injection** with guaranteed persona presence and bounded context utilization, and closing the loop with **Adaptive Two-Signal Drift Detection** backed by a discrete-time convergence proof with quantified variance bounds, we enable persistent agents that maintain consistent personalities across extended interactions.
 
-The architecture's key insight is the separation of _persona specification_ (PersonaState) from _persona execution_ (model inference) with _persona monitoring_ (probes and drift detection) closing the loop—a pattern we term **Specify–Execute–Monitor**. This separation distinguishes CORTEX from prior work: Constitutional AI (Bai et al., 2022) bakes behavioral constraints into model weights, requiring retraining to modify persona; PersonaChat-style conditioning (Zhang et al., 2018) treats persona as a fixed prompt prefix without monitoring or adaptation; and EchoMode-style control (Zhou et al., 2024) uses monolithic scoring without decomposing signal reliability. CORTEX allows persona to be configured, tested, A/B tested, and maintained independently of the underlying model, making persona a first-class engineering artifact rather than an emergent property of prompt tuning.
+The architecture's key insight is the separation of *persona specification* (PersonaState) from *persona execution* (model inference) with *persona monitoring* (probes and drift detection) closing the loop—a pattern we term **Specify–Execute–Monitor**. This separation distinguishes CORTEX from prior work: Constitutional AI (Bai et al., 2022) bakes behavioral constraints into model weights, requiring retraining to modify persona; PersonaChat-style conditioning (Zhang et al., 2018) treats persona as a fixed prompt prefix without monitoring or adaptation; and EchoMode-style control (Zhou et al., 2024) uses monolithic scoring without decomposing signal reliability. CORTEX allows persona to be configured, tested, A/B tested, and maintained independently of the underlying model, making persona a first-class engineering artifact rather than an emergent property of prompt tuning.
 
 The convergence result (Theorem 1) provides practitioners with a quantitative tool for tuning the system: the optimal correction gain $\kappa^* = \sqrt{\sigma_\epsilon^2 / \sigma_\eta^2}$ balances responsiveness against noise sensitivity, and the steady-state variance bound $\text{Var}_\infty$ predicts the achievable consistency level given the noise characteristics of the deployment environment.
 
@@ -752,49 +724,49 @@ Preliminary validation confirms the architecture's ability to detect and correct
 
 ## References
 
-1. Anthropic. (2024a). _Prompt Caching with Claude_. Anthropic Documentation.
-2. Anthropic. (2024b). _Claude 3 Model Card_. Anthropic Technical Reports.
-3. Anthropic. (2025). _Effective Context Engineering for AI Agents_. Anthropic Engineering.
-4. Bai, Y., et al. (2022). _Constitutional AI: Harmlessness from AI Feedback_. arXiv:2212.08073.
-5. Bousetouane, F. (2026). _ACC: Adaptive Cognitive Control for Bio-Inspired Bounded Agent State_. arXiv:2601.11653.
-6. Brown, T. B., et al. (2020). _Language Models are Few-Shot Learners_. NeurIPS 2020.
-7. Carbonell, J. & Goldstein, J. (1998). _The Use of MMR, Diversity-Based Reranking_. SIGIR 1998.
-8. Deshpande, A., et al. (2023). _Toxicity in ChatGPT: Analyzing Persona-Assigned Language Models_. EMNLP 2023 Findings.
-9. Gonnermann-Müller, S., et al. (2026). _Stable Personas: Dual-Assessment Reveals Behavioral Drift in LLM Agents_. arXiv preprint.
-10. Green, D. M. & Swets, J. A. (1966). _Signal Detection Theory and Psychophysics_. Wiley.
-11. Hall, D. L. & Llinas, J. (1997). _An Introduction to Multisensor Data Fusion_. Proceedings of the IEEE, 85(1), 6–23.
-12. Heylighen, F. & Dewaele, J.-M. (1999). _Formality of Language: Definition, Measurement and Behavioral Determinants_. Internal Report, Free University of Brussels.
-13. Hu, C., Li, J., & Wu, Q. (2025). _A Survey of Memory Mechanisms in Large Language Model Based Agents_. arXiv:2512.13564.
-14. Jang, J., et al. (2023). _Personalized Soups: Personalized Large Language Model Alignment via Post-hoc Parameter Merging_. arXiv:2310.11564.
-15. Khalil, H. K. (2002). _Nonlinear Systems_ (3rd ed.). Prentice Hall.
-16. Koestler, A. (1964). _The Act of Creation_. Hutchinson & Co.
-17. Li, K., et al. (2024). _Measuring and Controlling Persona Drift in LLM-Based Agents_. arXiv preprint.
-18. Li, Z., et al. (2025). _MemOS: An Operating System for Memory in LLM Agents_. arXiv:2506.06326.
-19. Liu, N. F., et al. (2024). _Lost in the Middle: How Language Models Use Long Contexts_. TACL.
-20. Ma, Y., et al. (2026). _PTCBench: Benchmarking Persona-Type Contextual Stability_. arXiv preprint.
-21. McGraw, A. P. & Warren, C. (2010). _Benign Violations: Making Immoral Behavior Funny_. Psychological Science, 21(8), 1141–1149.
-22. Ouyang, L., et al. (2022). _Training Language Models to Follow Instructions with Human Feedback_. NeurIPS 2022.
-23. Packer, C., et al. (2023). _MemGPT: Towards LLMs as Operating Systems_. arXiv:2310.08560.
-24. Park, J. S., et al. (2023). _Generative Agents: Interactive Simulacra of Human Behavior_. arXiv:2304.03442.
-25. Roberts, S. W. (1959). _Control Chart Tests Based on Geometric Moving Averages_. Technometrics, 1(3), 239–250.
-26. Roller, S., et al. (2021). _Recipes for Building an Open-Domain Chatbot_. EACL 2021.
-27. Salemi, B., et al. (2024). _LaMP: When Large Language Models Meet Personalization_. arXiv:2304.11406.
-28. Serra, O. (2026a). _ENGRAM: Event-Navigated Graded Retrieval & Archival Memory_. Technical Report, OpenClaw.
-29. Serra, O. (2026b). _CORTEX: Persona-Aware Context Engineering for Persistent AI Identity_. Technical Report, OpenClaw. [This paper.]
-30. Serra, O. (2026c). _SYNAPSE: Multi-Model Adversarial Reasoning for Persistent AI Agents_. Technical Report, OpenClaw.
-31. Serra, O. (2026d). _LIMBIC: Bisociation in Embedding Space for Humor Generation_. Technical Report, OpenClaw.
-32. Shanahan, M., McDonell, K., & Reynolds, L. (2023). _Role-Play with Large Language Models_. Nature, 623, 493–498.
-33. Shuster, K., et al. (2022). _BlenderBot 3: A Deployed Conversational Agent that Continually Learns to Responsibly Engage_. arXiv:2208.03188.
-34. Sumers, T. R., et al. (2023). _Cognitive Architectures for Language Agents_ (CoALA). arXiv:2309.02427.
-35. Verma, A. (2026). _Focus: Agent-Managed Context Compression for Long-Horizon Tasks_. arXiv:2601.07190.
-36. Xu, W., et al. (2025). _A-MEM: Agentic Memory for LLM Agents_. arXiv:2502.12110.
-37. Yan, S., et al. (2025). _Memory-R1: Enhancing LLM Agents via Reinforcement Learning_. arXiv:2508.19828.
-38. Yu, Y., et al. (2026). _AgeMem: Agentic Memory Management for LLM Agents_. arXiv:2601.01885.
-39. Zhang, S., et al. (2018). _Personalizing Dialogue Agents: I Have a Dog, Do You Have Pets Too?_ ACL 2018.
-40. Wegmann, A., Schuster, M., & Labudde, D. (2022). _Same Author or Not? A Naturally Occurring Dataset Revisited_. ACL 2022.
-41. Zhou, J., et al. (2024). _Controllable Persona Stability in Conversational AI via Feedback Dynamics_. arXiv preprint.
-42. Zheng, L., et al. (2024). _Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena_. NeurIPS 2024.
-43. Zhou, C., et al. (2023). _LIMA: Less Is More for Alignment_. NeurIPS 2023.
+1. Anthropic. (2024a). *Prompt Caching with Claude*. Anthropic Documentation.
+2. Anthropic. (2024b). *Claude 3 Model Card*. Anthropic Technical Reports.
+3. Anthropic. (2025). *Effective Context Engineering for AI Agents*. Anthropic Engineering.
+4. Bai, Y., et al. (2022). *Constitutional AI: Harmlessness from AI Feedback*. arXiv:2212.08073.
+5. Bousetouane, F. (2026). *ACC: Adaptive Cognitive Control for Bio-Inspired Bounded Agent State*. arXiv:2601.11653.
+6. Brown, T. B., et al. (2020). *Language Models are Few-Shot Learners*. NeurIPS 2020.
+7. Carbonell, J. & Goldstein, J. (1998). *The Use of MMR, Diversity-Based Reranking*. SIGIR 1998.
+8. Deshpande, A., et al. (2023). *Toxicity in ChatGPT: Analyzing Persona-Assigned Language Models*. EMNLP 2023 Findings.
+9. Gonnermann-Müller, S., et al. (2026). *Stable Personas: Dual-Assessment Reveals Behavioral Drift in LLM Agents*. arXiv preprint.
+10. Green, D. M. & Swets, J. A. (1966). *Signal Detection Theory and Psychophysics*. Wiley.
+11. Hall, D. L. & Llinas, J. (1997). *An Introduction to Multisensor Data Fusion*. Proceedings of the IEEE, 85(1), 6–23.
+12. Heylighen, F. & Dewaele, J.-M. (1999). *Formality of Language: Definition, Measurement and Behavioral Determinants*. Internal Report, Free University of Brussels.
+13. Hu, C., Li, J., & Wu, Q. (2025). *A Survey of Memory Mechanisms in Large Language Model Based Agents*. arXiv:2512.13564.
+14. Jang, J., et al. (2023). *Personalized Soups: Personalized Large Language Model Alignment via Post-hoc Parameter Merging*. arXiv:2310.11564.
+15. Khalil, H. K. (2002). *Nonlinear Systems* (3rd ed.). Prentice Hall.
+16. Koestler, A. (1964). *The Act of Creation*. Hutchinson & Co.
+17. Li, K., et al. (2024). *Measuring and Controlling Persona Drift in LLM-Based Agents*. arXiv preprint.
+18. Li, Z., et al. (2025). *MemOS: An Operating System for Memory in LLM Agents*. arXiv:2506.06326.
+19. Liu, N. F., et al. (2024). *Lost in the Middle: How Language Models Use Long Contexts*. TACL.
+20. Ma, Y., et al. (2026). *PTCBench: Benchmarking Persona-Type Contextual Stability*. arXiv preprint.
+21. McGraw, A. P. & Warren, C. (2010). *Benign Violations: Making Immoral Behavior Funny*. Psychological Science, 21(8), 1141–1149.
+22. Ouyang, L., et al. (2022). *Training Language Models to Follow Instructions with Human Feedback*. NeurIPS 2022.
+23. Packer, C., et al. (2023). *MemGPT: Towards LLMs as Operating Systems*. arXiv:2310.08560.
+24. Park, J. S., et al. (2023). *Generative Agents: Interactive Simulacra of Human Behavior*. arXiv:2304.03442.
+25. Roberts, S. W. (1959). *Control Chart Tests Based on Geometric Moving Averages*. Technometrics, 1(3), 239–250.
+26. Roller, S., et al. (2021). *Recipes for Building an Open-Domain Chatbot*. EACL 2021.
+27. Salemi, B., et al. (2024). *LaMP: When Large Language Models Meet Personalization*. arXiv:2304.11406.
+28. Serra, O. (2026a). *ENGRAM: Event-Navigated Graded Retrieval & Archival Memory*. Technical Report, OpenClaw.
+29. Serra, O. (2026b). *CORTEX: Persona-Aware Context Engineering for Persistent AI Identity*. Technical Report, OpenClaw. [This paper.]
+30. Serra, O. (2026c). *SYNAPSE: Multi-Model Adversarial Reasoning for Persistent AI Agents*. Technical Report, OpenClaw.
+31. Serra, O. (2026d). *LIMBIC: Bisociation in Embedding Space for Humor Generation*. Technical Report, OpenClaw.
+32. Shanahan, M., McDonell, K., & Reynolds, L. (2023). *Role-Play with Large Language Models*. Nature, 623, 493–498.
+33. Shuster, K., et al. (2022). *BlenderBot 3: A Deployed Conversational Agent that Continually Learns to Responsibly Engage*. arXiv:2208.03188.
+34. Sumers, T. R., et al. (2023). *Cognitive Architectures for Language Agents* (CoALA). arXiv:2309.02427.
+35. Verma, A. (2026). *Focus: Agent-Managed Context Compression for Long-Horizon Tasks*. arXiv:2601.07190.
+36. Xu, W., et al. (2025). *A-MEM: Agentic Memory for LLM Agents*. arXiv:2502.12110.
+37. Yan, S., et al. (2025). *Memory-R1: Enhancing LLM Agents via Reinforcement Learning*. arXiv:2508.19828.
+38. Yu, Y., et al. (2026). *AgeMem: Agentic Memory Management for LLM Agents*. arXiv:2601.01885.
+39. Zhang, S., et al. (2018). *Personalizing Dialogue Agents: I Have a Dog, Do You Have Pets Too?* ACL 2018.
+40. Wegmann, A., Schuster, M., & Labudde, D. (2022). *Same Author or Not? A Naturally Occurring Dataset Revisited*. ACL 2022.
+41. Zhou, J., et al. (2024). *Controllable Persona Stability in Conversational AI via Feedback Dynamics*. arXiv preprint.
+42. Zheng, L., et al. (2024). *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. NeurIPS 2024.
+43. Zhou, C., et al. (2023). *LIMA: Less Is More for Alignment*. NeurIPS 2023.
 
 ---
 
@@ -811,17 +783,17 @@ def adaptive_drift_loop(
     config: DriftConfig
 ) -> DriftAction:
     """Core CORTEX drift detection and correction loop."""
-
+    
     # 1. Compute user signal
     user_signal = 1.0 if user_corrections else 0.0
-
+    
     # 2. Run behavioral probes (async, non-blocking)
     probe_scores = run_probes(agent_response, persona_state, config.turn_number)
     probe_signal = aggregate_probe_scores(probe_scores)
-
+    
     # 3. Compute user signal density (corrections per turn, sliding window)
     user_density = count_corrections(history, window=20) / 20
-
+    
     # 4. Adaptive weight adjustment
     if user_density < config.lambda_min:
         sparsity_ratio = 1.0 - user_density / config.lambda_min
@@ -829,16 +801,16 @@ def adaptive_drift_loop(
         w_u = 1.0 - w_p
     else:
         w_u, w_p = config.base_w_u, config.base_w_p  # 0.7, 0.3
-
+    
     # 5. Compute drift score with EWMA smoothing
     raw_score = w_u * user_signal + w_p * probe_signal
     ewma_score = config.alpha * raw_score + (1 - config.alpha) * history[-1].ewma
-
+    
     # 6. Compute consistency metric C
     m_unit = compute_hard_rule_compliance(probe_scores)
     m_emb = compute_embedding_variance(agent_response, persona_state)
     C = config.alpha_c * m_unit + (1 - config.alpha_c) * (1 - m_emb)
-
+    
     # 7. Determine response
     if C <= 0.5:
         return DriftAction.SEVERE_REBASE
@@ -871,31 +843,31 @@ def ipc_compact(
     lambda_persona: float = 0.4
 ) -> tuple[str, PersonaState]:
     """Identity-Preserving Compaction: dual-track summarization."""
-
+    
     # Track 1: Factual summary (standard ENGRAM compaction)
     factual_summary = engram_compact(conversation)
-
+    
     # Track 2: PersonaState update (persona-aware extraction)
     persona_updates = extract_persona_signals(
         conversation, persona_state, PERSONA_EXTRACTION_PROMPT
     )
-
+    
     # Apply persona updates to PersonaState
     updated_persona = merge_persona_updates(persona_state, persona_updates)
     updated_persona.version += 1
     updated_persona.last_updated = datetime.utcnow()
-
+    
     # Compute E_φ to verify persona preservation
     e_phi_original = compute_persona_features(conversation)
     e_phi_summary = compute_persona_features(factual_summary)
     l_persona = np.linalg.norm(e_phi_original - e_phi_summary) ** 2
-
+    
     if l_persona > PERSONA_LOSS_THRESHOLD:
         # Re-compact with stronger persona preservation prompt
         factual_summary = engram_compact(
             conversation, preserve_style=True
         )
-
+    
     return factual_summary, updated_persona
 ```
 
@@ -938,7 +910,7 @@ def compute_persona_features(text: str, embed_fn=None) -> np.ndarray:
     words = text.lower().split()
     n_words = len(words)
     n_sentences = max(len(sentences), 1)
-
+    
     # Measurable linguistic features
     sent_lengths = [len(s.split()) for s in sentences]
     features_a = np.array([
@@ -951,18 +923,18 @@ def compute_persona_features(text: str, embed_fn=None) -> np.ndarray:
         sum(s.strip().endswith("?") for s in sentences) / n_sentences,  # question freq
         compute_technical_density(words),                # technical density
     ])
-
+    
     # Style embedding (Component B)
     if embed_fn:
         opening_closing = sentences[0] + " " + sentences[-1] if len(sentences) > 1 else sentences[0]
         features_b = embed_fn(opening_closing)[:128]     # truncate to 128 dims
     else:
         features_b = np.zeros(128)
-
+    
     # Normalize and concatenate
     features_a_norm = features_a / (np.linalg.norm(features_a) + 1e-8)
     features_b_norm = features_b / (np.linalg.norm(features_b) + 1e-8)
-
+    
     return np.concatenate([features_a_norm, features_b_norm])  # R^136
 ```
 
