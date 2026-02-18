@@ -4,9 +4,9 @@ import {
   getFinishedSession,
   getSession,
   resetProcessRegistryForTests,
-} from "./bash-process-registry";
-import { createExecTool } from "./bash-tools.exec";
-import { killProcessTree } from "./shell-utils";
+} from "./bash-process-registry.js";
+import { createExecTool } from "./bash-tools.exec.js";
+import { killProcessTree } from "./shell-utils.js";
 
 afterEach(() => {
   resetProcessRegistryForTests();
@@ -14,11 +14,18 @@ afterEach(() => {
 
 async function waitForFinishedSession(sessionId: string) {
   let finished = getFinishedSession(sessionId);
-  const deadline = Date.now() + (process.platform === "win32" ? 10_000 : 2_000);
-  while (!finished && Date.now() < deadline) {
-    await sleep(20);
-    finished = getFinishedSession(sessionId);
-  }
+  await expect
+    .poll(
+      () => {
+        finished = getFinishedSession(sessionId);
+        return Boolean(finished);
+      },
+      {
+        timeout: process.platform === "win32" ? 10_000 : 2_000,
+        interval: 20,
+      },
+    )
+    .toBe(true);
   return finished;
 }
 
