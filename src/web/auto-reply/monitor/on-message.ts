@@ -155,16 +155,21 @@ export function createWebOnMessageHandler(params: {
       const triggerPrefix =
         dmCfg.channels?.whatsapp?.triggerPrefix ?? dmCfg.channels?.defaults?.triggerPrefix;
       if (triggerPrefix) {
-        const bodyLower = (msg.body ?? "").trim().toLowerCase();
+        const bodyTrimmed = (msg.body ?? "").trim();
+        const bodyLower = bodyTrimmed.toLowerCase();
         const hasPrefix = bodyLower.startsWith(triggerPrefix.toLowerCase());
+        // Audio messages: let through — dispatch-from-config does audio
+        // preflight (transcribe then prefix check) downstream.
+        // Only audio — images/video/docs stay gated.
+        const isAudioMessage = bodyLower.startsWith("<media:audio");
         // Allow owner slash commands (e.g. /new, /status) without prefix
         const mentionCfg = buildMentionConfig(dmCfg, route.agentId);
         const senderNorm = normalizeE164(msg.senderE164 ?? peerId ?? "");
         const owners = resolveOwnerList(mentionCfg, msg.selfE164 ?? undefined);
         const isOwner = senderNorm ? owners.includes(senderNorm) : false;
-        const cmdBody = (msg.body ?? "").trim();
+        const cmdBody = bodyTrimmed;
         const isSlashCommand = isOwner && hasControlCommand(cmdBody, dmCfg);
-        if (!hasPrefix && !isSlashCommand) {
+        if (!hasPrefix && !isAudioMessage && !isSlashCommand) {
           logVerbose(
             `[dm-gate] REJECT: no prefix → ${msg.senderE164 ?? peerId}: ${msg.body?.substring(0, 80)}`,
           );
