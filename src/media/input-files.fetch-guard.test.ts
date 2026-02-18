@@ -6,6 +6,10 @@ vi.mock("../infra/net/fetch-guard.js", () => ({
   fetchWithSsrFGuard: (...args: unknown[]) => fetchWithSsrFGuardMock(...args),
 }));
 
+async function waitForMicrotaskTurn(): Promise<void> {
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+}
+
 describe("fetchWithGuard", () => {
   it("rejects oversized streamed payloads and cancels the stream", async () => {
     let canceled = false;
@@ -47,7 +51,7 @@ describe("fetchWithGuard", () => {
     ).rejects.toThrow("Content too large");
 
     // Allow cancel() microtask to run.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForMicrotaskTurn();
 
     expect(canceled).toBe(true);
     expect(release).toHaveBeenCalledTimes(1);
@@ -73,7 +77,7 @@ describe("base64 size guards", () => {
     ).rejects.toThrow("Image too large");
 
     // Regression check: the oversize reject must happen before Buffer.from(..., "base64") allocates.
-    const base64Calls = fromSpy.mock.calls.filter((args) => args[1] === "base64");
+    const base64Calls = fromSpy.mock.calls.filter((args) => (args as unknown[])[1] === "base64");
     expect(base64Calls).toHaveLength(0);
     fromSpy.mockRestore();
   });
@@ -97,7 +101,7 @@ describe("base64 size guards", () => {
       }),
     ).rejects.toThrow("File too large");
 
-    const base64Calls = fromSpy.mock.calls.filter((args) => args[1] === "base64");
+    const base64Calls = fromSpy.mock.calls.filter((args) => (args as unknown[])[1] === "base64");
     expect(base64Calls).toHaveLength(0);
     fromSpy.mockRestore();
   });

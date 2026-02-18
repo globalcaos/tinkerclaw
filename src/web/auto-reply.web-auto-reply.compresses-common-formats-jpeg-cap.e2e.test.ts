@@ -3,6 +3,7 @@ import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { monitorWebChannel } from "./auto-reply.js";
 import {
+  createMockWebListener,
   installWebAutoReplyTestHomeHooks,
   installWebAutoReplyUnitTestHooks,
   resetLoadConfigMock,
@@ -28,7 +29,7 @@ describe("web auto-reply", () => {
     let capturedOnMessage: ((msg: WebInboundMessage) => Promise<void>) | undefined;
     const listenerFactory: ListenerFactory = async ({ onMessage }) => {
       capturedOnMessage = onMessage;
-      return { close: vi.fn() };
+      return createMockWebListener();
     };
 
     await monitorWebChannel(false, listenerFactory, false, resolver);
@@ -115,7 +116,7 @@ describe("web auto-reply", () => {
       let capturedOnMessage: ((msg: WebInboundMessage) => Promise<void>) | undefined;
       const listenerFactory: ListenerFactory = async ({ onMessage }) => {
         capturedOnMessage = onMessage;
-        return { close: vi.fn() };
+        return createMockWebListener();
       };
 
       const big = await fmt.make(sharedRaw, { width, height });
@@ -173,7 +174,7 @@ describe("web auto-reply", () => {
     let capturedOnMessage: ((msg: WebInboundMessage) => Promise<void>) | undefined;
     const listenerFactory: ListenerFactory = async ({ onMessage }) => {
       capturedOnMessage = onMessage;
-      return { close: vi.fn() };
+      return createMockWebListener();
     };
 
     const bigPng = await sharp({
