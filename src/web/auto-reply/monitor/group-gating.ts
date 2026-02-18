@@ -152,7 +152,12 @@ export function applyGroupGating(params: {
   );
   const ownerSlashCommand = owner && hasControlCommand(commandBody, params.cfg);
 
-  const prefixPassed = wasMentioned || repliedToBot || ownerSlashCommand;
+  // Audio messages: let through to dispatch-from-config which handles
+  // audio preflight (transcribe → prefix check) downstream.
+  // Only audio — images/video/docs stay gated (no bypass for non-audio media).
+  const isAudioMessage = (params.msg.body ?? "").trim().toLowerCase().startsWith("<media:audio");
+
+  const prefixPassed = wasMentioned || repliedToBot || ownerSlashCommand || isAudioMessage;
 
   params.replyLogger.debug(
     {
