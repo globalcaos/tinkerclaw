@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { logWarnMock, logDebugMock, logInfoMock } = vi.hoisted(() => ({
   logWarnMock: vi.fn(),
@@ -1114,7 +1114,6 @@ describe("QmdMemoryManager", () => {
     await manager.sync({ reason: "manual" });
     expect(writeFileSpy.mock.calls.length).toBe(firstExportWrites);
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
     await fs.writeFile(
       sessionFile,
       '{"type":"message","message":{"role":"user","content":"follow-up update"}}\n',
