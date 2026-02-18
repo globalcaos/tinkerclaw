@@ -5,7 +5,9 @@ import { logVerbose } from "../../../globals.js";
 import { resolveAgentRoute } from "../../../routing/resolve-route.js";
 import { buildGroupHistoryKey } from "../../../routing/session-key.js";
 import { normalizeE164 } from "../../../utils.js";
+import { hasControlCommand } from "../../../auto-reply/command-detection.js";
 import type { MentionConfig } from "../mentions.js";
+import { buildMentionConfig, resolveOwnerList } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
@@ -146,6 +148,28 @@ export function createWebOnMessageHandler(params: {
       // Ensure `peerId` for DMs is stable and stored as E.164 when possible.
       if (!msg.senderE164 && peerId && peerId.startsWith("+")) {
         msg.senderE164 = normalizeE164(peerId) ?? msg.senderE164;
+      }
+
+      // ── DM prefix gate: require triggerPrefix for ALL WhatsApp conversations ──
+      const dmCfg = loadConfig();
+      const triggerPrefix =
+        dmCfg.channels?.whatsapp?.triggerPrefix ?? dmCfg.channels?.defaults?.triggerPrefix;
+      if (triggerPrefix) {
+        const bodyLower = (msg.body ?? "").trim().toLowerCase();
+        const hasPrefix = bodyLower.startsWith(triggerPrefix.toLowerCase());
+        // Allow owner slash commands (e.g. /new, /status) without prefix
+        const mentionCfg = buildMentionConfig(dmCfg, route.agentId);
+        const senderNorm = normalizeE164(msg.senderE164 ?? peerId ?? "");
+        const owners = resolveOwnerList(mentionCfg, msg.selfE164 ?? undefined);
+        const isOwner = senderNorm ? owners.includes(senderNorm) : false;
+        const cmdBody = (msg.body ?? "").trim();
+        const isSlashCommand = isOwner && hasControlCommand(cmdBody, dmCfg);
+        if (!hasPrefix && !isSlashCommand) {
+          logVerbose(
+            `[dm-gate] REJECT: no prefix → ${msg.senderE164 ?? peerId}: ${msg.body?.substring(0, 80)}`,
+          );
+          return;
+        }
       }
     }
 
