@@ -169,10 +169,12 @@ export function toSanitizedMarkdownHtml(markdown: string): string {
     rendered = `<pre class="code-block">${escaped}</pre>`;
   }
   const sanitized = DOMPurify.sanitize(rendered, sanitizeOptions);
+  // Auto-wrap text after **Jarvis:** in jarvis-voice span for purple italic styling.
+  const withVoice = applyJarvisVoiceHtml(sanitized);
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
-    setCachedMarkdown(input, sanitized);
+    setCachedMarkdown(input, withVoice);
   }
-  return sanitized;
+  return withVoice;
 }
 
 // Prevent raw HTML in chat messages from being rendered as formatted HTML.
@@ -189,4 +191,27 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;")
+}
+
+/**
+ * Post-sanitization: wrap text after <strong>Jarvis:</strong> in jarvis-voice span.
+ * Operates on the final HTML after DOMPurify, so no security bypass.
+ * Matches: <strong>Jarvis:</strong> followed by text until end of paragraph.
+ * Skips if already wrapped in jarvis-voice span.
+ */
+function applyJarvisVoiceHtml(html: string): string {
+  if (!html.includes("Jarvis:")) {
+    return html;
+  }
+  // Match <strong>Jarvis:</strong> followed by text, not already wrapped
+  return html.replace(
+    /(<strong>Jarvis:<\/strong>)\s+((?:(?!<span class="jarvis-voice">)[\s\S])*?)(<\/p>|$)/gi,
+    (match, label: string, content: string, closing: string) => {
+      const trimmed = content.trim();
+      if (!trimmed || match.includes('jarvis-voice')) {
+        return match;
+      }
+      return `${label} <span class="jarvis-voice">${trimmed}</span>${closing}`;
+    },
+  );
 }
