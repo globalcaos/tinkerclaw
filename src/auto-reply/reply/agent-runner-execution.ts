@@ -23,6 +23,7 @@ import {
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { defaultRuntime } from "../../runtime.js";
+import { applyJarvisVoiceMarkup } from "./jarvis-voice-markup.js";
 import {
   isMarkdownCapableMessageChannel,
   resolveMessageChannel,
@@ -144,7 +145,7 @@ export async function runAgentTurnWithFallback(params: {
         if (!sanitized.trim()) {
           return { skip: true };
         }
-        return { text: sanitized, skip: false };
+        return { text: applyJarvisVoiceMarkup(sanitized), skip: false };
       };
       const handlePartialForTyping = async (payload: ReplyPayload): Promise<string | undefined> => {
         const { text, skip } = normalizeStreamingText(payload);

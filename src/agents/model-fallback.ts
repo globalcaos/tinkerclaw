@@ -347,17 +347,26 @@ export async function runWithModelFallback<T>(params: {
       if (isLikelyContextOverflowError(errMessage)) {
         throw err;
       }
-      const normalized =
-        coerceToFailoverError(err, {
-          provider: candidate.provider,
-          model: candidate.model,
-        }) ?? err;
-      if (!isFailoverError(normalized)) {
-        throw err;
-      }
+      // Try to classify the error for logging/cooldown purposes.
+      // Even if classification fails, STILL try the next candidate.
+      // The original code threw immediately on unclassified errors,
+      // killing the agent even when fallback providers were available.
+      const normalized = coerceToFailoverError(err, {
+        provider: candidate.provider,
+        model: candidate.model,
+      });
 
-      lastError = normalized;
-      const described = describeFailoverError(normalized);
+      const errorToRecord = normalized ?? err;
+      const described = normalized
+        ? describeFailoverError(normalized)
+        : {
+            message: err instanceof Error ? err.message : String(err),
+            reason: "unclassified" as FailoverReason | undefined,
+            status: undefined,
+            code: undefined,
+          };
+
+      lastError = errorToRecord;
       attempts.push({
         provider: candidate.provider,
         model: candidate.model,
@@ -367,16 +376,22 @@ export async function runWithModelFallback<T>(params: {
         code: described.code,
       });
 
-      // Log failover attempt
+      // Log failover attempt (with unclassified warning)
+      const reasonTag = described.reason ?? "unclassified";
       const nextCandidate = candidates[i + 1];
+      if (!normalized) {
+        console.warn(
+          `[model-fallback] ${candidate.provider}/${candidate.model} failed with UNCLASSIFIED error: ${described.message}`,
+        );
+      }
       if (nextCandidate) {
         console.warn(
-          `[model-fallback] ${candidate.provider}/${candidate.model} failed (${described.reason ?? "error"}), ` +
+          `[model-fallback] ${candidate.provider}/${candidate.model} failed (${reasonTag}), ` +
             `trying ${nextCandidate.provider}/${nextCandidate.model}...`,
         );
       } else {
         console.warn(
-          `[model-fallback] ${candidate.provider}/${candidate.model} failed (${described.reason ?? "error"}), ` +
+          `[model-fallback] ${candidate.provider}/${candidate.model} failed (${reasonTag}), ` +
             `no more fallbacks available`,
         );
       }
@@ -384,7 +399,7 @@ export async function runWithModelFallback<T>(params: {
       await params.onError?.({
         provider: candidate.provider,
         model: candidate.model,
-        error: normalized,
+        error: errorToRecord,
         attempt: i + 1,
         total: candidates.length,
       });

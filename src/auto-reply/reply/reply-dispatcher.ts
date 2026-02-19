@@ -2,6 +2,7 @@ import type { HumanDelayConfig } from "../../config/types.js";
 import { sleep } from "../../utils.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { registerDispatcher } from "./dispatcher-registry.js";
+import { triggerJarvisAutoTts } from "./jarvis-auto-tts.js";
 import { normalizeReplyPayload, type NormalizeReplySkipReason } from "./normalize-reply.js";
 import type { ResponsePrefixContext } from "./response-prefix-template.js";
 import type { TypingController } from "./typing.js";
@@ -198,8 +199,29 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
 
   return {
     sendToolResult: (payload) => enqueue("tool", payload),
-    sendBlockReply: (payload) => enqueue("block", payload),
-    sendFinalReply: (payload) => enqueue("final", payload),
+    sendBlockReply: (payload) => {
+      // Auto-TTS: speak **Jarvis:** lines in block replies too (streaming path)
+      if (typeof payload === "string") {
+        triggerJarvisAutoTts(payload);
+      } else if (payload && !Array.isArray(payload) && "text" in payload) {
+        triggerJarvisAutoTts(payload.text);
+      }
+      return enqueue("block", payload);
+    },
+    sendFinalReply: (payload) => {
+      // Auto-TTS: speak **Jarvis:** lines on final replies (fire-and-forget)
+      if (typeof payload === "string") {
+        triggerJarvisAutoTts(payload);
+      } else if (payload && !Array.isArray(payload) && "text" in payload) {
+        triggerJarvisAutoTts(payload.text);
+      } else if (Array.isArray(payload)) {
+        for (const p of payload) {
+          if (typeof p === "string") {triggerJarvisAutoTts(p);}
+          else if (p && "text" in p) {triggerJarvisAutoTts(p.text);}
+        }
+      }
+      return enqueue("final", payload);
+    },
     waitForIdle: () => sendChain,
     getQueuedCounts: () => ({ ...queuedCounts }),
     markComplete,
