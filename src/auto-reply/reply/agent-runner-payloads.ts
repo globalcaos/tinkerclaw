@@ -5,6 +5,7 @@ import type { OriginatingChannelType } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { ReplyPayload } from "../types.js";
 import { formatBunFetchSocketError, isBunFetchSocketError } from "./agent-runner-utils.js";
+import { applyJarvisVoiceMarkup } from "./jarvis-voice-markup.js";
 import { createBlockReplyPayloadKey, type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { normalizeReplyPayloadDirectives } from "./reply-delivery.js";
 import {
@@ -46,7 +47,7 @@ export function buildReplyPayloads(params: {
         }
 
         if (!text || !text.includes("HEARTBEAT_OK")) {
-          return [{ ...payload, text }];
+          return [{ ...payload, text: text ? applyJarvisVoiceMarkup(text) : text }];
         }
         const stripped = stripHeartbeatToken(text, { mode: "message" });
         if (stripped.didStrip && !didLogHeartbeatStrip) {
@@ -57,7 +58,7 @@ export function buildReplyPayloads(params: {
         if (stripped.shouldSkip && !hasMedia) {
           return [];
         }
-        return [{ ...payload, text: stripped.text }];
+        return [{ ...payload, text: stripped.text ? applyJarvisVoiceMarkup(stripped.text) : stripped.text }];
       });
 
   const replyTaggedPayloads: ReplyPayload[] = applyReplyThreading({

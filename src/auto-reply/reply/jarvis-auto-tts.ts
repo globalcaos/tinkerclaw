@@ -29,7 +29,7 @@ function cleanDedup() {
  * Call this fire-and-forget on final payloads only.
  */
 export function triggerJarvisAutoTts(text: string | undefined): void {
-  if (!text) return;
+  if (!text) {return;}
 
   try { appendFileSync("/tmp/jarvis-tts-debug.log", `[${new Date().toISOString()}] INPUT: ${JSON.stringify(text.slice(0, 500))}\n`); } catch {};
 
@@ -43,19 +43,19 @@ export function triggerJarvisAutoTts(text: string | undefined): void {
     if (spoken) {
       // Strip HTML tags (jarvis-voice spans etc.) for clean speech
       const clean = spoken.replace(/<[^>]+>/g, "").trim();
-      if (clean) matches.push(clean);
+      if (clean) {matches.push(clean);}
     }
   }
 
   try { appendFileSync("/tmp/jarvis-tts-debug.log", `[${new Date().toISOString()}] MATCHES: ${JSON.stringify(matches)}\n`); } catch {};
-  if (matches.length === 0) return;
+  if (matches.length === 0) {return;}
 
   const combined = matches.join(". ");
 
   // Dedup check
   cleanDedup();
   const key = combined.slice(0, 200);
-  if (recentSpoken.has(key)) return;
+  if (recentSpoken.has(key)) {return;}
   recentSpoken.set(key, Date.now());
 
   // Fire and forget — detached subprocess so it survives reply completion
