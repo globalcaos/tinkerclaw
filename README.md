@@ -9,8 +9,8 @@ Every AI agent today handles long conversations the same way: when context gets 
 This fork replaces compaction with **cognitive memory** — a system that organizes, retrieves, and consolidates knowledge the way humans do. The result: **60-80% fewer tokens per session**, because the agent loads only what it needs instead of everything it has.
 
 [![Built on OpenClaw](https://img.shields.io/badge/built%20on-OpenClaw-blue?logo=github)](https://github.com/openclaw/openclaw)
-[![Skills on ClawHub](https://img.shields.io/badge/skills-12%20published-purple)](https://clawhub.com)
-[![Downloads](https://img.shields.io/badge/downloads-4%2C700%2B-green)](https://clawhub.com)
+[![Skills on ClawHub](https://img.shields.io/badge/skills-16%20published-purple)](https://clawhub.com)
+[![Downloads](https://img.shields.io/badge/downloads-5%2C400%2B-green)](https://clawhub.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [ClawHub Skills](https://clawhub.com) · [Memory Architecture Proposal](https://github.com/openclaw/openclaw/issues/13991) · [Research Papers](docs/papers/)
@@ -115,6 +115,7 @@ All available on [ClawHub](https://clawhub.com). Install any skill with `clawhub
 | 🧠 [agent-memory-ultimate](https://clawhub.com/globalcaos/agent-memory-ultimate)         | Cognitive memory with vector search, knowledge graphs, RAPTOR hierarchy. The core of the 60-80% token savings. |
 | 🛡️ [agent-boundaries-ultimate](https://clawhub.com/globalcaos/agent-boundaries-ultimate) | AI safety, security boundaries, privacy, ethics, OPSEC. Beyond Asimov's Three Laws.                            |
 | 😄 [ai-humor-ultimate](https://clawhub.com/globalcaos/ai-humor-ultimate)                 | 12 humor patterns for AI agents based on embedding space bisociation theory.                                   |
+| 🧪 [memory-pioneer](https://clawhub.com/globalcaos/memory-pioneer)                       | Benchmark your agent's memory. Contribute anonymized scores to open research.                                  |
 
 ### Communication & Messaging
 
@@ -134,11 +135,14 @@ All available on [ClawHub](https://clawhub.com). Install any skill with `clawhub
 
 ### Operations & Security
 
-| Skill                                                                                | Description                                                       |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| 🔒 [shell-security-ultimate](https://clawhub.com/globalcaos/shell-security-ultimate) | Command risk classification (SAFE → CRITICAL). Audit logging.     |
-| 📊 [token-panel-ultimate](https://clawhub.com/globalcaos/token-panel-ultimate)       | Track usage across Claude, ChatGPT, Gemini, Manus. One dashboard. |
-| 💊 [healthcheck](https://clawhub.com/globalcaos/healthcheck)                         | Track water intake and sleep with JSON storage.                   |
+| Skill                                                                                                | Description                                                         |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 🔒 [shell-security-ultimate](https://clawhub.com/globalcaos/shell-security-ultimate)                 | Command risk classification (SAFE → CRITICAL). Audit logging.       |
+| 📊 [token-panel-ultimate](https://clawhub.com/globalcaos/token-panel-ultimate)                       | Track usage across Claude, ChatGPT, Gemini, Manus. One dashboard.   |
+| 💊 [healthcheck](https://clawhub.com/globalcaos/healthcheck)                                         | Track water intake and sleep with JSON storage.                     |
+| 💰 [token-efficiency-guide](https://clawhub.com/globalcaos/token-efficiency-guide)                   | Go from weekly limit on Tuesday to weekly limit on Sunday.          |
+| 🔍 [fork-and-skill-scanner-ultimate](https://clawhub.com/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
+| 👁️ [subagent-overseer](https://clawhub.com/globalcaos/subagent-overseer)                             | Pull-based sub-agent monitor. Zero tokens. Pure bash + /proc.       |
 
 ---
 
