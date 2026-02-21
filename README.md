@@ -123,7 +123,6 @@ All available on [ClawHub](https://clawhub.com). Install any skill with `clawhub
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
 | 💬 [whatsapp-ultimate](https://clawhub.com/globalcaos/whatsapp-ultimate) | Full WhatsApp: messages, media, polls, voice notes, reactions, FTS5 history search. |
 | 📧 [outlook-hack](https://clawhub.com/globalcaos/outlook-hack)           | Outlook email via browser session. Read, search, draft. Send blocked by code.       |
-| 💼 [linkedin-inbox](https://clawhub.com/globalcaos/linkedin-inbox)       | LinkedIn inbox monitoring, auto-draft responses, approval workflows.                |
 
 ### Media & Content
 
@@ -139,7 +138,6 @@ All available on [ClawHub](https://clawhub.com). Install any skill with `clawhub
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | 🔒 [shell-security-ultimate](https://clawhub.com/globalcaos/shell-security-ultimate)                 | Command risk classification (SAFE → CRITICAL). Audit logging.       |
 | 📊 [token-panel-ultimate](https://clawhub.com/globalcaos/token-panel-ultimate)                       | Track usage across Claude, ChatGPT, Gemini, Manus. One dashboard.   |
-| 💊 [healthcheck](https://clawhub.com/globalcaos/healthcheck)                                         | Track water intake and sleep with JSON storage.                     |
 | 💰 [token-efficiency-guide](https://clawhub.com/globalcaos/token-efficiency-guide)                   | Go from weekly limit on Tuesday to weekly limit on Sunday.          |
 | 🔍 [fork-and-skill-scanner-ultimate](https://clawhub.com/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
 | 👁️ [subagent-overseer](https://clawhub.com/globalcaos/subagent-overseer)                             | Pull-based sub-agent monitor. Zero tokens. Pure bash + /proc.       |
