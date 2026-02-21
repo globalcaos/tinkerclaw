@@ -16,6 +16,7 @@
 import { execSync } from "node:child_process";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginRegistry } from "./registry.js";
+import type { PluginHookAfterToolCallEvent, PluginHookToolContext } from "./types.js";
 
 const log = createSubsystemLogger("hippocampus");
 
@@ -68,13 +69,13 @@ function hippocampusSearch(query: string, maxResults = 8): unknown[] {
  * Called from cognitive-hooks.ts or directly from the fork's startup.
  */
 export function registerHippocampusHook(registry: PluginRegistry): void {
-  registry.registerHook("after_tool_call", {
+  registry.typedHooks.push({
     pluginId: "hippocampus",
-    handler: async (event: {
-      toolName: string;
-      params?: Record<string, unknown>;
-      result?: { content?: string };
-    }) => {
+    hookName: "after_tool_call",
+    handler: async (
+      event: PluginHookAfterToolCallEvent,
+      _ctx: PluginHookToolContext,
+    ): Promise<void> => {
       if (event.toolName !== "memory_search") {
         return;
       }
@@ -91,7 +92,13 @@ export function registerHippocampusHook(registry: PluginRegistry): void {
         }
 
         // Parse existing results and merge
-        const existing = JSON.parse(event.result?.content ?? "{}");
+        const resultStr =
+          typeof event.result === "string"
+            ? event.result
+            : typeof event.result === "object" && event.result !== null
+              ? (event.result as { content?: string }).content ?? JSON.stringify(event.result)
+              : "{}";
+        const existing = JSON.parse(resultStr);
         if (!existing.results || !Array.isArray(existing.results)) {
           return;
         }
@@ -114,14 +121,18 @@ export function registerHippocampusHook(registry: PluginRegistry): void {
         // Re-sort by score descending
         existing.results.sort((a: { score: number }, b: { score: number }) => b.score - a.score);
 
-        // Update the result
+        // Tag the merge
         existing.hippocampus = { merged: hippoResults.length };
-        event.result = { content: JSON.stringify(existing) };
+
+        // Mutate result in-place for the hook system to pick up
+        (event as { result?: unknown }).result = { content: JSON.stringify(existing) };
       } catch {
         log.debug("hippocampus merge failed (non-fatal)");
       }
     },
-  });
+    priority: 50,
+    source: "bundled:hippocampus",
+  } as (typeof registry.typedHooks)[0]);
 
   log.info("HIPPOCAMPUS hook registered (fork-isolated)");
 }
