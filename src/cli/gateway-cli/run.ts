@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
-import type { GatewayAuthMode } from "../../config/config.js";
+import type { GatewayAuthMode, GatewayTailscaleMode } from "../../config/config.js";
 import {
   CONFIG_PATH,
   loadConfig,
@@ -19,13 +19,18 @@ import { formatPortDiagnostics, inspectPortUsage } from "../../infra/ports.js";
 import { setConsoleSubsystemFilter, setConsoleTimestampPrefix } from "../../logging/console.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { defaultRuntime } from "../../runtime.js";
+import {
+  startGatewayContainer,
+  stopGatewayContainer,
+  isGatewayContainerRunning,
+  getGatewayContainerLogs,
+} from "../../security/gateway-container.js";
+import { startSecretsProxy } from "../../security/secrets-proxy.js";
 import { formatCliCommand } from "../command-format.js";
 import { inheritOptionFromParent } from "../command-options.js";
 import { forceFreePortAndWait } from "../ports.js";
 import { ensureDevGatewayConfig } from "./dev.js";
 import { runGatewayLoop } from "./run-loop.js";
-import { startSecretsProxy } from "../../security/secrets-proxy.js";
-import { startGatewayContainer, stopGatewayContainer, isGatewayContainerRunning, getGatewayContainerLogs } from "../../security/gateway-container.js";
 import {
   describeUnknownError,
   extractGatewayMiskeys,
@@ -196,7 +201,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     return;
   }
   const tailscaleRaw = toOptionString(opts.tailscale);
-  const tailscaleMode =
+  const tailscaleMode: GatewayTailscaleMode | null =
     tailscaleRaw === "off" || tailscaleRaw === "serve" || tailscaleRaw === "funnel"
       ? tailscaleRaw
       : null;
@@ -242,14 +247,17 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   }
 
   const miskeys = extractGatewayMiskeys(snapshot?.parsed);
-  const authConfig = {
-    ...cfg.gateway?.auth,
-    ...(authMode ? { mode: authMode } : {}),
-    ...(passwordRaw ? { password: passwordRaw } : {}),
-    ...(tokenRaw ? { token: tokenRaw } : {}),
-  };
+  const authOverride =
+    authMode || passwordRaw || tokenRaw || authModeRaw
+      ? {
+          ...(authMode ? { mode: authMode } : {}),
+          ...(tokenRaw ? { token: tokenRaw } : {}),
+          ...(passwordRaw ? { password: passwordRaw } : {}),
+        }
+      : undefined;
   const resolvedAuth = resolveGatewayAuth({
-    authConfig,
+    authConfig: cfg.gateway?.auth,
+    authOverride,
     env: process.env,
     tailscaleMode: tailscaleMode ?? cfg.gateway?.tailscale?.mode ?? "off",
   });
@@ -260,6 +268,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   const hasPassword = typeof passwordValue === "string" && passwordValue.trim().length > 0;
   const hasSharedSecret =
     (resolvedAuthMode === "token" && hasToken) || (resolvedAuthMode === "password" && hasPassword);
+  const canBootstrapToken = resolvedAuthMode === "token" && !hasToken;
   const authHints: string[] = [];
   if (miskeys.hasGatewayToken) {
     authHints.push('Found "gateway.token" in config. Use "gateway.auth.token" instead.');
@@ -268,19 +277,6 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     authHints.push(
       '"gateway.remote.token" is for remote CLI calls; it does not enable local gateway auth.',
     );
-  }
-  if (resolvedAuthMode === "token" && !hasToken && !resolvedAuth.allowTailscale) {
-    defaultRuntime.error(
-      [
-        "Gateway auth is set to token, but no token is configured.",
-        "Set gateway.auth.token (or OPENCLAW_GATEWAY_TOKEN), or pass --token.",
-        ...authHints,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-    defaultRuntime.exit(1);
-    return;
   }
   if (resolvedAuthMode === "password" && !hasPassword) {
     defaultRuntime.error(
@@ -295,7 +291,17 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.exit(1);
     return;
   }
-  if (bind !== "loopback" && !hasSharedSecret && resolvedAuthMode !== "trusted-proxy") {
+  if (resolvedAuthMode === "none") {
+    gatewayLog.warn(
+      "Gateway auth mode=none explicitly configured; all gateway connections are unauthenticated.",
+    );
+  }
+  if (
+    bind !== "loopback" &&
+    !hasSharedSecret &&
+    !canBootstrapToken &&
+    resolvedAuthMode !== "trusted-proxy"
+  ) {
     defaultRuntime.error(
       [
         `Refusing to bind gateway to ${bind} without auth.`,
@@ -308,17 +314,24 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.exit(1);
     return;
   }
+  const tailscaleOverride =
+    tailscaleMode || opts.tailscaleResetOnExit
+      ? {
+          ...(tailscaleMode ? { mode: tailscaleMode } : {}),
+          ...(opts.tailscaleResetOnExit ? { resetOnExit: true } : {}),
+        }
+      : undefined;
 
   try {
     if (opts.secure) {
       gatewayLog.info("Starting in SECURE mode (Docker + Secrets Proxy)");
-      
+
       // Set secure mode environment variable for this process
       process.env.OPENCLAW_SECURE_MODE = "1";
-      
+
       const proxyPort = 8080;
       const proxyUrl = `http://host.docker.internal:${proxyPort}`;
-      
+
       // Start secrets proxy first
       let proxyServer: Awaited<ReturnType<typeof startSecretsProxy>>;
       try {
@@ -329,7 +342,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         defaultRuntime.exit(1);
         return;
       }
-      
+
       // Start gateway container
       let containerName: string;
       try {
@@ -346,22 +359,22 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         defaultRuntime.exit(1);
         return;
       }
-      
+
       // P1 Fix: Wait for container to be ready with timeout
       const HEALTH_CHECK_INTERVAL = 1000;
       const HEALTH_CHECK_TIMEOUT = 30000;
       const startTime = Date.now();
       let containerReady = false;
-      
+
       while (Date.now() - startTime < HEALTH_CHECK_TIMEOUT) {
         const isRunning = await isGatewayContainerRunning();
         if (isRunning) {
           containerReady = true;
           break;
         }
-        await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
+        await new Promise((resolve) => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
       }
-      
+
       if (!containerReady) {
         gatewayLog.error("Gateway container failed to start within timeout");
         const logs = await getGatewayContainerLogs(20);
@@ -371,9 +384,9 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         defaultRuntime.exit(1);
         return;
       }
-      
+
       gatewayLog.info("Gateway container is ready and healthy");
-      
+
       // Set up graceful shutdown handlers
       const shutdown = async () => {
         gatewayLog.info("Shutting down secure gateway...");
@@ -391,16 +404,16 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         }
         defaultRuntime.exit(0);
       };
-      
+
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
-      
+
       gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
-      
+
       // P1 Fix: Monitor container health periodically
       const healthCheckLoop = async () => {
         while (true) {
-          await new Promise(resolve => setTimeout(resolve, 10000)); // Check every 10s
+          await new Promise((resolve) => setTimeout(resolve, 10000)); // Check every 10s
           const isRunning = await isGatewayContainerRunning();
           if (!isRunning) {
             gatewayLog.error("Gateway container stopped unexpectedly");
@@ -411,36 +424,22 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           }
         }
       };
-      
+
       // Run health check loop (non-blocking)
       void healthCheckLoop();
-      
+
       // Keep process alive
       await new Promise(() => {});
       return;
     }
-
 
     await runGatewayLoop({
       runtime: defaultRuntime,
       start: async () =>
         await startGatewayServer(port, {
           bind,
-          auth:
-            authMode || passwordRaw || tokenRaw || authModeRaw
-              ? {
-                  mode: authMode ?? undefined,
-                  token: tokenRaw,
-                  password: passwordRaw,
-                }
-              : undefined,
-          tailscale:
-            tailscaleMode || opts.tailscaleResetOnExit
-              ? {
-                  mode: tailscaleMode ?? undefined,
-                  resetOnExit: Boolean(opts.tailscaleResetOnExit),
-                }
-              : undefined,
+          auth: authOverride,
+          tailscale: tailscaleOverride,
         }),
     });
   } catch (err) {
