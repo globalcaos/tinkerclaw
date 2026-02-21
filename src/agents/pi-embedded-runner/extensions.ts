@@ -22,6 +22,16 @@ import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { setIngestionRuntime } from "../pi-extensions/ingestion-runtime.js";
 import { setRetrievalRuntime } from "../pi-extensions/retrieval-runtime.js";
+import { createCortexRuntime, setCortexRuntime } from "../pi-extensions/cortex-runtime.js";
+import {
+  createObservationExtractor,
+  setObservationRuntime,
+} from "../pi-extensions/observation-runtime.js";
+import { initReflectionRuntime } from "../pi-extensions/reflection-runtime.js";
+import {
+  createSynapseRuntime,
+  setSynapseRuntime,
+} from "../pi-extensions/synapse-runtime.js";
 
 function resolveContextWindowTokens(params: {
   cfg: OpenClawConfig | undefined;
@@ -110,6 +120,23 @@ export function buildEmbeddedExtensionFactories(params: {
     // accessible via getPointerCompactionRuntime(sessionManager).
     const ptrHandler = createPointerCompactionHandler(eventStore);
     setPointerCompactionRuntime(params.sessionManager, ptrHandler);
+
+    // Phase 1.5: wire compaction self-reflection loop.
+    // After every compact() call, invoke getReflectionRuntime(sessionManager)?.reflect(...)
+    // to produce a structured learning record stored as a system_event.
+    initReflectionRuntime(params.sessionManager, eventStore);
+
+    // Phase 5: wire SYNAPSE multi-model debate runtime using the same event
+    // store so debate traces land in the ENGRAM event log automatically.
+    setSynapseRuntime(createSynapseRuntime(eventStore));
+
+    // Phase 3 (CORTEX): wire persona state injection, SyncScore, drift detection,
+    // and observation extraction into the engram runtime.
+    const cortexRuntime = createCortexRuntime();
+    setCortexRuntime(params.sessionManager, cortexRuntime);
+
+    const observationRuntime = createObservationExtractor(eventStore);
+    setObservationRuntime(params.sessionManager, observationRuntime);
 
     factories.push(compactionEngramExtension);
   } else if (compactionMode === "safeguard") {
