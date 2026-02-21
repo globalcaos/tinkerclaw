@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -12,6 +14,8 @@ import { computeEffectiveSettings } from "../pi-extensions/context-pruning/setti
 import { makeToolPrunablePredicate } from "../pi-extensions/context-pruning/tools.js";
 import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "./cache-ttl.js";
+import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
+import { setIngestionRuntime } from "../pi-extensions/ingestion-runtime.js";
 
 function resolveContextWindowTokens(params: {
   cfg: OpenClawConfig | undefined;
@@ -79,6 +83,16 @@ export function buildEmbeddedExtensionFactories(params: {
   const factories: ExtensionFactory[] = [];
   const compactionMode = resolveCompactionMode(params.cfg);
   if (compactionMode === "engram") {
+    // Initialise the ENGRAM ingestion pipeline for this session.
+    // Phase 1.1b will call getIngestionRuntime(sessionManager) from
+    // agent-runner-execution.ts to hook every turn event.
+    const engramBaseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
+    mkdirSync(engramBaseDir, { recursive: true });
+    const smInternal = params.sessionManager as unknown as { sessionId?: string };
+    const sessionKey = smInternal.sessionId ?? "default";
+    const pipeline = createIngestionPipeline({ baseDir: engramBaseDir, sessionKey });
+    setIngestionRuntime(params.sessionManager, pipeline);
+
     factories.push(compactionEngramExtension);
   } else if (compactionMode === "safeguard") {
     const compactionCfg = params.cfg?.agents?.defaults?.compaction;
