@@ -15,10 +15,12 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { EventStore } from "../../memory/engram/event-store.js";
+import { createEventStore } from "../../memory/engram/event-store.js";
 import { createTimeRangeMarker, renderMarker } from "../../memory/engram/time-range-marker.js";
 import type { EventKind, MemoryEvent } from "../../memory/engram/event-types.js";
-import { EngramMetrics } from "../../memory/engram/metrics.js";
+import { createMetricsCollector } from "../../memory/engram/metrics.js";
+import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 
 /** Map Pi agent message roles to ENGRAM event kinds. */
 function roleToEventKind(role: string, isError?: boolean): EventKind {
@@ -40,7 +42,7 @@ function roleToEventKind(role: string, isError?: boolean): EventKind {
 
 /** Extract text content from a Pi agent message. */
 function extractMessageText(msg: AgentMessage): string {
-  const content = (msg as Record<string, unknown>).content;
+  const content = (msg as unknown as Record<string, unknown>).content;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
@@ -79,17 +81,19 @@ export default function compactionEngramExtension(api: ExtensionAPI): void {
     }
 
     // 1. Persist all messages to ENGRAM event store
-    const store = new EventStore();
-    const metrics = new EngramMetrics();
+    const baseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
+    mkdirSync(baseDir, { recursive: true });
+    const store = createEventStore({ baseDir, sessionKey: "compaction" });
+    const metrics = createMetricsCollector({ baseDir });
     const events: MemoryEvent[] = [];
     let totalTokens = 0;
     const topicHints: string[] = [];
 
     for (let i = 0; i < allMessages.length; i++) {
-      const msg = allMessages[i] as AgentMessage & Record<string, unknown>;
+      const msg = allMessages[i] as unknown as Record<string, unknown>;
       const role = String(msg.role ?? "system");
       const isError = msg.isError === true;
-      const text = extractMessageText(msg);
+      const text = extractMessageText(allMessages[i]);
       const tokens = estimateTokens(text);
       totalTokens += tokens;
 
@@ -97,6 +101,7 @@ export default function compactionEngramExtension(api: ExtensionAPI): void {
         kind: roleToEventKind(role, isError),
         content: text,
         tokens,
+        turnId: i,
         sessionKey: "live",
         metadata: {
           tags: role === "toolResult" && msg.toolName ? [String(msg.toolName)] : undefined,

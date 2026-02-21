@@ -4,6 +4,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { setCompactionSafeguardRuntime } from "../pi-extensions/compaction-safeguard-runtime.js";
+import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
 import compactionSafeguardExtension from "../pi-extensions/compaction-safeguard.js";
 import contextPruningExtension from "../pi-extensions/context-pruning.js";
 import { setContextPruningRuntime } from "../pi-extensions/context-pruning/runtime.js";
@@ -77,7 +78,9 @@ export function buildEmbeddedExtensionFactories(params: {
 }): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   const compactionMode = resolveCompactionMode(params.cfg);
-  if (compactionMode === "safeguard") {
+  if (compactionMode === "engram") {
+    factories.push(compactionEngramExtension);
+  } else if (compactionMode === "safeguard") {
     const compactionCfg = params.cfg?.agents?.defaults?.compaction;
     const contextWindowInfo = resolveContextWindowInfo({
       cfg: params.cfg,
