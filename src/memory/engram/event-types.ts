@@ -24,6 +24,8 @@ export interface EventMetadata {
 	tags?: string[];
 	artifactId?: string;
 	embeddingStatus?: "pending" | "complete" | "failed";
+	/** Importance score: 1–10. Higher = more valuable for recall (default 5). */
+	importance?: number;
 }
 
 export interface MemoryEvent {
