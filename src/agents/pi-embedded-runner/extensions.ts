@@ -7,6 +7,10 @@ import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { setCompactionSafeguardRuntime } from "../pi-extensions/compaction-safeguard-runtime.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
+import {
+  createPointerCompactionHandler,
+  setPointerCompactionRuntime,
+} from "../pi-extensions/pointer-compaction-runtime.js";
 import compactionSafeguardExtension from "../pi-extensions/compaction-safeguard.js";
 import contextPruningExtension from "../pi-extensions/context-pruning.js";
 import { setContextPruningRuntime } from "../pi-extensions/context-pruning/runtime.js";
@@ -15,7 +19,9 @@ import { makeToolPrunablePredicate } from "../pi-extensions/context-pruning/tool
 import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "./cache-ttl.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
+import { createEventStore } from "../../memory/engram/event-store.js";
 import { setIngestionRuntime } from "../pi-extensions/ingestion-runtime.js";
+import { setRetrievalRuntime } from "../pi-extensions/retrieval-runtime.js";
 
 function resolveContextWindowTokens(params: {
   cfg: OpenClawConfig | undefined;
@@ -92,6 +98,18 @@ export function buildEmbeddedExtensionFactories(params: {
     const sessionKey = smInternal.sessionId ?? "default";
     const pipeline = createIngestionPipeline({ baseDir: engramBaseDir, sessionKey });
     setIngestionRuntime(params.sessionManager, pipeline);
+
+    // Phase 1.2: wire retrieval runtime alongside ingestion pipeline.
+    // getRetrievalRuntime(sessionManager) will be called by retrieval-aware
+    // turn hooks to inject the assembled pack into each turn's system prompt.
+    const eventStore = createEventStore({ baseDir: engramBaseDir, sessionKey });
+    setRetrievalRuntime(params.sessionManager, { eventStore });
+
+    // Phase 1.3: register pointer compaction handler as a feature-flagged
+    // alternative to narrative compaction. Works alongside compaction-engram.ts;
+    // accessible via getPointerCompactionRuntime(sessionManager).
+    const ptrHandler = createPointerCompactionHandler(eventStore);
+    setPointerCompactionRuntime(params.sessionManager, ptrHandler);
 
     factories.push(compactionEngramExtension);
   } else if (compactionMode === "safeguard") {
