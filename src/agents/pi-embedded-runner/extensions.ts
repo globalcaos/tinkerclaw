@@ -27,6 +27,10 @@ import {
   createObservationExtractor,
   setObservationRuntime,
 } from "../pi-extensions/observation-runtime.js";
+import {
+  createLimbicRuntime,
+  setLimbicRuntime,
+} from "../pi-extensions/limbic-runtime.js";
 import { initReflectionRuntime } from "../pi-extensions/reflection-runtime.js";
 import {
   createSynapseRuntime,
@@ -137,6 +141,10 @@ export function buildEmbeddedExtensionFactories(params: {
 
     const observationRuntime = createObservationExtractor(eventStore);
     setObservationRuntime(params.sessionManager, observationRuntime);
+
+    // Phase 4 (LIMBIC): wire humor pipeline using CORTEX for audience modeling.
+    const limbicRuntime = createLimbicRuntime(eventStore, {}, cortexRuntime);
+    setLimbicRuntime(params.sessionManager, limbicRuntime);
 
     factories.push(compactionEngramExtension);
   } else if (compactionMode === "safeguard") {
