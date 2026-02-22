@@ -1,0 +1,62 @@
+{
+  "generated": "2026-02-08",
+  "note": "Sample data for visualization. Replace with real ClawHub API data when available.",
+  "skills": {
+    "youtube-ultimate": {
+      "version": "1.0.2",
+      "published": "2026-02-05",
+      "downloads": [
+        {"date": "2026-02-05", "count": 12},
+        {"date": "2026-02-06", "count": 28},
+        {"date": "2026-02-07", "count": 45},
+        {"date": "2026-02-08", "count": 67}
+      ],
+      "total": 152
+    },
+    "whatsapp-ultimate": {
+      "version": "1.1.1",
+      "published": "2026-02-04",
+      "downloads": [
+        {"date": "2026-02-04", "count": 8},
+        {"date": "2026-02-05", "count": 22},
+        {"date": "2026-02-06", "count": 38},
+        {"date": "2026-02-07", "count": 51},
+        {"date": "2026-02-08", "count": 73}
+      ],
+      "total": 192
+    },
+    "agent-memory-ultimate": {
+      "version": "2.0.1",
+      "published": "2026-02-06",
+      "downloads": [
+        {"date": "2026-02-06", "count": 15},
+        {"date": "2026-02-07", "count": 34},
+        {"date": "2026-02-08", "count": 52}
+      ],
+      "total": 101
+    },
+    "agent-boundaries-ultimate": {
+      "version": "1.2.1",
+      "published": "2026-02-07",
+      "downloads": [
+        {"date": "2026-02-07", "count": 18},
+        {"date": "2026-02-08", "count": 41}
+      ],
+      "total": 59
+    },
+    "shell-security-ultimate": {
+      "version": "1.0.0",
+      "published": "2026-02-07",
+      "downloads": [
+        {"date": "2026-02-07", "count": 11},
+        {"date": "2026-02-08", "count": 29}
+      ],
+      "total": 40
+    }
+  },
+  "totals": {
+    "all_skills": 544,
+    "daily_average": 45,
+    "growth_rate": "23% day-over-day"
+  }
+}

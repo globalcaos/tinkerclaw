@@ -1,0 +1,17 @@
+[Unit]
+Description=Budget Collector - AI Usage Tracking
+After=network.target
+
+[Service]
+Type=simple
+User=globalcaos
+WorkingDirectory=/home/globalcaos/src/budget-collector
+ExecStart=/home/globalcaos/.local/bin/uvicorn api:app --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
