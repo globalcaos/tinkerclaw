@@ -610,15 +610,21 @@ export function buildAgentSystemPrompt(params: {
     (file) => typeof file.path === "string" && file.path.trim().length > 0,
   );
   if (validContextFiles.length > 0) {
-    const hasSoulFile = validContextFiles.some((file) => {
-      const normalizedPath = file.path.trim().replace(/\\/g, "/");
-      const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
-      return baseName.toLowerCase() === "soul.md";
-    });
+    const hasFile = (name: string) =>
+      validContextFiles.some((file) => {
+        const normalizedPath = file.path.trim().replace(/\\/g, "/");
+        const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
+        return baseName.toLowerCase() === name.toLowerCase();
+      });
     lines.push("# Project Context", "", "The following project context files have been loaded:");
-    if (hasSoulFile) {
+    if (hasFile("SOUL.md")) {
       lines.push(
         "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.",
+      );
+    }
+    if (hasFile("VOICE.md")) {
+      lines.push(
+        "If VOICE.md is present, follow its voice output rules strictly. Every response must include voice output as specified.",
       );
     }
     lines.push("");
