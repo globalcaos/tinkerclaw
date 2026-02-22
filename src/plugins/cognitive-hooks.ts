@@ -161,7 +161,11 @@ export function registerCognitiveHooks(
       try {
         await ensureModules();
         const personaState = loadPersonaState();
-        const injectionResult = _injectionModule.injectPersonaState(personaState, 1500);
+        // Skip identity/voice injection when SOUL.md is present (already in workspace context)
+        const hasSoulFile = _ctx.workspaceDir
+          ? existsSync(join(_ctx.workspaceDir, "SOUL.md"))
+          : false;
+        const injectionResult = _injectionModule.injectPersonaState(personaState, 1500, { hasSoulFile });
         if (injectionResult.blocks.length > 0) {
           const prependContext = injectionResult.blocks
             .map((b: { content: string }) => b.content)
