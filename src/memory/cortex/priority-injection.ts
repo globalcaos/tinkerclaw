@@ -50,12 +50,31 @@ export interface InjectionResult {
 // Rendering sub-tiers
 // ---------------------------------------------------------------------------
 
+export interface RenderTier1AOptions {
+	/** When true, skip identity & voice sections already covered by SOUL.md. */
+	hasSoulFile?: boolean;
+}
+
 /** Tier 1A: immutable core — name, identity, hard rules, core voice markers. */
-export function renderTier1A(ps: PersonaState): string {
-	const lines: string[] = [
-		`# Persona: ${ps.name} (v${ps.version})`,
-		`## Identity\n${ps.identityStatement}`,
-	];
+export function renderTier1A(ps: PersonaState, opts?: RenderTier1AOptions): string {
+	const lines: string[] = [];
+
+	if (!opts?.hasSoulFile) {
+		// Identity & voice only injected when SOUL.md is absent
+		lines.push(
+			`# Persona: ${ps.name} (v${ps.version})`,
+			`## Identity\n${ps.identityStatement}`,
+		);
+
+		const vm = ps.voiceMarkers;
+		lines.push(
+			`## Voice (core)\n` +
+				`- Avg sentence length: ${vm.avgSentenceLength} words\n` +
+				`- Vocabulary: ${vm.vocabularyTier}\n` +
+				`- Hedging: ${vm.hedgingLevel}\n` +
+				`- Emoji: ${vm.emojiUsage}`,
+		);
+	}
 
 	if (ps.hardRules.length > 0) {
 		lines.push(
@@ -64,17 +83,8 @@ export function renderTier1A(ps: PersonaState): string {
 		);
 	}
 
-	const vm = ps.voiceMarkers;
-	lines.push(
-		`## Voice (core)\n` +
-			`- Avg sentence length: ${vm.avgSentenceLength} words\n` +
-			`- Vocabulary: ${vm.vocabularyTier}\n` +
-			`- Hedging: ${vm.hedgingLevel}\n` +
-			`- Emoji: ${vm.emojiUsage}`,
-	);
-
-	if (vm.forbiddenPhrases.length > 0) {
-		lines.push(`- FORBIDDEN: ${vm.forbiddenPhrases.join(", ")}`);
+	if (ps.voiceMarkers.forbiddenPhrases.length > 0) {
+		lines.push(`- FORBIDDEN: ${ps.voiceMarkers.forbiddenPhrases.join(", ")}`);
 	}
 
 	return lines.join("\n\n");
@@ -146,14 +156,24 @@ export function renderTier1C(ps: PersonaState): string {
  * @param contextWindow - Total context window size in tokens
  * @returns Injection blocks ready to insert into the push pack
  */
+export interface InjectPersonaOptions {
+	/** When true, skip identity & voice sections already covered by SOUL.md. */
+	hasSoulFile?: boolean;
+	/** When true, skip relational state (Tier 1C) injection. */
+	skipRelational?: boolean;
+}
+
 export function injectPersonaState(
 	ps: PersonaState,
 	contextWindow: number,
+	opts?: InjectPersonaOptions,
 ): InjectionResult {
 	const totalBudget = Math.floor(contextWindow * CORTEX_PERSONA_CONFIG.maxBudgetFraction);
 
+	const skipRelational = opts?.skipRelational || opts?.hasSoulFile;
+
 	// Try full render first
-	const fullContent = [renderTier1A(ps), renderTier1B(ps), renderTier1C(ps)]
+	const fullContent = [renderTier1A(ps, opts), renderTier1B(ps), skipRelational ? "" : renderTier1C(ps)]
 		.filter(Boolean)
 		.join("\n\n");
 	const fullTokens = estimateTokens(fullContent);
@@ -168,7 +188,7 @@ export function injectPersonaState(
 	}
 
 	// Tiered fallback: always include 1A, then 1B/1C if they fit
-	const content1A = renderTier1A(ps);
+	const content1A = renderTier1A(ps, opts);
 	const content1B = renderTier1B(ps);
 	const content1C = renderTier1C(ps);
 
@@ -192,11 +212,11 @@ export function injectPersonaState(
 		overflow = true;
 	}
 
-	// 1C if room
-	if (used + tokens1C <= totalBudget) {
+	// 1C if room (and not skipped)
+	if (!skipRelational && used + tokens1C <= totalBudget) {
 		blocks.push({ role: "system", content: content1C, tier: "1C-relational", tokens: tokens1C });
 		used += tokens1C;
-	} else {
+	} else if (!skipRelational) {
 		overflow = true;
 	}
 
