@@ -1,0 +1,17 @@
+# GitHub Fork Analysis System - Python Dependencies
+
+# Core dependencies
+requests>=2.31.0
+
+# Markdown processing (for reports)
+markdown>=3.4.0
+
+# PDF generation (optional, for PDF reports)
+weasyprint>=59.0
+
+# Note: The following are pre-installed in the sandbox but listed for reference:
+# - sqlite3 (built-in with Python)
+# - json (built-in with Python)
+# - csv (built-in with Python)
+# - subprocess (built-in with Python)
+# - pathlib (built-in with Python)

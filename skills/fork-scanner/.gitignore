@@ -1,0 +1,45 @@
+# GitHub Fork Analysis System - Git Ignore
+
+# Database files
+data/
+*.db
+*.db-journal
+
+# Reports
+reports/
+
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary clone directories
+clones/
+
+# Environment variables (if stored in file)
+.env
+config_local.py
+
+# Backup files
+*.bak
+*.backup
