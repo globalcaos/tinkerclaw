@@ -319,3 +319,101 @@ describe("learning field", () => {
 		expect(r.learning).toMatch(/hotTailTurns|anchor|review/i);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// 6. reflectCompaction() — structured record and severity routing
+// ---------------------------------------------------------------------------
+
+import { appendReflectionJsonl, getDailyDigest } from "./compaction-reflection.js";
+import { existsSync, readFileSync } from "node:fs";
+
+describe("reflectCompaction()", () => {
+	it("returns low severity and autoFixApplied=true for small compactions", async () => {
+		const store = makeStore("reflect-compaction-low");
+		const reflector = createCompactionReflector(store);
+		const record = await reflector.reflectCompaction({
+			eventsCompacted: 5,
+			summary: "small compaction summary",
+			tokensEvicted: 3_000,
+		});
+		expect(record.severity).toBe("low");
+		expect(record.autoFixApplied).toBe(true);
+		expect(record.suggestions.length).toBeGreaterThan(0);
+		expect(record.eventsCompacted).toBe(5);
+		expect(record.tokensEvicted).toBe(3_000);
+		expect(typeof record.timestamp).toBe("string");
+	});
+
+	it("returns medium severity for moderate eviction (>15 000 tokens)", async () => {
+		const store = makeStore("reflect-compaction-medium");
+		const reflector = createCompactionReflector(store);
+		const record = await reflector.reflectCompaction({
+			eventsCompacted: 20,
+			summary: "medium compaction",
+			tokensEvicted: 20_000,
+		});
+		expect(record.severity).toBe("medium");
+		expect(record.autoFixApplied).toBe(false);
+	});
+
+	it("returns high severity for large eviction (>40 000 tokens) with suggestions", async () => {
+		const store = makeStore("reflect-compaction-high");
+		const reflector = createCompactionReflector(store);
+		const record = await reflector.reflectCompaction({
+			eventsCompacted: 80,
+			summary: "massive compaction",
+			tokensEvicted: 50_000,
+		});
+		expect(record.severity).toBe("high");
+		expect(record.autoFixApplied).toBe(false);
+		expect(record.suggestions.some((s) => /hotTailTurns|anchor/i.test(s))).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 7. JSONL persistence and daily digest
+// ---------------------------------------------------------------------------
+
+describe("JSONL persistence + daily digest", () => {
+	it("appendReflectionJsonl writes a parseable JSONL line", () => {
+		const dir = join(tmpDir, "reflections");
+		const record: import("./compaction-reflection.js").CompactionReflectionRecord = {
+			timestamp: new Date().toISOString(),
+			severity: "low",
+			diagnosis: "[LOW] test",
+			suggestions: ["all good"],
+			autoFixApplied: true,
+			eventsCompacted: 3,
+			tokensEvicted: 1000,
+		};
+		appendReflectionJsonl(record, dir);
+
+		const dateStr = record.timestamp.slice(0, 10);
+		const filePath = join(dir, `${dateStr}.jsonl`);
+		expect(existsSync(filePath)).toBe(true);
+		const lines = readFileSync(filePath, "utf8").trim().split("\n");
+		const parsed = JSON.parse(lines[0]) as typeof record;
+		expect(parsed.severity).toBe("low");
+		expect(parsed.eventsCompacted).toBe(3);
+	});
+
+	it("getDailyDigest aggregates multiple records correctly", () => {
+		const dir = join(tmpDir, "reflections-digest");
+		const today = new Date();
+		const dateStr = today.toISOString().slice(0, 10);
+		const records: import("./compaction-reflection.js").CompactionReflectionRecord[] = [
+			{ timestamp: `${dateStr}T01:00:00.000Z`, severity: "low",    diagnosis: "d1", suggestions: [], autoFixApplied: true,  eventsCompacted: 2,  tokensEvicted: 1000 },
+			{ timestamp: `${dateStr}T02:00:00.000Z`, severity: "medium", diagnosis: "d2", suggestions: [], autoFixApplied: false, eventsCompacted: 20, tokensEvicted: 18000 },
+			{ timestamp: `${dateStr}T03:00:00.000Z`, severity: "high",   diagnosis: "d3", suggestions: [], autoFixApplied: false, eventsCompacted: 120, tokensEvicted: 55000 },
+		];
+		for (const r of records) appendReflectionJsonl(r, dir);
+
+		const digest = getDailyDigest(today, dir);
+		expect(digest.totalReflections).toBe(3);
+		expect(digest.severityCounts.low).toBe(1);
+		expect(digest.severityCounts.medium).toBe(1);
+		expect(digest.severityCounts.high).toBe(1);
+		expect(digest.autoFixCount).toBe(1);
+		expect(digest.topDiagnoses).toContain("d1");
+	});
+});
