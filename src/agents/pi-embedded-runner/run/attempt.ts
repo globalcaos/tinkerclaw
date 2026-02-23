@@ -41,7 +41,7 @@ import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
-import { resolveDefaultModelForAgent } from "../../model-selection.js";
+import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
 import {
@@ -102,6 +102,12 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
+import {
+  extractRawAssistantText,
+  extractTextToolCalls,
+  executeTextToolCalls,
+  formatTextToolResults,
+} from "../text-tool-calls.js";
 import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
@@ -1285,6 +1291,68 @@ export async function runEmbeddedAttempt(
             .catch((err) => {
               log.warn(`agent_end hook failed: ${err}`);
             });
+        }
+
+        // -----------------------------------------------------------------
+        // Text-based tool call interception.
+        //
+        // Some local models output tool calls as raw JSON text instead of
+        // using the structured tool_calls API. Detect these, execute the
+        // tools, and feed results back so the model can summarize.
+        //
+        // Guards:
+        // 1. Only for local providers (ollama, lmstudio, vllm) — cloud
+        //    providers always use structured tool calls.
+        // 2. Skip if the model already made structured tool calls in this
+        //    run (toolMetas.length > 0) — it has native support.
+        // -----------------------------------------------------------------
+        const TEXT_TOOL_CALL_MAX_RETRIES = 3;
+        const normalizedProvider = normalizeProviderId(params.provider);
+        const isLocalProvider =
+          normalizedProvider === "ollama" ||
+          normalizedProvider === "lmstudio" ||
+          normalizedProvider === "vllm";
+        const madeStructuredToolCalls = toolMetas.length > 0;
+        if (
+          !promptError &&
+          !aborted &&
+          tools.length > 0 &&
+          isLocalProvider &&
+          !madeStructuredToolCalls
+        ) {
+          for (let ttcRetry = 0; ttcRetry < TEXT_TOOL_CALL_MAX_RETRIES; ttcRetry++) {
+            const lastMsg = activeSession.messages
+              .slice()
+              .toReversed()
+              .find((m) => m.role === "assistant");
+            if (!lastMsg) {
+              break;
+            }
+
+            const rawText = extractRawAssistantText(lastMsg);
+            const textCalls = extractTextToolCalls(rawText);
+            if (textCalls.length === 0) {
+              break;
+            }
+
+            log.info(
+              `text-tool-call: found ${textCalls.length} call(s) in assistant text (retry ${ttcRetry + 1}/${TEXT_TOOL_CALL_MAX_RETRIES})`,
+            );
+
+            const results = await executeTextToolCalls(
+              textCalls,
+              tools,
+              params.abortSignal ?? undefined,
+            );
+            const formatted = formatTextToolResults(results);
+
+            try {
+              await abortable(activeSession.steer(formatted));
+            } catch (steerErr) {
+              promptError = steerErr;
+              break;
+            }
+          }
         }
       } finally {
         clearTimeout(abortTimer);
