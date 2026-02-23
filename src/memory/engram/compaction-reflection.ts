@@ -6,6 +6,8 @@
  * FORK-ISOLATED: This file is unique to our fork.
  */
 
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { EventStore } from "./event-store.js";
 import type { CompactionManifest } from "../../agents/pi-extensions/pointer-compaction-runtime.js";
 
@@ -52,6 +54,38 @@ export interface CompactionReflector {
 		compactionId: string,
 		preCompactionState: { contextTokens: number; activeTopics: string[] },
 	): CompactionReflection;
+
+	/**
+	 * Lightweight reflection triggered directly from compaction-engram.ts after
+	 * the compaction summary is built. Unlike the marker-based reflect(), this
+	 * variant derives severity from the raw compaction metrics and persists an
+	 * JSONL record to ~/.openclaw/engram/reflections/.
+	 */
+	reflectCompaction(params: {
+		eventsCompacted: number;
+		summary: string;
+		tokensEvicted: number;
+	}): Promise<CompactionReflectionRecord>;
+}
+
+/** Structured JSON record produced by reflectCompaction(). */
+export interface CompactionReflectionRecord {
+	timestamp: string;
+	severity: "low" | "medium" | "high";
+	diagnosis: string;
+	suggestions: string[];
+	autoFixApplied: boolean;
+	eventsCompacted: number;
+	tokensEvicted: number;
+}
+
+/** Aggregated summary for a single day of reflections. */
+export interface ReflectionDailyDigest {
+	date: string;
+	totalReflections: number;
+	severityCounts: { low: number; medium: number; high: number };
+	autoFixCount: number;
+	topDiagnoses: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +221,126 @@ function buildLearning(
 }
 
 // ---------------------------------------------------------------------------
+// reflectCompaction helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify severity from raw compaction metrics.
+ *
+ * - high  : tokensEvicted > 40 000 OR eventsCompacted > 100
+ * - medium: tokensEvicted > 15 000 OR eventsCompacted > 30
+ * - low   : otherwise
+ */
+function classifyCompactionSeverity(
+	eventsCompacted: number,
+	tokensEvicted: number,
+): "low" | "medium" | "high" {
+	if (tokensEvicted > 40_000 || eventsCompacted > 100) return "high";
+	if (tokensEvicted > 15_000 || eventsCompacted > 30) return "medium";
+	return "low";
+}
+
+function buildCompactionDiagnosis(
+	eventsCompacted: number,
+	tokensEvicted: number,
+	severity: "low" | "medium" | "high",
+): string {
+	const label = severity.toUpperCase();
+	return `[${label}] Compacted ${eventsCompacted} event(s) evicting ~${tokensEvicted} tokens.`;
+}
+
+function buildCompactionSuggestions(
+	severity: "low" | "medium" | "high",
+	eventsCompacted: number,
+	tokensEvicted: number,
+): string[] {
+	if (severity === "high") {
+		const hints: string[] = [
+			"Increase hotTailTurns to retain more recent context before eviction.",
+			"Add anchor tags to critical events to prevent premature eviction.",
+		];
+		if (tokensEvicted > 40_000) {
+			hints.push(`${tokensEvicted} tokens evicted — review context window settings.`);
+		}
+		if (eventsCompacted > 100) {
+			hints.push(`${eventsCompacted} events compacted — consider more frequent compaction triggers.`);
+		}
+		return hints;
+	}
+	if (severity === "medium") {
+		return [
+			"Monitor retrieval coverage over the next few turns.",
+			"Consider tuning eviction priorities for frequently accessed event kinds.",
+		];
+	}
+	return ["Compaction is operating within normal parameters. No action required."];
+}
+
+/** Resolve the reflections directory, creating it if needed. */
+function resolveReflectionsDir(baseDir?: string): string {
+	const dir = baseDir ?? join(process.env.HOME ?? "~", ".openclaw", "engram", "reflections");
+	mkdirSync(dir, { recursive: true });
+	return dir;
+}
+
+/** Append a CompactionReflectionRecord to the daily JSONL file. */
+export function appendReflectionJsonl(
+	record: CompactionReflectionRecord,
+	baseDir?: string,
+): void {
+	const dir = resolveReflectionsDir(baseDir);
+	const dateStr = record.timestamp.slice(0, 10); // YYYY-MM-DD
+	const filePath = join(dir, `${dateStr}.jsonl`);
+	appendFileSync(filePath, JSON.stringify(record) + "\n", "utf8");
+}
+
+// ---------------------------------------------------------------------------
+// Daily digest
+// ---------------------------------------------------------------------------
+
+/**
+ * Summarise all reflection records for a given date (defaults to today).
+ * Reads from `~/.openclaw/engram/reflections/YYYY-MM-DD.jsonl`.
+ */
+export function getDailyDigest(date?: Date, baseDir?: string): ReflectionDailyDigest {
+	const d = date ?? new Date();
+	const dateStr = d.toISOString().slice(0, 10);
+	const dir = resolveReflectionsDir(baseDir);
+	const filePath = join(dir, `${dateStr}.jsonl`);
+
+	const counts = { low: 0, medium: 0, high: 0 };
+	let autoFixCount = 0;
+	const diagnoses: string[] = [];
+
+	if (existsSync(filePath)) {
+		const lines = readFileSync(filePath, "utf8")
+			.split("\n")
+			.filter((l) => l.trim().length > 0);
+		for (const line of lines) {
+			try {
+				const r = JSON.parse(line) as CompactionReflectionRecord;
+				counts[r.severity] = (counts[r.severity] ?? 0) + 1;
+				if (r.autoFixApplied) autoFixCount++;
+				if (r.diagnosis) diagnoses.push(r.diagnosis);
+			} catch {
+				// Skip malformed lines
+			}
+		}
+	}
+
+	// Deduplicate diagnoses and keep up to 5 unique ones
+	const topDiagnoses = [...new Set(diagnoses)].slice(0, 5);
+
+	return {
+		date: dateStr,
+		totalReflections: counts.low + counts.medium + counts.high,
+		severityCounts: counts,
+		autoFixCount,
+		topDiagnoses,
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -277,6 +431,34 @@ export function createCompactionReflector(eventStore: EventStore): CompactionRef
 			});
 
 			return reflection;
+		},
+
+		async reflectCompaction(params: {
+			eventsCompacted: number;
+			summary: string;
+			tokensEvicted: number;
+		}): Promise<CompactionReflectionRecord> {
+			const { eventsCompacted, tokensEvicted } = params;
+			const severity = classifyCompactionSeverity(eventsCompacted, tokensEvicted);
+			const diagnosis = buildCompactionDiagnosis(eventsCompacted, tokensEvicted, severity);
+			const suggestions = buildCompactionSuggestions(severity, eventsCompacted, tokensEvicted);
+			// autoFixApplied: low severity is handled silently (auto-fixed); others need review
+			const autoFixApplied = severity === "low";
+
+			const record: CompactionReflectionRecord = {
+				timestamp: new Date().toISOString(),
+				severity,
+				diagnosis,
+				suggestions,
+				autoFixApplied,
+				eventsCompacted,
+				tokensEvicted,
+			};
+
+			// Persist to ~/.openclaw/engram/reflections/YYYY-MM-DD.jsonl
+			appendReflectionJsonl(record);
+
+			return record;
 		},
 	};
 }
