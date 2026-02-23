@@ -115,6 +115,12 @@ import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
 import { getIngestionRuntime } from "../../pi-extensions/ingestion-runtime.js";
 import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js";
+import { getCortexRuntime } from "../../pi-extensions/cortex-runtime.js";
+import { getObservationRuntime } from "../../pi-extensions/observation-runtime.js";
+import {
+  applyMidContextReinject,
+  evaluateTurnSyncScore,
+} from "../../pi-extensions/mid-context-reinject.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
@@ -1194,6 +1200,21 @@ export async function runEmbeddedAttempt(
             }
           }
 
+          // CORTEX 3.3: Mid-context persona re-injection.
+          // When the session-bound CortexRuntime's EWMA SyncScore drops below 0.6,
+          // prepend the Tier 1A persona block to reinforce persona identity this turn.
+          {
+            const cortexRuntime = getCortexRuntime(sessionManager);
+            const reinjectResult = applyMidContextReinject(cortexRuntime, systemPromptText);
+            if (reinjectResult.reinjected) {
+              applySystemPromptOverrideToSession(activeSession, reinjectResult.systemPrompt);
+              systemPromptText = reinjectResult.systemPrompt;
+              log.info(
+                `cortex: mid-context re-injection applied (ewma=${reinjectResult.ewmaScore.toFixed(3)} < 0.6)`,
+              );
+            }
+          }
+
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
           if (imageResult.images.length > 0) {
@@ -1483,6 +1504,55 @@ export async function runEmbeddedAttempt(
         ingestionRuntime.ingest(messagesSnapshot).catch((err) => {
           log.warn(`ENGRAM ingestion failed: ${String(err)}`);
         });
+      }
+
+      // CORTEX 3.3: Per-turn SyncScore evaluation.
+      // Updates the EWMA SyncScore so that the next turn can decide whether to
+      // re-inject the persona block. Fire-and-forget (non-blocking).
+      {
+        const cortexRuntime = getCortexRuntime(sessionManager);
+        const turnNumber = messagesSnapshot.filter((m) => m.role === "user").length;
+        evaluateTurnSyncScore(cortexRuntime, assistantTexts, turnNumber, (msg) =>
+          log.info(msg),
+        );
+      }
+
+      // CORTEX 3.4: Observational memory extraction.
+      // Scans the recent conversation for extractable facts/preferences/beliefs
+      // and persists them as ENGRAM system_event entries tagged "observation".
+      // Fires every 10 turns OR when accumulated token count crosses 30K.
+      {
+        const observationRuntime = getObservationRuntime(sessionManager);
+        if (observationRuntime) {
+          // Collect recent user + assistant message texts (last 20 messages).
+          const recentTexts = messagesSnapshot.slice(-20).flatMap((m) => {
+            if (typeof m.content === "string") {
+              return m.content ? [m.content] : [];
+            }
+            if (Array.isArray(m.content)) {
+              const texts = (m.content as Array<{ type?: string; text?: string }>)
+                .filter((c) => c.type === "text" && typeof c.text === "string")
+                .map((c) => c.text as string)
+                .filter(Boolean);
+              return texts;
+            }
+            return [];
+          });
+
+          if (recentTexts.length > 0) {
+            const turnNumber = messagesSnapshot.filter((m) => m.role === "user").length;
+            // Force extraction every 10 turns regardless of token threshold.
+            const forceByTurn = turnNumber > 0 && turnNumber % 10 === 0;
+            const threshold = forceByTurn ? 1 : undefined; // undefined → default 30K
+
+            const extracted = observationRuntime.extractObservations(recentTexts, threshold);
+            if (extracted.length > 0) {
+              log.debug(
+                `cortex: extracted ${extracted.length} observation(s) at turn=${turnNumber} (forced=${forceByTurn})`,
+              );
+            }
+          }
+        }
       }
 
       return {
