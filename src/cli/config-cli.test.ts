@@ -9,11 +9,14 @@ import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.js";
  */
 
 const mockReadConfigFileSnapshot = vi.fn<() => Promise<ConfigFileSnapshot>>();
-const mockWriteConfigFile = vi.fn<(cfg: OpenClawConfig) => Promise<void>>(async () => {});
+const mockWriteConfigFile = vi.fn<
+  (cfg: OpenClawConfig, options?: { unsetPaths?: string[][] }) => Promise<void>
+>(async () => {});
 
 vi.mock("../config/config.js", () => ({
   readConfigFileSnapshot: () => mockReadConfigFileSnapshot(),
-  writeConfigFile: (cfg: OpenClawConfig) => mockWriteConfigFile(cfg),
+  writeConfigFile: (cfg: OpenClawConfig, options?: { unsetPaths?: string[][] }) =>
+    mockWriteConfigFile(cfg, options),
 }));
 
 const mockLog = vi.fn();
@@ -140,6 +143,23 @@ describe("config cli", () => {
     });
   });
 
+  describe("config get", () => {
+    it("redacts sensitive values", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: {
+          auth: {
+            token: "super-secret-token",
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand(["config", "get", "gateway.auth.token"]);
+
+      expect(mockLog).toHaveBeenCalledWith("__OPENCLAW_REDACTED__");
+    });
+  });
+
   describe("config set parsing flags", () => {
     it("falls back to raw string when parsing fails and strict mode is off", async () => {
       const resolved: OpenClawConfig = { gateway: { port: 18789 } };
@@ -216,6 +236,9 @@ describe("config cli", () => {
       expect(written.gateway).toEqual(resolved.gateway);
       expect(written.tools?.profile).toBe("coding");
       expect(written.logging).toEqual(resolved.logging);
+      expect(mockWriteConfigFile.mock.calls[0]?.[1]).toEqual({
+        unsetPaths: [["tools", "alsoAllow"]],
+      });
     });
   });
 });
