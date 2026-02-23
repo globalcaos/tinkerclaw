@@ -1,4 +1,5 @@
 import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js";
+import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
 import type { BashSandboxConfig } from "./bash-tools.shared.js";
 
 export type ExecToolDefaults = {
@@ -9,6 +10,8 @@ export type ExecToolDefaults = {
   maxSecurityLevel?: string;
   pathPrepend?: string[];
   safeBins?: string[];
+  safeBinTrustedDirs?: string[];
+  safeBinProfiles?: Record<string, SafeBinProfileFixture>;
   agentId?: string;
   backgroundMs?: number;
   timeoutSec?: number;

@@ -46,6 +46,27 @@ function restoreRedactedValues<TOriginal>(
   return result.result as TOriginal;
 }
 
+function expectNestedLevelPairValue(
+  source: Record<string, Record<string, Record<string, unknown>>>,
+  field: string,
+  expected: readonly [unknown, unknown],
+): void {
+  const values = source.nested.level[field] as unknown[];
+  expect(values[0]).toBe(expected[0]);
+  expect(values[1]).toBe(expected[1]);
+}
+
+function expectGatewayAuthFieldValue(
+  result: ReturnType<typeof redactConfigSnapshot>,
+  field: "token" | "password",
+  expected: string,
+): void {
+  const gateway = result.config.gateway as Record<string, Record<string, string>>;
+  const resolved = result.resolved as Record<string, Record<string, Record<string, string>>>;
+  expect(gateway.auth[field]).toBe(expected);
+  expect(resolved.gateway.auth[field]).toBe(expected);
+}
+
 describe("redactConfigSnapshot", () => {
   it("redacts common secret field patterns across config sections", () => {
     const snapshot = makeSnapshot({
@@ -392,6 +413,32 @@ describe("redactConfigSnapshot", () => {
   });
 
   it("round-trips nested and array sensitivity cases", () => {
+    const customSecretValue = "this-is-a-custom-secret-value";
+    const buildNestedValuesSnapshot = () =>
+      makeSnapshot({
+        custom1: { anykey: { mySecret: customSecretValue } },
+        custom2: [{ mySecret: customSecretValue }],
+      });
+    const assertNestedValuesRoundTrip = ({
+      redacted,
+      restored,
+    }: {
+      redacted: Record<string, unknown>;
+      restored: Record<string, unknown>;
+    }) => {
+      const cfg = redacted as Record<string, Record<string, unknown>>;
+      const cfgCustom2 = cfg.custom2 as unknown as unknown[];
+      expect(cfgCustom2.length).toBeGreaterThan(0);
+      expect((cfg.custom1.anykey as Record<string, unknown>).mySecret).toBe(REDACTED_SENTINEL);
+      expect((cfgCustom2[0] as Record<string, unknown>).mySecret).toBe(REDACTED_SENTINEL);
+
+      const out = restored as Record<string, Record<string, unknown>>;
+      const outCustom2 = out.custom2 as unknown as unknown[];
+      expect(outCustom2.length).toBeGreaterThan(0);
+      expect((out.custom1.anykey as Record<string, unknown>).mySecret).toBe(customSecretValue);
+      expect((outCustom2[0] as Record<string, unknown>).mySecret).toBe(customSecretValue);
+    };
+
     const cases: Array<{
       name: string;
       snapshot: TestSnapshot<Record<string, unknown>>;
@@ -403,28 +450,8 @@ describe("redactConfigSnapshot", () => {
     }> = [
       {
         name: "nested values (schema)",
-        snapshot: makeSnapshot({
-          custom1: { anykey: { mySecret: "this-is-a-custom-secret-value" } },
-          custom2: [{ mySecret: "this-is-a-custom-secret-value" }],
-        }),
-        assert: ({ redacted, restored }) => {
-          const cfg = redacted;
-          const cfgCustom2 = Array.isArray(cfg.custom2) ? cfg.custom2 : [];
-          expect(cfgCustom2.length).toBeGreaterThan(0);
-          expect(
-            ((cfg.custom1 as Record<string, unknown>).anykey as Record<string, unknown>).mySecret,
-          ).toBe(REDACTED_SENTINEL);
-          expect((cfgCustom2[0] as Record<string, unknown>).mySecret).toBe(REDACTED_SENTINEL);
-          const out = restored;
-          const outCustom2 = Array.isArray(out.custom2) ? out.custom2 : [];
-          expect(outCustom2.length).toBeGreaterThan(0);
-          expect(
-            ((out.custom1 as Record<string, unknown>).anykey as Record<string, unknown>).mySecret,
-          ).toBe("this-is-a-custom-secret-value");
-          expect((outCustom2[0] as Record<string, unknown>).mySecret).toBe(
-            "this-is-a-custom-secret-value",
-          );
-        },
+        snapshot: buildNestedValuesSnapshot(),
+        assert: assertNestedValuesRoundTrip,
       },
       {
         name: "nested values (uiHints)",
@@ -432,28 +459,8 @@ describe("redactConfigSnapshot", () => {
           "custom1.*.mySecret": { sensitive: true },
           "custom2[].mySecret": { sensitive: true },
         },
-        snapshot: makeSnapshot({
-          custom1: { anykey: { mySecret: "this-is-a-custom-secret-value" } },
-          custom2: [{ mySecret: "this-is-a-custom-secret-value" }],
-        }),
-        assert: ({ redacted, restored }) => {
-          const cfg = redacted;
-          const cfgCustom2 = Array.isArray(cfg.custom2) ? cfg.custom2 : [];
-          expect(cfgCustom2.length).toBeGreaterThan(0);
-          expect(
-            ((cfg.custom1 as Record<string, unknown>).anykey as Record<string, unknown>).mySecret,
-          ).toBe(REDACTED_SENTINEL);
-          expect((cfgCustom2[0] as Record<string, unknown>).mySecret).toBe(REDACTED_SENTINEL);
-          const out = restored;
-          const outCustom2 = Array.isArray(out.custom2) ? out.custom2 : [];
-          expect(outCustom2.length).toBeGreaterThan(0);
-          expect(
-            ((out.custom1 as Record<string, unknown>).anykey as Record<string, unknown>).mySecret,
-          ).toBe("this-is-a-custom-secret-value");
-          expect((outCustom2[0] as Record<string, unknown>).mySecret).toBe(
-            "this-is-a-custom-secret-value",
-          );
-        },
+        snapshot: buildNestedValuesSnapshot(),
+        assert: assertNestedValuesRoundTrip,
       },
       {
         name: "directly sensitive records and arrays",
@@ -574,12 +581,10 @@ describe("redactConfigSnapshot", () => {
         }),
         assert: ({ redacted, restored }) => {
           const cfg = redacted as Record<string, Record<string, Record<string, unknown>>>;
-          expect((cfg.nested.level.token as unknown[])[0]).toBe(42);
-          expect((cfg.nested.level.token as unknown[])[1]).toBe(815);
+          expectNestedLevelPairValue(cfg, "token", [42, 815]);
 
           const out = restored as Record<string, Record<string, Record<string, unknown>>>;
-          expect((out.nested.level.token as unknown[])[0]).toBe(42);
-          expect((out.nested.level.token as unknown[])[1]).toBe(815);
+          expectNestedLevelPairValue(out, "token", [42, 815]);
         },
       },
       {
@@ -618,12 +623,10 @@ describe("redactConfigSnapshot", () => {
         }),
         assert: ({ redacted, restored }) => {
           const cfg = redacted as Record<string, Record<string, Record<string, unknown>>>;
-          expect((cfg.nested.level.custom as unknown[])[0]).toBe(42);
-          expect((cfg.nested.level.custom as unknown[])[1]).toBe(815);
+          expectNestedLevelPairValue(cfg, "custom", [42, 815]);
 
           const out = restored as Record<string, Record<string, Record<string, unknown>>>;
-          expect((out.nested.level.custom as unknown[])[0]).toBe(42);
-          expect((out.nested.level.custom as unknown[])[1]).toBe(815);
+          expectNestedLevelPairValue(out, "custom", [42, 815]);
         },
       },
     ];
@@ -650,10 +653,7 @@ describe("redactConfigSnapshot", () => {
       gateway: { auth: { token: "not-actually-secret-value" } },
     });
     const result = redactConfigSnapshot(snapshot, hints);
-    const gw = result.config.gateway as Record<string, Record<string, string>>;
-    const resolved = result.resolved as Record<string, Record<string, Record<string, string>>>;
-    expect(gw.auth.token).toBe("not-actually-secret-value");
-    expect(resolved.gateway.auth.token).toBe("not-actually-secret-value");
+    expectGatewayAuthFieldValue(result, "token", "not-actually-secret-value");
   });
 
   it("does not redact paths absent from uiHints (schema is single source of truth)", () => {
@@ -664,10 +664,7 @@ describe("redactConfigSnapshot", () => {
       gateway: { auth: { password: "not-in-hints-value" } },
     });
     const result = redactConfigSnapshot(snapshot, hints);
-    const gw = result.config.gateway as Record<string, Record<string, string>>;
-    const resolved = result.resolved as Record<string, Record<string, Record<string, string>>>;
-    expect(gw.auth.password).toBe("not-in-hints-value");
-    expect(resolved.gateway.auth.password).toBe("not-in-hints-value");
+    expectGatewayAuthFieldValue(result, "password", "not-in-hints-value");
   });
 
   it("uses wildcard hints for array items", () => {
