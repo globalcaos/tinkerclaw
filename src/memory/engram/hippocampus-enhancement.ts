@@ -323,37 +323,77 @@ export interface EpisodicSearchResult {
   tier: "episodic";
 }
 
+/** Default TTL for episodic buffer entries: 24 hours in milliseconds. */
+export const EPISODIC_TTL_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Hot in-memory buffer for same-day events.
  * Searchable immediately without a nightly rebuild.
  * On query: returns matching episodic events first.
+ * Entries older than 24 h are automatically expired on each operation.
  */
 export class EpisodicBuffer {
   private readonly events: EpisodicEvent[] = [];
+  /** TTL in ms; defaults to 24 h. Override for testing. */
+  private readonly ttlMs: number;
+
+  constructor(ttlMs = EPISODIC_TTL_MS) {
+    this.ttlMs = ttlMs;
+  }
+
+  /**
+   * Prune entries older than `ttlMs` from the front of the buffer.
+   * The buffer is append-only and timestamps are monotonically non-decreasing,
+   * so a single linear scan from the front suffices.
+   */
+  expire(now = Date.now()): void {
+    const cutoff = now - this.ttlMs;
+    // Find first index whose timestamp is within the TTL window.
+    const firstValid = this.events.findIndex(
+      (e) => new Date(e.timestamp).getTime() >= cutoff,
+    );
+    if (firstValid === -1) {
+      // All events have expired.
+      this.events.length = 0;
+    } else if (firstValid > 0) {
+      this.events.splice(0, firstValid);
+    }
+  }
 
   /** Add an event to the episodic buffer. */
   add(event: EpisodicEvent): void {
     this.events.push(event);
   }
 
-  /** Return all events from today (local date). */
+  /**
+   * Return all events within the TTL window (last 24 h by default).
+   * Automatically calls `expire()` to remove stale entries first.
+   */
+  recentEvents(now = Date.now()): EpisodicEvent[] {
+    this.expire(now);
+    return [...this.events];
+  }
+
+  /** @deprecated Use `recentEvents()`. Kept for backward compatibility. */
   todayEvents(): EpisodicEvent[] {
     const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
     return this.events.filter((e) => e.timestamp.startsWith(today));
   }
 
   /**
-   * Score and return today's events that match `query`.
+   * Score and return recent events (within TTL) that match `query`.
    * Uses word-overlap Jaccard against event content.
+   * Automatically expires stale entries before searching.
    */
-  search(query: string, topN = 10): EpisodicSearchResult[] {
+  search(query: string, topN = 10, now = Date.now()): EpisodicSearchResult[] {
     const qSet = wordSet(query);
     if (qSet.size === 0) return [];
 
-    const today = new Date().toISOString().slice(0, 10);
+    this.expire(now);
+    const cutoff = now - this.ttlMs;
 
     const scored: EpisodicSearchResult[] = this.events
-      .filter((e) => e.timestamp.startsWith(today))
+      .filter((e) => new Date(e.timestamp).getTime() >= cutoff)
       .map((e) => {
         const importance = e.importance ?? 5;
         const sim = jaccard(qSet, wordSet(e.content));
@@ -399,7 +439,7 @@ export class EpisodicBuffer {
     return combined.slice(0, topN);
   }
 
-  /** Number of events in the buffer (all time, not just today). */
+  /** Number of events currently in the buffer (includes expired; call expire() first for accurate count). */
   size(): number {
     return this.events.length;
   }
@@ -409,3 +449,20 @@ export class EpisodicBuffer {
     this.events.length = 0;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Module-level singleton — shared episodic buffer for the current process.
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared process-level episodic buffer.
+ * Import and use this instance so all subsystems share the same hot buffer.
+ *
+ * @example
+ * ```ts
+ * import { sharedEpisodicBuffer } from "./hippocampus-enhancement.js";
+ * sharedEpisodicBuffer.add({ id, timestamp, content });
+ * const hits = sharedEpisodicBuffer.search("query");
+ * ```
+ */
+export const sharedEpisodicBuffer = new EpisodicBuffer();
