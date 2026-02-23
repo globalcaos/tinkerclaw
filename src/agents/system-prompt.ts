@@ -213,6 +213,8 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
+  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
+  personaBlock?: string;
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   runtimeInfo?: {
@@ -427,9 +429,15 @@ export function buildAgentSystemPrompt(params: {
     return "You are a personal assistant running inside OpenClaw.";
   }
 
+  // CORTEX Tier 1: persona block injected near the top, before tooling sections.
+  // Cached by CortexRuntime; survives context compaction because the system prompt
+  // is always rebuilt from scratch on each run/compact cycle.
+  const cortexPersonaBlock = params.personaBlock?.trim();
+
   const lines = [
     "You are a personal assistant running inside OpenClaw.",
     "",
+    ...(cortexPersonaBlock ? [cortexPersonaBlock, ""] : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",

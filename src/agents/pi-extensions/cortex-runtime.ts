@@ -118,6 +118,19 @@ function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaState {
 		}
 	}
 
+	// engram/persona-state.json — auto-generated structured persona state (secondary fallback)
+	const engramPersonaPath = join(OPENCLAW_DIR, "engram", "persona-state.json");
+	if (existsSync(engramPersonaPath)) {
+		try {
+			const raw = JSON.parse(readFileSync(engramPersonaPath, "utf8")) as PersonaState;
+			if (raw.name && raw.identityStatement && raw.version) {
+				return raw;
+			}
+		} catch {
+			// fall through to markdown parsing
+		}
+	}
+
 	let name = options.name ?? "JarvisOne";
 	let identity = "AI assistant and extension of the user";
 	let soulContent = "";

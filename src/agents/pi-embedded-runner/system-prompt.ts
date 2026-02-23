@@ -26,6 +26,8 @@ export function buildEmbeddedSystemPrompt(params: {
     channel: string;
   };
   workspaceNotes?: string[];
+  /** Tier 1 persona block from CORTEX runtime — injected near the top of the prompt. */
+  personaBlock?: string;
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   runtimeInfo: {
@@ -66,6 +68,7 @@ export function buildEmbeddedSystemPrompt(params: {
     ttsHint: params.ttsHint,
     workspaceNotes: params.workspaceNotes,
     reactionGuidance: params.reactionGuidance,
+    personaBlock: params.personaBlock,
     promptMode: params.promptMode,
     runtimeInfo: params.runtimeInfo,
     messageToolHints: params.messageToolHints,

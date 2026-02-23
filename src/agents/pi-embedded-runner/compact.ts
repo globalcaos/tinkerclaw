@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
+import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
   createAgentSession,
@@ -64,6 +65,7 @@ import {
   EMBEDDED_COMPACTION_TIMEOUT_MS,
 } from "./compaction-safety-timeout.js";
 import { buildEmbeddedExtensionFactories } from "./extensions.js";
+import { createCortexRuntime } from "../pi-extensions/cortex-runtime.js";
 import {
   logToolSchemasForGoogle,
   sanitizeSessionHistory,
@@ -483,6 +485,19 @@ export async function compactEmbeddedPiSessionDirect(
     });
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
+
+    // CORTEX: load PersonaState and generate Tier 1 persona block for system prompt injection.
+    // Must mirror the logic in attempt.ts so the persona survives compaction.
+    const personaBlock = (() => {
+      try {
+        const soulPath = join(effectiveWorkspace, "SOUL.md");
+        const rt = createCortexRuntime({ soulPath });
+        return rt.getPersonaBlock() || undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -498,6 +513,7 @@ export async function compactEmbeddedPiSessionDirect(
       skillsPrompt,
       docsPath: docsPath ?? undefined,
       ttsHint,
+      personaBlock,
       promptMode,
       runtimeInfo,
       reactionGuidance,
