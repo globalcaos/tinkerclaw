@@ -98,6 +98,7 @@ export const AgentDefaultsSchema = z
         keepRecentTokens: z.number().int().positive().optional(),
         reserveTokensFloor: z.number().int().nonnegative().optional(),
         maxHistoryShare: z.number().min(0.1).max(0.9).optional(),
+        pointerMode: z.boolean().optional(),
         memoryFlush: z
           .object({
             enabled: z.boolean().optional(),
