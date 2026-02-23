@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
+import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
@@ -80,6 +81,7 @@ import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
+import { createCortexRuntime } from "../../pi-extensions/cortex-runtime.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
 import {
   logToolSchemasForGoogle,
@@ -516,6 +518,20 @@ export async function runEmbeddedAttempt(
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
 
+    // CORTEX: load PersonaState and generate Tier 1 persona block for system prompt injection.
+    // createCortexRuntime() loads from ~/.openclaw/engram/persona-state.json (or SOUL.md).
+    // The runtime is created here (before sessionManager) as a lightweight read-only load;
+    // the session-bound runtime wired in extensions.ts handles drift/sync during the run.
+    const personaBlock = (() => {
+      try {
+        const soulPath = join(effectiveWorkspace, "SOUL.md");
+        const rt = createCortexRuntime({ soulPath });
+        return rt.getPersonaBlock() || undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -525,6 +541,7 @@ export async function runEmbeddedAttempt(
       ownerDisplay: ownerDisplay.ownerDisplay,
       ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
       reasoningTagHint,
+      personaBlock,
       heartbeatPrompt: isDefaultAgent
         ? resolveHeartbeatPrompt(params.config?.agents?.defaults?.heartbeat?.prompt)
         : undefined,
