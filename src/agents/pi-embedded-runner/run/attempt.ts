@@ -113,6 +113,7 @@ import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
 import { getIngestionRuntime } from "../../pi-extensions/ingestion-runtime.js";
+import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
@@ -1160,6 +1161,25 @@ export async function runEmbeddedAttempt(
               .catch((err) => {
                 log.warn(`llm_input hook failed: ${String(err)}`);
               });
+          }
+
+          // TRACE Phase 1.2: Assemble per-turn retrieval pack and inject into system prompt.
+          // Runs after effective prompt is final and before the LLM call so every turn
+          // benefits from relevant past events retrieved from the event store.
+          {
+            const retrievalRuntime = getRetrievalRuntime(sessionManager);
+            if (retrievalRuntime?.assemble) {
+              const pack = await retrievalRuntime.assemble(effectivePrompt, 4096).catch((err) => {
+                log.warn(`retrieval: assemble failed: ${String(err)}`);
+                return null;
+              });
+              if (pack) {
+                const enriched = `${systemPromptText}\n\n${pack}`;
+                applySystemPromptOverrideToSession(activeSession, enriched);
+                systemPromptText = enriched;
+                log.debug(`retrieval: injected pack (${pack.length} chars, query="${effectivePrompt.slice(0, 80)}")`);
+              }
+            }
           }
 
           // Only pass images option if there are actually images to pass
