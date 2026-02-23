@@ -146,7 +146,7 @@ export function buildEmbeddedExtensionFactories(params: {
     const limbicRuntime = createLimbicRuntime(eventStore, {}, cortexRuntime);
     setLimbicRuntime(params.sessionManager, limbicRuntime);
 
-    factories.push(compactionEngramExtension);
+    factories.push(compactionEngramExtension(params.cfg));
   } else if (compactionMode === "safeguard") {
     const compactionCfg = params.cfg?.agents?.defaults?.compaction;
     const contextWindowInfo = resolveContextWindowInfo({
