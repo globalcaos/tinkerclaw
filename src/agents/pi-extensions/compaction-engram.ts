@@ -24,6 +24,7 @@ import {
   buildManifest,
   renderManifest,
 } from "./pointer-compaction-runtime.js";
+import { getReflectionRuntime } from "./reflection-runtime.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 
@@ -175,6 +176,37 @@ export default function compactionEngramExtension(cfg?: OpenClawConfig): (api: E
           tokensEvicted: totalTokens,
           markerTokens: estimateTokens(rendered),
         });
+      }
+
+      // Phase 1.5: fire post-compaction self-reflection (fire-and-forget — does
+      // not block the compaction response). Severity routing is handled inside:
+      //   low    → persisted silently (autoFixApplied = true)
+      //   medium → persisted + logged for review
+      //   high   → persisted + stderr alert
+      const reflector = getReflectionRuntime(ctx.sessionManager);
+      if (reflector) {
+        void reflector
+          .reflectCompaction({
+            eventsCompacted: events.length,
+            summary: rendered,
+            tokensEvicted: totalTokens,
+          })
+          .then((record) => {
+            if (record.severity === "high") {
+              console.error(
+                `[ENGRAM][reflection] HIGH severity: ${record.diagnosis} — ${record.suggestions.join(" | ")}`,
+              );
+            } else if (record.severity === "medium") {
+              console.warn(
+                `[ENGRAM][reflection] medium: ${record.diagnosis}`,
+              );
+            }
+            // low: auto-fix applied silently
+          })
+          .catch((err: unknown) => {
+            // Reflection errors must never surface to the user
+            console.error("[ENGRAM][reflection] error:", err);
+          });
       }
 
       return {
