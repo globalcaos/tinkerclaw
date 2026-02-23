@@ -267,6 +267,11 @@ export type AgentCompactionConfig = {
   reserveTokensFloor?: number;
   /** Max share of context window for history during safeguard pruning (0.1–0.9, default 0.5). */
   maxHistoryShare?: number;
+  /**
+   * Enable pointer-based compaction manifests instead of narrative time-range markers.
+   * Only applies when mode === "engram". Default: false.
+   */
+  pointerMode?: boolean;
   /** Pre-compaction memory flush (agentic turn). Default: enabled. */
   memoryFlush?: AgentCompactionMemoryFlushConfig;
 };
