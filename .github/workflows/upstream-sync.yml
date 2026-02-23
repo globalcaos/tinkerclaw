@@ -1,0 +1,118 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 6 * * 1,4'  # Monday and Thursday at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no PR created)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/openclaw/openclaw.git || true
+          git fetch upstream main
+
+      - name: Check for new commits
+        id: check
+        run: |
+          BEHIND=$(git rev-list HEAD..upstream/main --count)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "Commits behind upstream: $BEHIND"
+          if [ "$BEHIND" -eq "0" ]; then
+            echo "Already up to date"
+          fi
+
+      - name: Create sync branch and merge
+        if: steps.check.outputs.behind != '0'
+        id: merge
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          BRANCH="sync/upstream-${DATE}"
+          git checkout -b "$BRANCH"
+
+          # Attempt merge
+          if git merge upstream/main --no-edit; then
+            echo "status=clean" >> $GITHUB_OUTPUT
+          else
+            # Handle README conflict (always keep ours)
+            if git diff --name-only --diff-filter=U | grep -q "README.md"; then
+              git checkout --ours README.md
+              git add README.md
+            fi
+
+            # Check if there are remaining conflicts
+            REMAINING=$(git diff --name-only --diff-filter=U | grep -v README.md | wc -l)
+            if [ "$REMAINING" -gt "0" ]; then
+              echo "status=conflict" >> $GITHUB_OUTPUT
+              git merge --abort
+              echo "Unresolvable conflicts in:"
+              git diff --name-only --diff-filter=U
+              exit 0
+            fi
+
+            git commit --no-edit
+            echo "status=resolved" >> $GITHUB_OUTPUT
+          fi
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Push branch
+        if: steps.merge.outputs.status == 'clean' || steps.merge.outputs.status == 'resolved'
+        run: |
+          git push origin "${{ steps.merge.outputs.branch }}"
+
+      - name: Create PR
+        if: (steps.merge.outputs.status == 'clean' || steps.merge.outputs.status == 'resolved') && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BEHIND=${{ steps.check.outputs.behind }}
+          STATUS=${{ steps.merge.outputs.status }}
+          BODY="## Upstream Sync — ${{ steps.merge.outputs.date }}\n\n"
+          BODY+="**Commits behind:** ${BEHIND}\n"
+          BODY+="**Merge status:** ${STATUS}\n\n"
+          if [ "$STATUS" = "resolved" ]; then
+            BODY+="⚠️ README.md conflict was auto-resolved (kept ours).\n\n"
+          fi
+          BODY+="### Upstream changes\n\`\`\`\n"
+          BODY+="$(git log HEAD..upstream/main --oneline | head -20)\n"
+          BODY+="\`\`\`"
+
+          gh pr create \
+            --base main \
+            --head "${{ steps.merge.outputs.branch }}" \
+            --title "🔄 Upstream sync — ${{ steps.merge.outputs.date }} (${BEHIND} commits)" \
+            --body "$BODY"
+
+      - name: Create conflict issue
+        if: steps.merge.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "⚠️ Upstream sync conflict — ${{ steps.merge.outputs.date }}" \
+            --body "Automatic upstream sync failed with unresolvable conflicts (beyond README.md). Manual merge required." \
+            --label "sync"
