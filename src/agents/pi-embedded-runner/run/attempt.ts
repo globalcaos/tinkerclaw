@@ -72,6 +72,7 @@ import {
   resolveSkillsPromptForRun,
 } from "../../skills.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
+import { buildContextAnatomy, writeAnatomyEvent } from "../../context-anatomy.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
 import { resolveTranscriptPolicy } from "../../transcript-policy.js";
@@ -1415,6 +1416,32 @@ export async function runEmbeddedAttempt(
           });
       }
 
+      // Build context anatomy — per-turn prompt decomposition
+      const contextWindowTokens = Math.max(
+        1,
+        Math.floor(
+          params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+        ),
+      );
+      const contextAnatomy = systemPromptReport
+        ? buildContextAnatomy({
+            turn: messagesSnapshot.filter((m) => m.role === "user").length,
+            compactionCycle: getCompactionCount() ?? 0,
+            provider: params.provider,
+            model: params.modelId,
+            sessionKey: params.sessionKey,
+            systemPromptReport,
+            messagesSnapshot,
+            contextWindowTokens,
+            totalTokensUsed: getUsageTotals()?.totalTokens,
+          })
+        : undefined;
+      if (contextAnatomy && params.sessionKey) {
+        writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
+          log.warn(`context-anatomy write failed: ${String(err)}`);
+        });
+      }
+
       return {
         aborted,
         timedOut,
@@ -1439,6 +1466,7 @@ export async function runEmbeddedAttempt(
         compactionCount: getCompactionCount(),
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
+        contextAnatomy,
       };
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.
