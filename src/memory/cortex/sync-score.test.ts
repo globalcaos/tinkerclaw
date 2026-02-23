@@ -9,7 +9,7 @@
  * - CortexRuntime integration
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -153,7 +153,7 @@ describe("EWMA smoothing (α=0.1)", () => {
 		const { runtime } = makeRuntime(tmpDir, 10); // interval = 10
 
 		// Run turn 10 to get first proper evaluation
-		const turn10 = evalSync(runtime, tmpDir, ["Focused response."], 10);
+		evalSync(runtime, tmpDir, ["Focused response."], 10);
 		const ewmaAfter10 = runtime.ewmaSyncScore;
 
 		// Turn 11 is off-schedule — EWMA must not change
@@ -248,8 +248,6 @@ describe("SyncScore scheduling (every N turns)", () => {
 		for (let t = 1; t <= 9; t++) {
 			evalSync(runtime, tmpDir, ["response"], t);
 		}
-		const ewmaBefore = runtime.ewmaSyncScore;
-
 		// Turn 10: scheduled — EWMA should update
 		evalSync(runtime, tmpDir, ["response"], 10);
 		// After first real evaluation, EWMA = 0.1 * rawScore + 0.9 * 1.0
@@ -285,7 +283,7 @@ describe("SyncScore scheduling (every N turns)", () => {
 					).split("\n").filter(Boolean).length
 				: 0;
 
-			if (logAfter > logBefore) scheduledTurns.push(t);
+			if (logAfter > logBefore) { scheduledTurns.push(t); }
 		}
 
 		expect(scheduledTurns).toEqual([5, 10, 15, 20]);
@@ -295,12 +293,10 @@ describe("SyncScore scheduling (every N turns)", () => {
 		const tmpDir = makeTmpDir();
 		const { runtime } = makeRuntime(tmpDir, 1);
 
-		let prevEwma = runtime.ewmaSyncScore;
 		// All 5 turns should be evaluated (EWMA will change each time)
 		for (let t = 1; t <= 5; t++) {
 			const r = evalSync(runtime, tmpDir, ["response"], t);
 			expect(r.ewmaScore).not.toBeUndefined();
-			prevEwma = r.ewmaScore;
 		}
 	});
 });
