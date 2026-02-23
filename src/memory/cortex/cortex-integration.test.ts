@@ -140,8 +140,8 @@ describe("CORTEX Integration: CortexRuntime", () => {
 			"I have reviewed the code and spotted the issue.",
 		];
 		const result = runtime.evaluateSyncScore(messages);
-		expect(result.C).toBeGreaterThanOrEqual(0);
-		expect(result.C).toBeLessThanOrEqual(1);
+		expect(result.consistency.C).toBeGreaterThanOrEqual(0);
+		expect(result.consistency.C).toBeLessThanOrEqual(1);
 	});
 
 	it("evaluateSyncScore() returns a valid action tier", () => {
@@ -151,7 +151,7 @@ describe("CORTEX Integration: CortexRuntime", () => {
 		});
 		const result = runtime.evaluateSyncScore(["A normal message."]);
 		const validActions = ["none", "mild_reinforce", "moderate_refresh", "severe_rebase"];
-		expect(validActions).toContain(result.action);
+		expect(validActions).toContain(result.consistency.action);
 	});
 
 	it("detectDrift() returns no drift for benign messages", () => {
