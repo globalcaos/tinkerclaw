@@ -27,6 +27,10 @@ function deriveRelayAuthToken(gatewayToken: string, port: number): string {
   return createHmac("sha256", gatewayToken).update(`${RELAY_TOKEN_CONTEXT}:${port}`).digest("hex");
 }
 
+export function resolveRawGatewayToken(): string | null {
+  return resolveGatewayAuthToken();
+}
+
 export function resolveRelayAuthTokenForPort(port: number): string {
   const gatewayToken = resolveGatewayAuthToken();
   if (gatewayToken) {
