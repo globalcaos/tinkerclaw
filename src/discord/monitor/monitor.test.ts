@@ -91,7 +91,7 @@ vi.mock("../../config/sessions.js", async (importOriginal) => {
 describe("agent components", () => {
   const createCfg = (): OpenClawConfig => ({}) as OpenClawConfig;
 
-  const createDmButtonInteraction = (overrides: Partial<ButtonInteraction> = {}) => {
+  const createBaseDmInteraction = (overrides: Record<string, unknown> = {}) => {
     const reply = vi.fn().mockResolvedValue(undefined);
     const defer = vi.fn().mockResolvedValue(undefined);
     const interaction = {
@@ -100,28 +100,37 @@ describe("agent components", () => {
       defer,
       reply,
       ...overrides,
-    } as unknown as ButtonInteraction;
+    };
     return { interaction, defer, reply };
+  };
+
+  const createDmButtonInteraction = (overrides: Partial<ButtonInteraction> = {}) => {
+    const { interaction, defer, reply } = createBaseDmInteraction(
+      overrides as Record<string, unknown>,
+    );
+    return {
+      interaction: interaction as unknown as ButtonInteraction,
+      defer,
+      reply,
+    };
   };
 
   const createDmSelectInteraction = (overrides: Partial<StringSelectMenuInteraction> = {}) => {
-    const reply = vi.fn().mockResolvedValue(undefined);
-    const defer = vi.fn().mockResolvedValue(undefined);
-    const interaction = {
-      rawData: { channel_id: "dm-channel" },
-      user: { id: "123456789", username: "Alice", discriminator: "1234" },
+    const { interaction, defer, reply } = createBaseDmInteraction({
       values: ["alpha"],
+      ...(overrides as Record<string, unknown>),
+    });
+    return {
+      interaction: interaction as unknown as StringSelectMenuInteraction,
       defer,
       reply,
-      ...overrides,
-    } as unknown as StringSelectMenuInteraction;
-    return { interaction, defer, reply };
+    };
   };
 
   beforeEach(() => {
-    readAllowFromStoreMock.mockReset().mockResolvedValue([]);
-    upsertPairingRequestMock.mockReset().mockResolvedValue({ code: "PAIRCODE", created: true });
-    enqueueSystemEventMock.mockReset();
+    readAllowFromStoreMock.mockClear().mockResolvedValue([]);
+    upsertPairingRequestMock.mockClear().mockResolvedValue({ code: "PAIRCODE", created: true });
+    enqueueSystemEventMock.mockClear();
   });
 
   it("sends pairing reply when DM sender is not allowlisted", async () => {
@@ -282,17 +291,17 @@ describe("discord component interactions", () => {
   beforeEach(() => {
     clearDiscordComponentEntries();
     lastDispatchCtx = undefined;
-    readAllowFromStoreMock.mockReset().mockResolvedValue([]);
-    upsertPairingRequestMock.mockReset().mockResolvedValue({ code: "PAIRCODE", created: true });
-    enqueueSystemEventMock.mockReset();
-    dispatchReplyMock.mockReset().mockImplementation(async (params: DispatchParams) => {
+    readAllowFromStoreMock.mockClear().mockResolvedValue([]);
+    upsertPairingRequestMock.mockClear().mockResolvedValue({ code: "PAIRCODE", created: true });
+    enqueueSystemEventMock.mockClear();
+    dispatchReplyMock.mockClear().mockImplementation(async (params: DispatchParams) => {
       lastDispatchCtx = params.ctx;
       await params.dispatcherOptions.deliver({ text: "ok" });
     });
-    deliverDiscordReplyMock.mockReset();
-    recordInboundSessionMock.mockReset().mockResolvedValue(undefined);
-    readSessionUpdatedAtMock.mockReset().mockReturnValue(undefined);
-    resolveStorePathMock.mockReset().mockReturnValue("/tmp/openclaw-sessions-test.json");
+    deliverDiscordReplyMock.mockClear();
+    recordInboundSessionMock.mockClear().mockResolvedValue(undefined);
+    readSessionUpdatedAtMock.mockClear().mockReturnValue(undefined);
+    resolveStorePathMock.mockClear().mockReturnValue("/tmp/openclaw-sessions-test.json");
   });
 
   it("routes button clicks with reply references", async () => {

@@ -32,13 +32,60 @@ import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenanc
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
+import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import { normalizeSessionDeliveryFields } from "../../utils/delivery-context.js";
+import {
+  INTERNAL_MESSAGE_CHANNEL,
+  isDeliverableMessageChannel,
+  normalizeMessageChannel,
+} from "../../utils/message-channel.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import { normalizeInboundTextNewlines } from "./inbound-text.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 
 const log = createSubsystemLogger("session-init");
+
+function resolveSessionKeyChannelHint(sessionKey?: string): string | undefined {
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (!parsed?.rest) {
+    return undefined;
+  }
+  const head = parsed.rest.split(":")[0]?.trim().toLowerCase();
+  if (!head || head === "main" || head === "cron" || head === "subagent" || head === "acp") {
+    return undefined;
+  }
+  return normalizeMessageChannel(head);
+}
+
+function resolveLastChannelRaw(params: {
+  originatingChannelRaw?: string;
+  persistedLastChannel?: string;
+  sessionKey?: string;
+}): string | undefined {
+  const originatingChannel = normalizeMessageChannel(params.originatingChannelRaw);
+  const persistedChannel = normalizeMessageChannel(params.persistedLastChannel);
+  const sessionKeyChannelHint = resolveSessionKeyChannelHint(params.sessionKey);
+  let resolved = params.originatingChannelRaw || params.persistedLastChannel;
+  // Internal webchat/system turns should not overwrite previously known external
+  // delivery routes (or explicit channel hints encoded in the session key).
+  if (originatingChannel === INTERNAL_MESSAGE_CHANNEL) {
+    if (
+      persistedChannel &&
+      persistedChannel !== INTERNAL_MESSAGE_CHANNEL &&
+      isDeliverableMessageChannel(persistedChannel)
+    ) {
+      resolved = persistedChannel;
+    } else if (
+      sessionKeyChannelHint &&
+      sessionKeyChannelHint !== INTERNAL_MESSAGE_CHANNEL &&
+      isDeliverableMessageChannel(sessionKeyChannelHint)
+    ) {
+      resolved = sessionKeyChannelHint;
+    }
+  }
+  return resolved;
+}
 
 export type SessionInitResult = {
   sessionCtx: TemplateContext;
@@ -151,6 +198,7 @@ export async function initSessionState(params: {
   let persistedTtsAuto: TtsAutoMode | undefined;
   let persistedModelOverride: string | undefined;
   let persistedProviderOverride: string | undefined;
+  let persistedLabel: string | undefined;
 
   const normalizedChatType = normalizeChatType(ctx.ChatType);
   const isGroup =
@@ -249,6 +297,7 @@ export async function initSessionState(params: {
     persistedTtsAuto = entry.ttsAuto;
     persistedModelOverride = entry.modelOverride;
     persistedProviderOverride = entry.providerOverride;
+    persistedLabel = entry.label;
   } else {
     sessionId = crypto.randomUUID();
     isNewSession = true;
@@ -264,12 +313,18 @@ export async function initSessionState(params: {
       persistedTtsAuto = entry.ttsAuto;
       persistedModelOverride = entry.modelOverride;
       persistedProviderOverride = entry.providerOverride;
+      persistedLabel = entry.label;
     }
   }
 
   const baseEntry = !isNewSession && freshEntry ? entry : undefined;
   // Track the originating channel/to for announce routing (subagent announce-back).
-  const lastChannelRaw = (ctx.OriginatingChannel as string | undefined) || baseEntry?.lastChannel;
+  const originatingChannelRaw = ctx.OriginatingChannel as string | undefined;
+  const lastChannelRaw = resolveLastChannelRaw({
+    originatingChannelRaw,
+    persistedLastChannel: baseEntry?.lastChannel,
+    sessionKey,
+  });
   const lastToRaw = ctx.OriginatingTo || ctx.To || baseEntry?.lastTo;
   const lastAccountIdRaw = ctx.AccountId || baseEntry?.lastAccountId;
   // Only fall back to persisted threadId for thread sessions.  Non-thread
@@ -302,6 +357,7 @@ export async function initSessionState(params: {
     responseUsage: baseEntry?.responseUsage,
     modelOverride: persistedModelOverride ?? baseEntry?.modelOverride,
     providerOverride: persistedProviderOverride ?? baseEntry?.providerOverride,
+    label: persistedLabel ?? baseEntry?.label,
     sendPolicy: baseEntry?.sendPolicy,
     queueMode: baseEntry?.queueMode,
     queueDebounceMs: baseEntry?.queueDebounceMs,
@@ -338,11 +394,12 @@ export async function initSessionState(params: {
     sessionEntry.displayName = threadLabel;
   }
   const parentSessionKey = ctx.ParentSessionKey?.trim();
+  const alreadyForked = sessionEntry.forkedFromParent === true;
   if (
-    isNewSession &&
     parentSessionKey &&
     parentSessionKey !== sessionKey &&
-    sessionStore[parentSessionKey]
+    sessionStore[parentSessionKey] &&
+    !alreadyForked
   ) {
     log.warn(
       `forking from parent session: parentKey=${parentSessionKey} → sessionKey=${sessionKey} ` +
@@ -357,6 +414,7 @@ export async function initSessionState(params: {
       sessionId = forked.sessionId;
       sessionEntry.sessionId = forked.sessionId;
       sessionEntry.sessionFile = forked.sessionFile;
+      sessionEntry.forkedFromParent = true;
       log.warn(`forked session created: file=${forked.sessionFile}`);
     }
   }

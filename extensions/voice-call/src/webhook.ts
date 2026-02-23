@@ -77,6 +77,10 @@ export class VoiceCallWebhookServer {
 
     const streamConfig: MediaStreamConfig = {
       sttProvider,
+      preStartTimeoutMs: this.config.streaming?.preStartTimeoutMs,
+      maxPendingConnections: this.config.streaming?.maxPendingConnections,
+      maxPendingConnectionsPerIp: this.config.streaming?.maxPendingConnectionsPerIp,
+      maxConnections: this.config.streaming?.maxConnections,
       shouldAcceptStream: ({ callId, token }) => {
         const call = this.manager.getCallByProviderCallId(callId);
         if (!call) {
@@ -193,8 +197,8 @@ export class VoiceCallWebhookServer {
       if (this.mediaStreamHandler) {
         this.server.on("upgrade", (request, socket, head) => {
           const url = new URL(request.url || "/", `http://${request.headers.host}`);
-
-          if (url.pathname === streamPath) {
+          const path = url.pathname;
+          if (path === streamPath) {
             // Validate stream token if configured
             const expectedToken = this.config.streaming?.streamToken;
             if (expectedToken) {
@@ -284,6 +288,15 @@ export class VoiceCallWebhookServer {
         resolve();
       }
     });
+  }
+
+  private getUpgradePathname(request: http.IncomingMessage): string | null {
+    try {
+      const host = request.headers.host || "localhost";
+      return new URL(request.url || "/", `http://${host}`).pathname;
+    } catch {
+      return null;
+    }
   }
 
   /**
