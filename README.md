@@ -66,11 +66,13 @@ Over 50 turns in a day, that's the difference between burning your rate limit by
 
 The theoretical foundations behind this fork's memory system:
 
-| Paper                                                      | Description                                                                                      |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 📄 [Agent Memory](docs/papers/agent-memory.md)             | Cognitive memory architecture for persistent AI agents — from daily logs to spreading activation |
-| 📄 [Context Compaction](docs/papers/context-compaction.md) | Why lossy compaction fails and how structured memory eliminates the need for it                  |
-| 📄 [Humor Embeddings](docs/papers/humor-embeddings.md)     | Embedding space bisociation theory — computational humor for AI agents                           |
+| Paper                                                      | Codename        | Description                                                                                      |
+| ---------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------ |
+| 📄 [Agent Memory](docs/papers/agent-memory.md)             | **CORTEX**      | Cognitive memory architecture for persistent AI agents — from daily logs to spreading activation |
+| 📄 [Context Compaction](docs/papers/context-compaction.md) | **ENGRAM**      | Why lossy compaction fails and how structured memory eliminates the need for it                  |
+| 📄 [Humor Embeddings](docs/papers/humor-embeddings.md)     | **LIMBIC**      | Embedding space bisociation theory — computational humor for AI agents                           |
+| 📄 [Multi-Model Debate](docs/papers/synapse.md)            | **SYNAPSE**     | Multi-model deliberation protocol — cognitive diversity through structured disagreement          |
+| 📄 [Concept Index](docs/papers/hippocampus.md)             | **HIPPOCAMPUS** | Two-tier retrieval index — episodic anchors + semantic consolidation for O(1) recall             |
 
 ---
 
@@ -180,3 +182,5 @@ For full setup instructions, see the [upstream documentation](https://docs.openc
 MIT — same as upstream. See [LICENSE](LICENSE).
 
 Built on [OpenClaw](https://github.com/openclaw/openclaw). All credit to the upstream team for the incredible foundation.
+
+For upstream features, setup, channels, and platform docs, see the [upstream README](https://github.com/openclaw/openclaw#readme).
