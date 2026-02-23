@@ -112,6 +112,7 @@ import {
 import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
+import { getIngestionRuntime } from "../../pi-extensions/ingestion-runtime.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
@@ -1439,6 +1440,16 @@ export async function runEmbeddedAttempt(
       if (contextAnatomy && params.sessionKey) {
         writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
           log.warn(`context-anatomy write failed: ${String(err)}`);
+        });
+      }
+
+      // TRACE Phase 1.1: fire-and-forget ENGRAM ingestion after each agent turn.
+      // Only active when the engram compaction mode has initialised the pipeline
+      // (via buildEmbeddedExtensionFactories → setIngestionRuntime).
+      const ingestionRuntime = getIngestionRuntime(sessionManager);
+      if (ingestionRuntime) {
+        ingestionRuntime.ingest(messagesSnapshot).catch((err) => {
+          log.warn(`ENGRAM ingestion failed: ${String(err)}`);
         });
       }
 
