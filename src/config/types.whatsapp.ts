@@ -53,35 +53,10 @@ export type WhatsAppAckReactionConfig = {
   group?: "always" | "mentions" | "never";
 };
 
-export type WhatsAppConfig = {
-  /** Optional per-account WhatsApp configuration (multi-account). */
-  accounts?: Record<string, WhatsAppAccountConfig>;
-  /** Optional provider capability tags used for agent/runtime guidance. */
-  capabilities?: string[];
-  /** Markdown formatting overrides (tables). */
-  markdown?: MarkdownConfig;
-  /** Allow channel-initiated config writes (default: true). */
-  configWrites?: boolean;
-  /** Send read receipts for incoming messages (default true). */
-  sendReadReceipts?: boolean;
-  /**
-   * Inbound message prefix (WhatsApp only).
-   * Default: `[{agents.list[].identity.name}]` (or `[openclaw]`) when allowFrom is empty, else `""`.
-   */
-  messagePrefix?: string;
-  /**
-   * Per-channel outbound response prefix override.
-   *
-   * When set, this takes precedence over the global `messages.responsePrefix`.
-   * Use `""` to explicitly disable a global prefix for this channel.
-   * Use `"auto"` to derive `[{identity.name}]` from the routed agent.
-   */
-  responsePrefix?: string;
+type WhatsAppSharedConfig = {
   /** Direct message access policy (default: pairing). */
   dmPolicy?: DmPolicy;
-  /**
-   * Same-phone setup (bot uses your personal WhatsApp number).
-   */
+  /** Same-phone setup (bot uses your personal WhatsApp number). */
   selfChatMode?: boolean;
   /** Optional allowlist for WhatsApp direct chats (E.164). */
   allowFrom?: string[];
@@ -96,11 +71,6 @@ export type WhatsAppConfig = {
    * - "allowlist": only allow group messages from senders in groupAllowFrom/allowFrom
    */
   groupPolicy?: GroupPolicy;
-  /**
-   * Require messages to start with this prefix to trigger the agent.
-   * Case-insensitive. The prefix is stripped from the message before processing.
-   */
-  triggerPrefix?: string;
   /** Max group messages to keep as history context (0 disables). */
   historyLimit?: number;
   /** Max DM turns to keep as history context. */
@@ -117,75 +87,51 @@ export type WhatsAppConfig = {
   blockStreaming?: boolean;
   /** Merge streamed block replies before sending. */
   blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
-  /** Per-action tool gating (default: true for all). */
-  actions?: WhatsAppActionConfig;
   groups?: Record<string, WhatsAppGroupConfig>;
   /** Acknowledgment reaction sent immediately upon message receipt. */
   ackReaction?: WhatsAppAckReactionConfig;
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
   debounceMs?: number;
-  /** Heartbeat visibility settings for this channel. */
+  /** Heartbeat visibility settings. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
   /**
    * Request full history sync from WhatsApp on connect (OPT-IN, default false).
    * Warning: This can download thousands of messages and consume significant memory.
    */
   syncFullHistory?: boolean;
+  /** Prefix that must appear at the start of a group message for the bot to respond. */
+  triggerPrefix?: string;
 };
 
-export type WhatsAppAccountConfig = {
-  /** Optional display name for this account (used in CLI/UI lists). */
-  name?: string;
+type WhatsAppConfigCore = {
   /** Optional provider capability tags used for agent/runtime guidance. */
   capabilities?: string[];
   /** Markdown formatting overrides (tables). */
   markdown?: MarkdownConfig;
   /** Allow channel-initiated config writes (default: true). */
   configWrites?: boolean;
-  /** If false, do not start this WhatsApp account provider. Default: true. */
-  enabled?: boolean;
   /** Send read receipts for incoming messages (default true). */
   sendReadReceipts?: boolean;
-  /** Inbound message prefix override for this account (WhatsApp only). */
+  /** Inbound message prefix override (WhatsApp only). */
   messagePrefix?: string;
-  /** Per-account outbound response prefix override (takes precedence over channel and global). */
+  /** Outbound response prefix override. */
   responsePrefix?: string;
-  /** Override auth directory (Baileys multi-file auth state). */
-  authDir?: string;
-  /** Direct message access policy (default: pairing). */
-  dmPolicy?: DmPolicy;
-  /** Same-phone setup for this account (bot uses your personal WhatsApp number). */
-  selfChatMode?: boolean;
-  allowFrom?: string[];
-  /** Default delivery target for CLI `--deliver` when no explicit `--reply-to` is provided (E.164 or group JID). */
-  defaultTo?: string;
-  groupAllowFrom?: string[];
-  groupPolicy?: GroupPolicy;
-  /** Max group messages to keep as history context (0 disables). */
-  historyLimit?: number;
-  /** Max DM turns to keep as history context. */
-  dmHistoryLimit?: number;
-  /** Per-DM config overrides keyed by user ID. */
-  dms?: Record<string, DmConfig>;
-  textChunkLimit?: number;
-  /** Chunking mode: "length" (default) splits by size; "newline" splits on every newline. */
-  chunkMode?: "length" | "newline";
-  mediaMaxMb?: number;
-  blockStreaming?: boolean;
-  /** Merge streamed block replies before sending. */
-  blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
-  /** Per-action tool gating (default: true for all). */
-  actions?: WhatsAppActionConfig;
-  groups?: Record<string, WhatsAppGroupConfig>;
-  /** Acknowledgment reaction sent immediately upon message receipt. */
-  ackReaction?: WhatsAppAckReactionConfig;
-  /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
-  debounceMs?: number;
-  /** Heartbeat visibility settings for this account. */
-  heartbeat?: ChannelHeartbeatVisibilityConfig;
-  /**
-   * Request full history sync from WhatsApp on connect (OPT-IN, default false).
-   * Warning: This can download thousands of messages and consume significant memory.
-   */
-  syncFullHistory?: boolean;
 };
+
+export type WhatsAppConfig = WhatsAppConfigCore &
+  WhatsAppSharedConfig & {
+    /** Optional per-account WhatsApp configuration (multi-account). */
+    accounts?: Record<string, WhatsAppAccountConfig>;
+    /** Per-action tool gating (default: true for all). */
+    actions?: WhatsAppActionConfig;
+  };
+
+export type WhatsAppAccountConfig = WhatsAppConfigCore &
+  WhatsAppSharedConfig & {
+    /** Optional display name for this account (used in CLI/UI lists). */
+    name?: string;
+    /** If false, do not start this WhatsApp account provider. Default: true. */
+    enabled?: boolean;
+    /** Override auth directory (Baileys multi-file auth state). */
+    authDir?: string;
+  };
