@@ -9,7 +9,7 @@ Every AI agent today handles long conversations the same way: when context gets 
 This fork replaces compaction with **cognitive memory** — a system that organizes, retrieves, and consolidates knowledge the way humans do. The result: **60-80% fewer tokens per session**, because the agent loads only what it needs instead of everything it has.
 
 [![Built on OpenClaw](https://img.shields.io/badge/built%20on-OpenClaw-blue?logo=github)](https://github.com/openclaw/openclaw)
-[![Skills on ClawHub](https://img.shields.io/badge/skills-14%20published-purple)](https://clawhub.com)
+[![Skills on ClawHub](https://img.shields.io/badge/skills-15%20published-purple)](https://clawhub.com)
 [![Downloads](https://img.shields.io/badge/downloads-5%2C400%2B-green)](https://clawhub.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -121,10 +121,11 @@ All available on [ClawHub](https://clawhub.com). Install any skill with `clawhub
 
 ### Communication & Messaging
 
-| Skill                                                                    | Description                                                                         |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| 💬 [whatsapp-ultimate](https://clawhub.com/globalcaos/whatsapp-ultimate) | Full WhatsApp: messages, media, polls, voice notes, reactions, FTS5 history search. |
-| 📧 [outlook-hack](https://clawhub.com/globalcaos/outlook-hack)           | Outlook email via browser session. Read, search, draft. Send blocked by code.       |
+| Skill                                                                    | Description                                                                                                   |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| 💬 [whatsapp-ultimate](https://clawhub.com/globalcaos/whatsapp-ultimate) | Full WhatsApp: messages, media, polls, voice notes, reactions, FTS5 history search.                           |
+| 📧 [outlook-hack](https://clawhub.com/globalcaos/outlook-hack)           | Outlook email via stolen Teams token. Read, search, draft. Send blocked by code. Shares token with Teams.     |
+| 💬 [teams-hack](https://clawhub.com/globalcaos/teams-hack)               | Teams chats, channels, search, presence, org directory. One stolen token, 90 days. Shares token with Outlook. |
 
 ### Media & Content
 
