@@ -39,6 +39,10 @@ export type ContextAnatomyEvent = {
   provider: string;
   /** Session key (if available). */
   sessionKey?: string;
+  /** Top 3-5 topic keywords extracted from this turn's context. */
+  topics: string[];
+  /** Topic transition from previous turn (undefined on first turn or no session key). */
+  topicTransition?: { from: string[]; to: string[]; changed: boolean };
   /** Breakdown of context sent to the model. */
   contextSent: {
     systemPromptChars: number;
@@ -81,6 +85,115 @@ export type ContextAnatomyEvent = {
 /** Rough chars-to-tokens ratio. Good enough for anatomy — not billing. */
 export function estimateTokens(chars: number): number {
   return Math.ceil(chars / 3.5);
+}
+
+// ---------------------------------------------------------------------------
+// Topic extraction
+// ---------------------------------------------------------------------------
+
+/** Common English stop words to filter during keyword extraction. */
+const STOP_WORDS = new Set([
+  "a", "an", "the", "is", "it", "in", "on", "at", "to", "for", "of", "and",
+  "or", "but", "with", "from", "by", "as", "be", "was", "are", "were", "been",
+  "has", "have", "had", "do", "does", "did", "will", "would", "could", "should",
+  "may", "might", "shall", "can", "need", "i", "me", "my", "we", "you", "he",
+  "she", "they", "them", "this", "that", "these", "those", "what", "how", "why",
+  "when", "where", "which", "who", "not", "no", "so", "if", "then", "up", "out",
+  "now", "also", "just", "about", "into", "than", "its", "your", "our", "their",
+  "there", "here", "get", "got", "let", "run", "want", "make", "like", "know",
+  "look", "see", "use", "find", "give", "think", "tell", "show", "work",
+]);
+
+/** Regex to detect file paths (e.g. src/foo/bar.ts, /home/user/file.md). */
+const FILE_PATH_REGEX = /(?:^|\s|["'`(])(\/?(?:[\w.-]+\/)+[\w.-]+\.[\w]+)/gm;
+
+/**
+ * Extract topic keywords from a messages snapshot.
+ *
+ * Sources (in order of priority):
+ * 1. Last user message: key nouns/verbs via word frequency.
+ * 2. Tool calls in assistant messages: tool names used.
+ * 3. Tool result messages: file paths mentioned.
+ *
+ * Returns 3–5 topic keywords.
+ */
+export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
+  const topics: string[] = [];
+
+  // --- Source 1: keywords from last user message ---
+  const lastUserMsg = [...messagesSnapshot].reverse().find((m) => m.role === "user");
+  if (lastUserMsg) {
+    const text =
+      typeof lastUserMsg.content === "string"
+        ? lastUserMsg.content
+        : JSON.stringify(lastUserMsg.content);
+    const wordFreq = new Map<string, number>();
+    for (const word of text.toLowerCase().split(/\W+/)) {
+      if (word.length >= 4 && !STOP_WORDS.has(word)) {
+        wordFreq.set(word, (wordFreq.get(word) ?? 0) + 1);
+      }
+    }
+    const sorted = [...wordFreq.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [word] of sorted.slice(0, 3)) {
+      topics.push(word);
+    }
+  }
+
+  // --- Source 2: tool names from assistant messages ---
+  for (const msg of messagesSnapshot) {
+    if (msg.role !== "assistant") {continue;}
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (
+          block &&
+          typeof block === "object" &&
+          (block as Record<string, unknown>).type === "tool_use" &&
+          typeof (block as Record<string, unknown>).name === "string"
+        ) {
+          const toolName = (block as Record<string, unknown>).name as string;
+          if (!topics.includes(toolName)) {
+            topics.push(toolName);
+          }
+        }
+      }
+    }
+  }
+
+  // --- Source 3: file paths from tool results ---
+  for (const msg of messagesSnapshot) {
+    if (msg.role !== "tool") {continue;}
+    const text =
+      typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+    for (const match of text.matchAll(FILE_PATH_REGEX)) {
+      const filePath = match[1];
+      if (filePath && !topics.includes(filePath)) {
+        topics.push(filePath);
+      }
+    }
+  }
+
+  return topics.slice(0, 5);
+}
+
+/** Per-session topic history used to compute turn-to-turn transitions. */
+const sessionTopicsState = new Map<string, string[]>();
+
+/**
+ * Compare two topic arrays to determine if the topic has meaningfully changed.
+ * "Changed" when fewer than half of the new topics overlap with the previous ones.
+ */
+function computeTopicTransition(
+  from: string[],
+  to: string[],
+): { from: string[]; to: string[]; changed: boolean } {
+  if (from.length === 0 && to.length === 0) {
+    return { from, to, changed: false };
+  }
+  const fromSet = new Set(from);
+  const overlap = to.filter((t) => fromSet.has(t)).length;
+  const threshold = Math.max(1, Math.floor(Math.min(from.length, to.length) / 2));
+  return { from, to, changed: overlap < threshold };
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +282,16 @@ export function buildContextAnatomy(params: {
     )
     .map((f) => f.path);
 
+  // Topic extraction + transition tracking
+  const topics = extractTopics(params.messagesSnapshot);
+  const stateKey = params.sessionKey ?? "";
+  const previousTopics = stateKey ? sessionTopicsState.get(stateKey) : undefined;
+  const topicTransition =
+    previousTopics !== undefined ? computeTopicTransition(previousTopics, topics) : undefined;
+  if (stateKey) {
+    sessionTopicsState.set(stateKey, topics);
+  }
+
   return {
     turn: params.turn,
     compactionCycle: params.compactionCycle,
@@ -177,6 +300,8 @@ export function buildContextAnatomy(params: {
     model: params.model,
     provider: params.provider,
     sessionKey: params.sessionKey,
+    topics,
+    topicTransition,
     contextSent: {
       systemPromptChars,
       systemPromptTokens: estimateTokens(systemPromptChars),
