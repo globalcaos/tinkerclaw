@@ -7,6 +7,7 @@ import type { SessionSystemPromptReport } from "../config/sessions/types.js";
 import {
   buildContextAnatomy,
   estimateTokens,
+  extractTopics,
   readAnatomyEvents,
   readLatestAnatomyEvent,
   writeAnatomyEvent,
@@ -184,6 +185,143 @@ describe("buildContextAnatomy", () => {
       event.contextSent.userMessageChars;
 
     expect(event.contextSent.totalChars).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractTopics
+// ---------------------------------------------------------------------------
+
+describe("extractTopics", () => {
+  test("extracts keywords from last user message", () => {
+    const messages: AgentMessage[] = [
+      { role: "user", content: "Hello there" },
+      { role: "assistant", content: "Sure, I can help." },
+      { role: "user", content: "Please refactor the authentication middleware module" },
+    ];
+    const topics = extractTopics(messages);
+    // "refactor", "authentication", "middleware", "module" should appear
+    expect(topics.length).toBeGreaterThan(0);
+    expect(topics.length).toBeLessThanOrEqual(5);
+    // At least one meaningful keyword from the last user message
+    const lowerTopics = topics.map((t) => t.toLowerCase());
+    const hasKeyword =
+      lowerTopics.some((t) => ["refactor", "authentication", "middleware", "module"].includes(t));
+    expect(hasKeyword).toBe(true);
+  });
+
+  test("includes tool names from assistant tool_use blocks", () => {
+    const messages: AgentMessage[] = [
+      { role: "user", content: "Read the config file" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "tu_1", name: "read_file", input: { path: "config.json" } },
+        ],
+      },
+      { role: "tool", content: '{"content":"..."}' },
+    ];
+    const topics = extractTopics(messages);
+    expect(topics).toContain("read_file");
+  });
+
+  test("includes file paths from tool result messages", () => {
+    const messages: AgentMessage[] = [
+      { role: "user", content: "Check the memory plans" },
+      {
+        role: "tool",
+        content: JSON.stringify({
+          results: [{ path: "memory/plans/roadmap.md", score: 0.95 }],
+        }),
+      },
+    ];
+    const topics = extractTopics(messages);
+    expect(topics.some((t) => t.includes("memory/plans/roadmap.md"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Topic transition tracking
+// ---------------------------------------------------------------------------
+
+describe("topic transitions", () => {
+  test("first call has no topicTransition, second call has transition info", () => {
+    const uniqueKey = `topic-transition-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const report = makeReport();
+
+    const first = buildContextAnatomy({
+      turn: 1,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      sessionKey: uniqueKey,
+      systemPromptReport: report,
+      messagesSnapshot: [{ role: "user", content: "Deploy the database migration scripts" }],
+      contextWindowTokens: 200000,
+    });
+
+    // First turn: topics populated, no transition yet
+    expect(first.topics).toBeDefined();
+    expect(Array.isArray(first.topics)).toBe(true);
+    expect(first.topicTransition).toBeUndefined();
+
+    const second = buildContextAnatomy({
+      turn: 2,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      sessionKey: uniqueKey,
+      systemPromptReport: report,
+      messagesSnapshot: [{ role: "user", content: "What is the weather forecast tomorrow?" }],
+      contextWindowTokens: 200000,
+    });
+
+    // Second turn: transition from first topics to new topics
+    expect(second.topics).toBeDefined();
+    expect(second.topicTransition).toBeDefined();
+    expect(second.topicTransition).toHaveProperty("from");
+    expect(second.topicTransition).toHaveProperty("to");
+    expect(second.topicTransition).toHaveProperty("changed");
+    // Topics changed significantly (database/migration → weather/forecast)
+    expect(second.topicTransition!.changed).toBe(true);
+  });
+
+  test("similar topics across turns yield changed: false", () => {
+    const uniqueKey = `topic-stable-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const report = makeReport();
+
+    const msgs1: AgentMessage[] = [
+      { role: "user", content: "Refactor the authentication module please" },
+    ];
+    const msgs2: AgentMessage[] = [
+      { role: "user", content: "Refactor the authentication middleware module" },
+    ];
+
+    buildContextAnatomy({
+      turn: 1,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      sessionKey: uniqueKey,
+      systemPromptReport: report,
+      messagesSnapshot: msgs1,
+      contextWindowTokens: 200000,
+    });
+
+    const second = buildContextAnatomy({
+      turn: 2,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      sessionKey: uniqueKey,
+      systemPromptReport: report,
+      messagesSnapshot: msgs2,
+      contextWindowTokens: 200000,
+    });
+
+    expect(second.topicTransition).toBeDefined();
+    // Overlapping keywords ("refactor", "authentication", "module") → not changed
+    expect(second.topicTransition!.changed).toBe(false);
   });
 });
 
