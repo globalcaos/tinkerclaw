@@ -7,6 +7,7 @@ import {
 import { createServer as createHttpsServer } from "node:https";
 import type { TlsOptions } from "node:tls";
 import type { WebSocketServer } from "ws";
+import { handleContextAnatomyRequest } from "../agents/context-anatomy-http.js";
 import { resolveAgentAvatar } from "../agents/identity-avatar.js";
 import {
   A2UI_PATH,
@@ -577,6 +578,11 @@ export function createGatewayHttpServer(opts: {
         ) {
           return;
         }
+      }
+
+      // Context Anatomy — per-turn prompt decomposition API
+      if (await handleContextAnatomyRequest(req, res)) {
+        return;
       }
 
       res.statusCode = 404;

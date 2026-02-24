@@ -16,12 +16,11 @@
 import { execSync } from "node:child_process";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginRegistry } from "./registry.js";
-import type { PluginHookAfterToolCallEvent, PluginHookToolContext } from "./types.js";
 
 const log = createSubsystemLogger("hippocampus");
 
 const HIPPOCAMPUS_CMD =
-  "node /home/globalcaos/.openclaw/workspace/scripts/hippocampus/cli.mjs lookup";
+  "cd /home/globalcaos/.openclaw/workspace/scripts && python3 -m hippocampus.cli lookup";
 const TIMEOUT_MS = 5000;
 
 interface HippocampusEntry {
@@ -69,13 +68,17 @@ function hippocampusSearch(query: string, maxResults = 8): unknown[] {
  * Called from cognitive-hooks.ts or directly from the fork's startup.
  */
 export function registerHippocampusHook(registry: PluginRegistry): void {
-  registry.typedHooks.push({
+  // Fork-only: PluginRegistry doesn't expose registerHook publicly.
+  // The internal registry builder adds it at runtime (see registry.ts L490).
+  (
+    registry as unknown as { registerHook: (event: string, opts: Record<string, unknown>) => void }
+  ).registerHook("after_tool_call", {
     pluginId: "hippocampus",
-    hookName: "after_tool_call",
-    handler: async (
-      event: PluginHookAfterToolCallEvent,
-      _ctx: PluginHookToolContext,
-    ): Promise<void> => {
+    handler: async (event: {
+      toolName: string;
+      params?: Record<string, unknown>;
+      result?: { content?: string };
+    }) => {
       if (event.toolName !== "memory_search") {
         return;
       }
@@ -92,13 +95,7 @@ export function registerHippocampusHook(registry: PluginRegistry): void {
         }
 
         // Parse existing results and merge
-        const resultStr =
-          typeof event.result === "string"
-            ? event.result
-            : typeof event.result === "object" && event.result !== null
-              ? (event.result as { content?: string }).content ?? JSON.stringify(event.result)
-              : "{}";
-        const existing = JSON.parse(resultStr);
+        const existing = JSON.parse(event.result?.content ?? "{}");
         if (!existing.results || !Array.isArray(existing.results)) {
           return;
         }
@@ -121,18 +118,14 @@ export function registerHippocampusHook(registry: PluginRegistry): void {
         // Re-sort by score descending
         existing.results.sort((a: { score: number }, b: { score: number }) => b.score - a.score);
 
-        // Tag the merge
+        // Update the result
         existing.hippocampus = { merged: hippoResults.length };
-
-        // Mutate result in-place for the hook system to pick up
-        (event as { result?: unknown }).result = { content: JSON.stringify(existing) };
+        event.result = { content: JSON.stringify(existing) };
       } catch {
         log.debug("hippocampus merge failed (non-fatal)");
       }
     },
-    priority: 50,
-    source: "bundled:hippocampus",
-  } as (typeof registry.typedHooks)[0]);
+  });
 
   log.info("HIPPOCAMPUS hook registered (fork-isolated)");
 }

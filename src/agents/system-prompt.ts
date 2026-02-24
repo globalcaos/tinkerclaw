@@ -214,6 +214,8 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
+  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
+  personaBlock?: string;
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   runtimeInfo?: {
@@ -415,9 +417,15 @@ export function buildAgentSystemPrompt(params: {
     return "You are a personal assistant running inside OpenClaw.";
   }
 
+  // CORTEX Tier 1: persona block injected near the top, before tooling sections.
+  // Cached by CortexRuntime; survives context compaction because the system prompt
+  // is always rebuilt from scratch on each run/compact cycle.
+  const cortexPersonaBlock = params.personaBlock?.trim();
+
   const lines = [
     "You are a personal assistant running inside OpenClaw.",
     "",
+    ...(cortexPersonaBlock ? [cortexPersonaBlock, ""] : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",
@@ -598,15 +606,21 @@ export function buildAgentSystemPrompt(params: {
     (file) => typeof file.path === "string" && file.path.trim().length > 0,
   );
   if (validContextFiles.length > 0) {
-    const hasSoulFile = validContextFiles.some((file) => {
-      const normalizedPath = file.path.trim().replace(/\\/g, "/");
-      const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
-      return baseName.toLowerCase() === "soul.md";
-    });
+    const hasFile = (name: string) =>
+      validContextFiles.some((file) => {
+        const normalizedPath = file.path.trim().replace(/\\/g, "/");
+        const baseName = normalizedPath.split("/").pop() ?? normalizedPath;
+        return baseName.toLowerCase() === name.toLowerCase();
+      });
     lines.push("# Project Context", "", "The following project context files have been loaded:");
-    if (hasSoulFile) {
+    if (hasFile("SOUL.md")) {
       lines.push(
         "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.",
+      );
+    }
+    if (hasFile("VOICE.md")) {
+      lines.push(
+        "If VOICE.md is present, follow its voice output rules strictly. Every response must include voice output as specified.",
       );
     }
     lines.push("");

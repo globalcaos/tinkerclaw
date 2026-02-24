@@ -11,6 +11,8 @@ import { enforceEmbeddingMaxInputTokens } from "./embedding-chunk-limits.js";
 import { estimateUtf8Bytes } from "./embedding-input-limits.js";
 import {
   chunkMarkdown,
+  detectGranularity,
+  detectTopicCluster,
   hashText,
   parseEmbedding,
   remapChunkLines,
@@ -739,6 +741,8 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     this.db
       .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
       .run(entry.path, options.source);
+    const granularity = detectGranularity(entry.path);
+    const topicCluster = detectTopicCluster(entry.path);
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const embedding = embeddings[i] ?? [];
@@ -747,14 +751,16 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       );
       this.db
         .prepare(
-          `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at, granularity, topic_cluster)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              hash=excluded.hash,
              model=excluded.model,
              text=excluded.text,
              embedding=excluded.embedding,
-             updated_at=excluded.updated_at`,
+             updated_at=excluded.updated_at,
+             granularity=excluded.granularity,
+             topic_cluster=excluded.topic_cluster`,
         )
         .run(
           id,
@@ -767,6 +773,8 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           chunk.text,
           JSON.stringify(embedding),
           now,
+          granularity,
+          topicCluster,
         );
       if (vectorReady && embedding.length > 0) {
         try {
