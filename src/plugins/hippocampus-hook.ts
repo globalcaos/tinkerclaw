@@ -68,12 +68,11 @@ function hippocampusSearch(query: string, maxResults = 8): unknown[] {
  * Called from cognitive-hooks.ts or directly from the fork's startup.
  */
 export function registerHippocampusHook(registry: PluginRegistry): void {
-  // Fork-only: PluginRegistry doesn't expose registerHook publicly.
-  // The internal registry builder adds it at runtime (see registry.ts L490).
-  (
-    registry as unknown as { registerHook: (event: string, opts: Record<string, unknown>) => void }
-  ).registerHook("after_tool_call", {
+  // Push directly onto typedHooks — registerHook is only on the builder,
+  // not on the bare PluginRegistry type.
+  registry.typedHooks.push({
     pluginId: "hippocampus",
+    hookName: "after_tool_call",
     handler: async (event: {
       toolName: string;
       params?: Record<string, unknown>;
@@ -125,7 +124,8 @@ export function registerHippocampusHook(registry: PluginRegistry): void {
         log.debug("hippocampus merge failed (non-fatal)");
       }
     },
-  });
+    source: "fork-isolated",
+  } as import("./types.js").PluginHookRegistration);
 
   log.info("HIPPOCAMPUS hook registered (fork-isolated)");
 }

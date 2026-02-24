@@ -121,8 +121,8 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
   const topics: string[] = [];
 
   // --- Source 1: keywords from last user message ---
-  const lastUserMsg = [...messagesSnapshot].reverse().find((m) => m.role === "user");
-  if (lastUserMsg) {
+  const lastUserMsg = [...messagesSnapshot].toReversed().find((m) => m.role === "user" && "content" in m);
+  if (lastUserMsg && "content" in lastUserMsg) {
     const text =
       typeof lastUserMsg.content === "string"
         ? lastUserMsg.content
@@ -133,7 +133,7 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
         wordFreq.set(word, (wordFreq.get(word) ?? 0) + 1);
       }
     }
-    const sorted = [...wordFreq.entries()].sort((a, b) => b[1] - a[1]);
+    const sorted = [...wordFreq.entries()].toSorted((a, b) => b[1] - a[1]);
     for (const [word] of sorted.slice(0, 3)) {
       topics.push(word);
     }
@@ -141,17 +141,18 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
 
   // --- Source 2: tool names from assistant messages ---
   for (const msg of messagesSnapshot) {
-    if (msg.role !== "assistant") {continue;}
+    if (msg.role !== "assistant" || !("content" in msg)) {continue;}
     const content = msg.content;
     if (Array.isArray(content)) {
       for (const block of content) {
+        const b = block as unknown as Record<string, unknown>;
         if (
-          block &&
-          typeof block === "object" &&
-          (block as Record<string, unknown>).type === "tool_use" &&
-          typeof (block as Record<string, unknown>).name === "string"
+          b &&
+          typeof b === "object" &&
+          b.type === "tool_use" &&
+          typeof b.name === "string"
         ) {
-          const toolName = (block as Record<string, unknown>).name as string;
+          const toolName = b.name as string;
           if (!topics.includes(toolName)) {
             topics.push(toolName);
           }
@@ -162,7 +163,7 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
 
   // --- Source 3: file paths from tool results ---
   for (const msg of messagesSnapshot) {
-    if (msg.role !== "tool") {continue;}
+    if ((msg.role as string) !== "tool" || !("content" in msg)) {continue;}
     const text =
       typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
     for (const match of text.matchAll(FILE_PATH_REGEX)) {
@@ -243,13 +244,14 @@ export function buildContextAnatomy(params: {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (!msg) {continue;}
+    if (!("content" in msg)) {continue;}
     const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
     const chars = content.length;
     const isLast = i === messages.length - 1;
 
     if (msg.role === "user" && isLast) {
       userMessageChars = chars;
-    } else if (msg.role === "tool") {
+    } else if (msg.role === "tool" as string) {
       toolResultsChars += chars;
     } else if (msg.role === "user" || msg.role === "assistant") {
       conversationHistoryChars += chars;
