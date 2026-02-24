@@ -25,8 +25,10 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   enhanceIndex,
   type HippocampusIndex,
+  type IndexChunk,
   type EnhanceOptions,
 } from "./hippocampus-enhancement.js";
+import type { MemoryEvent } from "./event-types.js";
 
 const log = createSubsystemLogger("hippocampus-rebuild");
 
@@ -288,4 +290,161 @@ export async function scheduleNightlyRebuild(
   );
 
   return { pruned, reindexed, anchors };
+}
+
+// ---------------------------------------------------------------------------
+// runHippocampusRebuild — ENGRAM event-driven nightly rebuild (Phase 2.4)
+// ---------------------------------------------------------------------------
+
+export interface RebuildFromEventsConfig {
+  /** Path to hippocampus-index.json. */
+  indexPath: string;
+  /**
+   * ENGRAM events to ingest.  Accepts either:
+   *   - A direct array of MemoryEvent objects (useful in tests / embedding)
+   *   - A path to a JSONL events file  (one JSON object per line)
+   */
+  events?: MemoryEvent[];
+  eventsFilePath?: string;
+  /**
+   * How far back to scan for events (ms).  Default: 24 h.
+   * Pass a different value in tests to control what's "recent".
+   */
+  maxAgeMs?: number;
+  /** Enhancement options forwarded to enhanceIndex(). */
+  enhanceOptions?: EnhanceOptions;
+}
+
+/** Stopwords excluded from anchor extraction. */
+const STOPWORDS = new Set([
+  "the", "and", "for", "are", "was", "has", "had", "its", "not", "but",
+  "with", "from", "this", "that", "have", "will", "been", "they", "them",
+  "were", "our", "can", "you", "she", "his", "her", "him", "who",
+]);
+
+/**
+ * Extract concept anchor tokens from free-form text.
+ *
+ * Strategy: tokenise, remove stopwords and short words, take the top-N most
+ * frequent terms as the anchor label (joined with spaces).
+ */
+function extractAnchor(text: string, maxTerms = 3): string {
+  const freq = new Map<string, number>();
+  for (const raw of text.toLowerCase().split(/\W+/)) {
+    const w = raw.trim();
+    if (w.length < 3 || STOPWORDS.has(w)) continue;
+    freq.set(w, (freq.get(w) ?? 0) + 1);
+  }
+  if (freq.size === 0) return "general";
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxTerms)
+    .map(([w]) => w)
+    .join(" ");
+}
+
+/** Load events from a JSONL file, one JSON object per line. */
+function loadEventsFromFile(filePath: string): MemoryEvent[] {
+  if (!existsSync(filePath)) return [];
+  try {
+    return readFileSync(filePath, "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as MemoryEvent);
+  } catch {
+    return [];
+  }
+}
+
+/** Convert a MemoryEvent into an IndexChunk for hippocampus storage. */
+function eventToChunk(event: MemoryEvent): IndexChunk {
+  return {
+    path: `engram://events/${event.id}`,
+    line: 1,
+    // Base score from metadata importance (default 5 → 0.5 in [0,1] space)
+    score: (event.metadata.importance ?? 5) / 10,
+    source: "engram",
+    preview: event.content.slice(0, 120).replace(/\s+/g, " ").trim(),
+    importance: event.metadata.importance ?? 5,
+    timestamp: event.timestamp,
+  };
+}
+
+/**
+ * Event-driven rebuild of the HIPPOCAMPUS concept index.
+ *
+ * Scans recent ENGRAM events (past `maxAgeMs`, default 24 h), extracts concept
+ * anchors and links, merges them into hippocampus-index.json, then applies
+ * importance scoring and deduplication via `enhanceIndex`.
+ *
+ * Safe to call from a cron job or heartbeat — idempotent when events haven't
+ * changed (events are keyed by their ENGRAM id path).
+ *
+ * @returns `{ anchors, indexed }` — total anchors after rebuild and number
+ *          of new chunks ingested.
+ */
+export async function runHippocampusRebuild(
+  config: RebuildFromEventsConfig,
+): Promise<{ anchors: number; indexed: number }> {
+  const {
+    indexPath,
+    maxAgeMs = 24 * 60 * 60 * 1000,
+    enhanceOptions,
+  } = config;
+
+  log.info(`HIPPOCAMPUS event-rebuild start — index: ${indexPath}`);
+
+  // ── Resolve event source ──────────────────────────────────────────────────
+  let allEvents: MemoryEvent[] = config.events ?? [];
+  if (allEvents.length === 0 && config.eventsFilePath) {
+    allEvents = loadEventsFromFile(config.eventsFilePath);
+  }
+
+  // Filter to the requested time window.
+  const cutoff = Date.now() - maxAgeMs;
+  const recentEvents = allEvents.filter(
+    (e) => new Date(e.timestamp).getTime() >= cutoff,
+  );
+
+  log.debug(
+    `Event rebuild: ${recentEvents.length} events within last ${Math.round(maxAgeMs / 3_600_000)}h`,
+  );
+
+  // ── Load existing index ───────────────────────────────────────────────────
+  let index: HippocampusIndex = {};
+  if (existsSync(indexPath)) {
+    try {
+      index = JSON.parse(readFileSync(indexPath, "utf-8")) as HippocampusIndex;
+    } catch {
+      log.warn("Could not parse existing index; starting fresh.");
+    }
+  }
+
+  // ── Ingest events → concept anchors ──────────────────────────────────────
+  let indexed = 0;
+  for (const event of recentEvents) {
+    const anchor = extractAnchor(event.content);
+    const chunk = eventToChunk(event);
+
+    const existing = index[anchor] ?? [];
+    // Dedup by the engram event path (id-based)
+    if (!existing.some((c) => c.path === chunk.path)) {
+      index[anchor] = [...existing, chunk];
+      indexed++;
+    }
+  }
+
+  log.debug(`Event rebuild: ${indexed} new chunks ingested across anchors.`);
+
+  // ── Write intermediate index and apply enhancement pass ───────────────────
+  writeFileSync(indexPath, JSON.stringify(index, null, 2));
+  const enhanced = enhanceIndex(indexPath, enhanceOptions);
+
+  const anchors = Object.keys(enhanced).length;
+  log.info(
+    `HIPPOCAMPUS event-rebuild complete — indexed=${indexed} anchors=${anchors}`,
+  );
+
+  return { anchors, indexed };
 }

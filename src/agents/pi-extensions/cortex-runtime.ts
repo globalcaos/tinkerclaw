@@ -4,14 +4,15 @@
  * Creates a CortexRuntime that:
  * - Loads PersonaState from SOUL.md + IDENTITY.md (or persona.json when present)
  * - Provides getPersonaBlock() for Tier 1 system prompt injection (cached)
- * - Evaluates SyncScore via computeConsistency
+ * - Evaluates SyncScore via computeConsistency with EWMA smoothing (α=0.1)
  * - Detects persona drift via computeDriftScore / detectUserCorrections
+ * - Triggers re-injection when EWMA SyncScore < 0.6
  *
  * Registry pattern mirrors ingestion-runtime.ts / retrieval-runtime.ts.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 import {
 	createDefaultPersonaState,
@@ -35,6 +36,11 @@ import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-r
 // Types
 // ---------------------------------------------------------------------------
 
+// SyncScore EWMA smoothing factor (α)
+export const SYNC_SCORE_ALPHA = 0.1;
+// EWMA threshold below which drift re-injection is triggered
+export const SYNC_SCORE_DRIFT_THRESHOLD = 0.6;
+
 export interface CortexRuntimeOptions {
 	/** Path to SOUL.md (persona description). Defaults to ~/.openclaw/SOUL.md */
 	soulPath?: string;
@@ -42,6 +48,26 @@ export interface CortexRuntimeOptions {
 	identityPath?: string;
 	/** Override the resolved persona name. */
 	name?: string;
+	/** How many turns between SyncScore evaluations. Defaults to 10. */
+	syncScoreInterval?: number;
+}
+
+/**
+ * Result returned by evaluateSyncScore.
+ */
+export interface SyncScoreResult {
+	/** Raw consistency metric C ∈ [0, 1] for this turn. */
+	rawScore: number;
+	/** EWMA-smoothed SyncScore ∈ [0, 1]. */
+	ewmaScore: number;
+	/** Whether drift re-injection should be triggered (ewmaScore < threshold). */
+	needsReinjection: boolean;
+	/** Turn number this evaluation ran on. */
+	turnNumber: number;
+	/** ISO timestamp. */
+	timestamp: string;
+	/** Underlying consistency breakdown. */
+	consistency: ConsistencyResult;
 }
 
 export type DriftActionTier = "none" | "mild_reinforce" | "moderate_refresh" | "severe_rebase";
@@ -56,10 +82,21 @@ export interface DriftAssessment {
 export interface CortexRuntime {
 	/** Tier-1 persona block for system prompt injection. Cached after first call. */
 	getPersonaBlock(): string;
-	/** Run lightweight SyncScore over recent conversation messages. */
-	evaluateSyncScore(conversationMessages: string[]): ConsistencyResult;
+	/**
+	 * Evaluate SyncScore for the current turn.
+	 *
+	 * Runs every `syncScoreInterval` turns (default 10). Applies EWMA smoothing
+	 * (α=0.1) and logs to ~/.openclaw/engram/sync-score-log.json (JSONL).
+	 * Returns current EWMA score; sets needsReinjection when EWMA < 0.6.
+	 *
+	 * @param conversationMessages - Recent agent response strings for consistency analysis.
+	 * @param turnNumber - Optional explicit turn number (auto-increments if omitted).
+	 */
+	evaluateSyncScore(conversationMessages: string[], turnNumber?: number): SyncScoreResult;
 	/** Detect persona drift from recent messages (corrections + signals). */
 	detectDrift(recentMessages: string[]): DriftAssessment;
+	/** Current EWMA SyncScore ∈ [0, 1]. Starts at 1.0 (no data = assume healthy). */
+	readonly ewmaSyncScore: number;
 	/** Underlying PersonaState. */
 	readonly persona: PersonaState;
 }
@@ -110,6 +147,19 @@ function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaState {
 	if (existsSync(personaJsonPath)) {
 		try {
 			const raw = JSON.parse(readFileSync(personaJsonPath, "utf8")) as PersonaState;
+			if (raw.name && raw.identityStatement && raw.version) {
+				return raw;
+			}
+		} catch {
+			// fall through to markdown parsing
+		}
+	}
+
+	// engram/persona-state.json — auto-generated structured persona state (secondary fallback)
+	const engramPersonaPath = join(OPENCLAW_DIR, "engram", "persona-state.json");
+	if (existsSync(engramPersonaPath)) {
+		try {
+			const raw = JSON.parse(readFileSync(engramPersonaPath, "utf8")) as PersonaState;
 			if (raw.name && raw.identityStatement && raw.version) {
 				return raw;
 			}
@@ -188,22 +238,63 @@ function actionFromEwma(ewmaScore: number): DriftActionTier {
 // Factory
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// SyncScore logging
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the sync score log path at call time (not module load time)
+ * so that HOME overrides in tests work correctly.
+ */
+function getSyncScoreLogPath(): string {
+	const home = process.env.HOME ?? "~";
+	return join(home, ".openclaw", "engram", "sync-score-log.json");
+}
+
+/**
+ * Append a SyncScoreResult as a JSONL line to the sync score log.
+ * Creates the engram directory if needed. Silently no-ops on I/O errors.
+ */
+function appendSyncScoreLog(entry: SyncScoreResult): void {
+	try {
+		const logPath = getSyncScoreLogPath();
+		mkdirSync(dirname(logPath), { recursive: true });
+		appendFileSync(logPath, JSON.stringify(entry) + "\n", "utf8");
+	} catch {
+		// Non-fatal: logging failures must not crash the runtime
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
 /**
  * Create a CortexRuntime from SOUL.md + IDENTITY.md (or persona.json).
  *
  * - `getPersonaBlock()` returns the Tier 1A immutable core block, cached.
- * - `evaluateSyncScore()` runs computeConsistency with no probes (lightweight).
+ * - `evaluateSyncScore()` runs computeConsistency every syncScoreInterval turns,
+ *   applies EWMA smoothing (α=0.1), logs to ~/.openclaw/engram/sync-score-log.json,
+ *   and flags needsReinjection when EWMA < 0.6.
  * - `detectDrift()` accumulates EWMA drift across the provided messages.
  */
 export function createCortexRuntime(options: CortexRuntimeOptions = {}): CortexRuntime {
 	const persona = loadPersonaFromFiles(options);
+	const syncScoreInterval = options.syncScoreInterval ?? 10;
 	let cachedPersonaBlock: string | null = null;
 	const driftState: DriftState = createDriftState();
 	let turnCounter = 0;
+	let syncTurnCounter = 0;
+	// EWMA SyncScore: starts at 1.0 (no data → assume healthy)
+	let ewmaSyncScore = 1.0;
 
 	return {
 		get persona() {
 			return persona;
+		},
+
+		get ewmaSyncScore() {
+			return ewmaSyncScore;
 		},
 
 		getPersonaBlock(): string {
@@ -213,9 +304,51 @@ export function createCortexRuntime(options: CortexRuntimeOptions = {}): CortexR
 			return cachedPersonaBlock;
 		},
 
-		evaluateSyncScore(conversationMessages: string[]): ConsistencyResult {
-			// Lightweight: use recent messages as responses, no probe results
-			return computeConsistency([], conversationMessages);
+		evaluateSyncScore(
+			conversationMessages: string[],
+			turnNumber?: number,
+		): SyncScoreResult {
+			// Determine effective turn number
+			const effectiveTurn = turnNumber ?? ++syncTurnCounter;
+
+			// Only run a full consistency evaluation on schedule.
+			// On off-turns return the current EWMA without recomputing or logging.
+			const isDue = effectiveTurn % syncScoreInterval === 0;
+
+			if (!isDue) {
+				return {
+					rawScore: ewmaSyncScore, // best estimate when not recomputing
+					ewmaScore: ewmaSyncScore,
+					needsReinjection: ewmaSyncScore < SYNC_SCORE_DRIFT_THRESHOLD,
+					turnNumber: effectiveTurn,
+					timestamp: new Date().toISOString(),
+					consistency: computeConsistency([], conversationMessages),
+				};
+			}
+
+			// Full evaluation on scheduled turns
+			const consistency = computeConsistency([], conversationMessages);
+			const rawScore = consistency.C;
+
+			// EWMA smoothing: α=0.1 (slow-moving — persona consistency changes gradually)
+			ewmaSyncScore =
+				SYNC_SCORE_ALPHA * rawScore + (1 - SYNC_SCORE_ALPHA) * ewmaSyncScore;
+
+			const needsReinjection = ewmaSyncScore < SYNC_SCORE_DRIFT_THRESHOLD;
+
+			const result: SyncScoreResult = {
+				rawScore,
+				ewmaScore: ewmaSyncScore,
+				needsReinjection,
+				turnNumber: effectiveTurn,
+				timestamp: new Date().toISOString(),
+				consistency,
+			};
+
+			// Persist to JSONL log
+			appendSyncScoreLog(result);
+
+			return result;
 		},
 
 		detectDrift(recentMessages: string[]): DriftAssessment {

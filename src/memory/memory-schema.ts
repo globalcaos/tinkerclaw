@@ -76,8 +76,15 @@ export function ensureMemoryIndexSchema(params: {
 
   ensureColumn(params.db, "files", "source", "TEXT NOT NULL DEFAULT 'memory'");
   ensureColumn(params.db, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  // Phase 1: granularity, topic clustering, and access tracking columns
+  ensureColumn(params.db, "chunks", "granularity", "TEXT DEFAULT 'detail'");
+  ensureColumn(params.db, "chunks", "topic_cluster", "TEXT DEFAULT ''");
+  ensureColumn(params.db, "chunks", "last_accessed", "INTEGER DEFAULT 0");
+  ensureColumn(params.db, "chunks", "access_count", "INTEGER DEFAULT 0");
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);`);
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_granularity ON chunks(granularity);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_topic_cluster ON chunks(topic_cluster);`);
 
   return { ftsAvailable, ...(ftsError ? { ftsError } : {}) };
 }

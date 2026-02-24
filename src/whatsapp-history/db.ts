@@ -13,7 +13,7 @@ const DB_PATH = resolveUserPath("~/.openclaw/data/whatsapp-history.db");
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
-  if (db) return db;
+  if (db) {return db;}
 
   // Ensure directory exists
   const dir = path.dirname(DB_PATH);
@@ -177,7 +177,7 @@ export function insertMessages(messages: MessageRecord[]): number {
         msg.raw_json || null,
         msg.source || "live",
       );
-      if (result.changes > 0) count++;
+      if (result.changes > 0) {count++;}
     }
     return count;
   });
@@ -209,6 +209,83 @@ export interface SearchResult {
   message_type: string | null;
 }
 
+/**
+ * Resolve a chat filter string to a list of chat JIDs, handling both
+ * phone-based JIDs (34689771571@s.whatsapp.net) and LIDs (94167325782196@lid).
+ *
+ * WhatsApp now uses LIDs alongside traditional JIDs for the same contact.
+ * This function queries the contacts and chats tables to find all JIDs
+ * (including LID variants) that match the given chat filter.
+ */
+function resolveChatJids(db: Database.Database, chat: string): string[] {
+  const jids = new Set<string>();
+
+  // 1. Direct LIKE match on chat_jid from the messages table (existing behavior)
+  const directJids = db
+    .prepare(`SELECT DISTINCT chat_jid FROM messages WHERE chat_jid LIKE ?`)
+    .all(`%${chat}%`) as { chat_jid: string }[];
+  for (const row of directJids) {jids.add(row.chat_jid);}
+
+  // 2. Match by chat name in the chats table → collect all their JIDs
+  const chatsByName = db
+    .prepare(`SELECT jid FROM chats WHERE name LIKE ?`)
+    .all(`%${chat}%`) as { jid: string }[];
+  for (const row of chatsByName) {jids.add(row.jid);}
+
+  // 3. Match by contact name/notify in the contacts table → collect all their JIDs
+  const contactsByName = db
+    .prepare(`SELECT jid FROM contacts WHERE name LIKE ? OR notify LIKE ?`)
+    .all(`%${chat}%`, `%${chat}%`) as { jid: string }[];
+  for (const row of contactsByName) {jids.add(row.jid);}
+
+  // 4. If any collected JID is a phone-based JID, also find associated LIDs:
+  //    Look in chats table for LID-format JIDs whose name matches any of the
+  //    phone JID holder names. We do this by cross-referencing names.
+  //    Conversely, if any JID is a LID, find the phone JID via name matching.
+  const resolvedNames = new Set<string>();
+  for (const jid of jids) {
+    // Get name from contacts table
+    const contact = db
+      .prepare(`SELECT name, notify FROM contacts WHERE jid = ?`)
+      .get(jid) as { name: string | null; notify: string | null } | undefined;
+    if (contact?.name) {resolvedNames.add(contact.name);}
+    if (contact?.notify) {resolvedNames.add(contact.notify);}
+
+    // Get name from chats table
+    const chatRow = db
+      .prepare(`SELECT name FROM chats WHERE jid = ?`)
+      .get(jid) as { name: string | null } | undefined;
+    if (chatRow?.name) {resolvedNames.add(chatRow.name);}
+
+    // Also check chat_name stored in messages
+    const msgChatName = db
+      .prepare(`SELECT chat_name FROM messages WHERE chat_jid = ? AND chat_name IS NOT NULL LIMIT 1`)
+      .get(jid) as { chat_name: string | null } | undefined;
+    if (msgChatName?.chat_name) {resolvedNames.add(msgChatName.chat_name);}
+  }
+
+  // For each resolved name, find all JIDs (phone + LID) in chats and contacts
+  for (const name of resolvedNames) {
+    const chatJids = db
+      .prepare(`SELECT jid FROM chats WHERE name = ?`)
+      .all(name) as { jid: string }[];
+    for (const row of chatJids) {jids.add(row.jid);}
+
+    const contactJids = db
+      .prepare(`SELECT jid FROM contacts WHERE name = ? OR notify = ?`)
+      .all(name, name) as { jid: string }[];
+    for (const row of contactJids) {jids.add(row.jid);}
+
+    // Also search messages table for any chat_jid that uses this name
+    const msgJids = db
+      .prepare(`SELECT DISTINCT chat_jid FROM messages WHERE chat_name = ?`)
+      .all(name) as { chat_jid: string }[];
+    for (const row of msgJids) {jids.add(row.chat_jid);}
+  }
+
+  return [...jids];
+}
+
 export function searchMessages(opts: SearchOptions): SearchResult[] {
   const db = getDb();
   const conditions: string[] = [];
@@ -220,8 +297,21 @@ export function searchMessages(opts: SearchOptions): SearchResult[] {
   }
 
   if (opts.chat) {
-    conditions.push(`(m.chat_jid LIKE ? OR m.chat_name LIKE ?)`);
-    params.push(`%${opts.chat}%`, `%${opts.chat}%`);
+    // Resolve all JIDs (including LIDs) for this chat filter
+    const chatJids = resolveChatJids(db, opts.chat);
+
+    if (chatJids.length > 0) {
+      // Build an IN clause for all resolved JIDs, plus keep name fallback
+      const placeholders = chatJids.map(() => "?").join(", ");
+      conditions.push(
+        `(m.chat_jid IN (${placeholders}) OR m.chat_name LIKE ?)`,
+      );
+      params.push(...chatJids, `%${opts.chat}%`);
+    } else {
+      // No JIDs found — fall back to original LIKE behavior
+      conditions.push(`(m.chat_jid LIKE ? OR m.chat_name LIKE ?)`);
+      params.push(`%${opts.chat}%`, `%${opts.chat}%`);
+    }
   }
 
   if (opts.sender) {

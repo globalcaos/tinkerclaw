@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
+import type { ContextAnatomyEvent } from "../../context-anatomy.js";
 import type { SessionSystemPromptReport } from "../../../config/sessions/types.js";
 import type { PluginHookBeforeAgentStartResult } from "../../../plugins/types.js";
 import type { MessagingToolSend } from "../../pi-embedded-messaging.js";
@@ -52,4 +53,6 @@ export type EmbeddedRunAttemptResult = {
   compactionCount?: number;
   /** Client tool call detected (OpenResponses hosted tools). */
   clientToolCall?: { name: string; params: Record<string, unknown> };
+  /** Per-turn context anatomy — decomposition of what was sent to the model. */
+  contextAnatomy?: ContextAnatomyEvent;
 };
