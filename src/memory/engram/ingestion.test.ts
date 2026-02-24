@@ -229,6 +229,77 @@ describe("ULID ordering", () => {
 });
 
 // ============================================================
+// Bulk ingest (ingest(messages) — Phase 1.1 turn hook)
+// ============================================================
+describe("ingest(messages)", () => {
+	it("ingests user and assistant messages from a snapshot", async () => {
+		const p = makePipeline();
+		const messages = [
+			{ role: "user", content: "Hello from user!" },
+			{ role: "assistant", content: [{ type: "text", text: "Hi back!" }] },
+		];
+		await p.ingest(messages);
+
+		const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
+		const all = store.readAll();
+		expect(all).toHaveLength(2);
+		expect(all[0].kind).toBe("user_message");
+		expect(all[0].content).toBe("Hello from user!");
+		expect(all[1].kind).toBe("agent_message");
+		expect(all[1].content).toBe("Hi back!");
+	});
+
+	it("uses cursor so repeated calls don't duplicate events", async () => {
+		const p = makePipeline();
+		const snapshot1 = [
+			{ role: "user", content: "Turn 1" },
+			{ role: "assistant", content: [{ type: "text", text: "Response 1" }] },
+		];
+		await p.ingest(snapshot1);
+
+		// Simulate a second turn: snapshot grows with 2 new messages.
+		const snapshot2 = [
+			...snapshot1,
+			{ role: "user", content: "Turn 2" },
+			{ role: "assistant", content: [{ type: "text", text: "Response 2" }] },
+		];
+		await p.ingest(snapshot2);
+
+		const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
+		const all = store.readAll();
+		// Exactly 4 events, not 6 (no duplicates from snapshot1).
+		expect(all).toHaveLength(4);
+		expect(all[2].kind).toBe("user_message");
+		expect(all[2].content).toBe("Turn 2");
+	});
+
+	it("ingests tool calls from assistant messages and tool results", async () => {
+		const p = makePipeline();
+		const messages = [
+			{ role: "user", content: "Run a tool" },
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "tc1", name: "read_file", arguments: { path: "/tmp/x" } },
+				],
+			},
+			{ role: "toolResult", toolName: "read_file", content: [{ type: "text", text: "file text" }] },
+		];
+		await p.ingest(messages);
+
+		const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
+		const all = store.readAll();
+		// user_message, tool_call, tool_result
+		expect(all).toHaveLength(3);
+		expect(all[0].kind).toBe("user_message");
+		expect(all[1].kind).toBe("tool_call");
+		const toolCallParsed = JSON.parse(all[1].content) as { tool: string };
+		expect(toolCallParsed.tool).toBe("read_file");
+		expect(all[2].kind).toBe("tool_result");
+	});
+});
+
+// ============================================================
 // Persistence (events survive across store re-open)
 // ============================================================
 describe("persistence", () => {

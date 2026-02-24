@@ -15,7 +15,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
-import { registerHippocampusHook } from "./hippocampus-hook.js";
 import type { PluginRegistry } from "./registry.js";
 import type {
   PluginHookAgentContext,
@@ -141,12 +140,10 @@ export function registerCognitiveHooks(
   registry: PluginRegistry,
   _config: OpenClawConfig | undefined,
 ): void {
-  // Register HIPPOCAMPUS hook (fork-isolated)
-  try {
-    registerHippocampusHook(registry);
-  } catch (err) {
-    console.error("[cognitive-hooks] failed to register hippocampus:", err);
-  }
+  // Register HIPPOCAMPUS hook (fork-isolated, dynamic import to avoid polluting tsc graph)
+  import("./hippocampus-hook.js")
+    .then((mod) => mod.registerHippocampusHook(registry))
+    .catch((err) => console.error("[cognitive-hooks] failed to register hippocampus:", err));
 
   // Create a synthetic plugin record for hook registration
   const pluginId = "cognitive-arch";
@@ -161,7 +158,13 @@ export function registerCognitiveHooks(
       try {
         await ensureModules();
         const personaState = loadPersonaState();
-        const injectionResult = _injectionModule.injectPersonaState(personaState, 1500);
+        // Skip identity/voice injection when SOUL.md is present (already in workspace context)
+        const hasSoulFile = _ctx.workspaceDir
+          ? existsSync(join(_ctx.workspaceDir, "SOUL.md"))
+          : false;
+        const injectionResult = _injectionModule.injectPersonaState(personaState, 1500, {
+          hasSoulFile,
+        });
         if (injectionResult.blocks.length > 0) {
           const prependContext = injectionResult.blocks
             .map((b: { content: string }) => b.content)

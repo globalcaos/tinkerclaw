@@ -68,10 +68,27 @@ export interface PointerCompactionHandler {
 }
 
 /**
+ * Render a CompactionManifest to a human-readable summary string.
+ * Suitable for use as the compaction "summary" passed back to Pi.
+ */
+export function renderManifest(manifest: CompactionManifest): string {
+	if (manifest.eventCount === 0) return "[Pointer manifest: no events evicted]";
+	const range = `${manifest.eventIdRange[0]}..${manifest.eventIdRange[1]}`;
+	const topics =
+		manifest.topicHints.length > 0 ? ` Topics: ${manifest.topicHints.join(", ")}.` : "";
+	const artifacts =
+		manifest.artifactRefs.length > 0 ? ` Artifacts: ${manifest.artifactRefs.join(", ")}.` : "";
+	return (
+		`[Pointer manifest: events ${range} (${manifest.eventCount} events, ~${manifest.tokenCount} tokens).` +
+		`${topics}${artifacts} Use recall(query) to retrieve.]`
+	);
+}
+
+/**
  * Build a CompactionManifest from a set of evicted events.
  * Includes event ID range, artifact refs, and top-3 topic hints.
  */
-function buildManifest(evictedEvents: MemoryEvent[]): CompactionManifest {
+export function buildManifest(evictedEvents: MemoryEvent[]): CompactionManifest {
 	if (evictedEvents.length === 0) {
 		return { eventIdRange: ["", ""], artifactRefs: [], topicHints: [], eventCount: 0, tokenCount: 0 };
 	}

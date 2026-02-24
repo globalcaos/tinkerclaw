@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
+import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
@@ -72,6 +73,7 @@ import {
   resolveSkillsPromptForRun,
 } from "../../skills.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
+import { buildContextAnatomy, writeAnatomyEvent } from "../../context-anatomy.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
 import { resolveTranscriptPolicy } from "../../transcript-policy.js";
@@ -79,6 +81,7 @@ import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
+import { createCortexRuntime } from "../../pi-extensions/cortex-runtime.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
 import {
   logToolSchemasForGoogle,
@@ -110,6 +113,8 @@ import {
 import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
+import { getIngestionRuntime } from "../../pi-extensions/ingestion-runtime.js";
+import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
@@ -510,6 +515,20 @@ export async function runEmbeddedAttempt(
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
 
+    // CORTEX: load PersonaState and generate Tier 1 persona block for system prompt injection.
+    // createCortexRuntime() loads from ~/.openclaw/engram/persona-state.json (or SOUL.md).
+    // The runtime is created here (before sessionManager) as a lightweight read-only load;
+    // the session-bound runtime wired in extensions.ts handles drift/sync during the run.
+    const personaBlock = (() => {
+      try {
+        const soulPath = join(effectiveWorkspace, "SOUL.md");
+        const rt = createCortexRuntime({ soulPath });
+        return rt.getPersonaBlock() || undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -519,6 +538,7 @@ export async function runEmbeddedAttempt(
       ownerDisplay: ownerDisplay.ownerDisplay,
       ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
       reasoningTagHint,
+      personaBlock,
       heartbeatPrompt: isDefaultAgent
         ? resolveHeartbeatPrompt(params.config?.agents?.defaults?.heartbeat?.prompt)
         : undefined,
@@ -1155,6 +1175,25 @@ export async function runEmbeddedAttempt(
               });
           }
 
+          // TRACE Phase 1.2: Assemble per-turn retrieval pack and inject into system prompt.
+          // Runs after effective prompt is final and before the LLM call so every turn
+          // benefits from relevant past events retrieved from the event store.
+          {
+            const retrievalRuntime = getRetrievalRuntime(sessionManager);
+            if (retrievalRuntime?.assemble) {
+              const pack = await retrievalRuntime.assemble(effectivePrompt, 4096).catch((err) => {
+                log.warn(`retrieval: assemble failed: ${String(err)}`);
+                return null;
+              });
+              if (pack) {
+                const enriched = `${systemPromptText}\n\n${pack}`;
+                applySystemPromptOverrideToSession(activeSession, enriched);
+                systemPromptText = enriched;
+                log.debug(`retrieval: injected pack (${pack.length} chars, query="${effectivePrompt.slice(0, 80)}")`);
+              }
+            }
+          }
+
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
           if (imageResult.images.length > 0) {
@@ -1410,6 +1449,42 @@ export async function runEmbeddedAttempt(
           });
       }
 
+      // Build context anatomy — per-turn prompt decomposition
+      const contextWindowTokens = Math.max(
+        1,
+        Math.floor(
+          params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+        ),
+      );
+      const contextAnatomy = systemPromptReport
+        ? buildContextAnatomy({
+            turn: messagesSnapshot.filter((m) => m.role === "user").length,
+            compactionCycle: getCompactionCount() ?? 0,
+            provider: params.provider,
+            model: params.modelId,
+            sessionKey: params.sessionKey,
+            systemPromptReport,
+            messagesSnapshot,
+            contextWindowTokens,
+            totalTokensUsed: getUsageTotals()?.totalTokens,
+          })
+        : undefined;
+      if (contextAnatomy && params.sessionKey) {
+        writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
+          log.warn(`context-anatomy write failed: ${String(err)}`);
+        });
+      }
+
+      // TRACE Phase 1.1: fire-and-forget ENGRAM ingestion after each agent turn.
+      // Only active when the engram compaction mode has initialised the pipeline
+      // (via buildEmbeddedExtensionFactories → setIngestionRuntime).
+      const ingestionRuntime = getIngestionRuntime(sessionManager);
+      if (ingestionRuntime) {
+        ingestionRuntime.ingest(messagesSnapshot).catch((err) => {
+          log.warn(`ENGRAM ingestion failed: ${String(err)}`);
+        });
+      }
+
       return {
         aborted,
         timedOut,
@@ -1434,6 +1509,7 @@ export async function runEmbeddedAttempt(
         compactionCount: getCompactionCount(),
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
+        contextAnatomy,
       };
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.
