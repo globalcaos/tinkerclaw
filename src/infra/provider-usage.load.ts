@@ -1,7 +1,6 @@
 import { resolveFetch } from "./fetch.js";
 import { type ProviderAuth, resolveProviderAuths } from "./provider-usage.auth.js";
 import {
-  fetchAntigravityUsage,
   fetchClaudeUsage,
   fetchCodexUsage,
   fetchCopilotUsage,
@@ -64,8 +63,6 @@ export async function loadProviderUsageSummary(
             };
           case "github-copilot":
             return await fetchCopilotUsage(auth.token, timeoutMs, fetchFn);
-          case "google-antigravity":
-            return await fetchAntigravityUsage(auth.token, timeoutMs, fetchFn);
           case "google-gemini-cli":
             return await fetchGeminiUsage(auth.token, timeoutMs, fetchFn, auth.provider);
           case "openai-codex":
