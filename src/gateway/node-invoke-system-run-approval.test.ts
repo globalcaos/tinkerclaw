@@ -18,6 +18,7 @@ describe("sanitizeSystemRunParamsForForwarding", () => {
       id: "approval-1",
       request: {
         host: "node",
+        nodeId: "node-1",
         command,
         cwd: null,
         agentId: null,
@@ -40,6 +41,18 @@ describe("sanitizeSystemRunParamsForForwarding", () => {
     };
   }
 
+  function expectAllowOnceForwardingResult(
+    result: ReturnType<typeof sanitizeSystemRunParamsForForwarding>,
+  ) {
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error("unreachable");
+    }
+    const params = result.params as Record<string, unknown>;
+    expect(params.approved).toBe(true);
+    expect(params.approvalDecision).toBe("allow-once");
+  }
+
   test("rejects cmd.exe /c trailing-arg mismatch against rawCommand", () => {
     const result = sanitizeSystemRunParamsForForwarding({
       rawParams: {
@@ -49,6 +62,7 @@ describe("sanitizeSystemRunParamsForForwarding", () => {
         approved: true,
         approvalDecision: "allow-once",
       },
+      nodeId: "node-1",
       client,
       execApprovalManager: manager(makeRecord("echo")),
       nowMs: now,
@@ -70,16 +84,94 @@ describe("sanitizeSystemRunParamsForForwarding", () => {
         approved: true,
         approvalDecision: "allow-once",
       },
+      nodeId: "node-1",
       client,
       execApprovalManager: manager(makeRecord("echo SAFE&&whoami")),
       nowMs: now,
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
+    expectAllowOnceForwardingResult(result);
+  });
+
+  test("rejects env-assignment shell wrapper when approval command omits env prelude", () => {
+    const result = sanitizeSystemRunParamsForForwarding({
+      rawParams: {
+        command: ["/usr/bin/env", "BASH_ENV=/tmp/payload.sh", "bash", "-lc", "echo SAFE"],
+        runId: "approval-1",
+        approved: true,
+        approvalDecision: "allow-once",
+      },
+      nodeId: "node-1",
+      client,
+      execApprovalManager: manager(makeRecord("echo SAFE")),
+      nowMs: now,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
       throw new Error("unreachable");
     }
-    const params = result.params as Record<string, unknown>;
-    expect(params.approved).toBe(true);
-    expect(params.approvalDecision).toBe("allow-once");
+    expect(result.message).toContain("approval id does not match request");
+    expect(result.details?.code).toBe("APPROVAL_REQUEST_MISMATCH");
+  });
+
+  test("accepts env-assignment shell wrapper only when approval command matches full argv text", () => {
+    const result = sanitizeSystemRunParamsForForwarding({
+      rawParams: {
+        command: ["/usr/bin/env", "BASH_ENV=/tmp/payload.sh", "bash", "-lc", "echo SAFE"],
+        runId: "approval-1",
+        approved: true,
+        approvalDecision: "allow-once",
+      },
+      nodeId: "node-1",
+      client,
+      execApprovalManager: manager(
+        makeRecord('/usr/bin/env BASH_ENV=/tmp/payload.sh bash -lc "echo SAFE"'),
+      ),
+      nowMs: now,
+    });
+    expectAllowOnceForwardingResult(result);
+  });
+
+  test("rejects approval ids that do not bind a nodeId", () => {
+    const record = makeRecord("echo SAFE");
+    record.request.nodeId = null;
+    const result = sanitizeSystemRunParamsForForwarding({
+      rawParams: {
+        command: ["echo", "SAFE"],
+        runId: "approval-1",
+        approved: true,
+        approvalDecision: "allow-once",
+      },
+      nodeId: "node-1",
+      client,
+      execApprovalManager: manager(record),
+      nowMs: now,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("unreachable");
+    }
+    expect(result.message).toContain("missing node binding");
+    expect(result.details?.code).toBe("APPROVAL_NODE_BINDING_MISSING");
+  });
+
+  test("rejects approval ids replayed against a different nodeId", () => {
+    const result = sanitizeSystemRunParamsForForwarding({
+      rawParams: {
+        command: ["echo", "SAFE"],
+        runId: "approval-1",
+        approved: true,
+        approvalDecision: "allow-once",
+      },
+      nodeId: "node-2",
+      client,
+      execApprovalManager: manager(makeRecord("echo SAFE")),
+      nowMs: now,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("unreachable");
+    }
+    expect(result.message).toContain("not valid for this node");
+    expect(result.details?.code).toBe("APPROVAL_NODE_MISMATCH");
   });
 });
