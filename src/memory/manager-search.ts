@@ -2,6 +2,22 @@ import type { DatabaseSync } from "node:sqlite";
 import { truncateUtf16Safe } from "../utils.js";
 import { cosineSimilarity, parseEmbedding } from "./internal.js";
 
+/**
+ * Update access tracking metadata for a set of chunk IDs.
+ * Called after every search that returns results so we can track
+ * how frequently each chunk is retrieved (used by Phase 1 metadata).
+ */
+function trackAccess(db: DatabaseSync, ids: string[]): void {
+  if (ids.length === 0) {return;}
+  const now = Date.now();
+  const stmt = db.prepare(
+    `UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?`,
+  );
+  for (const id of ids) {
+    stmt.run(now, id);
+  }
+}
+
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
 
@@ -57,7 +73,7 @@ export async function searchVector(params: {
       source: SearchSource;
       dist: number;
     }>;
-    return rows.map((row) => ({
+    const results = rows.map((row) => ({
       id: row.id,
       path: row.path,
       startLine: row.start_line,
@@ -66,6 +82,8 @@ export async function searchVector(params: {
       snippet: truncateUtf16Safe(row.text, params.snippetMaxChars),
       source: row.source,
     }));
+    trackAccess(params.db, results.map((r) => r.id));
+    return results;
   }
 
   const candidates = listChunks({
@@ -79,7 +97,7 @@ export async function searchVector(params: {
       score: cosineSimilarity(params.queryVec, chunk.embedding),
     }))
     .filter((entry) => Number.isFinite(entry.score));
-  return scored
+  const fallbackResults = scored
     .toSorted((a, b) => b.score - a.score)
     .slice(0, params.limit)
     .map((entry) => ({
@@ -91,6 +109,8 @@ export async function searchVector(params: {
       snippet: truncateUtf16Safe(entry.chunk.text, params.snippetMaxChars),
       source: entry.chunk.source,
     }));
+  trackAccess(params.db, fallbackResults.map((r) => r.id));
+  return fallbackResults;
 }
 
 export function listChunks(params: {
@@ -175,7 +195,7 @@ export async function searchKeyword(params: {
     rank: number;
   }>;
 
-  return rows.map((row) => {
+  const keywordResults = rows.map((row) => {
     const textScore = params.bm25RankToScore(row.rank);
     return {
       id: row.id,
@@ -188,4 +208,6 @@ export async function searchKeyword(params: {
       source: row.source,
     };
   });
+  trackAccess(params.db, keywordResults.map((r) => r.id));
+  return keywordResults;
 }

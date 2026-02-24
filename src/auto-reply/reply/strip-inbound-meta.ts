@@ -69,7 +69,23 @@ function stripTrailingUntrustedContextSuffix(lines: string[]): string[] {
  * Returns the original string reference unchanged when no metadata is present
  * (fast path — zero allocation).
  */
+// Persona prefix injected by CORTEX persona-state.ts — strip everything from
+// "# Persona:" up to (but not including) the first user content line.
+const PERSONA_RE = /^# Persona: .+?\n\n/s;
+
 export function stripInboundMetadata(text: string): string {
+  // Strip persona block first (if present).
+  if (text && text.startsWith("# Persona:")) {
+    // Find the end of the persona block: it ends at the first sentinel,
+    // timestamp line, or "System:" line — whichever comes first.
+    const personaEnd = text.search(
+      /\n(?=Conversation info |Sender |System: |\[[\w]+ \d{4}-\d{2}-\d{2})/,
+    );
+    if (personaEnd !== -1) {
+      text = text.slice(personaEnd).replace(/^\n+/, "");
+    }
+  }
+
   if (!text || !SENTINEL_FAST_RE.test(text)) {
     return text;
   }
