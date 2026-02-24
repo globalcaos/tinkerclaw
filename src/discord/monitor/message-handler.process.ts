@@ -21,6 +21,7 @@ import {
   type StatusReactionAdapter,
 } from "../../channels/status-reactions.js";
 import { createTypingCallbacks } from "../../channels/typing.js";
+import { isDangerousNameMatchingEnabled } from "../../config/dangerous-name-matching.js";
 import { resolveDiscordPreviewStreamMode } from "../../config/discord-preview-streaming.js";
 import { resolveMarkdownTableMode } from "../../config/markdown-tables.js";
 import { readSessionUpdatedAt, resolveStorePath } from "../../config/sessions.js";
@@ -199,6 +200,7 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     channelConfig,
     guildInfo,
     sender: { id: sender.id, name: sender.name, tag: sender.tag },
+    allowNameMatching: isDangerousNameMatchingEnabled(discordConfig),
   });
   const storePath = resolveStorePath(cfg.session?.store, {
     agentId: route.agentId,
@@ -555,6 +557,11 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     humanDelay: resolveHumanDelayConfig(cfg, route.agentId),
     deliver: async (payload: ReplyPayload, info) => {
       const isFinal = info.kind === "final";
+      if (info.kind === "block") {
+        // Block payloads carry reasoning/thinking content that should not be
+        // delivered to external channels. Skip them regardless of streamMode.
+        return;
+      }
       if (draftStream && isFinal) {
         await flushDraft();
         const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;

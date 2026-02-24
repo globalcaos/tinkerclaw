@@ -12,7 +12,7 @@ import { clearPluginCommands } from "./commands.js";
 import {
   applyTestPluginDefaults,
   normalizePluginsConfig,
-  resolveEnableState,
+  resolveEffectiveEnableState,
   resolveMemorySlotDecision,
   type NormalizedPluginsConfig,
 } from "./config-state.js";
@@ -473,7 +473,12 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       continue;
     }
 
-    const enableState = resolveEnableState(pluginId, candidate.origin, normalized);
+    const enableState = resolveEffectiveEnableState({
+      id: pluginId,
+      origin: candidate.origin,
+      config: normalized,
+      rootConfig: cfg,
+    });
     const entry = normalized.entries[pluginId];
     const record = createPluginRecord({
       id: pluginId,
