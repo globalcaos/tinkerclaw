@@ -1,8 +1,7 @@
 ---
 name: whatsapp-ultimate
-version: 1.0.0
-description: "The most comprehensive WhatsApp skill for AI agents. Full messaging (text, media, polls, stickers, voice), reactions, replies, edits, unsend, and complete group management. Native Baileys integration - no external services required."
-homepage: https://github.com/openclaw/openclaw
+version: 3.4.0
+description: "WhatsApp skill with a 3-rule security gate. Your agent speaks only when spoken to — in the right chat, by the right person."
 metadata:
   openclaw:
     emoji: "📱"
@@ -234,7 +233,13 @@ To react/edit/unsend, you need the message ID. Incoming messages include this in
 
 ---
 
-## Architecture
+### 3.4.0
+
+- **Fixed:** Chat search now resolves LID/JID aliases — searching by chat name finds messages across both `@lid` and `@s.whatsapp.net` JID formats
+- **Added:** `resolveChatJids()` cross-references chats, contacts, and messages tables to discover all JID aliases for a given chat filter
+- **Improved:** Search falls back to original LIKE behaviour if no JIDs resolve, so no regressions
+
+### 3.0.0
 
 ```
 Your Agent
