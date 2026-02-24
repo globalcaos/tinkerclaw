@@ -13,6 +13,7 @@ export type EventKind =
 	| "artifact_reference"
 	| "persona_state"
 	| "probe_result"
+	| "humor_attempt"
 	| "humor_association"
 	| "debate_synthesis"
 	| "debate_trace";

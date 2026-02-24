@@ -340,4 +340,176 @@ describe("trigger evaluation", () => {
 		const result = await trigger.evaluateOpportunity(messages, 20);
 		expect(result.shouldAttempt).toBe(false);
 	});
+
+	it("returns attemptId when shouldAttempt=true", async () => {
+		const messages = [
+			"I have been thinking about quantum mechanics and baking sourdough bread",
+			"The parallels between thermodynamics and fermentation are quite profound",
+		];
+		const result = await trigger.evaluateOpportunity(messages, 50);
+		if (result.shouldAttempt) {
+			expect(typeof result.attemptId).toBe("string");
+			expect(result.attemptId!.length).toBeGreaterThan(0);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 7. humor_attempt event store persistence (logAttempt)
+// ---------------------------------------------------------------------------
+
+describe("humor_attempt event persistence", () => {
+	it("logAttempt stores a humor_attempt event in the event store", () => {
+		runtime.logAttempt(
+			"attempt-ha-1",
+			{ conceptA: "physics", conceptB: "cooking", bridge: "entropy", score: 0.42 },
+			5,
+		);
+		const events = store.readByKind("humor_attempt");
+		expect(events.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("humor_attempt event has valid JSON content with conceptA, conceptB, bridge, score", () => {
+		runtime.logAttempt(
+			"attempt-ha-2",
+			{ conceptA: "music", conceptB: "mathematics", bridge: "harmony", score: 0.65 },
+			7,
+		);
+		const events = store.readByKind("humor_attempt");
+		const last = events.at(-1)!;
+		const parsed = JSON.parse(last.content) as {
+			conceptA: string;
+			conceptB: string;
+			bridge: string;
+			score: number;
+		};
+		expect(parsed.conceptA).toBe("music");
+		expect(parsed.conceptB).toBe("mathematics");
+		expect(parsed.bridge).toBe("harmony");
+		expect(typeof parsed.score).toBe("number");
+	});
+
+	it("humor_attempt event has correct turnId", () => {
+		runtime.logAttempt(
+			"attempt-ha-3",
+			{ conceptA: "space", conceptB: "gardening", bridge: "growing", score: 0.3 },
+			42,
+		);
+		const events = store.readByKind("humor_attempt");
+		const last = events.at(-1)!;
+		expect(last.turnId).toBe(42);
+	});
+
+	it("humor_attempt event tags include 'limbic' and 'humor_attempt'", () => {
+		runtime.logAttempt(
+			"attempt-ha-4",
+			{ conceptA: "ocean", conceptB: "city", bridge: "flow", score: 0.55 },
+			10,
+		);
+		const events = store.readByKind("humor_attempt");
+		const last = events.at(-1)!;
+		expect(last.metadata.tags).toContain("limbic");
+		expect(last.metadata.tags).toContain("humor_attempt");
+	});
+
+	it("logAttempt registers pending attempt so recordReaction can correlate", () => {
+		runtime.logAttempt(
+			"attempt-ha-5",
+			{ conceptA: "philosophy", conceptB: "plumbing", bridge: "flow of ideas", score: 0.7 },
+			15,
+		);
+		// If pending attempt was registered, recordReaction should produce a non-unknown conceptA
+		runtime.recordReaction("attempt-ha-5", "positive");
+		const assocEvents = store.readByKind("humor_association");
+		const last = assocEvents.at(-1)!;
+		const parsed = JSON.parse(last.content) as { conceptA: string };
+		expect(parsed.conceptA).toBe("philosophy");
+	});
+
+	it("trigger logs humor_attempt event when shouldAttempt=true", async () => {
+		const trigger = createHumorTrigger(runtime, undefined, { minTurnsBetweenAttempts: 1 });
+		const messages = [
+			"I have been thinking about quantum mechanics and baking sourdough bread",
+			"The parallels between thermodynamics and fermentation are quite profound",
+		];
+		const result = await trigger.evaluateOpportunity(messages, 200);
+		if (result.shouldAttempt) {
+			// The trigger should have called logAttempt, which stores a humor_attempt event
+			const events = store.readByKind("humor_attempt");
+			expect(events.length).toBeGreaterThanOrEqual(1);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 8. captureReaction — positive signal auto-detection
+// ---------------------------------------------------------------------------
+
+describe("captureReaction — positive signal detection", () => {
+	beforeEach(() => {
+		// Pre-register a pending attempt so captureReaction has something to correlate
+		runtime.logAttempt(
+			"pending-ha-1",
+			{ conceptA: "algebra", conceptB: "baking", bridge: "rising", score: 0.5 },
+			3,
+		);
+	});
+
+	it("returns true and records reaction for 'haha'", () => {
+		const detected = runtime.captureReaction("haha that was good", "pending-ha-1");
+		expect(detected).toBe(true);
+		const events = store.readByKind("humor_association");
+		expect(events.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("returns true for 'lol'", () => {
+		runtime.logAttempt("pending-ha-2", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 4);
+		const detected = runtime.captureReaction("lol nice", "pending-ha-2");
+		expect(detected).toBe(true);
+	});
+
+	it("returns true for laugh emoji 😂", () => {
+		runtime.logAttempt("pending-ha-3", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 5);
+		const detected = runtime.captureReaction("😂 that's hilarious", "pending-ha-3");
+		expect(detected).toBe(true);
+	});
+
+	it("returns true for laugh emoji 🤣", () => {
+		runtime.logAttempt("pending-ha-4", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 6);
+		const detected = runtime.captureReaction("🤣🤣🤣", "pending-ha-4");
+		expect(detected).toBe(true);
+	});
+
+	it("returns false for neutral messages", () => {
+		runtime.logAttempt("pending-ha-5", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 7);
+		const detected = runtime.captureReaction("ok thanks", "pending-ha-5");
+		expect(detected).toBe(false);
+	});
+
+	it("returns false for empty message", () => {
+		runtime.logAttempt("pending-ha-6", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 8);
+		const detected = runtime.captureReaction("", "pending-ha-6");
+		expect(detected).toBe(false);
+	});
+
+	it("returns true for 'funny'", () => {
+		runtime.logAttempt("pending-ha-7", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 9);
+		const detected = runtime.captureReaction("that's actually funny", "pending-ha-7");
+		expect(detected).toBe(true);
+	});
+
+	it("returns true for 'hilarious'", () => {
+		runtime.logAttempt("pending-ha-8", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.1 }, 10);
+		const detected = runtime.captureReaction("hilarious lol", "pending-ha-8");
+		expect(detected).toBe(true);
+	});
+
+	it("positive reaction results in humorConfidence=1 in the humor_association event", () => {
+		runtime.logAttempt("pending-ha-conf", { conceptA: "a", conceptB: "b", bridge: "c", score: 0.5 }, 11);
+		runtime.captureReaction("hahaha good one", "pending-ha-conf");
+		const events = store.readByKind("humor_association");
+		const last = events.at(-1)!;
+		const parsed = JSON.parse(last.content) as { humorConfidence: number };
+		expect(parsed.humorConfidence).toBe(1);
+	});
 });

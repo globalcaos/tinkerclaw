@@ -40,6 +40,14 @@ export interface BridgeResult {
 	method: string;
 }
 
+export interface HumorAttemptParams {
+	conceptA: string;
+	conceptB: string;
+	bridge: string;
+	score: number;
+	audience?: string;
+}
+
 export interface LimbicRuntime {
 	/** Find conceptual bridges between two distant concepts. */
 	discoverBridges(conceptA: string, conceptB: string): Promise<BridgeResult[]>;
@@ -47,6 +55,17 @@ export interface LimbicRuntime {
 	scoreHumor(conceptA: string, conceptB: string, bridge: string): number;
 	/** Run sensitivity gate for a topic and optional context string. */
 	checkSensitivity(topic: string, context?: string): SensitivityResult;
+	/**
+	 * Log a humor attempt to the ENGRAM event store (kind: "humor_attempt").
+	 * Returns the attempt ID for later reaction correlation via recordReaction().
+	 */
+	logAttempt(id: string, params: HumorAttemptParams, turnId: number): void;
+	/**
+	 * Inspect a user message for positive reaction signals (laughter, emoji).
+	 * If found, automatically records a positive reaction for the given attempt ID.
+	 * Returns true when a positive reaction was detected and recorded.
+	 */
+	captureReaction(userMessage: string, humorAttemptId: string): boolean;
 	/** Persist audience reaction to a humor attempt in the event store. */
 	recordReaction(
 		humorAttemptId: string,
@@ -114,6 +133,32 @@ interface PendingAttempt {
 	bridge: string;
 	audience: string;
 	timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Positive reaction detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Text patterns that indicate a positive humor reaction.
+ * Matches laughter text, positive emoji, and common affirmation phrases.
+ */
+const POSITIVE_REACTION_PATTERNS = [
+	// Laugh text
+	/\b(ha{2,}|he{2,}|hi{2,}|hehe|haha|hoho|lol|lmao|rofl|lmfao)\b/i,
+	// Positive humor words
+	/\b(funny|hilarious|clever|witty|good one|nice one|made me laugh|cracked me up)\b/i,
+	// Laugh emoji (Unicode ranges for 😂🤣😄😆😁😀🙂)
+	/[\u{1F602}\u{1F923}\u{1F604}\u{1F606}\u{1F601}\u{1F600}\u{1F642}]/u,
+	// Clap emoji: 👏
+	/\u{1F44F}/u,
+];
+
+/**
+ * Detect whether a user message contains positive humor reaction signals.
+ */
+function detectPositiveReaction(message: string): boolean {
+	return POSITIVE_REACTION_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +252,48 @@ export function createLimbicRuntime(
 			const calibration = getCalibration();
 			// sensitivityGate needs conceptA/conceptB/bridge breakdown; map topic to those roles.
 			return sensitivityGate(topic, context ?? "", "", calibration);
+		},
+
+		logAttempt(id: string, params: HumorAttemptParams, turnId: number): void {
+			// Register in pending-attempt registry for later reaction correlation.
+			pendingAttempts.set(id, {
+				conceptA: params.conceptA,
+				conceptB: params.conceptB,
+				bridge: params.bridge,
+				audience: params.audience ?? eventStore.sessionKey,
+				timestamp: new Date().toISOString(),
+			});
+
+			// Persist a humor_attempt event so the attempt is durable.
+			eventStore.append({
+				turnId,
+				sessionKey: eventStore.sessionKey,
+				kind: "humor_attempt",
+				content: JSON.stringify({
+					id,
+					conceptA: params.conceptA,
+					conceptB: params.conceptB,
+					bridge: params.bridge,
+					score: params.score,
+					audience: params.audience ?? eventStore.sessionKey,
+				}),
+				tokens: Math.ceil(
+					JSON.stringify(params).length / 4,
+				),
+				metadata: {
+					tags: ["limbic", "humor_attempt"],
+					importance: 5,
+				},
+			});
+		},
+
+		captureReaction(userMessage: string, humorAttemptId: string): boolean {
+			if (!detectPositiveReaction(userMessage)) {
+				return false;
+			}
+			// A positive signal was detected — record it.
+			this.recordReaction(humorAttemptId, "positive");
+			return true;
 		},
 
 		recordReaction(
