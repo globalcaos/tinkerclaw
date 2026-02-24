@@ -27,6 +27,8 @@ export interface HumorTriggerOptions {
 
 export interface HumorOpportunity {
 	shouldAttempt: boolean;
+	/** Unique ID for this attempt (use with LimbicRuntime.captureReaction). */
+	attemptId?: string;
 	/** Bridge concept connecting conceptA and conceptB (if found). */
 	bridge?: string;
 	/** Concept pair sourced from recent messages (if detected). */
@@ -195,8 +197,17 @@ export function createHumorTrigger(
 			const topBridge = bridges[0];
 			const score = limbicRuntime.scoreHumor(conceptA, conceptB, topBridge.bridge);
 
+			// Generate a stable attempt ID and persist it to the event store.
+			const attemptId = `ha-${turnCount}-${Date.now()}`;
+			limbicRuntime.logAttempt(
+				attemptId,
+				{ conceptA, conceptB, bridge: topBridge.bridge, score },
+				turnCount,
+			);
+
 			return {
 				shouldAttempt: true,
+				attemptId,
 				bridge: topBridge.bridge,
 				concepts: [conceptA, conceptB],
 				score,
