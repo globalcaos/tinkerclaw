@@ -1487,7 +1487,7 @@ export async function runEmbeddedAttempt(
             systemPromptReport,
             messagesSnapshot,
             contextWindowTokens,
-            totalTokensUsed: getUsageTotals()?.totalTokens,
+            totalTokensUsed: getUsageTotals()?.total,
           })
         : undefined;
       if (contextAnatomy && params.sessionKey) {
@@ -1526,6 +1526,7 @@ export async function runEmbeddedAttempt(
         if (observationRuntime) {
           // Collect recent user + assistant message texts (last 20 messages).
           const recentTexts = messagesSnapshot.slice(-20).flatMap((m) => {
+            if (!("content" in m)) {return [];}
             if (typeof m.content === "string") {
               return m.content ? [m.content] : [];
             }
