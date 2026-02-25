@@ -50,6 +50,9 @@ export function normalizeProviderId(provider: string): string {
   if (normalized === "kimi-code") {
     return "kimi-coding";
   }
+  if (normalized === "bedrock" || normalized === "aws-bedrock") {
+    return "amazon-bedrock";
+  }
   // Backward compatibility for older provider naming.
   if (normalized === "bytedance" || normalized === "doubao") {
     return "volcengine";
@@ -397,22 +400,23 @@ export function buildAllowedModelSet(params: {
   }
 
   const allowedKeys = new Set<string>();
-  const configuredProviders = (params.cfg.models?.providers ?? {}) as Record<string, unknown>;
+  const syntheticCatalogEntries = new Map<string, ModelCatalogEntry>();
   for (const raw of rawAllowlist) {
     const parsed = parseModelRef(String(raw), params.defaultProvider);
     if (!parsed) {
       continue;
     }
     const key = modelKey(parsed.provider, parsed.model);
-    const providerKey = normalizeProviderId(parsed.provider);
-    if (isCliProvider(parsed.provider, params.cfg)) {
-      allowedKeys.add(key);
-    } else if (catalogKeys.has(key)) {
-      allowedKeys.add(key);
-    } else if (configuredProviders[providerKey] != null) {
-      // Explicitly configured providers should be allowlist-able even when
-      // they don't exist in the curated model catalog.
-      allowedKeys.add(key);
+    // Explicit allowlist entries are always trusted, even when bundled catalog
+    // data is stale and does not include the configured model yet.
+    allowedKeys.add(key);
+
+    if (!catalogKeys.has(key) && !syntheticCatalogEntries.has(key)) {
+      syntheticCatalogEntries.set(key, {
+        id: parsed.model,
+        name: parsed.model,
+        provider: parsed.provider,
+      });
     }
   }
 
@@ -420,9 +424,10 @@ export function buildAllowedModelSet(params: {
     allowedKeys.add(defaultKey);
   }
 
-  const allowedCatalog = params.catalog.filter((entry) =>
-    allowedKeys.has(modelKey(entry.provider, entry.id)),
-  );
+  const allowedCatalog = [
+    ...params.catalog.filter((entry) => allowedKeys.has(modelKey(entry.provider, entry.id))),
+    ...syntheticCatalogEntries.values(),
+  ];
 
   if (allowedCatalog.length === 0 && allowedKeys.size === 0) {
     if (defaultKey) {

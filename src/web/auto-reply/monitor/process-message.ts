@@ -336,7 +336,10 @@ export async function processMessage(params: {
     OriginatingTo: params.msg.from,
   });
 
-  if (dmRouteTarget) {
+  // Only update main session's lastRoute when DM actually IS the main session.
+  // When dmScope="per-channel-peer", the DM uses an isolated sessionKey,
+  // and updating mainSessionKey would corrupt routing for the session owner.
+  if (dmRouteTarget && params.route.sessionKey === params.route.mainSessionKey) {
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
@@ -388,6 +391,12 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
+        if (info.kind !== "final") {
+          // Only deliver final replies to external messaging channels (WhatsApp).
+          // Block (reasoning/thinking) and tool updates are meant for the internal
+          // web UI only; sending them here leaks chain-of-thought to end users.
+          return;
+        }
         await deliverWebReply({
           replyResult: payload,
           msg: params.msg,
@@ -397,16 +406,11 @@ export async function processMessage(params: {
           chunkMode,
           replyLogger: params.replyLogger,
           connectionId: params.connectionId,
-          // Tool + block updates are noisy; skip their log lines.
-          skipLog: info.kind !== "final",
+          skipLog: false,
           tableMode,
         });
         didSendReply = true;
-        if (info.kind === "tool") {
-          params.rememberSentText(payload.text, {});
-          return;
-        }
-        const shouldLog = info.kind === "final" && payload.text ? true : undefined;
+        const shouldLog = payload.text ? true : undefined;
         params.rememberSentText(payload.text, {
           combinedBody,
           combinedBodySessionKey: params.route.sessionKey,
@@ -414,14 +418,14 @@ export async function processMessage(params: {
         });
         if (info.kind === "final") {
           thinkingReaction.stop(); // Fork: remove 🤔
-          const fromDisplay =
-            params.msg.chatType === "group" ? conversationId : (params.msg.from ?? "unknown");
-          const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
-          whatsappOutboundLog.info(`Auto-replied to ${fromDisplay}${hasMedia ? " (media)" : ""}`);
-          if (shouldLogVerbose()) {
-            const preview = payload.text != null ? elide(payload.text, 400) : "<media>";
-            whatsappOutboundLog.debug(`Reply body: ${preview}${hasMedia ? " (media)" : ""}`);
-          }
+        }
+        const fromDisplay =
+          params.msg.chatType === "group" ? conversationId : (params.msg.from ?? "unknown");
+        const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
+        whatsappOutboundLog.info(`Auto-replied to ${fromDisplay}${hasMedia ? " (media)" : ""}`);
+        if (shouldLogVerbose()) {
+          const preview = payload.text != null ? elide(payload.text, 400) : "<media>";
+          whatsappOutboundLog.debug(`Reply body: ${preview}${hasMedia ? " (media)" : ""}`);
         }
       },
       onError: (err, info) => {
@@ -441,10 +445,9 @@ export async function processMessage(params: {
       },
     },
     replyOptions: {
-      disableBlockStreaming:
-        typeof params.cfg.channels?.whatsapp?.blockStreaming === "boolean"
-          ? !params.cfg.channels.whatsapp.blockStreaming
-          : undefined,
+      // WhatsApp delivery intentionally suppresses non-final payloads.
+      // Keep block streaming disabled so final replies are still produced.
+      disableBlockStreaming: true,
       onModelSelected,
     },
   });
