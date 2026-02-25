@@ -322,16 +322,8 @@ export async function monitorWebInbox(options: {
             continue; // already seen (older than watermark)
           }
         } else {
-          // No watermark yet: fall back to fixed recovery window
-          const DEFAULT_RECOVERY_MS = 6 * 60 * 60 * 1000; // 6 hours
-          const recoveryMs = options.offlineRecoveryMs ?? DEFAULT_RECOVERY_MS;
-          if (recoveryMs <= 0) {
-            continue; // recovery disabled
-          }
-          const ageMs = Date.now() - messageTimestampMs;
-          if (ageMs > recoveryMs) {
-            continue; // too old, skip
-          }
+          // No watermark yet (first run): recover everything Baileys delivers.
+          // This lets us pick up all available messages on the initial connection.
         }
         const ageMin = Math.round((Date.now() - messageTimestampMs) / 60_000);
         inboundLogger.info(
