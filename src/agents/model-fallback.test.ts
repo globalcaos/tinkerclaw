@@ -237,6 +237,44 @@ describe("runWithModelFallback", () => {
     ]);
   });
 
+  it("keeps configured fallback chain when current model is a configured fallback", async () => {
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai/gpt-4.1-mini",
+            fallbacks: ["anthropic/claude-haiku-3-5", "openrouter/deepseek-chat"],
+          },
+        },
+      },
+    });
+
+    const run = vi.fn().mockImplementation(async (provider: string, model: string) => {
+      if (provider === "anthropic" && model === "claude-haiku-3-5") {
+        throw Object.assign(new Error("rate-limited"), { status: 429 });
+      }
+      if (provider === "openrouter" && model === "openrouter/deepseek-chat") {
+        return "ok";
+      }
+      throw new Error(`unexpected fallback candidate: ${provider}/${model}`);
+    });
+
+    const result = await runWithModelFallback({
+      cfg,
+      provider: "anthropic",
+      model: "claude-haiku-3-5",
+      run,
+    });
+
+    expect(result.result).toBe("ok");
+    expect(result.provider).toBe("openrouter");
+    expect(result.model).toBe("openrouter/deepseek-chat");
+    expect(run.mock.calls).toEqual([
+      ["anthropic", "claude-haiku-3-5"],
+      ["openrouter", "openrouter/deepseek-chat"],
+    ]);
+  });
+
   it("treats normalized default refs as primary and keeps configured fallback chain", async () => {
     const cfg = makeCfg({
       agents: {
@@ -371,6 +409,37 @@ describe("runWithModelFallback", () => {
       },
       expectedReason: "rate_limit",
     });
+  });
+
+  it("does not skip OpenRouter when legacy cooldown markers exist", async () => {
+    const provider = "openrouter";
+    const cfg = makeProviderFallbackCfg(provider);
+    const store = makeSingleProviderStore({
+      provider,
+      usageStat: {
+        cooldownUntil: Date.now() + 5 * 60_000,
+        disabledUntil: Date.now() + 10 * 60_000,
+        disabledReason: "billing",
+      },
+    });
+    const run = vi.fn().mockImplementation(async (providerId) => {
+      if (providerId === "openrouter") {
+        return "ok";
+      }
+      throw new Error(`unexpected provider: ${providerId}`);
+    });
+
+    const result = await runWithStoredAuth({
+      cfg,
+      store,
+      provider,
+      run,
+    });
+
+    expect(result.result).toBe("ok");
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]?.[0]).toBe("openrouter");
+    expect(result.attempts).toEqual([]);
   });
 
   it("propagates disabled reason when all profiles are unavailable", async () => {
