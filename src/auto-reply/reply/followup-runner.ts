@@ -14,6 +14,11 @@ import type { OriginatingChannelType } from "../templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { resolveRunAuthProfile } from "./agent-runner-utils.js";
+import {
+  resolveOriginAccountId,
+  resolveOriginMessageProvider,
+  resolveOriginMessageTo,
+} from "./origin-routing.js";
 import type { FollowupRun } from "./queue.js";
 import {
   applyReplyThreading,
@@ -98,13 +103,10 @@ export function createFollowupRunner(params: {
           cfg: queued.run.config,
         });
         if (!result.ok) {
-          // Log error and fall back to dispatcher if available.
+          // Keep origin isolation strict: do not fall back to the current
+          // dispatcher when explicit origin routing failed.
           const errorMsg = result.error ?? "unknown error";
           logVerbose(`followup queue: route-reply failed: ${errorMsg}`);
-          // Fallback: try the dispatcher if routing failed.
-          if (opts?.onBlockReply) {
-            await opts.onBlockReply(payload);
-          }
         }
       } else if (opts?.onBlockReply) {
         await opts.onBlockReply(payload);
@@ -234,9 +236,10 @@ export function createFollowupRunner(params: {
         }
         return [{ ...payload, text: stripped.text }];
       });
-      const replyToChannel =
-        queued.originatingChannel ??
-        (queued.run.messageProvider?.toLowerCase() as OriginatingChannelType | undefined);
+      const replyToChannel = resolveOriginMessageProvider({
+        originatingChannel: queued.originatingChannel,
+        provider: queued.run.messageProvider,
+      }) as OriginatingChannelType | undefined;
       const replyToMode = resolveReplyToMode(
         queued.run.config,
         replyToChannel,
@@ -259,10 +262,18 @@ export function createFollowupRunner(params: {
         sentMediaUrls: runResult.messagingToolSentMediaUrls ?? [],
       });
       const suppressMessagingToolReplies = shouldSuppressMessagingToolReplies({
-        messageProvider: queued.run.messageProvider,
+        messageProvider: resolveOriginMessageProvider({
+          originatingChannel: queued.originatingChannel,
+          provider: queued.run.messageProvider,
+        }),
         messagingToolSentTargets: runResult.messagingToolSentTargets,
-        originatingTo: queued.originatingTo,
-        accountId: queued.run.agentAccountId,
+        originatingTo: resolveOriginMessageTo({
+          originatingTo: queued.originatingTo,
+        }),
+        accountId: resolveOriginAccountId({
+          originatingAccountId: queued.originatingAccountId,
+          accountId: queued.run.agentAccountId,
+        }),
       });
       const finalPayloads = suppressMessagingToolReplies ? [] : mediaFilteredPayloads;
 
