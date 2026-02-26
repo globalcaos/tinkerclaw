@@ -153,14 +153,14 @@ export async function interceptTextToolCalls(params: {
 export interface PostTurnParams {
   sessionManager: SessionManager;
   sessionKey?: string;
-  messagesSnapshot: Array<{ role: string; content?: unknown }>;
+  messagesSnapshot: unknown[];
   assistantTexts: string[];
   systemPromptReport?: unknown;
   provider: string;
   modelId: string;
   contextWindowTokens?: number;
   getCompactionCount?: () => number | null;
-  getUsageTotals?: () => { total?: number } | null;
+  getUsageTotals?: (() => { total?: number } | undefined) | null;
   log: { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void };
 }
 
@@ -173,32 +173,36 @@ export interface PostTurnParams {
  */
 export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   const { sessionManager, messagesSnapshot, assistantTexts, log } = params;
-  const turnNumber = messagesSnapshot.filter((m) => m.role === "user").length;
+  const turnNumber = messagesSnapshot.filter((m) => (m as { role?: string }).role === "user").length;
 
   // Context anatomy
   if (params.systemPromptReport && params.sessionKey) {
-    const contextAnatomy = buildContextAnatomy({
-      turn: turnNumber,
-      compactionCycle: params.getCompactionCount?.() ?? 0,
-      provider: params.provider,
-      model: params.modelId,
-      sessionKey: params.sessionKey,
-      systemPromptReport: params.systemPromptReport,
-      messagesSnapshot,
-      contextWindowTokens: params.contextWindowTokens,
-      totalTokensUsed: params.getUsageTotals?.()?.total,
-    });
-    if (contextAnatomy) {
-      writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
-        log.warn(`context-anatomy write failed: ${String(err)}`);
+    try {
+      const contextAnatomy = buildContextAnatomy({
+        turn: turnNumber,
+        compactionCycle: params.getCompactionCount?.() ?? 0,
+        provider: params.provider,
+        model: params.modelId,
+        sessionKey: params.sessionKey,
+        systemPromptReport: params.systemPromptReport as never,
+        messagesSnapshot: messagesSnapshot as never,
+        contextWindowTokens: params.contextWindowTokens ?? 0,
+        totalTokensUsed: params.getUsageTotals?.()?.total,
       });
+      if (contextAnatomy) {
+        writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
+          log.warn(`context-anatomy write failed: ${String(err)}`);
+        });
+      }
+    } catch (err) {
+      log.warn(`context-anatomy build failed: ${String(err)}`);
     }
   }
 
   // ENGRAM ingestion
   const ingestionRuntime = getIngestionRuntime(sessionManager);
   if (ingestionRuntime) {
-    ingestionRuntime.ingest(messagesSnapshot as never).catch((err) => {
+    ingestionRuntime.ingest(params.messagesSnapshot as never).catch((err) => {
       log.warn(`ENGRAM ingestion failed: ${String(err)}`);
     });
   }
@@ -215,8 +219,9 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   {
     const observationRuntime = getObservationRuntime(sessionManager);
     if (observationRuntime) {
-      const recentTexts = messagesSnapshot.slice(-20).flatMap((m) => {
-        if (!("content" in m)) {return [];}
+      const recentTexts = messagesSnapshot.slice(-20).flatMap((_m) => {
+        const m = _m as { role?: string; content?: unknown };
+        if (!m.content) {return [];}
         if (typeof m.content === "string") {return m.content ? [m.content] : [];}
         if (Array.isArray(m.content)) {
           return (m.content as Array<{ type?: string; text?: string }>)
