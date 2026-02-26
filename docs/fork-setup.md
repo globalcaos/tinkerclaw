@@ -5,8 +5,8 @@ How to replicate the full globalcaos OpenClaw fork stack from scratch.
 ## Prerequisites
 
 - **Node.js 22+** (with npm or pnpm)
-- **Python 3.8+** (for ClawMetry diagnostics)
-- **Git**
+- **Python 3.10+** with `venv` (for ClawMetry)
+- **Git** + **GitHub CLI** (`gh`)
 
 ## Quick Start
 
@@ -16,14 +16,17 @@ cd clawdbot-moltbot-openclaw
 bash scripts/fork-setup.sh
 ```
 
-The setup script handles: dependencies → build → ClawMetry → config check → skills inventory → gateway status.
+The setup script handles: dependencies → build → companion tools (ClawMetry + Mission Control) → config check → skills inventory → gateway status.
 
 ## Stack Overview
 
-| Component | Port  | Purpose                         | How to start                                                                                         |
-| --------- | ----- | ------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Gateway   | 18789 | OpenClaw core (AI agent engine) | `nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &` |
-| ClawMetry | 4001  | OTEL diagnostics dashboard      | `nohup clawmetry --port 4001 --data-dir ~/.openclaw --no-debug > /tmp/clawmetry.log 2>&1 &`          |
+| Component       | Port  | Repo                         | Purpose                           |
+| --------------- | ----- | ---------------------------- | --------------------------------- |
+| Gateway         | 18789 | (this repo)                  | OpenClaw core (AI agent engine)   |
+| ClawMetry       | 4001  | `globalcaos/clawmetry`       | Real-time observability dashboard |
+| Mission Control | 4000  | `globalcaos/mission-control` | Task orchestration & sub-agent UI |
+
+All three run locally. ClawMetry and Mission Control are companion repos cloned into `~/src/` alongside this fork.
 
 ## Step-by-Step Manual Setup
 
@@ -53,19 +56,47 @@ If A2UI bundle fails (missing `tsc` for lit renderer), the main build (`tsdown`)
 npx tsdown
 ```
 
-### 3. Install ClawMetry (diagnostics)
+### 3. Clone companion tools
+
+Both tools live in `~/src/` as separate git repos with their own upstream tracking.
+
+#### ClawMetry (real-time observability dashboard)
 
 ```bash
-pip3 install --user clawmetry
+cd ~/src
+git clone https://github.com/globalcaos/clawmetry.git
+cd clawmetry
+git remote add upstream https://github.com/vivekchand/clawmetry.git
+pip3 install -r requirements.txt   # or: pip install flask
 ```
 
 Start it:
 
 ```bash
-nohup clawmetry --port 4001 --data-dir ~/.openclaw --no-debug > /tmp/clawmetry.log 2>&1 &
+cd ~/src/clawmetry
+nohup python3 dashboard.py --port 4001 --data-dir ~/.openclaw --no-debug > /tmp/clawmetry.log 2>&1 &
 ```
 
-Verify: open `http://localhost:4001` — you should see the observability dashboard.
+Verify: open `http://localhost:4001`
+
+#### Mission Control (task orchestration UI)
+
+```bash
+cd ~/src
+git clone https://github.com/globalcaos/mission-control.git
+cd mission-control
+git remote add upstream https://github.com/crshdn/mission-control.git
+npm install
+```
+
+Start it:
+
+```bash
+cd ~/src/mission-control
+npm run dev   # or: nohup npm run dev > /tmp/mission-control.log 2>&1 &
+```
+
+Verify: open `http://localhost:4000`
 
 ### 4. Configure diagnostics in OpenClaw
 
@@ -145,11 +176,13 @@ nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-
 
 ## Troubleshooting
 
-| Problem                                         | Fix                                                |
-| ----------------------------------------------- | -------------------------------------------------- |
-| `npm install` ENOTEMPTY                         | `rm -rf node_modules && npm install`               |
-| A2UI bundle fails                               | `npx tsdown` (skip A2UI, gateway works without it) |
-| `Cannot find package '@aws-sdk/client-bedrock'` | `npm install` didn't complete — rerun              |
-| `dotenv` not found                              | `npm install dotenv`                               |
-| Gateway "already running"                       | `pkill -9 -f openclaw-gateway` then restart        |
-| ClawMetry not starting                          | Check Python 3: `pip3 install --user clawmetry`    |
+| Problem                                         | Fix                                                                                       |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `npm install` ENOTEMPTY                         | `rm -rf node_modules && npm install`                                                      |
+| A2UI bundle fails                               | `npx tsdown` (skip A2UI, gateway works without it)                                        |
+| `Cannot find package '@aws-sdk/client-bedrock'` | `npm install` didn't complete — rerun                                                     |
+| `dotenv` not found                              | `npm install dotenv`                                                                      |
+| Gateway "already running"                       | `pkill -9 -f openclaw-gateway` then restart                                               |
+| ClawMetry not starting                          | `cd ~/src/clawmetry && python3 dashboard.py --port 4001`                                  |
+| Mission Control not starting                    | `cd ~/src/mission-control && npm install && npm run dev`                                  |
+| Python venv needed (Debian/Ubuntu)              | `sudo apt install python3-venv` then `python3 -m venv .venv && source .venv/bin/activate` |

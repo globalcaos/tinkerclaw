@@ -41,14 +41,27 @@ else
 fi
 echo "  ✓ Build complete"
 
-# ─── Step 3: ClawMetry (OTEL diagnostics dashboard) ───────────────
-echo "▸ Step 3: Setting up ClawMetry (diagnostics dashboard)..."
-if command -v clawmetry &>/dev/null; then
-  echo "  ✓ ClawMetry already installed ($(clawmetry --version 2>/dev/null || echo 'unknown version'))"
+# ─── Step 3: Companion Tools (ClawMetry + Mission Control) ────────
+SRC_DIR="${HOME}/src"
+mkdir -p "${SRC_DIR}"
+
+# ── ClawMetry (OTEL diagnostics dashboard) ──
+echo "▸ Step 3a: Setting up ClawMetry (diagnostics dashboard)..."
+CLAWMETRY_DIR="${SRC_DIR}/clawmetry"
+if [ -d "${CLAWMETRY_DIR}/.git" ]; then
+  echo "  ✓ ClawMetry already cloned at ${CLAWMETRY_DIR}"
+  cd "${CLAWMETRY_DIR}" && git pull --rebase origin main 2>/dev/null || true
 else
-  echo "  Installing ClawMetry via pip..."
-  pip3 install --user clawmetry
-  echo "  ✓ ClawMetry installed"
+  echo "  Cloning ClawMetry from source..."
+  cd "${SRC_DIR}"
+  git clone https://github.com/globalcaos/clawmetry.git
+  cd clawmetry
+  git remote add upstream https://github.com/vivekchand/clawmetry.git 2>/dev/null || true
+  echo "  ✓ ClawMetry cloned"
+fi
+# Install Python deps
+if command -v pip3 &>/dev/null; then
+  pip3 install --user flask 2>/dev/null || pip3 install flask 2>/dev/null || echo "  ⚠ pip3 install flask failed — try inside a venv"
 fi
 
 # Check if clawmetry is running
@@ -56,12 +69,43 @@ if ss -ltnp 2>/dev/null | grep -q ":4001"; then
   echo "  ✓ ClawMetry already running on port 4001"
 else
   echo "  Starting ClawMetry on port 4001..."
-  nohup clawmetry --port 4001 --data-dir "${OPENCLAW_DIR}" --no-debug > /tmp/clawmetry.log 2>&1 &
+  nohup python3 "${CLAWMETRY_DIR}/dashboard.py" --port 4001 --data-dir "${OPENCLAW_DIR}" --no-debug > /tmp/clawmetry.log 2>&1 &
   sleep 2
   if ss -ltnp 2>/dev/null | grep -q ":4001"; then
     echo "  ✓ ClawMetry started (PID $!)"
   else
     echo "  ⚠ ClawMetry failed to start. Check /tmp/clawmetry.log"
+  fi
+fi
+
+# ── Mission Control (task orchestration UI) ──
+echo "▸ Step 3b: Setting up Mission Control (task orchestration)..."
+MC_DIR="${SRC_DIR}/mission-control"
+if [ -d "${MC_DIR}/.git" ]; then
+  echo "  ✓ Mission Control already cloned at ${MC_DIR}"
+  cd "${MC_DIR}" && git pull --rebase origin main 2>/dev/null || true
+else
+  echo "  Cloning Mission Control from source..."
+  cd "${SRC_DIR}"
+  git clone https://github.com/globalcaos/mission-control.git
+  cd mission-control
+  git remote add upstream https://github.com/crshdn/mission-control.git 2>/dev/null || true
+  npm install 2>/dev/null || echo "  ⚠ npm install failed — run manually in ${MC_DIR}"
+  echo "  ✓ Mission Control cloned"
+fi
+
+# Check if mission-control is running
+if ss -ltnp 2>/dev/null | grep -q ":4000"; then
+  echo "  ✓ Mission Control already running on port 4000"
+else
+  echo "  Starting Mission Control on port 4000..."
+  cd "${MC_DIR}"
+  nohup npm run dev > /tmp/mission-control.log 2>&1 &
+  sleep 3
+  if ss -ltnp 2>/dev/null | grep -q ":4000"; then
+    echo "  ✓ Mission Control started (PID $!)"
+  else
+    echo "  ⚠ Mission Control failed to start. Check /tmp/mission-control.log"
   fi
 fi
 
