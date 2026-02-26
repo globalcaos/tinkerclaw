@@ -32,7 +32,7 @@ import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
-import { createThinkingReaction } from "./thinking-reaction.js";
+import { createThinkingReaction } from "./thinking-reaction.js"; // FORK: thinking reaction
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
@@ -187,6 +187,7 @@ export async function processMessage(params: {
   }
 
   // Annotate offline-recovered messages so the agent knows to review before acting.
+  // FORK: Annotate offline-recovered messages so agent batch-reviews before acting
   if (params.msg.isOfflineRecovery) {
     const ageMs = params.msg.timestamp ? Date.now() - params.msg.timestamp : undefined;
     const ageLabel = ageMs != null ? `${Math.round(ageMs / 60_000)} minutes` : "unknown time";
@@ -336,10 +337,7 @@ export async function processMessage(params: {
     OriginatingTo: params.msg.from,
   });
 
-  // Only update main session's lastRoute when DM actually IS the main session.
-  // When dmScope="per-channel-peer", the DM uses an isolated sessionKey,
-  // and updating mainSessionKey would corrupt routing for the session owner.
-  if (dmRouteTarget && params.route.sessionKey === params.route.mainSessionKey) {
+  if (dmRouteTarget) { // FORK: removed mainSessionKey guard — see merge-blueprint.md
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
@@ -370,6 +368,7 @@ export async function processMessage(params: {
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
   // Fork: visible progress indicator for WhatsApp groups (Baileys #866 workaround).
+  // FORK: visible progress indicator for WhatsApp groups
   const thinkingReaction = createThinkingReaction({
     messageId: params.msg.id,
     chatId: params.msg.chatId,
