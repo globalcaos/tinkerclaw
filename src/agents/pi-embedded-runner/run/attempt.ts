@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import os from "node:os";
-import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
@@ -43,7 +42,7 @@ import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
-import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
+import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
 import {
@@ -74,7 +73,7 @@ import {
   resolveSkillsPromptForRun,
 } from "../../skills.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
-import { buildContextAnatomy, writeAnatomyEvent } from "../../context-anatomy.js";
+import { buildContextAnatomy } from "../../context-anatomy.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
@@ -83,7 +82,6 @@ import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
-import { createCortexRuntime } from "../../pi-extensions/cortex-runtime.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
 import {
   logToolSchemasForGoogle,
@@ -106,24 +104,12 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
-import {
-  extractRawAssistantText,
-  extractTextToolCalls,
-  executeTextToolCalls,
-  formatTextToolResults,
-} from "../text-tool-calls.js";
 import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
-import { getIngestionRuntime } from "../../pi-extensions/ingestion-runtime.js";
-import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js";
-import { getCortexRuntime } from "../../pi-extensions/cortex-runtime.js";
-import { getObservationRuntime } from "../../pi-extensions/observation-runtime.js";
-import {
-  applyMidContextReinject,
-  evaluateTurnSyncScore,
-} from "../../pi-extensions/mid-context-reinject.js";
 import { splitSdkTools } from "../tool-split.js";
+import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack
+import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import {
@@ -544,19 +530,8 @@ export async function runEmbeddedAttempt(
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
 
-    // CORTEX: load PersonaState and generate Tier 1 persona block for system prompt injection.
-    // createCortexRuntime() loads from ~/.openclaw/engram/persona-state.json (or SOUL.md).
-    // The runtime is created here (before sessionManager) as a lightweight read-only load;
-    // the session-bound runtime wired in extensions.ts handles drift/sync during the run.
-    const personaBlock = (() => {
-      try {
-        const soulPath = join(effectiveWorkspace, "SOUL.md");
-        const rt = createCortexRuntime({ soulPath });
-        return rt.getPersonaBlock() || undefined;
-      } catch {
-        return undefined;
-      }
-    })();
+    // FORK: Cortex persona block for system prompt injection (see src/fork/attempt-hooks.ts)
+    const personaBlock = forkAttemptHooks.getPersonaBlock(effectiveWorkspace);
 
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
@@ -1224,18 +1199,12 @@ export async function runEmbeddedAttempt(
             }
           }
 
-          // CORTEX 3.3: Mid-context persona re-injection.
-          // When the session-bound CortexRuntime's EWMA SyncScore drops below 0.6,
-          // prepend the Tier 1A persona block to reinforce persona identity this turn.
+          // FORK: Mid-context persona re-injection (see src/fork/attempt-hooks.ts)
           {
-            const cortexRuntime = getCortexRuntime(sessionManager);
-            const reinjectResult = applyMidContextReinject(cortexRuntime, systemPromptText);
-            if (reinjectResult.reinjected) {
-              applySystemPromptOverrideToSession(activeSession, reinjectResult.systemPrompt);
-              systemPromptText = reinjectResult.systemPrompt;
-              log.info(
-                `cortex: mid-context re-injection applied (ewma=${reinjectResult.ewmaScore.toFixed(3)} < 0.6)`,
-              );
+            const reinject = forkAttemptHooks.applyMidContextReinjectHook(sessionManager, systemPromptText, log);
+            if (reinject.reinjected) {
+              applySystemPromptOverrideToSession(activeSession, reinject.systemPromptText);
+              systemPromptText = reinject.systemPromptText;
             }
           }
 
@@ -1375,63 +1344,20 @@ export async function runEmbeddedAttempt(
         // -----------------------------------------------------------------
         // Text-based tool call interception.
         //
-        // Some local models output tool calls as raw JSON text instead of
-        // using the structured tool_calls API. Detect these, execute the
-        // tools, and feed results back so the model can summarize.
-        //
-        // Guards:
-        // 1. Only for local providers (ollama, lmstudio, vllm) — cloud
-        //    providers always use structured tool calls.
-        // 2. Skip if the model already made structured tool calls in this
-        //    run (toolMetas.length > 0) — it has native support.
-        // -----------------------------------------------------------------
-        const TEXT_TOOL_CALL_MAX_RETRIES = 3;
-        const normalizedProvider = normalizeProviderId(params.provider);
-        const isLocalProvider =
-          normalizedProvider === "ollama" ||
-          normalizedProvider === "lmstudio" ||
-          normalizedProvider === "vllm";
-        const madeStructuredToolCalls = toolMetas.length > 0;
-        if (
-          !promptError &&
-          !aborted &&
-          tools.length > 0 &&
-          isLocalProvider &&
-          !madeStructuredToolCalls
-        ) {
-          for (let ttcRetry = 0; ttcRetry < TEXT_TOOL_CALL_MAX_RETRIES; ttcRetry++) {
-            const lastMsg = activeSession.messages
-              .slice()
-              .toReversed()
-              .find((m) => m.role === "assistant");
-            if (!lastMsg) {
-              break;
-            }
-
-            const rawText = extractRawAssistantText(lastMsg);
-            const textCalls = extractTextToolCalls(rawText);
-            if (textCalls.length === 0) {
-              break;
-            }
-
-            log.info(
-              `text-tool-call: found ${textCalls.length} call(s) in assistant text (retry ${ttcRetry + 1}/${TEXT_TOOL_CALL_MAX_RETRIES})`,
-            );
-
-            const results = await executeTextToolCalls(
-              textCalls,
-              tools,
-              params.abortSignal ?? undefined,
-            );
-            const formatted = formatTextToolResults(results);
-
-            try {
-              await abortable(activeSession.steer(formatted));
-            } catch (steerErr) {
-              promptError = steerErr;
-              break;
-            }
-          }
+        // FORK: Text-tool-call interception for local providers (see src/fork/attempt-hooks.ts)
+        {
+          const ttcResult = await forkAttemptHooks.interceptTextToolCalls({
+            provider: params.provider,
+            activeSession: activeSession as never,
+            tools,
+            toolMetas,
+            promptError,
+            aborted,
+            abortSignal: params.abortSignal ?? undefined,
+            abortable,
+            log,
+          });
+          promptError = ttcResult.promptError;
         }
       } finally {
         clearTimeout(abortTimer);
@@ -1501,6 +1427,23 @@ export async function runEmbeddedAttempt(
           params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
         ),
       );
+      // FORK: Post-turn side effects — context anatomy, engram, syncscore, observations
+      // (see src/fork/attempt-hooks.ts → onTurnComplete)
+      forkAttemptHooks.onTurnComplete({
+        sessionManager,
+        sessionKey: params.sessionKey,
+        messagesSnapshot,
+        assistantTexts,
+        systemPromptReport,
+        provider: params.provider,
+        modelId: params.modelId,
+        contextWindowTokens,
+        getCompactionCount,
+        getUsageTotals: getUsageTotals ?? null,
+        log,
+      }).catch((err) => log.warn(`fork post-turn failed: ${String(err)}`));
+
+      // Context anatomy result for return value (kept inline for type compat)
       const contextAnatomy = systemPromptReport
         ? buildContextAnatomy({
             turn: messagesSnapshot.filter((m) => m.role === "user").length,
@@ -1514,71 +1457,6 @@ export async function runEmbeddedAttempt(
             totalTokensUsed: getUsageTotals()?.total,
           })
         : undefined;
-      if (contextAnatomy && params.sessionKey) {
-        writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
-          log.warn(`context-anatomy write failed: ${String(err)}`);
-        });
-      }
-
-      // TRACE Phase 1.1: fire-and-forget ENGRAM ingestion after each agent turn.
-      // Only active when the engram compaction mode has initialised the pipeline
-      // (via buildEmbeddedExtensionFactories → setIngestionRuntime).
-      const ingestionRuntime = getIngestionRuntime(sessionManager);
-      if (ingestionRuntime) {
-        ingestionRuntime.ingest(messagesSnapshot).catch((err) => {
-          log.warn(`ENGRAM ingestion failed: ${String(err)}`);
-        });
-      }
-
-      // CORTEX 3.3: Per-turn SyncScore evaluation.
-      // Updates the EWMA SyncScore so that the next turn can decide whether to
-      // re-inject the persona block. Fire-and-forget (non-blocking).
-      {
-        const cortexRuntime = getCortexRuntime(sessionManager);
-        const turnNumber = messagesSnapshot.filter((m) => m.role === "user").length;
-        evaluateTurnSyncScore(cortexRuntime, assistantTexts, turnNumber, (msg) =>
-          log.info(msg),
-        );
-      }
-
-      // CORTEX 3.4: Observational memory extraction.
-      // Scans the recent conversation for extractable facts/preferences/beliefs
-      // and persists them as ENGRAM system_event entries tagged "observation".
-      // Fires every 10 turns OR when accumulated token count crosses 30K.
-      {
-        const observationRuntime = getObservationRuntime(sessionManager);
-        if (observationRuntime) {
-          // Collect recent user + assistant message texts (last 20 messages).
-          const recentTexts = messagesSnapshot.slice(-20).flatMap((m) => {
-            if (!("content" in m)) {return [];}
-            if (typeof m.content === "string") {
-              return m.content ? [m.content] : [];
-            }
-            if (Array.isArray(m.content)) {
-              const texts = (m.content as Array<{ type?: string; text?: string }>)
-                .filter((c) => c.type === "text" && typeof c.text === "string")
-                .map((c) => c.text as string)
-                .filter(Boolean);
-              return texts;
-            }
-            return [];
-          });
-
-          if (recentTexts.length > 0) {
-            const turnNumber = messagesSnapshot.filter((m) => m.role === "user").length;
-            // Force extraction every 10 turns regardless of token threshold.
-            const forceByTurn = turnNumber > 0 && turnNumber % 10 === 0;
-            const threshold = forceByTurn ? 1 : undefined; // undefined → default 30K
-
-            const extracted = observationRuntime.extractObservations(recentTexts, threshold);
-            if (extracted.length > 0) {
-              log.debug(
-                `cortex: extracted ${extracted.length} observation(s) at turn=${turnNumber} (forced=${forceByTurn})`,
-              );
-            }
-          }
-        }
-      }
 
       return {
         aborted,
