@@ -25,7 +25,7 @@ import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-// --- Watermark persistence: tracks the timestamp of the last processed message ---
+// FORK: Watermark persistence — tracks the timestamp of the last processed message
 // Stored as a plain text file alongside the Baileys auth state.
 const WATERMARK_FILENAME = ".openclaw-watermark-ms";
 
@@ -558,7 +558,7 @@ export async function monitorWebInbox(options: {
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
-    // fork: expanded ActiveWebListener surface for group management + message editing
+    // FORK: expanded ActiveWebListener surface for group management + message editing
     createGroup: async (subject: string, participants: string[]) => {
       const meta = await sock.groupCreate(subject, participants);
       return { groupId: meta.id, subject: meta.subject };
