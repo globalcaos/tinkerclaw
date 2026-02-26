@@ -397,6 +397,7 @@ export function buildAgentSystemPrompt(params: {
   ];
   const skillsSection = buildSkillsSection({
     skillsPrompt,
+    isMinimal, // FORK: pass through to suppress skills for sub-agents
     readToolName,
   });
   const memorySection = buildMemorySection({
