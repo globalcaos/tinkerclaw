@@ -84,6 +84,7 @@ const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [
   { prefix: "session", kind: "none" },
   { prefix: "talk", kind: "none" },
   { prefix: "skills", kind: "none" },
+  { prefix: "secrets", kind: "none" },
   { prefix: "plugins", kind: "restart" },
   { prefix: "ui", kind: "none" },
   { prefix: "gateway", kind: "restart" },
@@ -261,7 +262,7 @@ export function startGatewayConfigReloader(opts: {
   initialConfig: OpenClawConfig;
   readSnapshot: () => Promise<ConfigFileSnapshot>;
   onHotReload: (plan: GatewayReloadPlan, nextConfig: OpenClawConfig) => Promise<void>;
-  onRestart: (plan: GatewayReloadPlan, nextConfig: OpenClawConfig) => void;
+  onRestart: (plan: GatewayReloadPlan, nextConfig: OpenClawConfig) => void | Promise<void>;
   log: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -297,7 +298,16 @@ export function startGatewayConfigReloader(opts: {
       return;
     }
     restartQueued = true;
-    opts.onRestart(plan, nextConfig);
+    void (async () => {
+      try {
+        await opts.onRestart(plan, nextConfig);
+      } catch (err) {
+        // Restart checks can fail (for example unresolved SecretRefs). Keep the
+        // reloader alive and allow a future change to retry restart scheduling.
+        restartQueued = false;
+        opts.log.error(`config restart failed: ${String(err)}`);
+      }
+    })();
   };
 
   const handleMissingSnapshot = (snapshot: ConfigFileSnapshot): boolean => {
