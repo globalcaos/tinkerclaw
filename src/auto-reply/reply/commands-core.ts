@@ -166,7 +166,6 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
     `[DEBUG] handleCommands: commandBodyNormalized="${params.command.commandBodyNormalized}" resetRequested=${resetRequested} isAuthorizedSender=${params.command.isAuthorizedSender}`,
   );
   if (resetRequested && !params.command.isAuthorizedSender) {
-    console.log(`[DEBUG] handleCommands: returning shouldContinue=false (unauthorized reset)`);
     logVerbose(
       `Ignoring /reset from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
     );
@@ -203,7 +202,6 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       return result;
     }
   }
-  console.log(`[DEBUG] handleCommands: no handler matched, returning shouldContinue=true`);
 
   const sendPolicy = resolveSendPolicy({
     cfg: params.cfg,
