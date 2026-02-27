@@ -35,10 +35,11 @@ import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
-import { createThinkingReaction } from "./thinking-reaction.js";
+import { createThinkingReaction } from "./thinking-reaction.js"; // FORK: thinking reaction
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
+import { maybeSendAckMessage } from "./ack-message.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import { formatGroupMembers } from "./group-members.js";
 import { trackBackgroundTask, updateLastRouteInBackground } from "./last-route.js";
@@ -189,6 +190,7 @@ export async function processMessage(params: {
   }
 
   // Annotate offline-recovered messages so the agent knows to review before acting.
+  // FORK: Annotate offline-recovered messages so agent batch-reviews before acting
   if (params.msg.isOfflineRecovery) {
     const ageMs = params.msg.timestamp ? Date.now() - params.msg.timestamp : undefined;
     const ageLabel = ageMs != null ? `${Math.round(ageMs / 60_000)} minutes` : "unknown time";
@@ -212,6 +214,19 @@ export async function processMessage(params: {
 
   // Send ack reaction immediately upon message receipt (post-gating)
   maybeSendAckReaction({
+    cfg: params.cfg,
+    msg: params.msg,
+    agentId: params.route.agentId,
+    sessionKey: params.route.sessionKey,
+    conversationId,
+    verbose: params.verbose,
+    accountId: params.route.accountId,
+    info: params.replyLogger.info.bind(params.replyLogger),
+    warn: params.replyLogger.warn.bind(params.replyLogger),
+  });
+
+  // Send ack message immediately upon message receipt (post-gating)
+  maybeSendAckMessage({
     cfg: params.cfg,
     msg: params.msg,
     agentId: params.route.agentId,
@@ -338,10 +353,7 @@ export async function processMessage(params: {
     OriginatingTo: params.msg.from,
   });
 
-  // Only update main session's lastRoute when DM actually IS the main session.
-  // When dmScope="per-channel-peer", the DM uses an isolated sessionKey,
-  // and updating mainSessionKey would corrupt routing for the session owner.
-  if (dmRouteTarget && params.route.sessionKey === params.route.mainSessionKey) {
+  if (dmRouteTarget) { // FORK: removed mainSessionKey guard — see merge-blueprint.md
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
@@ -372,6 +384,7 @@ export async function processMessage(params: {
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
   // Fork: visible progress indicator for WhatsApp groups (Baileys #866 workaround).
+  // FORK: visible progress indicator for WhatsApp groups
   const thinkingReaction = createThinkingReaction({
     messageId: params.msg.id,
     chatId: params.msg.chatId,

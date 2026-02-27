@@ -53,6 +53,21 @@ export type WhatsAppAckReactionConfig = {
   group?: "always" | "mentions" | "never";
 };
 
+export type WhatsAppAckMessageConfig = {
+  /** Text to send as an instant acknowledgment message (e.g., "⚡"). Empty = disabled. */
+  text?: string;
+  /** Send ack message in direct chats. Default: true. */
+  direct?: boolean;
+  /**
+   * Send ack message in group chats:
+   * - "always": send for all group messages
+   * - "mentions": send only when bot is mentioned
+   * - "never": never send in groups
+   * Default: "never"
+   */
+  group?: "always" | "mentions" | "never";
+};
+
 type WhatsAppSharedConfig = {
   /** Whether the WhatsApp channel is enabled. */
   enabled?: boolean;
@@ -92,6 +107,8 @@ type WhatsAppSharedConfig = {
   groups?: Record<string, WhatsAppGroupConfig>;
   /** Acknowledgment reaction sent immediately upon message receipt. */
   ackReaction?: WhatsAppAckReactionConfig;
+  /** Acknowledgment message sent immediately upon message receipt (e.g., "⚡"). */
+  ackMessage?: WhatsAppAckMessageConfig;
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
   debounceMs?: number;
   /** Heartbeat visibility settings. */
