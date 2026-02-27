@@ -139,7 +139,6 @@ export async function monitorWebInbox(options: {
     shouldDebounce: options.shouldDebounce,
     onFlush: async (entries) => {
       const last = entries.at(-1);
-      console.log(`[DEBOUNCE-DEBUG] onFlush called: entries=${entries.length} chatType=${last?.chatType} from=${last?.from} body=${(last?.body ?? "").substring(0, 50)}`);
       if (!last) {
         return;
       }
@@ -216,7 +215,6 @@ export async function monitorWebInbox(options: {
       // DEBUG: Log every message received from Baileys
       const debugRemoteJid = msg.key?.remoteJid ?? "unknown";
       const debugFromMe = msg.key?.fromMe ?? false;
-      console.log(`[MONITOR-DEBUG] Baileys msg: jid=${debugRemoteJid} fromMe=${debugFromMe} type=${upsert.type} participant=${msg.key?.participant ?? "none"} id=${msg.key?.id ?? "?"}`);
       inboundLogger.info(
         { remoteJid: debugRemoteJid, fromMe: debugFromMe, type: upsert.type },
         "DEBUG: Baileys message received",
@@ -260,10 +258,8 @@ export async function monitorWebInbox(options: {
         if (msg.key?.fromMe) {
           // Skip LID resolution for our own messages — we know who we are
           resolvedParticipant = selfE164;
-          console.log(`[MONITOR-DEBUG] fromMe group msg: skipped LID resolve, using selfE164=${selfE164}`);
         } else {
           resolvedParticipant = await resolveInboundJid(participantJid);
-          console.log(`[MONITOR-DEBUG] resolved participant ${participantJid} -> ${resolvedParticipant}`);
         }
       }
       const senderE164 = group
@@ -272,7 +268,6 @@ export async function monitorWebInbox(options: {
           ? selfE164
           : from;
       if (group) {
-        console.log(`[MONITOR-DEBUG] group access: senderE164=${senderE164} group=${remoteJid} fromMe=${msg.key?.fromMe}`);
       }
 
       let groupSubject: string | undefined;
@@ -304,11 +299,9 @@ export async function monitorWebInbox(options: {
         messageBody: earlyBody,
       });
       if (!access.allowed) {
-        if (group) console.log(`[MONITOR-DEBUG] access DENIED for group msg id=${id} from=${from} sender=${senderE164}`);
         continue;
       }
 
-      if (group) console.log(`[MONITOR-DEBUG] access ALLOWED for group msg id=${id} isSelfChat=${access.isSelfChat}`);
       if (id && !access.isSelfChat && options.sendReadReceipts !== false) {
         const participant = msg.key?.participant;
         try {
@@ -356,18 +349,15 @@ export async function monitorWebInbox(options: {
         writeWatermarkMs(options.authDir, lastSeenTimestampMs);
       }
 
-      if (group) console.log(`[MONITOR-DEBUG] pre-extract: id=${id} msgKeys=${Object.keys(msg.message ?? {}).join(",") || "EMPTY"} pushName=${msg.pushName}`);
       const location = extractLocationData(msg.message ?? undefined);
       const locationText = location ? formatLocationText(location) : undefined;
       let body = extractText(msg.message ?? undefined);
-      if (group) console.log(`[MONITOR-DEBUG] post-extract: body=${body ? body.substring(0, 80) : "NULL"}`);
       if (locationText) {
         body = [body, locationText].filter(Boolean).join("\n").trim();
       }
       if (!body) {
         body = extractMediaPlaceholder(msg.message ?? undefined);
         if (!body) {
-          if (group) console.log(`[MONITOR-DEBUG] group msg SKIPPED: no body/media. id=${id} msgKeys=${Object.keys(msg.message ?? {}).join(",")}`);
           continue;
         }
       }
@@ -426,7 +416,6 @@ export async function monitorWebInbox(options: {
       const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
       const senderName = msg.pushName ?? undefined;
 
-      console.log(`[MONITOR-DEBUG] INBOUND MSG READY: from=${from} group=${group} body=${(body ?? "").substring(0, 60)} chatType=${group ? "group" : "direct"}`);
       inboundLogger.info(
         { from, to: selfE164 ?? "me", body, mediaPath, mediaType, mediaFileName, timestamp },
         "inbound message",
