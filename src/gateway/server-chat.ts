@@ -312,8 +312,11 @@ export function createAgentEventHandler({
         timestamp: now,
       },
     };
-    broadcast("chat", payload, { dropIfSlow: true });
-    nodeSendToSession(sessionKey, "chat", payload);
+    // Suppress webchat broadcast for heartbeat runs when showOk is false
+    if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
+      broadcast("chat", payload, { dropIfSlow: true });
+      nodeSendToSession(sessionKey, "chat", payload);
+    }
   };
 
   const emitChatFinal = (
@@ -352,8 +355,11 @@ export function createAgentEventHandler({
               }
             : undefined,
       };
-      broadcast("chat", payload);
-      nodeSendToSession(sessionKey, "chat", payload);
+      // Suppress webchat broadcast for heartbeat runs when showOk is false
+      if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
+        broadcast("chat", payload);
+        nodeSendToSession(sessionKey, "chat", payload);
+      }
       return;
     }
     const payload = {
@@ -363,8 +369,11 @@ export function createAgentEventHandler({
       state: "error" as const,
       errorMessage: error ? formatForLog(error) : undefined,
     };
-    broadcast("chat", payload);
-    nodeSendToSession(sessionKey, "chat", payload);
+    // Suppress webchat broadcast for heartbeat error events too
+    if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
+      broadcast("chat", payload);
+      nodeSendToSession(sessionKey, "chat", payload);
+    }
   };
 
   const resolveToolVerboseLevel = (runId: string, sessionKey?: string) => {

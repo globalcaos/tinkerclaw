@@ -31,6 +31,15 @@ const WhatsAppAckReactionSchema = z
   .strict()
   .optional();
 
+const WhatsAppAckMessageSchema = z
+  .object({
+    text: z.string().optional(),
+    direct: z.boolean().optional().default(true),
+    group: z.enum(["always", "mentions", "never"]).optional().default("never"),
+  })
+  .strict()
+  .optional();
+
 const WhatsAppSharedSchema = z.object({
   enabled: z.boolean().optional(),
   capabilities: z.array(z.string()).optional(),
@@ -55,6 +64,7 @@ const WhatsAppSharedSchema = z.object({
   blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
   groups: WhatsAppGroupsSchema,
   ackReaction: WhatsAppAckReactionSchema,
+  ackMessage: WhatsAppAckMessageSchema,
   debounceMs: z.number().int().nonnegative().optional().default(0),
   heartbeat: ChannelHeartbeatVisibilitySchema,
 });

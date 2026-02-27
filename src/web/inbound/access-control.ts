@@ -147,6 +147,30 @@ export async function checkInboundAccessControl(params: {
       resolvedAccountId: account.accountId,
     };
   }
+  if (params.group && groupPolicy === "allowlist") {
+    if (!groupAllowFrom || groupAllowFrom.length === 0) {
+      logVerbose("Blocked group message (groupPolicy: allowlist, no groupAllowFrom)");
+      return {
+        allowed: false,
+        shouldMarkRead: false,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    const senderAllowed =
+      groupHasWildcard ||
+      (params.senderE164 != null && normalizedGroupAllowFrom.includes(params.senderE164));
+    console.log(`[ACCESS-DEBUG] group allowlist check: sender=${params.senderE164} senderAllowed=${senderAllowed} groupHasWildcard=${groupHasWildcard} normalizedList=${JSON.stringify(normalizedGroupAllowFrom.slice(0,5))}...`);
+    if (!senderAllowed) {
+      console.log(`[ACCESS-DEBUG] BLOCKED group message from ${params.senderE164 ?? "unknown sender"}`);
+      return {
+        allowed: false,
+        shouldMarkRead: false,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+  }
 
   // DM access control (secure defaults): "pairing" (default) / "allowlist" / "open" / "disabled".
   if (!params.group) {
