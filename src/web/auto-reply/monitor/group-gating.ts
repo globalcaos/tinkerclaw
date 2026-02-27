@@ -106,6 +106,7 @@ export function applyGroupGating(params: {
   const senderAuthorized = senderE164 ? normalizedAllowFrom.includes(senderE164) : false;
 
   if (!senderAuthorized) {
+    console.log(`[GROUP-GATE] REJECT: sender not authorized → sender=${params.msg.senderE164} normalized=${senderE164} chat=${params.conversationId}`);
     params.logVerbose(
       `[group-gate] REJECT: sender not authorized → ${params.msg.senderE164} in ${params.conversationId}`,
     );
@@ -175,6 +176,7 @@ export function applyGroupGating(params: {
   );
 
   if (!prefixPassed) {
+    console.log(`[GROUP-GATE] REJECT: no prefix/mention/reply → sender=${params.msg.senderE164} chat=${params.conversationId} body=${params.msg.body?.substring(0, 60)} triggerPrefix=${triggerPrefix} triggerPrefixMatched=${triggerPrefixMatched} wasMentioned=${mentionDebug.wasMentioned} repliedToBot=${repliedToBot}`);
     params.logVerbose(
       `[group-gate] REJECT: no prefix/mention/reply → ${params.msg.senderE164} in ${params.conversationId}: ${params.msg.body?.substring(0, 80)}`,
     );
@@ -203,6 +205,7 @@ export function applyGroupGating(params: {
   // Set wasMentioned for downstream context
   params.msg.wasMentioned = wasMentioned || repliedToBot;
 
+  console.log(`[GROUP-GATE] ACCEPT: all 3 rules passed → sender=${params.msg.senderE164} chat=${params.conversationId}`);
   params.logVerbose(
     `[group-gate] ACCEPT: all 3 rules passed → ${params.msg.senderE164} in ${params.conversationId}`,
   );

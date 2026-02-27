@@ -124,9 +124,13 @@ export function renderTier1B(ps: PersonaState): string {
 	return lines.join("\n\n");
 }
 
-/** Tier 1C: relational — per-user state. */
-export function renderTier1C(ps: PersonaState): string {
-	const rel = ps.relational;
+/** Tier 1C: relational — per-user state. Disabled when SOUL.md is present. */
+export function renderTier1C(_ps: PersonaState): string {
+	// Relational state injection disabled — redundant when SOUL.md defines the relationship.
+	// TODO: re-enable with hasSoulFile gate when CORTEX opts plumbing lands.
+	return "";
+	/* Original implementation preserved for reference:
+	const rel = _ps.relational;
 	const lines: string[] = [
 		`## Relational State`,
 		`- Rapport: ${rel.rapport}`,
@@ -143,6 +147,7 @@ export function renderTier1C(ps: PersonaState): string {
 	}
 
 	return lines.join("\n");
+	*/
 }
 
 // ---------------------------------------------------------------------------
