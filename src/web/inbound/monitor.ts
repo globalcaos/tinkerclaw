@@ -11,7 +11,6 @@ import { jidToE164, resolveJidToE164 } from "../../utils.js";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 import { checkInboundAccessControl } from "./access-control.js";
 import { isRecentInboundMessage } from "./dedupe.js";
-import { isSentByUs } from "./sent-ids.js";
 import {
   describeReplyContext,
   extractLocationData,
@@ -21,6 +20,7 @@ import {
 } from "./extract.js";
 import { downloadInboundMedia } from "./media.js";
 import { createWebSendApi } from "./send-api.js";
+import { isSentByUs } from "./sent-ids.js";
 import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
 
 export async function monitorWebInbox(options: {
