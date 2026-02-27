@@ -998,7 +998,6 @@ export function renderApp(state: AppViewState) {
                 showThinking,
                 loading: state.chatLoading,
                 sending: state.chatSending,
-                runId: state.chatRunId,
                 compactionStatus: state.compactionStatus,
                 fallbackStatus: state.fallbackStatus,
                 assistantAvatarUrl: chatAvatarUrl,
