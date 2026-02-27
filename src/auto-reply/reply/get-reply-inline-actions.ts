@@ -410,7 +410,6 @@ export async function handleInlineActions(params: {
     return { kind: "reply", reply: commandResult.reply };
   }
 
-  console.log(`[DEBUG] handleInlineActions: returning kind=continue`);
   return {
     kind: "continue",
     directives,
