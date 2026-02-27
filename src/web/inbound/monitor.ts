@@ -22,6 +22,44 @@ import { downloadInboundMedia } from "./media.js";
 import { createWebSendApi } from "./send-api.js";
 import { wasSentByBot, forgetSentMessageId } from "./sent-ids.js"; // fork: sent-id tracking
 import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+
+// FORK: Watermark persistence — tracks the timestamp of the last processed message
+// Stored as a plain text file alongside the Baileys auth state.
+const WATERMARK_FILENAME = ".openclaw-watermark-ms";
+
+function watermarkPath(authDir: string): string {
+  return join(authDir, WATERMARK_FILENAME);
+}
+
+function readWatermarkMs(authDir: string): number {
+  try {
+    const raw = readFileSync(watermarkPath(authDir), "utf-8").trim();
+    const ms = Number(raw);
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+  } catch {
+    return 0; // file doesn't exist yet
+  }
+}
+
+let watermarkWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingWatermarkMs = 0;
+
+/** Debounced write — avoids thrashing disk on every message. Flushes at most once per second. */
+function writeWatermarkMs(authDir: string, ms: number): void {
+  pendingWatermarkMs = ms;
+  if (watermarkWriteTimer) {return;}
+  watermarkWriteTimer = setTimeout(() => {
+    watermarkWriteTimer = null;
+    try {
+      mkdirSync(dirname(watermarkPath(authDir)), { recursive: true });
+      writeFileSync(watermarkPath(authDir), String(pendingWatermarkMs), "utf-8");
+    } catch {
+      // best-effort; don't crash on write failure
+    }
+  }, 1000);
+}
 
 export async function monitorWebInbox(options: {
   verbose: boolean;
@@ -59,6 +97,7 @@ export async function monitorWebInbox(options: {
   });
   await waitForWaConnection(sock);
   const connectedAtMs = Date.now();
+  let lastSeenTimestampMs = readWatermarkMs(options.authDir);
 
   let onCloseResolve: ((reason: WebListenerCloseReason) => void) | null = null;
   const onClose = new Promise<WebListenerCloseReason>((resolve) => {
@@ -287,23 +326,34 @@ export async function monitorWebInbox(options: {
       }
 
       // Offline message recovery: "append" messages are history/catch-up delivered on
-      // reconnect. Instead of discarding them all, recover messages that arrived while
-      // the gateway was down (within the configured recovery window).
+      // reconnect. Instead of discarding them all, recover messages newer than the last
+      // processed message watermark. Falls back to a fixed window (default 6h) when no
+      // watermark exists yet.
       if (upsert.type === "append") {
-        const DEFAULT_RECOVERY_MS = 6 * 60 * 60 * 1000; // 6 hours
-        const recoveryMs = options.offlineRecoveryMs ?? DEFAULT_RECOVERY_MS;
-        if (recoveryMs <= 0) {
-          continue; // recovery disabled
+        if (messageTimestampMs == null) {
+          continue; // no timestamp, can't evaluate
         }
-        const ageMs = messageTimestampMs != null ? Date.now() - messageTimestampMs : Infinity;
-        if (ageMs > recoveryMs) {
-          continue; // too old, skip
+        // Use in-memory watermark (initialized from disk at connect time)
+        if (lastSeenTimestampMs > 0) {
+          // Dynamic recovery: only process messages newer than our last-processed watermark
+          if (messageTimestampMs <= lastSeenTimestampMs) {
+            continue; // already seen (older than watermark)
+          }
+        } else {
+          // No watermark yet (first run): recover everything Baileys delivers.
+          // This lets us pick up all available messages on the initial connection.
         }
-        const ageMin = Math.round(ageMs / 60_000);
+        const ageMin = Math.round((Date.now() - messageTimestampMs) / 60_000);
         inboundLogger.info(
-          { from, messageTimestampMs, ageMinutes: ageMin },
+          { from, messageTimestampMs, ageMinutes: ageMin, watermarkMs: lastSeenTimestampMs },
           "Recovering offline message (append)",
         );
+      }
+
+      // Update watermark: track the newest message we've processed
+      if (messageTimestampMs != null && messageTimestampMs > lastSeenTimestampMs) {
+        lastSeenTimestampMs = messageTimestampMs;
+        writeWatermarkMs(options.authDir, lastSeenTimestampMs);
       }
 
       if (group) console.log(`[MONITOR-DEBUG] pre-extract: id=${id} msgKeys=${Object.keys(msg.message ?? {}).join(",") || "EMPTY"} pushName=${msg.pushName}`);
@@ -530,7 +580,7 @@ export async function monitorWebInbox(options: {
     },
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
-    // fork: expanded ActiveWebListener surface for group management + message editing
+    // FORK: expanded ActiveWebListener surface for group management + message editing
     createGroup: async (subject: string, participants: string[]) => {
       const meta = await sock.groupCreate(subject, participants);
       return { groupId: meta.id, subject: meta.subject };
