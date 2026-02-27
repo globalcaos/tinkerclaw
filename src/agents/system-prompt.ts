@@ -17,7 +17,14 @@ import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
 export type PromptMode = "full" | "minimal" | "none";
 type OwnerIdDisplay = "raw" | "hash";
 
-function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
+function buildSkillsSection(params: {
+  skillsPrompt?: string;
+  isMinimal: boolean; // FORK: suppress skills for sub-agents
+  readToolName: string;
+}) {
+  if (params.isMinimal) { // FORK: sub-agents don't need skills in context
+    return [];
+  }
   const trimmed = params.skillsPrompt?.trim();
   if (!trimmed) {
     return [];
@@ -207,7 +214,7 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
-  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
+  /** FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
   personaBlock?: string;
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
@@ -398,6 +405,7 @@ export function buildAgentSystemPrompt(params: {
   ];
   const skillsSection = buildSkillsSection({
     skillsPrompt,
+    isMinimal, // FORK: pass through to suppress skills for sub-agents
     readToolName,
   });
   const memorySection = buildMemorySection({
@@ -417,9 +425,7 @@ export function buildAgentSystemPrompt(params: {
     return "You are a personal assistant running inside OpenClaw.";
   }
 
-  // CORTEX Tier 1: persona block injected near the top, before tooling sections.
-  // Cached by CortexRuntime; survives context compaction because the system prompt
-  // is always rebuilt from scratch on each run/compact cycle.
+  // FORK: CORTEX Tier 1 persona block injected near the top, before tooling sections.
   const cortexPersonaBlock = params.personaBlock?.trim();
 
   const lines = [
