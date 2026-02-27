@@ -21,12 +21,10 @@ const allowedTags = [
   "h4",
   "hr",
   "i",
-  "img",
   "li",
   "ol",
   "p",
   "pre",
-  "span",
   "strong",
   "table",
   "tbody",
@@ -38,20 +36,7 @@ const allowedTags = [
   "img",
 ];
 
-const allowedAttrs = [
-  "class",
-  "href",
-  "rel",
-  "target",
-  "title",
-  "start",
-  "src",
-  "alt",
-  "width",
-  "height",
-  "loading",
-];
-
+const allowedAttrs = ["class", "href", "rel", "target", "title", "start", "src", "alt"];
 const sanitizeOptions = {
   ALLOWED_TAGS: allowedTags,
   ALLOWED_ATTR: allowedAttrs,
@@ -61,31 +46,6 @@ const sanitizeOptions = {
 let hooksInstalled = false;
 const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
-
-/**
- * Detect raw JSON/structured data that can crash marked.parse() with infinite loops.
- * marked v15 has a known bug where raw JSON (especially large objects/arrays with nested
- * brackets, colons, and quotes) triggers infinite recursion or infinite loops in its
- * tokenizer (link() → inlineTokens() → lex()). Unlike stack overflows, infinite loops
- * cannot be caught by try-catch in single-threaded JS.
- *
- * We detect input that looks like a raw JSON blob and bypass marked entirely for it.
- */
-function looksLikeRawJson(text: string): boolean {
-  const first = text[0];
-  if (first !== "{" && first !== "[") {
-    return false;
-  }
-  const last = text[text.length - 1];
-  if ((first === "{" && last !== "}") || (first === "[" && last !== "]")) {
-    return false;
-  }
-  // Quick structural check: JSON-like content has a high density of quotes and colons
-  // relative to its length. Sample the first 500 chars.
-  const sample = text.slice(0, 500);
-  const quotes = sample.split('"').length - 1;
-  return quotes >= 4;
-}
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
 const markdownCache = new Map<string, string>();
@@ -146,9 +106,7 @@ export function toSanitizedMarkdownHtml(markdown: string): string {
   const suffix = truncated.truncated
     ? `\n\n… truncated (${truncated.total} chars, showing first ${truncated.text.length}).`
     : "";
-  // Bypass marked for content that is too large or looks like raw JSON/structured data.
-  // marked v15 enters infinite loops on raw JSON, which cannot be caught by try-catch.
-  if (truncated.text.length > MARKDOWN_PARSE_LIMIT || looksLikeRawJson(truncated.text)) {
+  if (truncated.text.length > MARKDOWN_PARSE_LIMIT) {
     const escaped = escapeHtml(`${truncated.text}${suffix}`);
     const html = `<pre class="code-block">${escaped}</pre>`;
     const sanitized = DOMPurify.sanitize(html, sanitizeOptions);
@@ -157,24 +115,14 @@ export function toSanitizedMarkdownHtml(markdown: string): string {
     }
     return sanitized;
   }
-  let rendered: string;
-  try {
-    rendered = marked.parse(`${truncated.text}${suffix}`, {
-      renderer: htmlEscapeRenderer,
-    }) as string;
-  } catch {
-    // marked can hit infinite recursion on certain input patterns (e.g. malformed links).
-    // Fall back to escaped plaintext so the UI doesn't freeze.
-    const escaped = escapeHtml(`${truncated.text}${suffix}`);
-    rendered = `<pre class="code-block">${escaped}</pre>`;
-  }
+  const rendered = marked.parse(`${truncated.text}${suffix}`, {
+    renderer: htmlEscapeRenderer,
+  }) as string;
   const sanitized = DOMPurify.sanitize(rendered, sanitizeOptions);
-  // Auto-wrap text after **Jarvis:** in jarvis-voice span for purple italic styling.
-  const withVoice = applyJarvisVoiceHtml(sanitized);
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
-    setCachedMarkdown(input, withVoice);
+    setCachedMarkdown(input, sanitized);
   }
-  return withVoice;
+  return sanitized;
 }
 
 // Prevent raw HTML in chat messages from being rendered as formatted HTML.
@@ -190,28 +138,5 @@ function escapeHtml(value: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-}
-
-/**
- * Post-sanitization: wrap text after <strong>Jarvis:</strong> in jarvis-voice span.
- * Operates on the final HTML after DOMPurify, so no security bypass.
- * Matches: <strong>Jarvis:</strong> followed by text until end of paragraph.
- * Skips if already wrapped in jarvis-voice span.
- */
-function applyJarvisVoiceHtml(html: string): string {
-  if (!html.includes("Jarvis:")) {
-    return html;
-  }
-  // Match <strong>Jarvis:</strong> followed by text, not already wrapped
-  return html.replace(
-    /(<strong>Jarvis:<\/strong>)\s+((?:(?!<span class="jarvis-voice">)[\s\S])*?)(<\/p>|$)/gi,
-    (match, label: string, content: string, closing: string) => {
-      const trimmed = content.trim();
-      if (!trimmed || match.includes('jarvis-voice')) {
-        return match;
-      }
-      return `${label} <span class="jarvis-voice">${trimmed}</span>${closing}`;
-    },
-  );
+    .replace(/'/g, "&#39;");
 }
