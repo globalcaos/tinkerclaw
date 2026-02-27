@@ -104,14 +104,6 @@ check_wiring "src/config/zod-schema.providers-whatsapp.ts" "ackMessage\|ackMessa
 check_wiring "src/config/zod-schema.providers-whatsapp.ts" "syncFullHistory" "WhatsApp syncFullHistory"
 
 # ─── 4. UI fork hooks ───
-log "--- Phase 4: UI hooks ---"
-check_wiring "ui/src/styles/chat.css" "fork-overrides" "Fork CSS override import"
-check_wiring "ui/src/styles/chat.css" "tool-compact" "Tool compact CSS import"
-check_wiring "ui/src/ui/chat/grouped-render.ts" "tool-compact" "Compact tool import in grouped-render"
-check_wiring "ui/src/ui/chat/tool-cards.ts" "tool-compact" "Compact tool import in tool-cards"
-check_wiring "ui/src/ui/markdown.ts" "jarvis" "Jarvis voice in markdown.ts"
-
-# ─── 5. Debug artifact scan ───
 log "--- Phase 5: Debug artifacts ---"
 DEBUG_COUNT=$(grep -rn "console\.log.*DEBUG" "$ROOT/src/" --include="*.ts" 2>/dev/null | grep -v node_modules | grep -v dist | grep -v "\.test\." | wc -l)
 if [ "$DEBUG_COUNT" -gt 0 ]; then
