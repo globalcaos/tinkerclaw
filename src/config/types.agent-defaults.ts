@@ -269,6 +269,7 @@ export type AgentDefaultsConfig = {
 };
 
 export type AgentCompactionMode = "default" | "safeguard" | "engram";
+export type AgentCompactionIdentifierPolicy = "strict" | "off" | "custom";
 
 export type AgentCompactionConfig = {
   /** Compaction summarization mode. */
@@ -286,6 +287,10 @@ export type AgentCompactionConfig = {
    * Only applies when mode === "engram". Default: false.
    */
   pointerMode?: boolean;
+  /** Identifier-preservation instruction policy for compaction summaries. */
+  identifierPolicy?: AgentCompactionIdentifierPolicy;
+  /** Custom identifier-preservation instructions used when identifierPolicy is "custom". */
+  identifierInstructions?: string;
   /** Pre-compaction memory flush (agentic turn). Default: enabled. */
   memoryFlush?: AgentCompactionMemoryFlushConfig;
 };
