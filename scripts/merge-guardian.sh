@@ -63,10 +63,6 @@ FORK_FILES=(
   "src/agents/tools/hippocampus-bridge.ts"
   "src/agents/tools/whatsapp-history-tool.ts"
   "src/web/auto-reply/monitor/ack-message.ts"
-  "ui/src/styles/chat/fork-overrides.css"
-  "ui/src/styles/chat/tool-compact.css"
-  "ui/src/ui/chat/tool-compact.ts"
-  "ui/src/ui/controllers/provider-usage.ts"
 )
 
 for f in "${FORK_FILES[@]}"; do
@@ -102,6 +98,8 @@ check_wiring "src/config/zod-schema.agent-defaults.ts" "engram" "engram compacti
 check_wiring "src/config/zod-schema.providers-whatsapp.ts" "triggerPrefix" "WhatsApp triggerPrefix"
 check_wiring "src/config/zod-schema.providers-whatsapp.ts" "ackMessage\|ackMessage" "WhatsApp ackMessage"
 check_wiring "src/config/zod-schema.providers-whatsapp.ts" "syncFullHistory" "WhatsApp syncFullHistory"
+check_wiring "src/config/zod-schema.agent-defaults.ts" "pointerMode" "Engram pointerMode in compaction schema"
+check_wiring "src/config/types.agent-defaults.ts" "engram" "Engram in AgentCompactionMode type"
 
 # ─── 4. UI fork hooks ───
 log "--- Phase 5: Debug artifacts ---"

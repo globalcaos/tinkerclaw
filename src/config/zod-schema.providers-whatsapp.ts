@@ -55,6 +55,7 @@ const WhatsAppSharedSchema = z.object({
   groupAllowFrom: z.array(z.string()).optional(),
   groupPolicy: GroupPolicySchema.optional().default("allowlist"),
   triggerPrefix: z.string().optional(),
+  triggerPrefixExempt: z.array(z.string()).optional(),
   historyLimit: z.number().int().min(0).optional(),
   dmHistoryLimit: z.number().int().min(0).optional(),
   dms: z.record(z.string(), DmConfigSchema.optional()).optional(),
