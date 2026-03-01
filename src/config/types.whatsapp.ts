@@ -120,6 +120,8 @@ type WhatsAppSharedConfig = {
   syncFullHistory?: boolean;
   /** Prefix that must appear at the start of a group message for the bot to respond. */
   triggerPrefix?: string;
+  /** Group JIDs exempt from triggerPrefix (messages forwarded without prefix check). */
+  triggerPrefixExempt?: string[];
 };
 
 type WhatsAppConfigCore = {

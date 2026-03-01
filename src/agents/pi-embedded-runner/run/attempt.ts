@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -41,6 +41,8 @@ import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
+import { isForensicMode } from "../../../forensic/mode.js";
+import { writeForensicDump } from "../../../forensic/dump-writer.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
 import {
@@ -976,6 +978,91 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
           activeSession.agent.streamFn,
         );
+      }
+
+      // Forensic mode: dump full payload to JSON instead of calling the LLM.
+      if (isForensicMode()) {
+        const innerFn = activeSession.agent.streamFn;
+        activeSession.agent.streamFn = (model, context, options) => {
+          const stream = createAssistantMessageEventStream();
+          const run = async () => {
+            try {
+              // Extract effective prompt from the last user message in context
+              const lastUserMsg = [...(context.messages ?? [])].reverse().find(
+                (m: any) => m.role === "user",
+              );
+              const promptText =
+                typeof lastUserMsg?.content === "string"
+                  ? lastUserMsg.content
+                  : Array.isArray(lastUserMsg?.content)
+                    ? lastUserMsg.content
+                        .filter((b: any) => b.type === "text")
+                        .map((b: any) => b.text)
+                        .join("\n")
+                    : "";
+
+              const dumpPath = await writeForensicDump({
+                runId: params.runId,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                model: model.id ?? params.modelId,
+                provider: model.provider ?? params.provider,
+                modelApi: model.api ?? params.model.api,
+                systemPrompt: context.systemPrompt ?? "",
+                messages: context.messages ?? [],
+                tools: context.tools ?? [],
+                effectivePrompt: promptText,
+              });
+
+              stream.push({
+                type: "done",
+                reason: "stop",
+                message: {
+                  role: "assistant" as const,
+                  content: [{ type: "text" as const, text: `[Forensic dump saved: ${dumpPath}]` }],
+                  stopReason: "stop" as const,
+                  api: model.api,
+                  provider: model.provider,
+                  model: model.id,
+                  usage: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 0,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                  },
+                  timestamp: Date.now(),
+                },
+              });
+            } catch (err) {
+              stream.push({
+                type: "error",
+                reason: "error",
+                error: {
+                  role: "assistant" as const,
+                  content: [{ type: "text" as const, text: `[Forensic dump error: ${String(err)}]` }],
+                  stopReason: "error" as const,
+                  api: model.api,
+                  provider: model.provider,
+                  model: model.id,
+                  usage: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 0,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                  },
+                  timestamp: Date.now(),
+                },
+              });
+            } finally {
+              stream.end();
+            }
+          };
+          queueMicrotask(() => void run());
+          return stream;
+        };
       }
 
       try {
