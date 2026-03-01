@@ -29,6 +29,7 @@ export const ChannelsSchema = z
         groupPolicy: GroupPolicySchema.optional(),
         heartbeat: ChannelHeartbeatVisibilitySchema,
         triggerPrefix: z.string().optional(),
+        triggerPrefixExempt: z.array(z.string()).optional(),
       })
       .strict()
       .optional(),
