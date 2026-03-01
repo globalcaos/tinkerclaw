@@ -81,8 +81,20 @@ export function applyGroupGating(params: {
   // — Rule 1: Allowed Chat —
   const groupPolicy = resolveGroupPolicyFor(params.cfg, params.conversationId);
   if (groupPolicy.allowlistEnabled && !groupPolicy.allowed) {
-    params.logVerbose(`[group-gate] REJECT: chat not in allowlist → ${params.conversationId}`);
-    return { shouldProcess: false };
+    // Owner override: if sender is the owner AND message starts with triggerPrefix,
+    // allow processing even in non-allowlisted chats.
+    const earlyTriggerPrefix =
+      params.cfg.channels?.whatsapp?.triggerPrefix ?? params.cfg.channels?.defaults?.triggerPrefix;
+    const earlyBodyTrimmed = (params.msg.body ?? "").trim().toLowerCase();
+    const earlyPrefixMatch = earlyTriggerPrefix
+      ? earlyBodyTrimmed.startsWith(earlyTriggerPrefix.toLowerCase())
+      : false;
+    const earlyOwner = isOwnerSender(params.baseMentionConfig, params.msg);
+    if (!(earlyOwner && earlyPrefixMatch)) {
+      params.logVerbose(`[group-gate] REJECT: chat not in allowlist → ${params.conversationId}`);
+      return { shouldProcess: false };
+    }
+    params.logVerbose(`[group-gate] OWNER-OVERRIDE: non-allowlisted chat but owner+prefix → ${params.conversationId}`);
   }
 
   noteGroupMember(
@@ -122,10 +134,15 @@ export function applyGroupGating(params: {
   // — Rule 3: Trigger Prefix —
   const triggerPrefix =
     params.cfg.channels?.whatsapp?.triggerPrefix ?? params.cfg.channels?.defaults?.triggerPrefix;
+  const triggerPrefixExemptList: string[] =
+    (params.cfg.channels?.whatsapp as Record<string, unknown> | undefined)?.triggerPrefixExempt as string[] ?? [];
+  const isTriggerExempt = triggerPrefixExemptList.includes(params.conversationId);
   const bodyTrimmed = (params.msg.body ?? "").trim().toLowerCase();
-  const triggerPrefixMatched = triggerPrefix
-    ? bodyTrimmed.startsWith(triggerPrefix.toLowerCase())
-    : false;
+  const triggerPrefixMatched = isTriggerExempt
+    ? true
+    : triggerPrefix
+      ? bodyTrimmed.startsWith(triggerPrefix.toLowerCase())
+      : false;
 
   // Also allow @mention as equivalent to prefix (standard WhatsApp behavior)
   const mentionConfig = buildMentionConfig(params.cfg, params.agentId);
