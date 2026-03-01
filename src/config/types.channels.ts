@@ -28,6 +28,7 @@ export type ChannelDefaultsConfig = {
    * Example: "Jarvis" means only messages starting with "Jarvis" or "jarvis" trigger.
    */
   triggerPrefix?: string;
+  triggerPrefixExempt?: string[];
 };
 
 export type ChannelModelByChannelConfig = Record<string, Record<string, string>>;

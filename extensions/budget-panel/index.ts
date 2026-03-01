@@ -274,6 +274,20 @@ export default function register(api: OpenClawPluginApi) {
     respond(true, status, undefined);
   });
 
+  // Register gateway method: config.models (live model configuration from openclaw.json)
+  api.registerGatewayMethod("config.models", async ({ respond }) => {
+    const agentDefaults = (config.agents as any)?.defaults || {};
+    const modelCfg = agentDefaults.model || {};
+    const primary: string = typeof modelCfg === "string" ? modelCfg : modelCfg.primary || "";
+    const fallbacks: string[] = modelCfg.fallbacks || [];
+    const models: Record<string, any> = agentDefaults.models || {};
+    const authCfg = (config as any).auth || {};
+    const authProfiles: Record<string, any> = authCfg.profiles || {};
+    const authOrder: Record<string, string[]> = authCfg.order || {};
+
+    respond(true, { primary, fallbacks, models, authProfiles, authOrder }, undefined);
+  });
+
   // Register HTTP route for dashboard
   registerPluginHttpRoute({
     path: "/budget",

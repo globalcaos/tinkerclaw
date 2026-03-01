@@ -200,7 +200,11 @@ export async function dispatchReplyFromConfig(params: {
   // Check triggerPrefix filter (e.g., "Jarvis" prefix requirement)
   // For audio messages: transcribe first, then check prefix against transcript.
   const triggerPrefix = resolveTriggerPrefix(cfg, channel);
-  if (triggerPrefix) {
+  const triggerPrefixExemptList =
+    (cfg.channels as Record<string, { triggerPrefixExempt?: string[] } | undefined>)?.[channel]
+      ?.triggerPrefixExempt ?? [];
+  const isTriggerExempt = chatId ? triggerPrefixExemptList.includes(chatId) : false;
+  if (triggerPrefix && !isTriggerExempt) {
     let messageBody = ctx.BodyForCommands ?? ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "";
 
     // Audio preflight: transcribe voice note before prefix check
