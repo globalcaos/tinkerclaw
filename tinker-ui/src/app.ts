@@ -5,7 +5,10 @@ import { mountResponseTreemap } from "./panels/response-treemap.js";
 // Runtime config: injected by the tinker plugin into index.html, or via URL params
 const __cfg = (window as any).__TINKER_CONFIG ?? {};
 const TOKEN = __cfg.token ?? new URLSearchParams(window.location.search).get("token") ?? "";
-const GW_WS = `ws${window.location.protocol === "https:" ? "s" : ""}://${window.location.host}`;
+// In dev mode (vite), connect WS directly to the gateway; in prod the plugin serves from the gateway itself
+const GW_WS = import.meta.env.DEV
+  ? `ws://localhost:18789`
+  : `ws${window.location.protocol === "https:" ? "s" : ""}://${window.location.host}`;
 const BASE = import.meta.env.BASE_URL ?? "/";
 
 let ws: WebSocket | null = null;
