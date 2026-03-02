@@ -17,6 +17,7 @@ export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
     data: {
       phase: "start",
       startedAt: Date.now(),
+      authProfileId: ctx.params.authProfileId,
     },
   });
   void ctx.params.onAgentEvent?.({
@@ -47,6 +48,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
         phase: "error",
         error: errorText,
         endedAt: Date.now(),
+        authProfileId: ctx.params.authProfileId,
       },
     });
     void ctx.params.onAgentEvent?.({
@@ -64,6 +66,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
       data: {
         phase: "end",
         endedAt: Date.now(),
+        authProfileId: ctx.params.authProfileId,
       },
     });
     void ctx.params.onAgentEvent?.({
