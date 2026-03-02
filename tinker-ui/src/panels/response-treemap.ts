@@ -29,14 +29,12 @@ interface Rect {
   h: number;
 }
 
-// ─── Color scheme (warm tones for output) ───
-const L0_HUES = [25, 340, 55, 160, 280, 10, 200, 90]; // distinct hues for call boxes
-
+// ─── Color scheme (purple tones for output — matches RESPONSE_COLOR) ───
 const CATEGORY_COLORS: Record<string, string> = {
-  text: "25,80%",
-  thinking: "45,80%",
-  tool_use: "0,65%",
-  tool_result: "330,55%",
+  text: "270,65%",
+  thinking: "290,60%",
+  tool_use: "250,55%",
+  tool_result: "310,50%",
 };
 
 function categoryHsl(key: string, lightness = 45): string {
@@ -118,6 +116,10 @@ function squarify(nodes: TreemapNode[], bounds: Rect): LayoutRect[] {
     }
   }
   return result;
+}
+
+function cleanModelName(model: string): string {
+  return model.replace(/^claude-/, "");
 }
 
 // ─── Helpers ───
@@ -237,13 +239,86 @@ function buildL1NodesFromContent(content: any[]): TreemapNode[] {
   return nodes;
 }
 
-// ─── Build L0 nodes from server run overview ───
-function buildL0Nodes(runData: any): TreemapNode[] {
-  return (runData.calls ?? []).map((c: any) => ({
-    key: `call-${c.index}`,
-    label: `#${c.index}`,
-    chars: c.totalChars,
-  }));
+// ─── Rich content renderers ───
+
+/** Simple JSON syntax highlighting */
+function syntaxHighlightJson(json: string): string {
+  return json
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"([^"\\]*(\\.[^"\\]*)*)"\s*:/g, '<span class="tm-json-key">"$1"</span>:')
+    .replace(/:\s*"([^"\\]*(\\.[^"\\]*)*)"/g, ': <span class="tm-json-str">"$1"</span>')
+    .replace(/:\s*(\d+\.?\d*)/g, ': <span class="tm-json-num">$1</span>')
+    .replace(/:\s*(true|false)/g, ': <span class="tm-json-bool">$1</span>')
+    .replace(/:\s*(null)/g, ': <span class="tm-json-null">$1</span>');
+}
+
+/** Detect JSON and return a highlighted pre block, or null */
+function tryRenderJson(text: string): HTMLElement | null {
+  const t = text.trim();
+  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) return null;
+  try {
+    const parsed = JSON.parse(t);
+    const pre = document.createElement("pre");
+    pre.className = "tm-json-block";
+    pre.innerHTML = syntaxHighlightJson(JSON.stringify(parsed, null, 2));
+    return pre;
+  } catch {
+    return null;
+  }
+}
+
+/** Render rich body for response content based on category */
+function renderRichBody(text: string, category: string, nodeKey: string): HTMLElement | null {
+  // Thinking: italic styled block with left border
+  if (category === "thinking" || nodeKey === "thinking") {
+    const div = document.createElement("div");
+    div.className = "tm-thinking-block";
+    div.textContent = text;
+    return div;
+  }
+
+  // Tool use: show tool name header + formatted JSON input
+  if (category === "tool_use") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "tm-tool-call-block";
+    const nameEl = document.createElement("div");
+    nameEl.className = "tm-tool-call-name";
+    nameEl.textContent = nodeKey;
+    wrapper.appendChild(nameEl);
+    const jsonEl = tryRenderJson(text);
+    if (jsonEl) {
+      wrapper.appendChild(jsonEl);
+    } else {
+      const pre = document.createElement("pre");
+      pre.className = "tm-json-block";
+      pre.textContent = text;
+      wrapper.appendChild(pre);
+    }
+    return wrapper;
+  }
+
+  // Tool result: try JSON, otherwise formatted text
+  if (category === "tool_result") {
+    const jsonEl = tryRenderJson(text);
+    if (jsonEl) return jsonEl;
+    const div = document.createElement("div");
+    div.className = "tm-text-block";
+    div.textContent = text;
+    return div;
+  }
+
+  // Text output: formatted text block
+  if (category === "text" || nodeKey === "text") {
+    const div = document.createElement("div");
+    div.className = "tm-text-block";
+    div.textContent = text;
+    return div;
+  }
+
+  // Generic JSON detection fallback
+  return tryRenderJson(text);
 }
 
 // ─── Main mount function ───
@@ -259,11 +334,10 @@ export function mountResponseTreemap(
   let currentRunData: any = null;
   let currentCallContent: any[] | null = null;
   let selectedCallIndex: number | null = null;
-  let level: 0 | 1 | 2 | 3 = 1;
+  let level: 1 | 2 | 3 = 1;
   let drillParent: TreemapNode | null = null;
   let drillChild: TreemapNode | null = null;
   let l1Nodes: TreemapNode[] = [];
-  let l0Nodes: TreemapNode[] = [];
   let outputPricePerMTok = 15; // default Sonnet pricing
   let currentModel = "";
 
@@ -282,20 +356,11 @@ export function mountResponseTreemap(
 
   // ─── Render breadcrumb ───
   function renderBreadcrumb() {
-    const isMultiCall = currentRunData && currentRunData.callCount > 1;
-    if (level === 0 || (level === 1 && !isMultiCall)) {
+    if (level === 1) {
       breadcrumbEl.innerHTML = "";
       return;
     }
-    let html = "";
-    if (isMultiCall) {
-      html += `<span data-nav="0">Run</span>`;
-      if (level >= 1 && selectedCallIndex !== null) {
-        html += ` \u203A <span data-nav="1">Call #${selectedCallIndex}</span>`;
-      }
-    } else {
-      html += `<span data-nav="1">Response</span>`;
-    }
+    let html = `<span data-nav="1">Response</span>`;
     if (level >= 2 && drillParent) {
       html += ` \u203A <span data-nav="2">${esc(drillParent.label)}</span>`;
     }
@@ -306,14 +371,8 @@ export function mountResponseTreemap(
 
     breadcrumbEl.querySelectorAll("[data-nav]").forEach((el) => {
       el.addEventListener("click", () => {
-        const target = parseInt((el as HTMLElement).dataset.nav!, 10) as 0 | 1 | 2;
-        if (target === 0) {
-          level = 0;
-          selectedCallIndex = null;
-          drillParent = null;
-          drillChild = null;
-          renderLevel();
-        } else if (target === 1) {
+        const target = parseInt((el as HTMLElement).dataset.nav!, 10) as 1 | 2;
+        if (target === 1) {
           level = 1;
           drillParent = null;
           drillChild = null;
@@ -404,7 +463,14 @@ export function mountResponseTreemap(
     metaEl.textContent = `${fmtChars(node.chars)} chars \u00b7 ~${fmtChars(estTokens)} tokens`;
 
     const bodyEl = document.createElement("div");
-    bodyEl.textContent = text;
+    const category = drillParent?.key ?? node.key;
+    const richEl = renderRichBody(text, category, node.key);
+    if (richEl) {
+      bodyEl.appendChild(richEl);
+    } else {
+      bodyEl.className = "tm-text-block";
+      bodyEl.textContent = text;
+    }
 
     previewEl.appendChild(headerEl);
     previewEl.appendChild(metaEl);
@@ -413,6 +479,7 @@ export function mountResponseTreemap(
     container.innerHTML = "";
     container.appendChild(previewEl);
     updateFooter();
+    (container as any).__onLevelChange?.();
   }
 
   // ─── L3 preview via server fetch (when no local text) ───
@@ -455,69 +522,12 @@ export function mountResponseTreemap(
       }
     } catch {
       container.innerHTML = `<div class="tm-preview" style="background:${bg}"><div class="tm-preview-meta">Failed to load detail</div></div>`;
-    }
-  }
-
-  // ─── Render L0 boxes (call overview) ───
-  function renderL0Boxes() {
-    container.innerHTML = "";
-    const totalChars = l0Nodes.reduce((s, n) => s + n.chars, 0);
-    const bounds: Rect = { x: 0, y: 0, w: container.offsetWidth, h: container.offsetHeight };
-    const rects = squarify(l0Nodes, bounds);
-
-    for (const r of rects) {
-      const box = document.createElement("div");
-      box.className = "tm-box tm-l0-box";
-
-      const idx = l0Nodes.indexOf(r.node);
-      const hue = L0_HUES[idx % L0_HUES.length];
-      const bg = `hsl(${hue},55%,38%)`;
-
-      box.style.cssText = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;background:${bg};`;
-
-      if (r.w >= 40 && r.h >= 30) {
-        const lbl = document.createElement("div");
-        lbl.className = "tm-lbl";
-        lbl.textContent = `#${idx}`;
-        box.appendChild(lbl);
-
-        if (r.w >= 60 && r.h >= 44) {
-          const sub = document.createElement("div");
-          sub.className = "tm-sub";
-          const cost = charsCost(r.node.chars, outputPricePerMTok);
-          sub.textContent = `${fmtChars(r.node.chars)}  ${pct(r.node.chars, totalChars)}  ${fmtUsd(cost)}`;
-          box.appendChild(sub);
-        }
-      }
-
-      box.addEventListener("click", () => onL0Click(idx));
-      container.appendChild(box);
-    }
-  }
-
-  // ─── L0 click → fetch call's full content, transition to L1 ───
-  async function onL0Click(callIdx: number) {
-    selectedCallIndex = callIdx;
-    container.innerHTML = `<div class="tm-empty">Loading call #${callIdx}...</div>`;
-    try {
-      const sk = getSessionKey();
-      const detail = await reqFn("forensic.getResponseDetail", {
-        sessionKey: sk || undefined,
-        callIndex: callIdx,
-      });
-      const content = detail?.content ?? [];
-      currentCallContent = content;
-      l1Nodes = buildL1NodesFromContent(content);
-      level = 1;
-      renderLevel();
-    } catch {
-      renderEmpty(`Failed to load call #${callIdx}`);
+      (container as any).__onLevelChange?.();
     }
   }
 
   // ─── Go back ───
   function goBack() {
-    const isMultiCall = currentRunData && currentRunData.callCount > 1;
     if (level === 3) {
       if (drillParent?.children?.length) {
         level = 2;
@@ -530,39 +540,22 @@ export function mountResponseTreemap(
     } else if (level === 2) {
       level = 1;
       drillParent = null;
-    } else if (level === 1 && isMultiCall) {
-      level = 0;
-      selectedCallIndex = null;
-      drillParent = null;
-      drillChild = null;
     }
     renderLevel();
   }
 
   // ─── Update footer ───
   function updateFooter() {
-    const isMultiCall = currentRunData && currentRunData.callCount > 1;
-    if (level === 0 && currentRunData) {
-      const totalCost = charsCost(currentRunData.totalChars ?? 0, outputPricePerMTok);
-      footerEl.textContent = `${currentRunData.callCount} calls \u00b7 ${fmtChars(currentRunData.totalChars)} chars output \u00b7 ${fmtUsd(totalCost)}`;
+    if (level === 1) {
+      const totalChars = l1Nodes.reduce((s, n) => s + n.chars, 0);
+      const estTokens = Math.ceil(totalChars / 4);
+      const totalCost = charsCost(totalChars, outputPricePerMTok);
+      footerEl.textContent = `${fmtChars(totalChars)} chars \u00b7 ~${fmtChars(estTokens)} tokens output \u00b7 ${fmtUsd(totalCost)}`;
       if (costEl) {
         costEl.textContent = fmtUsd(totalCost);
       }
       if (modelEl) {
-        modelEl.textContent = currentModel ? `(${currentModel})` : "";
-      }
-    } else if (level === 1) {
-      const totalChars = l1Nodes.reduce((s, n) => s + n.chars, 0);
-      const estTokens = Math.ceil(totalChars / 4);
-      const totalCost = charsCost(totalChars, outputPricePerMTok);
-      const callLabel =
-        selectedCallIndex !== null && isMultiCall ? `Call #${selectedCallIndex} \u00b7 ` : "";
-      footerEl.textContent = `${callLabel}${fmtChars(totalChars)} chars \u00b7 ~${fmtChars(estTokens)} tokens output \u00b7 ${fmtUsd(totalCost)}`;
-      if (costEl && !isMultiCall) {
-        costEl.textContent = fmtUsd(totalCost);
-      }
-      if (modelEl && !isMultiCall) {
-        modelEl.textContent = currentModel ? `(${currentModel})` : "";
+        modelEl.textContent = currentModel ? `(${cleanModelName(currentModel)})` : "";
       }
     } else if (level === 2 && drillParent) {
       const cost = charsCost(drillParent.chars, outputPricePerMTok);
@@ -576,16 +569,6 @@ export function mountResponseTreemap(
   // ─── Render current level ───
   function renderLevel() {
     renderBreadcrumb();
-
-    if (level === 0) {
-      if (!currentRunData || l0Nodes.length === 0) {
-        renderEmpty();
-        return;
-      }
-      renderL0Boxes();
-      updateFooter();
-      return;
-    }
 
     if (l1Nodes.length === 0) {
       renderEmpty();
@@ -610,6 +593,9 @@ export function mountResponseTreemap(
     }
     // L3 handled by showPreview
     updateFooter();
+
+    // Notify parent (back button visibility etc.)
+    (container as any).__onLevelChange?.();
   }
 
   // ─── Render slim L1 (from server overview, clicking fetches detail) ───
@@ -664,21 +650,16 @@ export function mountResponseTreemap(
       drillChild = null;
       selectedCallIndex = null;
 
-      if (data.callCount > 1) {
-        // Multi-call run → start at L0
-        l0Nodes = buildL0Nodes(data);
-        l1Nodes = [];
-        level = 0;
-      } else if (data.callCount === 1) {
-        // Single-call → fetch full detail and start at L1
-        l0Nodes = [];
+      if (data.callCount >= 1) {
+        // Always skip L0 — go directly to latest call's L1 breakdown
+        const lastIdx = data.callCount - 1;
         const detail = await reqFn("forensic.getResponseDetail", {
           sessionKey: sk || undefined,
-          callIndex: 0,
+          callIndex: lastIdx,
         });
         currentCallContent = detail?.content ?? [];
         l1Nodes = buildL1NodesFromContent(currentCallContent);
-        selectedCallIndex = 0;
+        selectedCallIndex = lastIdx;
         level = 1;
       } else {
         renderEmpty();
@@ -691,8 +672,6 @@ export function mountResponseTreemap(
   }
 
   // ─── Escape key handler ───
-  const isMultiCall = () => currentRunData && currentRunData.callCount > 1;
-
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (level === 3) {
@@ -709,12 +688,6 @@ export function mountResponseTreemap(
         level = 1;
         drillParent = null;
         renderLevel();
-      } else if (level === 1 && isMultiCall()) {
-        level = 0;
-        selectedCallIndex = null;
-        drillParent = null;
-        drillChild = null;
-        renderLevel();
       }
     }
   });
@@ -723,15 +696,7 @@ export function mountResponseTreemap(
   (container as any).__responseRefresh = loadLatest;
   (container as any).__responseBack = goBack;
   (container as any).__responseLevel = () => level;
-  (container as any).__responseCanGoBack = () => {
-    if (level > 1) {
-      return true;
-    }
-    if (level === 1 && isMultiCall()) {
-      return true;
-    }
-    return false;
-  };
+  (container as any).__responseCanGoBack = () => level > 1;
 
   // Initial state
   renderEmpty();
