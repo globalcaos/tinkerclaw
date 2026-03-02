@@ -30,13 +30,51 @@ The wizard guides you step by step through setting up the gateway, workspace, ch
 Works with npm, pnpm, or bun.
 New install? Start here: [Getting started](https://docs.openclaw.ai/start/getting-started)
 
-## Tinker Command Center (Plugin)
+## Fork Features
+
+This is a **trust-first, Ubuntu-optimized fork** of OpenClaw maintained by **Oscar Serra**. Full details in [FORK.md](FORK.md).
+
+### Multi-Model Support
+
+| Provider      | Model                      | Use Case                            |
+| ------------- | -------------------------- | ----------------------------------- |
+| **Anthropic** | Claude Opus 4.5 / Sonnet 4 | Primary chat, coding, complex tasks |
+| **Google**    | Gemini 3 Pro               | Failover, large context, vision     |
+| **Ollama**    | Local models               | Heartbeat, background tasks         |
+
+Failover chain: Claude (primary) → Gemini (rate limit) → Local. Tested and verified — zero downtime on provider rate-limits.
+
+### Security Patches Applied
+
+| PR        | Fix                        |
+| --------- | -------------------------- |
+| **#7769** | DNS Rebinding Protection   |
+| **#7616** | Zip Path Traversal Fix     |
+| **#7704** | WebSocket Auth Enforcement |
+
+### Enhanced Skills
+
+| Skill              | Description                                       | Status    |
+| ------------------ | ------------------------------------------------- | --------- |
+| `youtube-ultimate` | FREE transcripts (no API cost!) + video downloads | v2.0      |
+| `google-sheets`    | Content calendars, spreadsheet automation         | Installed |
+| `healthcheck`      | System security auditing                          | Installed |
+
+### Fork Fixes
+
+| Fix                   | Description                                           |
+| --------------------- | ----------------------------------------------------- |
+| Anthropic failover    | Auto-switch to Gemini on rate limit (verified)        |
+| Anthropic OAuth       | PKCE flow with refresh token (no more expired tokens) |
+| Heartbeat isolation   | Runs in separate session — no webchat pollution       |
+| Config schema merge   | Re-adds fork Zod keys wiped by upstream merges        |
+| Prompt queue deadlock | Workaround for upstream session lane deadlock (#7630) |
+
+### Tinker Command Center (Plugin)
 
 > **Know exactly what you're spending before the bill arrives.**
 
-If you've used Opus or other premium models through the API, you know the feeling: a single long conversation can burn through $20+ in tokens without any warning. Tinker is an OpenClaw plugin that gives you a real-time command center so every token is visible and you stay in control.
-
-**What it does:**
+If you've used Opus or other premium models through the API, you know the feeling: a single long conversation can burn through $20+ in tokens without any warning. Tinker is a bundled OpenClaw plugin that gives you a real-time command center so every token is visible and you stay in control.
 
 - **Context Treemap** — interactive squarified treemap showing exactly what fills your context window: system prompt sections, conversation history, tool results, and their relative sizes. Drill down from categories to individual messages to raw text.
 - **Response Treemap** — same visualization for model output: see how much of the response is text, thinking, tool calls, or tool results, per LLM call within a run.
