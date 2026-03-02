@@ -51,13 +51,61 @@ All critical upstream security PRs cherry-picked and verified:
 - **Anthropic Failover** — Auto-switches to Gemini when Claude hits quota (tested & verified!)
 - **OAuth PKCE Flow** — Proper token refresh for Anthropic subscriptions (no more expired tokens)
 
-### 📦 Enhanced Skills
+### 📦 Published Skills on [ClawHub](https://clawhub.ai/u/globalcaos)
 
-| Skill              | Description                                       | Status       |
-| ------------------ | ------------------------------------------------- | ------------ |
-| `youtube-ultimate` | FREE transcripts (no API cost!) + video downloads | ✅ v2.0      |
-| `google-sheets`    | Content calendars, spreadsheet automation         | ✅ Installed |
-| `healthcheck`      | System security auditing                          | ✅ Installed |
+> All skills below are **published by globalcaos** and available for any OpenClaw user to install.
+
+#### 🎙️ Voice & Personality
+
+| Skill                                                        | Description                                                                      | Version   |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------- | --------- |
+| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Turn your AI into JARVIS — voice, wit, and personality. Humor cranked to maximum | ✅ v3.1.1 |
+
+#### 📹 Media & Content
+
+| Skill                                                                | Description                                                                 | Version      |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------ |
+| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned  | ✅ v4.2.2    |
+| [`video-frames`](https://clawhub.ai/globalcaos/video-frames)         | Extract frames or short clips from videos using ffmpeg                      | ✅ Published |
+| [`ai-humanizer`](https://clawhub.ai/globalcaos/ai-humanizer)         | Detect and remove LLM patterns from text. 24 detectors, 500+ AI vocab terms | ✅ Published |
+
+#### 💬 Messaging & Channels
+
+| Skill                                                                  | Description                                                                                                     | Version   |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------- |
+| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | WhatsApp with a 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person | ✅ v3.5.1 |
+
+#### 💰 Cost & Token Management
+
+| Skill                                                                            | Description                                                                                | Version   |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --------- |
+| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Know exactly where your AI tokens go. Multi-provider tracking, budget alerts, and REST API | ✅ v2.1.1 |
+| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon         | ✅ v1.1.0 |
+
+#### 🤖 Agent & DevOps
+
+| Skill                                                                                              | Description                                                                               | Version      |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------ |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Monitor sub-agent health and progress via pull-based bash daemon with staleness detection | ✅ v1.0.0    |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones — fully automated      | ✅ v1.1.1    |
+| [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer)                                   | Benchmark your agent's memory. Contribute anonymized scores to open research              | ✅ v1.0.2    |
+| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent)                                       | Delegate coding tasks to Codex, Claude Code, or Pi agents via background process          | ✅ Published |
+
+#### 🏢 Enterprise Hacks (Browser Relay)
+
+> No API keys, no admin consent. Your authenticated browser session IS the API.
+
+| Skill                                                            | Description                                                                     | Version   |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------- |
+| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Query Factorial HR through browser relay — attendance, time-off, payslips       | ✅ v1.0.0 |
+| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)     | Agent reads Outlook email all day, drafts replies — won't send without approval | ✅ v3.0.0 |
+| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)         | Agent reads Teams chats, posts to channels, searches everything                 | ✅ v1.0.0 |
+
+#### 🐦 Social & Web
+
+| Skill                                        | Description                                                                    | Version      |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | ------------ |
+| [`xurl`](https://clawhub.ai/globalcaos/xurl) | CLI for authenticated X (Twitter) API — post, reply, search, DMs, media upload | ✅ Published |
 
 ### 🔧 Fork Fixes
 
