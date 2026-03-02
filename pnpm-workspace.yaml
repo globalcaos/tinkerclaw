@@ -1,6 +1,7 @@
 packages:
   - .
   - ui
+  - tinker-ui
   - packages/*
   - extensions/*
 
