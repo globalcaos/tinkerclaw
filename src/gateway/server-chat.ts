@@ -450,7 +450,26 @@ export function createAgentEventHandler({
         broadcastToConnIds("agent", toolPayload, recipients);
       }
     } else {
-      broadcast("agent", agentPayload);
+      // Enrich lifecycle events with model info for observability clients
+      let enrichedPayload = agentPayload;
+      if (evt.stream === "lifecycle" && typeof evt.data?.phase === "string" && sessionKey) {
+        try {
+          const { entry } = loadSessionEntry(sessionKey);
+          if (entry?.model) {
+            enrichedPayload = {
+              ...agentPayload,
+              data: {
+                ...evt.data,
+                model: entry.model,
+                modelProvider: entry.modelProvider,
+              },
+            };
+          }
+        } catch {
+          /* non-critical enrichment failure */
+        }
+      }
+      broadcast("agent", enrichedPayload);
     }
 
     const lifecyclePhase =
