@@ -30,36 +30,35 @@ The wizard guides you step by step through setting up the gateway, workspace, ch
 Works with npm, pnpm, or bun.
 New install? Start here: [Getting started](https://docs.openclaw.ai/start/getting-started)
 
-## Tinker Command Center (Fork Feature)
+## Tinker Command Center (Plugin)
 
 > **Know exactly what you're spending before the bill arrives.**
 
-If you've used Opus or other premium models through the API, you know the feeling: a single long conversation can burn through $20+ in tokens without any warning. Tinker is a real-time command center that makes every token visible so you stay in control.
+If you've used Opus or other premium models through the API, you know the feeling: a single long conversation can burn through $20+ in tokens without any warning. Tinker is an OpenClaw plugin that gives you a real-time command center so every token is visible and you stay in control.
 
 **What it does:**
 
 - **Context Treemap** — interactive squarified treemap showing exactly what fills your context window: system prompt sections, conversation history, tool results, and their relative sizes. Drill down from categories to individual messages to raw text.
 - **Response Treemap** — same visualization for model output: see how much of the response is text, thinking, tool calls, or tool results, per LLM call within a run.
-- **Live Cost Tracking** — per-provider token usage (Anthropic, OpenAI, Ollama), daily/monthly cost estimates, and the 5-hour Claude rate-limit window with countdown timer.
+- **Live Cost Tracking** — per-provider token usage, daily/monthly cost estimates, and the 5-hour Claude rate-limit window with countdown timer.
 - **Budget Alerts** — set spending limits and get warnings before you blow through them.
 - **Multi-call Run View** — when the agent makes multiple LLM calls in a single run (tool loops, retries), see each call's context and cost individually.
-- **Chat + Session Management** — full webchat interface with session switching, tool call inspection (inline expansion, not a useless sidebar), and real-time streaming.
+- **Chat + Session Management** — full webchat interface with session switching, tool call inspection, and real-time streaming.
 
-**Why this matters:** Premium API models like Opus charge $15/M input + $75/M output tokens. A single conversation with a large context window can cost more than a day of ChatGPT Pro. Tinker shows you the token breakdown in real time so you can catch runaway costs, understand what's eating your context, and make informed decisions about when to compact, switch models, or start a fresh session.
+**Supported models with built-in pricing:**
 
-Tinker runs as a bundled OpenClaw plugin — no extra setup. After `pnpm build`, visit `http://localhost:18789/tinker/` (or run the vite dev server on port 18790 for development).
+| Model                  | Input (per 1M tokens) | Output (per 1M tokens) |
+| ---------------------- | --------------------- | ---------------------- |
+| Claude Opus 4 / 4.5    | $15.00                | $75.00                 |
+| Claude Sonnet 4 / 3.5  | $3.00                 | $15.00                 |
+| Claude Haiku 3.5       | $0.80                 | $4.00                  |
+| Gemini 3 Pro / 3.1 Pro | $1.25                 | $5.00                  |
+| Gemini 2 Flash         | $0.10                 | $0.40                  |
+| Gemini 2 Flash Lite    | $0.02                 | $0.08                  |
 
-## Sponsors
+Other models use Sonnet-tier pricing as a conservative default.
 
-| OpenAI                                                            | Blacksmith                                                                   | Convex                                                                |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [![OpenAI](docs/assets/sponsors/openai.svg)](https://openai.com/) | [![Blacksmith](docs/assets/sponsors/blacksmith.svg)](https://blacksmith.sh/) | [![Convex](docs/assets/sponsors/convex.svg)](https://www.convex.dev/) |
-
-**Subscriptions (OAuth):**
-
-- **[OpenAI](https://openai.com/)** (ChatGPT/Codex)
-
-Model note: while any model is supported, I strongly recommend **Anthropic Pro/Max (100/200) + Opus 4.6** for long‑context strength and better prompt‑injection resistance. See [Onboarding](https://docs.openclaw.ai/start/onboarding).
+After `pnpm build`, visit `http://localhost:18789/tinker/`.
 
 ## Models (selection + auth)
 
@@ -152,7 +151,6 @@ Run `openclaw doctor` to surface risky/misconfigured DM policies.
 - **[First-class tools](https://docs.openclaw.ai/tools)** — browser, canvas, nodes, cron, sessions, and Discord/Slack actions.
 - **[Companion apps](https://docs.openclaw.ai/platforms/macos)** — macOS menu bar app + iOS/Android [nodes](https://docs.openclaw.ai/nodes).
 - **[Onboarding](https://docs.openclaw.ai/start/wizard) + [skills](https://docs.openclaw.ai/tools/skills)** — wizard-driven setup with bundled/managed/workspace skills.
-- **Tinker Command Center** — real-time context/response treemaps, live cost tracking, and budget alerts so you never get surprised by API bills.
 
 ## Star History
 
