@@ -36,10 +36,35 @@ const PROVIDER_COLORS: Record<string, string> = {
   google: "#16a34a",
   openai: "#6b7280",
   ollama: "#ca8a04",
+  meta: "#0668E1",
+  mistral: "#f97316",
+  deepseek: "#4f8ff7",
 };
 
+// ─── Provider Icons (14px inline SVGs) ───
+const PROVIDER_ICONS: Record<string, string> = {
+  anthropic: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M13.827 3.52l5.932 16.96h-3.828L10.06 3.52h3.767zm-7.404 0l5.932 16.96H8.527L2.595 3.52h3.828z" fill="#D97757"/></svg>`,
+  google: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="7" cy="7" r="3" fill="#4285F4"/><circle cx="17" cy="7" r="3" fill="#EA4335"/><circle cx="7" cy="17" r="3" fill="#34A853"/><circle cx="17" cy="17" r="3" fill="#FBBC05"/></svg>`,
+  openai: `<svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 3.5a6.5 6.5 0 0 1 0 13 6.5 6.5 0 0 1 0-13z" fill="#10a37f"/><path d="M12 7v10M7 12h10" stroke="#10a37f" stroke-width="1.5" fill="none"/></svg>`,
+  ollama: `<svg width="14" height="14" viewBox="0 0 24 24"><text x="3" y="17" font-size="14" font-weight="bold" fill="#ca8a04">O</text></svg>`,
+  meta: `<svg width="14" height="14" viewBox="0 0 24 24"><path d="M4 12c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6zm8 0c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6z" stroke="#0668E1" stroke-width="2" fill="none"/></svg>`,
+  mistral: `<svg width="14" height="14" viewBox="0 0 24 24"><rect x="2" y="3" width="5" height="5" fill="#f97316"/><rect x="10" y="3" width="5" height="5" fill="#f97316"/><rect x="17" y="3" width="5" height="5" fill="#f97316"/><rect x="2" y="10" width="5" height="5" fill="#f97316"/><rect x="10" y="10" width="5" height="5" fill="#f97316"/><rect x="2" y="17" width="5" height="5" fill="#f97316"/><rect x="17" y="17" width="5" height="5" fill="#f97316"/></svg>`,
+  deepseek: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="#4f8ff7" stroke-width="2" fill="none"/><path d="M8 12l3 3 5-6" stroke="#4f8ff7" stroke-width="2" fill="none"/></svg>`,
+};
+
+function providerIcon(provider: string): string {
+  if (PROVIDER_ICONS[provider]) {
+    return `<span class="model-provider-icon">${PROVIDER_ICONS[provider]}</span>`;
+  }
+  const color = PROVIDER_COLORS[provider] || "#6b7280";
+  return `<span class="model-provider-dot" style="background:${color}"></span>`;
+}
+
 // ─── Active Model Tracking ───
-const activeRuns = new Map<string, { model: string; provider: string; startedAt: number }>();
+const activeRuns = new Map<
+  string,
+  { model: string; provider: string; authProfileId?: string; startedAt: number }
+>();
 const STALE_RUN_MS = 5 * 60_000;
 
 function pruneStaleRuns() {
@@ -49,11 +74,12 @@ function pruneStaleRuns() {
   }
 }
 
-function getModelCounts(): Map<string, number> {
+function getAuthKeyCounts(): Map<string, number> {
   pruneStaleRuns();
   const counts = new Map<string, number>();
   for (const info of activeRuns.values()) {
-    counts.set(info.model, (counts.get(info.model) || 0) + 1);
+    const key = info.authProfileId || info.model;
+    counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts;
 }
@@ -163,12 +189,16 @@ function onEvent(evt: any) {
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: p.data.modelProvider || providerOf(p.data.model),
+          authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
         });
         updateBudgetPanel();
       } else if (p.data.phase === "end" || p.data.phase === "error") {
-        activeRuns.delete(p.runId);
-        updateBudgetPanel();
+        const endRunId = p.runId;
+        setTimeout(() => {
+          activeRuns.delete(endRunId);
+          updateBudgetPanel();
+        }, 3000);
       }
     }
   }
@@ -450,14 +480,44 @@ function updateBudgetPanel() {
   }
 
   const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
-  const counts = getModelCounts();
+  const counts = getAuthKeyCounts();
   let html = '<div class="model-list">';
+
+  // Helper: render auth key rows for a model's provider
+  function renderAuthKeyRows(modelId: string, badge: string) {
+    const provider = providerOf(modelId);
+    const name = modelName(modelId);
+    const keys: string[] = authOrder?.[provider] || [];
+    if (keys.length <= 1) {
+      // Single key or no keys — show one row with model name
+      const keyId = keys[0];
+      const keyLabel = keyId ? authProfiles?.[keyId]?.label || keyId.split(":")[1] || keyId : "";
+      const mode = keyId ? authProfiles?.[keyId]?.mode || "" : "";
+      const suffix = keyLabel && mode ? ` \u00b7 ${keyLabel} (${mode})` : "";
+      html += renderModelRow(
+        modelId,
+        provider,
+        name,
+        badge,
+        suffix,
+        counts.get(keyId || modelId) || 0,
+      );
+    } else {
+      // Multiple keys — show model header + one row per key
+      html += `<div class="model-group-header">${providerIcon(provider)} <span class="model-name">${esc(name)}</span> ${badge ? `<span class="model-badge">${badge}</span>` : ""}</div>`;
+      for (const keyId of keys) {
+        const prof = authProfiles?.[keyId] || {};
+        const keyLabel = prof.label || keyId.split(":")[1] || keyId;
+        const mode = prof.mode || "unknown";
+        html += renderAuthKeyRow(keyId, keyLabel, mode, provider, counts.get(keyId) || 0);
+      }
+    }
+  }
 
   // Primary
   if (primary) {
-    const alias = models?.[primary]?.alias;
     html += '<div class="model-group-label">PRIMARY</div>';
-    html += renderModelRow(primary, alias, "\u{1F451}", true, counts.get(primary) || 0);
+    renderAuthKeyRows(primary, "\u{1F451}");
   }
 
   // Fallbacks
@@ -465,9 +525,7 @@ function updateBudgetPanel() {
     const badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464"];
     html += '<div class="model-group-label">FALLBACK CHAIN</div>';
     for (let i = 0; i < fallbacks.length; i++) {
-      const fb = fallbacks[i];
-      const alias = models?.[fb]?.alias;
-      html += renderModelRow(fb, alias, badges[i] || `${i + 1}`, false, counts.get(fb) || 0);
+      renderAuthKeyRows(fallbacks[i], badges[i] || `${i + 1}`);
     }
   }
 
@@ -477,38 +535,8 @@ function updateBudgetPanel() {
   if (otherIds.length) {
     html += '<div class="model-group-label">CONFIGURED</div>';
     for (const id of otherIds) {
-      const alias = models[id]?.alias;
-      html += renderModelRow(id, alias, "", false, counts.get(id) || 0);
+      renderAuthKeyRows(id, "");
     }
-  }
-
-  // Provider auth summary
-  const providers = new Set<string>();
-  if (primary) {
-    providers.add(providerOf(primary));
-  }
-  for (const fb of fallbacks || []) {
-    providers.add(providerOf(fb));
-  }
-  for (const id of Object.keys(models || {})) {
-    providers.add(providerOf(id));
-  }
-
-  html += '<div class="model-group-label" style="margin-top:8px">PROVIDERS</div>';
-  for (const prov of providers) {
-    const order: string[] = authOrder?.[prov] || [];
-    const authDesc = order.length
-      ? order
-          .map((p: string) => {
-            const mode = authProfiles?.[p]?.mode || "unknown";
-            const label = p.split(":")[1] || p;
-            return `${label}(${mode})`;
-          })
-          .join(" \u2192 ")
-      : prov === "ollama"
-        ? "local"
-        : "default";
-    html += `<div class="provider-row"><span class="provider-name">${esc(prov)}</span><span class="provider-auth">${esc(authDesc)}</span></div>`;
   }
 
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
@@ -517,32 +545,50 @@ function updateBudgetPanel() {
 
 function renderModelRow(
   id: string,
-  alias: string | undefined,
+  provider: string,
+  name: string,
   badge: string,
-  isPrimary: boolean,
-  count: number = 0,
+  suffix: string,
+  count: number,
 ): string {
-  const provider = providerOf(id);
-  const name = modelName(id);
   const color = PROVIDER_COLORS[provider] || "#6b7280";
-  const aliasBadge = alias ? `<span class="model-alias">${esc(alias)}</span>` : "";
-  const tierBadge = badge ? `<span class="model-badge">${badge}</span>` : "";
-  const activeClass = isPrimary ? " model-active" : "";
   const liveClass = count > 0 ? " model-live" : "";
   const glowStyle =
     count > 0
-      ? ` style="--glow-color:${color}40;--glow-bg:${color}0f;--glow-border:${color}30"`
+      ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
-  const providerDot = `<span class="model-provider-dot" style="background:${color}"></span>`;
 
-  return `<div class="model-row${activeClass}${liveClass}"${glowStyle}>
-    ${providerDot}
+  return `<div class="model-row${liveClass}"${glowStyle}>
+    ${providerIcon(provider)}
     <span class="model-name">${esc(name)}</span>
-    ${tierBadge}
-    ${aliasBadge}
+    ${badge ? `<span class="model-badge">${badge}</span>` : ""}
+    ${suffix ? `<span class="model-auth-suffix">${esc(suffix)}</span>` : ""}
     ${countBadge}
-    <span class="model-provider-label">${esc(provider)}</span>
+  </div>`;
+}
+
+function renderAuthKeyRow(
+  keyId: string,
+  label: string,
+  mode: string,
+  provider: string,
+  count: number,
+): string {
+  const color = PROVIDER_COLORS[provider] || "#6b7280";
+  const liveClass = count > 0 ? " model-live" : "";
+  const glowStyle =
+    count > 0
+      ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
+      : "";
+  const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  const modeTag = `<span class="auth-mode-tag auth-mode-${mode}">${esc(mode)}</span>`;
+
+  return `<div class="model-row auth-key-row${liveClass}"${glowStyle}>
+    <span class="auth-key-indent"></span>
+    <span class="auth-key-label">${esc(label)}</span>
+    ${modeTag}
+    ${countBadge}
   </div>`;
 }
 
