@@ -399,14 +399,31 @@ export const forensicHandlers: GatewayRequestHandlers = {
   "forensic.getLiveDetail": async ({ params, respond }) => {
     const sk = typeof params?.sessionKey === "string" ? params.sessionKey : undefined;
     const callIndex = typeof params?.callIndex === "number" ? params.callIndex : undefined;
-    const dump =
-      callIndex !== undefined
-        ? sk
-          ? getDumpByIndexForSession(sk, callIndex)
-          : getDumpByIndex(callIndex)
-        : sk
-          ? getDumpForSession(sk)
-          : getLatestDump();
+    const timestamp = typeof params?.timestamp === "number" ? params.timestamp : undefined;
+    let dump: any;
+    if (callIndex !== undefined) {
+      dump = sk ? getDumpByIndexForSession(sk, callIndex) : getDumpByIndex(callIndex);
+    } else if (timestamp !== undefined) {
+      // Fuzzy match by timestamp — find the dump closest to the given ms
+      const run = sk ? getRunForSession(sk) : getLatestRun();
+      if (run) {
+        let bestIdx = -1,
+          bestDelta = Infinity;
+        for (let i = 0; i < run.dumps.length; i++) {
+          const ts = new Date(run.dumps[i]?.meta?.timestamp ?? "").getTime();
+          const delta = Math.abs(ts - timestamp);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx >= 0 && bestDelta < 60_000) {
+          dump = run.dumps[bestIdx];
+        }
+      }
+    } else {
+      dump = sk ? getDumpForSession(sk) : getLatestDump();
+    }
     if (!dump) {
       respond(false, undefined, {
         code: "NO_DATA",
@@ -502,15 +519,84 @@ export const forensicHandlers: GatewayRequestHandlers = {
     respond(true, result);
   },
 
-  // ─── Summarize a context component via Anthropic Haiku ───
+  // ─── Summarize a context component or response via Anthropic Haiku ───
   "forensic.summarize": async ({ params, respond }) => {
     const sk = typeof params?.sessionKey === "string" ? params.sessionKey : undefined;
     const callIndex = typeof params?.callIndex === "number" ? params.callIndex : undefined;
+    const timestamp = typeof params?.timestamp === "number" ? params.timestamp : undefined;
+    const component = params?.component as string;
+
+    // Resolve the run and dump index
+    const run = sk ? getRunForSession(sk) : getLatestRun();
+    let dumpIdx: number | undefined;
+    if (callIndex !== undefined) {
+      dumpIdx = callIndex;
+    } else if (timestamp !== undefined && run) {
+      let bestIdx = -1,
+        bestDelta = Infinity;
+      for (let i = 0; i < run.dumps.length; i++) {
+        const ts = new Date(run.dumps[i]?.meta?.timestamp ?? "").getTime();
+        const delta = Math.abs(ts - timestamp);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0 && bestDelta < 60_000) {
+        dumpIdx = bestIdx;
+      }
+    }
+
+    // Handle response summarization
+    if (component === "response") {
+      if (!run?.responses?.length) {
+        respond(false, undefined, { code: "NO_DATA", message: "No response data for this call." });
+        return;
+      }
+      const idx = dumpIdx ?? run.responses.length - 1;
+      const content = run.responses[idx];
+      if (!content || !Array.isArray(content) || content.length === 0) {
+        respond(false, undefined, { code: "NO_DATA", message: "No response data at this index." });
+        return;
+      }
+      const texts = content
+        .map((b: any) => {
+          if (b.type === "text") {
+            return b.text ?? "";
+          }
+          if (b.type === "thinking") {
+            return `[thinking] ${(b.thinking ?? b.text ?? "").slice(0, 2000)}`;
+          }
+          if (b.type === "tool_use") {
+            return `[tool: ${b.name}] ${JSON.stringify(b.input ?? {}).slice(0, 1000)}`;
+          }
+          if (b.type === "tool_result") {
+            const rt = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
+            return `[result] ${rt.slice(0, 1000)}`;
+          }
+          return "";
+        })
+        .filter(Boolean);
+      const responseText = texts.join("\n\n");
+      if (!responseText) {
+        respond(false, undefined, { code: "EMPTY", message: "Response is empty." });
+        return;
+      }
+      try {
+        const summary = await summarizeText(responseText);
+        respond(true, { summary });
+      } catch (e: any) {
+        respond(false, undefined, { code: "SUMMARIZE_ERROR", message: e.message });
+      }
+      return;
+    }
+
+    // Context component summarization
     const dump =
-      callIndex !== undefined
-        ? sk
-          ? getDumpByIndexForSession(sk, callIndex)
-          : getDumpByIndex(callIndex)
+      dumpIdx !== undefined
+        ? run
+          ? run.dumps[dumpIdx]
+          : undefined
         : sk
           ? getDumpForSession(sk)
           : getLatestDump();
@@ -518,7 +604,6 @@ export const forensicHandlers: GatewayRequestHandlers = {
       respond(false, undefined, { code: "NO_DATA", message: "No context captured yet." });
       return;
     }
-    const component = params?.component as string;
     const key = params?.key as string | undefined;
     const text = extractText(dump, component, key);
     if (text == null) {

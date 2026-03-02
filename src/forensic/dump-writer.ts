@@ -54,7 +54,7 @@ export interface ForensicRun {
   responses?: any[]; // per-call response content blocks, matched by index with dumps[]
 }
 
-const MAX_DUMPS_PER_RUN = 50;
+const MAX_DUMPS_PER_SESSION = 200; // Accumulates across runs so timeline can access all calls
 const MAX_SESSIONS = 20;
 
 // ─── Per-session in-memory store ───
@@ -291,21 +291,41 @@ function buildDump(input: ForensicDumpInput): any {
   };
 }
 
-// ─── Shared append-or-replace logic, scoped to a session key ───
+// ─── Shared append logic, scoped to a session key ───
+// Keeps dumps across runs so the timeline can access all historical calls.
 function upsertRun(sk: string, dump: any, runId: string): void {
   loadAllSessionsFromDisk();
   const existing = sessionRuns.get(sk);
 
-  if (existing && existing.runId === runId) {
-    if (existing.dumps.length < MAX_DUMPS_PER_RUN) {
-      existing.dumps.push(dump);
+  if (existing) {
+    if (existing.runId !== runId) {
+      // New run — update tracking, clear stale response data
+      existing.runId = runId;
+      (existing as any)._currentRunStart = existing.dumps.length;
+      existing.startedAt = dump.meta.timestamp;
+      existing.responses = undefined;
     }
+    // Append dump, evicting oldest if over cap
+    if (existing.dumps.length >= MAX_DUMPS_PER_SESSION) {
+      existing.dumps.shift();
+      // Adjust responses array to stay aligned
+      if (existing.responses) {
+        existing.responses.shift();
+      }
+      const crs = (existing as any)._currentRunStart ?? 0;
+      if (crs > 0) {
+        (existing as any)._currentRunStart = crs - 1;
+      }
+    }
+    existing.dumps.push(dump);
   } else {
-    sessionRuns.set(sk, {
+    const run: ForensicRun = {
       runId,
       dumps: [dump],
       startedAt: dump.meta.timestamp,
-    });
+    };
+    (run as any)._currentRunStart = 0;
+    sessionRuns.set(sk, run);
   }
   touchSession(sk);
   persistSessionRun(sk);
@@ -323,17 +343,25 @@ export async function finalizeForensicRun(
     return;
   }
 
-  const numCalls = run.dumps.length;
-  const responses: any[] = new Array(numCalls).fill(null);
+  const totalDumps = run.dumps.length;
+  const startIdx = (run as any)._currentRunStart ?? 0;
+
+  // Preserve existing responses from previous runs
+  const responses: any[] = new Array(totalDumps).fill(null);
+  if (run.responses) {
+    for (let i = 0; i < run.responses.length && i < totalDumps; i++) {
+      responses[i] = run.responses[i];
+    }
+  }
 
   // Strategy: each dump[i] captures context.messages BEFORE call i.
   // So dump[i+1].conversation_history.messages contains the response to call i
   // as its last assistant message (captured before SDK redacts thinking).
-  for (let i = 0; i < numCalls - 1; i++) {
+  // Only process dumps from the CURRENT run (startIdx onwards).
+  for (let i = startIdx; i < totalDumps - 1; i++) {
     const nextDump = run.dumps[i + 1];
     const msgs = nextDump?.conversation_history?.messages;
     if (Array.isArray(msgs)) {
-      // Find the last assistant message — that's the response to call i
       for (let j = msgs.length - 1; j >= 0; j--) {
         const m = msgs[j] as any;
         if (m?.role === "assistant") {
@@ -353,13 +381,12 @@ export async function finalizeForensicRun(
     if (m?.role === "assistant") {
       const content = Array.isArray(m.content) ? m.content : [];
       if (content.length > 0) {
-        responses[numCalls - 1] = content;
+        responses[totalDumps - 1] = content;
       }
       break;
     }
   }
 
-  // Filter out any null entries (shouldn't happen, but be safe)
   run.responses = responses.map((r) => r ?? []);
   persistSessionRun(sk);
 }
