@@ -37,6 +37,27 @@ const PROVIDER_COLORS: Record<string, string> = {
   openai: "#6b7280",
   ollama: "#ca8a04",
 };
+
+// ─── Active Model Tracking ───
+const activeRuns = new Map<string, { model: string; provider: string; startedAt: number }>();
+const STALE_RUN_MS = 5 * 60_000;
+
+function pruneStaleRuns() {
+  const now = Date.now();
+  for (const [id, info] of activeRuns) {
+    if (now - info.startedAt > STALE_RUN_MS) activeRuns.delete(id);
+  }
+}
+
+function getModelCounts(): Map<string, number> {
+  pruneStaleRuns();
+  const counts = new Map<string, number>();
+  for (const info of activeRuns.values()) {
+    counts.set(info.model, (counts.get(info.model) || 0) + 1);
+  }
+  return counts;
+}
+
 let modelConfigData: any = null;
 
 // ─── Gateway ───
@@ -133,6 +154,22 @@ function onEvent(evt: any) {
       loadBudget();
       refreshTreemap();
       updateResponseMap();
+    }
+  }
+  if (evt.event === "agent") {
+    const p = evt.payload;
+    if (p?.stream === "lifecycle" && p.data?.model) {
+      if (p.data.phase === "start") {
+        activeRuns.set(p.runId, {
+          model: p.data.model,
+          provider: p.data.modelProvider || providerOf(p.data.model),
+          startedAt: Date.now(),
+        });
+        updateBudgetPanel();
+      } else if (p.data.phase === "end" || p.data.phase === "error") {
+        activeRuns.delete(p.runId);
+        updateBudgetPanel();
+      }
     }
   }
 }
@@ -413,13 +450,14 @@ function updateBudgetPanel() {
   }
 
   const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
+  const counts = getModelCounts();
   let html = '<div class="model-list">';
 
   // Primary
   if (primary) {
     const alias = models?.[primary]?.alias;
     html += '<div class="model-group-label">PRIMARY</div>';
-    html += renderModelRow(primary, alias, "\u{1F451}", true);
+    html += renderModelRow(primary, alias, "\u{1F451}", true, counts.get(primary) || 0);
   }
 
   // Fallbacks
@@ -429,7 +467,7 @@ function updateBudgetPanel() {
     for (let i = 0; i < fallbacks.length; i++) {
       const fb = fallbacks[i];
       const alias = models?.[fb]?.alias;
-      html += renderModelRow(fb, alias, badges[i] || `${i + 1}`, false);
+      html += renderModelRow(fb, alias, badges[i] || `${i + 1}`, false, counts.get(fb) || 0);
     }
   }
 
@@ -440,7 +478,7 @@ function updateBudgetPanel() {
     html += '<div class="model-group-label">CONFIGURED</div>';
     for (const id of otherIds) {
       const alias = models[id]?.alias;
-      html += renderModelRow(id, alias, "", false);
+      html += renderModelRow(id, alias, "", false, counts.get(id) || 0);
     }
   }
 
@@ -482,6 +520,7 @@ function renderModelRow(
   alias: string | undefined,
   badge: string,
   isPrimary: boolean,
+  count: number = 0,
 ): string {
   const provider = providerOf(id);
   const name = modelName(id);
@@ -489,13 +528,20 @@ function renderModelRow(
   const aliasBadge = alias ? `<span class="model-alias">${esc(alias)}</span>` : "";
   const tierBadge = badge ? `<span class="model-badge">${badge}</span>` : "";
   const activeClass = isPrimary ? " model-active" : "";
+  const liveClass = count > 0 ? " model-live" : "";
+  const glowStyle =
+    count > 0
+      ? ` style="--glow-color:${color}40;--glow-bg:${color}0f;--glow-border:${color}30"`
+      : "";
+  const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
   const providerDot = `<span class="model-provider-dot" style="background:${color}"></span>`;
 
-  return `<div class="model-row${activeClass}">
+  return `<div class="model-row${activeClass}${liveClass}"${glowStyle}>
     ${providerDot}
     <span class="model-name">${esc(name)}</span>
     ${tierBadge}
     ${aliasBadge}
+    ${countBadge}
     <span class="model-provider-label">${esc(provider)}</span>
   </div>`;
 }
