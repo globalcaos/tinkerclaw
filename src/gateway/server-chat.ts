@@ -5,7 +5,7 @@ import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
-import { loadSessionEntry } from "./session-utils.js";
+import { loadSessionEntry, resolveSessionModelRef } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
 function resolveHeartbeatAckMaxChars(): number {
@@ -454,14 +454,17 @@ export function createAgentEventHandler({
       let enrichedPayload = agentPayload;
       if (evt.stream === "lifecycle" && typeof evt.data?.phase === "string" && sessionKey) {
         try {
-          const { entry } = loadSessionEntry(sessionKey);
-          if (entry?.model) {
+          const { cfg, entry } = loadSessionEntry(sessionKey);
+          const resolved = resolveSessionModelRef(cfg, entry);
+          if (resolved.model) {
             enrichedPayload = {
               ...agentPayload,
               data: {
                 ...evt.data,
-                model: entry.model,
-                modelProvider: entry.modelProvider,
+                model: resolved.provider
+                  ? `${resolved.provider}/${resolved.model}`
+                  : resolved.model,
+                modelProvider: resolved.provider,
               },
             };
           }
