@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -10,6 +10,8 @@ import {
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
+import { captureForensicDump, finalizeForensicRun } from "../../../forensic/dump-writer.js";
+import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
@@ -35,14 +37,13 @@ import {
   listChannelSupportedActions,
   resolveChannelMessageToolHints,
 } from "../../channel-tools.js";
+import { buildContextAnatomy } from "../../context-anatomy.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
-import { isForensicMode } from "../../../forensic/mode.js";
-import { writeForensicDump } from "../../../forensic/dump-writer.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
 import {
@@ -53,6 +54,7 @@ import {
   validateGeminiTurns,
 } from "../../pi-embedded-helpers.js";
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
+import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
 import { createOpenClawCodingTools, resolveToolLoopDetectionConfig } from "../../pi-tools.js";
@@ -73,7 +75,6 @@ import {
   resolveSkillsPromptForRun,
 } from "../../skills.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
-import { buildContextAnatomy } from "../../context-anatomy.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
@@ -108,8 +109,6 @@ import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
 import { splitSdkTools } from "../tool-split.js";
-import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack
-import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import {
@@ -980,88 +979,43 @@ export async function runEmbeddedAttempt(
         );
       }
 
-      // Forensic mode: dump full payload to JSON instead of calling the LLM.
-      if (isForensicMode()) {
+      // Always dump full payload as side-effect for the context map, then call the LLM normally.
+      {
         const innerFn = activeSession.agent.streamFn;
         activeSession.agent.streamFn = (model, context, options) => {
-          const stream = createAssistantMessageEventStream();
-          const run = async () => {
-            try {
-              // Extract effective prompt from the last user message in context
-              const lastUserMsg = [...(context.messages ?? [])].reverse().find(
-                (m: any) => m.role === "user",
-              );
-              const promptText =
-                typeof lastUserMsg?.content === "string"
-                  ? lastUserMsg.content
-                  : Array.isArray(lastUserMsg?.content)
-                    ? lastUserMsg.content
-                        .filter((b: any) => b.type === "text")
-                        .map((b: any) => b.text)
-                        .join("\n")
-                    : "";
+          // Write dump in the background — don't block the LLM call
+          try {
+            const lastUserMsg = [...(context.messages ?? [])]
+              .toReversed()
+              .find((m: unknown) => (m as AgentMessage).role === "user");
+            const userMsg = lastUserMsg as AgentMessage | undefined;
+            const promptText =
+              typeof userMsg?.content === "string"
+                ? userMsg.content
+                : Array.isArray(userMsg?.content)
+                  ? (userMsg.content as { type: string; text?: string }[])
+                      .filter((b) => b.type === "text")
+                      .map((b) => b.text ?? "")
+                      .join("\n")
+                  : "";
 
-              const dumpPath = await writeForensicDump({
-                runId: params.runId,
-                sessionKey: params.sessionKey ?? params.sessionId,
-                model: model.id ?? params.modelId,
-                provider: model.provider ?? params.provider,
-                modelApi: model.api ?? params.model.api,
-                systemPrompt: context.systemPrompt ?? "",
-                messages: context.messages ?? [],
-                tools: context.tools ?? [],
-                effectivePrompt: promptText,
-              });
+            captureForensicDump({
+              runId: params.runId,
+              sessionKey: params.sessionKey ?? params.sessionId,
+              model: model.id ?? params.modelId,
+              provider: model.provider ?? params.provider,
+              modelApi: model.api ?? params.model.api,
+              systemPrompt: context.systemPrompt ?? "",
+              messages: context.messages ?? [],
+              tools: context.tools ?? [],
+              effectivePrompt: promptText,
+            }).catch(() => {}); // fire-and-forget
+          } catch {
+            /* fire-and-forget */
+          }
 
-              stream.push({
-                type: "done",
-                reason: "stop",
-                message: {
-                  role: "assistant" as const,
-                  content: [{ type: "text" as const, text: `[Forensic dump saved: ${dumpPath}]` }],
-                  stopReason: "stop" as const,
-                  api: model.api,
-                  provider: model.provider,
-                  model: model.id,
-                  usage: {
-                    input: 0,
-                    output: 0,
-                    cacheRead: 0,
-                    cacheWrite: 0,
-                    totalTokens: 0,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-                  },
-                  timestamp: Date.now(),
-                },
-              });
-            } catch (err) {
-              stream.push({
-                type: "error",
-                reason: "error",
-                error: {
-                  role: "assistant" as const,
-                  content: [{ type: "text" as const, text: `[Forensic dump error: ${String(err)}]` }],
-                  stopReason: "error" as const,
-                  api: model.api,
-                  provider: model.provider,
-                  model: model.id,
-                  usage: {
-                    input: 0,
-                    output: 0,
-                    cacheRead: 0,
-                    cacheWrite: 0,
-                    totalTokens: 0,
-                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-                  },
-                  timestamp: Date.now(),
-                },
-              });
-            } finally {
-              stream.end();
-            }
-          };
-          queueMicrotask(() => void run());
-          return stream;
+          // Call the real LLM
+          return innerFn(model, context, options);
         };
       }
 
@@ -1421,14 +1375,20 @@ export async function runEmbeddedAttempt(
                 const enriched = `${systemPromptText}\n\n${pack}`;
                 applySystemPromptOverrideToSession(activeSession, enriched);
                 systemPromptText = enriched;
-                log.debug(`retrieval: injected pack (${pack.length} chars, query="${effectivePrompt.slice(0, 80)}")`);
+                log.debug(
+                  `retrieval: injected pack (${pack.length} chars, query="${effectivePrompt.slice(0, 80)}")`,
+                );
               }
             }
           }
 
           // FORK: Mid-context persona re-injection (see src/fork/attempt-hooks.ts)
           {
-            const reinject = forkAttemptHooks.applyMidContextReinjectHook(sessionManager, systemPromptText, log);
+            const reinject = forkAttemptHooks.applyMidContextReinjectHook(
+              sessionManager,
+              systemPromptText,
+              log,
+            );
             if (reinject.reinjected) {
               applySystemPromptOverrideToSession(activeSession, reinject.systemPromptText);
               systemPromptText = reinject.systemPromptText;
@@ -1652,25 +1612,32 @@ export async function runEmbeddedAttempt(
       // Build context anatomy — per-turn prompt decomposition
       const contextWindowTokens = Math.max(
         1,
-        Math.floor(
-          params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-        ),
+        Math.floor(params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS),
       );
       // FORK: Post-turn side effects — context anatomy, engram, syncscore, observations
       // (see src/fork/attempt-hooks.ts → onTurnComplete)
-      forkAttemptHooks.onTurnComplete({
-        sessionManager,
-        sessionKey: params.sessionKey,
+      forkAttemptHooks
+        .onTurnComplete({
+          sessionManager,
+          sessionKey: params.sessionKey,
+          messagesSnapshot,
+          assistantTexts,
+          systemPromptReport,
+          provider: params.provider,
+          modelId: params.modelId,
+          contextWindowTokens,
+          getCompactionCount,
+          getUsageTotals: getUsageTotals ?? null,
+          log,
+        })
+        .catch((err) => log.warn(`fork post-turn failed: ${String(err)}`));
+
+      // Capture response content for the response treemap
+      finalizeForensicRun(
+        params.sessionKey ?? params.sessionId,
+        params.runId,
         messagesSnapshot,
-        assistantTexts,
-        systemPromptReport,
-        provider: params.provider,
-        modelId: params.modelId,
-        contextWindowTokens,
-        getCompactionCount,
-        getUsageTotals: getUsageTotals ?? null,
-        log,
-      }).catch((err) => log.warn(`fork post-turn failed: ${String(err)}`));
+      ).catch(() => {}); // fire-and-forget
 
       // Context anatomy result for return value (kept inline for type compat)
       const contextAnatomy = systemPromptReport
