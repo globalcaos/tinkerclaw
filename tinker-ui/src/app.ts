@@ -1,3 +1,4 @@
+import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
@@ -21,11 +22,10 @@ let streamText = "";
 let streamRunId: string | null = null;
 let sending = false;
 let expandedTools = new Set<string>();
-let tokenUsage: any = null;
-let costData: any = null;
 let initialized = false;
 let budgetData: any = null;
 let forensicMode = false;
+let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
 const $ = (id: string) => document.getElementById(id);
 const app = $("app")!;
@@ -43,9 +43,9 @@ const PROVIDER_COLORS: Record<string, string> = {
 
 // ─── Provider Icons (14px inline SVGs) ───
 const PROVIDER_ICONS: Record<string, string> = {
-  anthropic: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M13.827 3.52l5.932 16.96h-3.828L10.06 3.52h3.767zm-7.404 0l5.932 16.96H8.527L2.595 3.52h3.828z" fill="#D97757"/></svg>`,
-  google: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="7" cy="7" r="3" fill="#4285F4"/><circle cx="17" cy="7" r="3" fill="#EA4335"/><circle cx="7" cy="17" r="3" fill="#34A853"/><circle cx="17" cy="17" r="3" fill="#FBBC05"/></svg>`,
-  openai: `<svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 3.5a6.5 6.5 0 0 1 0 13 6.5 6.5 0 0 1 0-13z" fill="#10a37f"/><path d="M12 7v10M7 12h10" stroke="#10a37f" stroke-width="1.5" fill="none"/></svg>`,
+  anthropic: `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`,
+  google: `<svg width="14" height="14" viewBox="0 0 48 48"><path d="M43.6 20.5H42V20H24v8h11.3C33.6 33.4 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" fill="#FFC107"/><path d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" fill="#FF3D00"/><path d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.3c-2 1.5-4.5 2.3-7.3 2.3-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" fill="#4CAF50"/><path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.7l6.2 5.3C37 39.4 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" fill="#1976D2"/></svg>`,
+  openai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22.28 9.37a5.88 5.88 0 0 0-.51-4.86 5.97 5.97 0 0 0-6.43-2.83A5.9 5.9 0 0 0 10.87 0a5.97 5.97 0 0 0-5.69 4.13 5.88 5.88 0 0 0-3.93 2.85 5.97 5.97 0 0 0 .74 6.99 5.88 5.88 0 0 0 .51 4.86 5.97 5.97 0 0 0 6.43 2.83A5.9 5.9 0 0 0 13.4 24a5.97 5.97 0 0 0 5.69-4.13 5.88 5.88 0 0 0 3.93-2.85 5.97 5.97 0 0 0-.74-6.99zM13.4 22.3a4.42 4.42 0 0 1-2.84-1.03l.14-.08 4.72-2.73a.77.77 0 0 0 .39-.67v-6.66l2 1.15a.07.07 0 0 1 .04.06v5.52a4.46 4.46 0 0 1-4.46 4.44zM3.48 18.2a4.42 4.42 0 0 1-.53-2.97l.14.08 4.72 2.73a.77.77 0 0 0 .77 0l5.76-3.33v2.31a.07.07 0 0 1-.03.06l-4.77 2.76a4.46 4.46 0 0 1-6.06-1.64zM2.2 7.87A4.42 4.42 0 0 1 4.52 5.9v5.62a.77.77 0 0 0 .39.67l5.76 3.33-2 1.15a.07.07 0 0 1-.07 0L3.83 13.9A4.46 4.46 0 0 1 2.2 7.87zm17.33 4.03l-5.76-3.33 2-1.15a.07.07 0 0 1 .07 0l4.77 2.76a4.46 4.46 0 0 1-.69 8.05v-5.66a.77.77 0 0 0-.39-.67zM21.5 9.7l-.14-.08-4.72-2.73a.77.77 0 0 0-.77 0L10.1 10.2V7.9a.07.07 0 0 1 .03-.06l4.77-2.76a4.46 4.46 0 0 1 6.6 4.62zM8.93 13.34l-2-1.15a.07.07 0 0 1-.04-.06V6.61a4.46 4.46 0 0 1 7.3-3.42l-.14.08-4.72 2.73a.77.77 0 0 0-.39.67zm1.08-2.34L12 9.77l1.99 1.15v2.3L12 14.36l-1.99-1.15z" fill="#10a37f"/></svg>`,
   ollama: `<svg width="14" height="14" viewBox="0 0 24 24"><text x="3" y="17" font-size="14" font-weight="bold" fill="#ca8a04">O</text></svg>`,
   meta: `<svg width="14" height="14" viewBox="0 0 24 24"><path d="M4 12c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6zm8 0c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6z" stroke="#0668E1" stroke-width="2" fill="none"/></svg>`,
   mistral: `<svg width="14" height="14" viewBox="0 0 24 24"><rect x="2" y="3" width="5" height="5" fill="#f97316"/><rect x="10" y="3" width="5" height="5" fill="#f97316"/><rect x="17" y="3" width="5" height="5" fill="#f97316"/><rect x="2" y="10" width="5" height="5" fill="#f97316"/><rect x="10" y="10" width="5" height="5" fill="#f97316"/><rect x="2" y="17" width="5" height="5" fill="#f97316"/><rect x="17" y="17" width="5" height="5" fill="#f97316"/></svg>`,
@@ -61,23 +61,59 @@ function providerIcon(provider: string): string {
 }
 
 // ─── Active Model Tracking ───
-const activeRuns = new Map<
-  string,
-  { model: string; provider: string; authProfileId?: string; startedAt: number }
->();
-const STALE_RUN_MS = 5 * 60_000;
+type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number };
+const activeRuns = new Map<string, ActiveRunInfo>();
+const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
+// Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
+const unconfirmedRuns = new Set<string>();
 
-function pruneStaleRuns() {
-  const now = Date.now();
-  for (const [id, info] of activeRuns) {
-    if (now - info.startedAt > STALE_RUN_MS) activeRuns.delete(id);
+function saveActiveRuns() {
+  try {
+    const entries = Array.from(activeRuns.entries());
+    sessionStorage.setItem(ACTIVE_RUNS_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    /* quota exceeded — ignore */
   }
 }
 
-function getAuthKeyCounts(): Map<string, number> {
-  pruneStaleRuns();
+function restoreActiveRuns() {
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_RUNS_STORAGE_KEY);
+    if (!raw) return;
+    const entries: [string, ActiveRunInfo][] = JSON.parse(raw);
+    for (const [id, info] of entries) {
+      activeRuns.set(id, info);
+      unconfirmedRuns.add(id);
+    }
+  } catch {
+    /* parse error — ignore */
+  }
+}
+
+/** After reconnect, clear restored runs that no lifecycle event confirmed. */
+function scheduleUnconfirmedPrune() {
+  if (unconfirmedRuns.size === 0) return;
+  setTimeout(() => {
+    let changed = false;
+    for (const id of unconfirmedRuns) {
+      activeRuns.delete(id);
+      changed = true;
+    }
+    unconfirmedRuns.clear();
+    if (changed) {
+      saveActiveRuns();
+      updateBudgetPanel();
+    }
+  }, 5000);
+}
+
+// Restore on load
+restoreActiveRuns();
+
+function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const info of activeRuns.values()) {
+    if (forModel && info.model !== forModel) continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -121,9 +157,10 @@ function onFrame(f: any) {
           }
           updateDots();
           loadSessions();
-          loadTokens();
           loadBudget();
           refreshTreemap();
+          timelineCtrl?.loadSession(sessionKey);
+          scheduleUnconfirmedPrune();
           req("forensic.getMode", {})
             .then((res: any) => {
               forensicMode = res?.enabled ?? false;
@@ -176,7 +213,6 @@ function onEvent(evt: any) {
       sending = false;
       updateChat();
       updateBtn();
-      loadTokens();
       loadBudget();
       refreshTreemap();
       updateResponseMap();
@@ -185,6 +221,8 @@ function onEvent(evt: any) {
   if (evt.event === "agent") {
     const p = evt.payload;
     if (p?.stream === "lifecycle" && p.data?.model) {
+      // Any lifecycle event for a restored run confirms it's still active
+      unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
         activeRuns.set(p.runId, {
           model: p.data.model,
@@ -192,13 +230,29 @@ function onEvent(evt: any) {
           authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
         });
+        saveActiveRuns();
         updateBudgetPanel();
       } else if (p.data.phase === "end" || p.data.phase === "error") {
         const endRunId = p.runId;
         setTimeout(() => {
           activeRuns.delete(endRunId);
+          saveActiveRuns();
           updateBudgetPanel();
         }, 3000);
+        // Poll anatomy API after turn completes
+        const sk = sessionKey;
+        const rid = p.runId;
+        setTimeout(() => {
+          if (sk && timelineCtrl) {
+            const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+            fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}/latest`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((ev) => {
+                if (ev?.turn) timelineCtrl!.pushEvent(ev, rid);
+              })
+              .catch(() => {});
+          }
+        }, 500);
       }
     }
   }
@@ -250,17 +304,6 @@ async function abort() {
   streamRunId = null;
   updateChat();
   updateBtn();
-}
-
-async function loadTokens() {
-  const today = new Date().toISOString().slice(0, 10);
-  const [u, c] = await Promise.all([
-    req("sessions.usage", { startDate: today, endDate: today }).catch(() => null),
-    req("usage.cost", { startDate: today, endDate: today }).catch(() => null),
-  ]);
-  tokenUsage = u;
-  costData = c;
-  updateTokens();
 }
 
 async function loadBudget() {
@@ -329,7 +372,7 @@ function renderMsg(msg: any, idx: number): string {
 
   if (text.trim()) {
     if (role === "user") {
-      h += `<div class="msg user">${md(text)}</div>`;
+      h += `<div class="msg user" data-msg-idx="${idx}">${md(text)}</div>`;
     } else if (role === "assistant") {
       h += `<div class="msg assistant">${md(text)}</div>`;
     } else {
@@ -435,37 +478,34 @@ function updateBtn() {
   }
 }
 
-function updateTokens() {
-  const el = $("token-monitor");
-  if (!el) {
-    return;
-  }
-  if (!tokenUsage) {
-    el.innerHTML = `<div class="tm-card"><div class="label">Loading tokens...</div></div>`;
-    return;
-  }
-  const t = tokenUsage.totals ?? {};
-  const inp = t.inputTokens ?? 0,
-    out = t.outputTokens ?? 0,
-    tot = inp + out;
-  const cost = t.estimatedCostUSD ?? costData?.daily?.[0]?.totalCostUSD ?? 0;
-  const sc = tokenUsage.sessions?.length ?? 0;
-  const lim = 200000,
-    pct = Math.min(100, (out / lim) * 100);
-  const fc = pct > 80 ? "fill-red" : pct > 50 ? "fill-yellow" : "fill-green";
-  el.innerHTML = `
-    <div class="tm-card"><div class="label">Tokens Today</div><div class="value">${(tot / 1000).toFixed(1)}k</div><div class="sub">${(inp / 1000).toFixed(1)}k in · ${(out / 1000).toFixed(1)}k out</div></div>
-    <div class="tm-card"><div class="label">Est. Cost</div><div class="value">$${cost.toFixed(2)}</div><div class="sub">${sc} session${sc !== 1 ? "s" : ""}</div></div>
-    <div class="tm-card"><div class="label">5h Window</div><div class="value">${pct.toFixed(0)}%</div><div class="progress-bar"><div class="fill ${fc}" style="width:${pct}%"></div></div><div class="sub">${(out / 1000).toFixed(0)}k / ${lim / 1000}k</div></div>
-  `;
-}
-
 function modelName(id: string): string {
-  return id.split("/").slice(1).join("/") || id;
+  const name = id.split("/").slice(1).join("/") || id;
+  return name.replace(/^claude-/, "");
 }
 
 function providerOf(id: string): string {
   return id.split("/")[0] || "unknown";
+}
+
+// Performance ranking for sorting configured models (lower = more performant).
+// Uses keyword matching against the model name portion of the ID.
+function modelPerfRank(id: string): number {
+  const lo = id.toLowerCase();
+  // Tier 0: frontier reasoning (opus, pro-preview, o1)
+  if (lo.includes("opus") || lo.includes("pro-preview") || lo.includes("-o1")) return 0;
+  // Tier 1: strong general (sonnet, pro, gpt-4o)
+  if (
+    lo.includes("sonnet") ||
+    (lo.includes("pro") && !lo.includes("preview")) ||
+    lo.includes("gpt-4o")
+  )
+    return 1;
+  // Tier 2: balanced (flash non-lite, haiku)
+  if (lo.includes("flash") && !lo.includes("lite")) return 2;
+  if (lo.includes("haiku")) return 3;
+  // Tier 3: lightweight / local
+  if (lo.includes("lite") || lo.includes("mini") || lo.includes("nano")) return 4;
+  return 5;
 }
 
 function updateBudgetPanel() {
@@ -480,7 +520,6 @@ function updateBudgetPanel() {
   }
 
   const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
-  const counts = getAuthKeyCounts();
   let html = '<div class="model-list">';
 
   // Helper: render auth key rows for a model's provider
@@ -488,6 +527,8 @@ function updateBudgetPanel() {
     const provider = providerOf(modelId);
     const name = modelName(modelId);
     const keys: string[] = authOrder?.[provider] || [];
+    // Get counts filtered to THIS model only (prevents cross-model glow)
+    const counts = getAuthKeyCounts(modelId);
     if (keys.length <= 1) {
       // Single key or no keys — show one row with model name
       const keyId = keys[0];
@@ -503,13 +544,11 @@ function updateBudgetPanel() {
         counts.get(keyId || modelId) || 0,
       );
     } else {
-      // Multiple keys — show model header + one row per key
-      html += `<div class="model-group-header">${providerIcon(provider)} <span class="model-name">${esc(name)}</span> ${badge ? `<span class="model-badge">${badge}</span>` : ""}</div>`;
+      // Multiple keys — one compact row per key with model name inline
       for (const keyId of keys) {
         const prof = authProfiles?.[keyId] || {};
         const keyLabel = prof.label || keyId.split(":")[1] || keyId;
-        const mode = prof.mode || "unknown";
-        html += renderAuthKeyRow(keyId, keyLabel, mode, provider, counts.get(keyId) || 0);
+        html += renderAuthKeyRow(keyId, keyLabel, provider, name, badge, counts.get(keyId) || 0);
       }
     }
   }
@@ -529,10 +568,11 @@ function updateBudgetPanel() {
     }
   }
 
-  // Other configured models (not primary or fallback)
+  // Other configured models (not primary or fallback), sorted by performance tier
   const fbSet = new Set(fallbacks || []);
   const otherIds = Object.keys(models || {}).filter((id) => id !== primary && !fbSet.has(id));
   if (otherIds.length) {
+    otherIds.sort((a, b) => modelPerfRank(a) - modelPerfRank(b));
     html += '<div class="model-group-label">CONFIGURED</div>';
     for (const id of otherIds) {
       renderAuthKeyRows(id, "");
@@ -571,8 +611,9 @@ function renderModelRow(
 function renderAuthKeyRow(
   keyId: string,
   label: string,
-  mode: string,
   provider: string,
+  name: string,
+  badge: string,
   count: number,
 ): string {
   const color = PROVIDER_COLORS[provider] || "#6b7280";
@@ -582,12 +623,13 @@ function renderAuthKeyRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
-  const modeTag = `<span class="auth-mode-tag auth-mode-${mode}">${esc(mode)}</span>`;
 
   return `<div class="model-row auth-key-row${liveClass}"${glowStyle}>
-    <span class="auth-key-indent"></span>
+    ${providerIcon(provider)}
+    <span class="model-name">${esc(name)}</span>
+    ${badge ? `<span class="model-badge">${badge}</span>` : ""}
+    <span class="auth-key-sep">\u00b7</span>
     <span class="auth-key-label">${esc(label)}</span>
-    ${modeTag}
     ${countBadge}
   </div>`;
 }
@@ -607,24 +649,12 @@ function updateResponseMap() {
   }
 }
 
-function updateTreemapBackBtn() {
-  const btn = $("treemap-back");
-  const tmCanvas = $("treemap-canvas");
-  if (!btn || !tmCanvas) {
-    return;
-  }
-  const canGoBack = (tmCanvas as any).__treemapCanGoBack?.() ?? false;
-  btn.style.display = canGoBack ? "" : "none";
-}
-
-function updateResponseBackBtn() {
-  const btn = $("response-back");
-  const canvas = $("response-canvas");
-  if (!btn || !canvas) {
-    return;
-  }
-  const canGoBack = (canvas as any).__responseCanGoBack?.() ?? false;
-  btn.style.display = canGoBack ? "" : "none";
+// ─── Bottom-right panel tab switching ───
+function switchBrpTab(tab: "context" | "response") {
+  const tabs = document.querySelectorAll(".brp-tab");
+  const views = document.querySelectorAll(".brp-view");
+  tabs.forEach((t) => t.classList.toggle("brp-tab-active", t.id === `brp-tab-${tab}`));
+  views.forEach((v) => v.classList.toggle("brp-view-active", v.id === `brp-view-${tab}`));
 }
 
 function timeAgo(ts: number): string {
@@ -641,6 +671,46 @@ function timeAgo(ts: number): string {
   return Math.floor(diff / 86400000) + "d";
 }
 
+// Track which session groups are collapsed (all collapsed by default)
+const collapsedGroups = new Set<string>(["cron", "subagent", "whatsapp", "other"]);
+
+function classifySession(key: string): { group: string; shortLabel: string } {
+  // agent:main:cron:<uuid>
+  if (/:cron:/.test(key)) {
+    const uuid = key.split(":cron:")[1] ?? "";
+    return { group: "cron", shortLabel: uuid.slice(0, 8) };
+  }
+  // agent:main:subagent:<uuid>
+  if (/:subagent:/.test(key)) {
+    const uuid = key.split(":subagent:")[1] ?? "";
+    return { group: "subagent", shortLabel: uuid.slice(0, 8) };
+  }
+  // agent:main:whatsapp:group:<id> or agent:main:whatsapp:direct:<phone>
+  if (/:whatsapp:/.test(key)) {
+    const tail = key.split(":whatsapp:")[1] ?? "";
+    return { group: "whatsapp", shortLabel: tail.replace(/@g\.us$/, "") };
+  }
+  // agent:main:heartbeat
+  if (/:heartbeat/.test(key)) {
+    return { group: "pinned", shortLabel: "heartbeat" };
+  }
+  // agent:main:main
+  if (/:main$/.test(key)) {
+    return { group: "pinned", shortLabel: "main" };
+  }
+  return { group: "other", shortLabel: key.slice(0, 24) };
+}
+
+const GROUP_LABELS: Record<string, string> = {
+  pinned: "",
+  cron: "Cron Jobs",
+  subagent: "Subagents",
+  whatsapp: "WhatsApp",
+  other: "Other",
+};
+
+const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
+
 function updateSessionsPanel() {
   const el = $("sessions-list");
   if (!el) {
@@ -656,21 +726,47 @@ function updateSessionsPanel() {
     return;
   }
 
-  let html = '<div class="session-list">';
+  // Group sessions
+  const groups = new Map<string, Array<{ session: any; shortLabel: string }>>();
   for (const s of sessions) {
-    const isActive = s.key === sessionKey;
-    const label = s.label || s.displayName || s.key.slice(0, 24);
-    const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
-    const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
-    const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
-    html += `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
-      <span class="session-label">${esc(label)} ${channel}</span>
-      <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
-    </div>`;
+    const { group, shortLabel } = classifySession(s.key);
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group)!.push({ session: s, shortLabel });
   }
+
+  let html = '<div class="session-list">';
+
+  for (const groupKey of GROUP_ORDER) {
+    const items = groups.get(groupKey);
+    if (!items || items.length === 0) continue;
+
+    if (groupKey === "pinned") {
+      // Pinned sessions render directly, no group header
+      for (const { session: s, shortLabel } of items) {
+        html += renderSessionRow(s, shortLabel);
+      }
+    } else {
+      const label = GROUP_LABELS[groupKey] ?? groupKey;
+      const collapsed = collapsedGroups.has(groupKey);
+      const hasActive = items.some((i) => i.session.key === sessionKey);
+      const arrow = collapsed ? "\u25B8" : "\u25BE";
+      html += `<div class="session-group-header${hasActive ? " session-group-has-active" : ""}" data-group="${esc(groupKey)}">
+        <span class="session-group-arrow">${arrow}</span>
+        <span class="session-group-label">${esc(label)}</span>
+        <span class="session-group-count">${items.length}</span>
+      </div>`;
+      if (!collapsed) {
+        for (const { session: s, shortLabel } of items) {
+          html += renderSessionRow(s, shortLabel);
+        }
+      }
+    }
+  }
+
   html += "</div>";
   el.innerHTML = html;
 
+  // Wire session row clicks
   el.querySelectorAll(".session-row").forEach((row) => {
     row.addEventListener("click", () => {
       const key = (row as HTMLElement).dataset.sessionKey;
@@ -685,9 +781,35 @@ function updateSessionsPanel() {
         if (tmCanvas) {
           (tmCanvas as any).__treemapRefresh?.();
         }
+        timelineCtrl?.loadSession(key);
       }
     });
   });
+
+  // Wire group header clicks (toggle collapse)
+  el.querySelectorAll(".session-group-header").forEach((hdr) => {
+    hdr.addEventListener("click", () => {
+      const group = (hdr as HTMLElement).dataset.group!;
+      if (collapsedGroups.has(group)) {
+        collapsedGroups.delete(group);
+      } else {
+        collapsedGroups.add(group);
+      }
+      updateSessionsPanel();
+    });
+  });
+}
+
+function renderSessionRow(s: any, shortLabel: string): string {
+  const isActive = s.key === sessionKey;
+  const label = s.label || s.displayName || shortLabel;
+  const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
+  const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
+  const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
+  return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
+    <span class="session-label">${esc(label)} ${channel}</span>
+    <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
+  </div>`;
 }
 
 function scrollChat() {
@@ -733,22 +855,25 @@ function init() {
         <div class="rpanel-header">🎛️ Models & Resources <button id="budget-refresh" class="budget-refresh-btn" title="Refresh">↻</button></div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel" id="context-map-panel">
-        <div class="rpanel-header"><span id="treemap-icon" class="panel-icon" data-hint="Refresh" data-hint-right>🔬</span> Context Map <span id="context-cost" class="panel-cost"></span><span id="context-model" class="panel-model"></span><span id="treemap-breadcrumb"></span><button id="treemap-back" class="panel-back-btn" data-hint="Back" style="display:none">◀</button></div>
-        <div id="treemap-canvas" style="height:260px;position:relative"></div>
-        <div id="treemap-footer" class="treemap-footer"></div>
-      </div>
-      <div class="rpanel" id="response-map-panel">
-        <div class="rpanel-header"><span id="response-icon" class="panel-icon" data-hint="Refresh" data-hint-right>📤</span> Response <span id="response-cost" class="panel-cost"></span><span id="response-model" class="panel-model"></span><span id="response-breadcrumb"></span><button id="response-back" class="panel-back-btn" data-hint="Back" style="display:none">◀</button></div>
-        <div id="response-canvas" style="height:260px;position:relative;overflow:hidden;border-radius:4px;background:#111"></div>
-        <div id="response-footer" class="treemap-footer"></div>
-      </div>
       <div class="rpanel" id="sessions-panel">
         <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
     </div>
-    <div class="token-monitor" id="token-monitor"><div class="tm-card"><div class="label">Connecting...</div></div></div>
+    <div class="context-timeline" id="context-timeline"></div>
+    <div class="bottom-right-panel" id="bottom-right-panel">
+      <div class="brp-views">
+        <div class="brp-view brp-view-active" id="brp-view-context">
+          <div id="treemap-canvas" style="width:100%;height:100%;position:relative"></div>
+          <button class="brp-back-btn" id="brp-back-context" title="Back" style="display:none">\u25C0</button>
+        </div>
+        <div class="brp-view" id="brp-view-response">
+          <div id="response-canvas" style="width:100%;height:100%;position:relative;overflow:hidden"></div>
+          <button class="brp-back-btn" id="brp-back-response" title="Back" style="display:none">\u25C0</button>
+        </div>
+      </div>
+      <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
+    </div>
   `;
 
   const ta = $("chat-textarea") as HTMLTextAreaElement;
@@ -775,6 +900,7 @@ function init() {
     messages = [];
     updateChat();
     loadChat();
+    timelineCtrl?.loadSession(sessionKey);
   });
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
@@ -795,51 +921,127 @@ function init() {
       .catch((e) => console.error("forensic toggle:", e));
   });
 
-  // Mount context treemap
+  // Mount context treemap into bottom-right panel
   const tmCanvas = $("treemap-canvas")!;
   const tmFooter = $("treemap-footer")!;
-  const tmBreadcrumb = $("treemap-breadcrumb")!;
-  const tmCost = $("context-cost")!;
-  const tmModel = $("context-model")!;
-  mountContextTreemap(tmCanvas, tmFooter, tmBreadcrumb, req, () => sessionKey, tmCost, tmModel);
+  const brpMeta = $("brp-meta")!;
+  mountContextTreemap(tmCanvas, tmFooter, brpMeta, req, () => sessionKey, brpMeta);
 
-  $("treemap-back")!.addEventListener("click", () => {
-    (tmCanvas as any).__treemapBack?.();
-    updateTreemapBackBtn();
-  });
-  // Update back button visibility after any treemap interaction
-  tmCanvas.addEventListener("click", () => {
-    setTimeout(updateTreemapBackBtn, 50);
-  });
-  $("treemap-icon")!.addEventListener("click", () => {
-    refreshTreemap();
-  });
-
-  // Mount response treemap
+  // Mount response treemap into bottom-right panel
   const respCanvas = $("response-canvas")!;
-  const respFooter = $("response-footer")!;
-  const respBreadcrumb = $("response-breadcrumb")!;
-  const respCost = $("response-cost")!;
-  const respModel = $("response-model")!;
-  mountResponseTreemap(
-    respCanvas,
-    respFooter,
-    respBreadcrumb,
-    req,
-    () => sessionKey,
-    respCost,
-    respModel,
-  );
-  respCanvas.addEventListener("click", () => {
-    setTimeout(updateResponseBackBtn, 50);
+  mountResponseTreemap(respCanvas, tmFooter, brpMeta, req, () => sessionKey, brpMeta);
+
+  // Back buttons
+  const backCtx = $("brp-back-context")!;
+  const backResp = $("brp-back-response")!;
+
+  function updateBackButtons() {
+    backCtx.style.display = (tmCanvas as any).__treemapCanGoBack?.() ? "" : "none";
+    backResp.style.display = (respCanvas as any).__responseCanGoBack?.() ? "" : "none";
+  }
+
+  backCtx.addEventListener("click", () => {
+    (tmCanvas as any).__treemapBack?.();
+    updateBackButtons();
   });
-  $("response-back")!.addEventListener("click", () => {
+  backResp.addEventListener("click", () => {
     (respCanvas as any).__responseBack?.();
-    updateResponseBackBtn();
+    updateBackButtons();
   });
-  $("response-icon")!.addEventListener("click", () => {
-    updateResponseMap();
-  });
+
+  // Observe treemap re-renders to update back button visibility
+  const backObserver = new MutationObserver(updateBackButtons);
+  backObserver.observe(tmCanvas, { childList: true, subtree: true });
+  backObserver.observe(respCanvas, { childList: true, subtree: true });
+
+  // Also expose direct callback for level changes (catches async updates the observer might miss)
+  (tmCanvas as any).__onLevelChange = updateBackButtons;
+  (respCanvas as any).__onLevelChange = updateBackButtons;
+
+  // ─── Auto-summary on bar re-click ───
+  async function triggerAutoSummary(event: any, type: "context" | "response") {
+    const panel = type === "context" ? tmCanvas : respCanvas;
+    const ts = event.timestampMs ?? (event.timestamp ? new Date(event.timestamp).getTime() : null);
+    panel.innerHTML = '<div class="tm-empty">Summarizing\u2026</div>';
+    try {
+      const params: any = {
+        component: type === "context" ? "current_prompt" : "response",
+        sessionKey: sessionKey || undefined,
+      };
+      if (ts) params.timestamp = ts;
+      const result = await req("forensic.summarize", params);
+      const summary = result?.summary ?? "(no summary)";
+      panel.innerHTML = "";
+      const div = document.createElement("div");
+      div.className = "tm-preview";
+      div.style.background = "rgba(20,20,40,0.95)";
+      const hdr = document.createElement("div");
+      hdr.className = "tm-preview-header";
+      hdr.textContent = type === "context" ? "Prompt Summary" : "Response Summary";
+      const body = document.createElement("div");
+      body.className = "tm-text-block";
+      body.textContent = summary;
+      div.appendChild(hdr);
+      div.appendChild(body);
+      panel.appendChild(div);
+      (panel as any).__onLevelChange?.();
+    } catch (e: any) {
+      panel.innerHTML = `<div class="tm-empty">Summary failed: ${esc(e?.message ?? "unknown")}</div>`;
+    }
+  }
+
+  // Mount context timeline (bottom bar)
+  const timelineContainer = $("context-timeline")!;
+  timelineCtrl = mountContextTimeline(
+    timelineContainer,
+    (event, mode) => {
+      if (mode === "response-summarize") {
+        switchBrpTab("response");
+        triggerAutoSummary(event, "response");
+      } else if (mode === "context-summarize") {
+        triggerAutoSummary(event, "context");
+      } else if (mode === "response") {
+        switchBrpTab("response");
+        updateResponseMap();
+      } else {
+        switchBrpTab("context");
+        (tmCanvas as any).__treemapShowAnatomy?.(event);
+      }
+      updateBackButtons();
+    },
+    () => sessionKey,
+    () => (import.meta.env.DEV ? "http://localhost:18789" : ""),
+    PROVIDER_ICONS,
+    (groupIndex) => {
+      // Scroll webchat to the Nth user message matching this group
+      const container = $("messages");
+      if (!container) return;
+      const userMsgs = container.querySelectorAll(".msg.user");
+      if (groupIndex >= userMsgs.length) return;
+      const target = userMsgs[groupIndex] as HTMLElement;
+      // Manual smooth scroll within the .messages container
+      const targetTop = target.offsetTop - container.offsetTop;
+      const dest = targetTop - container.clientHeight / 2 + target.offsetHeight / 2;
+      const start = container.scrollTop;
+      const delta = dest - start;
+      const duration = 350;
+      let t0: number | null = null;
+      function step(ts: number) {
+        if (!t0) t0 = ts;
+        const elapsed = ts - t0;
+        const progress = Math.min(elapsed / duration, 1);
+        // ease-out cubic
+        const ease = 1 - Math.pow(1 - progress, 3);
+        container!.scrollTop = start + delta * ease;
+        if (progress < 1) requestAnimationFrame(step);
+        else {
+          target.classList.add("scroll-highlight");
+          setTimeout(() => target.classList.remove("scroll-highlight"), 900);
+        }
+      }
+      requestAnimationFrame(step);
+    },
+  );
 }
 
 function updateForensicBtn() {
@@ -864,7 +1066,6 @@ updateForensicBtn(); // set initial dot indicator
 gwConnect();
 setInterval(() => {
   if (connected) {
-    loadTokens();
     loadBudget();
   }
 }, 300_000);
