@@ -9,7 +9,7 @@
 [![Based on OpenClaw](https://img.shields.io/badge/based%20on-OpenClaw-blue?style=for-the-badge)](https://github.com/openclaw/openclaw)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%2F%20Linux-orange?style=for-the-badge)](https://ubuntu.com)
 [![AI Models](https://img.shields.io/badge/AI-Claude%20%7C%20Gemini%20%7C%20Ollama-green?style=for-the-badge)](#-multi-model-support)
-[![Skills](https://img.shields.io/badge/skills-18%20published-purple?style=for-the-badge)](#-published-skills-on-clawhub)
+[![Skills](https://img.shields.io/badge/skills-19%20published-purple?style=for-the-badge)](#-published-skills-on-clawhub)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
 > **What is OpenClaw?** A personal AI assistant you run on your own devices — multi-channel (WhatsApp, Telegram, Slack, Discord, WebChat, and more), multi-model, always-on.
@@ -73,7 +73,7 @@ All critical upstream security PRs cherry-picked and verified:
 
 ## 📦 Published Skills on [ClawHub](https://clawhub.ai/u/globalcaos)
 
-> 18 skills, all built by globalcaos. Install any of them with `clawhub install globalcaos/<skill-name>`.
+> 19 skills, all built by globalcaos. Install any of them with `clawhub install globalcaos/<skill-name>`.
 
 ### 🎙️ Voice & Personality
 
@@ -98,10 +98,11 @@ All critical upstream security PRs cherry-picked and verified:
 
 ### 💰 Cost & Token Management
 
-| Skill                                                                            | Description                                                                             | Version |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------- |
-| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Know exactly where your AI tokens go. Multi-provider tracking, budget alerts, REST API. | v2.1.1  |
-| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon.     | v1.1.0  |
+| Skill                                                                            | Description                                                                                       | Version |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------- |
+| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | 🆕 Your $200 Opus session didn't have to happen. Real-time treemaps of context, cost, and budget. | v1.0.0  |
+| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Know exactly where your AI tokens go. Multi-provider tracking, budget alerts, REST API.           | v2.1.1  |
+| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon.               | v1.1.0  |
 
 ### 🏢 Enterprise Hacks (Browser Relay)
 
@@ -139,29 +140,32 @@ No API keys. No admin consent. No IT ticket. Your authenticated browser session 
 
 ## 🖥️ Tinker Command Center (Bundled Plugin)
 
-> **Know exactly what you're spending before the bill arrives.**
+> **You just switched to Claude API because Anthropic refused the Pentagon contract. Respect. Now — do you know what you're spending?**
 
-A single long Opus conversation can burn through **$20+ in tokens** without warning. Tinker gives you a real-time command center so every token is visible.
+This weekend, Claude overtook ChatGPT in the App Store. People are migrating to Claude API in droves. But Claude API through OpenClaw is **unmetered** — there's no $20/month cap. Opus costs $15/M input and $75/M output. One deep agent session with tools can hit 200K+ tokens. Do the math: that's a surprise $20 bill from a single conversation.
 
-- **🗺️ Context Treemap** — Interactive visualization of what fills your context window. Drill down from categories to individual messages to raw text.
-- **📊 Response Treemap** — See how much of the response is text, thinking, tool calls, or tool results.
-- **💰 Live Cost Tracking** — Per-provider usage, daily/monthly estimates, and the 5-hour Claude rate-limit countdown.
-- **⚠️ Budget Alerts** — Set limits and get warnings before you blow through them.
-- **🔄 Multi-call Run View** — When the agent loops through tools, see each call's context and cost individually.
-- **💬 Chat + Session Management** — Full webchat with session switching, tool call inspection, real-time streaming.
+Tinker is the fix. A real-time command center that shows you **exactly** where every token goes — before the bill arrives.
 
-### Supported Models & Pricing
+- **🗺️ Context Treemap** — Interactive visualization of what fills your context window. Drill down from categories → messages → raw text. When you wonder "why is my context 180K tokens?" — this answers it in one glance.
+- **📊 Response Treemap** — See how much of the response is text, thinking, tool calls, or tool results. Per LLM call, so you spot which tool loops are token hogs.
+- **💰 Live Cost Tracking** — Per-provider usage, daily/monthly estimates, and the 5-hour Claude rate-limit countdown. Never hit a rate limit by surprise again.
+- **⚠️ Budget Alerts** — Set a monthly limit. Get warned at 70%, 90%, 100%. No more "I'll check later."
+- **🔄 Multi-call Run View** — When the agent loops through 8 tools, see each call's context and cost individually.
+- **💬 Full Chat Interface** — Not just a dashboard — complete webchat with session switching, tool call inspection, and real-time streaming. Use it as your daily driver.
 
-| Model                  | Input (per 1M) | Output (per 1M) | Notes                          |
-| ---------------------- | -------------- | --------------- | ------------------------------ |
-| Claude Opus 4 / 4.5    | **$15.00**     | **$75.00**      | ⚠️ Premium — watch your usage! |
-| Claude Sonnet 4 / 3.5  | $3.00          | $15.00          | Best price/performance ratio   |
-| Claude Haiku 3.5       | $0.80          | $4.00           | Fast, cheap tasks              |
-| Gemini 3 Pro / 3.1 Pro | $1.25          | $5.00           | Great failover option          |
-| Gemini 2 Flash         | $0.10          | $0.40           | Budget-friendly                |
-| Gemini 2 Flash Lite    | $0.02          | $0.08           | Near-free for simple tasks     |
+### What You're Actually Paying
+
+| Model                  | Input (per 1M) | Output (per 1M) | Reality check              |
+| ---------------------- | -------------- | --------------- | -------------------------- |
+| Claude Opus 4 / 4.5    | **$15.00**     | **$75.00**      | ⚠️ One deep session = $20+ |
+| Claude Sonnet 4 / 3.5  | $3.00          | $15.00          | Sweet spot for most tasks  |
+| Claude Haiku 3.5       | $0.80          | $4.00           | Background work            |
+| Gemini 3 Pro / 3.1 Pro | $1.25          | $5.00           | Failover — good and cheap  |
+| Gemini 2 Flash         | $0.10          | $0.40           | Near-free                  |
 
 After `pnpm build`, visit **`http://localhost:18789/tinker/`** · Dev: `cd tinker-ui && pnpm dev` → `http://localhost:18790/tinker/`
+
+> 📦 Also available as a guide skill on ClawHub: `clawhub install globalcaos/tinker-command-center`
 
 ---
 
