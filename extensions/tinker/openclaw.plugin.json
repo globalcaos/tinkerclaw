@@ -1,8 +1,9 @@
 {
   "id": "tinker",
   "name": "Tinker Command Center",
-  "description": "Operator command center with context/response treemaps and chat",
-  "version": "0.3.0",
+  "description": "Your $200 Opus session didn't have to happen. Real-time treemaps of context, cost, and budget — before the bill arrives.",
+  "version": "1.0.0",
+  "homepage": "https://github.com/globalcaos/clawdbot-moltbot-openclaw",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
