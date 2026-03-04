@@ -1,0 +1,32 @@
+{
+  "id": "overseer",
+  "name": "Overseer",
+  "description": "Real-time agent topology tracking with force-directed graph visualization",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "pollIntervalMs": {
+        "type": "number",
+        "default": 5000,
+        "description": "Session store enrichment poll interval in milliseconds"
+      },
+      "stalenessThresholdMs": {
+        "type": "number",
+        "default": 60000,
+        "description": "Time in ms before marking an agent as stuck"
+      },
+      "chatMinIntervalMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Minimum interval for chat summary messages"
+      },
+      "chatMaxIntervalMs": {
+        "type": "number",
+        "default": 180000,
+        "description": "Maximum interval for chat summary messages"
+      }
+    }
+  }
+}
