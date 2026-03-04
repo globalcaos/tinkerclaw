@@ -4,16 +4,52 @@ const env = {
   NODE_ENV: "production",
 };
 
-const outputOptions = {
-  codeSplitting: {
-    groups: [
-      {
-        name: "rolldown-runtime",
-        test: /rolldown[\\/]runtime/,
-      },
-    ],
-  },
-};
+const pluginSdkEntrypoints = [
+  "index",
+  "core",
+  "compat",
+  "telegram",
+  "discord",
+  "slack",
+  "signal",
+  "imessage",
+  "whatsapp",
+  "line",
+  "msteams",
+  "acpx",
+  "bluebubbles",
+  "copilot-proxy",
+  "device-pair",
+  "diagnostics-otel",
+  "diffs",
+  "feishu",
+  "google-gemini-cli-auth",
+  "googlechat",
+  "irc",
+  "llm-task",
+  "lobster",
+  "matrix",
+  "mattermost",
+  "memory-core",
+  "memory-lancedb",
+  "minimax-portal-auth",
+  "nextcloud-talk",
+  "nostr",
+  "open-prose",
+  "phone-control",
+  "qwen-portal-auth",
+  "synology-chat",
+  "talk-voice",
+  "test-utils",
+  "thread-ownership",
+  "tlon",
+  "twitch",
+  "voice-call",
+  "zalo",
+  "zalouser",
+  "account-id",
+  "keyed-async-queue",
+] as const;
 
 export default defineConfig([
   {
@@ -21,14 +57,14 @@ export default defineConfig([
     env,
     fixedExtension: false,
     platform: "node",
-    outputOptions,
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external (ESM __filename crash)
   },
   {
     entry: "src/entry.ts",
     env,
     fixedExtension: false,
     platform: "node",
-    outputOptions,
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   },
   {
     // Ensure this module is bundled as an entry so legacy CLI shims can resolve its exports.
@@ -44,19 +80,30 @@ export default defineConfig([
     platform: "node",
   },
   {
-    entry: "src/plugin-sdk/index.ts",
-    outDir: "dist/plugin-sdk",
+    // Keep sync lazy-runtime channel modules as concrete dist files.
+    entry: {
+      "channels/plugins/agent-tools/whatsapp-login":
+        "src/channels/plugins/agent-tools/whatsapp-login.ts",
+      "channels/plugins/actions/discord": "src/channels/plugins/actions/discord.ts",
+      "channels/plugins/actions/signal": "src/channels/plugins/actions/signal.ts",
+      "channels/plugins/actions/telegram": "src/channels/plugins/actions/telegram.ts",
+      "telegram/audit": "src/telegram/audit.ts",
+      "telegram/token": "src/telegram/token.ts",
+      "line/accounts": "src/line/accounts.ts",
+      "line/send": "src/line/send.ts",
+      "line/template-messages": "src/line/template-messages.ts",
+    },
     env,
     fixedExtension: false,
     platform: "node",
   },
-  {
-    entry: "src/plugin-sdk/account-id.ts",
+  ...pluginSdkEntrypoints.map((entry) => ({
+    entry: `src/plugin-sdk/${entry}.ts`,
     outDir: "dist/plugin-sdk",
     env,
     fixedExtension: false,
-    platform: "node",
-  },
+    platform: "node" as const,
+  })),
   {
     entry: "src/extensionAPI.ts",
     env,
