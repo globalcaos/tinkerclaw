@@ -69,6 +69,8 @@ export type ContextAnatomyEvent = {
     usedTokens: number;
     utilizationPercent: number;
   };
+  /** Output/response tokens from the model (if available). */
+  responseTokens?: number;
   /** Which memory files were injected. */
   memoriesInjected: {
     /** Files injected as workspace bootstrap (MEMORY.md, SOUL.md, etc). */
@@ -93,15 +95,100 @@ export function estimateTokens(chars: number): number {
 
 /** Common English stop words to filter during keyword extraction. */
 const STOP_WORDS = new Set([
-  "a", "an", "the", "is", "it", "in", "on", "at", "to", "for", "of", "and",
-  "or", "but", "with", "from", "by", "as", "be", "was", "are", "were", "been",
-  "has", "have", "had", "do", "does", "did", "will", "would", "could", "should",
-  "may", "might", "shall", "can", "need", "i", "me", "my", "we", "you", "he",
-  "she", "they", "them", "this", "that", "these", "those", "what", "how", "why",
-  "when", "where", "which", "who", "not", "no", "so", "if", "then", "up", "out",
-  "now", "also", "just", "about", "into", "than", "its", "your", "our", "their",
-  "there", "here", "get", "got", "let", "run", "want", "make", "like", "know",
-  "look", "see", "use", "find", "give", "think", "tell", "show", "work",
+  "a",
+  "an",
+  "the",
+  "is",
+  "it",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "and",
+  "or",
+  "but",
+  "with",
+  "from",
+  "by",
+  "as",
+  "be",
+  "was",
+  "are",
+  "were",
+  "been",
+  "has",
+  "have",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "need",
+  "i",
+  "me",
+  "my",
+  "we",
+  "you",
+  "he",
+  "she",
+  "they",
+  "them",
+  "this",
+  "that",
+  "these",
+  "those",
+  "what",
+  "how",
+  "why",
+  "when",
+  "where",
+  "which",
+  "who",
+  "not",
+  "no",
+  "so",
+  "if",
+  "then",
+  "up",
+  "out",
+  "now",
+  "also",
+  "just",
+  "about",
+  "into",
+  "than",
+  "its",
+  "your",
+  "our",
+  "their",
+  "there",
+  "here",
+  "get",
+  "got",
+  "let",
+  "run",
+  "want",
+  "make",
+  "like",
+  "know",
+  "look",
+  "see",
+  "use",
+  "find",
+  "give",
+  "think",
+  "tell",
+  "show",
+  "work",
 ]);
 
 /** Regex to detect file paths (e.g. src/foo/bar.ts, /home/user/file.md). */
@@ -121,7 +208,9 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
   const topics: string[] = [];
 
   // --- Source 1: keywords from last user message ---
-  const lastUserMsg = [...messagesSnapshot].toReversed().find((m) => m.role === "user" && "content" in m);
+  const lastUserMsg = [...messagesSnapshot]
+    .toReversed()
+    .find((m) => m.role === "user" && "content" in m);
   if (lastUserMsg && "content" in lastUserMsg) {
     const text =
       typeof lastUserMsg.content === "string"
@@ -141,17 +230,14 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
 
   // --- Source 2: tool names from assistant messages ---
   for (const msg of messagesSnapshot) {
-    if (msg.role !== "assistant" || !("content" in msg)) {continue;}
+    if (msg.role !== "assistant" || !("content" in msg)) {
+      continue;
+    }
     const content = msg.content;
     if (Array.isArray(content)) {
       for (const block of content) {
         const b = block as unknown as Record<string, unknown>;
-        if (
-          b &&
-          typeof b === "object" &&
-          b.type === "tool_use" &&
-          typeof b.name === "string"
-        ) {
+        if (b && typeof b === "object" && b.type === "tool_use" && typeof b.name === "string") {
           const toolName = b.name as string;
           if (!topics.includes(toolName)) {
             topics.push(toolName);
@@ -163,9 +249,10 @@ export function extractTopics(messagesSnapshot: AgentMessage[]): string[] {
 
   // --- Source 3: file paths from tool results ---
   for (const msg of messagesSnapshot) {
-    if ((msg.role as string) !== "tool" || !("content" in msg)) {continue;}
-    const text =
-      typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+    if ((msg.role as string) !== "tool" || !("content" in msg)) {
+      continue;
+    }
+    const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
     for (const match of text.matchAll(FILE_PATH_REGEX)) {
       const filePath = match[1];
       if (filePath && !topics.includes(filePath)) {
@@ -211,6 +298,7 @@ export function buildContextAnatomy(params: {
   messagesSnapshot: AgentMessage[];
   contextWindowTokens: number;
   totalTokensUsed?: number;
+  outputTokens?: number;
 }): ContextAnatomyEvent {
   const { systemPromptReport: report } = params;
   const now = Date.now();
@@ -232,8 +320,7 @@ export function buildContextAnatomy(params: {
   const skillsChars = report.skills.promptChars;
 
   // Tool schemas
-  const toolSchemasChars =
-    report.tools.listChars + report.tools.schemaChars;
+  const toolSchemasChars = report.tools.listChars + report.tools.schemaChars;
 
   // Conversation history and tool results from messages snapshot
   let conversationHistoryChars = 0;
@@ -243,15 +330,19 @@ export function buildContextAnatomy(params: {
   const messages = params.messagesSnapshot;
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    if (!msg) {continue;}
-    if (!("content" in msg)) {continue;}
+    if (!msg) {
+      continue;
+    }
+    if (!("content" in msg)) {
+      continue;
+    }
     const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
     const chars = content.length;
     const isLast = i === messages.length - 1;
 
     if (msg.role === "user" && isLast) {
       userMessageChars = chars;
-    } else if (msg.role === "tool" as string) {
+    } else if (msg.role === ("tool" as string)) {
       toolResultsChars += chars;
     } else if (msg.role === "user" || msg.role === "assistant") {
       conversationHistoryChars += chars;
@@ -328,6 +419,7 @@ export function buildContextAnatomy(params: {
       usedTokens,
       utilizationPercent: maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 1000) / 10 : 0,
     },
+    responseTokens: params.outputTokens,
     memoriesInjected: {
       autoRecall,
       searched: [],

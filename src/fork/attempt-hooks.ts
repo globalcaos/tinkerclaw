@@ -10,22 +10,22 @@
  */
 import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
-import { normalizeProviderId } from "../agents/model-selection.js";
 import { buildContextAnatomy, writeAnatomyEvent } from "../agents/context-anatomy.js";
-import { createCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
-import { getCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
-import { getIngestionRuntime } from "../agents/pi-extensions/ingestion-runtime.js";
-import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
-import {
-  applyMidContextReinject,
-  evaluateTurnSyncScore,
-} from "../agents/pi-extensions/mid-context-reinject.js";
+import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
   extractTextToolCalls,
   executeTextToolCalls,
   formatTextToolResults,
 } from "../agents/pi-embedded-runner/text-tool-calls.js";
+import { createCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
+import { getCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
+import { getIngestionRuntime } from "../agents/pi-extensions/ingestion-runtime.js";
+import {
+  applyMidContextReinject,
+  evaluateTurnSyncScore,
+} from "../agents/pi-extensions/mid-context-reinject.js";
+import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
 
 // ---------------------------------------------------------------------------
 // Hook: Persona block (before system prompt build)
@@ -68,9 +68,7 @@ export function applyMidContextReinjectHook(
     );
   }
   return {
-    systemPromptText: reinjectResult.reinjected
-      ? reinjectResult.systemPrompt
-      : systemPromptText,
+    systemPromptText: reinjectResult.reinjected ? reinjectResult.systemPrompt : systemPromptText,
     reinjected: reinjectResult.reinjected,
   };
 }
@@ -87,7 +85,10 @@ const TEXT_TOOL_CALL_MAX_RETRIES = 3;
  */
 export async function interceptTextToolCalls(params: {
   provider: string;
-  activeSession: { messages: Array<{ role: string; content?: unknown }>; steer: (text: string) => Promise<void> };
+  activeSession: {
+    messages: Array<{ role: string; content?: unknown }>;
+    steer: (text: string) => Promise<void>;
+  };
   tools: unknown[];
   toolMetas: unknown[];
   promptError: unknown;
@@ -119,11 +120,15 @@ export async function interceptTextToolCalls(params: {
       .slice()
       .toReversed()
       .find((m) => m.role === "assistant");
-    if (!lastMsg) {break;}
+    if (!lastMsg) {
+      break;
+    }
 
     const rawText = extractRawAssistantText(lastMsg as never);
     const textCalls = extractTextToolCalls(rawText);
-    if (textCalls.length === 0) {break;}
+    if (textCalls.length === 0) {
+      break;
+    }
 
     params.log.info(
       `text-tool-call: found ${textCalls.length} call(s) in assistant text (retry ${ttcRetry + 1}/${TEXT_TOOL_CALL_MAX_RETRIES})`,
@@ -160,7 +165,7 @@ export interface PostTurnParams {
   modelId: string;
   contextWindowTokens?: number;
   getCompactionCount?: () => number | null;
-  getUsageTotals?: (() => { total?: number } | undefined) | null;
+  getUsageTotals?: (() => { total?: number; output?: number } | undefined) | null;
   log: { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void };
 }
 
@@ -173,11 +178,14 @@ export interface PostTurnParams {
  */
 export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   const { sessionManager, messagesSnapshot, assistantTexts, log } = params;
-  const turnNumber = messagesSnapshot.filter((m) => (m as { role?: string }).role === "user").length;
+  const turnNumber = messagesSnapshot.filter(
+    (m) => (m as { role?: string }).role === "user",
+  ).length;
 
   // Context anatomy
   if (params.systemPromptReport && params.sessionKey) {
     try {
+      const usageTotals = params.getUsageTotals?.();
       const contextAnatomy = buildContextAnatomy({
         turn: turnNumber,
         compactionCycle: params.getCompactionCount?.() ?? 0,
@@ -187,7 +195,8 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         systemPromptReport: params.systemPromptReport as never,
         messagesSnapshot: messagesSnapshot as never,
         contextWindowTokens: params.contextWindowTokens ?? 0,
-        totalTokensUsed: params.getUsageTotals?.()?.total,
+        totalTokensUsed: usageTotals?.total,
+        outputTokens: usageTotals?.output,
       });
       if (contextAnatomy) {
         writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
@@ -210,9 +219,7 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   // SyncScore evaluation
   {
     const cortexRuntime = getCortexRuntime(sessionManager);
-    evaluateTurnSyncScore(cortexRuntime, assistantTexts, turnNumber, (msg) =>
-      log.info(msg),
-    );
+    evaluateTurnSyncScore(cortexRuntime, assistantTexts, turnNumber, (msg) => log.info(msg));
   }
 
   // Observational memory extraction
@@ -221,8 +228,12 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     if (observationRuntime) {
       const recentTexts = messagesSnapshot.slice(-20).flatMap((_m) => {
         const m = _m as { role?: string; content?: unknown };
-        if (!m.content) {return [];}
-        if (typeof m.content === "string") {return m.content ? [m.content] : [];}
+        if (!m.content) {
+          return [];
+        }
+        if (typeof m.content === "string") {
+          return m.content ? [m.content] : [];
+        }
         if (Array.isArray(m.content)) {
           return (m.content as Array<{ type?: string; text?: string }>)
             .filter((c) => c.type === "text" && typeof c.text === "string")
