@@ -202,7 +202,7 @@ export async function monitorWebChannel(
       sendReadReceipts: account.sendReadReceipts,
       debounceMs: inboundDebounceMs,
       shouldDebounce,
-      syncFullHistory: account.syncFullHistory,
+      ...(account.syncFullHistory != null ? { syncFullHistory: account.syncFullHistory } : {}),
       onMessage: async (msg: WebInboundMsg) => {
         handledMessages += 1;
         lastMessageAt = Date.now();
@@ -223,7 +223,10 @@ export async function monitorWebChannel(
     // WhatsApp lifecycle events are logged to the journal — no need to
     // enqueue them as system events (they pollute the main session).
 
-    setActiveWebListener(account.accountId, listener);
+    setActiveWebListener(
+      account.accountId,
+      listener as unknown as import("../active-listener.js").ActiveWebListener,
+    );
     unregisterUnhandled = registerUnhandledRejectionHandler((reason) => {
       if (!isLikelyWhatsAppCryptoError(reason)) {
         return false;
