@@ -50,14 +50,7 @@ export const CHANNEL_MESSAGE_ACTION_NAMES = [
   "kick",
   "ban",
   "set-presence",
-  "group-create",
-  "getGroupInfo",
-  "getInviteCode",
-  "revokeInviteCode",
-  "setGroupDescription",
-  "promoteParticipant",
-  "demoteParticipant",
-  "fetchHistory",
+  "download-file",
 ] as const;
 
 export type ChannelMessageActionName = (typeof CHANNEL_MESSAGE_ACTION_NAMES)[number];
