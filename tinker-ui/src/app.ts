@@ -1,4 +1,5 @@
 import MarkdownIt from "markdown-it";
+import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
@@ -580,6 +581,8 @@ async function loadBudget() {
 function esc(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+
+const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
 
 function md(text: string): string {
   let h = mdParser.render(text);
