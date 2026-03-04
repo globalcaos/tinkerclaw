@@ -1,7 +1,10 @@
+import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
+
+const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
 
 // Runtime config: injected by the tinker plugin into index.html, or via URL params
 const __cfg = (window as any).__TINKER_CONFIG ?? {};
@@ -21,6 +24,7 @@ let messages: any[] = [];
 let streamText = "";
 let streamRunId: string | null = null;
 let sending = false;
+let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
 let initialized = false;
 let budgetData: any = null;
@@ -60,10 +64,52 @@ function providerIcon(provider: string): string {
   return `<span class="model-provider-dot" style="background:${color}"></span>`;
 }
 
+function findLastIndex<T>(arr: T[], pred: (v: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i])) return i;
+  }
+  return -1;
+}
+
+// ─── Persisted Error Messages ───
+const ERROR_STORAGE_KEY = "tinker-errors";
+
+function persistErrorMsg(sk: string, msg: any) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
+    if (!all[sk]) all[sk] = [];
+    all[sk].push(msg);
+    localStorage.setItem(ERROR_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* quota exceeded */
+  }
+}
+
+function loadPersistedErrors(sk: string): any[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
+    return all[sk] || [];
+  } catch {
+    return [];
+  }
+}
+
+function clearPersistedErrors(sk: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
+    delete all[sk];
+    localStorage.setItem(ERROR_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
 // ─── Active Model Tracking ───
 type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number };
 const activeRuns = new Map<string, ActiveRunInfo>();
+const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
+const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
 const unconfirmedRuns = new Set<string>();
 
@@ -132,7 +178,12 @@ function gwConnect() {
   ws.onmessage = (ev) => onFrame(JSON.parse(ev.data));
   ws.onclose = () => {
     connected = false;
+    sending = false;
+    streamText = "";
+    streamRunId = null;
     updateDots();
+    updateBtn();
+    updateChat();
     setTimeout(gwConnect, 2000);
   };
 }
@@ -143,7 +194,13 @@ function onFrame(f: any) {
       req("connect", {
         minProtocol: 3,
         maxProtocol: 3,
-        client: { id: "webchat-ui", version: "0.3", platform: "web", mode: "webchat" },
+        client: {
+          id: "webchat-ui",
+          displayName: "Tinker UI",
+          version: "0.3",
+          platform: "web",
+          mode: "webchat",
+        },
         role: "operator",
         scopes: ["operator.admin"],
         caps: ["tool-events"],
@@ -156,6 +213,7 @@ function onFrame(f: any) {
             sessionKey = defs.mainSessionKey;
           }
           updateDots();
+          updateBtn();
           loadSessions();
           loadBudget();
           refreshTreemap();
@@ -194,6 +252,34 @@ function req<T = any>(method: string, params?: any): Promise<T> {
   });
 }
 
+// ─── Health Poll (replaces 5-min auto-clear) ───
+let healthPollInterval: ReturnType<typeof setInterval> | null = null;
+
+function startHealthPoll() {
+  if (healthPollInterval) return;
+  healthPollInterval = setInterval(async () => {
+    if (providerErrors.size === 0) {
+      clearInterval(healthPollInterval!);
+      healthPollInterval = null;
+      return;
+    }
+    try {
+      const res = await req("provider.health", {});
+      if (!res?.health) return;
+      let changed = false;
+      for (const [provider, info] of Object.entries(res.health) as [string, any][]) {
+        if (info.available && providerErrors.has(provider)) {
+          providerErrors.delete(provider);
+          changed = true;
+        }
+      }
+      if (changed) updateBudgetPanel();
+    } catch {
+      /* gateway disconnected */
+    }
+  }, 60_000);
+}
+
 function onEvent(evt: any) {
   if (evt.event === "chat") {
     const p = evt.payload;
@@ -208,6 +294,19 @@ function onEvent(evt: any) {
       if (p.message) {
         messages.push(p.message);
       }
+      if (p.state === "error" && p.errorMessage) {
+        const errMsg = {
+          role: "assistant",
+          content: [{ type: "text", text: p.errorMessage }],
+          _isError: true,
+        };
+        messages.push(errMsg);
+        persistErrorMsg(sessionKey, errMsg);
+      }
+      if (p.state === "final") {
+        // Successful response — clear persisted errors for this session
+        clearPersistedErrors(sessionKey);
+      }
       streamText = "";
       streamRunId = null;
       sending = false;
@@ -220,35 +319,124 @@ function onEvent(evt: any) {
   }
   if (evt.event === "agent") {
     const p = evt.payload;
+    // Track provider failures from model fallback
+    if (p?.stream === "lifecycle" && p.data?.phase === "fallback-error") {
+      const fp = p.data.failedProvider as string | undefined;
+      const fm = p.data.failedModel as string | undefined;
+      const reason = (p.data.reason || "unknown") as string;
+      const errMsg = (p.data.error || "") as string;
+      const attempt = p.data.attempt as number | undefined;
+      const total = p.data.total as number | undefined;
+      if (fp) {
+        providerErrors.set(fp, {
+          error: (errMsg || reason || "failed") as string,
+          reason,
+          ts: Date.now(),
+        });
+        updateBudgetPanel();
+        startHealthPoll();
+      }
+      // Show each fallback step as a chat message
+      const profileId = (p.data.failedProfileId || "") as string;
+      const stepLabel = attempt && total ? `[${attempt}/${total}]` : "";
+      const modelLabel = fm || "unknown";
+      const profileLabel = profileId ? ` (${profileId})` : "";
+      const reasonLabel = describeError(reason, errMsg);
+      // Mark timeline placeholder as failed
+      if (p.runId) {
+        timelineCtrl?.failPlaceholder(p.runId, reasonLabel);
+      }
+      const nextLabel =
+        attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
+      const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
+      const fallbackMsg: any = {
+        role: "assistant",
+        content: [{ type: "text", text: fallbackText }],
+        _isError: true,
+        _retryProvider: fp || undefined,
+      };
+      messages.push(fallbackMsg);
+      persistErrorMsg(sessionKey, fallbackMsg);
+      updateChat();
+    }
+    // Show per-profile failure events (auth profile rotation within a provider)
+    if (p?.stream === "lifecycle" && p.data?.phase === "fallback-profile-error") {
+      const prov = (p.data.provider || "unknown") as string;
+      const model = (p.data.model || "unknown") as string;
+      const pid = (p.data.profileId || "") as string;
+      const reason = (p.data.reason || "unknown") as string;
+      const errMsg = (p.data.error || "") as string;
+      const pIdx = p.data.profileIndex as number | undefined;
+      const pTotal = p.data.profileTotal as number | undefined;
+      const reasonLabel = describeError(reason, errMsg);
+      const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
+      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
+      const profileMsg: any = {
+        role: "assistant",
+        content: [{ type: "text", text: profileText }],
+        _isError: true,
+        _retryProvider: prov,
+      };
+      messages.push(profileMsg);
+      persistErrorMsg(sessionKey, profileMsg);
+      updateChat();
+    }
     if (p?.stream === "lifecycle" && p.data?.model) {
+      // Ignore lifecycle events that don't belong to the current session (e.g. heartbeat)
+      if (p.data.sessionKey && p.data.sessionKey !== sessionKey) return;
+      // Also ignore if we're not expecting any response (no pending send, no active runs)
+      if (!sending && activeRuns.size === 0 && !streamRunId && !activeRuns.has(p.runId)) return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
+        const startProvider = p.data.modelProvider || providerOf(p.data.model);
+        if (providerErrors.has(startProvider)) {
+          providerErrors.delete(startProvider);
+        }
         activeRuns.set(p.runId, {
           model: p.data.model,
-          provider: p.data.modelProvider || providerOf(p.data.model),
+          provider: startProvider,
           authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
         });
         saveActiveRuns();
         updateBudgetPanel();
+        updateChat();
+        updateBtn();
+        startThinkingTick();
+        // Activate timeline placeholder with provider/model info
+        timelineCtrl?.activatePlaceholder(p.runId, p.data.model, startProvider);
       } else if (p.data.phase === "end" || p.data.phase === "error") {
         const endRunId = p.runId;
         setTimeout(() => {
           activeRuns.delete(endRunId);
           saveActiveRuns();
           updateBudgetPanel();
+          updateChat();
+          updateBtn();
         }, 3000);
-        // Poll anatomy API after turn completes
+        // Poll anatomy API after turn completes — fetch recent events to capture fallback attempts
         const sk = sessionKey;
-        const rid = p.runId;
+        const turnNum = currentTurnNumber;
         setTimeout(() => {
           if (sk && timelineCtrl) {
             const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-            fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}/latest`)
+            fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
               .then((r) => (r.ok ? r.json() : null))
-              .then((ev) => {
-                if (ev?.turn) timelineCtrl!.pushEvent(ev, rid);
+              .then((body) => {
+                const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+                if (events.length === 0) return;
+                // Find events for the current turn
+                const turnEvents = events.filter((ev: any) => ev.turn === turnNum);
+                if (turnEvents.length > 0) {
+                  timelineCtrl!.replacePlaceholders(turnNum, turnEvents);
+                } else {
+                  // Fallback: just use the latest event (backwards compat)
+                  const latest = events[events.length - 1];
+                  if (latest?.turn) {
+                    timelineCtrl!.replacePlaceholders(latest.turn, [latest]);
+                  }
+                }
               })
               .catch(() => {});
           }
@@ -276,17 +464,34 @@ async function loadChat() {
   }
   const res = await req("chat.history", { sessionKey, limit: 200 }).catch(() => ({ messages: [] }));
   messages = res.messages ?? [];
+  // Sync turn counter from loaded history
+  const userMsgCount = messages.filter((m: any) => m.role === "user").length;
+  currentTurnNumber = userMsgCount;
+  // Restore persisted error messages (survive refresh)
+  const storedErrors = loadPersistedErrors(sessionKey);
+  if (storedErrors.length) {
+    // Insert errors before the last assistant message (natural position),
+    // or append at end if no assistant message follows.
+    const lastAssistantIdx = findLastIndex(messages, (m: any) => m.role === "assistant");
+    if (lastAssistantIdx >= 0) {
+      messages.splice(lastAssistantIdx, 0, ...storedErrors);
+    } else {
+      messages.push(...storedErrors);
+    }
+  }
   updateChat();
   scrollChat();
   updateResponseMap();
 }
 
 async function send(text: string) {
-  if (!text.trim() || !sessionKey || sending) {
+  if (!text.trim() || !sessionKey) {
     return;
   }
   sending = true;
+  currentTurnNumber++;
   messages.push({ role: "user", content: [{ type: "text", text }] });
+  timelineCtrl?.pushPlaceholder(currentTurnNumber);
   updateChat();
   updateBtn();
   scrollChat();
@@ -295,6 +500,36 @@ async function send(text: string) {
     sending = false;
     updateBtn();
   });
+}
+
+function retryProvider(provider: string) {
+  // Clear provider error state
+  providerErrors.delete(provider);
+  updateBudgetPanel();
+  // Remove error messages from this provider and re-render
+  messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
+  clearPersistedErrors(sessionKey);
+  // Find last user message and resend
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if ((messages[i].role ?? "").toLowerCase() === "user") {
+      const text = Array.isArray(messages[i].content)
+        ? messages[i].content
+            .filter((b: any) => b.type === "text")
+            .map((b: any) => b.text)
+            .join("\n")
+        : typeof messages[i].content === "string"
+          ? messages[i].content
+          : "";
+      if (text.trim()) {
+        // Remove the user message — send() will re-add it
+        messages.splice(i, 1);
+        send(text.trim());
+        return;
+      }
+    }
+  }
+  // No user message found — just refresh
+  updateChat();
 }
 
 async function abort() {
@@ -325,12 +560,8 @@ function esc(s: string) {
 }
 
 function md(text: string): string {
-  let h = esc(text);
-  h = h.replace(/```[\w]*\n([\s\S]*?)```/g, "<pre>$1</pre>");
-  h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  h = h.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
-  h = h.replace(/\n/g, "<br>");
+  let h = mdParser.render(text);
+  // Jarvis voice styling
   h = h.replace(
     /<strong>Jarvis:<\/strong>\s*<em>(.*?)<\/em>/gi,
     '<strong>Jarvis:</strong> <span class="jarvis-voice">$1</span>',
@@ -374,7 +605,12 @@ function renderMsg(msg: any, idx: number): string {
     if (role === "user") {
       h += `<div class="msg user" data-msg-idx="${idx}">${md(text)}</div>`;
     } else if (role === "assistant") {
-      h += `<div class="msg assistant">${md(text)}</div>`;
+      const errorClass = msg._isError ? " msg-error" : "";
+      const retryBtn =
+        msg._isError && msg._retryProvider
+          ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" title="Retry ${esc(msg._retryProvider)}">↻</button>`
+          : "";
+      h += `<div class="msg assistant${errorClass}">${md(text)}${retryBtn}</div>`;
     } else {
       const sid = `s${idx}`;
       h += `<div class="msg system" data-tid="${sid}">${esc(text.slice(0, 80).replace(/\n/g, " "))}${text.length > 80 ? "…" : ""}</div>`;
@@ -384,6 +620,107 @@ function renderMsg(msg: any, idx: number): string {
     }
   }
   return h;
+}
+
+function renderMsgToolsOnly(msg: any, idx: number): string {
+  const content = Array.isArray(msg.content) ? msg.content : [];
+  const tus = content.filter((b: any) => b.type === "tool_use");
+  const trs = content.filter((b: any) => b.type === "tool_result");
+  let h = "";
+
+  for (const tu of tus) {
+    const a = tu.input ?? {};
+    const d = String(a.command ?? a.file_path ?? a.path ?? a.query ?? a.url ?? "")
+      .replace(/\/home\/[^/]+/g, "~")
+      .slice(0, 90);
+    const tid = `t${idx}-${tu.id ?? tu.name}`;
+    const exp = expandedTools.has(tid);
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status run">⋯</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
+    if (exp) {
+      h += `<div class="tool-detail">${esc(JSON.stringify(a, null, 2))}</div>`;
+    }
+  }
+  for (const tr of trs) {
+    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
+    const err = tr.is_error === true;
+    const tid = `r${idx}-${tr.tool_use_id ?? "r"}`;
+    const exp = expandedTools.has(tid);
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.slice(0, 60).replace(/\n/g, " "))}${rt.length > 60 ? "…" : ""}</span></div>`;
+    if (exp) {
+      h += `<div class="tool-detail">${esc(rt.slice(0, 2000))}</div>`;
+    }
+  }
+  return h;
+}
+
+function renderThinkingBlock(msgs: { msg: any; idx: number }[], blockId: string): string {
+  const expanded = expandedTools.has(blockId);
+  const chevron = expanded ? "▾" : "▸";
+  let h = `<div class="thinking-block${expanded ? " expanded" : ""}" data-tid="${blockId}">`;
+  h += `<div class="thinking-header">${chevron} Thinking (${msgs.length} step${msgs.length > 1 ? "s" : ""})</div>`;
+  if (expanded) {
+    h += `<div class="thinking-content">`;
+    for (const { msg, idx } of msgs) {
+      const content = Array.isArray(msg.content) ? msg.content : [];
+      const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
+      const text = texts.join("\n") || (typeof msg.content === "string" ? msg.content : "");
+      if (text.trim()) {
+        const errClass = msg._isError ? " thinking-step-error" : "";
+        h += `<div class="thinking-step${errClass}">${md(text)}</div>`;
+      }
+    }
+    h += `</div>`;
+  }
+  h += `</div>`;
+  return h;
+}
+
+// ─── Thinking Indicator ───
+let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
+
+function renderThinkingIndicator(): string {
+  if (activeRuns.size > 0) {
+    let rows = "";
+    for (const [runId, info] of activeRuns) {
+      const color = PROVIDER_COLORS[info.provider] || "#6b7280";
+      const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
+      const name = modelName(info.model);
+      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
+  <div class="thinking-dots"><span></span><span></span><span></span></div>
+  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
+  <span class="thinking-elapsed">${elapsed}s</span>
+  <span class="thinking-stop">Stop</span>
+</div>`;
+    }
+    return `<div class="thinking-indicator">${rows}</div>`;
+  }
+  if (sending) {
+    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b7280">
+  <div class="thinking-dots"><span></span><span></span><span></span></div>
+  <span class="thinking-model">sending...</span>
+</div></div>`;
+  }
+  return "";
+}
+
+function startThinkingTick() {
+  if (thinkingTickInterval) return;
+  thinkingTickInterval = setInterval(() => {
+    if (activeRuns.size === 0) {
+      clearInterval(thinkingTickInterval!);
+      thinkingTickInterval = null;
+      return;
+    }
+    document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
+      const runId = el.getAttribute("data-run-id");
+      if (!runId) return;
+      const info = activeRuns.get(runId);
+      if (!info) return;
+      const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
+      const span = el.querySelector(".thinking-elapsed");
+      if (span) span.textContent = `${elapsed}s`;
+    });
+  }, 1000);
 }
 
 // ─── Budget Helpers ───
@@ -413,17 +750,85 @@ function formatNum(n: number) {
   return n.toString();
 }
 
+function renderWithThinkingGroups(): string {
+  let h = "";
+  // Split messages into runs (bounded by user messages)
+  let runStart = 0;
+  for (let i = 0; i <= messages.length; i++) {
+    const isUserOrEnd = i === messages.length || (messages[i].role ?? "").toLowerCase() === "user";
+    if (!isUserOrEnd) continue;
+
+    // Process the run from runStart to i-1
+    // Find assistant messages with text in this run
+    const assistantTextIndices: number[] = [];
+    for (let j = runStart; j < i; j++) {
+      const m = messages[j];
+      if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+      const content = Array.isArray(m.content) ? m.content : [];
+      const hasText = content.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+      const plainText = typeof m.content === "string" && m.content.trim();
+      if (hasText || plainText) assistantTextIndices.push(j);
+    }
+
+    if (assistantTextIndices.length >= 2) {
+      // We have a thinking group: all-but-last are intermediate
+      const thinkingIndices = new Set(assistantTextIndices.slice(0, -1));
+      const blockId = `tk-${assistantTextIndices[0]}`;
+      const thinkingMsgs: { msg: any; idx: number }[] = [];
+      let blockInserted = false;
+
+      for (let j = runStart; j < i; j++) {
+        if (thinkingIndices.has(j)) {
+          thinkingMsgs.push({ msg: messages[j], idx: j });
+          // Render tool rows from this message even though text goes to thinking block
+          h += renderMsgToolsOnly(messages[j], j);
+          if (!blockInserted && j === assistantTextIndices[assistantTextIndices.length - 2]) {
+            // Insert the thinking block after the last intermediate message
+            h += renderThinkingBlock(thinkingMsgs, blockId);
+            blockInserted = true;
+          }
+        } else {
+          h += renderMsg(messages[j], j);
+        }
+      }
+    } else {
+      // No grouping needed — render normally
+      for (let j = runStart; j < i; j++) {
+        h += renderMsg(messages[j], j);
+      }
+    }
+
+    // Render the user message that ends this run (if not end-of-array)
+    if (i < messages.length) {
+      h += renderMsg(messages[i], i);
+    }
+    runStart = i + 1;
+  }
+  return h;
+}
+
 // ─── Targeted Updates ───
 function updateChat() {
   const el = $("messages");
   if (!el) {
     return;
   }
-  let h = messages.map((m, i) => renderMsg(m, i)).join("");
+  const runActive = !!(streamText || sending || activeRuns.size > 0);
+  let h = "";
+
+  if (runActive) {
+    // Live mode: render all messages normally, no grouping
+    h = messages.map((m, i) => renderMsg(m, i)).join("");
+  } else {
+    // Complete mode: group intermediate assistant texts into thinking blocks
+    h = renderWithThinkingGroups();
+  }
+
   if (streamText) {
     h += `<div class="msg assistant">${md(streamText)}</div>`;
-  } else if (sending) {
-    h += `<div class="streaming"><span class="dots"><span>●</span><span>●</span><span>●</span></span> thinking...</div>`;
+  }
+  if (!streamText) {
+    h += renderThinkingIndicator();
   }
   el.innerHTML = h;
   el.querySelectorAll("[data-tid]").forEach((r) =>
@@ -431,6 +836,16 @@ function updateChat() {
       const id = r.getAttribute("data-tid")!;
       expandedTools.has(id) ? expandedTools.delete(id) : expandedTools.add(id);
       updateChat();
+    }),
+  );
+  el.querySelectorAll(".thinking-run[data-run-id]").forEach((r) =>
+    r.addEventListener("click", () => abort()),
+  );
+  el.querySelectorAll(".retry-provider-btn").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const prov = (btn as HTMLElement).getAttribute("data-retry-provider");
+      if (prov) retryProvider(prov);
     }),
   );
   scrollChat();
@@ -464,18 +879,65 @@ function updateBtn() {
   if (!btn) {
     return;
   }
-  const ta = $("chat-textarea") as HTMLTextAreaElement | null;
-  if (sending || streamRunId) {
-    btn.className = "abort";
-    btn.textContent = "Stop";
+  if (sending || streamRunId || activeRuns.size > 0) {
+    btn.className = "queue";
+    btn.textContent = "Queue";
+    btn.disabled = !connected;
   } else {
     btn.className = "";
     btn.textContent = "Send";
     btn.disabled = !connected;
   }
-  if (ta) {
-    ta.disabled = sending;
+}
+
+// ─── Error Description ───
+// Extract actionable detail from raw LLM error messages instead of showing generic labels
+function describeError(reason: string, errMsg: string): string {
+  const e = errMsg.toLowerCase();
+
+  if (reason === "billing") {
+    // Extract reset date from "regain access on 2026-04-01 at 00:00 UTC"
+    const resetMatch = errMsg.match(/regain access on (\d{4}-\d{2}-\d{2}(?: at [^.]+)?)/i);
+    if (resetMatch) return `billing cap — resets ${resetMatch[1]}`;
+    if (/credit|payment/i.test(errMsg)) return "billing — no credits";
+    return "billing cap reached";
   }
+
+  if (reason === "auth" || reason === "auth_permanent") {
+    if (/refresh token.*(?:not found|invalid|revoked|expired)/i.test(errMsg))
+      return "OAuth token revoked — needs re-login";
+    if (/OAuth token refresh failed/i.test(errMsg)) return "OAuth refresh failed — needs re-login";
+    if (/token.*expired/i.test(errMsg)) return "token expired";
+    if (/invalid.*key|invalid.*api/i.test(errMsg)) return "invalid API key";
+    if (/unauthorized|forbidden|permission/i.test(errMsg)) return "access denied";
+    return reason === "auth_permanent" ? "auth permanently failed" : "auth error";
+  }
+
+  if (reason === "rate_limit") {
+    if (/retry.after.*(\d+)/i.test(errMsg)) {
+      const secs = errMsg.match(/retry.after.*?(\d+)/i);
+      return secs ? `rate limited — retry in ${secs[1]}s` : "rate limited";
+    }
+    if (/tokens? per minute|tpm/i.test(errMsg)) return "TPM limit hit";
+    if (/requests? per minute|rpm/i.test(errMsg)) return "RPM limit hit";
+    if (/quota/i.test(errMsg)) return "quota exceeded";
+    return "rate limited";
+  }
+
+  if (reason === "timeout") return "timeout";
+  if (reason === "model_not_found") return "model not found";
+  if (reason === "session_expired") return "session expired";
+  if (reason === "cooldown") return "in cooldown";
+  if (reason === "overloaded" || /overloaded|503|capacity/i.test(e)) return "overloaded";
+
+  // Fallback: show truncated raw message if we have one, otherwise the reason code
+  if (errMsg && errMsg.length > 0) {
+    // Try to extract just the message field from JSON error responses
+    const msgMatch = errMsg.match(/"message"\s*:\s*"([^"]{1,80})"/);
+    if (msgMatch) return msgMatch[1];
+    return errMsg.slice(0, 80);
+  }
+  return reason || "unknown error";
 }
 
 function modelName(id: string): string {
@@ -542,13 +1004,24 @@ function updateBudgetPanel() {
         badge,
         suffix,
         counts.get(keyId || modelId) || 0,
+        providerErrors.get(provider),
       );
     } else {
       // Multiple keys — one compact row per key with model name inline
-      for (const keyId of keys) {
+      const errInfo = providerErrors.get(provider);
+      for (let ki = 0; ki < keys.length; ki++) {
+        const keyId = keys[ki];
         const prof = authProfiles?.[keyId] || {};
         const keyLabel = prof.label || keyId.split(":")[1] || keyId;
-        html += renderAuthKeyRow(keyId, keyLabel, provider, name, badge, counts.get(keyId) || 0);
+        html += renderAuthKeyRow(
+          keyId,
+          keyLabel,
+          provider,
+          name,
+          badge,
+          counts.get(keyId) || 0,
+          ki === 0 ? errInfo : undefined,
+        );
       }
     }
   }
@@ -583,6 +1056,24 @@ function updateBudgetPanel() {
   el.innerHTML = html;
 }
 
+function shortErrorLabel(reason: string): string {
+  switch (reason) {
+    case "billing":
+      return "billing cap";
+    case "rate_limit":
+      return "rate limited";
+    case "overloaded":
+      return "overloaded";
+    case "auth":
+    case "auth_permanent":
+      return "auth error";
+    case "timeout":
+      return "timeout";
+    default:
+      return "error";
+  }
+}
+
 function renderModelRow(
   id: string,
   provider: string,
@@ -590,20 +1081,26 @@ function renderModelRow(
   badge: string,
   suffix: string,
   count: number,
+  errorInfo?: { error: string; reason: string },
 ): string {
   const color = PROVIDER_COLORS[provider] || "#6b7280";
   const liveClass = count > 0 ? " model-live" : "";
+  const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  const errorBadge = errorInfo
+    ? `<span class="model-error-badge" title="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    : "";
 
-  return `<div class="model-row${liveClass}"${glowStyle}>
+  return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
     ${providerIcon(provider)}
     <span class="model-name">${esc(name)}</span>
     ${badge ? `<span class="model-badge">${badge}</span>` : ""}
     ${suffix ? `<span class="model-auth-suffix">${esc(suffix)}</span>` : ""}
+    ${errorBadge}
     ${countBadge}
   </div>`;
 }
@@ -615,21 +1112,27 @@ function renderAuthKeyRow(
   name: string,
   badge: string,
   count: number,
+  errorInfo?: { error: string; reason: string },
 ): string {
   const color = PROVIDER_COLORS[provider] || "#6b7280";
   const liveClass = count > 0 ? " model-live" : "";
+  const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  const errorBadge = errorInfo
+    ? `<span class="model-error-badge" title="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    : "";
 
-  return `<div class="model-row auth-key-row${liveClass}"${glowStyle}>
+  return `<div class="model-row auth-key-row${liveClass}${errorClass}"${glowStyle}>
     ${providerIcon(provider)}
     <span class="model-name">${esc(name)}</span>
     ${badge ? `<span class="model-badge">${badge}</span>` : ""}
     <span class="auth-key-sep">\u00b7</span>
     <span class="auth-key-label">${esc(label)}</span>
+    ${errorBadge}
     ${countBadge}
   </div>`;
 }
@@ -786,6 +1289,22 @@ function updateSessionsPanel() {
     });
   });
 
+  // Wire session delete buttons
+  el.querySelectorAll(".session-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const key = (btn as HTMLElement).dataset.deleteKey;
+      if (!key) return;
+      try {
+        await req("sessions.delete", { key });
+        // Reload from server to get authoritative list
+        await loadSessions();
+      } catch (err) {
+        console.error("Failed to delete session:", err);
+      }
+    });
+  });
+
   // Wire group header clicks (toggle collapse)
   el.querySelectorAll(".session-group-header").forEach((hdr) => {
     hdr.addEventListener("click", () => {
@@ -809,6 +1328,9 @@ function renderSessionRow(s: any, shortLabel: string): string {
   return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
     <span class="session-label">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
+    <button class="session-delete-btn" data-delete-key="${esc(s.key)}" title="Delete session">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
   </div>`;
 }
 
@@ -864,11 +1386,11 @@ function init() {
     <div class="bottom-right-panel" id="bottom-right-panel">
       <div class="brp-views">
         <div class="brp-view brp-view-active" id="brp-view-context">
-          <div id="treemap-canvas" style="width:100%;height:100%;position:relative"></div>
+          <div id="treemap-canvas" style="position:absolute;inset:0"></div>
           <button class="brp-back-btn" id="brp-back-context" title="Back" style="display:none">\u25C0</button>
         </div>
         <div class="brp-view" id="brp-view-response">
-          <div id="response-canvas" style="width:100%;height:100%;position:relative;overflow:hidden"></div>
+          <div id="response-canvas" style="position:absolute;inset:0;overflow:hidden"></div>
           <button class="brp-back-btn" id="brp-back-response" title="Back" style="display:none">\u25C0</button>
         </div>
       </div>
@@ -877,21 +1399,33 @@ function init() {
   `;
 
   const ta = $("chat-textarea") as HTMLTextAreaElement;
+  try {
+    ta.value = localStorage.getItem(DRAFT_STORAGE_KEY) || "";
+  } catch {}
+  ta.addEventListener("input", () => {
+    try {
+      localStorage.setItem(DRAFT_STORAGE_KEY, ta.value);
+    } catch {}
+  });
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (ta.value.trim() && !sending) {
+      if (ta.value.trim()) {
         send(ta.value);
         ta.value = "";
+        try {
+          localStorage.removeItem(DRAFT_STORAGE_KEY);
+        } catch {}
       }
     }
   });
   $("action-btn")!.addEventListener("click", () => {
-    if (sending || streamRunId) {
-      abort();
-    } else if (ta.value.trim()) {
+    if (ta.value.trim()) {
       send(ta.value);
       ta.value = "";
+      try {
+        localStorage.removeItem(DRAFT_STORAGE_KEY);
+      } catch {}
       ta.focus();
     }
   });
@@ -931,21 +1465,52 @@ function init() {
   const respCanvas = $("response-canvas")!;
   mountResponseTreemap(respCanvas, tmFooter, brpMeta, req, () => sessionKey, brpMeta);
 
-  // Back buttons
-  const backCtx = $("brp-back-context")!;
-  const backResp = $("brp-back-response")!;
+  // Back buttons — siblings of canvas, survive innerHTML wipes
+  const backCtx = $("brp-back-context");
+  const backResp = $("brp-back-response");
 
   function updateBackButtons() {
-    backCtx.style.display = (tmCanvas as any).__treemapCanGoBack?.() ? "" : "none";
-    backResp.style.display = (respCanvas as any).__responseCanGoBack?.() ? "" : "none";
+    const ctxBack = !!(tmCanvas as any).__treemapCanGoBack?.() || !!(tmCanvas as any).__hasOverlay;
+    const respBack =
+      !!(respCanvas as any).__responseCanGoBack?.() || !!(respCanvas as any).__hasOverlay;
+    if (backCtx) backCtx.style.display = ctxBack ? "" : "none";
+    if (backResp) backResp.style.display = respBack ? "" : "none";
+
+    // Check for scrollbars and adjust back button position to avoid overlap
+    const checkScroll = (canvas: HTMLElement, viewId: string) => {
+      const preview = canvas.querySelector(".tm-preview");
+      const view = document.getElementById(viewId);
+      if (preview && view) {
+        if (preview.scrollHeight > preview.clientHeight) {
+          view.classList.add("is-scrolling");
+        } else {
+          view.classList.remove("is-scrolling");
+        }
+      } else if (view) {
+        view.classList.remove("is-scrolling");
+      }
+    };
+    checkScroll(tmCanvas, "brp-view-context");
+    checkScroll(respCanvas, "brp-view-response");
   }
 
-  backCtx.addEventListener("click", () => {
-    (tmCanvas as any).__treemapBack?.();
+  backCtx?.addEventListener("click", () => {
+    if ((tmCanvas as any).__treemapCanGoBack?.()) {
+      (tmCanvas as any).__treemapBack?.();
+    } else {
+      // We're in an overlay (auto-summary) — clear overlay and refresh back to L1 treemap
+      (tmCanvas as any).__hasOverlay = false;
+      (tmCanvas as any).__treemapRefresh?.();
+    }
     updateBackButtons();
   });
-  backResp.addEventListener("click", () => {
-    (respCanvas as any).__responseBack?.();
+  backResp?.addEventListener("click", () => {
+    if ((respCanvas as any).__responseCanGoBack?.()) {
+      (respCanvas as any).__responseBack?.();
+    } else {
+      (respCanvas as any).__hasOverlay = false;
+      (respCanvas as any).__responseRefresh?.();
+    }
     updateBackButtons();
   });
 
@@ -984,7 +1549,10 @@ function init() {
       div.appendChild(hdr);
       div.appendChild(body);
       panel.appendChild(div);
-      (panel as any).__onLevelChange?.();
+      // Mark overlay so updateBackButtons() shows the back button
+      (panel as any).__hasOverlay = true;
+      // Give DOM a tick to render before checking scroll
+      setTimeout(updateBackButtons, 10);
     } catch (e: any) {
       panel.innerHTML = `<div class="tm-empty">Summary failed: ${esc(e?.message ?? "unknown")}</div>`;
     }
@@ -1041,6 +1609,7 @@ function init() {
       }
       requestAnimationFrame(step);
     },
+    PROVIDER_COLORS,
   );
 }
 
