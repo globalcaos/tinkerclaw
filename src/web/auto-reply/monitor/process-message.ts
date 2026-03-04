@@ -1,10 +1,11 @@
+import {
+  annotateOfflineRecovery as _annotateOfflineRecovery,
+  createThinkingReaction as _createThinkingReaction,
+} from "../../../../fork/process-message-hooks.js"; // FORK: used by fork hooks
 import { resolveIdentityNamePrefix } from "../../../agents/identity.js";
 import { resolveChunkMode, resolveTextChunkLimit } from "../../../auto-reply/chunk.js";
 import { shouldComputeCommandAuthorized } from "../../../auto-reply/command-detection.js";
-import {
-  formatInboundEnvelope,
-  resolveEnvelopeFormatOptions,
-} from "../../../auto-reply/envelope.js";
+import { formatInboundEnvelope } from "../../../auto-reply/envelope.js";
 import type { getReplyFromConfig } from "../../../auto-reply/reply.js";
 import {
   buildHistoryContextFromEntries,
@@ -15,20 +16,17 @@ import { dispatchReplyWithBufferedBlockDispatcher } from "../../../auto-reply/re
 import type { ReplyPayload } from "../../../auto-reply/types.js";
 import { toLocationContext } from "../../../channels/location.js";
 import { createReplyPrefixOptions } from "../../../channels/reply-prefix.js";
+import { resolveInboundSessionEnvelopeContext } from "../../../channels/session-envelope.js";
 import type { loadConfig } from "../../../config/config.js";
 import { resolveMarkdownTableMode } from "../../../config/markdown-tables.js";
-import {
-  readSessionUpdatedAt,
-  recordSessionMetaFromInbound,
-  resolveStorePath,
-} from "../../../config/sessions.js";
-import { createThinkingReaction } from "../../../fork/process-message-hooks.js"; // FORK
+import { recordSessionMetaFromInbound } from "../../../config/sessions.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
 import type { resolveAgentRoute } from "../../../routing/resolve-route.js";
 import {
   readStoreAllowFromForDmPolicy,
+  resolvePinnedMainDmOwnerFromAllowlist,
   resolveDmGroupAccessWithCommandGate,
 } from "../../../security/dm-policy-shared.js";
 import { jidToE164, normalizeE164 } from "../../../utils.js";
@@ -39,7 +37,6 @@ import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
-import { maybeSendAckMessage } from "./ack-message.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import { formatGroupMembers } from "./group-members.js";
 import { trackBackgroundTask, updateLastRouteInBackground } from "./last-route.js";
@@ -115,6 +112,18 @@ async function resolveWhatsAppCommandAuthorized(params: {
   return access.commandAuthorized;
 }
 
+function resolvePinnedMainDmRecipient(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  msg: WebInboundMsg;
+}): string | null {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.msg.accountId });
+  return resolvePinnedMainDmOwnerFromAllowlist({
+    dmScope: params.cfg.session?.dmScope,
+    allowFrom: account.allowFrom,
+    normalizeEntry: (entry) => normalizeE164(entry),
+  });
+}
+
 export async function processMessage(params: {
   cfg: ReturnType<typeof loadConfig>;
   msg: WebInboundMsg;
@@ -144,12 +153,9 @@ export async function processMessage(params: {
   suppressGroupHistoryClear?: boolean;
 }) {
   const conversationId = params.msg.conversationId ?? params.msg.from;
-  const storePath = resolveStorePath(params.cfg.session?.store, {
+  const { storePath, envelopeOptions, previousTimestamp } = resolveInboundSessionEnvelopeContext({
+    cfg: params.cfg,
     agentId: params.route.agentId,
-  });
-  const envelopeOptions = resolveEnvelopeFormatOptions(params.cfg);
-  const previousTimestamp = readSessionUpdatedAt({
-    storePath,
     sessionKey: params.route.sessionKey,
   });
   let combinedBody = buildInboundLine({
@@ -189,18 +195,6 @@ export async function processMessage(params: {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
-  // Annotate offline-recovered messages so the agent knows to review before acting.
-  // FORK: Annotate offline-recovered messages so agent batch-reviews before acting
-  if (params.msg.isOfflineRecovery) {
-    const ageMs = params.msg.timestamp ? Date.now() - params.msg.timestamp : undefined;
-    const ageLabel = ageMs != null ? `${Math.round(ageMs / 60_000)} minutes` : "unknown time";
-    combinedBody =
-      `[OFFLINE RECOVERY — This message was sent ${ageLabel} ago while you were offline. ` +
-      `Read ALL recovered messages before responding. Do NOT act on each one individually. ` +
-      `Summarize what was missed, acknowledge receipt, and ask for confirmation before taking action.]\n` +
-      combinedBody;
-  }
-
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
     sessionKey: params.route.sessionKey,
@@ -214,19 +208,6 @@ export async function processMessage(params: {
 
   // Send ack reaction immediately upon message receipt (post-gating)
   maybeSendAckReaction({
-    cfg: params.cfg,
-    msg: params.msg,
-    agentId: params.route.agentId,
-    sessionKey: params.route.sessionKey,
-    conversationId,
-    verbose: params.verbose,
-    accountId: params.route.accountId,
-    info: params.replyLogger.info.bind(params.replyLogger),
-    warn: params.replyLogger.warn.bind(params.replyLogger),
-  });
-
-  // Send ack message immediately upon message receipt (post-gating)
-  maybeSendAckMessage({
     cfg: params.cfg,
     msg: params.msg,
     agentId: params.route.agentId,
@@ -353,8 +334,20 @@ export async function processMessage(params: {
     OriginatingTo: params.msg.from,
   });
 
-  if (dmRouteTarget) {
-    // FORK: removed mainSessionKey guard — see merge-blueprint.md
+  // Only update main session's lastRoute when DM actually IS the main session.
+  // When dmScope="per-channel-peer", the DM uses an isolated sessionKey,
+  // and updating mainSessionKey would corrupt routing for the session owner.
+  const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
+    cfg: params.cfg,
+    msg: params.msg,
+  });
+  const shouldUpdateMainLastRoute =
+    !pinnedMainDmRecipient || pinnedMainDmRecipient === dmRouteTarget;
+  if (
+    dmRouteTarget &&
+    params.route.sessionKey === params.route.mainSessionKey &&
+    shouldUpdateMainLastRoute
+  ) {
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
@@ -366,6 +359,14 @@ export async function processMessage(params: {
       ctx: ctxPayload,
       warn: params.replyLogger.warn.bind(params.replyLogger),
     });
+  } else if (
+    dmRouteTarget &&
+    params.route.sessionKey === params.route.mainSessionKey &&
+    pinnedMainDmRecipient
+  ) {
+    logVerbose(
+      `Skipping main-session last route update for ${dmRouteTarget} (pinned owner ${pinnedMainDmRecipient})`,
+    );
   }
 
   const metaTask = recordSessionMetaFromInbound({
@@ -383,15 +384,6 @@ export async function processMessage(params: {
     );
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
-
-  // Fork: visible progress indicator for WhatsApp groups (Baileys #866 workaround).
-  // FORK: visible progress indicator for WhatsApp groups
-  const thinkingReaction = createThinkingReaction({
-    messageId: params.msg.id,
-    chatId: params.msg.chatId,
-    senderJid: params.msg.senderJid,
-    accountId: params.msg.accountId,
-  });
 
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
@@ -432,9 +424,6 @@ export async function processMessage(params: {
           combinedBodySessionKey: params.route.sessionKey,
           logVerboseMessage: shouldLog,
         });
-        if (info.kind === "final") {
-          thinkingReaction.stop(); // Fork: remove 🤔
-        }
         const fromDisplay =
           params.msg.chatType === "group" ? conversationId : (params.msg.from ?? "unknown");
         const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
@@ -455,10 +444,7 @@ export async function processMessage(params: {
           `Failed sending web ${label} to ${params.msg.from ?? conversationId}: ${formatError(err)}`,
         );
       },
-      onReplyStart: async () => {
-        await params.msg.sendComposing();
-        thinkingReaction.start(); // Fork: 🤔 progress indicator
-      },
+      onReplyStart: params.msg.sendComposing,
     },
     replyOptions: {
       // WhatsApp delivery intentionally suppresses non-final payloads.
@@ -467,8 +453,6 @@ export async function processMessage(params: {
       onModelSelected,
     },
   });
-
-  thinkingReaction.stop(); // Fork: safety net cleanup
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {
