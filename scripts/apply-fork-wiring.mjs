@@ -29,8 +29,10 @@ function patchAttempt() {
   const file = "src/agents/pi-embedded-runner/run/attempt.ts";
   let src = readFile(file);
 
-  const FORK_IMPORT = 'import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point';
-  const RETRIEVAL_IMPORT = 'import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack';
+  const FORK_IMPORT =
+    'import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point';
+  const RETRIEVAL_IMPORT =
+    'import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack';
 
   // Add imports if missing
   if (!src.includes("fork/attempt-hooks")) {
@@ -38,7 +40,13 @@ function patchAttempt() {
     const lastImportIdx = src.lastIndexOf("\nimport ");
     if (lastImportIdx > -1) {
       const lineEnd = src.indexOf("\n", lastImportIdx + 1);
-      src = src.slice(0, lineEnd + 1) + RETRIEVAL_IMPORT + "\n" + FORK_IMPORT + "\n" + src.slice(lineEnd + 1);
+      src =
+        src.slice(0, lineEnd + 1) +
+        RETRIEVAL_IMPORT +
+        "\n" +
+        FORK_IMPORT +
+        "\n" +
+        src.slice(lineEnd + 1);
     }
   }
 
@@ -57,7 +65,7 @@ function patchSystemPrompt() {
     // Find the buildAgentSystemPrompt params type and add personaBlock
     src = src.replace(
       /(ttsHint\?: string;)/,
-      '$1\n  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */\n  personaBlock?: string;',
+      "$1\n  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */\n  personaBlock?: string;",
     );
   }
 
@@ -65,14 +73,15 @@ function patchSystemPrompt() {
   if (!src.includes("isMinimal") && src.includes("buildSkillsSection")) {
     src = src.replace(
       /function buildSkillsSection\(params: \{\s*skillsPrompt\?: string;\s*readToolName: string\s*\}\)/,
-      'function buildSkillsSection(params: { skillsPrompt?: string; isMinimal: boolean; readToolName: string })',
+      "function buildSkillsSection(params: { skillsPrompt?: string; isMinimal: boolean; readToolName: string })",
     );
     // Add early return for isMinimal
     const skillsFnBody = src.indexOf("function buildSkillsSection");
     if (skillsFnBody > -1) {
       const bodyStart = src.indexOf("{", src.indexOf(")", skillsFnBody));
       if (bodyStart > -1 && !src.slice(bodyStart, bodyStart + 200).includes("isMinimal")) {
-        src = src.slice(0, bodyStart + 1) +
+        src =
+          src.slice(0, bodyStart + 1) +
           "\n  if (params.isMinimal) {\n    return [];\n  }" +
           src.slice(bodyStart + 1);
       }
@@ -89,7 +98,8 @@ function patchProcessMessage() {
   const file = "src/web/auto-reply/monitor/process-message.ts";
   let src = readFile(file);
 
-  const FORK_IMPORT = 'import { annotateOfflineRecovery, createThinkingReaction } from "../../../../fork/process-message-hooks.js"; // FORK';
+  const FORK_IMPORT =
+    'import { annotateOfflineRecovery, createThinkingReaction } from "../../../../fork/process-message-hooks.js"; // FORK';
 
   if (!src.includes("fork/process-message-hooks")) {
     const lastImportIdx = src.lastIndexOf("\nimport ");
@@ -103,12 +113,57 @@ function patchProcessMessage() {
 }
 
 // ---------------------------------------------------------------------------
+// 4. sessions.ts — webchat delete bypass
+// ---------------------------------------------------------------------------
+function patchSessions() {
+  const file = "src/gateway/server-methods/sessions.ts";
+  let src = readFile(file);
+  let changed = false;
+
+  if (!src.includes("Allow webchat delete")) {
+    const r = insertBeforeAnchor(
+      src,
+      /  params\.respond\(\s*\n?\s*false,\s*\n?\s*undefined,\s*\n?\s*errorShape\(\s*\n?\s*ErrorCodes\.INVALID_REQUEST,\s*\n?\s*`webchat clients cannot/,
+      `  // Allow webchat delete — handler already prevents deleting the main session\n  if (params.action === "delete") {\n    return false;\n  }\n`,
+      "Allow webchat delete",
+    );
+    if (r) {
+      src = r;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeFile(file, src);
+  } else {
+    console.log(`  ✅ ${file} — webchat delete bypass already present`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 console.log("🔌 Applying fork hook wiring...\n");
 
-try { patchAttempt(); } catch (err) { console.warn(`  ⚠️  attempt.ts: ${err.message}`); }
-try { patchSystemPrompt(); } catch (err) { console.warn(`  ⚠️  system-prompt.ts: ${err.message}`); }
-try { patchProcessMessage(); } catch (err) { console.warn(`  ⚠️  process-message.ts: ${err.message}`); }
+try {
+  patchAttempt();
+} catch (err) {
+  console.warn(`  ⚠️  attempt.ts: ${err.message}`);
+}
+try {
+  patchSystemPrompt();
+} catch (err) {
+  console.warn(`  ⚠️  system-prompt.ts: ${err.message}`);
+}
+try {
+  patchProcessMessage();
+} catch (err) {
+  console.warn(`  ⚠️  process-message.ts: ${err.message}`);
+}
+try {
+  patchSessions();
+} catch (err) {
+  console.warn(`  ⚠️  sessions.ts: ${err.message}`);
+}
 
 console.log("\n✅ Fork wiring applied. Run: pnpm build");
