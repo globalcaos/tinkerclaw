@@ -107,6 +107,19 @@ if [ -f scripts/apply-fork-wiring.mjs ]; then
   done
 fi
 
+# Restore fork dependencies in package.json if upstream wiped them
+if [ -f package.json ] && ! grep -q '"better-sqlite3"' package.json; then
+  echo "  🔧 Restoring fork dependencies (better-sqlite3, bindings) to package.json..."
+  node -e "
+    const pkg = JSON.parse(require('fs').readFileSync('package.json','utf8'));
+    pkg.dependencies = pkg.dependencies || {};
+    if (!pkg.dependencies['better-sqlite3']) pkg.dependencies['better-sqlite3'] = '^12.6.2';
+    if (!pkg.dependencies['bindings']) pkg.dependencies['bindings'] = '^1.5.0';
+    require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+  "
+  git add package.json
+fi
+
 # Report remaining conflicts
 REMAINING=$(git diff --name-only --diff-filter=U 2>/dev/null | wc -l)
 if [ "$REMAINING" -gt 0 ]; then
