@@ -22,6 +22,7 @@ import {
   recordSessionMetaFromInbound,
   resolveStorePath,
 } from "../../../config/sessions.js";
+import { createThinkingReaction } from "../../../fork/process-message-hooks.js"; // FORK
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
@@ -35,7 +36,6 @@ import { resolveWhatsAppAccount } from "../../accounts.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
-import { createThinkingReaction } from "./thinking-reaction.js"; // FORK: thinking reaction
 import { whatsappInboundLog, whatsappOutboundLog } from "../loggers.js";
 import type { WebInboundMsg } from "../types.js";
 import { elide } from "../util.js";
@@ -353,7 +353,8 @@ export async function processMessage(params: {
     OriginatingTo: params.msg.from,
   });
 
-  if (dmRouteTarget) { // FORK: removed mainSessionKey guard — see merge-blueprint.md
+  if (dmRouteTarget) {
+    // FORK: removed mainSessionKey guard — see merge-blueprint.md
     updateLastRouteInBackground({
       cfg: params.cfg,
       backgroundTasks: params.backgroundTasks,
