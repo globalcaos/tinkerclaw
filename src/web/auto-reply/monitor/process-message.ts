@@ -1,7 +1,3 @@
-import {
-  annotateOfflineRecovery as _annotateOfflineRecovery,
-  createThinkingReaction as _createThinkingReaction,
-} from "../../../../fork/process-message-hooks.js"; // FORK: used by fork hooks
 import { resolveIdentityNamePrefix } from "../../../agents/identity.js";
 import { resolveChunkMode, resolveTextChunkLimit } from "../../../auto-reply/chunk.js";
 import { shouldComputeCommandAuthorized } from "../../../auto-reply/command-detection.js";
@@ -20,6 +16,10 @@ import { resolveInboundSessionEnvelopeContext } from "../../../channels/session-
 import type { loadConfig } from "../../../config/config.js";
 import { resolveMarkdownTableMode } from "../../../config/markdown-tables.js";
 import { recordSessionMetaFromInbound } from "../../../config/sessions.js";
+import {
+  annotateOfflineRecovery as _annotateOfflineRecovery,
+  createThinkingReaction as _createThinkingReaction,
+} from "../../../fork/process-message-hooks.js"; // FORK: used by fork hooks
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
 import type { getChildLogger } from "../../../logging.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
