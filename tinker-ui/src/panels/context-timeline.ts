@@ -68,6 +68,8 @@ interface BufferEntry {
   event: AnatomyEvent;
   runId?: string;
   groupId: string;
+  placeholder?: "pending" | "active" | "failed";
+  failReason?: string;
 }
 
 interface TimelineController {
@@ -75,11 +77,15 @@ interface TimelineController {
   loadSession(sessionKey: string): void;
   clear(): void;
   getSelected(): AnatomyEvent | null;
+  pushPlaceholder(turn: number): void;
+  activatePlaceholder(runId: string, model: string, provider: string): void;
+  failPlaceholder(runId: string, reason: string): void;
+  replacePlaceholders(turn: number, realEvents: AnatomyEvent[]): void;
 }
 
-const MAX_BUFFER = 60;
-// Per-column chrome: provider icon (14+2) + timestamp (7+2) + group border-bottom (2+2) = 29px
-const COLUMN_CHROME_PX = 29;
+const MAX_BUFFER = 200;
+// Per-column chrome: provider icon (16) + timestamp 2-line (24) + group border (4) + legend (16) = 60px
+const COLUMN_CHROME_PX = 60;
 
 // Map our segment keys to the flat field names in contextSent
 const SEGMENT_TOKEN_FIELDS: Record<string, string> = {
@@ -101,6 +107,7 @@ export function mountContextTimeline(
   getGatewayBase: () => string,
   providerIcons?: Record<string, string>,
   onGroupLineClick?: (groupIndex: number, firstEvent: AnatomyEvent) => void,
+  providerColors?: Record<string, string>,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
   let selectedIdx: number | null = null;
@@ -114,14 +121,24 @@ export function mountContextTimeline(
     const ev = entry.event;
     const tip = document.createElement("div");
     tip.className = "ct-tooltip";
-    const model = cleanModelName(ev.model ?? "unknown");
-    const turn = ev.turn ?? "?";
-    const total = totalTokensFor(ev);
-    const max = maxTokensFor(ev);
-    const util = ev.contextWindow?.utilizationPercent;
-    const utilStr = util != null ? `${util.toFixed(0)}%` : "?";
-    const respStr = ev.responseTokens ? ` · ${fmtK(ev.responseTokens)} out` : "";
-    tip.textContent = `${model} · T${turn} · ${fmtK(total)}/${fmtK(max)} in · ${utilStr}${respStr}`;
+    if (entry.placeholder === "pending") {
+      tip.textContent = "Sending prompt...";
+    } else if (entry.placeholder === "active") {
+      const model = cleanModelName(ev.model ?? "unknown");
+      tip.textContent = `${model} — processing...`;
+    } else if (entry.placeholder === "failed") {
+      const model = cleanModelName(ev.model ?? "unknown");
+      tip.textContent = `${model} — ${entry.failReason || "failed"}`;
+    } else {
+      const model = cleanModelName(ev.model ?? "unknown");
+      const turn = ev.turn ?? "?";
+      const total = totalTokensFor(ev);
+      const max = maxTokensFor(ev);
+      const util = ev.contextWindow?.utilizationPercent;
+      const utilStr = util != null ? `${util.toFixed(0)}%` : "?";
+      const respStr = ev.responseTokens ? ` · ${fmtK(ev.responseTokens)} out` : "";
+      tip.textContent = `${model} · T${turn} · ${fmtK(total)}/${fmtK(max)} in · ${utilStr}${respStr}`;
+    }
     tip.style.left = `${x + 10}px`;
     tip.style.top = `${y - 28}px`;
     document.body.appendChild(tip);
@@ -167,19 +184,34 @@ export function mountContextTimeline(
     return String(n);
   }
 
-  function fmtTime(ev: AnatomyEvent): string {
+  const SHORT_MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+
+  function fmtTime(ev: AnatomyEvent): { date: string; time: string } | null {
+    let d: Date | null = null;
     const ms = ev.timestampMs;
     if (ms) {
-      const d = new Date(ms);
-      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      d = new Date(ms);
+    } else if (ev.timestamp) {
+      const parsed = new Date(ev.timestamp);
+      if (!isNaN(parsed.getTime())) d = parsed;
     }
-    if (ev.timestamp) {
-      const d = new Date(ev.timestamp);
-      if (!isNaN(d.getTime())) {
-        return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-      }
-    }
-    return "";
+    if (!d) return null;
+    const date = `${SHORT_MONTHS[d.getMonth()]} ${d.getDate()}`;
+    const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return { date, time };
   }
 
   function getSegmentTokens(ev: AnatomyEvent): { key: string; tokens: number }[] {
@@ -322,10 +354,11 @@ export function mountContextTimeline(
         groupEl.className = "ct-group";
         groupIndex++;
 
-        // Vertical blue line at group start — click scrolls to matching prompt
+        // Vertical blue lollipop at group start — click scrolls to matching prompt
         if (onGroupLineClick) {
           const line = document.createElement("div");
           line.className = "ct-group-line";
+          line.style.height = `${Math.round(maxBarHeight * 0.75)}px`;
           line.title = "Scroll to prompt";
           const gi = groupIndex;
           const firstEv = entry.event;
@@ -340,6 +373,8 @@ export function mountContextTimeline(
       const ev = entry.event;
       const total = totalTokensFor(ev);
       const max = maxTokensFor(ev);
+      const isPlaceholder = !!entry.placeholder;
+      const isFailed = entry.placeholder === "failed";
 
       // Column wrapper: icon + bar-area + timestamp
       const col = document.createElement("div");
@@ -367,37 +402,62 @@ export function mountContextTimeline(
       if (modelShort) {
         iconEl.title = `${provider}/${cleanModelName(ev.model ?? "")}`;
       }
+      if (isFailed) {
+        const badge = document.createElement("span");
+        badge.className = "ct-fail-badge";
+        badge.textContent = "\u2717";
+        iconEl.appendChild(badge);
+        iconEl.title = entry.failReason || "Failed";
+      }
       barArea.appendChild(iconEl);
 
       // Bar: scaled to usedTokens / globalMax, grows from bottom
-      const barHeight = Math.max(4, (total / globalMax) * maxBarHeight);
+      const barHeight = isPlaceholder
+        ? maxBarHeight * 0.75
+        : Math.max(4, (total / globalMax) * maxBarHeight);
       const bar = document.createElement("div");
       bar.className =
-        "ct-bar" + (i === selectedIdx && selectedMode === "context" ? " ct-selected" : "");
+        "ct-bar" +
+        (i === selectedIdx && selectedMode === "context" ? " ct-selected" : "") +
+        (entry.placeholder === "pending" ? " ct-placeholder" : "") +
+        (entry.placeholder === "active" ? " ct-placeholder ct-placeholder-active" : "") +
+        (isFailed ? " ct-failed" : "");
       bar.style.height = `${barHeight}px`;
 
-      // Build segments
-      const segments = getSegmentTokens(ev);
-      const segTotal = segments.reduce((s, seg) => s + seg.tokens, 0);
+      if (isPlaceholder && !isFailed) {
+        const phColor = providerColors?.[ev.provider ?? ""] || "#6b7280";
+        bar.style.setProperty("--ct-placeholder-color", phColor);
+        const seg = document.createElement("div");
+        seg.className = "ct-segment";
+        seg.style.height = "100%";
+        seg.style.background = entry.placeholder === "active" ? phColor : "#6b7280";
+        seg.style.opacity = "0.4";
+        bar.appendChild(seg);
+      } else {
+        const segments = getSegmentTokens(ev);
+        const segTotal = segments.reduce((s, seg) => s + seg.tokens, 0);
 
-      for (const seg of segments) {
-        const el = document.createElement("div");
-        el.className = "ct-segment";
-        const pct = segTotal > 0 ? (seg.tokens / segTotal) * 100 : 0;
-        el.style.height = `${pct}%`;
-        el.style.background = SEGMENT_COLORS[seg.key];
-        bar.appendChild(el);
+        for (const seg of segments) {
+          const el = document.createElement("div");
+          el.className = "ct-segment";
+          const pct = segTotal > 0 ? (seg.tokens / segTotal) * 100 : 0;
+          el.style.height = `${pct}%`;
+          el.style.background = SEGMENT_COLORS[seg.key];
+          bar.appendChild(el);
+        }
       }
 
       // Click — select; re-click triggers auto-summary
       const idx = i;
-      bar.addEventListener("click", () => {
-        const isReclick = selectedIdx === idx && selectedMode === "context";
-        selectedIdx = idx;
-        selectedMode = "context";
-        onBarSelect(buffer[idx].event, isReclick ? "context-summarize" : "context");
-        render();
-      });
+      if (!isPlaceholder) {
+        bar.addEventListener("click", () => {
+          const isReclick = selectedIdx === idx && selectedMode === "context";
+          selectedIdx = idx;
+          selectedMode = "context";
+          onBarSelect(buffer[idx].event, isReclick ? "context-summarize" : "context");
+          render();
+        });
+      }
 
       // Hover
       bar.addEventListener("mouseenter", (e) => {
@@ -411,6 +471,10 @@ export function mountContextTimeline(
       });
       bar.addEventListener("mouseleave", removeTooltip);
 
+      // Bars row: context bar + response bar side by side, above the date
+      const barsRow = document.createElement("div");
+      barsRow.className = "ct-bars-row";
+
       barArea.appendChild(bar);
 
       // Max-token line: this model's context window within the uniform canvas
@@ -420,28 +484,16 @@ export function mountContextTimeline(
       maxLine.style.bottom = `${maxLinePx}px`;
       barArea.appendChild(maxLine);
 
-      col.appendChild(barArea);
+      barsRow.appendChild(barArea);
 
-      // Timestamp below bar
-      const tsEl = document.createElement("div");
-      tsEl.className = "ct-ts";
-      tsEl.textContent = fmtTime(ev);
-      col.appendChild(tsEl);
-
-      groupEl!.appendChild(col);
-
-      // Response bar — purple bar showing output tokens, scaled independently
+      // Response bar — side by side with context bar
       const respTokens = respTokensArr[i];
       const respEstimated = !ev.responseTokens && respTokens > 0;
-      if (respTokens > 0) {
-        const respCol = document.createElement("div");
-        respCol.className = "ct-col ct-resp-col";
-
+      if (respTokens > 0 && !isPlaceholder) {
         const respBarArea = document.createElement("div");
-        respBarArea.className = "ct-bar-area";
+        respBarArea.className = "ct-bar-area ct-resp-bar-area";
         respBarArea.style.height = `${maxBarHeight}px`;
 
-        // Independent scale: biggest response = 75% of bar area, rest proportional
         const respHeight = Math.max(4, (respTokens / maxRespTokens) * maxBarHeight * 0.75);
         const respBar = document.createElement("div");
         respBar.className =
@@ -478,19 +530,32 @@ export function mountContextTimeline(
         });
 
         respBarArea.appendChild(respBar);
-        respCol.appendChild(respBarArea);
-
-        // Empty timestamp placeholder for alignment
-        const respTs = document.createElement("div");
-        respTs.className = "ct-ts";
-        respCol.appendChild(respTs);
-
-        groupEl!.appendChild(respCol);
+        barsRow.appendChild(respBarArea);
       }
+
+      col.appendChild(barsRow);
+
+      // Timestamp below both bars (two lines: date + time)
+      const tsEl = document.createElement("div");
+      tsEl.className = "ct-ts";
+      if (!isPlaceholder && !isFailed) {
+        const ts = fmtTime(ev);
+        if (ts) {
+          const dateLine = document.createElement("div");
+          dateLine.textContent = ts.date;
+          const timeLine = document.createElement("div");
+          timeLine.textContent = ts.time;
+          tsEl.appendChild(dateLine);
+          tsEl.appendChild(timeLine);
+        }
+      }
+      col.appendChild(tsEl);
+
+      groupEl!.appendChild(col);
     }
 
-    // No scroll needed — flex-end keeps newest bars on the right,
-    // older bars overflow off the left edge.
+    // Scroll to rightmost (newest) bars after render
+    container.scrollLeft = container.scrollWidth;
   }
 
   // ─── Controller ───
@@ -560,6 +625,78 @@ export function mountContextTimeline(
         return buffer[selectedIdx].event;
       }
       return null;
+    },
+
+    pushPlaceholder(turn: number) {
+      // Synthetic pending entry — no real anatomy data
+      const event: AnatomyEvent = { turn, timestampMs: Date.now() };
+      const groupId = assignGroupId(undefined, event);
+      push({ event, groupId, placeholder: "pending" });
+      selectedIdx = buffer.length - 1;
+      render();
+    },
+
+    activatePlaceholder(runId: string, model: string, provider: string) {
+      // Find the latest pending placeholder and upgrade it to active
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        if (buffer[i].placeholder === "pending") {
+          buffer[i].placeholder = "active";
+          buffer[i].runId = runId;
+          buffer[i].event.model = model;
+          buffer[i].event.provider = provider;
+          render();
+          return;
+        }
+      }
+      // No pending placeholder found — create a new active one
+      const event: AnatomyEvent = { turn: undefined, model, provider, timestampMs: Date.now() };
+      const groupId = assignGroupId(runId, event);
+      push({ event, runId, groupId, placeholder: "active" });
+      selectedIdx = buffer.length - 1;
+      render();
+    },
+
+    failPlaceholder(runId: string, reason: string) {
+      // Mark the active placeholder as failed, then add a new pending one for the next attempt
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        if (buffer[i].placeholder === "active" && buffer[i].runId === runId) {
+          buffer[i].placeholder = "failed";
+          buffer[i].failReason = reason;
+          // Add a new pending placeholder in the same group for the next attempt
+          const newEntry: BufferEntry = {
+            event: { turn: buffer[i].event.turn, timestampMs: Date.now() },
+            groupId: buffer[i].groupId,
+            placeholder: "pending",
+          };
+          push(newEntry);
+          selectedIdx = buffer.length - 1;
+          render();
+          return;
+        }
+      }
+    },
+
+    replacePlaceholders(turn: number, realEvents: AnatomyEvent[]) {
+      // Remove all placeholder entries for this turn
+      let groupId: string | null = null;
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        if (buffer[i].placeholder && buffer[i].event.turn === turn) {
+          if (!groupId) groupId = buffer[i].groupId;
+          buffer.splice(i, 1);
+          if (selectedIdx !== null && selectedIdx >= i) {
+            selectedIdx = Math.max(0, selectedIdx - 1);
+          }
+        }
+      }
+      // Push real events, reusing the placeholder's groupId
+      for (const ev of realEvents) {
+        const gid = groupId ?? assignGroupId(undefined, ev);
+        push({ event: ev, groupId: gid });
+      }
+      if (buffer.length > 0) {
+        selectedIdx = buffer.length - 1;
+      }
+      render();
     },
   };
 
