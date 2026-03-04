@@ -2,6 +2,7 @@ import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
+import { mountOverseerGraph } from "./panels/overseer-graph.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 
 const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -216,6 +217,7 @@ function onFrame(f: any) {
           updateBtn();
           loadSessions();
           loadBudget();
+          pollOverseerTopology();
           refreshTreemap();
           timelineCtrl?.loadSession(sessionKey);
           scheduleUnconfirmedPrune();
@@ -309,7 +311,11 @@ function onEvent(evt: any) {
       }
       streamText = "";
       streamRunId = null;
-      sending = false;
+      // Only clear sending when no active runs remain — prevents flash
+      // between intermediate turns where the view collapses momentarily
+      if (activeRuns.size === 0) {
+        sending = false;
+      }
       updateChat();
       updateBtn();
       loadBudget();
@@ -381,6 +387,18 @@ function onEvent(evt: any) {
       persistErrorMsg(sessionKey, profileMsg);
       updateChat();
     }
+    // Overseer periodic chat updates
+    if (p?.stream === "lifecycle" && p.data?.phase === "overseer-update") {
+      const mdText = p.data.markdown as string;
+      if (mdText) {
+        messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: mdText }],
+          _isOverseer: true,
+        });
+        updateChat();
+      }
+    }
     if (p?.stream === "lifecycle" && p.data?.model) {
       // Ignore lifecycle events that don't belong to the current session (e.g. heartbeat)
       if (p.data.sessionKey && p.data.sessionKey !== sessionKey) return;
@@ -411,6 +429,10 @@ function onEvent(evt: any) {
         setTimeout(() => {
           activeRuns.delete(endRunId);
           saveActiveRuns();
+          // Clear sending once all runs are done
+          if (activeRuns.size === 0) {
+            sending = false;
+          }
           updateBudgetPanel();
           updateChat();
           updateBtn();
@@ -569,6 +591,240 @@ function md(text: string): string {
   return h;
 }
 
+// ─── Smart Tool Summaries ───
+function shortenPath(s: string): string {
+  return s.replace(/\/home\/[^/]+/g, "~");
+}
+
+function fileName(p: string): string {
+  return p.split("/").pop() ?? p;
+}
+
+function extractGrepTarget(cmd: string): string {
+  // Extract the search pattern from grep commands
+  const m = cmd.match(/grep\s+(?:-[^\s]+\s+)*(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? "") : "";
+}
+
+function extractGrepFiles(cmd: string): string {
+  // Get the last path-like argument
+  const parts = cmd.split(/\s+/);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].includes("/")) return fileName(shortenPath(parts[i]));
+  }
+  return "";
+}
+
+function editPreview(s: string): string {
+  // Return first meaningful line of a string, trimmed
+  const line = s.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+  return line.length > 60 ? line.slice(0, 57) + "…" : line;
+}
+
+function toolSummary(name: string, input: any): string {
+  const n = (name ?? "").toLowerCase();
+  const a = input ?? {};
+  const p = shortenPath(String(a.file_path ?? a.path ?? ""));
+  const fn = fileName(p);
+  switch (n) {
+    case "exec": {
+      const cmd = shortenPath(String(a.command ?? ""));
+      if (cmd.match(/^grep\b/)) {
+        const target = extractGrepTarget(cmd);
+        const where = extractGrepFiles(cmd);
+        return `Looking for any mention of "${target}"${where ? ` inside ${where}` : " across the code"} to find clues`;
+      }
+      if (cmd.match(/^find\b/)) {
+        const nameM = cmd.match(
+          /-name\s+"([^"]+)"|--name\s+"([^"]+)"|-name\s+'([^']+)'|-name\s+(\S+)/,
+        );
+        const what = nameM ? (nameM[1] ?? nameM[2] ?? nameM[3] ?? nameM[4]) : "certain files";
+        return `Scanning folders to locate ${what}`;
+      }
+      if (cmd.startsWith("ls")) return `Looking at what's inside a folder`;
+      if (cmd.startsWith("cat"))
+        return `Opening ${fileName(cmd.split(/\s+/).pop() ?? "")} to read its contents`;
+      if (cmd.startsWith("kill")) return `Stopping a running task that's no longer needed`;
+      if (cmd.includes("pnpm build") || cmd.includes("npm build"))
+        return `Compiling all changes so they take effect`;
+      if (cmd.includes("pnpm test") || cmd.includes("npm test"))
+        return `Running automated checks to make sure nothing broke`;
+      if (cmd.includes("pnpm install") || cmd.includes("npm install"))
+        return `Setting up required software components`;
+      if (cmd.match(/^curl\b/)) {
+        const urlM = cmd.match(/https?:\/\/([^/\s"']+)/);
+        return urlM
+          ? `Requesting information from ${urlM[1]}`
+          : `Requesting information from the internet`;
+      }
+      if (cmd.startsWith("jarvis")) {
+        const textM = cmd.match(/jarvis\s+"([^"]+)"|jarvis\s+'([^']+)'/);
+        const speech = textM ? (textM[1] ?? textM[2] ?? "").slice(0, 60) : "";
+        return speech ? `Saying out loud: "${speech}"` : `Speaking a response out loud`;
+      }
+      if (cmd.startsWith("which")) {
+        const bins = cmd.replace(/^which\s+/, "").trim();
+        return `Checking whether ${bins} is available on this machine`;
+      }
+      if (cmd.startsWith("ps ")) return `Checking what's currently running on the machine`;
+      if (cmd.startsWith("sed")) return `Making a quick text replacement inside a file`;
+      if (cmd.includes("git pull")) return `Downloading the latest version of the code`;
+      if (cmd.includes("git push")) return `Uploading the changes to the shared repository`;
+      if (cmd.includes("git commit")) return `Saving the current changes as a checkpoint`;
+      if (cmd.includes("git diff")) return `Comparing the current version with a previous one`;
+      if (cmd.includes("git ")) return `Doing version control housekeeping`;
+      if (cmd.startsWith("echo"))
+        return `Noting: ${cmd
+          .replace(/^echo\s+/, "")
+          .replace(/^["']|["']$/g, "")
+          .slice(0, 60)}`;
+      if (cmd.startsWith("sleep")) return `Pausing for a moment before continuing`;
+      if (cmd.startsWith("nohup") || cmd.startsWith("setsid"))
+        return `Kicking off a long-running task in the background`;
+      // Fallback: keep it readable
+      const firstWord =
+        cmd
+          .split(/[\s|;&]/)
+          .at(0)
+          ?.trim() ?? "";
+      return firstWord
+        ? `Running a command (${firstWord}) on the system`
+        : `Running a system command`;
+    }
+    case "read":
+      return a.offset
+        ? `Looking at a specific section of ${fn} (around line ${a.offset})`
+        : `Opening ${fn} to see what's in it`;
+    case "edit": {
+      const oldStr = String(a.old_string ?? a.oldText ?? "");
+      const newStr = String(a.new_string ?? a.newText ?? "");
+      if (oldStr && !newStr)
+        return `Removing a piece of code from ${fn} that said "${editPreview(oldStr)}"`;
+      if (!oldStr && newStr) return `Adding new content to ${fn}: "${editPreview(newStr)}"`;
+      // Describe the nature of the change
+      const oldP = editPreview(oldStr);
+      const newP = editPreview(newStr);
+      return `Updating ${fn} — changing "${oldP}" to "${newP}"`;
+    }
+    case "write": {
+      const contentPreview = String(a.content ?? "")
+        .replace(/\n/g, " ")
+        .trim()
+        .slice(0, 50);
+      return `Creating a new file called ${fn} with content starting: "${contentPreview}…"`;
+    }
+    case "process": {
+      const act = a.action ?? "?";
+      if (act === "poll") return `Checking whether a background task has finished yet`;
+      if (act === "kill") return `Stopping a background task that's no longer needed`;
+      if (act === "log") return `Reading what a background task has produced so far`;
+      if (act === "list") return `Looking at all tasks running in the background`;
+      return `Managing a background task (${act})`;
+    }
+    case "memory_search":
+      return `Searching through past notes and conversations for "${a.query ?? ""}"`;
+    case "memory_get":
+      return `Pulling up a specific memory note: ${fileName(String(a.path ?? ""))}`;
+    case "web_search":
+      return `Looking up "${a.query ?? ""}" on the internet`;
+    case "web_fetch": {
+      const url = String(a.url ?? "");
+      const domain = url.match(/https?:\/\/([^/]+)/)?.[1] ?? url;
+      return `Reading a web page from ${domain}`;
+    }
+    case "message": {
+      const act = a.action ?? "send";
+      const target = a.target ?? a.to ?? "someone";
+      if (act === "send") return `Sending a message to ${target}`;
+      if (act === "react") return `Reacting to a message with an emoji`;
+      return `Doing a messaging action (${act}) with ${target}`;
+    }
+    case "browser": {
+      const act = a.action ?? "?";
+      if (act === "screenshot") return `Taking a picture of what the browser shows right now`;
+      if (act === "snapshot") return `Reading the structure of the web page`;
+      if (act === "open") return `Opening a web page${a.url ? `: ${a.url}` : ""}`;
+      if (act === "navigate") return `Going to a different web page${a.url ? `: ${a.url}` : ""}`;
+      if (act === "act") return `Clicking or typing something on the web page`;
+      return `Doing something in the browser (${act})`;
+    }
+    case "image":
+      return a.prompt
+        ? `Looking at an image to ${String(a.prompt).slice(0, 60)}`
+        : `Examining an image`;
+    case "whatsapp_history": {
+      const act = a.action ?? "?";
+      if (act === "search" && a.query) return `Looking through WhatsApp messages for "${a.query}"`;
+      if (act === "search" && a.chat) return `Reading the WhatsApp conversation with ${a.chat}`;
+      if (act === "search") return `Going through recent WhatsApp messages`;
+      if (act === "stats") return `Checking how many WhatsApp messages are stored`;
+      return `Doing something with WhatsApp (${act})`;
+    }
+    case "sessions_spawn":
+      return `Starting a helper to work on: ${String(a.task ?? "").slice(0, 80)}`;
+    case "subagents": {
+      const act = a.action ?? "?";
+      if (act === "list") return `Checking on the helpers that are working in parallel`;
+      if (act === "kill") return `Telling a helper to stop`;
+      if (act === "steer") return `Giving new instructions to a helper`;
+      return `Managing helpers (${act})`;
+    }
+    case "tts":
+      return `Saying out loud: "${String(a.text ?? "").slice(0, 60)}"`;
+    case "session_status":
+      return `Checking how much time and resources this conversation has used`;
+    case "pdf":
+      return a.prompt
+        ? `Reading a PDF to ${String(a.prompt).slice(0, 60)}`
+        : `Reading a PDF document`;
+    default: {
+      const fallback = shortenPath(
+        String(a.command ?? a.file_path ?? a.path ?? a.query ?? a.url ?? a.action ?? ""),
+      );
+      return fallback ? `Using ${name} with: ${fallback}` : `Using a tool called ${name}`;
+    }
+  }
+}
+
+function toolExpandedDetail(name: string, input: any): string {
+  const n = (name ?? "").toLowerCase();
+  const a = input ?? {};
+  const p = shortenPath(String(a.file_path ?? a.path ?? ""));
+  switch (n) {
+    case "exec":
+      return `<div class="explanation">Ran shell command:</div><div class="code-block">${esc(String(a.command ?? ""))}</div>`;
+    case "edit": {
+      const oldStr = String(a.old_string ?? a.oldText ?? "");
+      const newStr = String(a.new_string ?? a.newText ?? "");
+      return `<div class="explanation">Edited ${p} — replaced ${oldStr.length} chars with ${newStr.length} chars:</div><del>${esc(oldStr)}</del><ins>${esc(newStr)}</ins>`;
+    }
+    case "read":
+      return `<div class="explanation">Read ${p}${a.offset ? `, lines ${a.offset}–${(a.offset ?? 0) + (a.limit ?? 0)}` : ""}:</div>`;
+    case "write":
+      return `<div class="explanation">Wrote ${String(a.content ?? "").length} chars to ${p}:</div><div class="code-block">${esc(String(a.content ?? ""))}</div>`;
+    case "memory_search":
+      return `<div class="explanation">Searched memory for: "${esc(String(a.query ?? ""))}"</div>`;
+    case "web_search":
+      return `<div class="explanation">Web search: "${esc(String(a.query ?? ""))}"</div>`;
+    case "web_fetch":
+      return `<div class="explanation">Fetched URL: ${esc(String(a.url ?? ""))}</div>`;
+    case "process":
+      return `<div class="explanation">Process ${esc(String(a.action ?? "?"))} on session ${esc(String(a.sessionId ?? "?"))}${a.timeout ? ` (timeout: ${a.timeout}ms)` : ""}:</div>`;
+    default: {
+      // Formatted key-value pairs instead of raw JSON
+      const entries = Object.entries(a);
+      if (entries.length === 0)
+        return `<div class="explanation">${esc(name ?? "tool")} (no parameters)</div>`;
+      let out = `<div class="explanation">${esc(name ?? "tool")}:</div>`;
+      for (const [k, v] of entries) {
+        const vs = typeof v === "string" ? v : JSON.stringify(v);
+        out += `<div><span class="kv-label">${esc(k)}:</span> ${esc(shortenPath(String(vs)))}</div>`;
+      }
+      return out;
+    }
+  }
+}
+
 function renderMsg(msg: any, idx: number): string {
   const role = (msg.role ?? "").toLowerCase();
   const content = Array.isArray(msg.content) ? msg.content : [];
@@ -576,28 +832,43 @@ function renderMsg(msg: any, idx: number): string {
   const text = texts.join("\n") || (typeof msg.content === "string" ? msg.content : "");
   const tus = content.filter((b: any) => b.type === "tool_use");
   const trs = content.filter((b: any) => b.type === "tool_result");
+  // Build result map for pairing
+  const resultMap = new Map<string, { content: string; isError: boolean }>();
+  for (const tr of trs) {
+    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
+    resultMap.set(tr.tool_use_id ?? "", { content: rt, isError: tr.is_error === true });
+  }
   let h = "";
 
   for (const tu of tus) {
     const a = tu.input ?? {};
-    const d = String(a.command ?? a.file_path ?? a.path ?? a.query ?? a.url ?? "")
-      .replace(/\/home\/[^/]+/g, "~")
-      .slice(0, 90);
+    const d = toolSummary(tu.name, a);
     const tid = `t${idx}-${tu.id ?? tu.name}`;
     const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status run">⋯</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
+    const paired = resultMap.get(tu.id ?? "");
+    const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
+    const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
     if (exp) {
-      h += `<div class="tool-detail">${esc(JSON.stringify(a, null, 2))}</div>`;
+      h += `<div class="tool-detail">${toolExpandedDetail(tu.name, a)}`;
+      if (paired) {
+        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Error:" : "Result:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+      }
+      h += `</div>`;
     }
   }
+  // Render orphan results (no matching tool_use)
+  const pairedIds = new Set(tus.map((tu: any) => tu.id ?? ""));
   for (const tr of trs) {
+    const uid = tr.tool_use_id ?? "";
+    if (pairedIds.has(uid)) continue;
     const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
     const err = tr.is_error === true;
-    const tid = `r${idx}-${tr.tool_use_id ?? "r"}`;
+    const tid = `r${idx}-${uid || "r"}`;
     const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.slice(0, 60).replace(/\n/g, " "))}${rt.length > 60 ? "…" : ""}</span></div>`;
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
     if (exp) {
-      h += `<div class="tool-detail">${esc(rt.slice(0, 2000))}</div>`;
+      h += `<div class="tool-detail">${esc(rt)}</div>`;
     }
   }
 
@@ -613,9 +884,15 @@ function renderMsg(msg: any, idx: number): string {
       h += `<div class="msg assistant${errorClass}">${md(text)}${retryBtn}</div>`;
     } else {
       const sid = `s${idx}`;
-      h += `<div class="msg system" data-tid="${sid}">${esc(text.slice(0, 80).replace(/\n/g, " "))}${text.length > 80 ? "…" : ""}</div>`;
-      if (expandedTools.has(sid)) {
-        h += `<div class="tool-detail">${esc(text)}</div>`;
+      const sysExp = expandedTools.has(sid);
+      // Summarize system message: first sentence or first 120 chars
+      const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+      const firstSentence = flat.match(/^[^.!?\n]{10,120}[.!?]/)?.[0];
+      const sysPreview = firstSentence ?? flat.slice(0, 120);
+      const hasMore = text.length > sysPreview.length;
+      h += `<div class="msg system" data-tid="${sid}">${sysExp ? "▾" : "▸"} ${esc(sysPreview)}${hasMore ? " …" : ""}</div>`;
+      if (sysExp) {
+        h += `<div class="tool-detail system-expanded">${md(text)}</div>`;
       }
     }
   }
@@ -626,28 +903,41 @@ function renderMsgToolsOnly(msg: any, idx: number): string {
   const content = Array.isArray(msg.content) ? msg.content : [];
   const tus = content.filter((b: any) => b.type === "tool_use");
   const trs = content.filter((b: any) => b.type === "tool_result");
+  const resultMap = new Map<string, { content: string; isError: boolean }>();
+  for (const tr of trs) {
+    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
+    resultMap.set(tr.tool_use_id ?? "", { content: rt, isError: tr.is_error === true });
+  }
   let h = "";
 
   for (const tu of tus) {
     const a = tu.input ?? {};
-    const d = String(a.command ?? a.file_path ?? a.path ?? a.query ?? a.url ?? "")
-      .replace(/\/home\/[^/]+/g, "~")
-      .slice(0, 90);
+    const d = toolSummary(tu.name, a);
     const tid = `t${idx}-${tu.id ?? tu.name}`;
     const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status run">⋯</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
+    const paired = resultMap.get(tu.id ?? "");
+    const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
+    const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
     if (exp) {
-      h += `<div class="tool-detail">${esc(JSON.stringify(a, null, 2))}</div>`;
+      h += `<div class="tool-detail">${toolExpandedDetail(tu.name, a)}`;
+      if (paired) {
+        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Error:" : "Result:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+      }
+      h += `</div>`;
     }
   }
+  const pairedIds = new Set(tus.map((tu: any) => tu.id ?? ""));
   for (const tr of trs) {
+    const uid = tr.tool_use_id ?? "";
+    if (pairedIds.has(uid)) continue;
     const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
     const err = tr.is_error === true;
-    const tid = `r${idx}-${tr.tool_use_id ?? "r"}`;
+    const tid = `r${idx}-${uid || "r"}`;
     const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.slice(0, 60).replace(/\n/g, " "))}${rt.length > 60 ? "…" : ""}</span></div>`;
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
     if (exp) {
-      h += `<div class="tool-detail">${esc(rt.slice(0, 2000))}</div>`;
+      h += `<div class="tool-detail">${esc(rt)}</div>`;
     }
   }
   return h;
@@ -807,8 +1097,57 @@ function renderWithThinkingGroups(): string {
   return h;
 }
 
+function renderLiveWithThinking(): string {
+  let h = "";
+  // Find the last user message to identify the current run
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if ((messages[i].role ?? "").toLowerCase() === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  // Render prior messages (before current run) normally
+  for (let i = 0; i <= lastUserIdx; i++) {
+    h += renderMsg(messages[i], i);
+  }
+
+  // Current run: ALL assistant text messages are intermediate reasoning
+  // (the live answer is in streamText, rendered separately by updateChat).
+  // Tool rows render normally; assistant text goes to thinking steps.
+  const currentRunStart = lastUserIdx + 1;
+  let liveThinkingSteps = "";
+  for (let j = currentRunStart; j < messages.length; j++) {
+    const m = messages[j];
+    const role = (m.role ?? "").toLowerCase();
+    if (role === "assistant") {
+      // Tool rows render normally in the chat flow
+      h += renderMsgToolsOnly(m, j);
+      // Assistant text → live thinking step (stacks, never replaced)
+      const content = Array.isArray(m.content) ? m.content : [];
+      const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
+      const text = texts.join("\n") || (typeof m.content === "string" ? m.content : "");
+      if (text.trim()) {
+        const errClass = m._isError ? " thinking-step-error" : "";
+        liveThinkingSteps += `<div class="thinking-step live${errClass}">${md(text)}</div>`;
+      }
+    } else {
+      // System / other messages render normally
+      h += renderMsg(m, j);
+    }
+  }
+  // Show accumulated reasoning as an always-open block
+  if (liveThinkingSteps) {
+    h += `<div class="thinking-block expanded live-thinking">`;
+    h += `<div class="thinking-header">▾ Reasoning…</div>`;
+    h += `<div class="thinking-content">${liveThinkingSteps}</div>`;
+    h += `</div>`;
+  }
+  return h;
+}
+
 // ─── Targeted Updates ───
-function updateChat() {
+function updateChat(skipScroll = false) {
   const el = $("messages");
   if (!el) {
     return;
@@ -817,25 +1156,38 @@ function updateChat() {
   let h = "";
 
   if (runActive) {
-    // Live mode: render all messages normally, no grouping
-    h = messages.map((m, i) => renderMsg(m, i)).join("");
+    // Live mode: render messages but show intermediate assistant texts as
+    // live thinking steps so they stack instead of being replaced
+    h = renderLiveWithThinking();
   } else {
     // Complete mode: group intermediate assistant texts into thinking blocks
     h = renderWithThinkingGroups();
   }
 
-  if (streamText) {
-    h += `<div class="msg assistant">${md(streamText)}</div>`;
-  }
-  if (!streamText) {
+  // Always show thinking indicator when a run is active
+  if (activeRuns.size > 0 || sending) {
     h += renderThinkingIndicator();
+  }
+  // Show streaming text below indicator
+  if (streamText) {
+    h += `<div class="msg assistant streaming">${md(streamText)}</div>`;
   }
   el.innerHTML = h;
   el.querySelectorAll("[data-tid]").forEach((r) =>
     r.addEventListener("click", () => {
       const id = r.getAttribute("data-tid")!;
       expandedTools.has(id) ? expandedTools.delete(id) : expandedTools.add(id);
-      updateChat();
+      // Re-render without scrolling, then restore clicked element into view
+      const clickedRect = (r as HTMLElement).getBoundingClientRect();
+      const scrollContainer = $("messages");
+      const prevScroll = scrollContainer ? scrollContainer.scrollTop : 0;
+      updateChat(true);
+      // Find the same element after re-render and adjust scroll so it stays put
+      const after = el.querySelector(`[data-tid="${id}"]`) as HTMLElement | null;
+      if (after && scrollContainer) {
+        const afterRect = after.getBoundingClientRect();
+        scrollContainer.scrollTop = prevScroll + (afterRect.top - clickedRect.top);
+      }
     }),
   );
   el.querySelectorAll(".thinking-run[data-run-id]").forEach((r) =>
@@ -848,7 +1200,7 @@ function updateChat() {
       if (prov) retryProvider(prov);
     }),
   );
-  scrollChat();
+  if (!skipScroll) scrollChat();
 }
 
 function updateDots() {
@@ -1381,6 +1733,10 @@ function init() {
         <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
+      <div class="rpanel" id="overseer-panel">
+        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
+        <div id="overseer-graph" class="rpanel-body overseer-graph-container"></div>
+      </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
     <div class="bottom-right-panel" id="bottom-right-panel">
@@ -1613,6 +1969,29 @@ function init() {
   );
 }
 
+// ─── Overseer Graph ───
+let overseerCtrl: ReturnType<typeof mountOverseerGraph> | null = null;
+const overseerContainer = document.getElementById("overseer-graph");
+if (overseerContainer) {
+  overseerCtrl = mountOverseerGraph(overseerContainer, { providerIconFn: providerIcon });
+}
+
+async function pollOverseerTopology() {
+  if (!connected) return;
+  try {
+    const snap = await req("overseer.topology", {});
+    if (overseerCtrl && snap) {
+      overseerCtrl.update(snap);
+      const countEl = document.getElementById("overseer-count");
+      if (countEl) {
+        countEl.textContent = snap.nodes?.length ? `(${snap.nodes.length})` : "";
+      }
+    }
+  } catch {
+    // overseer plugin not loaded — hide panel silently
+  }
+}
+
 function updateForensicBtn() {
   const btn = $("forensic-btn");
   if (!btn) {
@@ -1638,3 +2017,6 @@ setInterval(() => {
     loadBudget();
   }
 }, 300_000);
+setInterval(() => {
+  if (connected) pollOverseerTopology();
+}, 5000);

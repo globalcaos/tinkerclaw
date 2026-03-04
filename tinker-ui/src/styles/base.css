@@ -56,13 +56,26 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .msg hr{border:none;border-top:1px solid var(--border);margin:6px 0}
 
 /* Tool rows */
-.tool-row{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:11px;color:var(--muted);cursor:pointer;border-radius:4px}
+.tool-row{display:flex;align-items:flex-start;gap:6px;padding:2px 0;font-size:11px;color:var(--muted);cursor:pointer;border-radius:4px;flex-wrap:wrap}
 .tool-row:hover{background:var(--surface2);color:var(--text)}
 .tool-row .status{width:14px;text-align:center;font-weight:700;font-size:12px}
 .tool-row .status.ok{color:var(--green)}.tool-row .status.err{color:var(--red)}.tool-row .status.run{color:var(--muted)}
 .tool-row .name{font-weight:600;color:var(--text)}
-.tool-row .detail{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:"SF Mono",monospace;font-size:10px}
+.tool-row .detail{flex:1;min-width:0;font-family:"SF Mono",monospace;font-size:10px;word-break:break-word}
 .tool-detail{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin:2px 0;font-size:11px;font-family:"SF Mono",monospace;white-space:pre-wrap;max-height:none;overflow-y:visible;line-height:1.4}
+.tool-detail .explanation{color:var(--muted);font-style:italic;margin-bottom:4px;font-family:inherit}
+.tool-detail del{background:rgba(255,0,0,0.15);color:#ff6b6b;text-decoration:line-through;display:block;padding:2px 4px;border-radius:2px;margin:2px 0}
+.tool-detail ins{background:rgba(0,255,0,0.12);color:#69db7c;text-decoration:none;display:block;padding:2px 4px;border-radius:2px;margin:2px 0}
+.tool-detail .code-block{background:var(--surface2);border-radius:3px;padding:4px 6px;margin:2px 0}
+.tool-detail .kv-label{color:var(--muted);font-weight:600}
+.tool-result-inline{border-top:1px dashed var(--border);margin-top:4px;padding-top:4px}
+.tool-detail .explanation{color:var(--muted);font-style:italic;margin-bottom:4px;font-family:inherit}
+.tool-detail del{background:rgba(255,80,80,0.15);color:#ff6b6b;text-decoration:line-through;display:block;padding:2px 4px;border-radius:2px;margin:2px 0}
+.tool-detail ins{background:rgba(80,220,100,0.12);color:#69db7c;text-decoration:none;display:block;padding:2px 4px;border-radius:2px;margin:2px 0}
+.tool-detail .code-block{background:var(--surface2);border-radius:3px;padding:4px 6px;margin:2px 0}
+.tool-detail .kv-label{color:var(--muted);font-weight:600}
+.tool-result-inline{border-top:1px dashed var(--border);margin-top:6px;padding-top:6px}
+.tool-detail.system-expanded{text-align:left;max-width:100%}
 
 /* Thinking block (collapsible intermediate reasoning) */
 .thinking-block{margin:4px 0;border-left:2px solid var(--purple);border-radius:0 6px 6px 0;background:var(--surface2);overflow:hidden}
@@ -75,6 +88,11 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .thinking-step pre{background:var(--surface);padding:4px 6px;border-radius:4px;overflow-x:auto;font-size:11px;margin:4px 0}
 .thinking-step code{font-family:"SF Mono","Fira Code",monospace;font-size:11px}
 .thinking-step-error{color:var(--red);opacity:.6}
+/* Live thinking (during streaming) */
+.thinking-block.live-thinking{border-left-color:var(--accent);background:rgba(124,58,237,0.03)}
+.thinking-step.live{opacity:.65;font-style:italic}
+.thinking-step.live:last-child{border-bottom:none}
+.msg.assistant.streaming{border-left:2px solid var(--accent);opacity:.85}
 
 /* Thinking indicator */
 .thinking-indicator{display:flex;flex-direction:column;gap:3px;padding:4px 10px}
@@ -319,3 +337,19 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .brp-view.is-scrolling #treemap-canvas,
 .brp-view.is-scrolling #response-canvas{right:14px}
 .brp-view.is-scrolling .brp-back-btn{right:18px}
+
+/* ─── Overseer Graph Panel ─── */
+.overseer-graph-container{min-height:200px;max-height:500px;overflow:hidden;background:var(--bg,#0a0a1a);border-radius:8px}
+.overseer-graph-container svg{display:block}
+.overseer-node{cursor:pointer;transition:opacity .3s}
+.overseer-node--working .overseer-status-ring{animation:overseer-pulse 2s ease-in-out infinite}
+.overseer-node--stuck .overseer-status-ring{animation:overseer-alert 1s ease-in-out infinite}
+.overseer-node--waiting .overseer-status-ring{stroke-dasharray:4 4;animation:overseer-dash 2s linear infinite}
+.overseer-node--main circle:nth-child(2){filter:url(#overseer-glow)}
+.overseer-node--idle .overseer-status-ring{stroke-opacity:.3;stroke-dasharray:8 4}
+.overseer-edge{transition:opacity .3s}
+.overseer-empty{opacity:.7}
+.overseer-tokens{font-variant-numeric:tabular-nums}
+@keyframes overseer-pulse{0%,100%{stroke-opacity:.4;stroke-width:2}50%{stroke-opacity:1;stroke-width:3}}
+@keyframes overseer-alert{0%,100%{stroke-opacity:.5;stroke-width:2}50%{stroke-opacity:1;stroke-width:4}}
+@keyframes overseer-dash{to{stroke-dashoffset:-16}}
