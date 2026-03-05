@@ -14,12 +14,26 @@ That's it. The script handles everything: merge, guardian check, build, deploy, 
 ## Step 2: Report the result
 Based on the script's output, write a summary:
 - Commits merged (or "up to date")
-- Guardian result
-- Build result
+- Guardian result (issues found / fixed)
+- Build result (first attempt or self-healed)
+- Self-heal actions taken (if any — wiring re-applied, errors classified)
 - Deploy result
 - Any escalation messages
 
-## Step 3: Fork Isolation Score
+## Step 3: Review postmortem (LEARNING LOOP)
+After the merge, check if a postmortem was generated:
+```bash
+cat ~/.openclaw/workspace/memory/knowledge/merge-postmortem-$(date +%Y-%m-%d).md 2>/dev/null || echo "No postmortem today"
+```
+
+If a postmortem exists:
+1. **Include its content** in the daily report under "## Postmortem"
+2. **Flag unknown errors**: If the postmortem shows "Unknown Error Signatures", highlight them prominently — these are gaps in automation that Oscar needs to address
+3. **Track trends**: Note if the same categories keep appearing across days (check previous postmortems)
+
+If the build passed on first attempt with zero guardian issues, note "Clean merge — no learning needed."
+
+## Step 4: Fork Isolation Score
 ```bash
 cd ~/src/clawdbot-moltbot-openclaw
 SAFE=$(find src/fork src/memory src/whatsapp-history src/agents/continuous-compact src/agents/pi-extensions extensions/manus extensions/budget-panel extensions/tinker extensions/overseer tinker-ui -name "*.ts" 2>/dev/null | wc -l)
@@ -28,11 +42,17 @@ SCORE=$((SAFE * 100 / (SAFE + MODIFIED)))
 echo "Fork isolation: ${SCORE}% ($SAFE safe / $((SAFE + MODIFIED)) total)"
 ```
 
-## Step 4: Save report
+## Step 5: Save report
 Save to: /home/globalcaos/Documents/AI_reports/Cron_Tasks/0445_Daily_Fork_Sync_Report/YYYY-MM-DD-report.md
 
-## Step 5: Write cron receipt
-Write a receipt to ~/.openclaw/workspace/memory/cron-receipts/YYYY-MM-DD-daily-fork-sync-report.json with: run_id, timestamp, dedup_key, state_before, state_after, actions_taken.
+## Step 6: Write cron receipt
+Write a receipt to ~/.openclaw/workspace/memory/cron-receipts/YYYY-MM-DD-daily-fork-sync-report.json with: run_id, timestamp, dedup_key, state_before, state_after, actions_taken, self_healed (bool), unknown_errors (count).
+
+## Build Error Reference
+If the build fails after merge, consult `scripts/post-merge-build-playbook.md` for known error patterns.
+The playbook maps 8 error categories to their root causes and automated fixes (all handled by `apply-fork-wiring.mjs`).
+The `safe-cron-merge.sh` script now auto-classifies errors and retries after self-heal.
+Include the error classification table in the escalation report if the build still fails after retry.
 
 ## HARD CONSTRAINTS — VIOLATION OF ANY IS A CRITICAL FAILURE
 - NEVER run `git checkout upstream/main -- .` or `git checkout --theirs` on any file

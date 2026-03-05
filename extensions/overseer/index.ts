@@ -1,4 +1,17 @@
-// extensions/overseer/index.ts
+/**
+ * FORK: overseer/index — Plugin entry point for the Overseer real-time agent topology tracker
+ *
+ * Registers the Overseer plugin with the OpenClaw plugin API, wiring up hooks
+ * for subagent spawn/end, LLM input/output, tool calls, and agent completion to
+ * build a live topology graph of all running agents and the main session.
+ * Enriches subagent nodes by polling the gateway session store on a timer, detects
+ * stale/stuck agents, and broadcasts markdown status updates to the Tinker UI via
+ * `agent` lifecycle events through the ChatEmitter. Persists topology state across
+ * gateway restarts. Exposes `overseer.topology` and `overseer.status` gateway
+ * methods for external queries. Heartbeat sessions are filtered out at every hook.
+ *
+ * Wired in by: OpenClaw plugin system via `plugins.entries.overseer` in openclaw.json
+ */
 import { join } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { loadCombinedSessionStoreForGateway } from "../../src/gateway/session-utils.js";
@@ -87,6 +100,9 @@ export default function register(api: OpenClawPluginApi) {
 
   // ─── Main Session Tracking ───
   api.on("llm_input", (event: PluginHookLlmInputEvent, ctx: PluginHookAgentContext) => {
+    log.info?.(
+      `[overseer] HOOK llm_input sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} provider=${event.provider} model=${event.model}`,
+    );
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.activateMain({
@@ -96,9 +112,13 @@ export default function register(api: OpenClawPluginApi) {
       runId: event.runId,
       trigger: ctx.trigger,
     });
+    log.info?.(
+      `[overseer] Main activated: ${sessionKey} (${event.provider}/${event.model}) topo.size=${topology.size}`,
+    );
   });
 
   api.on("llm_output", (event: PluginHookLlmOutputEvent, ctx: PluginHookAgentContext) => {
+    log.info?.(`[overseer] HOOK llm_output sessionKey=${ctx.sessionKey} trigger=${ctx.trigger}`);
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.updateUsage(sessionKey, event.usage);
@@ -106,18 +126,27 @@ export default function register(api: OpenClawPluginApi) {
   });
 
   api.on("before_tool_call", (event: PluginHookBeforeToolCallEvent, ctx: PluginHookToolContext) => {
+    log.info?.(
+      `[overseer] HOOK before_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
+    );
     const sessionKey = ctx.sessionKey || "agent:main:main";
     if (TopologyStore.isHeartbeat(sessionKey)) return;
     topology.addToolCall(sessionKey, event.toolName);
   });
 
   api.on("after_tool_call", (event: PluginHookAfterToolCallEvent, ctx: PluginHookToolContext) => {
+    log.info?.(
+      `[overseer] HOOK after_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
+    );
     const sessionKey = ctx.sessionKey || "agent:main:main";
     if (TopologyStore.isHeartbeat(sessionKey)) return;
     topology.finishToolCall(sessionKey);
   });
 
   api.on("agent_end", (event: PluginHookAgentEndEvent, ctx: PluginHookAgentContext) => {
+    log.info?.(
+      `[overseer] HOOK agent_end sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} success=${event.success} duration=${event.durationMs}`,
+    );
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.endSession(sessionKey, event.success, event.durationMs);
@@ -182,7 +211,11 @@ export default function register(api: OpenClawPluginApi) {
   // ─── Gateway Methods ───
   api.registerGatewayMethod("overseer.topology", async ({ respond }) => {
     enrichTopology(); // Freshen data before responding
-    respond(true, topology.snapshot());
+    const snap = topology.snapshot();
+    log.info?.(
+      `[overseer] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
+    );
+    respond(true, snap);
   });
 
   api.registerGatewayMethod("overseer.status", async ({ respond }) => {

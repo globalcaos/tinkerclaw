@@ -195,6 +195,13 @@ export async function processMessage(params: {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
+  // FORK: annotate offline recovery messages for agent awareness
+  combinedBody = _annotateOfflineRecovery(
+    combinedBody,
+    params.msg.isOfflineRecovery,
+    params.msg.timestamp,
+  );
+
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
     sessionKey: params.route.sessionKey,
@@ -385,6 +392,15 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
+  // FORK: thinking reaction (WhatsApp progress indicator)
+  const thinkingReaction = _createThinkingReaction({
+    messageId: params.msg.id,
+    chatId: conversationId,
+    senderJid: params.msg.senderJid,
+    accountId: params.route.accountId,
+  });
+  thinkingReaction.start();
+
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -453,6 +469,9 @@ export async function processMessage(params: {
       onModelSelected,
     },
   });
+
+  // FORK: stop thinking reaction after dispatch completes
+  thinkingReaction.stop();
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {

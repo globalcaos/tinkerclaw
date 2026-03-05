@@ -54,6 +54,7 @@ export type RuntimeFallbackAttempt = {
   reason?: string;
   status?: number;
   code?: string;
+  failedProfileId?: string; // FORK: auth profile that triggered this fallback attempt
 };
 
 export type AgentRunLoopResult =
@@ -464,6 +465,7 @@ export async function runAgentTurnWithFallback(params: {
             reason: attempt.reason ? String(attempt.reason) : undefined,
             status: typeof attempt.status === "number" ? attempt.status : undefined,
             code: attempt.code ? String(attempt.code) : undefined,
+            failedProfileId: attempt.failedProfileId ? String(attempt.failedProfileId) : undefined, // FORK
           }))
         : [];
 

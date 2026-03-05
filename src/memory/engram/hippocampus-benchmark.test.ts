@@ -11,53 +11,67 @@
  * Run: pnpm test -- src/memory/engram/hippocampus-benchmark.test.ts
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
-  jaccard, weightedScore, enhanceIndex, EpisodicBuffer,
-  type IndexChunk, type HippocampusIndex, type EpisodicEvent,
+  jaccard,
+  weightedScore,
+  enhanceIndex,
+  EpisodicBuffer,
+  type IndexChunk,
+  type HippocampusIndex,
 } from "./hippocampus-enhancement.js";
 import { scheduleNightlyRebuild } from "./hippocampus-rebuild.js";
 
 // ── Shared tmp dir ────────────────────────────────────────────────────────────
 let tmpDir: string;
-beforeAll(() => { tmpDir = mkdtempSync(join(tmpdir(), "hippo-bench-")); });
-afterAll(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+beforeAll(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), "hippo-bench-"));
+});
+afterAll(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 // ── Result accumulator (printed as JSON in the summary suite) ─────────────────
 interface AblationResult {
-  ablation: string; condition: string;
-  recall_at_20: number | null; false_positive_rate: number | null;
-  avg_latency_ms: number; queries_run: number;
+  ablation: string;
+  condition: string;
+  recall_at_20: number | null;
+  false_positive_rate: number | null;
+  avg_latency_ms: number;
+  queries_run: number;
 }
 const benchmarkResults: AblationResult[] = [];
 
 // ── Synthetic fixture ─────────────────────────────────────────────────────────
 const TOPICS = [
-  { id: "ts",     text: "typescript type system generics interfaces async" },
-  { id: "react",  text: "react hooks useState useEffect component render" },
-  { id: "mem",    text: "memory hippocampus engram episodic recall index" },
-  { id: "git",    text: "git commit branch merge rebase pull remote" },
-  { id: "sql",    text: "sql query database table join select where" },
-  { id: "llm",    text: "language model prompt token context window attention" },
+  { id: "ts", text: "typescript type system generics interfaces async" },
+  { id: "react", text: "react hooks useState useEffect component render" },
+  { id: "mem", text: "memory hippocampus engram episodic recall index" },
+  { id: "git", text: "git commit branch merge rebase pull remote" },
+  { id: "sql", text: "sql query database table join select where" },
+  { id: "llm", text: "language model prompt token context window attention" },
 ];
 
 const QUERIES = [
-  { query: "typescript generics type interface",   topicId: "ts"    },
-  { query: "react hooks useState component",       topicId: "react" },
-  { query: "hippocampus memory engram recall",     topicId: "mem"   },
-  { query: "git commit branch merge rebase",       topicId: "git"   },
-  { query: "sql query database table join",        topicId: "sql"   },
-  { query: "language model prompt token context",  topicId: "llm"   },
+  { query: "typescript generics type interface", topicId: "ts" },
+  { query: "react hooks useState component", topicId: "react" },
+  { query: "hippocampus memory engram recall", topicId: "mem" },
+  { query: "git commit branch merge rebase", topicId: "git" },
+  { query: "sql query database table join", topicId: "sql" },
+  { query: "language model prompt token context", topicId: "llm" },
 ];
 
 function buildCorpus(importanceAlt = false): IndexChunk[] {
   return TOPICS.flatMap(({ id, text }, idx) =>
     Array.from({ length: 5 }, (_, i) => ({
-      path: `mem/${id}/chunk-${i}.md`, line: i * 10 + 1, score: 0.5,
-      source: "memory", preview: `${text} chunk ${i} details summary`,
+      path: `mem/${id}/chunk-${i}.md`,
+      line: i * 10 + 1,
+      score: 0.5,
+      source: "memory",
+      preview: `${text} chunk ${i} details summary`,
       importance: importanceAlt ? (idx % 2 === 0 ? 9 : 2) : 5,
     })),
   );
@@ -68,32 +82,50 @@ function groundTruth(topicId: string): Set<string> {
 }
 
 function retrieve(corpus: IndexChunk[], query: string, topN = 20, rerank = false): string[] {
-  const qSet = new Set(query.toLowerCase().split(/\s+/).filter((w) => w.length >= 3));
+  const qSet = new Set(
+    query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length >= 3),
+  );
   return corpus
     .map((c) => {
-      const cSet = new Set(c.preview.toLowerCase().split(/\s+/).filter((w) => w.length >= 3));
+      const cSet = new Set(
+        c.preview
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length >= 3),
+      );
       const sim = jaccard(qSet, cSet);
       return { path: c.path, score: rerank ? weightedScore(sim, c.importance ?? 5) : sim };
     })
-    .sort((a, b) => b.score - a.score)
+    .toSorted((a, b) => b.score - a.score)
     .slice(0, topN)
     .map((r) => r.path);
 }
 
 function recallAt(retrieved: string[], rel: Set<string>): number {
-  if (rel.size === 0) return 1;
+  if (rel.size === 0) {
+    return 1;
+  }
   return retrieved.filter((p) => rel.has(p)).length / rel.size;
 }
 function fpr(retrieved: string[], rel: Set<string>): number {
-  if (retrieved.length === 0) return 0;
+  if (retrieved.length === 0) {
+    return 0;
+  }
   return retrieved.filter((p) => !rel.has(p)).length / retrieved.length;
 }
 
 function runAblation(
-  condition: string, ablation: string,
-  corpus: IndexChunk[], rerank: boolean,
+  condition: string,
+  ablation: string,
+  corpus: IndexChunk[],
+  rerank: boolean,
 ): AblationResult {
-  const recalls: number[] = [], fprs: number[] = [], lats: number[] = [];
+  const recalls: number[] = [],
+    fprs: number[] = [],
+    lats: number[] = [];
   for (const { query, topicId } of QUERIES) {
     const t0 = performance.now();
     const r = retrieve(corpus, query, 20, rerank);
@@ -104,7 +136,8 @@ function runAblation(
   }
   const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
   return {
-    ablation, condition,
+    ablation,
+    condition,
     recall_at_20: parseFloat(avg(recalls).toFixed(4)),
     false_positive_rate: parseFloat(avg(fprs).toFixed(4)),
     avg_latency_ms: parseFloat(avg(lats).toFixed(3)),
@@ -141,8 +174,12 @@ describe("A2: Importance re-ranking ablation", () => {
     const idx: HippocampusIndex = {};
     for (const { id, text } of TOPICS) {
       idx[id] = Array.from({ length: 3 }, (_, i) => ({
-        path: `mem/${id}/${i}.md`, line: i + 1, score: 0.5,
-        source: "memory", preview: `${text} chunk ${i}`, importance: i % 2 === 0 ? 9 : 2,
+        path: `mem/${id}/${i}.md`,
+        line: i + 1,
+        score: 0.5,
+        source: "memory",
+        preview: `${text} chunk ${i}`,
+        importance: i % 2 === 0 ? 9 : 2,
       }));
     }
     const path = join(tmpDir, "bench-enhance.json");
@@ -165,21 +202,39 @@ describe("A3: Episodic tier vs nightly rebuild", () => {
     const buf = new EpisodicBuffer();
     for (const { id, text } of TOPICS) {
       for (let i = 0; i < 5; i++) {
-        buf.add({ id: `${id}-ep-${i}`, timestamp: TODAY, content: `${text} event ${i}`, importance: 7 });
+        buf.add({
+          id: `${id}-ep-${i}`,
+          timestamp: TODAY,
+          content: `${text} event ${i}`,
+          importance: 7,
+        });
       }
     }
-    const recalls: number[] = [], lats: number[] = [], fprs: number[] = [];
+    const recalls: number[] = [],
+      lats: number[] = [],
+      fprs: number[] = [];
     for (const { query, topicId } of QUERIES) {
       const t0 = performance.now();
       const results = buf.search(query, 20);
       lats.push(performance.now() - t0);
       const gt = new Set(Array.from({ length: 5 }, (_, i) => `${topicId}-ep-${i}`));
-      recalls.push(recallAt(results.map((r) => r.event.id), gt));
-      fprs.push(fpr(results.map((r) => r.event.id), gt));
+      recalls.push(
+        recallAt(
+          results.map((r) => r.event.id),
+          gt,
+        ),
+      );
+      fprs.push(
+        fpr(
+          results.map((r) => r.event.id),
+          gt,
+        ),
+      );
     }
     const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
     const result: AblationResult = {
-      ablation: "A3", condition: "episodic_realtime",
+      ablation: "A3",
+      condition: "episodic_realtime",
       recall_at_20: parseFloat(avg(recalls).toFixed(4)),
       false_positive_rate: parseFloat(avg(fprs).toFixed(4)),
       avg_latency_ms: parseFloat(avg(lats).toFixed(3)),
@@ -192,8 +247,12 @@ describe("A3: Episodic tier vs nightly rebuild", () => {
 
   it("A3-freshness: episodic buffer surfaces same-day events not in nightly index", () => {
     const buf = new EpisodicBuffer();
-    buf.add({ id: "fresh-001", timestamp: new Date().toISOString(),
-      content: "hippocampus memory engram episodic freshness recall urgent", importance: 9 });
+    buf.add({
+      id: "fresh-001",
+      timestamp: new Date().toISOString(),
+      content: "hippocampus memory engram episodic freshness recall urgent",
+      importance: 9,
+    });
     const results = buf.search("hippocampus memory episodic freshness", 20);
     expect(results.map((r) => r.event.id)).toContain("fresh-001");
   });
@@ -209,8 +268,10 @@ describe("A3: Episodic tier vs nightly rebuild", () => {
     const result = await scheduleNightlyRebuild(idxPath, wsDir);
     const latency = performance.now() - t0;
     benchmarkResults.push({
-      ablation: "A3", condition: "nightly_rebuild",
-      recall_at_20: null, false_positive_rate: null,
+      ablation: "A3",
+      condition: "nightly_rebuild",
+      recall_at_20: null,
+      false_positive_rate: null,
       avg_latency_ms: parseFloat(latency.toFixed(3)),
       queries_run: 0,
     });
@@ -220,11 +281,15 @@ describe("A3: Episodic tier vs nightly rebuild", () => {
 
   it("A3-combined: combinedQuery deduplicates episodic + semantic results", () => {
     const buf = new EpisodicBuffer();
-    buf.add({ id: "ep-1", timestamp: TODAY,
-      content: "typescript type system generics combined test", importance: 7 });
+    buf.add({
+      id: "ep-1",
+      timestamp: TODAY,
+      content: "typescript type system generics combined test",
+      importance: 7,
+    });
     const semantic = (_q: string) => [
       { id: "sem-1", path: "mem/ts/chunk-0.md", score: 0.85 },
-      { id: "ep-1",  path: "mem/ts/chunk-0.md", score: 0.72 }, // dup
+      { id: "ep-1", path: "mem/ts/chunk-0.md", score: 0.72 }, // dup
     ];
     const combined = buf.combinedQuery("typescript generics", semantic, 20);
     const ids = combined.map(
@@ -237,15 +302,20 @@ describe("A3: Episodic tier vs nightly rebuild", () => {
 // ── A1: Pronoun expansion — placeholder ───────────────────────────────────────
 describe("A1: Pronoun expansion ablation (placeholder)", () => {
   it.todo("A1-baseline: retrieval without pronoun expansion recall@20");
-  // TODO: implement once hippocampus-enhancement exposes pronoun/entity expansion
+  // Blocked: hippocampus-enhancement doesn't expose pronoun/entity expansion yet
 
   it.todo("A1-expanded: retrieval with pronoun expansion improved recall@20");
-  // TODO: map 'he'/'she'/'it' → resolved entity names, re-query, compare recall
+  // Blocked: needs pronoun resolution ('he'/'she'/'it' → entity names) before re-query
 
   it("A1-api-readiness: jaccard handles pronoun-resolved vs raw queries identically (no-op until A1)", () => {
     const raw = "Oscar committed change to memory module";
     const cSet = new Set(["oscar", "memory", "module", "commit", "change", "engram"]);
-    const rSet = new Set(raw.toLowerCase().split(/\s+/).filter((w) => w.length >= 3));
+    const rSet = new Set(
+      raw
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length >= 3),
+    );
     // Scores should be non-zero — once expansion lands, pronoun form and entity form should match
     expect(jaccard(rSet, cSet)).toBeGreaterThan(0);
   });
@@ -255,7 +325,9 @@ describe("A1: Pronoun expansion ablation (placeholder)", () => {
 describe("Benchmark Summary", () => {
   it("outputs all ablation results as JSON to console", () => {
     console.log("\n=== HIPPOCAMPUS BENCHMARK RESULTS ===");
-    console.log(JSON.stringify({ timestamp: new Date().toISOString(), results: benchmarkResults }, null, 2));
+    console.log(
+      JSON.stringify({ timestamp: new Date().toISOString(), results: benchmarkResults }, null, 2),
+    );
     console.log("=====================================\n");
     expect(benchmarkResults.length).toBeGreaterThan(0);
     for (const r of benchmarkResults) {

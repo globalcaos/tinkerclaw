@@ -423,6 +423,8 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant running inside OpenClaw.",
     "",
+    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top for identity reinforcement.
+    ...(params.personaBlock ? [params.personaBlock, ""] : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",
