@@ -508,26 +508,46 @@ export function createAgentEventHandler({
         broadcastToConnIds("agent", toolPayload, recipients);
       }
     } else {
-      // Enrich lifecycle events with model info for observability clients
+      // Enrich lifecycle events with model info for observability clients.
+      // If the runner already provided model/modelProvider/authProfileId in the
+      // event data (e.g. from handleAgentStart), prefer those — the runner knows
+      // the actual model and auth profile being used. Only fall back to
+      // session-entry resolution when the event lacks model info.
       let enrichedPayload = agentPayload;
       if (evt.stream === "lifecycle" && typeof evt.data?.phase === "string" && sessionKey) {
-        try {
-          const { cfg, entry } = loadSessionEntry(sessionKey);
-          const resolved = resolveSessionModelRef(cfg, entry);
-          if (resolved.model) {
-            enrichedPayload = {
-              ...agentPayload,
-              data: {
-                ...evt.data,
-                model: resolved.provider
-                  ? `${resolved.provider}/${resolved.model}`
-                  : resolved.model,
-                modelProvider: resolved.provider,
-              },
-            };
+        if (evt.data.model && evt.data.modelProvider) {
+          // Runner already provided authoritative model info — just ensure
+          // model is in provider/model format and pass through authProfileId.
+          const evtModel = String(evt.data.model);
+          const evtProvider = String(evt.data.modelProvider);
+          const formattedModel = evtModel.includes("/") ? evtModel : `${evtProvider}/${evtModel}`;
+          enrichedPayload = {
+            ...agentPayload,
+            data: {
+              ...evt.data,
+              model: formattedModel,
+              modelProvider: evtProvider,
+            },
+          };
+        } else {
+          try {
+            const { cfg, entry } = loadSessionEntry(sessionKey);
+            const resolved = resolveSessionModelRef(cfg, entry);
+            if (resolved.model) {
+              enrichedPayload = {
+                ...agentPayload,
+                data: {
+                  ...evt.data,
+                  model: resolved.provider
+                    ? `${resolved.provider}/${resolved.model}`
+                    : resolved.model,
+                  modelProvider: resolved.provider,
+                },
+              };
+            }
+          } catch {
+            /* non-critical enrichment failure */
           }
-        } catch {
-          /* non-critical enrichment failure */
         }
       }
       broadcast("agent", enrichedPayload);
