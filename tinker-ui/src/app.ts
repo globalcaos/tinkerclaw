@@ -2,7 +2,7 @@ import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
-import { mountOverseerGraph } from "./panels/overseer-graph.js";
+import { mountOverseerGraph, type OverseerItem } from "./panels/overseer-graph.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 
 const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -35,7 +35,6 @@ let initialized = false;
 let budgetData: any = null;
 let forensicMode = false;
 let showOverseerChat = false;
-let overseerFilterActive = false;
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
 const $ = (id: string) => document.getElementById(id);
@@ -224,7 +223,6 @@ function onFrame(f: any) {
           updateBtn();
           loadSessions();
           loadBudget();
-          pollOverseerTopology();
           refreshTreemap();
           timelineCtrl?.loadSession(sessionKey);
           scheduleUnconfirmedPrune();
@@ -282,9 +280,9 @@ function startHealthPoll() {
             providerErrors.delete(provider);
             changed = true;
           }
-          // Clear per-profile errors for this provider
+          // Clear per-profile and per-model errors for this provider
           for (const k of providerErrors.keys()) {
-            if (k.startsWith(provider + ":")) {
+            if (k.startsWith(provider + ":") || k.startsWith(provider + "/")) {
               providerErrors.delete(k);
               changed = true;
             }
@@ -411,8 +409,12 @@ function onEvent(evt: any) {
       const errMsg = (p.data.error || "") as string;
       const attempt = p.data.attempt as number | undefined;
       const total = p.data.total as number | undefined;
-      if (fp) {
-        providerErrors.set(fp, {
+      // Key by profileId or model — NOT bare provider, to avoid bleeding
+      // into other models from the same provider (e.g. opus error showing on sonnet/haiku).
+      // fallback-profile-error already populates per-profile entries.
+      const errKey = (p.data.failedProfileId as string) || fm || fp;
+      if (errKey) {
+        providerErrors.set(errKey, {
           error: (errMsg || reason || "failed") as string,
           reason,
           ts: Date.now(),
@@ -494,8 +496,10 @@ function onEvent(evt: any) {
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
         const startProvider = p.data.modelProvider || providerOf(p.data.model);
-        // Clear provider-level and per-profile errors on successful start
+        // Clear provider-level, per-profile, and per-model errors on successful start
+        const startModel = p.data.model as string;
         providerErrors.delete(startProvider);
+        providerErrors.delete(startModel);
         for (const k of providerErrors.keys()) {
           if (k.startsWith(startProvider + ":")) providerErrors.delete(k);
         }
@@ -614,8 +618,13 @@ async function send(text: string) {
 }
 
 function retryProvider(provider: string) {
-  // Clear provider error state
+  // Clear provider-level, per-profile, and per-model error state
   providerErrors.delete(provider);
+  for (const k of providerErrors.keys()) {
+    if (k.startsWith(provider + ":") || k.startsWith(provider + "/")) {
+      providerErrors.delete(k);
+    }
+  }
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
   messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
@@ -1442,7 +1451,7 @@ function updateBudgetPanel() {
         badge,
         suffix,
         counts.get(keyId || modelId) || 0,
-        providerErrors.get(keyId || provider),
+        providerErrors.get(keyId || modelId),
       );
     } else {
       // Multiple keys — one compact row per key with model name inline
@@ -1460,7 +1469,7 @@ function updateBudgetPanel() {
           name,
           badge,
           counts.get(keyId) || modelCount,
-          providerErrors.get(keyId) || providerErrors.get(provider),
+          providerErrors.get(keyId) || providerErrors.get(modelId),
         );
       }
     }
@@ -1525,6 +1534,9 @@ function updateBudgetPanel() {
       }
     });
   });
+
+  // Sync overseer pills with the same data
+  updateOverseerPanel();
 }
 
 function shortErrorLabel(reason: string): string {
@@ -1854,7 +1866,7 @@ function init() {
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="overseer-panel">
-        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span> <button id="overseer-filter-btn" class="panel-toggle" title="Show only this session's agents">Session</button></div>
+        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
         <div id="overseer-graph" class="rpanel-body overseer-graph-container"></div>
       </div>
     </div>
@@ -1915,7 +1927,6 @@ function init() {
     } else {
       timelineCtrl?.loadSession(sessionKey);
     }
-    if (overseerFilterActive) overseerCtrl?.setSessionFilter(sessionKey);
   });
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
@@ -1925,12 +1936,6 @@ function init() {
       return;
     }
     send("/new");
-  });
-  $("overseer-filter-btn")!.addEventListener("click", () => {
-    overseerFilterActive = !overseerFilterActive;
-    const btn = $("overseer-filter-btn")!;
-    btn.classList.toggle("panel-toggle--active", overseerFilterActive);
-    overseerCtrl?.setSessionFilter(overseerFilterActive ? sessionKey : null);
   });
   $("toggle-overseer-chat")!.addEventListener("click", () => {
     showOverseerChat = !showOverseerChat;
@@ -2116,19 +2121,38 @@ function init() {
 // ─── Overseer Graph ───
 let overseerCtrl: ReturnType<typeof mountOverseerGraph> | null = null;
 
-async function pollOverseerTopology() {
-  if (!connected) return;
-  try {
-    const snap = await req("overseer.topology", {});
-    if (overseerCtrl && snap) {
-      overseerCtrl.update(snap);
-      const countEl = document.getElementById("overseer-count");
-      if (countEl) {
-        countEl.textContent = snap.nodes?.length ? `(${snap.nodes.length})` : "";
-      }
-    }
-  } catch {
-    // overseer plugin not loaded — hide panel silently
+function updateOverseerPanel(): void {
+  if (!overseerCtrl) return;
+  if (activeRuns.size === 0) {
+    overseerCtrl.update([]);
+    const countEl = document.getElementById("overseer-count");
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+
+  const authProfiles = modelConfigData?.authProfiles ?? {};
+  const items: OverseerItem[] = [];
+
+  for (const [runId, info] of activeRuns) {
+    const authLabel = info.authProfileId
+      ? authProfiles[info.authProfileId]?.label ||
+        info.authProfileId.split(":")[1] ||
+        info.authProfileId
+      : "";
+    items.push({
+      id: runId,
+      provider: info.provider,
+      modelName: modelName(info.model),
+      authLabel,
+      badge: "",
+      count: 1,
+    });
+  }
+
+  overseerCtrl.update(items);
+  const countEl = document.getElementById("overseer-count");
+  if (countEl) {
+    countEl.textContent = `(${items.length})`;
   }
 }
 
@@ -2164,6 +2188,3 @@ setInterval(() => {
     loadBudget();
   }
 }, 300_000);
-setInterval(() => {
-  if (connected) pollOverseerTopology();
-}, 5000);
