@@ -436,14 +436,17 @@
       "tough-cookie": "4.1.3"
     },
     "onlyBuiltDependencies": [
+      "@discordjs/opus",
       "@lydell/node-pty",
       "@matrix-org/matrix-sdk-crypto-nodejs",
       "@napi-rs/canvas",
       "@whiskeysockets/baileys",
       "authenticate-pam",
+      "better-sqlite3",
       "esbuild",
       "koffi",
       "node-llama-cpp",
+      "opusscript",
       "protobufjs",
       "sharp"
     ]
