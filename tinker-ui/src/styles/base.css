@@ -223,7 +223,11 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 
 /* Model List */
 .model-list{display:flex;flex-direction:column;gap:2px}
-.model-group-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0 4px;padding-bottom:2px;border-bottom:1px solid var(--border)}
+.model-group{margin-bottom:2px}
+.model-group-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0 4px;padding-bottom:2px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none}
+.model-group-label::before{content:"\25BE";font-size:10px;transition:transform .15s}
+.model-group:not(.open)>.model-group-label::before{transform:rotate(-90deg)}
+.model-group:not(.open)>.model-group-body>.model-row:not(.model-live){display:none}
 .model-group-label:first-child{margin-top:0}
 .model-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;font-size:11px;transition:background .1s}
 .model-row:hover{background:var(--surface2)}
