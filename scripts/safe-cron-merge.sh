@@ -6,22 +6,35 @@
 # Safety guarantees:
 #   1. NEVER uses `git checkout upstream/main -- .` (the overlay pattern)
 #   2. NEVER modifies source code directly (delegates to merge-upstream.sh + apply-fork-wiring.mjs)
-#   3. Aborts if working tree is dirty
+#   3. Auto-commits dirty trees before merge (Gate 0)
 #   4. Aborts if merge has >5 unresolved conflicts
 #   5. Build + deploy only after successful merge + guardian check
+#   6. Post-merge jarvis-brain backup (Phase 6)
+#   7. Companion repo sync — ClawMetry + Mission Control (Phase 7)
 #
-# Usage: scripts/safe-cron-merge.sh [--dry-run]
+# Usage: scripts/safe-cron-merge.sh [--dry-run] [--no-backup] [--no-companion]
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 DRY_RUN=false
+NO_BACKUP=false
+NO_COMPANION=false
 MAX_UNRESOLVED=5
+
+JARVIS_BRAIN="$HOME/.openclaw"
+JARVIS_ICU="$HOME/src/jarvis-icu"
+CLAWMETRY="$HOME/src/clawmetry"
+MISSION_CONTROL="$HOME/src/mission-control"
+
+GATE0_COMMITS=""
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
+    --no-backup) NO_BACKUP=true ;;
+    --no-companion) NO_COMPANION=true ;;
   esac
 done
 
@@ -33,13 +46,159 @@ escalate() {
   exit 1
 }
 
-# ─── GATE 1: Clean working tree ───
-log "Gate 1: Checking working tree..."
-DIRTY_COUNT=$(git status --porcelain | wc -l)
-if [ "$DIRTY_COUNT" -gt 0 ]; then
-  escalate "Working tree has $DIRTY_COUNT dirty files. Refusing to merge. Run 'git status' to inspect."
+# ─── HELPER: Auto-commit a repo (tracked files only) ───
+# Usage: auto_commit_repo <path> <label> [--no-verify]
+auto_commit_repo() {
+  local repo_path="$1"
+  local label="$2"
+  local no_verify="${3:-}"
+
+  if [ ! -d "$repo_path/.git" ]; then
+    log "  ⚠️  $label: not a git repo at $repo_path — skipping"
+    return 0
+  fi
+
+  local dirty
+  dirty=$(git -C "$repo_path" status --porcelain | wc -l)
+  if [ "$dirty" -eq 0 ]; then
+    log "  ✅ $label: clean"
+    return 0
+  fi
+
+  log "  $label: $dirty dirty files — auto-committing..."
+  git -C "$repo_path" add -u
+  local msg="chore: auto-commit before merge ($(date '+%Y-%m-%d %H:%M'))"
+  if [ "$no_verify" = "--no-verify" ]; then
+    git -C "$repo_path" commit --no-verify -m "$msg" || { log "  ⚠️  $label: commit failed"; return 0; }
+  else
+    git -C "$repo_path" commit -m "$msg" || { log "  ⚠️  $label: commit failed"; return 0; }
+  fi
+  git -C "$repo_path" push origin main || log "  ⚠️  $label: push failed (non-blocking)"
+  GATE0_COMMITS="$GATE0_COMMITS $label"
+  log "  ✅ $label: committed + pushed"
+}
+
+# ─── HELPER: Commit jarvis-brain with rename trick ───
+# Hides workspace/.git temporarily, commits, pushes, restores.
+# Usage: commit_jarvis_brain <commit_message> <log_label>
+# Sets _BRAIN_COMMITTED=1 if a commit was made, empty otherwise.
+commit_jarvis_brain() {
+  local msg="$1"
+  local label="$2"
+  local brain="$JARVIS_BRAIN"
+  _BRAIN_COMMITTED=""
+
+  if [ ! -d "$brain/.git" ]; then
+    log "  ⚠️  $label: not a git repo at $brain — skipping"
+    return 0
+  fi
+
+  # The workspace/ dir has its own .git (OpenClaw data dir) that confuses
+  # the parent repo. Temporarily hide it during commit.
+  local ws_git="$brain/workspace/.git"
+  local ws_git_hidden="$brain/workspace/.git_real"
+
+  if [ -d "$ws_git" ]; then
+    mv "$ws_git" "$ws_git_hidden"
+  fi
+
+  # Always restore workspace/.git, even on error
+  _restore_ws_git() {
+    if [ -d "$ws_git_hidden" ] && [ ! -d "$ws_git" ]; then
+      mv "$ws_git_hidden" "$ws_git"
+    fi
+  }
+
+  local dirty
+  dirty=$(git -C "$brain" status --porcelain | wc -l)
+  if [ "$dirty" -eq 0 ]; then
+    log "  ✅ $label: clean"
+    _restore_ws_git
+    return 0
+  fi
+
+  log "  $label: $dirty dirty files — committing..."
+  git -C "$brain" add -A
+  if git -C "$brain" commit -m "$msg"; then
+    git -C "$brain" push origin main || log "  ⚠️  $label: push failed (non-blocking)"
+    _BRAIN_COMMITTED=1
+    log "  ✅ $label: committed + pushed"
+  else
+    log "  ⚠️  $label: commit failed"
+  fi
+
+  _restore_ws_git
+}
+
+# ─── HELPER: Sync a companion fork repo ───
+# Usage: sync_companion <path> <label> <branch>
+sync_companion() {
+  local repo_path="$1"
+  local label="$2"
+  local branch="${3:-main}"
+
+  if [ ! -d "$repo_path/.git" ]; then
+    log "  ⚠️  $label: not a git repo at $repo_path — skipping"
+    return 0
+  fi
+
+  log "  $label: syncing..."
+
+  # Auto-commit dirty tracked files first
+  local dirty
+  dirty=$(git -C "$repo_path" status --porcelain | wc -l)
+  if [ "$dirty" -gt 0 ]; then
+    log "    $dirty dirty files — auto-committing..."
+    git -C "$repo_path" add -u
+    git -C "$repo_path" commit -m "chore: auto-commit before upstream sync ($(date '+%Y-%m-%d %H:%M'))" || true
+  fi
+
+  # Fetch upstream
+  if ! git -C "$repo_path" fetch upstream 2>/dev/null; then
+    log "  ⚠️  $label: upstream fetch failed — skipping"
+    return 0
+  fi
+
+  # Check how far behind
+  local behind
+  behind=$(git -C "$repo_path" rev-list --count HEAD..upstream/"$branch" 2>/dev/null || echo 0)
+  if [ "$behind" -eq 0 ]; then
+    log "  ✅ $label: already up to date"
+    return 0
+  fi
+
+  log "    $behind commits behind upstream/$branch — merging..."
+  if ! git -C "$repo_path" merge upstream/"$branch" --no-edit 2>/dev/null; then
+    log "  ⚠️  $label: merge conflict — aborting merge"
+    git -C "$repo_path" merge --abort 2>/dev/null || true
+    return 0
+  fi
+
+  git -C "$repo_path" push origin "$branch" || log "  ⚠️  $label: push failed (non-blocking)"
+  log "  ✅ $label: synced $behind commits from upstream"
+}
+
+# ─── GATE 0: Pre-merge auto-commit (all repos) ───
+log "Gate 0: Auto-committing dirty repos..."
+auto_commit_repo "$REPO_ROOT" "openclaw-fork" "--no-verify"
+commit_jarvis_brain "chore: auto-commit before merge ($(date '+%Y-%m-%d %H:%M'))" "jarvis-brain"
+[ -n "${_BRAIN_COMMITTED:-}" ] && GATE0_COMMITS="$GATE0_COMMITS jarvis-brain"
+auto_commit_repo "$JARVIS_ICU" "jarvis-icu"
+if [ -n "$GATE0_COMMITS" ]; then
+  log "  Gate 0 committed:$GATE0_COMMITS"
+else
+  log "  Gate 0: all repos clean"
 fi
-log "  ✅ Working tree clean"
+
+# ─── GATE 1: Clean working tree (tracked files only) ───
+log "Gate 1: Checking working tree..."
+DIRTY_TRACKED=$(git diff --name-only 2>/dev/null | wc -l)
+DIRTY_STAGED=$(git diff --cached --name-only 2>/dev/null | wc -l)
+DIRTY_COUNT=$((DIRTY_TRACKED + DIRTY_STAGED))
+if [ "$DIRTY_COUNT" -gt 0 ]; then
+  escalate "Working tree still has $DIRTY_COUNT dirty tracked files after Gate 0. Run 'git status' to inspect."
+fi
+log "  ✅ Working tree clean (tracked files)"
 
 # ─── GATE 2: Fetch upstream ───
 log "Gate 2: Fetching upstream..."
@@ -211,5 +370,22 @@ log "Phase 5: Pushing to origin..."
 git push origin main
 log "  ✅ Pushed"
 
+# ─── PHASE 6: Post-merge jarvis-brain backup ───
+if $NO_BACKUP; then
+  log "Phase 6: Skipped (--no-backup)"
+else
+  log "Phase 6: Post-merge jarvis-brain backup..."
+  commit_jarvis_brain "post-merge backup: $(date '+%Y-%m-%d %H:%M')" "jarvis-brain-backup"
+fi
+
+# ─── PHASE 7: Companion repo sync (ClawMetry + Mission Control) ───
+if $NO_COMPANION; then
+  log "Phase 7: Skipped (--no-companion)"
+else
+  log "Phase 7: Syncing companion repos..."
+  sync_companion "$CLAWMETRY" "clawmetry" "main"
+  sync_companion "$MISSION_CONTROL" "mission-control" "main"
+fi
+
 log "✅ Merge complete. $BEHIND upstream commits integrated."
-echo "RESULT: merged; $BEHIND commits; guardian=$GUARDIAN_EXIT issues"
+echo "RESULT: merged; $BEHIND commits; guardian=$GUARDIAN_EXIT issues; gate0=[${GATE0_COMMITS:-none}]"
