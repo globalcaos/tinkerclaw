@@ -27,9 +27,15 @@ let streamRunId: string | null = null;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
+let liveToolCalls = new Map<
+  string,
+  { name: string; args: any; toolCallId: string; isError: boolean; result: any }
+>();
 let initialized = false;
 let budgetData: any = null;
 let forensicMode = false;
+let showOverseerChat = false;
+let overseerFilterActive = false;
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
 const $ = (id: string) => document.getElementById(id);
@@ -293,6 +299,37 @@ function onEvent(evt: any) {
       streamText = p.message?.content?.[0]?.text ?? streamText;
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+      // Inject live tool calls as a synthetic message if the final doesn't include them
+      if (liveToolCalls.size > 0) {
+        const finalContent = Array.isArray(p.message?.content) ? p.message.content : [];
+        const hasTool = finalContent.some(
+          (b: any) => b.type === "tool_use" || b.type === "tool_result",
+        );
+        if (!hasTool) {
+          const syntheticContent: any[] = [];
+          for (const [, tc] of liveToolCalls) {
+            syntheticContent.push({
+              type: "tool_use",
+              id: tc.toolCallId,
+              name: tc.name,
+              input: tc.args,
+            });
+            syntheticContent.push({
+              type: "tool_result",
+              tool_use_id: tc.toolCallId,
+              content:
+                tc.result != null
+                  ? typeof tc.result === "string"
+                    ? tc.result
+                    : JSON.stringify(tc.result)
+                  : "(completed)",
+              is_error: tc.isError,
+            });
+          }
+          messages.push({ role: "assistant", content: syntheticContent, _synthetic: true });
+        }
+        liveToolCalls.clear();
+      }
       if (p.message) {
         messages.push(p.message);
       }
@@ -325,6 +362,37 @@ function onEvent(evt: any) {
   }
   if (evt.event === "agent") {
     const p = evt.payload;
+    // ─── Live Tool Events ───
+    // Capture tool-use/tool-result events and inject them as visible messages
+    if (p?.stream === "tool" && p.sessionKey === sessionKey) {
+      const d = p.data ?? {};
+      if (d.phase === "start" && d.name && d.toolCallId) {
+        // Store the tool call for live rendering
+        liveToolCalls.set(d.toolCallId, {
+          name: d.name,
+          args: d.args ?? {},
+          toolCallId: d.toolCallId,
+          isError: false,
+          result: null,
+        });
+        updateChat();
+      } else if (d.phase === "result" && d.toolCallId) {
+        const existing = liveToolCalls.get(d.toolCallId);
+        if (existing) {
+          existing.isError = Boolean(d.isError);
+          existing.result = d.result ?? null;
+        } else {
+          liveToolCalls.set(d.toolCallId, {
+            name: d.name ?? "tool",
+            args: {},
+            toolCallId: d.toolCallId,
+            isError: Boolean(d.isError),
+            result: d.result ?? null,
+          });
+        }
+        updateChat();
+      }
+    }
     // Track provider failures from model fallback
     if (p?.stream === "lifecycle" && p.data?.phase === "fallback-error") {
       const fp = p.data.failedProvider as string | undefined;
@@ -402,8 +470,6 @@ function onEvent(evt: any) {
     if (p?.stream === "lifecycle" && p.data?.model) {
       // Ignore lifecycle events that don't belong to the current session (e.g. heartbeat)
       if (p.data.sessionKey && p.data.sessionKey !== sessionKey) return;
-      // Also ignore if we're not expecting any response (no pending send, no active runs)
-      if (!sending && activeRuns.size === 0 && !streamRunId && !activeRuns.has(p.runId)) return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
@@ -481,6 +547,7 @@ async function loadSessions() {
 }
 
 async function loadChat() {
+  liveToolCalls.clear();
   if (!sessionKey) {
     return;
   }
@@ -624,33 +691,31 @@ function editPreview(s: string): string {
 function toolSummary(name: string, input: any): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
-  const p = shortenPath(String(a.file_path ?? a.path ?? ""));
-  const fn = fileName(p);
   switch (n) {
     case "exec": {
       const cmd = shortenPath(String(a.command ?? ""));
       if (cmd.match(/^grep\b/)) {
         const target = extractGrepTarget(cmd);
-        const where = extractGrepFiles(cmd);
-        return `Looking for any mention of "${target}"${where ? ` inside ${where}` : " across the code"} to find clues`;
+        return target
+          ? `Looking for any mention of "${target}" across the code`
+          : `Searching through the code for a specific pattern`;
       }
       if (cmd.match(/^find\b/)) {
         const nameM = cmd.match(
           /-name\s+"([^"]+)"|--name\s+"([^"]+)"|-name\s+'([^']+)'|-name\s+(\S+)/,
         );
-        const what = nameM ? (nameM[1] ?? nameM[2] ?? nameM[3] ?? nameM[4]) : "certain files";
-        return `Scanning folders to locate ${what}`;
+        const what = nameM ? (nameM[1] ?? nameM[2] ?? nameM[3] ?? nameM[4]) : "something";
+        return `Scanning the project to locate ${what}`;
       }
-      if (cmd.startsWith("ls")) return `Looking at what's inside a folder`;
-      if (cmd.startsWith("cat"))
-        return `Opening ${fileName(cmd.split(/\s+/).pop() ?? "")} to read its contents`;
-      if (cmd.startsWith("kill")) return `Stopping a running task that's no longer needed`;
+      if (cmd.startsWith("ls")) return `Checking what's inside a folder`;
+      if (cmd.startsWith("cat")) return `Reading the contents of a file`;
+      if (cmd.startsWith("kill")) return `Stopping something that was running`;
       if (cmd.includes("pnpm build") || cmd.includes("npm build"))
-        return `Compiling all changes so they take effect`;
+        return `Compiling all recent changes so they take effect`;
       if (cmd.includes("pnpm test") || cmd.includes("npm test"))
-        return `Running automated checks to make sure nothing broke`;
+        return `Running automated checks to make sure nothing is broken`;
       if (cmd.includes("pnpm install") || cmd.includes("npm install"))
-        return `Setting up required software components`;
+        return `Setting up the required software components`;
       if (cmd.match(/^curl\b/)) {
         const urlM = cmd.match(/https?:\/\/([^/\s"']+)/);
         return urlM
@@ -659,130 +724,105 @@ function toolSummary(name: string, input: any): string {
       }
       if (cmd.startsWith("jarvis")) {
         const textM = cmd.match(/jarvis\s+"([^"]+)"|jarvis\s+'([^']+)'/);
-        const speech = textM ? (textM[1] ?? textM[2] ?? "").slice(0, 60) : "";
+        const speech = textM ? (textM[1] ?? textM[2] ?? "").slice(0, 80) : "";
         return speech ? `Saying out loud: "${speech}"` : `Speaking a response out loud`;
       }
       if (cmd.startsWith("which")) {
         const bins = cmd.replace(/^which\s+/, "").trim();
         return `Checking whether ${bins} is available on this machine`;
       }
-      if (cmd.startsWith("ps ")) return `Checking what's currently running on the machine`;
-      if (cmd.startsWith("sed")) return `Making a quick text replacement inside a file`;
+      if (cmd.startsWith("ps ")) return `Checking what programs are currently running`;
+      if (cmd.startsWith("sed")) return `Making a quick text replacement in a file`;
       if (cmd.includes("git pull")) return `Downloading the latest version of the code`;
-      if (cmd.includes("git push")) return `Uploading the changes to the shared repository`;
-      if (cmd.includes("git commit")) return `Saving the current changes as a checkpoint`;
-      if (cmd.includes("git diff")) return `Comparing the current version with a previous one`;
-      if (cmd.includes("git ")) return `Doing version control housekeeping`;
-      if (cmd.startsWith("echo"))
-        return `Noting: ${cmd
-          .replace(/^echo\s+/, "")
-          .replace(/^["']|["']$/g, "")
-          .slice(0, 60)}`;
-      if (cmd.startsWith("sleep")) return `Pausing for a moment before continuing`;
+      if (cmd.includes("git push")) return `Uploading the changes so others can see them`;
+      if (cmd.includes("git commit")) return `Saving the current changes as a named checkpoint`;
+      if (cmd.includes("git diff")) return `Comparing what changed between two versions`;
+      if (cmd.includes("git ")) return `Doing some version tracking housekeeping`;
+      if (cmd.startsWith("echo")) return `Printing a note`;
+      if (cmd.startsWith("sleep")) return `Pausing briefly before the next step`;
       if (cmd.startsWith("nohup") || cmd.startsWith("setsid"))
-        return `Kicking off a long-running task in the background`;
-      // Fallback: keep it readable
-      const firstWord =
-        cmd
-          .split(/[\s|;&]/)
-          .at(0)
-          ?.trim() ?? "";
-      return firstWord
-        ? `Running a command (${firstWord}) on the system`
-        : `Running a system command`;
+        return `Starting a long-running task in the background`;
+      return `Performing a system operation`;
     }
     case "read":
-      return a.offset
-        ? `Looking at a specific section of ${fn} (around line ${a.offset})`
-        : `Opening ${fn} to see what's in it`;
+      return `Reading a section of the code to understand how it works`;
     case "edit": {
       const oldStr = String(a.old_string ?? a.oldText ?? "");
       const newStr = String(a.new_string ?? a.newText ?? "");
-      if (oldStr && !newStr)
-        return `Removing a piece of code from ${fn} that said "${editPreview(oldStr)}"`;
-      if (!oldStr && newStr) return `Adding new content to ${fn}: "${editPreview(newStr)}"`;
-      // Describe the nature of the change
       const oldP = editPreview(oldStr);
       const newP = editPreview(newStr);
-      return `Updating ${fn} — changing "${oldP}" to "${newP}"`;
+      if (oldStr && !newStr) return `Removing: "${oldP}"`;
+      if (!oldStr && newStr) return `Adding: "${newP}"`;
+      return `Changing "${oldP}" to "${newP}"`;
     }
-    case "write": {
-      const contentPreview = String(a.content ?? "")
-        .replace(/\n/g, " ")
-        .trim()
-        .slice(0, 50);
-      return `Creating a new file called ${fn} with content starting: "${contentPreview}…"`;
-    }
+    case "write":
+      return `Creating a new file with the necessary content`;
     case "process": {
       const act = a.action ?? "?";
-      if (act === "poll") return `Checking whether a background task has finished yet`;
-      if (act === "kill") return `Stopping a background task that's no longer needed`;
-      if (act === "log") return `Reading what a background task has produced so far`;
-      if (act === "list") return `Looking at all tasks running in the background`;
-      return `Managing a background task (${act})`;
+      if (act === "poll") return `Waiting for a background task to finish`;
+      if (act === "kill") return `Stopping a background task`;
+      if (act === "log") return `Checking the output of a background task`;
+      if (act === "list") return `Looking at what's running in the background`;
+      return `Managing a background task`;
     }
     case "memory_search":
-      return `Searching through past notes and conversations for "${a.query ?? ""}"`;
+      return `Searching through past notes for "${a.query ?? ""}"`;
     case "memory_get":
-      return `Pulling up a specific memory note: ${fileName(String(a.path ?? ""))}`;
+      return `Pulling up a previous note from memory`;
     case "web_search":
       return `Looking up "${a.query ?? ""}" on the internet`;
     case "web_fetch": {
       const url = String(a.url ?? "");
-      const domain = url.match(/https?:\/\/([^/]+)/)?.[1] ?? url;
-      return `Reading a web page from ${domain}`;
+      const domain = url.match(/https?:\/\/([^/]+)/)?.[1] ?? "";
+      return domain ? `Reading a page from ${domain}` : `Reading a web page`;
     }
     case "message": {
       const act = a.action ?? "send";
       const target = a.target ?? a.to ?? "someone";
       if (act === "send") return `Sending a message to ${target}`;
-      if (act === "react") return `Reacting to a message with an emoji`;
-      return `Doing a messaging action (${act}) with ${target}`;
+      if (act === "react") return `Reacting to a message`;
+      return `Performing a messaging action with ${target}`;
     }
     case "browser": {
       const act = a.action ?? "?";
-      if (act === "screenshot") return `Taking a picture of what the browser shows right now`;
-      if (act === "snapshot") return `Reading the structure of the web page`;
-      if (act === "open") return `Opening a web page${a.url ? `: ${a.url}` : ""}`;
-      if (act === "navigate") return `Going to a different web page${a.url ? `: ${a.url}` : ""}`;
-      if (act === "act") return `Clicking or typing something on the web page`;
-      return `Doing something in the browser (${act})`;
+      if (act === "screenshot") return `Taking a picture of what's on screen`;
+      if (act === "snapshot") return `Reading the layout of the web page`;
+      if (act === "open") return `Opening a web page in the browser`;
+      if (act === "navigate") return `Going to a different web page`;
+      if (act === "act") return `Clicking or typing something on the page`;
+      return `Doing something in the browser`;
     }
     case "image":
       return a.prompt
-        ? `Looking at an image to ${String(a.prompt).slice(0, 60)}`
+        ? `Looking at an image to ${String(a.prompt).slice(0, 80)}`
         : `Examining an image`;
     case "whatsapp_history": {
       const act = a.action ?? "?";
-      if (act === "search" && a.query) return `Looking through WhatsApp messages for "${a.query}"`;
-      if (act === "search" && a.chat) return `Reading the WhatsApp conversation with ${a.chat}`;
+      if (act === "search" && a.query) return `Searching WhatsApp messages for "${a.query}"`;
+      if (act === "search" && a.chat) return `Reading a WhatsApp conversation`;
       if (act === "search") return `Going through recent WhatsApp messages`;
-      if (act === "stats") return `Checking how many WhatsApp messages are stored`;
-      return `Doing something with WhatsApp (${act})`;
+      if (act === "stats") return `Checking how many WhatsApp messages there are`;
+      return `Doing something with WhatsApp`;
     }
     case "sessions_spawn":
       return `Starting a helper to work on: ${String(a.task ?? "").slice(0, 80)}`;
     case "subagents": {
       const act = a.action ?? "?";
-      if (act === "list") return `Checking on the helpers that are working in parallel`;
+      if (act === "list") return `Checking on helpers that are working in parallel`;
       if (act === "kill") return `Telling a helper to stop`;
       if (act === "steer") return `Giving new instructions to a helper`;
-      return `Managing helpers (${act})`;
+      return `Managing helpers`;
     }
     case "tts":
-      return `Saying out loud: "${String(a.text ?? "").slice(0, 60)}"`;
+      return `Saying out loud: "${String(a.text ?? "").slice(0, 80)}"`;
     case "session_status":
       return `Checking how much time and resources this conversation has used`;
     case "pdf":
       return a.prompt
-        ? `Reading a PDF to ${String(a.prompt).slice(0, 60)}`
+        ? `Reading a PDF document to ${String(a.prompt).slice(0, 80)}`
         : `Reading a PDF document`;
-    default: {
-      const fallback = shortenPath(
-        String(a.command ?? a.file_path ?? a.path ?? a.query ?? a.url ?? a.action ?? ""),
-      );
-      return fallback ? `Using ${name} with: ${fallback}` : `Using a tool called ${name}`;
-    }
+    default:
+      return `Performing an action`;
   }
 }
 
@@ -826,6 +866,8 @@ function toolExpandedDetail(name: string, input: any): string {
 }
 
 function renderMsg(msg: any, idx: number): string {
+  // Hide overseer-update messages unless toggled on
+  if (msg._isOverseer && !showOverseerChat) return "";
   const role = (msg.role ?? "").toLowerCase();
   const content = Array.isArray(msg.content) ? msg.content : [];
   const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
@@ -848,11 +890,11 @@ function renderMsg(msg: any, idx: number): string {
     const paired = resultMap.get(tu.id ?? "");
     const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
     const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
     if (exp) {
       h += `<div class="tool-detail">${toolExpandedDetail(tu.name, a)}`;
       if (paired) {
-        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Error:" : "Result:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
       }
       h += `</div>`;
     }
@@ -866,7 +908,7 @@ function renderMsg(msg: any, idx: number): string {
     const err = tr.is_error === true;
     const tid = `r${idx}-${uid || "r"}`;
     const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
     if (exp) {
       h += `<div class="tool-detail">${esc(rt)}</div>`;
     }
@@ -918,11 +960,11 @@ function renderMsgToolsOnly(msg: any, idx: number): string {
     const paired = resultMap.get(tu.id ?? "");
     const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
     const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="name">${esc(tu.name ?? "tool")}</span><span class="detail">${esc(d)}</span></div>`;
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
     if (exp) {
       h += `<div class="tool-detail">${toolExpandedDetail(tu.name, a)}`;
       if (paired) {
-        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Error:" : "Result:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
       }
       h += `</div>`;
     }
@@ -935,7 +977,7 @@ function renderMsgToolsOnly(msg: any, idx: number): string {
     const err = tr.is_error === true;
     const tid = `r${idx}-${uid || "r"}`;
     const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="name">result</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
+    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
     if (exp) {
       h += `<div class="tool-detail">${esc(rt)}</div>`;
     }
@@ -1165,6 +1207,27 @@ function updateChat(skipScroll = false) {
   }
 
   // Always show thinking indicator when a run is active
+  // Show live tool calls as they happen
+  if (liveToolCalls.size > 0) {
+    const liveIdx = messages.length + 9000; // offset to avoid id collisions
+    let i = 0;
+    for (const [, tc] of liveToolCalls) {
+      const d = toolSummary(tc.name, tc.args);
+      const tid = `live-${liveIdx}-${i++}`;
+      const done = tc.result != null;
+      const statusIcon = done ? (tc.isError ? "✗" : "✓") : "⋯";
+      const statusCls = done ? (tc.isError ? "err" : "ok") : "run";
+      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
+      if (expandedTools.has(tid)) {
+        h += `<div class="tool-detail">${toolExpandedDetail(tc.name, tc.args)}`;
+        if (done) {
+          const rt = typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result ?? "");
+          h += `<div class="tool-result-inline"><div class="explanation">${tc.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(rt)}</div></div>`;
+        }
+        h += `</div>`;
+      }
+    }
+  }
   if (activeRuns.size > 0 || sending) {
     h += renderThinkingIndicator();
   }
@@ -1718,6 +1781,7 @@ function init() {
       <span style="color:var(--muted);font-size:11px"><span class="status-dot gw-dot dot-red"></span> Gateway</span>
     </div>
     <div class="chat-area">
+      <div class="chat-header"><button id="toggle-overseer-chat" class="panel-toggle" title="Show/hide system messages">Sys</button></div>
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
@@ -1734,7 +1798,7 @@ function init() {
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="overseer-panel">
-        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
+        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span> <button id="overseer-filter-btn" class="panel-toggle" title="Show only this session's agents">Session</button></div>
         <div id="overseer-graph" class="rpanel-body overseer-graph-container"></div>
       </div>
     </div>
@@ -1790,7 +1854,12 @@ function init() {
     messages = [];
     updateChat();
     loadChat();
-    timelineCtrl?.loadSession(sessionKey);
+    if (timelineCtrl?.getFilterMode() === "all") {
+      timelineCtrl.loadAllSessions(sessions.map((s: any) => s.key));
+    } else {
+      timelineCtrl?.loadSession(sessionKey);
+    }
+    if (overseerFilterActive) overseerCtrl?.setSessionFilter(sessionKey);
   });
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
@@ -1800,6 +1869,18 @@ function init() {
       return;
     }
     send("/new");
+  });
+  $("overseer-filter-btn")!.addEventListener("click", () => {
+    overseerFilterActive = !overseerFilterActive;
+    const btn = $("overseer-filter-btn")!;
+    btn.classList.toggle("panel-toggle--active", overseerFilterActive);
+    overseerCtrl?.setSessionFilter(overseerFilterActive ? sessionKey : null);
+  });
+  $("toggle-overseer-chat")!.addEventListener("click", () => {
+    showOverseerChat = !showOverseerChat;
+    const btn = $("toggle-overseer-chat")!;
+    btn.classList.toggle("panel-toggle--active", showOverseerChat);
+    updateChat();
   });
   $("forensic-btn")!.addEventListener("click", () => {
     const next = !forensicMode;
@@ -1966,15 +2047,18 @@ function init() {
       requestAnimationFrame(step);
     },
     PROVIDER_COLORS,
+    (mode) => {
+      if (mode === "all") {
+        timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
+      } else {
+        timelineCtrl?.loadSession(sessionKey);
+      }
+    },
   );
 }
 
 // ─── Overseer Graph ───
 let overseerCtrl: ReturnType<typeof mountOverseerGraph> | null = null;
-const overseerContainer = document.getElementById("overseer-graph");
-if (overseerContainer) {
-  overseerCtrl = mountOverseerGraph(overseerContainer, { providerIconFn: providerIcon });
-}
 
 async function pollOverseerTopology() {
   if (!connected) return;
@@ -2010,6 +2094,13 @@ function updateForensicBtn() {
 
 // ─── Boot ───
 init();
+// Mount overseer graph AFTER init() creates the DOM
+const overseerContainer = document.getElementById("overseer-graph");
+if (overseerContainer) {
+  overseerCtrl = mountOverseerGraph(overseerContainer, {
+    providerIcons: PROVIDER_ICONS,
+  });
+}
 updateForensicBtn(); // set initial dot indicator
 gwConnect();
 setInterval(() => {

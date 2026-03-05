@@ -87,22 +87,111 @@ if [ -f "$REPO_ROOT/.git/MERGE_HEAD" ]; then
 fi
 
 # ─── PHASE 2: Guardian check ───
-log "Phase 2: Running merge-guardian.sh --fix --learn..."
+log "Phase 2: Running merge-guardian.sh --fix --learn --no-build..."
 GUARDIAN_EXIT=0
-bash scripts/merge-guardian.sh --fix --learn || GUARDIAN_EXIT=$?
+bash scripts/merge-guardian.sh --fix --learn --no-build || GUARDIAN_EXIT=$?
 
 if [ "$GUARDIAN_EXIT" -gt 3 ]; then
   escalate "Guardian found $GUARDIAN_EXIT issues after --fix. Manual review needed."
 fi
 log "  Guardian result: $GUARDIAN_EXIT issues"
 
-# ─── PHASE 3: Build ───
+# ─── PHASE 3: Build (with self-healing retry) ───
 log "Phase 3: Building..."
 rm -rf dist/.cache node_modules/.cache
-if ! pnpm build 2>&1; then
-  escalate "Build failed after merge. Do NOT deploy."
+
+BUILD_LOG="/tmp/merge-cron-build.log"
+BUILD_PASS=false
+
+if pnpm build > "$BUILD_LOG" 2>&1; then
+  BUILD_PASS=true
+  log "  ✅ Build passed (first attempt)"
+else
+  log "  ⚠️  Build failed. Classifying errors and attempting self-heal..."
+
+  # ─── Classify build errors against the 8 playbook categories ───
+  KNOWN_ERRORS=0
+  UNKNOWN_ERRORS=0
+  CLASSIFIED=""
+
+  if grep -q '__filename is not defined' "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [1:__filename_ESM]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "Cannot find.*fork/" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [2:wrong_import_depth]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "has no exported member.*MessageKey" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [3:MessageKey_missing]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "syncFullHistory.*does not exist" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [4:syncFullHistory_type]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "not assignable to type.*ActiveWebListener" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [5:ActiveWebListener_cast]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "authProfileId.*does not exist" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [6:authProfileId_missing]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "Cannot find name.*forkAttemptHooks\|fork/attempt-hooks" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [7:fork_hooks_wiped]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+  if grep -q "Cannot find module.*better-sqlite3" "$BUILD_LOG" 2>/dev/null; then
+    CLASSIFIED="$CLASSIFIED [8:missing_deps]"
+    ((KNOWN_ERRORS++)) || true
+  fi
+
+  # Count unclassified TS errors
+  TOTAL_TS_ERRORS=$(grep -cE "error TS[0-9]+" "$BUILD_LOG" 2>/dev/null || echo 0)
+  UNKNOWN_ERRORS=$((TOTAL_TS_ERRORS - KNOWN_ERRORS))
+  if [ "$UNKNOWN_ERRORS" -lt 0 ]; then UNKNOWN_ERRORS=0; fi
+
+  log "  Error classification: ${KNOWN_ERRORS} known${CLASSIFIED}, ${UNKNOWN_ERRORS} unknown"
+
+  # ─── Self-heal: re-run wiring + guardian, then retry build ───
+  log "  Re-running apply-fork-wiring.mjs..."
+  node scripts/apply-fork-wiring.mjs || log "  ⚠️  Wiring script had warnings"
+
+  log "  Re-running merge-guardian.sh --fix --no-build..."
+  bash scripts/merge-guardian.sh --fix --no-build || true
+
+  # Commit any wiring fixes before rebuilding
+  if [ -n "$(git status --porcelain)" ]; then
+    log "  Committing self-heal patches..."
+    git add -u
+    git commit -m "chore(fork): self-heal build after upstream merge
+
+Applied by safe-cron-merge.sh auto-recovery.
+Classified errors:${CLASSIFIED:-" none"}
+" --no-verify || true
+  fi
+
+  log "  Retrying build..."
+  rm -rf dist/.cache node_modules/.cache
+  if pnpm build > "$BUILD_LOG" 2>&1; then
+    BUILD_PASS=true
+    log "  ✅ Build passed (second attempt, after self-heal)"
+  fi
 fi
-log "  ✅ Build passed"
+
+if ! $BUILD_PASS; then
+  # Save build log for postmortem
+  FAIL_LOG="/tmp/merge-cron-build-fail-$(date +%Y%m%d-%H%M%S).log"
+  cp "$BUILD_LOG" "$FAIL_LOG"
+
+  # Extract top errors for the escalation message
+  TOP_ERRORS=$(grep -E "error TS[0-9]+" "$BUILD_LOG" 2>/dev/null | head -10)
+
+  escalate "Build failed after self-heal retry. Errors:${CLASSIFIED:-" unclassified"}. Unknown: ${UNKNOWN_ERRORS:-?}. Log: $FAIL_LOG
+Top errors:
+$TOP_ERRORS"
+fi
 
 # ─── PHASE 4: Deploy ───
 log "Phase 4: Restarting gateway..."

@@ -72,12 +72,14 @@ export default defineConfig([
     env,
     fixedExtension: false,
     platform: "node",
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   },
   {
     entry: "src/infra/warning-filter.ts",
     env,
     fixedExtension: false,
     platform: "node",
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   },
   {
     // Keep sync lazy-runtime channel modules as concrete dist files.
@@ -96,6 +98,7 @@ export default defineConfig([
     env,
     fixedExtension: false,
     platform: "node",
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   },
   ...pluginSdkEntrypoints.map((entry) => ({
     entry: `src/plugin-sdk/${entry}.ts`,
@@ -103,17 +106,20 @@ export default defineConfig([
     env,
     fixedExtension: false,
     platform: "node" as const,
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   })),
   {
     entry: "src/extensionAPI.ts",
     env,
     fixedExtension: false,
     platform: "node",
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   },
   {
     entry: ["src/hooks/bundled/*/handler.ts", "src/hooks/llm-slug-generator.ts"],
     env,
     fixedExtension: false,
     platform: "node",
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
   },
 ]);
