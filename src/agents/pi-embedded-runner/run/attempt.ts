@@ -796,6 +796,9 @@ export async function runEmbeddedAttempt(
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
 
+    // FORK: persona block injection from CORTEX/SOUL.md
+    const personaBlock = _forkAttemptHooks.getPersonaBlock(effectiveWorkspace);
+
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -826,6 +829,7 @@ export async function runEmbeddedAttempt(
       contextFiles,
       bootstrapTruncationWarningLines: bootstrapPromptWarning.lines,
       memoryCitationsMode: params.config?.memory?.citations,
+      personaBlock, // FORK: Tier 1 persona block from CORTEX runtime
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
@@ -1284,6 +1288,8 @@ export async function runEmbeddedAttempt(
         sessionKey: sandboxSessionKey,
         sessionId: params.sessionId,
         agentId: sessionAgentId,
+        modelId: params.modelId,
+        modelProvider: params.provider,
       });
 
       const {
@@ -1512,6 +1518,18 @@ export async function runEmbeddedAttempt(
               });
           }
 
+          // FORK: mid-context persona re-injection when SyncScore drops
+          {
+            const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
+              activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+              systemPromptText ?? "",
+              log,
+            );
+            if (reinjectResult.reinjected && systemPromptText != null) {
+              systemPromptText = reinjectResult.systemPromptText;
+            }
+          }
+
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
           if (imageResult.images.length > 0) {
@@ -1646,6 +1664,24 @@ export async function runEmbeddedAttempt(
               log.warn(`agent_end hook failed: ${err}`);
             });
         }
+
+        // FORK: text-tool-call interception for local providers (ollama/lmstudio/vllm)
+        if (!promptError && !aborted && tools.length > 0) {
+          const ttcResult = await _forkAttemptHooks.interceptTextToolCalls({
+            provider: params.provider,
+            activeSession: activeSession as never,
+            tools: tools as never,
+            toolMetas: toolMetas as never,
+            promptError,
+            aborted,
+            abortSignal: params.abortSignal,
+            abortable,
+            log,
+          });
+          if (ttcResult.promptError) {
+            promptError = ttcResult.promptError;
+          }
+        }
       } finally {
         clearTimeout(abortTimer);
         if (abortWarnTimer) {
@@ -1706,6 +1742,27 @@ export async function runEmbeddedAttempt(
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
       }
+
+      // FORK: fire-and-forget post-turn processing (context anatomy, ENGRAM, SyncScore, observations)
+      _forkAttemptHooks
+        .onTurnComplete({
+          sessionManager:
+            activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+          sessionKey: params.sessionKey,
+          messagesSnapshot,
+          assistantTexts,
+          systemPromptReport,
+          provider: params.provider,
+          modelId: params.modelId,
+          contextWindowTokens:
+            params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+          getCompactionCount,
+          getUsageTotals,
+          log,
+        })
+        .catch((err) => {
+          log.warn(`fork onTurnComplete failed: ${String(err)}`);
+        });
 
       return {
         aborted,

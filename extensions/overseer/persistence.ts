@@ -1,4 +1,13 @@
-// extensions/overseer/persistence.ts
+/**
+ * FORK: overseer/persistence — Atomic JSON save/load for topology snapshots
+ *
+ * Provides `saveState()` and `loadState()` for persisting the Overseer topology
+ * graph (`TopologySnapshot`) to disk as JSON. Writes use a tmp+rename pattern to
+ * prevent corruption on crash. Called by the plugin's `gateway_start` (restore)
+ * and `gateway_stop` (persist) hooks so agent topology survives gateway restarts.
+ *
+ * Wired in by: imported from `./persistence.js` in `extensions/overseer/index.ts`
+ */
 import { writeFileSync, readFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { TopologySnapshot } from "./topology.js";

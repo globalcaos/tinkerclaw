@@ -1,3 +1,16 @@
+/**
+ * FORK: context-pruning/settings — Configuration types and defaults for context pruning
+ *
+ * Defines the raw config shape (ContextPruningConfig), the resolved runtime shape
+ * (EffectiveContextPruningSettings), and default values for all pruning parameters
+ * including TTL, soft-trim head/tail char limits, hard-clear thresholds, and tool
+ * allow/deny glob patterns. The computeEffectiveSettings() function validates and
+ * normalizes raw config into the effective settings, falling back to defaults for
+ * missing or invalid values.
+ *
+ * Wired in by: imported by runtime.ts (to type the runtime value) and pruner.ts
+ * (to access settings during pruning); config values originate from agent config.
+ */
 import { parseDurationMs } from "../../../cli/parse-duration.js";
 
 export type ContextPruningToolMatch = {

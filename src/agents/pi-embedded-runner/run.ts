@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
+import { emitAgentEvent } from "../../infra/agent-events.js"; // FORK: per-profile fallback error events
 import { generateSecureToken } from "../../infra/secure-random.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookBeforeAgentStartResult } from "../../plugins/types.js";
@@ -576,6 +577,19 @@ export async function runEmbeddedPiAgent(
         while (nextIndex < profileCandidates.length) {
           const candidate = profileCandidates[nextIndex];
           if (candidate && isProfileInCooldown(authStore, candidate)) {
+            // FORK: emit per-profile fallback error for cooldown skip
+            emitAgentEvent({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-profile-error",
+                profileId: candidate,
+                profileIndex: nextIndex,
+                totalProfiles: profileCandidates.length,
+                reason: "cooldown",
+              },
+            });
             nextIndex += 1;
             continue;
           }
@@ -589,6 +603,20 @@ export async function runEmbeddedPiAgent(
             if (candidate && candidate === lockedProfileId) {
               throw err;
             }
+            // FORK: emit per-profile fallback error for key resolution failure
+            emitAgentEvent({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-profile-error",
+                profileId: candidate,
+                profileIndex: nextIndex,
+                totalProfiles: profileCandidates.length,
+                reason: "auth",
+                message: String(err),
+              },
+            });
             nextIndex += 1;
           }
         }
@@ -1072,12 +1100,24 @@ export async function runEmbeddedPiAgent(
               profileId: lastProfileId,
               reason: promptFailoverReason,
             });
-            if (
-              isFailoverErrorMessage(errorText) &&
-              promptFailoverReason !== "timeout" &&
-              (await advanceAuthProfile())
-            ) {
-              continue;
+            if (isFailoverErrorMessage(errorText) && promptFailoverReason !== "timeout") {
+              // FORK: emit per-profile fallback error for prompt error path
+              emitAgentEvent({
+                runId: params.runId,
+                sessionKey: params.sessionKey,
+                stream: "lifecycle",
+                data: {
+                  phase: "fallback-profile-error",
+                  profileId: lastProfileId,
+                  profileIndex,
+                  totalProfiles: profileCandidates.length,
+                  reason: promptFailoverReason ?? "unknown",
+                  message: errorText,
+                },
+              });
+              if (await advanceAuthProfile()) {
+                continue;
+              }
             }
             const fallbackThinking = pickFallbackThinkingLevel({
               message: errorText,
@@ -1179,6 +1219,23 @@ export async function runEmbeddedPiAgent(
                   `Profile ${lastProfileId} hit Cloud Code Assist format error. Tool calls will be sanitized on retry.`,
                 );
               }
+            }
+
+            // FORK: emit per-profile fallback error for response error path
+            if (shouldRotate && lastProfileId) {
+              emitAgentEvent({
+                runId: params.runId,
+                sessionKey: params.sessionKey,
+                stream: "lifecycle",
+                data: {
+                  phase: "fallback-profile-error",
+                  profileId: lastProfileId,
+                  profileIndex,
+                  totalProfiles: profileCandidates.length,
+                  reason: assistantFailoverReason ?? (timedOut ? "timeout" : "unknown"),
+                  message: lastAssistant?.errorMessage?.trim() ?? "",
+                },
+              });
             }
 
             const rotated = await advanceAuthProfile();

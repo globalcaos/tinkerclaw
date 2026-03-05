@@ -1,3 +1,15 @@
+/**
+ * canvas-tool — Agent tool for controlling node-attached browser canvases
+ *
+ * Exposes `createCanvasTool()` which returns an `AnyAgentTool` that the LLM can
+ * invoke to present/hide/navigate/eval/snapshot canvas windows and push A2UI JSONL
+ * payloads on OpenClaw CLI nodes. Each action delegates to the gateway via
+ * `callGatewayTool("node.invoke", ...)` with the resolved node ID. The snapshot
+ * action captures the rendered canvas as a base64 image and returns it inline so
+ * the model can see the current UI state.
+ *
+ * Wired in by: tool registration in the agent runner; imported as `createCanvasTool`
+ */
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";

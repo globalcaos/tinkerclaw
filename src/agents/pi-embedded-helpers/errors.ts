@@ -797,6 +797,11 @@ export function classifyFailoverReason(raw: string): FailoverReason | null {
   if (isJsonApiInternalServerError(raw)) {
     return "timeout";
   }
+  // FORK: Early billing check for Anthropic spending cap — must come BEFORE
+  // rateLimit because "usage limits" also matches rate_limit patterns.
+  if (/regain access/i.test(raw) || /specified.*usage limits/i.test(raw)) {
+    return "billing";
+  }
   if (isRateLimitErrorMessage(raw)) {
     return "rate_limit";
   }
