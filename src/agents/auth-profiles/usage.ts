@@ -34,6 +34,11 @@ export function resolveProfileUnusableUntil(
   return Math.max(...values);
 }
 
+// FORK: Hard ceiling for any cooldown/disable window. No legitimate backoff
+// exceeds 48 hours (billingMaxHours defaults to 24). Values beyond this are
+// stale or corrupted and should be treated as expired.
+const COOLDOWN_ANOMALY_CEILING_MS = 48 * 60 * 60 * 1000;
+
 /**
  * Check if a profile is currently in cooldown (due to rate limiting or errors).
  */
@@ -51,7 +56,15 @@ export function isProfileInCooldown(
   }
   const unusableUntil = resolveProfileUnusableUntil(stats);
   const ts = now ?? Date.now();
-  return unusableUntil ? ts < unusableUntil : false;
+  if (!unusableUntil || ts >= unusableUntil) {
+    return false;
+  }
+  // FORK: Reject anomalous disable windows that exceed the hard ceiling.
+  // These are stale/corrupt entries (e.g. clock skew, bug in backoff calc).
+  if (unusableUntil - ts > COOLDOWN_ANOMALY_CEILING_MS) {
+    return false;
+  }
+  return true;
 }
 
 function isActiveUnusableWindow(until: number | undefined, now: number): boolean {
@@ -192,16 +205,22 @@ export function clearExpiredCooldowns(store: AuthProfileStore, now?: number): bo
     }
 
     let profileMutated = false;
+    // FORK: Also treat anomalously far-future values as expired (stale/corrupt).
+    const isAnomalous = (until: number | undefined): boolean =>
+      typeof until === "number" &&
+      Number.isFinite(until) &&
+      until > 0 &&
+      until - ts > COOLDOWN_ANOMALY_CEILING_MS;
     const cooldownExpired =
       typeof stats.cooldownUntil === "number" &&
       Number.isFinite(stats.cooldownUntil) &&
       stats.cooldownUntil > 0 &&
-      ts >= stats.cooldownUntil;
+      (ts >= stats.cooldownUntil || isAnomalous(stats.cooldownUntil));
     const disabledExpired =
       typeof stats.disabledUntil === "number" &&
       Number.isFinite(stats.disabledUntil) &&
       stats.disabledUntil > 0 &&
-      ts >= stats.disabledUntil;
+      (ts >= stats.disabledUntil || isAnomalous(stats.disabledUntil));
 
     if (cooldownExpired) {
       stats.cooldownUntil = undefined;

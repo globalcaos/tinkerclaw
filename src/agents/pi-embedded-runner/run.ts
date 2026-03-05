@@ -615,16 +615,19 @@ export async function runEmbeddedPiAgent(
           const candidate = profileCandidates[nextIndex];
           if (candidate && isProfileInCooldown(authStore, candidate)) {
             // FORK: emit per-profile fallback error for cooldown skip
+            const cooldownReason = authStore.usageStats?.[candidate]?.disabledReason || "cooldown";
             emitAgentEvent({
               runId: params.runId,
               sessionKey: params.sessionKey,
               stream: "lifecycle",
               data: {
                 phase: "fallback-profile-error",
+                provider: model.provider,
+                model: model.id,
                 profileId: candidate,
                 profileIndex: nextIndex,
                 totalProfiles: profileCandidates.length,
-                reason: "cooldown",
+                reason: cooldownReason,
               },
             });
             nextIndex += 1;
@@ -647,6 +650,8 @@ export async function runEmbeddedPiAgent(
               stream: "lifecycle",
               data: {
                 phase: "fallback-profile-error",
+                provider: model.provider,
+                model: model.id,
                 profileId: candidate,
                 profileIndex: nextIndex,
                 totalProfiles: profileCandidates.length,
@@ -668,6 +673,23 @@ export async function runEmbeddedPiAgent(
             candidate !== lockedProfileId &&
             isProfileInCooldown(authStore, candidate)
           ) {
+            // FORK: emit per-profile fallback error for initial selection cooldown skip
+            const initCooldownReason =
+              authStore.usageStats?.[candidate]?.disabledReason || "cooldown";
+            emitAgentEvent({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-profile-error",
+                provider: model.provider,
+                model: model.id,
+                profileId: candidate,
+                profileIndex,
+                totalProfiles: profileCandidates.length,
+                reason: initCooldownReason,
+              },
+            });
             profileIndex += 1;
             continue;
           }
@@ -681,7 +703,26 @@ export async function runEmbeddedPiAgent(
         if (err instanceof FailoverError) {
           throw err;
         }
-        if (profileCandidates[profileIndex] === lockedProfileId) {
+        // FORK: emit per-profile fallback error for initial selection key resolution failure
+        const failedInitCandidate = profileCandidates[profileIndex];
+        if (failedInitCandidate && failedInitCandidate !== lockedProfileId) {
+          emitAgentEvent({
+            runId: params.runId,
+            sessionKey: params.sessionKey,
+            stream: "lifecycle",
+            data: {
+              phase: "fallback-profile-error",
+              provider: model.provider,
+              model: model.id,
+              profileId: failedInitCandidate,
+              profileIndex,
+              totalProfiles: profileCandidates.length,
+              reason: "auth",
+              message: String(err),
+            },
+          });
+        }
+        if (failedInitCandidate === lockedProfileId) {
           throwAuthProfileFailover({ allInCooldown: false, error: err });
         }
         const advanced = await advanceAuthProfile();
@@ -1162,6 +1203,8 @@ export async function runEmbeddedPiAgent(
                 stream: "lifecycle",
                 data: {
                   phase: "fallback-profile-error",
+                  provider: model.provider,
+                  model: model.id,
                   profileId: lastProfileId,
                   profileIndex,
                   totalProfiles: profileCandidates.length,
@@ -1283,6 +1326,8 @@ export async function runEmbeddedPiAgent(
                 stream: "lifecycle",
                 data: {
                   phase: "fallback-profile-error",
+                  provider: model.provider,
+                  model: model.id,
                   profileId: lastProfileId,
                   profileIndex,
                   totalProfiles: profileCandidates.length,

@@ -441,7 +441,7 @@ function onEvent(evt: any) {
       const reason = (p.data.reason || "unknown") as string;
       const errMsg = (p.data.error || "") as string;
       const pIdx = p.data.profileIndex as number | undefined;
-      const pTotal = p.data.profileTotal as number | undefined;
+      const pTotal = (p.data.totalProfiles ?? p.data.profileTotal) as number | undefined;
       const reasonLabel = describeError(reason, errMsg);
       const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
       const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
@@ -1342,6 +1342,7 @@ function describeError(reason: string, errMsg: string): string {
   if (reason === "timeout") return "timeout";
   if (reason === "model_not_found") return "model not found";
   if (reason === "session_expired") return "session expired";
+  if (reason === "format") return "request format rejected";
   if (reason === "cooldown") return "in cooldown";
   if (reason === "overloaded" || /overloaded|503|capacity/i.test(e)) return "overloaded";
 
