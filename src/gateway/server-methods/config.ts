@@ -1,4 +1,6 @@
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { resolveAuthProfileOrder } from "../../agents/auth-profiles/order.js";
+import { loadAuthProfileStoreForSecretsRuntime } from "../../agents/auth-profiles/store.js";
 import { listChannelPlugins } from "../../channels/plugins/index.js";
 import {
   CONFIG_PATH,
@@ -12,6 +14,10 @@ import {
 } from "../../config/config.js";
 import { applyLegacyMigrations } from "../../config/legacy.js";
 import { applyMergePatch } from "../../config/merge-patch.js";
+import {
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+} from "../../config/model-input.js";
 import {
   redactConfigObject,
   redactConfigSnapshot,
@@ -244,6 +250,45 @@ function loadSchemaWithPlugins(): ConfigSchemaResponse {
 }
 
 export const configHandlers: GatewayRequestHandlers = {
+  "config.models": ({ respond }) => {
+    try {
+      const cfg = loadConfig();
+      const modelCfg = cfg.agents?.defaults?.model;
+      const primary = resolveAgentModelPrimaryValue(modelCfg) ?? null;
+      const fallbacks = resolveAgentModelFallbackValues(modelCfg);
+
+      const store = loadAuthProfileStoreForSecretsRuntime();
+      const allModelIds = [primary, ...fallbacks].filter(Boolean) as string[];
+      const seenProviders = new Set<string>();
+      const authOrder: Record<string, string[]> = {};
+      const authProfiles: Record<string, { label?: string; mode?: string }> = {};
+
+      for (const modelId of allModelIds) {
+        const provider = modelId.split("/")[0];
+        if (!provider || seenProviders.has(provider)) {
+          continue;
+        }
+        seenProviders.add(provider);
+        const order = resolveAuthProfileOrder({ cfg, store, provider });
+        if (order.length > 0) {
+          authOrder[provider] = order;
+          for (const profileId of order) {
+            const cred = store.profiles[profileId];
+            authProfiles[profileId] = {
+              label: (cred as Record<string, unknown>)?.label as string | undefined,
+              mode: cred?.type,
+            };
+          }
+        }
+      }
+
+      const models = (cfg.agents?.defaults as Record<string, unknown>)?.models ?? {};
+
+      respond(true, { primary, fallbacks, models, authProfiles, authOrder }, undefined);
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
+    }
+  },
   "config.get": async ({ params, respond }) => {
     if (!assertValidParams(params, validateConfigGetParams, "config.get", respond)) {
       return;
