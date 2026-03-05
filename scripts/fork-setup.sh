@@ -109,6 +109,37 @@ else
   fi
 fi
 
+# ─── Step 3c: Contributor fork remotes ────────────────────────────
+echo "▸ Step 3c: Adding contributor fork remotes..."
+cd "${REPO_DIR}"
+
+# Contributor forks we cherry-pick from.
+# Format: "remote_name|github_url|contribution_area"
+# Only forks verified to exist as public repos are included.
+CONTRIBUTOR_REMOTES=(
+  "jake|https://github.com/mcinteerj/openclaw.git|Voyage AI embeddings"
+  "bruno|https://github.com/bmendonca3/openclaw.git|Feishu fixes"
+  "glucksberg|https://github.com/Glucksberg/openclaw.git|Webhook/media fixes"
+  # The following contributors' forks were not found as public repos (2026-03-05):
+  #   nathandenherder (Slack text streaming)
+  #   nikolas-pinon98 (Zero-latency hot-reload)
+  #   jasuchung (Browser cookies action)
+  #   robertchang-gh (Secrets injection proxy)
+  # Their contributions were likely via PRs to upstream, not personal forks.
+)
+
+for entry in "${CONTRIBUTOR_REMOTES[@]}"; do
+  IFS='|' read -r name url area <<< "$entry"
+  if git remote get-url "$name" &>/dev/null; then
+    echo "  ✓ $name already configured ($area)"
+  else
+    git remote add "$name" "$url" 2>/dev/null && echo "  ✓ Added $name ($area)" || echo "  ⚠ Failed to add $name"
+  fi
+done
+
+CONTRIBUTOR_COUNT=${#CONTRIBUTOR_REMOTES[@]}
+echo "  ✓ ${CONTRIBUTOR_COUNT} contributor remotes configured"
+
 # ─── Step 4: Config template ──────────────────────────────────────
 echo "▸ Step 4: Checking config..."
 mkdir -p "${OPENCLAW_DIR}"
