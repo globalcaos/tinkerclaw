@@ -1,4 +1,17 @@
-// extensions/overseer/topology.ts
+/**
+ * FORK: overseer/topology — In-memory graph store for agent/subagent hierarchy
+ *
+ * Maintains a live directed graph of `OverseerNode` entries (main session +
+ * subagents) and parent-child `OverseerEdge` connections. Nodes are created on
+ * subagent spawn or main session LLM activation, enriched with model/provider/token
+ * data from gateway session polling, and removed on subagent end. Tracks per-node
+ * phase, tool call counts, and staleness detection (marks nodes "stuck" when their
+ * `updatedAt` timestamp stops advancing). Exports `TopologySnapshot` for
+ * serialization by the persistence layer and for the `overseer.topology` gateway
+ * method. Heartbeat sessions are excluded via the static `isHeartbeat()` guard.
+ *
+ * Wired in by: instantiated in `extensions/overseer/index.ts` as `TopologyStore`
+ */
 import type {
   PluginHookSubagentSpawnedEvent,
   PluginHookSubagentEndedEvent,
@@ -152,6 +165,10 @@ export class TopologyStore {
     this.nodes.clear();
     this.edges = [];
     for (const n of snap.nodes) {
+      // Skip heartbeat nodes that may have been persisted
+      if (TopologyStore.isHeartbeat(n.sessionKey)) continue;
+      // Update stale labels from before rename
+      if (n.label === "Jarvis") n.label = "Main";
       this.nodes.set(n.sessionKey, n);
     }
     this.edges = snap.edges;
@@ -202,7 +219,7 @@ export class TopologyStore {
       node = {
         sessionKey: info.sessionKey,
         agentId: "main",
-        label: "Jarvis",
+        label: "Main",
         mode: "main",
         runId: info.runId,
         parentKey: null,

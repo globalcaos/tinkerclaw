@@ -1,3 +1,17 @@
+/**
+ * FORK: compaction-safeguard — Enhanced session compaction with multi-stage summarization
+ *
+ * Intercepts the "session_before_compact" event to replace Pi's default compaction with
+ * a richer summarization pipeline. Splits recent turns for verbatim preservation, collects
+ * tool failures into a dedicated section, appends file operation lists (read/modified),
+ * injects workspace critical rules from AGENTS.md, and uses adaptive chunk sizing to
+ * summarize history in stages via the LLM. When context is heavily skewed toward new
+ * content, it prunes older chunks first and summarizes them separately so no context is
+ * silently lost. Cancels compaction if no real conversation exists or no API key is available.
+ *
+ * Wired in by: Pi extension loader via plugin config; reads runtime state from
+ * compaction-safeguard-runtime.ts; delegates summarization to compaction.ts utilities.
+ */
 import fs from "node:fs";
 import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";

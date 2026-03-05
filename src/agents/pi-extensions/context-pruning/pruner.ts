@@ -1,3 +1,16 @@
+/**
+ * FORK: context-pruning/pruner — Two-pass context pruning engine for tool result messages
+ *
+ * Implements the core pruning algorithm that reduces context window usage by processing
+ * tool result messages in two passes: (1) soft-trim keeps head+tail chars of large tool
+ * results when the fill ratio exceeds softTrimRatio, and (2) hard-clear replaces entire
+ * tool results with a placeholder when the ratio exceeds hardClearRatio. Messages before
+ * the first user message and the last N assistant messages are always protected from
+ * pruning. Image-containing tool results are skipped but counted toward fill estimates.
+ *
+ * Wired in by: imported by extension.ts which calls pruneContextMessages() on each
+ * "context" event; uses settings from settings.ts and tool predicates from tools.ts.
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";

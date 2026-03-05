@@ -1,3 +1,16 @@
+/**
+ * gateway-tool — Agent tool for gateway lifecycle and config management
+ *
+ * Exposes `createGatewayTool()` which gives the LLM actions to restart the
+ * gateway (via SIGUSR1), read/write/patch the runtime config with optimistic
+ * concurrency (baseHash), retrieve the config JSON schema, and trigger in-place
+ * updates. Config writes auto-fetch the current hash when none is supplied to
+ * prevent blind overwrites. The restart path writes a sentinel file so the
+ * post-restart process can deliver a completion note back to the user's channel.
+ * Marked `ownerOnly` so non-owner senders cannot mutate gateway state.
+ *
+ * Wired in by: tool registration in the agent runner; imported as `createGatewayTool`
+ */
 import { Type } from "@sinclair/typebox";
 import { isRestartEnabled } from "../../config/commands.js";
 import type { OpenClawConfig } from "../../config/config.js";

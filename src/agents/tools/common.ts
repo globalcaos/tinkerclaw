@@ -1,3 +1,16 @@
+/**
+ * common — Shared types, param parsers, and result builders for agent tools
+ *
+ * Provides the foundational utilities used by every agent tool implementation:
+ * `AnyAgentTool` (the base tool type with optional `ownerOnly` flag),
+ * `readStringParam`/`readNumberParam`/`readBooleanParam` (type-safe parameter
+ * extraction with camelCase-to-snake_case fallback), `jsonResult`/`imageResult`
+ * (standardized tool result constructors), error classes (`ToolInputError`,
+ * `ToolAuthorizationError`), and `createActionGate` for toggling tool sub-actions
+ * via config. Nearly every file in `src/agents/tools/` imports from here.
+ *
+ * Wired in by: direct import from all agent tool files (`./common.js`)
+ */
 import fs from "node:fs/promises";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { detectMime } from "../../media/mime.js";

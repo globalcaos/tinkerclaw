@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { listAgentIds } from "../../agents/agent-scope.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
+import { DEFAULT_AGENT_WORKSPACE_DIR } from "../../agents/workspace.js";
 import { buildBareSessionResetPrompt } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
@@ -359,7 +360,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         // reset first, then run a fresh-session greeting prompt in-place.
         // Date is embedded in the prompt so agents read the correct daily
         // memory files; skip further timestamp injection to avoid duplication.
-        message = buildBareSessionResetPrompt(cfg);
+        message = buildBareSessionResetPrompt(cfg, undefined, DEFAULT_AGENT_WORKSPACE_DIR);
         skipTimestampInjection = true;
       }
     }

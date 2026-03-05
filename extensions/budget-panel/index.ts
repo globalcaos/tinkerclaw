@@ -5,10 +5,10 @@
  * Wired to real usage data.
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { readFileSync, existsSync } from "fs";
-import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { join } from "path";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
 
 export default function register(api: OpenClawPluginApi) {
@@ -229,8 +229,8 @@ export default function register(api: OpenClawPluginApi) {
           fiveHourLimit: anthropic.estimated.fiveHourLimit || 900000,
         };
       }
-    } catch (e) {
-      // console.log("[budget-panel] Could not get usage.budget, using defaults");
+    } catch {
+      // Fallback to defaults if usage.budget is unavailable
     }
 
     // Build status with real Claude token data

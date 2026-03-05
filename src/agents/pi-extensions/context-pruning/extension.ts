@@ -1,3 +1,14 @@
+/**
+ * FORK: context-pruning/extension — Pi extension entry point for context window pruning
+ *
+ * Registers a "context" event handler that intercepts the message array before it is
+ * sent to the LLM. When the context window fill ratio exceeds configured thresholds,
+ * it delegates to the pruner to soft-trim or hard-clear old tool results. In "cache-ttl"
+ * mode, pruning is skipped if the cache was touched within the configured TTL window.
+ *
+ * Wired in by: Pi extension loader via the context-pruning plugin config; imports
+ * pruner.ts for the actual pruning logic and runtime.ts for per-session settings.
+ */
 import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { pruneContextMessages } from "./pruner.js";
 import { getContextPruningRuntime } from "./runtime.js";
