@@ -8,9 +8,9 @@ bash scripts/merge-guardian.sh --fix --learn
 
 ## Renamed Functions
 
-| Original (upstream)                  | Fork rename                       | Files affected                                                                   | Date       |
-| ------------------------------------ | --------------------------------- | -------------------------------------------------------------------------------- | ---------- |
-| `shouldSuppressHeartbeatBroadcast()` | `shouldHideHeartbeatChatOutput()` | `src/web/auto-reply/server-chat.ts` (3 call sites: emitChatDelta, emitChatFinal) | 2026-02-22 |
+| Original (upstream)                  | Fork rename                       | Files affected                                                            | Date       |
+| ------------------------------------ | --------------------------------- | ------------------------------------------------------------------------- | ---------- |
+| `shouldSuppressHeartbeatBroadcast()` | `shouldHideHeartbeatChatOutput()` | `src/gateway/server-chat.ts` (3 call sites: emitChatDelta, emitChatFinal) | 2026-02-22 |
 
 ## Upstream File Patches
 
@@ -157,12 +157,12 @@ These directories exist ONLY in the fork. Upstream has none of them:
 - `src/fork/` — hook entry points (attempt-hooks.ts, process-message-hooks.ts, etc.)
 - `src/memory/` — cortex, engram, limbic, synapse
 - `src/whatsapp-history/` — WhatsApp history import
-- `src/agents/continuous-compact/` — continuous compaction
 - `src/agents/pi-extensions/` — retrieval runtime, tools
-- `src/agents/tools/` — hippocampus-bridge, whatsapp-history-tool
+- `src/agents/tools/` — whatsapp-history-tool, canvas-tool, gateway-tool, web-tools
 - `extensions/manus/` — Manus extension
 - `extensions/budget-panel/` — Budget panel
 - `extensions/tinker/` — Tinker Command Center plugin
+- `extensions/hippocampus/` — Hippocampus memory search hook
 - `extensions/overseer/` — Overseer sub-agent monitor
 - `tinker-ui/` — Tinker webchat UI (separate Vite+Lit app)
 
@@ -189,7 +189,7 @@ grep "_createThinkingReaction"      src/web/auto-reply/monitor/process-message.t
 # Manual-only checks:
 grep "failedProfileId"              src/auto-reply/reply/agent-runner-execution.ts
 grep "external.*better-sqlite3"     tsdown.config.ts
-grep "shouldHideHeartbeatChatOutput" src/web/auto-reply/server-chat.ts
+grep "shouldHideHeartbeatChatOutput" src/gateway/server-chat.ts
 ```
 
 **Key improvement (2026-03-04):** `apply-fork-wiring.mjs` now restores BOTH imports AND call sites for attempt.ts, system-prompt.ts, process-message.ts, run.ts, failover-matches.ts, and errors.ts. Future `--theirs` merges are self-healing via `node scripts/apply-fork-wiring.mjs`.
