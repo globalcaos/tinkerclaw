@@ -58,14 +58,15 @@ auto_commit_repo() {
     return 0
   fi
 
+  # Count only tracked dirty files (exclude untracked with grep -v '^??')
   local dirty
-  dirty=$(git -C "$repo_path" status --porcelain | wc -l)
+  dirty=$(git -C "$repo_path" status --porcelain | grep -v '^??' | wc -l)
   if [ "$dirty" -eq 0 ]; then
     log "  ✅ $label: clean"
     return 0
   fi
 
-  log "  $label: $dirty dirty files — auto-committing..."
+  log "  $label: $dirty dirty tracked files — auto-committing..."
   git -C "$repo_path" add -u
   local msg="chore: auto-commit before merge ($(date '+%Y-%m-%d %H:%M'))"
   if [ "$no_verify" = "--no-verify" ]; then
@@ -144,11 +145,11 @@ sync_companion() {
 
   log "  $label: syncing..."
 
-  # Auto-commit dirty tracked files first
+  # Auto-commit dirty tracked files first (exclude untracked)
   local dirty
-  dirty=$(git -C "$repo_path" status --porcelain | wc -l)
+  dirty=$(git -C "$repo_path" status --porcelain | grep -v '^??' | wc -l)
   if [ "$dirty" -gt 0 ]; then
-    log "    $dirty dirty files — auto-committing..."
+    log "    $dirty dirty tracked files — auto-committing..."
     git -C "$repo_path" add -u
     git -C "$repo_path" commit -m "chore: auto-commit before upstream sync ($(date '+%Y-%m-%d %H:%M'))" || true
   fi
