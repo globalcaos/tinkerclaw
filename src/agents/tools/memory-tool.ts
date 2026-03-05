@@ -1,3 +1,17 @@
+/**
+ * memory-tool — Agent tools for semantic memory search and file retrieval
+ *
+ * Exports `createMemorySearchTool()` and `createMemoryGetTool()` which let the
+ * LLM recall information from the agent's MEMORY.md and memory/*.md files via
+ * embedding-based semantic search. Search results include optional source
+ * citations (auto-enabled for DM chats, suppressed in groups/channels) and are
+ * budget-clamped by `maxInjectedChars` for the QMD backend. `memory_get` allows
+ * targeted line-range reads after an initial search to keep context windows small.
+ * Both tools gracefully degrade when the embedding provider is unavailable,
+ * returning structured `disabled`/`unavailable` payloads with actionable hints.
+ *
+ * Wired in by: tool registration in the agent runner; imported as `createMemorySearchTool` / `createMemoryGetTool`
+ */
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";

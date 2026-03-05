@@ -40,6 +40,7 @@ type FallbackAttempt = {
   reason?: FailoverReason;
   status?: number;
   code?: string;
+  failedProfileId?: string; // FORK: auth profile that triggered this fallback attempt
 };
 
 /**
@@ -537,6 +538,7 @@ export async function runWithModelFallback<T>(params: {
         reason: described.reason ?? "unknown",
         status: described.status,
         code: described.code,
+        failedProfileId: isFailoverError(normalized) ? normalized.profileId : undefined, // FORK: track which auth profile failed
       });
       await params.onError?.({
         provider: candidate.provider,

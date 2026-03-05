@@ -30,7 +30,7 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .chat-area{grid-column:2;grid-row:2;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border)}
 .messages{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:4px}
 .msg{max-width:85%;padding:6px 10px;border-radius:8px;line-height:1.45;word-wrap:break-word}
-.msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:2px}
+.msg.user{align-self:flex-end;background:rgb(37,227,109);color:#1a1a1a;border-bottom-right-radius:2px}
 .msg.assistant{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:2px}
 .msg.system{align-self:center;color:var(--muted);font-size:11px;background:transparent;padding:2px 8px;cursor:pointer}
 .msg.system:hover{color:var(--text)}
@@ -113,6 +113,21 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .thinking-indicator[data-state="pending"] .thinking-run:hover{background:transparent;border-color:transparent}
 .thinking-indicator[data-state="pending"] .thinking-run:hover .thinking-model{opacity:1}
 
+/* Chat header */
+.chat-header{display:flex;align-items:center;justify-content:flex-end;padding:2px 8px;border-bottom:1px solid var(--border);background:var(--surface);gap:4px}
+
+/* Panel toggles */
+.panel-toggle{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:8px;font-family:"SF Mono",monospace;
+  color:var(--muted);cursor:pointer;padding:1px 6px;
+  border:1px solid var(--border);border-radius:3px;
+  background:var(--surface2);transition:all .12s;
+  user-select:none;flex-shrink:0;
+}
+.panel-toggle:hover{color:var(--text);border-color:var(--accent)}
+.panel-toggle.panel-toggle--active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
 /* Input */
 .chat-input{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--border);background:var(--surface)}
 .chat-input textarea{flex:1;background:#fff;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;font-size:13px;resize:none;min-height:36px;max-height:120px;line-height:1.4}
@@ -158,7 +173,7 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .ct-ts{text-align:center;font-size:9px;color:var(--muted);font-family:"SF Mono",monospace;margin-top:1px;white-space:nowrap;line-height:1.3}
 .ct-empty{display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:var(--muted);font-size:11px;font-family:"SF Mono",monospace}
 .ct-tooltip{position:fixed;background:#1a1a1a;color:#fff;font-size:10px;font-family:"SF Mono",monospace;padding:4px 8px;border-radius:4px;pointer-events:none;z-index:100;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3)}
-.ct-legend{position:absolute;right:8px;top:4px;display:flex;gap:6px;font-size:8px;color:var(--muted);font-family:"SF Mono",monospace;padding:2px 6px;background:var(--surface);border-radius:3px;z-index:10}
+.ct-legend{position:sticky;right:0;top:0;align-self:flex-start;flex-shrink:0;order:9999;margin-left:auto;display:flex;gap:6px;font-size:9px;color:var(--muted);font-family:"SF Mono",monospace;padding:2px 6px;background:var(--surface);border-radius:3px;z-index:10}
 .ct-legend-item{display:flex;align-items:center;gap:2px}
 .ct-legend-swatch{width:7px;height:7px;border-radius:1px;flex-shrink:0}
 .ct-bars-row{display:flex;align-items:flex-end;gap:1px;flex:1}
@@ -345,7 +360,7 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .overseer-node--working .overseer-status-ring{animation:overseer-pulse 2s ease-in-out infinite}
 .overseer-node--stuck .overseer-status-ring{animation:overseer-alert 1s ease-in-out infinite}
 .overseer-node--waiting .overseer-status-ring{stroke-dasharray:4 4;animation:overseer-dash 2s linear infinite}
-.overseer-node--main circle:nth-child(2){filter:url(#overseer-glow)}
+.overseer-node--working circle:nth-child(2){filter:url(#overseer-glow)}
 .overseer-node--idle .overseer-status-ring{stroke-opacity:.3;stroke-dasharray:8 4}
 .overseer-edge{transition:opacity .3s}
 .overseer-empty{opacity:.7}

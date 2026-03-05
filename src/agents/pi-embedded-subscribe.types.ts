@@ -37,6 +37,10 @@ export type SubscribeEmbeddedPiSessionParams = {
   agentId?: string;
   /** Auth profile ID for lifecycle event tracking. */
   authProfileId?: string;
+  /** Model ID for lifecycle event tracking (e.g. "claude-sonnet-4-6"). */
+  modelId?: string;
+  /** Provider name for lifecycle event tracking (e.g. "anthropic"). */
+  modelProvider?: string;
 };
 
 export type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";

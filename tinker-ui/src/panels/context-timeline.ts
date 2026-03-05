@@ -81,6 +81,9 @@ interface TimelineController {
   activatePlaceholder(runId: string, model: string, provider: string): void;
   failPlaceholder(runId: string, reason: string): void;
   replacePlaceholders(turn: number, realEvents: AnatomyEvent[]): void;
+  setFilterMode(mode: "session" | "all"): void;
+  getFilterMode(): "session" | "all";
+  loadAllSessions(sessionKeys: string[]): void;
 }
 
 const MAX_BUFFER = 200;
@@ -108,12 +111,14 @@ export function mountContextTimeline(
   providerIcons?: Record<string, string>,
   onGroupLineClick?: (groupIndex: number, firstEvent: AnatomyEvent) => void,
   providerColors?: Record<string, string>,
+  onFilterModeChange?: (mode: "session" | "all") => void,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
   let selectedIdx: number | null = null;
   let selectedMode: "context" | "response" = "context";
   let groupCounter = 0;
   let tooltipEl: HTMLElement | null = null;
+  let filterMode: "session" | "all" = "session";
 
   // ─── Tooltip ───
   function showTooltip(x: number, y: number, entry: BufferEntry) {
@@ -338,6 +343,20 @@ export function mountContextTimeline(
     respItem.appendChild(respSwatch);
     respItem.appendChild(document.createTextNode("Response"));
     legend.appendChild(respItem);
+    // Filter mode toggle
+    const filterBtn = document.createElement("button");
+    filterBtn.className = "panel-toggle" + (filterMode === "all" ? " panel-toggle--active" : "");
+    filterBtn.textContent = filterMode === "all" ? "All" : "Session";
+    filterBtn.title =
+      filterMode === "all" ? "Showing all sessions" : "Showing current session only";
+    filterBtn.style.marginLeft = "6px";
+    filterBtn.addEventListener("click", () => {
+      const newMode = filterMode === "session" ? "all" : "session";
+      filterMode = newMode;
+      if (onFilterModeChange) onFilterModeChange(newMode);
+      render();
+    });
+    legend.appendChild(filterBtn);
     container.appendChild(legend);
 
     // Group entries and render
@@ -695,6 +714,52 @@ export function mountContextTimeline(
       }
       if (buffer.length > 0) {
         selectedIdx = buffer.length - 1;
+      }
+      render();
+    },
+
+    setFilterMode(mode: "session" | "all") {
+      filterMode = mode;
+      // Re-render will pick up the new toggle state
+      render();
+    },
+
+    getFilterMode() {
+      return filterMode;
+    },
+
+    async loadAllSessions(sessionKeys: string[]) {
+      buffer.length = 0;
+      selectedIdx = null;
+      groupCounter = 0;
+      const base = getGatewayBase();
+      const allEvents: AnatomyEvent[] = [];
+      await Promise.all(
+        sessionKeys.map(async (sk) => {
+          try {
+            const resp = await fetch(
+              `${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=${MAX_BUFFER}`,
+            );
+            if (!resp.ok) return;
+            const body = await resp.json();
+            const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
+            allEvents.push(...events);
+          } catch {}
+        }),
+      );
+      // Sort by timestamp ascending
+      allEvents.sort((a, b) => {
+        const ta = a.timestampMs ?? (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+        const tb = b.timestampMs ?? (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+        return ta - tb;
+      });
+      for (const ev of allEvents) {
+        const groupId = assignGroupId(undefined, ev);
+        push({ event: ev, groupId });
+      }
+      if (buffer.length > 0) {
+        selectedIdx = buffer.length - 1;
+        onBarSelect(buffer[selectedIdx].event, "context");
       }
       render();
     },

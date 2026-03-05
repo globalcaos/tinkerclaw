@@ -1,4 +1,15 @@
-// extensions/overseer/chat-emitter.ts
+/**
+ * FORK: overseer/chat-emitter — Rate-limited markdown broadcaster for topology events
+ *
+ * Buffers agent lifecycle events (spawned, ended, stuck) and flushes them as
+ * formatted markdown strings at an adaptive interval that accelerates on activity
+ * (down to `minIntervalMs`) and decays back to `maxIntervalMs` during quiet periods.
+ * The `emitFn` callback provided by the plugin index broadcasts these updates as
+ * `overseer-update` lifecycle events so the Tinker UI can display real-time agent
+ * status without flooding the event stream during high subagent churn.
+ *
+ * Wired in by: instantiated in `extensions/overseer/index.ts` as `ChatEmitter`
+ */
 import type { OverseerNode } from "./topology.js";
 
 interface ChatEvent {

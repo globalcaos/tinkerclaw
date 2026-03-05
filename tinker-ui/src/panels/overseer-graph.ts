@@ -45,8 +45,6 @@ interface TopologySnapshot {
   edges: Array<{ source: string; target: string }>;
 }
 
-type ProviderIconFn = (provider: string) => string;
-
 // ─── Constants ───
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: "#7c3aed",
@@ -79,8 +77,16 @@ const FADE_DURATION = 300;
 // ─── Mount ───
 export function mountOverseerGraph(
   container: HTMLElement,
-  opts: { providerIconFn?: ProviderIconFn },
-): { update(snap: TopologySnapshot): void; destroy(): void } {
+  opts: {
+    providerIcons?: Record<string, string>;
+  },
+): {
+  update(snap: TopologySnapshot): void;
+  destroy(): void;
+  setSessionFilter(key: string | null): void;
+} {
+  const icons = opts.providerIcons ?? {};
+  let filterKey: string | null = null;
   const ns = "http://www.w3.org/2000/svg";
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
@@ -174,22 +180,42 @@ export function mountOverseerGraph(
     circle.setAttribute("stroke-width", node.isMain ? "3" : "2.5");
     g.appendChild(circle);
 
+    // Provider icon via foreignObject
+    const iconSvg = icons[node.provider];
+    if (iconSvg) {
+      const fo = document.createElementNS(ns, "foreignObject");
+      fo.setAttribute("x", "-7");
+      fo.setAttribute("y", node.isMain ? "-20" : "-16");
+      fo.setAttribute("width", "14");
+      fo.setAttribute("height", "14");
+      fo.setAttribute("class", "overseer-icon-fo");
+      const div = document.createElement("div");
+      div.style.cssText =
+        "display:flex;align-items:center;justify-content:center;width:14px;height:14px";
+      div.innerHTML = iconSvg;
+      fo.appendChild(div);
+      g.appendChild(fo);
+    }
+
+    // Model slug (primary label)
     const text = document.createElementNS(ns, "text");
-    text.setAttribute("y", node.isMain ? "-6" : "-4");
+    text.setAttribute("y", node.isMain ? "-2" : "0");
     text.setAttribute("text-anchor", "middle");
     text.setAttribute("fill", "var(--fg, #e0e0e0)");
-    text.setAttribute("font-size", node.isMain ? "12" : "10");
+    text.setAttribute("font-size", node.isMain ? "11" : "9");
     text.setAttribute("font-weight", "600");
-    text.textContent = truncate(node.label, 14);
+    text.setAttribute("class", "overseer-model");
+    text.textContent = shortModel(node.model) || truncate(node.label, 14);
     g.appendChild(text);
 
+    // Role sublabel
     const sub = document.createElementNS(ns, "text");
-    sub.setAttribute("y", node.isMain ? "8" : "10");
+    sub.setAttribute("y", node.isMain ? "10" : "10");
     sub.setAttribute("text-anchor", "middle");
     sub.setAttribute("fill", "var(--muted, #888)");
-    sub.setAttribute("font-size", node.isMain ? "9" : "8");
+    sub.setAttribute("font-size", node.isMain ? "8" : "7");
     sub.setAttribute("class", "overseer-sublabel");
-    sub.textContent = node.role || shortModel(node.model);
+    sub.textContent = node.role || "";
     g.appendChild(sub);
 
     // Phase / status text
@@ -231,8 +257,10 @@ export function mountOverseerGraph(
     if (ring) ring.setAttribute("stroke", statusColor);
     const circle = node.el.querySelector("circle:nth-child(2)");
     if (circle) circle.setAttribute("stroke", color);
+    const modelEl = node.el.querySelector(".overseer-model");
+    if (modelEl) modelEl.textContent = shortModel(node.model) || truncate(node.label, 14);
     const sub = node.el.querySelector(".overseer-sublabel");
-    if (sub) sub.textContent = node.role || shortModel(node.model);
+    if (sub) sub.textContent = node.role || "";
     const phase = node.el.querySelector(".overseer-phase");
     if (phase) phase.textContent = node.phase || "";
     const tok = node.el.querySelector(".overseer-tokens");
@@ -379,6 +407,32 @@ export function mountOverseerGraph(
     width = container.clientWidth || 300;
     svg.setAttribute("width", "100%");
 
+    // Apply session filter if active — show only the selected session and its subagents
+    if (filterKey) {
+      // Build set of reachable nodes: start with filterKey, then follow edges (parent→child)
+      const reachable = new Set<string>([filterKey]);
+      const edgeMap = new Map<string, string[]>();
+      for (const e of snap.edges) {
+        const children = edgeMap.get(e.source) ?? [];
+        children.push(e.target);
+        edgeMap.set(e.source, children);
+      }
+      const queue = [filterKey];
+      while (queue.length > 0) {
+        const key = queue.pop()!;
+        for (const child of edgeMap.get(key) ?? []) {
+          if (!reachable.has(child)) {
+            reachable.add(child);
+            queue.push(child);
+          }
+        }
+      }
+      snap = {
+        nodes: snap.nodes.filter((n) => reachable.has(n.sessionKey)),
+        edges: snap.edges.filter((e) => reachable.has(e.source) && reachable.has(e.target)),
+      };
+    }
+
     const maxDepth = snap.nodes.reduce((m, n) => Math.max(m, n.depth), 0);
     height = Math.max(200, 60 + (maxDepth + 1) * DEPTH_SPACING + 40);
     svg.setAttribute("height", String(height));
@@ -460,8 +514,12 @@ export function mountOverseerGraph(
     container.removeChild(svg);
   }
 
+  function setSessionFilter(key: string | null): void {
+    filterKey = key;
+  }
+
   updateEmptyState();
-  return { update, destroy };
+  return { update, destroy, setSessionFilter };
 }
 
 // ─── Helpers ───

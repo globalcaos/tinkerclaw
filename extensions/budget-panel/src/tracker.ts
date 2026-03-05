@@ -68,7 +68,7 @@ export class BudgetTracker {
       try {
         if (fs.existsSync(filePath)) {
           const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as ManusUsageFile;
-          // console.log(`[budget-panel] Loaded Manus usage from ${filePath}: ${data.credits_used} credits`);
+
           return {
             used: data.credits_used || 0,
             budget: data.credits_budget || this.manusBudget,
@@ -78,7 +78,7 @@ export class BudgetTracker {
         console.error(`[budget-panel] Error reading ${filePath}:`, e);
       }
     }
-    // console.log(`[budget-panel] No Manus usage file found, using defaults`);
+
     return { used: this.manusUsed, budget: this.manusBudget };
   }
 
@@ -95,11 +95,10 @@ export class BudgetTracker {
 
     for (const filePath of paths) {
       try {
-        // console.log(`[budget-panel] Checking Claude file: ${filePath}`);
         if (fs.existsSync(filePath)) {
           const raw = fs.readFileSync(filePath, "utf-8");
           const data = JSON.parse(raw);
-          // console.log(`[budget-panel] Loaded Claude: mode=${data.mode}, tier=${data.tier}`);
+
           // Check if it's a subscription (no billing)
           if (data.mode === "subscription") {
             return {
@@ -119,7 +118,7 @@ export class BudgetTracker {
         console.error(`[budget-panel] Claude file error: ${filePath}`, e);
       }
     }
-    // console.log(`[budget-panel] No Claude file found, using defaults`);
+
     return { used: this.claudeUsed, budget: this.claudeBudget, isSubscription: false };
   }
 

@@ -56,6 +56,11 @@ TIER1_ACCEPT_UPSTREAM=(
   "src/agents/pi-embedded-subscribe.handlers.tools.ts"
   "src/agents/pi-embedded-runner/system-prompt.ts"
   "src/agents/pi-embedded-runner/run.ts"
+  "src/gateway/server-methods/sessions.ts"
+  "src/web/outbound.ts"
+  "src/web/auto-reply/monitor.ts"
+  "src/agents/pi-embedded-subscribe.types.ts"
+  "tsdown.config.ts"
 )
 
 RESOLVED=0
