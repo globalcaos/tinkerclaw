@@ -357,18 +357,21 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .brp-view.is-scrolling #response-canvas{right:14px}
 .brp-view.is-scrolling .brp-back-btn{right:18px}
 
-/* ─── Overseer Graph Panel ─── */
-.overseer-graph-container{min-height:200px;max-height:500px;overflow:hidden;background:var(--bg,#0a0a1a);border-radius:8px}
-.overseer-graph-container svg{display:block}
-.overseer-node{cursor:pointer;transition:opacity .3s}
-.overseer-node--working .overseer-status-ring{animation:overseer-pulse 2s ease-in-out infinite}
-.overseer-node--stuck .overseer-status-ring{animation:overseer-alert 1s ease-in-out infinite}
-.overseer-node--waiting .overseer-status-ring{stroke-dasharray:4 4;animation:overseer-dash 2s linear infinite}
-.overseer-node--working circle:nth-child(2){filter:url(#overseer-glow)}
-.overseer-node--idle .overseer-status-ring{stroke-opacity:.3;stroke-dasharray:8 4}
-.overseer-edge{transition:opacity .3s}
-.overseer-empty{opacity:.7}
-.overseer-tokens{font-variant-numeric:tabular-nums}
-@keyframes overseer-pulse{0%,100%{stroke-opacity:.4;stroke-width:2}50%{stroke-opacity:1;stroke-width:3}}
-@keyframes overseer-alert{0%,100%{stroke-opacity:.5;stroke-width:2}50%{stroke-opacity:1;stroke-width:4}}
-@keyframes overseer-dash{to{stroke-dashoffset:-16}}
+/* ─── Overseer Pills Panel ─── */
+.overseer-graph-container{overflow-y:auto;background:var(--bg,#0a0a1a);border-radius:8px;padding:6px}
+.overseer-pills{display:flex;flex-wrap:wrap;gap:6px}
+.overseer-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;border:1.5px solid var(--pill-color,#6b7280);background:transparent;font-size:11px;transition:opacity .2s,box-shadow .3s,background .3s;opacity:.4;cursor:default}
+.overseer-pill--active{opacity:1;animation:overseer-pill-breathe 2s ease-in-out infinite;background:var(--pill-bg,transparent);border-color:var(--pill-border,var(--pill-color,#6b7280))}
+.overseer-pill--error{border-color:#ef4444;opacity:.55}
+.overseer-pill--error.overseer-pill--active{opacity:.75}
+.overseer-pill-icon{display:flex;align-items:center;flex-shrink:0}
+.overseer-pill-model{font-weight:600;color:var(--fg,#e0e0e0);white-space:nowrap}
+.overseer-pill-sep{color:var(--muted,#555);font-size:10px}
+.overseer-pill-auth{color:var(--muted,#bbb);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.03em}
+.overseer-pill-badge{font-size:10px;opacity:.7;flex-shrink:0}
+.overseer-pill-count{color:#fff;font-size:9px;font-weight:700;padding:0 5px;border-radius:8px;min-width:14px;text-align:center;line-height:14px;flex-shrink:0}
+.overseer-pill-error{font-size:8px;color:#ff6b6b;font-weight:600;margin-left:2px}
+.overseer-empty-state{text-align:center;padding:16px 0;opacity:.6}
+.overseer-empty-icon{font-size:22px;margin-bottom:4px}
+.overseer-empty-text{font-size:10px;color:var(--muted,#666)}
+@keyframes overseer-pill-breathe{0%,100%{box-shadow:0 0 4px 1px var(--pill-bg,transparent)}50%{box-shadow:0 0 14px 3px var(--pill-bg2,transparent)}}
