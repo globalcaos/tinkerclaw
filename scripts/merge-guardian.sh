@@ -57,7 +57,7 @@ done
 
 # Fork-only files
 FORK_FILES=(
-  "src/plugins/hippocampus-hook.ts"
+  "extensions/hippocampus/index.ts"
   "src/web/auto-reply/monitor/thinking-reaction.ts"
   "src/auto-reply/reply/jarvis-voice-markup.ts"
   "src/agents/tools/whatsapp-history-tool.ts"
@@ -127,6 +127,8 @@ if [ -f "$ROOT/src/web/auto-reply/monitor.ts" ]; then
     warn "ActiveWebListener cast missing in monitor.ts"
   fi
 fi
+
+check_wiring "src/agents/openclaw-tools.ts" "createWhatsAppHistoryTool" "WhatsApp history tool in openclaw-tools.ts"
 
 # ─── 2b. Bundler & dependency integrity ───
 log "--- Phase 2b: Bundler & dependency checks ---"

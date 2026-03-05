@@ -1,0 +1,6 @@
+{
+  "id": "hippocampus",
+  "name": "Hippocampus Memory Hook",
+  "description": "Merges pre-computed concept index results into memory_search tool calls",
+  "version": "0.1.0"
+}
