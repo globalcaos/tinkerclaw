@@ -2,5 +2,10 @@
   "id": "hippocampus",
   "name": "Hippocampus Memory Hook",
   "description": "Merges pre-computed concept index results into memory_search tool calls",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
 }
