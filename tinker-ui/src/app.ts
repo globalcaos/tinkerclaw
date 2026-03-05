@@ -115,6 +115,7 @@ function clearPersistedErrors(sk: string) {
 type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
+const collapsedModelSections = new Set<string>();
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
@@ -276,9 +277,18 @@ function startHealthPoll() {
       if (!res?.health) return;
       let changed = false;
       for (const [provider, info] of Object.entries(res.health) as [string, any][]) {
-        if (info.available && providerErrors.has(provider)) {
-          providerErrors.delete(provider);
-          changed = true;
+        if (info.available) {
+          if (providerErrors.has(provider)) {
+            providerErrors.delete(provider);
+            changed = true;
+          }
+          // Clear per-profile errors for this provider
+          for (const k of providerErrors.keys()) {
+            if (k.startsWith(provider + ":")) {
+              providerErrors.delete(k);
+              changed = true;
+            }
+          }
         }
       }
       if (changed) updateBudgetPanel();
@@ -445,6 +455,16 @@ function onEvent(evt: any) {
       const reasonLabel = describeError(reason, errMsg);
       const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
       const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
+      // Track per-profile error for model panel red labels
+      if (pid) {
+        providerErrors.set(pid, {
+          error: (errMsg || reason || "failed") as string,
+          reason,
+          ts: Date.now(),
+        });
+        updateBudgetPanel();
+        startHealthPoll();
+      }
       const profileMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: profileText }],
@@ -474,8 +494,10 @@ function onEvent(evt: any) {
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
         const startProvider = p.data.modelProvider || providerOf(p.data.model);
-        if (providerErrors.has(startProvider)) {
-          providerErrors.delete(startProvider);
+        // Clear provider-level and per-profile errors on successful start
+        providerErrors.delete(startProvider);
+        for (const k of providerErrors.keys()) {
+          if (k.startsWith(startProvider + ":")) providerErrors.delete(k);
         }
         activeRuns.set(p.runId, {
           model: p.data.model,
@@ -1420,11 +1442,13 @@ function updateBudgetPanel() {
         badge,
         suffix,
         counts.get(keyId || modelId) || 0,
-        providerErrors.get(provider),
+        providerErrors.get(keyId || provider),
       );
     } else {
       // Multiple keys — one compact row per key with model name inline
-      const errInfo = providerErrors.get(provider);
+      // Lifecycle events may lack authProfileId, so count is stored under modelId.
+      // Fall back to model-level count so all rows glow when the model is active.
+      const modelCount = counts.get(modelId) || 0;
       for (let ki = 0; ki < keys.length; ki++) {
         const keyId = keys[ki];
         const prof = authProfiles?.[keyId] || {};
@@ -1435,41 +1459,72 @@ function updateBudgetPanel() {
           provider,
           name,
           badge,
-          counts.get(keyId) || 0,
-          ki === 0 ? errInfo : undefined,
+          counts.get(keyId) || modelCount,
+          providerErrors.get(keyId) || providerErrors.get(provider),
         );
       }
     }
   }
 
-  // Primary
-  if (primary) {
-    html += '<div class="model-group-label">PRIMARY</div>';
-    renderAuthKeyRows(primary, "\u{1F451}");
-  }
+  // Fallback chain: primary + fallbacks
+  const chain: string[] = [];
+  if (primary) chain.push(primary);
+  if (fallbacks?.length) chain.push(...fallbacks);
 
-  // Fallbacks
-  if (fallbacks?.length) {
-    const badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464"];
+  if (chain.length) {
+    const open = !collapsedModelSections.has("fallback");
+    const badges = [
+      "\u{1F451}",
+      "\u2461",
+      "\u2462",
+      "\u2463",
+      "\u2464",
+      "\u2465",
+      "\u2466",
+      "\u2467",
+    ];
+    html += `<div class="model-group${open ? " open" : ""}" data-section="fallback">`;
     html += '<div class="model-group-label">FALLBACK CHAIN</div>';
-    for (let i = 0; i < fallbacks.length; i++) {
-      renderAuthKeyRows(fallbacks[i], badges[i] || `${i + 1}`);
+    html += '<div class="model-group-body">';
+    for (let i = 0; i < chain.length; i++) {
+      renderAuthKeyRows(chain[i], badges[i] || `${i + 1}`);
     }
+    html += "</div></div>";
   }
 
-  // Other configured models (not primary or fallback), sorted by performance tier
-  const fbSet = new Set(fallbacks || []);
-  const otherIds = Object.keys(models || {}).filter((id) => id !== primary && !fbSet.has(id));
+  // Other configured models (not in fallback chain), sorted by performance tier
+  const chainSet = new Set(chain);
+  const otherIds = Object.keys(models || {}).filter((id) => !chainSet.has(id));
   if (otherIds.length) {
+    const open = !collapsedModelSections.has("configured");
     otherIds.sort((a, b) => modelPerfRank(a) - modelPerfRank(b));
+    html += `<div class="model-group${open ? " open" : ""}" data-section="configured">`;
     html += '<div class="model-group-label">CONFIGURED</div>';
+    html += '<div class="model-group-body">';
     for (const id of otherIds) {
       renderAuthKeyRows(id, "");
     }
+    html += "</div></div>";
   }
 
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
+
+  // Bind collapse toggles
+  el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
+    label.addEventListener("click", () => {
+      const group = label.parentElement;
+      if (!group) return;
+      const section = group.dataset.section;
+      if (!section) return;
+      group.classList.toggle("open");
+      if (group.classList.contains("open")) {
+        collapsedModelSections.delete(section);
+      } else {
+        collapsedModelSections.add(section);
+      }
+    });
+  });
 }
 
 function shortErrorLabel(reason: string): string {
@@ -1791,7 +1846,7 @@ function init() {
     </div>
     <div class="right-panels">
       <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🎛️ Models & Resources <button id="budget-refresh" class="budget-refresh-btn" title="Refresh">↻</button></div>
+        <div class="rpanel-header">🎛️ Models <button id="budget-refresh" class="budget-refresh-btn" title="Refresh">↻</button></div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="sessions-panel">

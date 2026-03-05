@@ -1398,6 +1398,7 @@ export async function runEmbeddedAttempt(
         sessionKey: sandboxSessionKey,
         sessionId: params.sessionId,
         agentId: sessionAgentId,
+        authProfileId: params.authProfileId,
         modelId: params.modelId,
         modelProvider: params.provider,
       });

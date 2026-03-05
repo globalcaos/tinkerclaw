@@ -17,6 +17,7 @@ const BASE_METHODS = [
   "tts.convert",
   "tts.setProvider",
   "config.get",
+  "config.models",
   "config.set",
   "config.apply",
   "config.patch",
