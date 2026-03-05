@@ -188,6 +188,29 @@ export async function runAgentTurnWithFallback(params: {
       const onToolResult = params.opts?.onToolResult;
       const fallbackResult = await runWithModelFallback({
         ...resolveModelFallbackOptions(params.followupRun.run),
+        // FORK: emit fallback-error lifecycle events so Tinker UI can show per-model failures
+        onError: async ({ provider, model, error, attempt, total }) => {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          const errObj =
+            error && typeof error === "object" ? (error as Record<string, unknown>) : undefined;
+          const failedProfileId =
+            errObj && "profileId" in errObj ? String(errObj.profileId) : undefined;
+          emitAgentEvent({
+            runId,
+            sessionKey: params.sessionKey,
+            stream: "lifecycle",
+            data: {
+              phase: "fallback-error",
+              failedProvider: provider,
+              failedModel: model,
+              reason: errObj && "reason" in errObj ? String(errObj.reason) : "unknown",
+              error: errMsg,
+              attempt,
+              total,
+              failedProfileId,
+            },
+          });
+        },
         run: (provider, model) => {
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.

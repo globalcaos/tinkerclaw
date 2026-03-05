@@ -492,6 +492,14 @@ export async function runWithModelFallback<T>(params: {
             error: decision.error,
             reason: decision.reason,
           });
+          // FORK: notify onError so lifecycle events reach Tinker UI for skipped providers
+          await params.onError?.({
+            provider: candidate.provider,
+            model: candidate.model,
+            error: Object.assign(new Error(decision.error), { reason: decision.reason }),
+            attempt: i + 1,
+            total: candidates.length,
+          });
           continue;
         }
 
