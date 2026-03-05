@@ -60,7 +60,7 @@ auto_commit_repo() {
 
   # Count only tracked dirty files (exclude untracked with grep -v '^??')
   local dirty
-  dirty=$(git -C "$repo_path" status --porcelain | grep -v '^??' | wc -l)
+  dirty=$(git -C "$repo_path" status --porcelain | grep -cv '^??' || true)
   if [ "$dirty" -eq 0 ]; then
     log "  ✅ $label: clean"
     return 0
@@ -147,7 +147,7 @@ sync_companion() {
 
   # Auto-commit dirty tracked files first (exclude untracked)
   local dirty
-  dirty=$(git -C "$repo_path" status --porcelain | grep -v '^??' | wc -l)
+  dirty=$(git -C "$repo_path" status --porcelain | grep -cv '^??' || true)
   if [ "$dirty" -gt 0 ]; then
     log "    $dirty dirty tracked files — auto-committing..."
     git -C "$repo_path" add -u
