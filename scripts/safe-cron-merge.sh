@@ -24,6 +24,7 @@ NO_COMPANION=false
 MAX_UNRESOLVED=5
 
 JARVIS_BRAIN="$HOME/.openclaw"
+JARVIS_BRAIN_REMOTE="${JARVIS_BRAIN_REMOTE:-$(git -C "$HOME/.openclaw" remote get-url origin 2>/dev/null || echo "")}"
 JARVIS_ICU="$HOME/src/jarvis-icu"
 CLAWMETRY="$HOME/src/clawmetry"
 MISSION_CONTROL="$HOME/src/mission-control"
@@ -137,7 +138,11 @@ commit_jarvis_brain() {
     ws_remote=$(git -C "$brain/workspace" remote get-url origin 2>/dev/null || true)
     if echo "$ws_remote" | grep -qi "github"; then
       log "  🛑 CRITICAL: workspace/.git remote points to GitHub ($ws_remote) — fixing to jarvis-brain"
-      git -C "$brain/workspace" remote set-url origin "https://gitlab.com/globalcaos/jarvis-brain.git"
+      if [ -n "$JARVIS_BRAIN_REMOTE" ]; then
+        git -C "$brain/workspace" remote set-url origin "$JARVIS_BRAIN_REMOTE"
+      else
+        log "  ⚠️  JARVIS_BRAIN_REMOTE is empty — cannot fix remote automatically"
+      fi
     fi
   fi
 }

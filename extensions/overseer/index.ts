@@ -45,7 +45,7 @@ export default function register(api: OpenClawPluginApi) {
   const chatMinMs = pluginConfig.chatMinIntervalMs ?? 30000;
   const chatMaxMs = pluginConfig.chatMaxIntervalMs ?? 180000;
 
-  const homeDir = process.env.HOME || "/home/<user>";
+  const homeDir = process.env.HOME || "/tmp";
   const persistPath = pluginConfig.persistPath
     ? String(pluginConfig.persistPath).replace("~", homeDir)
     : join(homeDir, ".openclaw", "overseer-state.json");
