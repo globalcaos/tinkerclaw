@@ -139,10 +139,11 @@ export function mountContextTimeline(
       const turn = ev.turn ?? "?";
       const total = totalTokensFor(ev);
       const max = maxTokensFor(ev);
-      const util = ev.contextWindow?.utilizationPercent;
-      const utilStr = util != null ? `${util.toFixed(0)}%` : "?";
+      const rawUtil = ev.contextWindow?.utilizationPercent ?? (max > 0 ? (total / max) * 100 : 0);
+      const util = Math.min(rawUtil, 100);
+      const utilStr = `${util.toFixed(1)}%`;
       const respStr = ev.responseTokens ? ` · ${fmtK(ev.responseTokens)} out` : "";
-      tip.textContent = `${model} · T${turn} · ${fmtK(total)}/${fmtK(max)} in · ${utilStr}${respStr}`;
+      tip.textContent = `${model} · T${turn} · ${fmtK(total)}/${fmtK(max)} in (${utilStr})${respStr}`;
     }
     tip.style.left = `${x + 10}px`;
     tip.style.top = `${y - 28}px`;
