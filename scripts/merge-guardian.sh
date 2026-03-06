@@ -96,6 +96,7 @@ check_wiring "src/agents/pi-embedded-runner/run.ts" "fallback-profile-error" "Pe
 check_wiring "src/agents/pi-embedded-runner/run.ts" "agent-events" "emitAgentEvent import in run.ts"
 check_wiring "src/agents/pi-embedded-helpers/failover-matches.ts" "regain access" "Anthropic billing pattern in failover-matches.ts"
 check_wiring "src/agents/pi-embedded-helpers/errors.ts" "regain access" "Early billing check in errors.ts"
+check_wiring "src/agents/auth-profiles/store.ts" "diskCred.expires > memCred.expires" "OAuth refresh token preservation in saveAuthProfileStore"
 check_wiring "src/web/auto-reply/monitor/process-message.ts" "process-message-hooks" "Fork hooks import in process-message.ts"
 check_wiring "src/web/auto-reply/monitor/process-message.ts" "_annotateOfflineRecovery" "Offline recovery annotation CALL in process-message.ts"
 check_wiring "src/web/auto-reply/monitor/process-message.ts" "_createThinkingReaction" "Thinking reaction CALL in process-message.ts"
