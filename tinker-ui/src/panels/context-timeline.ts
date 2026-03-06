@@ -343,21 +343,40 @@ export function mountContextTimeline(
     respItem.appendChild(respSwatch);
     respItem.appendChild(document.createTextNode("Response"));
     legend.appendChild(respItem);
-    // Filter mode toggle
-    const filterBtn = document.createElement("button");
-    filterBtn.className = "panel-toggle" + (filterMode === "all" ? " panel-toggle--active" : "");
-    filterBtn.textContent = filterMode === "all" ? "All" : "Session";
-    filterBtn.title =
-      filterMode === "all" ? "Showing all sessions" : "Showing current session only";
-    filterBtn.style.marginLeft = "6px";
-    filterBtn.addEventListener("click", () => {
+    // Filter mode toggle switch
+    const switchWrap = document.createElement("span");
+    switchWrap.className = "ct-switch";
+
+    const lblSession = document.createElement("span");
+    lblSession.className =
+      "ct-switch-label" + (filterMode === "session" ? " ct-switch-label--active" : "");
+    lblSession.textContent = "Session";
+    switchWrap.appendChild(lblSession);
+
+    const track = document.createElement("span");
+    track.className = "ct-switch-track" + (filterMode === "all" ? " ct-switch-track--on" : "");
+    const thumb = document.createElement("span");
+    thumb.className = "ct-switch-thumb";
+    track.appendChild(thumb);
+    switchWrap.appendChild(track);
+
+    const lblAll = document.createElement("span");
+    lblAll.className = "ct-switch-label" + (filterMode === "all" ? " ct-switch-label--active" : "");
+    lblAll.textContent = "All";
+    switchWrap.appendChild(lblAll);
+
+    switchWrap.addEventListener("click", () => {
       const newMode = filterMode === "session" ? "all" : "session";
       filterMode = newMode;
       if (onFilterModeChange) onFilterModeChange(newMode);
       render();
     });
-    legend.appendChild(filterBtn);
-    container.appendChild(legend);
+    legend.appendChild(switchWrap);
+    // Wrap legend in a zero-width sticky anchor so it stays visible without inflating scroll width
+    const legendAnchor = document.createElement("div");
+    legendAnchor.className = "ct-legend-anchor";
+    legendAnchor.appendChild(legend);
+    container.appendChild(legendAnchor);
 
     // Group entries and render
     let currentGroupId: string | null = null;
@@ -432,7 +451,7 @@ export function mountContextTimeline(
 
       // Bar: scaled to usedTokens / globalMax, grows from bottom
       const barHeight = isPlaceholder
-        ? maxBarHeight * 0.75
+        ? maxBarHeight
         : Math.max(4, (total / globalMax) * maxBarHeight);
       const bar = document.createElement("div");
       bar.className =
@@ -496,7 +515,7 @@ export function mountContextTimeline(
 
       barArea.appendChild(bar);
 
-      // Max-token line: this model's context window within the uniform canvas
+      // Per-model max-token line within the uniform canvas
       const maxLinePx = (max / globalMax) * maxBarHeight;
       const maxLine = document.createElement("div");
       maxLine.className = "ct-maxline";
@@ -557,23 +576,37 @@ export function mountContextTimeline(
       // Timestamp below both bars (two lines: date + time)
       const tsEl = document.createElement("div");
       tsEl.className = "ct-ts";
-      if (!isPlaceholder && !isFailed) {
-        const ts = fmtTime(ev);
-        if (ts) {
-          const dateLine = document.createElement("div");
-          dateLine.textContent = ts.date;
-          const timeLine = document.createElement("div");
-          timeLine.textContent = ts.time;
-          tsEl.appendChild(dateLine);
-          tsEl.appendChild(timeLine);
-        }
+      // Show timestamp for all entries — placeholders use current time
+      const ts = fmtTime(ev);
+      if (ts) {
+        const dateLine = document.createElement("div");
+        dateLine.textContent = ts.date;
+        const timeLine = document.createElement("div");
+        timeLine.textContent = ts.time;
+        tsEl.appendChild(dateLine);
+        tsEl.appendChild(timeLine);
       }
       col.appendChild(tsEl);
 
       groupEl!.appendChild(col);
     }
 
-    // Scroll to rightmost (newest) bars after render
+    // 100% capacity line — spans full scrollable width, positioned at top of bar areas
+    const capLine = document.createElement("div");
+    capLine.className = "ct-capacity-line";
+    container.appendChild(capLine);
+    // Position after layout: find first bar-area and align to its top edge
+    requestAnimationFrame(() => {
+      const firstBarArea = container.querySelector(".ct-bar-area") as HTMLElement | null;
+      if (firstBarArea && container.contains(capLine)) {
+        const containerRect = container.getBoundingClientRect();
+        const barRect = firstBarArea.getBoundingClientRect();
+        capLine.style.top = `${barRect.top - containerRect.top + container.scrollTop}px`;
+        capLine.style.width = `${container.scrollWidth}px`;
+      }
+    });
+
+    // Scroll to rightmost (newest) bars
     container.scrollLeft = container.scrollWidth;
   }
 

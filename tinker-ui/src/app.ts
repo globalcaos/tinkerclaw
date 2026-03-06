@@ -119,6 +119,8 @@ const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
 const unconfirmedRuns = new Set<string>();
+// Pending delayed deletes for activeRuns — cancelled when a fallback model re-uses the same runId
+const pendingRunDeletes = new Map<string, ReturnType<typeof setTimeout>>();
 
 function saveActiveRuns() {
   try {
@@ -354,18 +356,24 @@ function onEvent(evt: any) {
         // Successful response — clear persisted errors for this session
         clearPersistedErrors(sessionKey);
       }
-      streamText = "";
-      streamRunId = null;
-      // Only clear sending when no active runs remain — prevents flash
-      // between intermediate turns where the view collapses momentarily
-      if (activeRuns.size === 0) {
+      // During fallback the same runId gets a chat error for the failed model
+      // then a new start+deltas for the fallback model. Only clear streaming
+      // state on the FINAL event (final/aborted), not on intermediate errors.
+      if (p.state !== "error") {
+        streamText = "";
+        streamRunId = null;
+      }
+      // Only clear sending when no active runs remain AND no pending fallback
+      if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
         sending = false;
       }
       updateChat();
       updateBtn();
-      loadBudget();
-      refreshTreemap();
-      updateResponseMap();
+      if (p.state !== "error") {
+        loadBudget();
+        refreshTreemap();
+        updateResponseMap();
+      }
     }
   }
   if (evt.event === "agent") {
@@ -496,6 +504,12 @@ function onEvent(evt: any) {
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
         const startProvider = p.data.modelProvider || providerOf(p.data.model);
+        // Cancel any pending deletion for this runId (fallback reuses the same runId)
+        const pendingTimeout = pendingRunDeletes.get(p.runId);
+        if (pendingTimeout) {
+          clearTimeout(pendingTimeout);
+          pendingRunDeletes.delete(p.runId);
+        }
         // Clear provider-level, per-profile, and per-model errors on successful start
         const startModel = p.data.model as string;
         providerErrors.delete(startProvider);
@@ -509,6 +523,8 @@ function onEvent(evt: any) {
           authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
         });
+        // Re-assert sending in case a chat error event cleared it during fallback
+        sending = true;
         saveActiveRuns();
         updateBudgetPanel();
         updateChat();
@@ -518,7 +534,8 @@ function onEvent(evt: any) {
         timelineCtrl?.activatePlaceholder(p.runId, p.data.model, startProvider);
       } else if (p.data.phase === "end" || p.data.phase === "error") {
         const endRunId = p.runId;
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
+          pendingRunDeletes.delete(endRunId);
           activeRuns.delete(endRunId);
           saveActiveRuns();
           // Clear sending once all runs are done
@@ -529,6 +546,7 @@ function onEvent(evt: any) {
           updateChat();
           updateBtn();
         }, 3000);
+        pendingRunDeletes.set(endRunId, timeoutId);
         // Poll anatomy API after turn completes — fetch recent events to capture fallback attempts
         const sk = sessionKey;
         const turnNum = currentTurnNumber;
@@ -1931,9 +1949,22 @@ function init() {
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
-  $("new-session-btn")!.addEventListener("click", () => {
+  $("new-session-btn")!.addEventListener("click", async () => {
     if (!connected || !sessionKey) {
       return;
+    }
+    // Clear UI immediately so the user sees a fresh slate
+    messages.length = 0;
+    liveToolCalls.clear();
+    streamText = "";
+    streamRunId = null;
+    sending = false;
+    clearPersistedErrors(sessionKey);
+    updateChat();
+    updateBtn();
+    // Abort any active run before creating a new session
+    if (activeRuns.size > 0 || pendingRunDeletes.size > 0) {
+      await abort();
     }
     send("/new");
   });
