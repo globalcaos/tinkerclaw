@@ -57,7 +57,7 @@ echo "Fork isolation: ${SCORE}% ($SAFE safe / $((SAFE + MODIFIED)) total)"
 ```
 
 ## Step 5: Save report
-Save to: /home/<user>/Documents/AI_reports/Cron_Tasks/0445_Daily_Fork_Sync_Report/YYYY-MM-DD-report.md
+Save to: $HOME/Documents/AI_reports/Cron_Tasks/0445_Daily_Fork_Sync_Report/YYYY-MM-DD-report.md
 
 ## Step 6: Write cron receipt
 Write a receipt to ~/.openclaw/workspace/memory/cron-receipts/YYYY-MM-DD-daily-fork-sync-report.json with: run_id, timestamp, dedup_key, state_before, state_after, actions_taken, self_healed (bool), unknown_errors (count), gate0_commits (list of repos auto-committed), companion_sync (object with clawmetry/mission-control status), post_merge_backup (bool).

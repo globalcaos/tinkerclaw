@@ -1,12 +1,19 @@
+# Budget Collector — systemd service template
+# CUSTOMIZE before installing:
+#   - Replace YOUR_USER with your OS username
+#   - Replace YOUR_HOME with your home directory (e.g., /home/youruser)
+# Install: sudo cp budget-collector.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now budget-collector
+
 [Unit]
 Description=Budget Collector - AI Usage Tracking
 After=network.target
 
 [Service]
 Type=simple
-User=globalcaos
-WorkingDirectory=/home/<user>/src/budget-collector
-ExecStart=/home/<user>/.local/bin/uvicorn api:app --host 127.0.0.1 --port 8765
+User=YOUR_USER
+WorkingDirectory=YOUR_HOME/src/budget-collector
+ExecStart=YOUR_HOME/.local/bin/uvicorn api:app --host 127.0.0.1 --port 8765
 Restart=on-failure
 RestartSec=10
 
