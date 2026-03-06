@@ -675,6 +675,7 @@ async function abort() {
   sending = false;
   streamText = "";
   streamRunId = null;
+  activeRuns.clear();
   updateChat();
   updateBtn();
 }
@@ -698,7 +699,10 @@ function esc(s: string) {
 }
 
 function md(text: string): string {
-  let h = mdParser.render(text);
+  // Ensure a blank line before table-header rows so markdown-it parses them
+  // as tables even when they follow a list or paragraph with no gap.
+  const fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
+  let h = mdParser.render(fixed);
   // Jarvis voice styling
   h = h.replace(
     /<strong>Jarvis:<\/strong>\s*<em>(.*?)<\/em>/gi,
@@ -1302,9 +1306,8 @@ function updateChat(skipScroll = false) {
       }
     }),
   );
-  el.querySelectorAll(".thinking-run[data-run-id]").forEach((r) =>
-    r.addEventListener("click", () => abort()),
-  );
+  // Stop button uses event delegation (registered once in init) to survive
+  // innerHTML replacements during streaming.
   el.querySelectorAll(".retry-provider-btn").forEach((btn) =>
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1973,6 +1976,11 @@ function init() {
     const btn = $("toggle-overseer-chat")!;
     btn.classList.toggle("panel-toggle--active", showOverseerChat);
     updateChat();
+  });
+  // Delegated stop-button handler on messages container — survives innerHTML wipes
+  $("messages")!.addEventListener("click", (e) => {
+    const run = (e.target as HTMLElement).closest(".thinking-run[data-run-id]");
+    if (run) abort();
   });
   $("forensic-btn")!.addEventListener("click", () => {
     const next = !forensicMode;
