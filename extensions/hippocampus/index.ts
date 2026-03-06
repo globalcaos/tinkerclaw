@@ -17,8 +17,8 @@ import type {
   PluginHookToolContext,
 } from "../../src/plugins/types.js";
 
-const HIPPOCAMPUS_CMD =
-  "cd /home/globalcaos/.openclaw/workspace/scripts && python3 -m hippocampus.cli lookup";
+const HIPPOCAMPUS_DIR = `${process.env.HOME || "/tmp"}/.openclaw/workspace/scripts`;
+const HIPPOCAMPUS_CMD = `cd ${HIPPOCAMPUS_DIR} && python3 -m hippocampus.cli lookup`;
 const TIMEOUT_MS = 5000;
 
 interface HippocampusEntry {
