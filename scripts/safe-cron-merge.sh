@@ -129,6 +129,17 @@ commit_jarvis_brain() {
   fi
 
   _restore_ws_git
+
+  # Safety: verify workspace/.git remote hasn't drifted to the source repo.
+  # The workspace contains sensitive data and must only push to jarvis-brain (GitLab, private).
+  if [ -d "$ws_git" ]; then
+    local ws_remote
+    ws_remote=$(git -C "$brain/workspace" remote get-url origin 2>/dev/null || true)
+    if echo "$ws_remote" | grep -qi "github"; then
+      log "  🛑 CRITICAL: workspace/.git remote points to GitHub ($ws_remote) — fixing to jarvis-brain"
+      git -C "$brain/workspace" remote set-url origin "https://gitlab.com/globalcaos/jarvis-brain.git"
+    fi
+  fi
 }
 
 # ─── HELPER: Sync a companion fork repo ───
