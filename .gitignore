@@ -102,6 +102,35 @@ package-lock.json
 .agent/
 skills-lock.json
 
+# ═══════════════════════════════════════════════════════════════════
+# WORKSPACE PERSONAL DATA — NEVER COMMIT (added after privacy leak)
+# Commit d531fa6 accidentally pushed all of these to public repo.
+# ═══════════════════════════════════════════════════════════════════
+MEMORY.md
+SOUL.md
+BOOTSTRAP.md
+HEARTBEAT.md
+TOOLS.md
+BRIEFING.md
+PRIVACY.md
+PROJECTS.md
+VOICE.md
+SESSION.md
+.openclaw/
+bank/
+data/
+db/
+crm_data/
+sessions/
+employees.txt
+*.sqlite
+*.db
+auth-profiles.json
+memory/
+morning-briefings/
+skills/
+config/
+
 # Local iOS signing overrides
 apps/ios/LocalSigning.xcconfig
 
