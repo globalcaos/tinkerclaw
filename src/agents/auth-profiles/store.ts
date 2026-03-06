@@ -350,7 +350,7 @@ export function loadAuthProfileStore(): AuthProfileStore {
     // Sync from external CLI tools on every load.
     const synced = syncExternalCliCredentials(asStore);
     if (synced) {
-      saveJsonFile(authPath, asStore);
+      saveAuthProfileStore(asStore);
     }
     return asStore;
   }
@@ -383,7 +383,7 @@ function loadAuthProfileStoreForAgent(
     // sync external CLI credentials in-memory, but never persist while readOnly.
     const synced = syncExternalCliCredentials(asStore);
     if (synced && !readOnly) {
-      saveJsonFile(authPath, asStore);
+      saveAuthProfileStore(asStore, agentDir);
     }
     return asStore;
   }
@@ -395,7 +395,7 @@ function loadAuthProfileStoreForAgent(
     const mainStore = coerceAuthStore(mainRaw);
     if (mainStore && Object.keys(mainStore.profiles).length > 0) {
       // Clone main store to subagent directory for auth inheritance
-      saveJsonFile(authPath, mainStore);
+      saveAuthProfileStore(mainStore, agentDir);
       log.info("inherited auth-profiles from main agent", { agentDir });
       return mainStore;
     }
@@ -417,7 +417,7 @@ function loadAuthProfileStoreForAgent(
   const forceReadOnly = process.env.OPENCLAW_AUTH_STORE_READONLY === "1";
   const shouldWrite = !readOnly && !forceReadOnly && (legacy !== null || mergedOAuth || syncedCli);
   if (shouldWrite) {
-    saveJsonFile(authPath, store);
+    saveAuthProfileStore(store, agentDir);
   }
 
   // PR #368: legacy auth.json could get re-migrated from other agent dirs,
@@ -483,6 +483,40 @@ export function ensureAuthProfileStore(
 
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
   const authPath = resolveAuthStorePath(agentDir);
+
+  // FORK: Preserve newer OAuth refresh tokens from disk to prevent stale
+  // in-memory writes from overwriting freshly-rotated credentials.
+  // Anthropic uses strict refresh token rotation — once rotated, the old
+  // token is immediately invalidated.  Without this guard any concurrent
+  // or fallback (unlocked) save that still holds the pre-rotation snapshot
+  // permanently kills the OAuth chain (invalid_grant).
+  try {
+    const onDisk = loadCoercedStore(authPath);
+    if (onDisk) {
+      for (const [profileId, diskCred] of Object.entries(onDisk.profiles)) {
+        if (
+          diskCred.type === "oauth" &&
+          typeof diskCred.expires === "number" &&
+          Number.isFinite(diskCred.expires) &&
+          diskCred.expires > 0
+        ) {
+          const memCred = store.profiles[profileId];
+          if (
+            memCred?.type === "oauth" &&
+            typeof memCred.expires === "number" &&
+            Number.isFinite(memCred.expires) &&
+            diskCred.expires > memCred.expires
+          ) {
+            // Disk has a newer token — keep it, don't downgrade
+            store.profiles[profileId] = { ...diskCred };
+          }
+        }
+      }
+    }
+  } catch {
+    // Best-effort: don't block the save if disk read fails
+  }
+
   const profiles = Object.fromEntries(
     Object.entries(store.profiles).map(([profileId, credential]) => {
       if (credential.type === "api_key" && credential.keyRef && credential.key !== undefined) {
