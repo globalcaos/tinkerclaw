@@ -12,7 +12,7 @@ import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
 
 export default function register(api: OpenClawPluginApi) {
-  const homeDir = process.env.HOME || "/home/globalcaos";
+  const homeDir = process.env.HOME || "/tmp";
   const workspaceDir =
     (api.config as any)?.agents?.defaults?.workspace || `${homeDir}/.openclaw/workspace`;
   const tracker = new BudgetTracker(workspaceDir);
