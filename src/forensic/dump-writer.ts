@@ -54,7 +54,6 @@ export interface ForensicRun {
   responses?: any[]; // per-call response content blocks, matched by index with dumps[]
 }
 
-const MAX_DUMPS_PER_SESSION = 200; // Accumulates across runs so timeline can access all calls
 const MAX_SESSIONS = 20;
 
 // ─── Per-session in-memory store ───
@@ -304,18 +303,6 @@ function upsertRun(sk: string, dump: any, runId: string): void {
       (existing as any)._currentRunStart = existing.dumps.length;
       existing.startedAt = dump.meta.timestamp;
       existing.responses = undefined;
-    }
-    // Append dump, evicting oldest if over cap
-    if (existing.dumps.length >= MAX_DUMPS_PER_SESSION) {
-      existing.dumps.shift();
-      // Adjust responses array to stay aligned
-      if (existing.responses) {
-        existing.responses.shift();
-      }
-      const crs = (existing as any)._currentRunStart ?? 0;
-      if (crs > 0) {
-        (existing as any)._currentRunStart = crs - 1;
-      }
     }
     existing.dumps.push(dump);
   } else {
