@@ -1,41 +1,35 @@
-import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
+import { createEventStore } from "../../memory/engram/event-store.js";
+import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
-import { setCompactionSafeguardRuntime } from "../pi-extensions/compaction-safeguard-runtime.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
-import {
-  createPointerCompactionHandler,
-  setPointerCompactionRuntime,
-} from "../pi-extensions/pointer-compaction-runtime.js";
+import { setCompactionSafeguardRuntime } from "../pi-extensions/compaction-safeguard-runtime.js";
 import compactionSafeguardExtension from "../pi-extensions/compaction-safeguard.js";
 import contextPruningExtension from "../pi-extensions/context-pruning.js";
 import { setContextPruningRuntime } from "../pi-extensions/context-pruning/runtime.js";
 import { computeEffectiveSettings } from "../pi-extensions/context-pruning/settings.js";
 import { makeToolPrunablePredicate } from "../pi-extensions/context-pruning/tools.js";
-import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
-import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "./cache-ttl.js";
-import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
-import { createEventStore } from "../../memory/engram/event-store.js";
-import { setIngestionRuntime } from "../pi-extensions/ingestion-runtime.js";
-import { setRetrievalRuntime } from "../pi-extensions/retrieval-runtime.js";
 import { createCortexRuntime, setCortexRuntime } from "../pi-extensions/cortex-runtime.js";
+import { setIngestionRuntime } from "../pi-extensions/ingestion-runtime.js";
+import { createLimbicRuntime, setLimbicRuntime } from "../pi-extensions/limbic-runtime.js";
 import {
   createObservationExtractor,
   setObservationRuntime,
 } from "../pi-extensions/observation-runtime.js";
 import {
-  createLimbicRuntime,
-  setLimbicRuntime,
-} from "../pi-extensions/limbic-runtime.js";
+  createPointerCompactionHandler,
+  setPointerCompactionRuntime,
+} from "../pi-extensions/pointer-compaction-runtime.js";
 import { initReflectionRuntime } from "../pi-extensions/reflection-runtime.js";
-import {
-  createSynapseRuntime,
-  setSynapseRuntime,
-} from "../pi-extensions/synapse-runtime.js";
+import { setRetrievalRuntime } from "../pi-extensions/retrieval-runtime.js";
+import { createSynapseRuntime, setSynapseRuntime } from "../pi-extensions/synapse-runtime.js";
+import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
+import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "./cache-ttl.js";
 
 function resolveContextWindowTokens(params: {
   cfg: OpenClawConfig | undefined;
@@ -149,6 +143,7 @@ export function buildEmbeddedExtensionFactories(params: {
     factories.push(compactionEngramExtension(params.cfg));
   } else if (compactionMode === "safeguard") {
     const compactionCfg = params.cfg?.agents?.defaults?.compaction;
+    const qualityGuardCfg = compactionCfg?.qualityGuard;
     const contextWindowInfo = resolveContextWindowInfo({
       cfg: params.cfg,
       provider: params.provider,
@@ -161,6 +156,8 @@ export function buildEmbeddedExtensionFactories(params: {
       contextWindowTokens: contextWindowInfo.tokens,
       identifierPolicy: compactionCfg?.identifierPolicy,
       identifierInstructions: compactionCfg?.identifierInstructions,
+      qualityGuardEnabled: qualityGuardCfg?.enabled ?? false,
+      qualityGuardMaxRetries: qualityGuardCfg?.maxRetries,
       model: params.model,
     });
     factories.push(compactionSafeguardExtension);
