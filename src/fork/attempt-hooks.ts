@@ -11,6 +11,7 @@
 import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { buildContextAnatomy, writeAnatomyEvent } from "../agents/context-anatomy.js";
+import { captureForensicDump } from "../forensic/dump-writer.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
@@ -149,6 +150,77 @@ export async function interceptTextToolCalls(params: {
     }
   }
   return { promptError };
+}
+
+// ---------------------------------------------------------------------------
+// Hook: Pre-prompt anatomy (emit anatomy event BEFORE LLM call)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build and write the context anatomy event before the LLM prompt fires.
+ * This lets the Tinker UI show the real colorful bar immediately instead of
+ * waiting for the full response. Response tokens are unknown at this point
+ * and will be zero.
+ */
+export async function emitPrePromptAnatomy(params: {
+  runId: string;
+  sessionKey?: string;
+  messagesSnapshot: unknown[];
+  systemPromptReport?: unknown;
+  provider: string;
+  modelId: string;
+  modelApi?: string;
+  contextWindowTokens?: number;
+  getCompactionCount?: () => number | null;
+  systemPromptText?: string;
+  tools?: unknown[];
+  effectivePrompt?: string;
+  log: { info: (msg: string) => void; warn: (msg: string) => void };
+}): Promise<void> {
+  if (!params.sessionKey) return;
+
+  // 1. Anatomy event (token breakdown for timeline bar)
+  if (params.systemPromptReport) {
+    try {
+      const turnNumber = params.messagesSnapshot.filter(
+        (m) => (m as { role?: string }).role === "user",
+      ).length;
+      const anatomy = buildContextAnatomy({
+        turn: turnNumber,
+        compactionCycle: params.getCompactionCount?.() ?? 0,
+        provider: params.provider,
+        model: params.modelId,
+        sessionKey: params.sessionKey,
+        systemPromptReport: params.systemPromptReport as never,
+        messagesSnapshot: params.messagesSnapshot as never,
+        contextWindowTokens: params.contextWindowTokens ?? 0,
+      });
+      if (anatomy) {
+        await writeAnatomyEvent(params.sessionKey, anatomy);
+      }
+    } catch (err) {
+      params.log.warn(`pre-prompt anatomy failed: ${String(err)}`);
+    }
+  }
+
+  // 2. Forensic dump (full text for treemap drill-down)
+  if (params.systemPromptText != null && params.effectivePrompt != null) {
+    try {
+      await captureForensicDump({
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        model: params.modelId,
+        provider: params.provider,
+        modelApi: params.modelApi ?? params.provider,
+        systemPrompt: params.systemPromptText,
+        messages: params.messagesSnapshot,
+        tools: params.tools ?? [],
+        effectivePrompt: params.effectivePrompt,
+      });
+    } catch (err) {
+      params.log.warn(`pre-prompt forensic dump failed: ${String(err)}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
