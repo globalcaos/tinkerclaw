@@ -69,6 +69,8 @@ export type ContextAnatomyEvent = {
     usedTokens: number;
     utilizationPercent: number;
   };
+  /** Auth profile used for this turn (e.g. "oauth-sv", "api", "cli-gm"). */
+  authProfileId?: string;
   /** Output/response tokens from the model (if available). */
   responseTokens?: number;
   /** Which memory files were injected. */
@@ -299,6 +301,7 @@ export function buildContextAnatomy(params: {
   contextWindowTokens: number;
   totalTokensUsed?: number;
   outputTokens?: number;
+  authProfileId?: string;
 }): ContextAnatomyEvent {
   const { systemPromptReport: report } = params;
   const now = Date.now();
@@ -419,6 +422,7 @@ export function buildContextAnatomy(params: {
       usedTokens,
       utilizationPercent: maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 1000) / 10 : 0,
     },
+    authProfileId: params.authProfileId,
     responseTokens: params.outputTokens,
     memoriesInjected: {
       autoRecall,

@@ -138,7 +138,8 @@ export function mountContextTimeline(
     } else {
       const model = cleanModelName(ev.model ?? "unknown");
       const total = totalTokensFor(ev);
-      const util = currentGlobalMax > 0 ? (total / currentGlobalMax) * 100 : 0;
+      const max = maxTokensFor(ev);
+      const util = max > 0 ? (total / max) * 100 : 0;
       tip.textContent = `${model} · ${fmtK(total)} tokens (${util.toFixed(1)}%)`;
     }
     tip.style.left = `${x + 10}px`;
@@ -745,6 +746,7 @@ export function mountContextTimeline(
       }
       if (buffer.length > 0) {
         selectedIdx = buffer.length - 1;
+        onBarSelect(buffer[selectedIdx].event, "context");
       }
       render();
     },

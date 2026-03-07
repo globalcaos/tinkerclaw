@@ -8,6 +8,63 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { resolveApiKeyForProfile, ensureAuthProfileStore } from "../../src/agents/auth-profiles.js";
+
+/** Anthropic OAuth profile IDs to poll for usage. */
+const USAGE_PROFILES: Record<string, string> = {
+  "cli-sv": "anthropic:cli-sv",
+  "cli-gm": "anthropic:cli-gm",
+};
+
+/** Per-profile cache: profile → { data, ts }. */
+const usageCache: Record<string, { data: Record<string, any>; ts: number }> = {};
+const CACHE_TTL_MS = 60_000;
+
+/** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
+async function resolveToken(profileId: string): Promise<string | null> {
+  try {
+    const store = ensureAuthProfileStore();
+    const result = await resolveApiKeyForProfile({ store, profileId });
+    return result?.apiKey ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch live usage for a single OAuth profile (with cache + auto-refresh). */
+async function fetchProfileUsage(label: string): Promise<Record<string, any> | null> {
+  const cached = usageCache[label];
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
+  const profileId = USAGE_PROFILES[label];
+  if (!profileId) return cached?.data ?? null;
+  const token = await resolveToken(profileId);
+  if (!token) return cached?.data ?? null;
+  try {
+    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20",
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return cached?.data ?? null;
+    const data = (await res.json()) as Record<string, any>;
+    usageCache[label] = { data, ts: Date.now() };
+    return data;
+  } catch {
+    return cached?.data ?? null;
+  }
+}
+
+/** Fetch live usage from all profiles in parallel. */
+async function fetchAllClaudeUsage(): Promise<Record<string, Record<string, any> | null>> {
+  const entries = await Promise.all(
+    Object.keys(USAGE_PROFILES).map(async (p) => [p, await fetchProfileUsage(p)] as const),
+  );
+  return Object.fromEntries(entries);
+}
 import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
 
@@ -76,21 +133,59 @@ export default function register(api: OpenClawPluginApi) {
     }
   }
 
-  // Register gateway method: budget.usage (reads real JSON files)
+  // Register gateway method: budget.usage (live API + JSON fallback)
   api.registerGatewayMethod("budget.usage", async ({ respond }) => {
-    const claudeData = readUsageFile(usageFiles.claude) as any;
+    const claudeFileData = readUsageFile(usageFiles.claude) as any;
     const geminiData = readUsageFile(usageFiles.gemini) as any;
     const manusData = readUsageFile(usageFiles.manus) as any;
     const chatgptData = readUsageFile(usageFiles.chatgpt) as any;
 
-    const result: Record<string, unknown> = {
-      claude: claudeData
+    // Fetch live usage from both OAuth profiles in parallel
+    const liveProfiles = await fetchAllClaudeUsage();
+
+    function buildClaudeProfile(live: Record<string, any> | null) {
+      if (!live) return null;
+      return {
+        mode: "subscription",
+        plan: "max",
+        fetchedAt: new Date().toISOString(),
+        limits: {
+          five_hour: {
+            utilization: live.five_hour?.utilization ?? 0,
+            resets_at: live.five_hour?.resets_at ?? null,
+          },
+          seven_day: {
+            utilization: live.seven_day?.utilization ?? 0,
+            resets_at: live.seven_day?.resets_at ?? null,
+          },
+          seven_day_sonnet: live.seven_day_sonnet
+            ? {
+                utilization: live.seven_day_sonnet.utilization ?? 0,
+                resets_at: live.seven_day_sonnet.resets_at ?? null,
+              }
+            : undefined,
+        },
+      };
+    }
+
+    // Per-profile usage (keyed by "cli-sv", "cli-gm")
+    const claudeProfiles: Record<string, any> = {};
+    for (const [profile, data] of Object.entries(liveProfiles)) {
+      const built = buildClaudeProfile(data);
+      if (built) claudeProfiles[profile] = built;
+    }
+
+    // Backwards-compatible "claude" key: use first available profile or file fallback
+    const firstLive = Object.values(liveProfiles).find(Boolean);
+    const claudeResult =
+      buildClaudeProfile(firstLive) ??
+      (claudeFileData
         ? {
-            mode: claudeData.mode || "subscription",
-            plan: claudeData.plan || "max",
-            rateLimitTier: claudeData.rateLimitTier || "unknown",
-            fetchedAt: claudeData.fetchedAt,
-            limits: claudeData.limits || {
+            mode: claudeFileData.mode || "subscription",
+            plan: claudeFileData.plan || "max",
+            rateLimitTier: claudeFileData.rateLimitTier || "unknown",
+            fetchedAt: claudeFileData.fetchedAt,
+            limits: claudeFileData.limits || {
               five_hour: { utilization: 0, resets_at: null },
               seven_day: { utilization: 0, resets_at: null },
             },
@@ -99,7 +194,11 @@ export default function register(api: OpenClawPluginApi) {
             mode: "subscription",
             plan: "max",
             limits: { five_hour: { utilization: 0 }, seven_day: { utilization: 0 } },
-          },
+          });
+
+    const result: Record<string, unknown> = {
+      claude: claudeResult,
+      claudeProfiles,
       gemini: (() => {
         const models = geminiData?.models || {};
         const result: Record<string, { pct: number; metric: string; used: number; limit: number }> =
