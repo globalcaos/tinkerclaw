@@ -1700,6 +1700,7 @@ export async function runEmbeddedAttempt(
               systemPromptText: systemPromptText ?? "",
               tools,
               effectivePrompt,
+              authProfileId: params.authProfileId,
               log,
             })
             .catch((err) => {
@@ -1942,6 +1943,7 @@ export async function runEmbeddedAttempt(
             params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
           getCompactionCount,
           getUsageTotals,
+          authProfileId: params.authProfileId,
           log,
         })
         .catch((err) => {
