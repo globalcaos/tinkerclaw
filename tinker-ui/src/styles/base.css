@@ -244,11 +244,12 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .model-row:hover{background:var(--surface2)}
 @keyframes model-breathe{0%,100%{box-shadow:0 0 6px 2px var(--glow-color,rgba(124,58,237,0.4));background:var(--glow-bg,rgba(124,58,237,0.08))}50%{box-shadow:0 0 18px 4px var(--glow-color,rgba(124,58,237,0.6));background:var(--glow-bg2,rgba(124,58,237,0.15))}}
 .model-row.model-live{animation:model-breathe 2s ease-in-out infinite;border:1px solid var(--glow-border,rgba(124,58,237,0.3));border-radius:4px}
-.model-agent-count{background:rgba(255,255,255,0.15);color:#000;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:auto;font-family:"SF Mono",monospace}
+.model-agent-count{background:rgba(255,255,255,0.15);color:#000;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;font-family:"SF Mono",monospace}
 .model-provider-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 .model-provider-icon{display:inline-flex;align-items:center;flex-shrink:0;line-height:0}
 .model-provider-icon svg{display:block}
-.model-name{font-weight:500;color:var(--text);white-space:nowrap}
+.model-name-col{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;min-width:110px;max-width:140px}
+.model-name{font-weight:500;color:var(--text);white-space:nowrap;font-size:10px;font-family:"SF Mono",monospace;overflow:hidden;text-overflow:ellipsis}
 .model-badge{font-size:10px;flex-shrink:0}
 .model-auth-suffix{font-size:9px;color:var(--muted);white-space:nowrap}
 .auth-key-label{font-weight:400;color:var(--muted);font-size:10px;white-space:nowrap}
@@ -386,3 +387,12 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .overseer-empty-icon{font-size:22px;margin-bottom:4px}
 .overseer-empty-text{font-size:10px;color:var(--muted,#666)}
 @keyframes overseer-pill-breathe{0%,100%{box-shadow:0 0 4px 1px var(--pill-bg,transparent)}50%{box-shadow:0 0 14px 3px var(--pill-bg2,transparent)}}
+
+/* Usage Bars (inline with model rows) */
+.usage-bars-col{flex:1;min-width:0;display:flex;align-items:center}
+.usage-bars-wrap{position:relative;display:flex;flex-direction:column;gap:1px;width:100%;cursor:help}
+.usage-bar{height:2px;background:var(--border);border-radius:1px;overflow:hidden}
+.usage-bar-fill{height:100%;border-radius:1px;transition:width .3s ease,background-color .3s ease}
+.usage-cost-col{flex-shrink:0;font-size:8px;font-family:"SF Mono",monospace;color:var(--muted);white-space:nowrap;text-align:right;min-width:36px}
+.usage-bars-wrap:hover .usage-tip{display:block}
+.usage-tip{display:none;position:absolute;bottom:calc(100% + 6px);right:0;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:9px;line-height:1.5;color:var(--text);white-space:pre;z-index:100;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.3);min-width:160px}
