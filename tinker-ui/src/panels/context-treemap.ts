@@ -708,6 +708,102 @@ export function mountContextTreemap(
     userMessage: "current_prompt",
   };
 
+  // ─── Extract children from forensic slim dump for a given anatomy/forensic key ───
+  function extractChildrenFromSlim(
+    slim: any,
+    forensicKey: string,
+    anatomyKey: string,
+  ): TreemapNode[] | null {
+    if (forensicKey === "system_prompt") {
+      const sections = slim.system_prompt?.sections;
+      if (sections?.length) {
+        return sections.map((s: any) => ({ key: s.name, label: s.name, chars: s.chars }));
+      }
+    } else if (forensicKey === "tools") {
+      const defs = slim.tools?.definitions;
+      if (defs?.length) {
+        return defs.map((d: any) => ({ key: d.name, label: d.name, chars: d.schema_chars }));
+      }
+    } else if (forensicKey === "conversation_history") {
+      const msgs = slim.conversation_history?.messages_slim;
+      if (msgs?.length) {
+        // In anatomy mode, split by role: "conversation" = non-tool, "toolResults" = tool
+        const filtered =
+          anatomyKey === "toolResults"
+            ? msgs.filter((m: any) => m.role === "tool")
+            : anatomyKey === "conversation"
+              ? msgs.filter((m: any) => m.role !== "tool")
+              : msgs;
+        if (filtered.length > 0) {
+          return filtered.map((m: any) => ({
+            key: String(m.index),
+            label: `${m.role}[${m.index}]`,
+            chars: m.chars,
+          }));
+        }
+      }
+    }
+    return null;
+  }
+
+  // ─── Fetch children on-demand from forensic dump and drill to L2 ───
+  async function fetchAndDrillToL2(node: TreemapNode) {
+    container.innerHTML = `<div class="tm-empty">Loading\u2026</div>`;
+    try {
+      const sk = getSessionKey();
+      const params: any = { sessionKey: sk || undefined };
+
+      // Find the matching call index via timestamp
+      let callIndex: number | undefined;
+      if (anatomyTimestamp) {
+        const liveData = await reqFn("forensic.getLive", params);
+        if (liveData?._run?.calls) {
+          let bestIdx = -1,
+            bestDelta = Infinity;
+          for (const call of liveData._run.calls) {
+            const ts = new Date(call.timestamp).getTime();
+            const delta = Math.abs(ts - anatomyTimestamp);
+            if (delta < bestDelta) {
+              bestDelta = delta;
+              bestIdx = call.index;
+            }
+          }
+          if (bestIdx >= 0 && bestDelta < 60_000) {
+            callIndex = bestIdx;
+          }
+        }
+      }
+
+      // Fetch the specific call's slim dump
+      const callDump =
+        callIndex !== undefined
+          ? await reqFn("forensic.getCallLive", { sessionKey: sk || undefined, index: callIndex })
+          : await reqFn("forensic.getLive", { sessionKey: sk || undefined });
+
+      if (!callDump) throw new Error("No dump data");
+
+      const forensicKey = ANATOMY_TO_FORENSIC[node.key] ?? node.key;
+      const children = extractChildrenFromSlim(callDump, forensicKey, node.key);
+
+      if (children && children.length > 0) {
+        node.children = children;
+        drillParent = node;
+        level = 2;
+        renderLevel();
+        return;
+      }
+    } catch {
+      /* fetch failed — fall through to L3 */
+    }
+
+    // Fallback: no children found — go to L3
+    drillParent = node;
+    drillChild = node;
+    level = 3;
+    const component = anatomyMode ? (ANATOMY_TO_FORENSIC[node.key] ?? node.key) : node.key;
+    showL3Preview(component, undefined);
+  }
+
   // ─── Box click ───
   function onBoxClick(node: TreemapNode, parentKey: string | null) {
     if (level === 1) {
@@ -717,12 +813,8 @@ export function mountContextTreemap(
         level = 2;
         renderLevel();
       } else {
-        // No children — show detail (maps anatomy keys to forensic API keys)
-        drillParent = node;
-        drillChild = node;
-        level = 3;
-        const component = anatomyMode ? (ANATOMY_TO_FORENSIC[node.key] ?? node.key) : node.key;
-        showL3Preview(component, undefined);
+        // No children locally — try fetching from forensic dump
+        fetchAndDrillToL2(node);
       }
     } else if (level === 2 && drillParent) {
       drillChild = node;
@@ -730,8 +822,7 @@ export function mountContextTreemap(
       const component = anatomyMode
         ? (ANATOMY_TO_FORENSIC[drillParent.key] ?? drillParent.key)
         : drillParent.key;
-      const childKey = anatomyMode ? node.key : node.key;
-      showL3Preview(component, childKey);
+      showL3Preview(component, node.key);
     }
   }
 
