@@ -54,25 +54,25 @@ const PROVIDER_COLORS: Record<string, string> = {
 
 // API cost per MTok [input, output] by model short name
 const MODEL_COST: Record<string, [number, number]> = {
-  // Anthropic — API pricing (subscription makes this cheaper at high usage)
-  "claude-opus-4-6": [15, 75],
+  // Anthropic (source: platform.claude.com/docs/en/docs/about-claude/models)
+  "claude-opus-4-6": [5, 25],
   "claude-sonnet-4-6": [3, 15],
   "claude-haiku-4-5": [1, 5],
-  // OpenAI
-  "gpt-5.4-pro": [10, 30],
-  "gpt-5.4": [2.5, 10],
-  "gpt-5.2-pro": [10, 30],
-  "gpt-5.2": [2.5, 10],
-  "gpt-5.1": [2, 8],
+  // OpenAI (source: developers.openai.com/api/docs/pricing)
+  "gpt-5.4-pro": [30, 180],
+  "gpt-5.4": [2.5, 15],
+  "gpt-5.2-pro": [21, 168],
+  "gpt-5.2": [1.75, 14],
+  "gpt-5.1": [1.25, 10],
   "gpt-4.1": [2, 8],
   "gpt-4o": [2.5, 10],
-  "o3": [10, 40],
+  o3: [2, 8],
   "o4-mini": [1.1, 4.4],
-  // Gemini
-  "gemini-3.1-pro-preview": [1.25, 5],
-  "gemini-3-flash-preview": [0.1, 0.4],
+  // Gemini (source: ai.google.dev/pricing)
+  "gemini-3.1-pro-preview": [2, 12],
+  "gemini-3-flash-preview": [0.5, 3],
   "gemini-2.5-pro": [1.25, 10],
-  "gemini-2.5-flash": [0.15, 0.6],
+  "gemini-2.5-flash": [0.3, 2.5],
   "gemini-2.0-flash": [0.1, 0.4],
   "gemini-2.0-flash-lite": [0.075, 0.3],
 };
@@ -216,6 +216,8 @@ function gwConnect() {
     sending = false;
     streamText = "";
     streamRunId = null;
+    activeRuns.clear();
+    saveActiveRuns();
     updateDots();
     updateBtn();
     updateChat();
@@ -258,7 +260,9 @@ function onFrame(f: any) {
             .then((res: any) => {
               forensicMode = res?.enabled ?? true;
             })
-            .catch(() => { forensicMode = true; });
+            .catch(() => {
+              forensicMode = true;
+            });
         })
         .catch((e) => console.error("connect:", e));
       return;
@@ -1022,7 +1026,7 @@ function renderMsg(msg: any, idx: number): string {
       const errorClass = msg._isError ? " msg-error" : "";
       const retryBtn =
         msg._isError && msg._retryProvider
-          ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" title="Retry ${esc(msg._retryProvider)}">↻</button>`
+          ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
       h += `<div class="msg assistant${errorClass}">${md(text)}${retryBtn}</div>`;
     } else {
@@ -1163,7 +1167,15 @@ function fmtCost(n: number): string {
   return n.toFixed(3);
 }
 
-function getModelCost(modelId: string): string {
+// Subscription effective $/MTok: $200/mo, ~6M tok/day = ~180M/mo → ~$1.1/MTok blended
+const SUB_COST_LABEL = "~$1.1";
+
+function getModelCost(modelId: string, keyId?: string): string {
+  // Subscription profiles get effective flat rate
+  if (keyId && (keyId.includes(":cli-") || keyId.includes(":oauth"))) {
+    const provider = modelId.split("/")[0];
+    if (provider === "anthropic") return SUB_COST_LABEL;
+  }
   const name = modelId.split("/").slice(1).join("/") || modelId;
   const cost = MODEL_COST[name];
   if (!cost) return "";
@@ -1176,14 +1188,13 @@ function fmtReset(iso: string): string {
     const d = new Date(iso);
     const now = Date.now();
     const diffMs = d.getTime() - now;
-    if (diffMs <= 0) return "now";
+    if (diffMs <= 0) return "";
     const h = Math.floor(diffMs / 3600000);
     const m = Math.floor((diffMs % 3600000) / 60000);
-    if (h >= 24) {
-      const days = Math.floor(h / 24);
-      return `${days}d ${h % 24}h`;
-    }
-    return `${h}h ${m}m`;
+    if (h < 24) return `${h}h ${m}m`;
+    const day = d.toLocaleDateString(undefined, { weekday: "short" });
+    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    return `${day} ${time}`;
   } catch {
     return iso;
   }
@@ -1195,27 +1206,34 @@ interface ModelUsageInfo {
   tooltip: string;
 }
 
-function getModelUsage(provider: string, modelId: string): ModelUsageInfo | null {
+function getModelUsage(provider: string, modelId: string, keyId?: string): ModelUsageInfo | null {
   if (!budgetUsageData || provider === "ollama") return null;
   const name = modelId.split("/").slice(1).join("/") || modelId;
 
   if (provider === "anthropic") {
-    const c = budgetUsageData.claude;
+    // Use per-profile data if available (e.g. "anthropic:cli-sv" → "cli-sv")
+    const profileKey = keyId?.split(":").slice(1).join(":") || "";
+    const profiles = budgetUsageData.claudeProfiles || {};
+    const c = (profileKey && profiles[profileKey]) || budgetUsageData.claude;
     if (!c?.limits) return null;
     const h5 = c.limits.five_hour?.utilization ?? 0;
-    const d7 = c.limits.seven_day?.utilization ?? 0;
-    const r5 = c.limits.five_hour?.resets_at;
-    const r7 = c.limits.seven_day?.resets_at;
-    const opus7 = c.limits.seven_day_opus?.utilization;
+    const isSonnet = name.includes("sonnet");
     const sonnet7 = c.limits.seven_day_sonnet?.utilization;
+    const d7 = c.limits.seven_day?.utilization ?? 0;
+    const bottomPct = isSonnet && sonnet7 != null ? sonnet7 : d7;
     let tip = `5h: ${h5}%`;
-    if (r5) tip += ` \u2014 resets ${fmtReset(r5)}`;
-    tip += `\n7d: ${d7}%`;
-    if (r7) tip += ` \u2014 resets ${fmtReset(r7)}`;
-    if (opus7 != null) tip += `\n7d opus: ${opus7}%`;
-    if (sonnet7 != null) tip += `\n7d sonnet: ${sonnet7}%`;
-    tip += `\nPlan: ${c.plan || "max"} (${c.rateLimitTier || "?"})`;
-    return { topPct: h5, bottomPct: d7, tooltip: tip };
+    if (isSonnet && sonnet7 != null) {
+      const rs = c.limits.seven_day_sonnet?.resets_at;
+      const rsfmt = rs ? fmtReset(rs) : "";
+      tip += `\n7d sonnet: ${sonnet7}%`;
+      if (rsfmt) tip += ` \u2014 resets ${rsfmt}`;
+    } else {
+      const r7 = c.limits.seven_day?.resets_at;
+      const r7fmt = r7 ? fmtReset(r7) : "";
+      tip += `\n7d: ${d7}%`;
+      if (r7fmt) tip += ` \u2014 resets ${r7fmt}`;
+    }
+    return { topPct: h5, bottomPct, tooltip: tip };
   }
 
   if (provider === "google") {
@@ -1234,7 +1252,7 @@ function getModelUsage(provider: string, modelId: string): ModelUsageInfo | null
     const entry = o.models[name];
     if (!entry) return null;
     const reqPct = entry.utilization_pct ?? 0;
-    const tokPct = entry.tokens?.limit ? ((entry.tokens.used / entry.tokens.limit) * 100) : 0;
+    const tokPct = entry.tokens?.limit ? (entry.tokens.used / entry.tokens.limit) * 100 : 0;
     let tip = `Requests: ${entry.requests?.used ?? 0}/${entry.requests?.limit ?? 0} (${reqPct.toFixed(0)}%)`;
     tip += `\nTokens: ${formatNum(entry.tokens?.used ?? 0)}/${formatNum(entry.tokens?.limit ?? 0)} (${tokPct.toFixed(0)}%)`;
     return { topPct: reqPct, bottomPct: tokPct, tooltip: tip };
@@ -1250,10 +1268,9 @@ function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   const topW = Math.min(usage.topPct, 100);
   const bottomW = Math.min(usage.bottomPct, 100);
   let h = '<span class="usage-bars-col">';
-  h += `<span class="usage-bars-wrap">`;
+  h += `<span class="usage-bars-wrap" data-hint="${esc(usage.tooltip)}">`;
   h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${topW}%;background:${topColor}"></span></span>`;
   h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${bottomW}%;background:${bottomColor}"></span></span>`;
-  h += `<span class="usage-tip">${esc(usage.tooltip)}</span>`;
   h += `</span></span>`;
   return h;
 }
@@ -1578,7 +1595,9 @@ const SHORT_NAMES: Record<string, string> = {
 function modelName(id: string): string {
   const name = id.split("/").slice(1).join("/") || id;
   const clean = name.replace(/^claude-/, "");
-  return SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
+  let short = SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
+  short = short.replace("opus", "op").replace("sonnet", "sn").replace("haiku", "hk");
+  return short;
 }
 
 function providerOf(id: string): string {
@@ -1634,7 +1653,12 @@ function updateBudgetPanel() {
       const mode = keyId ? authProfiles?.[keyId]?.mode || "" : "";
       // Hide redundant "default(api_key)" tags — only show meaningful labels
       const showSuffix = keyLabel && keyLabel !== "default";
-      const suffix = showSuffix && mode && mode !== "api_key" ? ` \u00b7 ${keyLabel} (${mode})` : showSuffix ? ` \u00b7 ${keyLabel}` : "";
+      const suffix =
+        showSuffix && mode && mode !== "api_key"
+          ? ` \u00b7 ${keyLabel} (${mode})`
+          : showSuffix
+            ? ` \u00b7 ${keyLabel}`
+            : "";
       html += renderModelRow(
         modelId,
         provider,
@@ -1643,6 +1667,7 @@ function updateBudgetPanel() {
         suffix,
         counts.get(keyId || modelId) || 0,
         providerErrors.get(keyId || modelId),
+        keyId,
       );
     } else {
       // Multiple keys — one compact row per key with model name inline
@@ -1674,16 +1699,7 @@ function updateBudgetPanel() {
 
   if (chain.length) {
     const open = !collapsedModelSections.has("fallback");
-    const badges = [
-      "\u2460",
-      "\u2461",
-      "\u2462",
-      "\u2463",
-      "\u2464",
-      "\u2465",
-      "\u2466",
-      "\u2467",
-    ];
+    const badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
     html += `<div class="model-group${open ? " open" : ""}" data-section="fallback">`;
     html += '<div class="model-group-label">FALLBACK CHAIN</div>';
     html += '<div class="model-group-body">';
@@ -1757,6 +1773,7 @@ function renderModelRow(
   suffix: string,
   count: number,
   errorInfo?: { error: string; reason: string },
+  keyId?: string,
 ): string {
   const color = PROVIDER_COLORS[provider] || "#6b7280";
   const liveClass = count > 0 ? " model-live" : "";
@@ -1767,13 +1784,14 @@ function renderModelRow(
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge" title="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
-  const usage = getModelUsage(provider, id);
-  const costLabel = getModelCost(id);
+  const usage = getModelUsage(provider, id, keyId);
+  const costLabel = getModelCost(id, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
   const costHtml = renderCostCol(costLabel);
-  const nameParts = esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
+  const nameParts =
+    esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
 
   return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
@@ -1802,10 +1820,10 @@ function renderAuthKeyRow(
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge" title="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
-  const usage = getModelUsage(provider, modelId);
-  const costLabel = getModelCost(modelId);
+  const usage = getModelUsage(provider, modelId, keyId);
+  const costLabel = getModelCost(modelId, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
   const costHtml = renderCostCol(costLabel);
 
@@ -2008,17 +2026,20 @@ function renderSessionRow(s: any, shortLabel: string): string {
   return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
     <span class="session-label">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
-    <button class="session-delete-btn" data-delete-key="${esc(s.key)}" title="Delete session">
+    <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
     </button>
   </div>`;
 }
 
+/** Auto-scroll only when the user is already near the bottom of the chat. */
 function scrollChat() {
   requestAnimationFrame(() => {
     const el = $("messages");
     if (el) {
-      el.scrollTop = el.scrollHeight;
+      const threshold = 80; // px tolerance
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      if (atBottom) el.scrollTop = el.scrollHeight;
     }
   });
 }
@@ -2031,12 +2052,12 @@ function init() {
   initialized = true;
   app.innerHTML = `
     <nav class="sidebar">
-      <div class="logo" id="new-session-btn" title="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:48px;height:48px;border-radius:6px"></div>
-      <button class="active" title="Chat">💬</button>
-      <button title="Tokens">📊</button>
-      <button title="Context">🧠</button>
+      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:48px;height:48px;border-radius:6px"></div>
+      <button class="active" data-hint="Chat">💬</button>
+      <button data-hint="Tokens">📊</button>
+      <button data-hint="Context">🧠</button>
 
-      <button title="Metrics">📈</button>
+      <button data-hint="Metrics">📈</button>
     </nav>
     <div class="topbar">
       <span class="status-dot gw-dot dot-red"></span>
@@ -2046,7 +2067,7 @@ function init() {
       <span style="color:var(--muted);font-size:11px"><span class="status-dot gw-dot dot-red"></span> Gateway</span>
     </div>
     <div class="chat-area">
-      <div class="chat-header"><button id="toggle-overseer-chat" class="panel-toggle" title="Show/hide system messages">Sys</button></div>
+      <div class="chat-header"><button id="toggle-overseer-chat" class="panel-toggle" data-hint="System messages">Sys</button></div>
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
@@ -2055,7 +2076,7 @@ function init() {
     </div>
     <div class="right-panels">
       <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🎛️ Models <button id="budget-refresh" class="budget-refresh-btn" title="Refresh">↻</button></div>
+        <div class="rpanel-header">🎛️ Models <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button></div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="sessions-panel">
@@ -2072,16 +2093,72 @@ function init() {
       <div class="brp-views">
         <div class="brp-view brp-view-active" id="brp-view-context">
           <div id="treemap-canvas" style="position:absolute;inset:0"></div>
-          <button class="brp-back-btn" id="brp-back-context" title="Back" style="display:none">\u25C0</button>
+          <button class="brp-back-btn" id="brp-back-context" data-hint="Back" style="display:none">\u25C0</button>
         </div>
         <div class="brp-view" id="brp-view-response">
           <div id="response-canvas" style="position:absolute;inset:0;overflow:hidden"></div>
-          <button class="brp-back-btn" id="brp-back-response" title="Back" style="display:none">\u25C0</button>
+          <button class="brp-back-btn" id="brp-back-response" data-hint="Back" style="display:none">\u25C0</button>
         </div>
       </div>
       <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
     </div>
   `;
+
+  // ─── Global tooltip system (viewport-clamped) ───
+  const hintEl = document.createElement("div");
+  hintEl.id = "global-hint";
+  document.body.appendChild(hintEl);
+  let hintTarget: HTMLElement | null = null;
+
+  function positionHint(target: HTMLElement) {
+    const text = target.dataset.hint;
+    if (!text) return;
+    hintEl.textContent = text;
+    hintEl.style.opacity = "1";
+    const rect = target.getBoundingClientRect();
+    const pad = 6;
+
+    // Measure tooltip size
+    hintEl.style.left = "0";
+    hintEl.style.top = "0";
+    const tw = hintEl.offsetWidth;
+    const th = hintEl.offsetHeight;
+
+    // Default: centered above
+    let left = rect.left + rect.width / 2 - tw / 2;
+    let top = rect.top - th - pad;
+
+    // If not enough room above, show below
+    if (top < pad) {
+      top = rect.bottom + pad;
+    }
+    // Clamp horizontal to viewport
+    if (left < pad) left = pad;
+    if (left + tw > window.innerWidth - pad) left = window.innerWidth - pad - tw;
+    // Clamp vertical
+    if (top + th > window.innerHeight - pad) top = window.innerHeight - pad - th;
+
+    hintEl.style.left = `${left}px`;
+    hintEl.style.top = `${top}px`;
+  }
+
+  document.addEventListener("mouseover", (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>("[data-hint]");
+    if (target && target.dataset.hint) {
+      hintTarget = target;
+      positionHint(target);
+    } else if (hintTarget) {
+      hintEl.style.opacity = "0";
+      hintTarget = null;
+    }
+  });
+  document.addEventListener("mouseout", (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>("[data-hint]");
+    if (target === hintTarget) {
+      hintEl.style.opacity = "0";
+      hintTarget = null;
+    }
+  });
 
   const ta = $("chat-textarea") as HTMLTextAreaElement;
   try {
@@ -2361,7 +2438,6 @@ function updateOverseerPanel(): void {
     countEl.textContent = `(${items.length})`;
   }
 }
-
 
 // ─── Boot ───
 init();

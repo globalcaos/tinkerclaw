@@ -73,7 +73,7 @@ export function mountOverseerGraph(
 
       const icon = icons[item.provider] || "";
 
-      html += `<div class="${cls}" style="${style}" title="${esc(item.id)}">`;
+      html += `<div class="${cls}" style="${style}" data-hint="${esc(item.id)}">`;
       if (icon) html += `<span class="overseer-pill-icon">${icon}</span>`;
       html += `<span class="overseer-pill-model">${esc(item.modelName)}</span>`;
       if (item.authLabel) {
