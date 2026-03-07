@@ -3,6 +3,10 @@
  * Squarified treemap with 3-level drill-down: L1 (categories) → L2 (sub-items) → L3 (text preview).
  */
 
+import MarkdownIt from "markdown-it";
+
+const md = MarkdownIt({ html: false, linkify: true, breaks: true });
+
 type ReqFn = (method: string, params?: any) => Promise<any>;
 
 interface TreemapNode {
@@ -357,11 +361,11 @@ function syntaxHighlightJson(json: string): string {
     .replace(/:\s*(null)/g, ': <span class="tm-json-null">$1</span>');
 }
 
-/** Render formatted text with paragraph structure */
+/** Render formatted text with markdown */
 function renderFormattedText(text: string): HTMLElement {
   const div = document.createElement("div");
-  div.className = "tm-text-block";
-  div.textContent = text;
+  div.className = "tm-text-block tm-md";
+  div.innerHTML = md.render(text);
   return div;
 }
 
@@ -389,10 +393,10 @@ function renderConversationMessage(text: string, label: string): HTMLElement | n
     return el;
   }
 
-  // Plain text content
+  // Render as markdown
   const content = document.createElement("div");
-  content.className = "tm-msg-content";
-  content.textContent = text;
+  content.className = "tm-msg-content tm-md";
+  content.innerHTML = md.render(text);
   el.appendChild(content);
   return el;
 }
@@ -514,6 +518,7 @@ export function mountContextTreemap(
   let currentModel = "";
   let anatomyMode = false;
   let anatomyTimestamp: number | null = null;
+  let maxTokenWindow = 200_000;
 
   // ─── Render empty state ───
   function renderEmpty(msg = "No forensic dump loaded. Toggle 🛡️, send a message, then click ↻") {
@@ -564,8 +569,16 @@ export function mountContextTreemap(
   // ─── Render boxes ───
   function renderBoxes(nodes: TreemapNode[], parentKey: string | null) {
     container.innerHTML = "";
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    // Defer if container has no dimensions yet (tab not visible, layout pending)
+    if (w <= 0 || h <= 0) {
+      requestAnimationFrame(() => renderBoxes(nodes, parentKey));
+      return;
+    }
     const totalChars = nodes.reduce((s, n) => s + n.chars, 0);
-    const bounds: Rect = { x: 0, y: 0, w: container.offsetWidth, h: container.offsetHeight };
+    // Reserve 18px at bottom so summary buttons on bottom-edge boxes stay visible
+    const bounds: Rect = { x: 0, y: 0, w, h: h - 18 };
     const rects = squarify(nodes, bounds);
 
     for (const r of rects) {
@@ -582,20 +595,27 @@ export function mountContextTreemap(
         bg = categoryColor(r.node.key);
       }
 
-      box.style.cssText = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;background:${bg};`;
+      // Clamp boxes to container bounds to prevent overflow and uneven edges
+      const bx = Math.round(r.x);
+      const by = Math.round(r.y);
+      const bw = Math.round(Math.min(r.w, w - r.x));
+      const bh = Math.round(Math.min(r.h, h - r.y));
+      box.style.cssText = `left:${bx}px;top:${by}px;width:${bw}px;height:${bh}px;background:${bg};`;
 
       // Labels based on box size
-      if (r.w >= 40 && r.h >= 30) {
+      if (r.w >= 30 && r.h >= 20) {
         const lbl = document.createElement("div");
         lbl.className = "tm-lbl";
         lbl.textContent = r.node.label;
         box.appendChild(lbl);
 
-        if (r.w >= 60 && r.h >= 44) {
+        if (r.w >= 40 && r.h >= 32) {
           const sub = document.createElement("div");
           sub.className = "tm-sub";
           const cost = charsCost(r.node.chars, inputPricePerMTok);
-          sub.textContent = `${fmtChars(r.node.chars)}  ${pct(r.node.chars, totalChars)}  ${fmtUsd(cost)}`;
+          // Percentage relative to model's max token window (chars ≈ tokens * 4)
+          const pctBase = anatomyMode ? maxTokenWindow * 4 : totalChars;
+          sub.textContent = `${fmtChars(r.node.chars)}  ${pct(r.node.chars, pctBase)}  ${fmtUsd(cost)}`;
           box.appendChild(sub);
 
           // Summary button
@@ -772,7 +792,10 @@ export function mountContextTreemap(
           s.textContent = summaryText;
           bodyEl.appendChild(s);
         } else {
-          bodyEl.textContent = text;
+          const mdDiv = document.createElement("div");
+          mdDiv.className = "tm-md";
+          mdDiv.innerHTML = md.render(text);
+          bodyEl.appendChild(mdDiv);
         }
       }
 
@@ -952,7 +975,11 @@ export function mountContextTreemap(
       { key: "injectedFiles", tokenField: "injectedFilesTotalTokens", label: "Workspace Files" },
       { key: "skills", tokenField: "skillsTokens", label: "Skills" },
       { key: "toolSchemas", tokenField: "toolSchemasTokens", label: "Tool Schemas" },
-      { key: "conversation", tokenField: "conversationHistoryTokens", label: "Conversation" },
+      {
+        key: "conversation",
+        tokenField: "conversationHistoryTokens",
+        label: "Conversation History",
+      },
       { key: "toolResults", tokenField: "toolResultsTokens", label: "Tool Results" },
       { key: "userMessage", tokenField: "userMessageTokens", label: "User Message" },
     ];
@@ -983,6 +1010,7 @@ export function mountContextTreemap(
     drillChild = null;
     selectedCallIndex = null;
     anatomyTimestamp = ev.timestampMs ?? (ev.timestamp ? new Date(ev.timestamp).getTime() : null);
+    maxTokenWindow = ev.contextWindow?.maxTokens ?? 200_000;
 
     const totalTokens = ev.contextWindow?.usedTokens ?? cs.totalTokens ?? 0;
     currentDump = {
@@ -996,12 +1024,14 @@ export function mountContextTreemap(
     // Update footer with anatomy info
     const max = ev.contextWindow?.maxTokens ?? 200_000;
     const util = ev.contextWindow?.utilizationPercent ?? (max > 0 ? (totalTokens / max) * 100 : 0);
-    const turn = ev.turn ?? "?";
     const model = cleanModelName(ev.model ?? "unknown");
-    footerEl.textContent = `T${turn} · ${fmtChars(totalTokens)} tokens · ${util.toFixed?.(0) ?? util}% of ${fmtChars(max)} · ${model}`;
+    const profileId = ev.authProfileId ?? "";
+    const isSub = /oauth|cli/i.test(profileId);
+    const cost = isSub ? 0 : charsCost(totalTokens * 4, inputPricePerMTok);
+    const costStr = isSub ? "$0.00 (sub)" : fmtUsd(cost);
+    footerEl.textContent = `${fmtChars(totalTokens)} tokens · ${util.toFixed?.(0) ?? util}% of ${fmtChars(max)} · ${model} · ${costStr}`;
     if (costEl) {
-      const cost = charsCost(totalTokens * 4, inputPricePerMTok);
-      costEl.textContent = fmtUsd(cost);
+      costEl.textContent = costStr;
     }
     if (modelEl) {
       modelEl.textContent = model ? `(${model})` : "";

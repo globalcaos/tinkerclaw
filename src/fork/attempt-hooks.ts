@@ -11,7 +11,6 @@
 import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { buildContextAnatomy, writeAnatomyEvent } from "../agents/context-anatomy.js";
-import { captureForensicDump } from "../forensic/dump-writer.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
@@ -27,6 +26,7 @@ import {
   evaluateTurnSyncScore,
 } from "../agents/pi-extensions/mid-context-reinject.js";
 import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
+import { captureForensicDump } from "../forensic/dump-writer.js";
 
 // ---------------------------------------------------------------------------
 // Hook: Persona block (before system prompt build)
@@ -175,9 +175,12 @@ export async function emitPrePromptAnatomy(params: {
   systemPromptText?: string;
   tools?: unknown[];
   effectivePrompt?: string;
+  authProfileId?: string;
   log: { info: (msg: string) => void; warn: (msg: string) => void };
 }): Promise<void> {
-  if (!params.sessionKey) return;
+  if (!params.sessionKey) {
+    return;
+  }
 
   // 1. Anatomy event (token breakdown for timeline bar)
   if (params.systemPromptReport) {
@@ -194,6 +197,7 @@ export async function emitPrePromptAnatomy(params: {
         systemPromptReport: params.systemPromptReport as never,
         messagesSnapshot: params.messagesSnapshot as never,
         contextWindowTokens: params.contextWindowTokens ?? 0,
+        authProfileId: params.authProfileId,
       });
       if (anatomy) {
         await writeAnatomyEvent(params.sessionKey, anatomy);
@@ -238,6 +242,7 @@ export interface PostTurnParams {
   contextWindowTokens?: number;
   getCompactionCount?: () => number | null;
   getUsageTotals?: (() => { total?: number; output?: number } | undefined) | null;
+  authProfileId?: string;
   log: { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void };
 }
 
@@ -269,6 +274,7 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         contextWindowTokens: params.contextWindowTokens ?? 0,
         totalTokensUsed: usageTotals?.total,
         outputTokens: usageTotals?.output,
+        authProfileId: params.authProfileId,
       });
       if (contextAnatomy) {
         writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
