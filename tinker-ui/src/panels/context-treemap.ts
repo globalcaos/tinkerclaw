@@ -851,7 +851,7 @@ export function mountContextTreemap(
         nodeChars > 0 ? `${fmtChars(nodeChars)} chars \u00b7 ~${fmtChars(estTokens)} tokens` : "";
       container.innerHTML = `<div class="tm-preview" style="background:${bg}">
         <div class="tm-preview-header">${esc(nodeLabel)}</div>
-        <div class="tm-preview-meta">${nodeCharsStr}${nodeCharsStr ? " \u00b7 " : ""}Detail not available \u2014 enable forensic mode (\ud83d\udee1\ufe0f) to inspect contents</div>
+        <div class="tm-preview-meta">${nodeCharsStr}${nodeCharsStr ? " \u00b7 " : ""}Detail not available \u2014 send a new message to capture context</div>
       </div>`;
       (container as any).__onLevelChange?.();
     }

@@ -1684,6 +1684,28 @@ export async function runEmbeddedAttempt(
             }
           }
 
+          // FORK: emit anatomy + forensic dump before LLM call so Tinker UI shows bar + details immediately
+          _forkAttemptHooks
+            .emitPrePromptAnatomy({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              messagesSnapshot: activeSession.messages.slice(),
+              systemPromptReport,
+              provider: params.provider,
+              modelId: params.modelId,
+              modelApi: params.provider,
+              contextWindowTokens:
+                params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+              getCompactionCount,
+              systemPromptText: systemPromptText ?? "",
+              tools,
+              effectivePrompt,
+              log,
+            })
+            .catch((err) => {
+              log.warn(`pre-prompt anatomy emit failed: ${String(err)}`);
+            });
+
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
           if (imageResult.images.length > 0) {
