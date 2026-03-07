@@ -119,6 +119,7 @@ export function mountContextTimeline(
   let groupCounter = 0;
   let tooltipEl: HTMLElement | null = null;
   let filterMode: "session" | "all" = "session";
+  let currentGlobalMax = 200_000;
 
   // ─── Tooltip ───
   function showTooltip(x: number, y: number, entry: BufferEntry) {
@@ -136,14 +137,9 @@ export function mountContextTimeline(
       tip.textContent = `${model} — ${entry.failReason || "failed"}`;
     } else {
       const model = cleanModelName(ev.model ?? "unknown");
-      const turn = ev.turn ?? "?";
       const total = totalTokensFor(ev);
-      const max = maxTokensFor(ev);
-      const rawUtil = ev.contextWindow?.utilizationPercent ?? (max > 0 ? (total / max) * 100 : 0);
-      const util = Math.min(rawUtil, 100);
-      const utilStr = `${util.toFixed(1)}%`;
-      const respStr = ev.responseTokens ? ` · ${fmtK(ev.responseTokens)} out` : "";
-      tip.textContent = `${model} · T${turn} · ${fmtK(total)}/${fmtK(max)} in (${utilStr})${respStr}`;
+      const util = currentGlobalMax > 0 ? (total / currentGlobalMax) * 100 : 0;
+      tip.textContent = `${model} · ${fmtK(total)} tokens (${util.toFixed(1)}%)`;
     }
     tip.style.left = `${x + 10}px`;
     tip.style.top = `${y - 28}px`;
@@ -305,6 +301,7 @@ export function mountContextTimeline(
       if (m > globalMax) globalMax = m;
     }
     if (globalMax <= 0) globalMax = 200_000;
+    currentGlobalMax = globalMax;
 
     // Pre-compute response tokens for independent scaling
     const respTokensArr: number[] = [];

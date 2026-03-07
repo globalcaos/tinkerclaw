@@ -10,6 +10,7 @@ import { resolveUserPath } from "../utils.js";
 const log = createSubsystemLogger("agents/auth-profiles");
 
 const CLAUDE_CLI_CREDENTIALS_RELATIVE_PATH = ".claude/.credentials.json";
+const CLAUDE_CLI_SV_CREDENTIALS_RELATIVE_PATH = ".claude/.credentials-sv.json";
 const CODEX_CLI_AUTH_FILENAME = "auth.json";
 const QWEN_CLI_CREDENTIALS_RELATIVE_PATH = ".qwen/oauth_creds.json";
 const MINIMAX_CLI_CREDENTIALS_RELATIVE_PATH = ".minimax/oauth_creds.json";
@@ -24,12 +25,14 @@ type CachedValue<T> = {
 };
 
 let claudeCliCache: CachedValue<ClaudeCliCredential> | null = null;
+let claudeCliSvCache: CachedValue<ClaudeCliCredential> | null = null;
 let codexCliCache: CachedValue<CodexCliCredential> | null = null;
 let qwenCliCache: CachedValue<QwenCliCredential> | null = null;
 let minimaxCliCache: CachedValue<MiniMaxCliCredential> | null = null;
 
 export function resetCliCredentialCachesForTest(): void {
   claudeCliCache = null;
+  claudeCliSvCache = null;
   codexCliCache = null;
   qwenCliCache = null;
   minimaxCliCache = null;
@@ -329,6 +332,79 @@ export function readClaudeCliCredentialsCached(options?: {
     claudeCliCache = { value, readAt: now, cacheKey };
   }
   return value;
+}
+
+// FORK: SV account credential file — separate from Claude Code's main credential.
+// OpenClaw is the sole writer, so refresh is race-free.
+function resolveClaudeCliSvCredentialsPath(homeDir?: string) {
+  const baseDir = homeDir ?? resolveUserPath("~");
+  return path.join(baseDir, CLAUDE_CLI_SV_CREDENTIALS_RELATIVE_PATH);
+}
+
+export function readClaudeCliSvCredentials(options?: {
+  homeDir?: string;
+}): ClaudeCliCredential | null {
+  const credPath = resolveClaudeCliSvCredentialsPath(options?.homeDir);
+  const raw = loadJsonFile(credPath);
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const data = raw as Record<string, unknown>;
+  return parseClaudeCliOauthCredential(data.claudeAiOauth);
+}
+
+export function readClaudeCliSvCredentialsCached(options?: {
+  ttlMs?: number;
+  homeDir?: string;
+}): ClaudeCliCredential | null {
+  const ttlMs = options?.ttlMs ?? 0;
+  const now = Date.now();
+  const cacheKey = resolveClaudeCliSvCredentialsPath(options?.homeDir);
+  if (
+    ttlMs > 0 &&
+    claudeCliSvCache &&
+    claudeCliSvCache.cacheKey === cacheKey &&
+    now - claudeCliSvCache.readAt < ttlMs
+  ) {
+    return claudeCliSvCache.value;
+  }
+  const value = readClaudeCliSvCredentials({ homeDir: options?.homeDir });
+  if (ttlMs > 0) {
+    claudeCliSvCache = { value, readAt: now, cacheKey };
+  }
+  return value;
+}
+
+export function writeClaudeCliSvCredentials(
+  newCredentials: OAuthCredentials,
+  options?: { homeDir?: string },
+): boolean {
+  const credPath = resolveClaudeCliSvCredentialsPath(options?.homeDir);
+  try {
+    const raw = loadJsonFile(credPath);
+    const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const existingOauth = (data.claudeAiOauth && typeof data.claudeAiOauth === "object"
+      ? data.claudeAiOauth
+      : {}) as Record<string, unknown>;
+    data.claudeAiOauth = {
+      ...existingOauth,
+      accessToken: newCredentials.access,
+      refreshToken: newCredentials.refresh,
+      expiresAt: newCredentials.expires,
+    };
+    saveJsonFile(credPath, data);
+    // Invalidate cache so next read picks up the new value
+    claudeCliSvCache = null;
+    log.info("wrote refreshed SV credentials to cli file", {
+      expires: new Date(newCredentials.expires).toISOString(),
+    });
+    return true;
+  } catch (error) {
+    log.warn("failed to write SV credentials to cli file", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
 }
 
 export function writeClaudeCliKeychainCredentials(

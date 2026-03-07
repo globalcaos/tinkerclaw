@@ -116,9 +116,11 @@ export async function maybeRemoveDeprecatedCliAuthProfiles(
 ): Promise<OpenClawConfig> {
   const store = ensureAuthProfileStore(undefined, { allowKeychainPrompt: false });
   const deprecated = new Set<string>();
-  if (store.profiles[CLAUDE_CLI_PROFILE_ID] || cfg.auth?.profiles?.[CLAUDE_CLI_PROFILE_ID]) {
-    deprecated.add(CLAUDE_CLI_PROFILE_ID);
-  }
+  // FORK: Do NOT deprecate Claude CLI profile — we sync from Claude Code's
+  // credential file to piggyback on its single-writer OAuth refresh.
+  // if (store.profiles[CLAUDE_CLI_PROFILE_ID] || cfg.auth?.profiles?.[CLAUDE_CLI_PROFILE_ID]) {
+  //   deprecated.add(CLAUDE_CLI_PROFILE_ID);
+  // }
   if (store.profiles[CODEX_CLI_PROFILE_ID] || cfg.auth?.profiles?.[CODEX_CLI_PROFILE_ID]) {
     deprecated.add(CODEX_CLI_PROFILE_ID);
   }
