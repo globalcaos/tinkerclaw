@@ -33,6 +33,7 @@ let liveToolCalls = new Map<
 >();
 let initialized = false;
 let budgetData: any = null;
+let budgetUsageData: any = null;
 let forensicMode = false;
 let showOverseerChat = false;
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
@@ -49,6 +50,31 @@ const PROVIDER_COLORS: Record<string, string> = {
   meta: "#0668E1",
   mistral: "#f97316",
   deepseek: "#4f8ff7",
+};
+
+// API cost per MTok [input, output] by model short name
+const MODEL_COST: Record<string, [number, number]> = {
+  // Anthropic — API pricing (subscription makes this cheaper at high usage)
+  "claude-opus-4-6": [15, 75],
+  "claude-sonnet-4-6": [3, 15],
+  "claude-haiku-4-5": [1, 5],
+  // OpenAI
+  "gpt-5.4-pro": [10, 30],
+  "gpt-5.4": [2.5, 10],
+  "gpt-5.2-pro": [10, 30],
+  "gpt-5.2": [2.5, 10],
+  "gpt-5.1": [2, 8],
+  "gpt-4.1": [2, 8],
+  "gpt-4o": [2.5, 10],
+  "o3": [10, 40],
+  "o4-mini": [1.1, 4.4],
+  // Gemini
+  "gemini-3.1-pro-preview": [1.25, 5],
+  "gemini-3-flash-preview": [0.1, 0.4],
+  "gemini-2.5-pro": [1.25, 10],
+  "gemini-2.5-flash": [0.15, 0.6],
+  "gemini-2.0-flash": [0.1, 0.4],
+  "gemini-2.0-flash-lite": [0.075, 0.3],
 };
 
 // ─── Provider Icons (14px inline SVGs) ───
@@ -228,12 +254,11 @@ function onFrame(f: any) {
           refreshTreemap();
           timelineCtrl?.loadSession(sessionKey);
           scheduleUnconfirmedPrune();
-          req("forensic.getMode", {})
+          req("forensic.setMode", { enabled: true })
             .then((res: any) => {
-              forensicMode = res?.enabled ?? false;
-              updateForensicBtn();
+              forensicMode = res?.enabled ?? true;
             })
-            .catch(() => {});
+            .catch(() => { forensicMode = true; });
         })
         .catch((e) => console.error("connect:", e));
       return;
@@ -532,6 +557,27 @@ function onEvent(evt: any) {
         startThinkingTick();
         // Activate timeline placeholder with provider/model info
         timelineCtrl?.activatePlaceholder(p.runId, p.data.model, startProvider);
+        // Poll anatomy API shortly after run starts — pre-prompt anatomy is written before LLM call
+        {
+          const sk = sessionKey;
+          const tn = currentTurnNumber;
+          setTimeout(() => {
+            if (sk && timelineCtrl) {
+              const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+              fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+                .then((r) => (r.ok ? r.json() : null))
+                .then((body) => {
+                  const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+                  if (events.length === 0) return;
+                  const turnEvents = events.filter((ev: any) => ev.turn === tn);
+                  if (turnEvents.length > 0) {
+                    timelineCtrl!.replacePlaceholders(tn, turnEvents);
+                  }
+                })
+                .catch(() => {});
+            }
+          }, 800);
+        }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
         const endRunId = p.runId;
         const timeoutId = setTimeout(() => {
@@ -681,15 +727,17 @@ async function abort() {
 }
 
 async function loadBudget() {
-  const [b, s, mc] = await Promise.all([
+  const [b, s, mc, bu] = await Promise.all([
     req("usage.budget", {}).catch(() => null),
     req("budget.status", {}).catch(() => null),
     req("config.models", {}).catch(() => null),
+    req("budget.usage", {}).catch(() => null),
   ]);
   budgetData = { budget: b, status: s };
   if (mc) {
     modelConfigData = mc;
   }
+  budgetUsageData = bu;
   updateBudgetPanel();
 }
 
@@ -1108,6 +1156,113 @@ function startThinkingTick() {
   }, 1000);
 }
 
+// ─── Usage Tracker Helpers ───
+function fmtCost(n: number): string {
+  if (n >= 1) return n % 1 === 0 ? n.toString() : n.toFixed(1);
+  if (n >= 0.1) return n.toFixed(2);
+  return n.toFixed(3);
+}
+
+function getModelCost(modelId: string): string {
+  const name = modelId.split("/").slice(1).join("/") || modelId;
+  const cost = MODEL_COST[name];
+  if (!cost) return "";
+  if (cost[0] === cost[1]) return `$${fmtCost(cost[0])}`;
+  return `$${fmtCost(cost[0])}/${fmtCost(cost[1])}`;
+}
+
+function fmtReset(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = Date.now();
+    const diffMs = d.getTime() - now;
+    if (diffMs <= 0) return "now";
+    const h = Math.floor(diffMs / 3600000);
+    const m = Math.floor((diffMs % 3600000) / 60000);
+    if (h >= 24) {
+      const days = Math.floor(h / 24);
+      return `${days}d ${h % 24}h`;
+    }
+    return `${h}h ${m}m`;
+  } catch {
+    return iso;
+  }
+}
+
+interface ModelUsageInfo {
+  topPct: number;
+  bottomPct: number;
+  tooltip: string;
+}
+
+function getModelUsage(provider: string, modelId: string): ModelUsageInfo | null {
+  if (!budgetUsageData || provider === "ollama") return null;
+  const name = modelId.split("/").slice(1).join("/") || modelId;
+
+  if (provider === "anthropic") {
+    const c = budgetUsageData.claude;
+    if (!c?.limits) return null;
+    const h5 = c.limits.five_hour?.utilization ?? 0;
+    const d7 = c.limits.seven_day?.utilization ?? 0;
+    const r5 = c.limits.five_hour?.resets_at;
+    const r7 = c.limits.seven_day?.resets_at;
+    const opus7 = c.limits.seven_day_opus?.utilization;
+    const sonnet7 = c.limits.seven_day_sonnet?.utilization;
+    let tip = `5h: ${h5}%`;
+    if (r5) tip += ` \u2014 resets ${fmtReset(r5)}`;
+    tip += `\n7d: ${d7}%`;
+    if (r7) tip += ` \u2014 resets ${fmtReset(r7)}`;
+    if (opus7 != null) tip += `\n7d opus: ${opus7}%`;
+    if (sonnet7 != null) tip += `\n7d sonnet: ${sonnet7}%`;
+    tip += `\nPlan: ${c.plan || "max"} (${c.rateLimitTier || "?"})`;
+    return { topPct: h5, bottomPct: d7, tooltip: tip };
+  }
+
+  if (provider === "google") {
+    const g = budgetUsageData.gemini;
+    if (!g) return null;
+    const entry = g[name] || g[name.replace("gemini-", "")] || Object.values(g)[0];
+    if (!entry) return null;
+    const pct = (entry as any).pct ?? 0;
+    const tip = `${(entry as any).metric || "RPD"}: ${(entry as any).used ?? 0}/${(entry as any).limit ?? 0} (${pct.toFixed(0)}%)`;
+    return { topPct: pct, bottomPct: pct, tooltip: tip };
+  }
+
+  if (provider === "openai") {
+    const o = budgetUsageData.chatgpt;
+    if (!o?.models) return null;
+    const entry = o.models[name];
+    if (!entry) return null;
+    const reqPct = entry.utilization_pct ?? 0;
+    const tokPct = entry.tokens?.limit ? ((entry.tokens.used / entry.tokens.limit) * 100) : 0;
+    let tip = `Requests: ${entry.requests?.used ?? 0}/${entry.requests?.limit ?? 0} (${reqPct.toFixed(0)}%)`;
+    tip += `\nTokens: ${formatNum(entry.tokens?.used ?? 0)}/${formatNum(entry.tokens?.limit ?? 0)} (${tokPct.toFixed(0)}%)`;
+    return { topPct: reqPct, bottomPct: tokPct, tooltip: tip };
+  }
+
+  return null;
+}
+
+function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
+  if (!usage) return '<span class="usage-bars-col"></span>';
+  const topColor = budgetColor(usage.topPct);
+  const bottomColor = budgetColor(usage.bottomPct);
+  const topW = Math.min(usage.topPct, 100);
+  const bottomW = Math.min(usage.bottomPct, 100);
+  let h = '<span class="usage-bars-col">';
+  h += `<span class="usage-bars-wrap">`;
+  h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${topW}%;background:${topColor}"></span></span>`;
+  h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${bottomW}%;background:${bottomColor}"></span></span>`;
+  h += `<span class="usage-tip">${esc(usage.tooltip)}</span>`;
+  h += `</span></span>`;
+  return h;
+}
+
+function renderCostCol(costLabel: string): string {
+  if (!costLabel) return '<span class="usage-cost-col"></span>';
+  return `<span class="usage-cost-col">${esc(costLabel)}</span>`;
+}
+
 // ─── Budget Helpers ───
 function budgetColor(pct: number) {
   if (pct >= 100) {
@@ -1408,9 +1563,22 @@ function describeError(reason: string, errMsg: string): string {
   return reason || "unknown error";
 }
 
+const SHORT_NAMES: Record<string, string> = {
+  "qwen3:14b-q4_K_M": "qwen3-14b",
+  "gemini-3.1-pro-preview": "gem-3.1-pro",
+  "gemini-3-flash-preview": "gem-3-fl",
+  "gemini-2.5-pro": "gem-2.5-pro",
+  "gemini-2.5-flash": "gem-2.5-fl",
+  "gemini-2.0-flash": "gem-2.0-fl",
+  "gemini-2.0-flash-lite": "gem-2.0-fl-lt",
+  "gpt-5.4-pro": "gpt-5.4p",
+  "gpt-5.2-pro": "gpt-5.2p",
+};
+
 function modelName(id: string): string {
   const name = id.split("/").slice(1).join("/") || id;
-  return name.replace(/^claude-/, "");
+  const clean = name.replace(/^claude-/, "");
+  return SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
 }
 
 function providerOf(id: string): string {
@@ -1464,7 +1632,9 @@ function updateBudgetPanel() {
       const keyId = keys[0];
       const keyLabel = keyId ? authProfiles?.[keyId]?.label || keyId.split(":")[1] || keyId : "";
       const mode = keyId ? authProfiles?.[keyId]?.mode || "" : "";
-      const suffix = keyLabel && mode ? ` \u00b7 ${keyLabel} (${mode})` : "";
+      // Hide redundant "default(api_key)" tags — only show meaningful labels
+      const showSuffix = keyLabel && keyLabel !== "default";
+      const suffix = showSuffix && mode && mode !== "api_key" ? ` \u00b7 ${keyLabel} (${mode})` : showSuffix ? ` \u00b7 ${keyLabel}` : "";
       html += renderModelRow(
         modelId,
         provider,
@@ -1487,6 +1657,7 @@ function updateBudgetPanel() {
           keyId,
           keyLabel,
           provider,
+          modelId,
           name,
           badge,
           counts.get(keyId) || modelCount,
@@ -1504,7 +1675,7 @@ function updateBudgetPanel() {
   if (chain.length) {
     const open = !collapsedModelSections.has("fallback");
     const badges = [
-      "\u{1F451}",
+      "\u2460",
       "\u2461",
       "\u2462",
       "\u2463",
@@ -1517,7 +1688,7 @@ function updateBudgetPanel() {
     html += '<div class="model-group-label">FALLBACK CHAIN</div>';
     html += '<div class="model-group-body">';
     for (let i = 0; i < chain.length; i++) {
-      renderAuthKeyRows(chain[i], badges[i] || `${i + 1}`);
+      renderAuthKeyRows(chain[i], "");
     }
     html += "</div></div>";
   }
@@ -1598,13 +1769,16 @@ function renderModelRow(
   const errorBadge = errorInfo
     ? `<span class="model-error-badge" title="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
+  const usage = getModelUsage(provider, id);
+  const costLabel = getModelCost(id);
+  const barsHtml = renderUsageBarsOnly(usage);
+  const costHtml = renderCostCol(costLabel);
+  const nameParts = esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
 
   return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
-    ${providerIcon(provider)}
-    <span class="model-name">${esc(name)}</span>
-    ${badge ? `<span class="model-badge">${badge}</span>` : ""}
-    ${suffix ? `<span class="model-auth-suffix">${esc(suffix)}</span>` : ""}
-    ${errorBadge}
+    <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    ${barsHtml}
+    ${costHtml}
     ${countBadge}
   </div>`;
 }
@@ -1613,6 +1787,7 @@ function renderAuthKeyRow(
   keyId: string,
   label: string,
   provider: string,
+  modelId: string,
   name: string,
   badge: string,
   count: number,
@@ -1629,14 +1804,15 @@ function renderAuthKeyRow(
   const errorBadge = errorInfo
     ? `<span class="model-error-badge" title="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
+  const usage = getModelUsage(provider, modelId);
+  const costLabel = getModelCost(modelId);
+  const barsHtml = renderUsageBarsOnly(usage);
+  const costHtml = renderCostCol(costLabel);
 
   return `<div class="model-row auth-key-row${liveClass}${errorClass}"${glowStyle}>
-    ${providerIcon(provider)}
-    <span class="model-name">${esc(name)}</span>
-    ${badge ? `<span class="model-badge">${badge}</span>` : ""}
-    <span class="auth-key-sep">\u00b7</span>
-    <span class="auth-key-label">${esc(label)}</span>
-    ${errorBadge}
+    <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    ${barsHtml}
+    ${costHtml}
     ${countBadge}
   </div>`;
 }
@@ -1859,7 +2035,7 @@ function init() {
       <button class="active" title="Chat">💬</button>
       <button title="Tokens">📊</button>
       <button title="Context">🧠</button>
-      <button id="forensic-btn" title="Forensic Mode">🛡️</button>
+
       <button title="Metrics">📈</button>
     </nav>
     <div class="topbar">
@@ -1981,15 +2157,6 @@ function init() {
   $("messages")!.addEventListener("click", (e) => {
     const run = (e.target as HTMLElement).closest(".thinking-run[data-run-id]");
     if (run) abort();
-  });
-  $("forensic-btn")!.addEventListener("click", () => {
-    const next = !forensicMode;
-    req("forensic.setMode", { enabled: next })
-      .then((res: any) => {
-        forensicMode = res?.enabled ?? next;
-        updateForensicBtn();
-      })
-      .catch((e) => console.error("forensic toggle:", e));
   });
 
   // Mount context treemap into bottom-right panel
@@ -2195,21 +2362,6 @@ function updateOverseerPanel(): void {
   }
 }
 
-function updateForensicBtn() {
-  const btn = $("forensic-btn");
-  if (!btn) {
-    return;
-  }
-  if (forensicMode) {
-    btn.classList.add("active", "forensic-active");
-    btn.innerHTML = "🛡️<span class='forensic-dot forensic-on'></span>";
-    btn.title = "Forensic Mode ON — click to disable (prompts dumped to disk, no LLM calls)";
-  } else {
-    btn.classList.remove("active", "forensic-active");
-    btn.innerHTML = "🛡️<span class='forensic-dot'></span>";
-    btn.title = "Forensic Mode OFF — click to enable";
-  }
-}
 
 // ─── Boot ───
 init();
@@ -2220,7 +2372,6 @@ if (overseerContainer) {
     providerIcons: PROVIDER_ICONS,
   });
 }
-updateForensicBtn(); // set initial dot indicator
 gwConnect();
 setInterval(() => {
   if (connected) {

@@ -4,6 +4,11 @@ import {
   type OAuthCredentials,
   type OAuthProvider,
 } from "@mariozechner/pi-ai";
+import {
+  readClaudeCliCredentials,
+  readClaudeCliSvCredentials,
+  writeClaudeCliSvCredentials,
+} from "../cli-credentials.js";
 import { loadConfig, type OpenClawConfig } from "../../config/config.js";
 import { coerceSecretRef } from "../../config/types.secrets.js";
 import { withFileLock } from "../../infra/file-lock.js";
@@ -11,7 +16,12 @@ import { refreshQwenPortalCredentials } from "../../providers/qwen-portal-oauth.
 import { resolveSecretRefString, type SecretRefResolveCache } from "../../secrets/resolve.js";
 import { refreshChutesTokens } from "../chutes-oauth.js";
 import { normalizeProviderId } from "../model-selection.js";
-import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
+import {
+  AUTH_STORE_LOCK_OPTIONS,
+  CLAUDE_CLI_PROFILE_ID,
+  CLAUDE_CLI_SV_PROFILE_ID,
+  log,
+} from "./constants.js";
 import { resolveTokenExpiryState } from "./credential-state.js";
 import { formatAuthDoctorHint } from "./doctor.js";
 import { ensureAuthStoreFile, resolveAuthStorePath } from "./paths.js";
@@ -174,6 +184,71 @@ async function refreshOAuthTokenWithLock(params: {
         apiKey: buildOAuthApiKey(cred.provider, cred),
         newCredentials: cred,
       };
+    }
+
+    // FORK: For Claude CLI GM profile, re-read from Claude Code's credential file
+    // instead of doing an independent OAuth refresh. Claude Code handles refresh
+    // as a single-writer — doing our own refresh would rotate the token and
+    // invalidate Claude Code's stored refresh token.
+    if (params.profileId === CLAUDE_CLI_PROFILE_ID && cred.provider === "anthropic") {
+      const fresh = readClaudeCliCredentials();
+      if (fresh && fresh.type === "oauth" && Date.now() < fresh.expires) {
+        store.profiles[params.profileId] = {
+          ...cred,
+          access: fresh.access,
+          refresh: fresh.refresh,
+          expires: fresh.expires,
+          type: "oauth",
+        };
+        saveAuthProfileStore(store, params.agentDir);
+        return {
+          apiKey: fresh.access,
+          newCredentials: { ...cred, ...fresh },
+        };
+      }
+      // Claude Code's token is also expired — fall through to normal refresh
+      log.warn("claude cli credential also expired, falling through to direct refresh", {
+        profileId: params.profileId,
+      });
+    }
+
+    // FORK: For Claude CLI SV profile, re-read from dedicated SV file first.
+    // If expired, do the refresh ourselves (OpenClaw is sole writer) and
+    // write back to ~/.claude/.credentials-sv.json.
+    if (params.profileId === CLAUDE_CLI_SV_PROFILE_ID && cred.provider === "anthropic") {
+      const fresh = readClaudeCliSvCredentials();
+      if (fresh && fresh.type === "oauth" && Date.now() < fresh.expires) {
+        store.profiles[params.profileId] = {
+          ...cred,
+          access: fresh.access,
+          refresh: fresh.refresh,
+          expires: fresh.expires,
+          type: "oauth",
+        };
+        saveAuthProfileStore(store, params.agentDir);
+        return {
+          apiKey: fresh.access,
+          newCredentials: { ...cred, ...fresh },
+        };
+      }
+      // SV file token also expired — do the refresh, then write back
+      const oauthProvider = resolveOAuthProvider(cred.provider);
+      if (oauthProvider) {
+        const svCreds: Record<string, OAuthCredentials> = { [cred.provider]: cred };
+        const refreshed = await getOAuthApiKey(oauthProvider, svCreds);
+        if (refreshed) {
+          store.profiles[params.profileId] = {
+            ...cred,
+            ...refreshed.newCredentials,
+            type: "oauth",
+          };
+          saveAuthProfileStore(store, params.agentDir);
+          // Write back to dedicated SV file (single writer)
+          writeClaudeCliSvCredentials(refreshed.newCredentials);
+          return refreshed;
+        }
+      }
+      return null;
     }
 
     const oauthCreds: Record<string, OAuthCredentials> = {
