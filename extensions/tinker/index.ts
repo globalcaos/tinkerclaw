@@ -83,6 +83,59 @@ const plugin = {
           return true;
         }
 
+        // API: read local file contents
+        if (pathname.startsWith(`${PREFIX}/api/`)) {
+          const rawPath = url.searchParams.get("path") ?? "";
+          if (!rawPath || !path.isAbsolute(rawPath)) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Absolute path required" }));
+            return true;
+          }
+          // Try the exact path first, then common workspace prefixes
+          const HOME = process.env.HOME ?? "/home/globalcaos";
+          const candidates = [
+            rawPath,
+            path.join(HOME, ".openclaw/workspace/memory", rawPath),
+            path.join(HOME, ".openclaw/workspace", rawPath),
+            path.join(HOME, rawPath),
+          ];
+          let resolved: string | null = null;
+          for (const c of candidates) {
+            try {
+              if (fs.statSync(c).isFile()) {
+                resolved = c;
+                break;
+              }
+            } catch {}
+          }
+          if (!resolved) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: `File not found: ${rawPath}` }));
+            return true;
+          }
+          try {
+            const stat = fs.statSync(resolved);
+            if (stat.size > 512 * 1024) {
+              res.statusCode = 413;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "File too large (>512KB)" }));
+              return true;
+            }
+            const content = fs.readFileSync(resolved, "utf-8");
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache");
+            res.end(JSON.stringify({ path: resolved, content }));
+          } catch (err: any) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: err.message ?? "File not found" }));
+          }
+          return true;
+        }
+
         // Check if the dist directory exists
         if (!fs.existsSync(TINKER_DIST)) {
           res.statusCode = 503;
