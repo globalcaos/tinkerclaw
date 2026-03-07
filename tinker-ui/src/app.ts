@@ -1728,7 +1728,7 @@ function updateDots() {
     .forEach((d) => (d.className = `status-dot gw-dot ${connected ? "dot-green" : "dot-red"}`));
   const l = $("gw-label");
   if (l) {
-    l.textContent = connected ? "" : "Disconnected";
+    l.textContent = connected ? "Connected" : "Disconnected";
   }
 }
 
@@ -2283,19 +2283,15 @@ function init() {
   }
   initialized = true;
   app.innerHTML = `
-    <nav class="sidebar">
-      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:48px;height:48px;border-radius:6px"></div>
-      <button class="active" data-hint="Chat">💬</button>
-      <button data-hint="Tokens">📊</button>
-      <button data-hint="Context">🧠</button>
-
-    </nav>
     <div class="topbar">
-      <span class="status-dot gw-dot dot-red"></span>
-      <span id="gw-label" style="font-weight:600;font-size:12px">Connecting...</span>
-      <span style="flex:1"></span>
-      <span id="topbar-graph-btn" class="topbar-icon-btn" data-hint="Metrics" style="cursor:pointer;font-size:16px;opacity:.7;transition:opacity .12s">📈</span>
-      <span style="color:var(--muted);font-size:11px"><span class="status-dot gw-dot dot-red"></span> Gateway</span>
+      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:70px;height:70px;border-radius:8px"></div>
+      <div class="toolbox">
+        <span class="topbar-icon-btn" data-hint="Chat">💬</span>
+        <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
+        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
+        <span id="topbar-graph-btn" class="topbar-icon-btn" data-hint="Metrics">📈</span>
+      </div>
+      <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
     <div class="chat-area">
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
@@ -2445,6 +2441,21 @@ function init() {
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
+
+  // ─── Timeline toggle (bottom panels expand/collapse) ───
+  const tlBtn = $("tb-timeline")!;
+  tlBtn.addEventListener("click", () => {
+    const collapsed = app.classList.toggle("bottom-collapsed");
+    tlBtn.classList.toggle("tb-active", !collapsed);
+  });
+
+  // ─── Models toggle (right panels expand/collapse) ───
+  const mdBtn = $("tb-models")!;
+  mdBtn.addEventListener("click", () => {
+    const collapsed = app.classList.toggle("right-collapsed");
+    mdBtn.classList.toggle("tb-active", !collapsed);
+  });
+
   $("new-session-btn")!.addEventListener("click", async () => {
     if (!connected || !sessionKey) {
       return;

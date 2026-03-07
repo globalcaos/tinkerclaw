@@ -391,15 +391,19 @@ export function mountContextTimeline(
         groupEl.className = "ct-group";
         groupIndex++;
 
-        // Vertical blue lollipop at group start — click scrolls to matching prompt
+        // Vertical brown lollipop at group start — click shows prompt in context map + scrolls webchat
         if (onGroupLineClick) {
           const line = document.createElement("div");
           line.className = "ct-group-line";
           line.style.height = `${Math.round(maxBarHeight * 0.75)}px`;
-          line.title = "Scroll to prompt";
+          line.title = "Show prompt context";
           const gi = groupIndex;
           const firstEv = entry.event;
-          line.addEventListener("click", () => onGroupLineClick(gi, firstEv));
+          line.addEventListener("click", (e) => {
+            e.stopPropagation();
+            console.log("[timeline] lollipop click group=%d event=", gi, firstEv);
+            onGroupLineClick(gi, firstEv);
+          });
           groupEl.appendChild(line);
         }
 
