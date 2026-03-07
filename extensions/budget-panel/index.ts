@@ -8,7 +8,11 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { resolveApiKeyForProfile, ensureAuthProfileStore } from "../../src/agents/auth-profiles.js";
+import {
+  resolveApiKeyForProfile,
+  ensureAuthProfileStore,
+  saveAuthProfileStore,
+} from "../../src/agents/auth-profiles.js";
 
 /** Anthropic OAuth profile IDs to poll for usage. */
 const USAGE_PROFILES: Record<string, string> = {
@@ -16,54 +20,145 @@ const USAGE_PROFILES: Record<string, string> = {
   "cli-gm": "anthropic:cli-gm",
 };
 
-/** Per-profile cache: profile → { data, ts }. */
-const usageCache: Record<string, { data: Record<string, any>; ts: number }> = {};
-const CACHE_TTL_MS = 60_000;
+/** Per-profile cache: profile → { data, ts }. null data = rate-limited / failed. */
+const usageCache: Record<string, { data: Record<string, any> | null; ts: number }> = {};
+// Anthropic /api/oauth/usage has a per-ACCESS-TOKEN rate limit of ~5 requests.
+// With 30min cache we use ~2 requests/hr, safely under the limit.
+const CACHE_TTL_MS = 30 * 60_000;
 
 /** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
-async function resolveToken(profileId: string): Promise<string | null> {
+async function resolveToken(
+  profileId: string,
+  log: (...args: any[]) => void = console.log,
+): Promise<string | null> {
   try {
     const store = ensureAuthProfileStore();
     const result = await resolveApiKeyForProfile({ store, profileId });
     return result?.apiKey ?? null;
-  } catch {
+  } catch (e) {
+    log(`[budget-panel] resolveToken ${profileId}: ${e}`);
     return null;
   }
 }
 
-/** Fetch live usage for a single OAuth profile (with cache + auto-refresh). */
-async function fetchProfileUsage(label: string): Promise<Record<string, any> | null> {
+const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
+
+/**
+ * Force-rotate an OAuth token by calling the Anthropic token endpoint directly.
+ * The /api/oauth/usage endpoint has a per-access-token rate limit of ~5 requests.
+ * Refreshing gives us a new access token with a fresh rate limit window.
+ */
+async function forceRefreshToken(
+  profileId: string,
+  log: (...args: any[]) => void = console.log,
+): Promise<string | null> {
+  try {
+    const store = ensureAuthProfileStore();
+    const cred = store.profiles[profileId] as any;
+    if (!cred || cred.type !== "oauth" || !cred.refresh) return null;
+
+    const res = await fetch(ANTHROPIC_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: cred.refresh,
+        client_id: ANTHROPIC_CLIENT_ID,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      log(`[budget-panel] forceRefresh ${profileId}: HTTP ${res.status} ${body.slice(0, 120)}`);
+      return null;
+    }
+    const data = (await res.json()) as any;
+    const newAccess = data.access_token;
+    const newRefresh = data.refresh_token;
+    if (!newAccess) return null;
+
+    // Persist new tokens to auth-profiles store
+    const freshStore = ensureAuthProfileStore();
+    const freshCred = freshStore.profiles[profileId] as any;
+    if (freshCred) {
+      freshCred.access = newAccess;
+      if (newRefresh) freshCred.refresh = newRefresh;
+      freshCred.expires = Date.now() + (data.expires_in ?? 3600) * 1000;
+      saveAuthProfileStore(freshStore);
+    }
+
+    log(`[budget-panel] ${profileId}: token rotated for fresh rate limit window`);
+    return newAccess;
+  } catch (e) {
+    log(`[budget-panel] forceRefreshToken ${profileId}: ${e}`);
+    return null;
+  }
+}
+
+/** Fetch live usage for a single OAuth profile (with cache + token rotation on 429). */
+async function fetchProfileUsage(
+  label: string,
+  log: (...args: any[]) => void = console.log,
+): Promise<Record<string, any> | null> {
   const cached = usageCache[label];
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
   const profileId = USAGE_PROFILES[label];
   if (!profileId) return cached?.data ?? null;
-  const token = await resolveToken(profileId);
-  if (!token) return cached?.data ?? null;
-  try {
-    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "oauth-2025-04-20",
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return cached?.data ?? null;
-    const data = (await res.json()) as Record<string, any>;
-    usageCache[label] = { data, ts: Date.now() };
-    return data;
-  } catch {
-    return cached?.data ?? null;
+
+  let token = await resolveToken(profileId, log);
+  if (!token) {
+    usageCache[label] = { data: null, ts: Date.now() };
+    return null;
   }
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "oauth-2025-04-20",
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 429 && attempt === 0) {
+        // Per-token rate limit exhausted — rotate token for fresh window
+        log(`[budget-panel] ${label}: 429 on attempt 1, rotating token...`);
+        const fresh = await forceRefreshToken(profileId, log);
+        if (fresh) {
+          token = fresh;
+          continue;
+        }
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        log(`[budget-panel] ${label}: HTTP ${res.status} ${body.slice(0, 120)}`);
+        usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
+        return cached?.data ?? null;
+      }
+      const data = (await res.json()) as Record<string, any>;
+      usageCache[label] = { data, ts: Date.now() };
+      return data;
+    } catch (e) {
+      log(`[budget-panel] ${label}: ${e}`);
+      usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
+      return cached?.data ?? null;
+    }
+  }
+  return cached?.data ?? null;
 }
 
-/** Fetch live usage from all profiles in parallel. */
-async function fetchAllClaudeUsage(): Promise<Record<string, Record<string, any> | null>> {
-  const entries = await Promise.all(
-    Object.keys(USAGE_PROFILES).map(async (p) => [p, await fetchProfileUsage(p)] as const),
-  );
-  return Object.fromEntries(entries);
+/** Fetch live usage from all profiles sequentially. */
+async function fetchAllClaudeUsage(
+  log: (...args: any[]) => void = console.log,
+): Promise<Record<string, Record<string, any> | null>> {
+  const result: Record<string, Record<string, any> | null> = {};
+  for (const p of Object.keys(USAGE_PROFILES)) {
+    result[p] = await fetchProfileUsage(p, log);
+  }
+  return result;
 }
 import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
@@ -141,7 +236,7 @@ export default function register(api: OpenClawPluginApi) {
     const chatgptData = readUsageFile(usageFiles.chatgpt) as any;
 
     // Fetch live usage from both OAuth profiles in parallel
-    const liveProfiles = await fetchAllClaudeUsage();
+    const liveProfiles = await fetchAllClaudeUsage(log);
 
     function buildClaudeProfile(live: Record<string, any> | null) {
       if (!live) return null;
