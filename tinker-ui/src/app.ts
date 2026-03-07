@@ -35,7 +35,6 @@ let initialized = false;
 let budgetData: any = null;
 let budgetUsageData: any = null;
 let forensicMode = false;
-let showOverseerChat = false;
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
 const $ = (id: string) => document.getElementById(id);
@@ -43,7 +42,7 @@ const app = $("app")!;
 
 // ─── Provider Colors ───
 const PROVIDER_COLORS: Record<string, string> = {
-  anthropic: "#7c3aed",
+  anthropic: "#6b8e23",
   google: "#16a34a",
   openai: "#6b7280",
   ollama: "#ca8a04",
@@ -970,76 +969,184 @@ function toolExpandedDetail(name: string, input: any): string {
   }
 }
 
-function renderMsg(msg: any, idx: number): string {
-  // Hide overseer-update messages unless toggled on
-  if (msg._isOverseer && !showOverseerChat) return "";
+/** Extract file paths from text (absolute paths like /home/... or ~/...) */
+function extractFilePaths(text: string): string[] {
+  const matches = text.match(/(?:\/[\w./-]+\.[a-zA-Z0-9]+|~\/[\w./-]+\.[a-zA-Z0-9]+)/g);
+  return matches ? [...new Set(matches)] : [];
+}
+
+function renderSystemMsg(text: string, idx: number): string {
+  const sid = `s${idx}`;
+  const sysExp = expandedTools.has(sid);
+  const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+  const isAlert = /⚠️|⚠/.test(flat);
+
+  // Detect file content: try to find file paths
+  const paths = extractFilePaths(text);
+  let preview: string;
+  if (paths.length > 0) {
+    // Show file paths as links instead of dumping content
+    const links = paths.map((p) => {
+      const name = p.split("/").pop() || p;
+      const fullPath = p.startsWith("~") ? p.replace("~", "/home/<user>") : p;
+      return `<span class="sys-file-link" data-path="${esc(fullPath)}">📄 ${esc(name)}</span>`;
+    });
+    preview = links.join(" ");
+  } else {
+    const firstSentence = flat.match(/^[^.!?\n]{10,120}[.!?]/)?.[0];
+    preview = esc(firstSentence ?? flat.slice(0, 120));
+    if (text.length > (firstSentence?.length ?? 120)) preview += " …";
+  }
+
+  const cssClass = isAlert ? "msg system-alert" : "msg system";
+  let h = `<div class="${cssClass}" data-tid="${sid}">${sysExp ? "▾" : "▸"} ${preview}</div>`;
+  if (sysExp) {
+    h += `<div class="tool-detail system-expanded">${md(text)}</div>`;
+  }
+  return h;
+}
+
+function renderMsg(
+  msg: any,
+  idx: number,
+  isThinking = false,
+  globalResults?: Map<string, { content: string; isError: boolean }>,
+  globalToolNames?: Map<string, { name: string; input: any }>,
+): string {
   const role = (msg.role ?? "").toLowerCase();
   const content = Array.isArray(msg.content) ? msg.content : [];
-  const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
-  const text = texts.join("\n") || (typeof msg.content === "string" ? msg.content : "");
-  const tus = content.filter((b: any) => b.type === "tool_use");
-  const trs = content.filter((b: any) => b.type === "tool_result");
-  // Build result map for pairing
-  const resultMap = new Map<string, { content: string; isError: boolean }>();
-  for (const tr of trs) {
-    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
-    resultMap.set(tr.tool_use_id ?? "", { content: rt, isError: tr.is_error === true });
-  }
+  const resultMap = globalResults ?? new Map();
+  const toolNameMap = globalToolNames ?? new Map();
   let h = "";
+  let blockIdx = 0;
+  let hasNonToolContent = false;
 
-  for (const tu of tus) {
-    const a = tu.input ?? {};
-    const d = toolSummary(tu.name, a);
-    const tid = `t${idx}-${tu.id ?? tu.name}`;
-    const exp = expandedTools.has(tid);
-    const paired = resultMap.get(tu.id ?? "");
-    const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
-    const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
-    if (exp) {
-      h += `<div class="tool-detail">${toolExpandedDetail(tu.name, a)}`;
-      if (paired) {
-        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
-      }
-      h += `</div>`;
-    }
-  }
-  // Render orphan results (no matching tool_use)
-  const pairedIds = new Set(tus.map((tu: any) => tu.id ?? ""));
-  for (const tr of trs) {
-    const uid = tr.tool_use_id ?? "";
-    if (pairedIds.has(uid)) continue;
-    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
-    const err = tr.is_error === true;
-    const tid = `r${idx}-${uid || "r"}`;
-    const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
-    if (exp) {
-      h += `<div class="tool-detail">${esc(rt)}</div>`;
+  // Check if this message has any non-tool content (text blocks or plain string)
+  if (typeof msg.content === "string" && msg.content.trim()) hasNonToolContent = true;
+  for (const b of content) {
+    if (b.type === "text" && (b.text ?? "").trim()) {
+      hasNonToolContent = true;
+      break;
     }
   }
 
-  if (text.trim()) {
+  // Plain string content (legacy format)
+  if (content.length === 0 && typeof msg.content === "string" && msg.content.trim()) {
+    const text = msg.content as string;
     if (role === "user") {
-      h += `<div class="msg user" data-msg-idx="${idx}">${md(text)}</div>`;
+      // Split system event lines from user text
+      const lines = text.split("\n");
+      const sysLines: string[] = [];
+      const userLines: string[] = [];
+      let inSystemBlock = true;
+      for (const line of lines) {
+        if (inSystemBlock && (line.startsWith("System:") || line.trim() === "")) {
+          if (line.startsWith("System:")) sysLines.push(line);
+        } else {
+          inSystemBlock = false;
+          userLines.push(line);
+        }
+      }
+      for (const line of sysLines) {
+        const sysText = line.replace(/^System:\s*/, "").trim();
+        if (sysText) h += renderSystemMsg(sysText, idx);
+      }
+      const userText = userLines.join("\n").trim();
+      if (userText) {
+        h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+      }
     } else if (role === "assistant") {
       const errorClass = msg._isError ? " msg-error" : "";
       const retryBtn =
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
-      h += `<div class="msg assistant${errorClass}">${md(text)}${retryBtn}</div>`;
+      const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
+      h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
     } else {
-      const sid = `s${idx}`;
-      const sysExp = expandedTools.has(sid);
-      // Summarize system message: first sentence or first 120 chars
-      const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
-      const firstSentence = flat.match(/^[^.!?\n]{10,120}[.!?]/)?.[0];
-      const sysPreview = firstSentence ?? flat.slice(0, 120);
-      const hasMore = text.length > sysPreview.length;
-      h += `<div class="msg system" data-tid="${sid}">${sysExp ? "▾" : "▸"} ${esc(sysPreview)}${hasMore ? " …" : ""}</div>`;
-      if (sysExp) {
-        h += `<div class="tool-detail system-expanded">${md(text)}</div>`;
+      h += renderSystemMsg(text, idx);
+    }
+    return h;
+  }
+
+  // Render content blocks in order — text, tool_use, tool_result interlaced
+  for (const block of content) {
+    if (block.type === "text") {
+      const text = (block.text ?? "").trim();
+      if (!text) continue;
+      if (role === "user") {
+        // Split system event lines from user text
+        const lines = text.split("\n");
+        const sysLines: string[] = [];
+        const userLines: string[] = [];
+        let inSystemBlock = true;
+        for (const line of lines) {
+          if (inSystemBlock && (line.startsWith("System:") || line.trim() === "")) {
+            if (line.startsWith("System:")) sysLines.push(line);
+          } else {
+            inSystemBlock = false;
+            userLines.push(line);
+          }
+        }
+        // Render system lines as system messages
+        for (const line of sysLines) {
+          const sysText = line.replace(/^System:\s*/, "").trim();
+          if (sysText) h += renderSystemMsg(sysText, idx);
+        }
+        // Render remaining user text
+        const userText = userLines.join("\n").trim();
+        if (userText) {
+          h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+        }
+      } else if (role === "assistant") {
+        const errorClass = msg._isError ? " msg-error" : "";
+        const retryBtn =
+          msg._isError && msg._retryProvider
+            ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
+            : "";
+        const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
+        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+      } else {
+        h += renderSystemMsg(text, idx);
+      }
+    } else if (block.type === "tool_use") {
+      const a = block.input ?? {};
+      const d = toolSummary(block.name, a);
+      const tid = `t${idx}-${block.id ?? block.name}-${blockIdx++}`;
+      const exp = expandedTools.has(tid);
+      // Look up result from global map (tool_result may be in a different message)
+      const paired = resultMap.get(block.id ?? "");
+      const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
+      const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
+      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
+      if (exp) {
+        h += `<div class="tool-detail">${toolExpandedDetail(block.name, a)}`;
+        // Show result only for errors or when the detail doesn't already contain it
+        const n = (block.name ?? "").toLowerCase();
+        const detailHasContent = n === "edit" || n === "write";
+        if (paired && (paired.isError || !detailHasContent)) {
+          h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+        }
+        h += `</div>`;
+      }
+    } else if (block.type === "tool_result") {
+      // tool_result blocks are shown alongside their tool_use (via globalResults).
+      // Only render standalone if there's no matching tool_use anywhere AND this
+      // message has other content (otherwise skip the whole message).
+      const uid = block.tool_use_id ?? "";
+      const matchingTool = toolNameMap.get(uid);
+      if (matchingTool) continue; // will be shown with its tool_use
+      if (!hasNonToolContent) continue; // pure tool_result message — skip entirely
+      const rt =
+        typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+      const err = block.is_error === true;
+      const tid = `r${idx}-${uid || "r"}-${blockIdx++}`;
+      const exp = expandedTools.has(tid);
+      const preview = rt.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+      const summary = preview.length > 120 ? preview.slice(0, 117) + "…" : preview;
+      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(summary)}</span></div>`;
+      if (exp) {
+        h += `<div class="tool-detail"><div class="code-block">${esc(rt)}</div></div>`;
       }
     }
   }
@@ -1132,7 +1239,7 @@ function renderThinkingIndicator(): string {
     return `<div class="thinking-indicator">${rows}</div>`;
   }
   if (sending) {
-    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b7280">
+    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
 </div></div>`;
@@ -1214,14 +1321,16 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     // Use per-profile data if available (e.g. "anthropic:cli-sv" → "cli-sv")
     const profileKey = keyId?.split(":").slice(1).join(":") || "";
     const profiles = budgetUsageData.claudeProfiles || {};
-    const c = (profileKey && profiles[profileKey]) || budgetUsageData.claude;
+    const matched = profileKey ? profiles[profileKey] : null;
+    const c = matched || budgetUsageData.claude;
     if (!c?.limits) return null;
+    const src = matched ? profileKey : "shared";
     const h5 = c.limits.five_hour?.utilization ?? 0;
     const isSonnet = name.includes("sonnet");
     const sonnet7 = c.limits.seven_day_sonnet?.utilization;
     const d7 = c.limits.seven_day?.utilization ?? 0;
     const bottomPct = isSonnet && sonnet7 != null ? sonnet7 : d7;
-    let tip = `5h: ${h5}%`;
+    let tip = `${src}: 5h ${h5}%`;
     if (isSonnet && sonnet7 != null) {
       const rs = c.limits.seven_day_sonnet?.resets_at;
       const rsfmt = rs ? fmtReset(rs) : "";
@@ -1263,8 +1372,8 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   if (!usage) return '<span class="usage-bars-col"></span>';
-  const topColor = budgetColor(usage.topPct);
-  const bottomColor = budgetColor(usage.bottomPct);
+  const topColor = "#4ade80";
+  const bottomColor = "#f59e0b";
   const topW = Math.min(usage.topPct, 100);
   const bottomW = Math.min(usage.bottomPct, 100);
   let h = '<span class="usage-bars-col">';
@@ -1379,10 +1488,25 @@ function renderLiveWithThinking(): string {
     h += renderMsg(messages[i], i);
   }
 
-  // Current run: ALL assistant text messages are intermediate reasoning
-  // (the live answer is in streamText, rendered separately by updateChat).
-  // Tool rows render normally; assistant text goes to thinking steps.
+  // Current run: assistant text messages are intermediate reasoning UNLESS
+  // streamText is empty (final answer already arrived) — then the LAST
+  // assistant text is the final answer and should render normally.
   const currentRunStart = lastUserIdx + 1;
+  // Find assistant messages with text in the current run
+  const assistantTextIndices: number[] = [];
+  for (let j = currentRunStart; j < messages.length; j++) {
+    const m = messages[j];
+    if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+    const content = Array.isArray(m.content) ? m.content : [];
+    const hasText = content.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+    const plainText = typeof m.content === "string" && (m.content as string).trim();
+    if (hasText || plainText) assistantTextIndices.push(j);
+  }
+  // If no streamText, the last assistant text message is the final answer (not a thinking step)
+  const finalAnswerIdx =
+    !streamText && assistantTextIndices.length > 0
+      ? assistantTextIndices[assistantTextIndices.length - 1]
+      : -1;
   let liveThinkingSteps = "";
   for (let j = currentRunStart; j < messages.length; j++) {
     const m = messages[j];
@@ -1390,13 +1514,18 @@ function renderLiveWithThinking(): string {
     if (role === "assistant") {
       // Tool rows render normally in the chat flow
       h += renderMsgToolsOnly(m, j);
-      // Assistant text → live thinking step (stacks, never replaced)
-      const content = Array.isArray(m.content) ? m.content : [];
-      const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
-      const text = texts.join("\n") || (typeof m.content === "string" ? m.content : "");
-      if (text.trim()) {
-        const errClass = m._isError ? " thinking-step-error" : "";
-        liveThinkingSteps += `<div class="thinking-step live${errClass}">${md(text)}</div>`;
+      if (j === finalAnswerIdx) {
+        // This is the final answer — render as a normal message
+        h += renderMsg(m, j);
+      } else {
+        // Assistant text → live thinking step (stacks, never replaced)
+        const content = Array.isArray(m.content) ? m.content : [];
+        const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
+        const text = texts.join("\n") || (typeof m.content === "string" ? m.content : "");
+        if (text.trim()) {
+          const errClass = m._isError ? " thinking-step-error" : "";
+          liveThinkingSteps += `<div class="thinking-step live${errClass}">${md(text)}</div>`;
+        }
       }
     } else {
       // System / other messages render normally
@@ -1419,16 +1548,53 @@ function updateChat(skipScroll = false) {
   if (!el) {
     return;
   }
-  const runActive = !!(streamText || sending || activeRuns.size > 0);
   let h = "";
-
-  if (runActive) {
-    // Live mode: render messages but show intermediate assistant texts as
-    // live thinking steps so they stack instead of being replaced
-    h = renderLiveWithThinking();
-  } else {
-    // Complete mode: group intermediate assistant texts into thinking blocks
-    h = renderWithThinkingGroups();
+  // Identify intermediate "thinking" assistant messages: in each run
+  // (bounded by user messages), all assistant text messages except the last
+  // are thinking steps. If streaming is active, ALL assistant texts in the
+  // current run are thinking (the live answer is in streamText).
+  const thinkingSet = new Set<number>();
+  {
+    let runStart = 0;
+    for (let i = 0; i <= messages.length; i++) {
+      const isUserOrEnd =
+        i === messages.length || (messages[i].role ?? "").toLowerCase() === "user";
+      if (!isUserOrEnd) continue;
+      const assistantTextIndices: number[] = [];
+      for (let j = runStart; j < i; j++) {
+        const m = messages[j];
+        if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+        const c = Array.isArray(m.content) ? m.content : [];
+        const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+        const plainText = typeof m.content === "string" && (m.content as string).trim();
+        if (hasText || plainText) assistantTextIndices.push(j);
+      }
+      // If this is the last run and we're still streaming, all assistant texts are thinking
+      const isCurrentRun = i === messages.length && streamText;
+      const intermediates = isCurrentRun ? assistantTextIndices : assistantTextIndices.slice(0, -1);
+      for (const idx of intermediates) thinkingSet.add(idx);
+      runStart = i + 1;
+    }
+  }
+  // Build a global tool result map: tool_use_id → { content, isError, name }
+  // so tool_use blocks can find their paired results even across messages.
+  const globalResultMap = new Map<string, { content: string; isError: boolean }>();
+  const globalToolNames = new Map<string, { name: string; input: any }>();
+  for (const m of messages) {
+    const c = Array.isArray(m.content) ? m.content : [];
+    for (const b of c) {
+      if (b.type === "tool_result") {
+        const rt = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
+        globalResultMap.set(b.tool_use_id ?? "", { content: rt, isError: b.is_error === true });
+      }
+      if (b.type === "tool_use") {
+        globalToolNames.set(b.id ?? "", { name: b.name, input: b.input ?? {} });
+      }
+    }
+  }
+  // Render ALL messages as normal bubbles — no hiding, no collapsing, ever.
+  for (let i = 0; i < messages.length; i++) {
+    h += renderMsg(messages[i], i, thinkingSet.has(i), globalResultMap, globalToolNames);
   }
 
   // Always show thinking indicator when a run is active
@@ -1445,7 +1611,9 @@ function updateChat(skipScroll = false) {
       h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
       if (expandedTools.has(tid)) {
         h += `<div class="tool-detail">${toolExpandedDetail(tc.name, tc.args)}`;
-        if (done) {
+        const ln = (tc.name ?? "").toLowerCase();
+        const liveDetailHasContent = ln === "edit" || ln === "write";
+        if (done && (tc.isError || !liveDetailHasContent)) {
           const rt = typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result ?? "");
           h += `<div class="tool-result-inline"><div class="explanation">${tc.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(rt)}</div></div>`;
         }
@@ -1460,21 +1628,85 @@ function updateChat(skipScroll = false) {
   if (streamText) {
     h += `<div class="msg assistant streaming">${md(streamText)}</div>`;
   }
+  // Decide scroll behavior BEFORE replacing DOM content.
+  const threshold = 80;
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  const prevScrollTop = el.scrollTop;
   el.innerHTML = h;
+  if (wasAtBottom) {
+    el.scrollTop = el.scrollHeight;
+  } else {
+    el.scrollTop = prevScrollTop;
+  }
   el.querySelectorAll("[data-tid]").forEach((r) =>
-    r.addEventListener("click", () => {
+    r.addEventListener("click", (ev) => {
+      const fileLink = (ev.target as HTMLElement).closest(".sys-file-link") as HTMLElement | null;
+      if (fileLink) {
+        ev.stopPropagation();
+        const fp = fileLink.dataset.path;
+        if (!fp) return;
+        // Collapse any existing open file viewer
+        el.querySelectorAll(".file-viewer-inline").forEach((v) => v.remove());
+        // If clicking the same link that was already open, just collapse
+        if (fileLink.classList.contains("file-viewer-open")) {
+          fileLink.classList.remove("file-viewer-open");
+          return;
+        }
+        el.querySelectorAll(".sys-file-link.file-viewer-open").forEach((l) =>
+          l.classList.remove("file-viewer-open"),
+        );
+        fileLink.classList.add("file-viewer-open");
+        const viewer = document.createElement("div");
+        viewer.className = "file-viewer-inline";
+        viewer.textContent = "Loading...";
+        // Insert after the parent system message row
+        const parentMsg = fileLink.closest(".msg") ?? fileLink.parentElement!;
+        parentMsg.insertAdjacentElement("afterend", viewer);
+        const fileApiBase = import.meta.env.DEV ? "/tinker-api" : "/tinker/api";
+        fetch(`${fileApiBase}/file-read?path=${encodeURIComponent(fp)}`)
+          .then((r) => r.json())
+          .then((data: any) => {
+            if (data.error) {
+              viewer.textContent = `Error: ${data.error}`;
+              return;
+            }
+            const name = fp.split("/").pop() || fp;
+            const ext = (name.match(/\.([^.]+)$/)?.[1] ?? "").toLowerCase();
+            const isMarkdown = ext === "md" || ext === "mdx";
+            const isJson = ext === "json";
+            let body: string;
+            if (isMarkdown) {
+              body = `<div class="file-viewer-content file-viewer-md">${md(data.content)}</div>`;
+            } else {
+              let content = data.content;
+              if (isJson)
+                try {
+                  content = JSON.stringify(JSON.parse(content), null, 2);
+                } catch {}
+              const lines = content.split("\n");
+              const numbered = lines
+                .map((line: string, i: number) => `<span class="fv-ln">${i + 1}</span>${esc(line)}`)
+                .join("\n");
+              body = `<pre class="file-viewer-content file-viewer-code">${numbered}</pre>`;
+            }
+            viewer.innerHTML = `<div class="file-viewer-header"><span>📄 ${esc(name)}</span><span class="file-viewer-path">${esc(fp)}</span></div>${body}`;
+          })
+          .catch((e) => {
+            viewer.textContent = `Fetch error: ${e.message}`;
+          });
+        return;
+      }
       const id = r.getAttribute("data-tid")!;
       expandedTools.has(id) ? expandedTools.delete(id) : expandedTools.add(id);
-      // Re-render without scrolling, then restore clicked element into view
-      const clickedRect = (r as HTMLElement).getBoundingClientRect();
-      const scrollContainer = $("messages");
-      const prevScroll = scrollContainer ? scrollContainer.scrollTop : 0;
+      // Remember the clicked row's position relative to the viewport
+      const clickedTop = (r as HTMLElement).getBoundingClientRect().top;
       updateChat(true);
-      // Find the same element after re-render and adjust scroll so it stays put
+      // After re-render, find the same element and adjust scroll so it
+      // stays at the exact same viewport position — only content below moves.
       const after = el.querySelector(`[data-tid="${id}"]`) as HTMLElement | null;
-      if (after && scrollContainer) {
-        const afterRect = after.getBoundingClientRect();
-        scrollContainer.scrollTop = prevScroll + (afterRect.top - clickedRect.top);
+      if (after) {
+        const newTop = after.getBoundingClientRect().top;
+        el.scrollTop += newTop - clickedTop;
       }
     }),
   );
@@ -1496,7 +1728,7 @@ function updateDots() {
     .forEach((d) => (d.className = `status-dot gw-dot ${connected ? "dot-green" : "dot-red"}`));
   const l = $("gw-label");
   if (l) {
-    l.textContent = connected ? "Connected" : "Disconnected";
+    l.textContent = connected ? "" : "Disconnected";
   }
 }
 
@@ -2057,17 +2289,15 @@ function init() {
       <button data-hint="Tokens">📊</button>
       <button data-hint="Context">🧠</button>
 
-      <button data-hint="Metrics">📈</button>
     </nav>
     <div class="topbar">
       <span class="status-dot gw-dot dot-red"></span>
       <span id="gw-label" style="font-weight:600;font-size:12px">Connecting...</span>
-      <select id="session-select" style="margin-left:8px"></select>
       <span style="flex:1"></span>
+      <span id="topbar-graph-btn" class="topbar-icon-btn" data-hint="Metrics" style="cursor:pointer;font-size:16px;opacity:.7;transition:opacity .12s">📈</span>
       <span style="color:var(--muted);font-size:11px"><span class="status-dot gw-dot dot-red"></span> Gateway</span>
     </div>
     <div class="chat-area">
-      <div class="chat-header"><button id="toggle-overseer-chat" class="panel-toggle" data-hint="System messages">Sys</button></div>
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
@@ -2164,17 +2394,26 @@ function init() {
   try {
     ta.value = localStorage.getItem(DRAFT_STORAGE_KEY) || "";
   } catch {}
+  function autoResizeTA() {
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }
   ta.addEventListener("input", () => {
+    autoResizeTA();
     try {
       localStorage.setItem(DRAFT_STORAGE_KEY, ta.value);
     } catch {}
   });
+  // Size to fit restored draft + focus
+  if (ta.value) requestAnimationFrame(autoResizeTA);
+  ta.focus();
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (ta.value.trim()) {
         send(ta.value);
         ta.value = "";
+        ta.style.height = "auto";
         try {
           localStorage.removeItem(DRAFT_STORAGE_KEY);
         } catch {}
@@ -2185,13 +2424,14 @@ function init() {
     if (ta.value.trim()) {
       send(ta.value);
       ta.value = "";
+      ta.style.height = "auto";
       try {
         localStorage.removeItem(DRAFT_STORAGE_KEY);
       } catch {}
       ta.focus();
     }
   });
-  $("session-select")!.addEventListener("change", (e) => {
+  $("session-select")?.addEventListener("change", (e) => {
     sessionKey = (e.target as HTMLSelectElement).value;
     messages = [];
     updateChat();
@@ -2223,12 +2463,6 @@ function init() {
       await abort();
     }
     send("/new");
-  });
-  $("toggle-overseer-chat")!.addEventListener("click", () => {
-    showOverseerChat = !showOverseerChat;
-    const btn = $("toggle-overseer-chat")!;
-    btn.classList.toggle("panel-toggle--active", showOverseerChat);
-    updateChat();
   });
   // Delegated stop-button handler on messages container — survives innerHTML wipes
   $("messages")!.addEventListener("click", (e) => {

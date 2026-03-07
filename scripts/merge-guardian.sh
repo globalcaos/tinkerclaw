@@ -154,6 +154,10 @@ else
   ok "@types/better-sqlite3 in package.json"
 fi
 
+# Budget-panel live API wiring
+check_wiring "extensions/budget-panel/index.ts" "resolveApiKeyForProfile" "Budget-panel live OAuth token resolution"
+check_wiring "extensions/budget-panel/index.ts" "ensureAuthProfileStore" "Budget-panel auth store access"
+
 # ─── 3. Config schema fork additions ───
 log "--- Phase 3: Config schemas ---"
 check_wiring "src/config/zod-schema.agent-defaults.ts" "engram" "engram compaction mode"
@@ -177,6 +181,9 @@ if [ -f "$ROOT/tinker-ui/src/app.ts" ]; then
   else
     ok "No duplicate MarkdownIt imports in tinker-ui"
   fi
+  # Usage bars + per-profile tooltip wiring
+  check_wiring "tinker-ui/src/app.ts" "getModelUsage" "Usage bar helper in tinker-ui app.ts"
+  check_wiring "tinker-ui/src/app.ts" "claudeProfiles" "Per-profile usage routing in tinker-ui app.ts"
 fi
 
 # ─── 5. Debug artifacts ───
