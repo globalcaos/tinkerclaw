@@ -41,12 +41,8 @@ function getModelPricing(model: string): { input: number; output: number } {
   return MODEL_PRICING.default;
 }
 
-// ─── Anthropic API key (lazy, cached) ───
-let _cachedApiKey: string | null = null;
-function getAnthropicApiKey(): string | null {
-  if (_cachedApiKey) {
-    return _cachedApiKey;
-  }
+// ─── Google API key (from auth-profiles) ───
+function getGoogleApiKey(): string | null {
   try {
     const authPath = path.join(
       os.homedir(),
@@ -57,10 +53,9 @@ function getAnthropicApiKey(): string | null {
       "auth-profiles.json",
     );
     const data = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-    const profile = data?.profiles?.["anthropic:api"];
+    const profile = data?.profiles?.["google:default"];
     if (profile?.key) {
-      _cachedApiKey = profile.key;
-      return _cachedApiKey;
+      return profile.key;
     }
   } catch {
     /* ignore */
@@ -80,40 +75,43 @@ function extractText(dump: any, component: string, key: string | undefined): str
   return result;
 }
 
-// ─── Call Anthropic Messages API for summarization ───
+// ─── Call Gemini Flash for summarization (cheap + fast) ───
 async function summarizeText(text: string): Promise<string> {
-  const apiKey = getAnthropicApiKey();
+  const apiKey = getGoogleApiKey();
   if (!apiKey) {
-    throw new Error("No Anthropic API key found in auth-profiles.json");
+    throw new Error("No Google API key found in auth-profiles.json");
   }
 
-  // Truncate to ~30k chars to stay within haiku limits
-  const truncated = text.length > 30_000 ? text.slice(0, 30_000) + "\n…[truncated]" : text;
+  // Truncate to ~60k chars (Gemini Flash has a large context window)
+  const truncated = text.length > 60_000 ? text.slice(0, 60_000) + "\n…[truncated]" : text;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [
+            {
+              text: "Summarize the following content in 2-3 concise sentences. Focus on what it does and why it matters.",
+            },
+          ],
+        },
+        contents: [{ parts: [{ text: truncated }] }],
+        generationConfig: { maxOutputTokens: 300 },
+      }),
     },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 300,
-      system:
-        "Summarize the following content in 2-3 concise sentences. Focus on what it does and why it matters.",
-      messages: [{ role: "user", content: truncated }],
-    }),
-  });
+  );
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Gemini API ${res.status}: ${body.slice(0, 200)}`);
   }
 
   const data = (await res.json()) as any;
-  const textBlock = (data.content ?? []).find((b: any) => b.type === "text");
-  return textBlock?.text ?? "(no summary returned)";
+  const candidate = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return candidate ?? "(no summary returned)";
 }
 
 function safeDumpFilename(filename: unknown): string | null {
