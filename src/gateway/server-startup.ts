@@ -20,6 +20,8 @@ import {
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
+import { consumeSessionResume } from "../infra/session-resume.js";
+import { enqueueSystemEvent } from "../infra/system-events.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
 import { startBrowserControlServerIfEnabled } from "./server-browser.js";
@@ -185,6 +187,20 @@ export async function startGatewaySidecars(params: {
     setTimeout(() => {
       void scheduleRestartSentinelWake({ deps: params.deps });
     }, 750);
+
+    // Resume interrupted session if gateway restarted within TTL
+    setTimeout(() => {
+      void consumeSessionResume(60)
+        .then((resume) => {
+          if (!resume) {
+            return;
+          }
+          const { sessionKey, userMessage } = resume.payload;
+          const resumeMessage = `⚠️ Gateway restarted while processing your message. Resuming your request:\n\n${userMessage}`;
+          enqueueSystemEvent(resumeMessage, { sessionKey });
+        })
+        .catch(() => {});
+    }, 1500);
   }
 
   return { browserControl, pluginServices };
