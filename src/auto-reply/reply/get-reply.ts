@@ -9,6 +9,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+import { writeSessionResume, clearSessionResume } from "../../infra/session-resume.js";
 import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
 import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -175,6 +176,26 @@ export async function getReplyFromConfig(
     `[DEBUG] get-reply: after initSessionState isNewSession=${isNewSession} resetTriggered=${resetTriggered} bodyStripped="${bodyStripped}" triggerBodyNormalized="${triggerBodyNormalized}"`,
   );
 
+  // Persist in-flight message for resume on restart
+  const resumeUserMessage = triggerBodyNormalized || bodyStripped || ctx.Body || "";
+  if (resumeUserMessage && agentSessionKey) {
+    try {
+      await writeSessionResume({
+        ts: Date.now(),
+        sessionKey: agentSessionKey,
+        channel: ctx.Provider ?? ctx.NativeChannelId ?? undefined,
+        userMessage: resumeUserMessage,
+        deliveryContext: {
+          channel: ctx.Provider ?? undefined,
+          to: ctx.From ?? undefined,
+          accountId: ctx.AccountId ?? undefined,
+        },
+      });
+    } catch {
+      // Never block the reply flow
+    }
+  }
+
   await applyResetModelOverride({
     cfg,
     resetTriggered,
@@ -248,6 +269,7 @@ export async function getReplyFromConfig(
     skillFilter: mergedSkillFilter,
   });
   if (directiveResult.kind === "reply") {
+    await clearSessionResume(agentSessionKey).catch(() => {});
     return directiveResult.reply;
   }
 
@@ -342,6 +364,7 @@ export async function getReplyFromConfig(
     skillFilter: mergedSkillFilter,
   });
   if (inlineActionResult.kind === "reply") {
+    await clearSessionResume(agentSessionKey).catch(() => {});
     await maybeEmitMissingResetHooks();
     return inlineActionResult.reply;
   }
@@ -356,6 +379,9 @@ export async function getReplyFromConfig(
     sessionKey,
     workspaceDir,
   });
+
+  // Clear session resume — reply is about to be generated
+  await clearSessionResume(agentSessionKey).catch(() => {});
 
   return runPreparedReply({
     ctx,
