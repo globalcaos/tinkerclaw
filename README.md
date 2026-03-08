@@ -180,7 +180,6 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 | [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent) | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call. |
 | [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer) | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
 | [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
-| [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer) | Benchmark your agent's memory. Contribute anonymized scores to open research. |
 | [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer) | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics. |
 | [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter) | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
 | [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router) | Auto-selects the optimal model per task. Cost vs capability, no manual routing. |
