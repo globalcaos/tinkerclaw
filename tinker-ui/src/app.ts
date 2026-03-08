@@ -22,15 +22,12 @@ let pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => v
 let sessionKey = "";
 let sessions: any[] = [];
 let messages: any[] = [];
-let streamText = "";
+/** Index into messages[] of the current streaming temporary message, or -1 if none. */
+let streamMsgIdx = -1;
 let streamRunId: string | null = null;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
-let liveToolCalls = new Map<
-  string,
-  { name: string; args: any; toolCallId: string; isError: boolean; result: any }
->();
 let initialized = false;
 let budgetData: any = null;
 let budgetUsageData: any = null;
@@ -213,7 +210,7 @@ function gwConnect() {
   ws.onclose = () => {
     connected = false;
     sending = false;
-    streamText = "";
+    streamMsgIdx = -1;
     streamRunId = null;
     activeRuns.clear();
     saveActiveRuns();
@@ -334,39 +331,30 @@ function onEvent(evt: any) {
     }
     if (p.state === "delta") {
       streamRunId = p.runId;
-      streamText = p.message?.content?.[0]?.text ?? streamText;
+      const deltaText = p.message?.content?.[0]?.text ?? "";
+      if (deltaText) {
+        if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
+          // Update existing temporary message's text
+          const content = messages[streamMsgIdx].content;
+          const textBlock = content.find((b: any) => b.type === "text");
+          if (textBlock) {
+            textBlock.text = deltaText;
+          }
+        } else {
+          // Create a new temporary message
+          messages.push({
+            role: "assistant",
+            content: [{ type: "text", text: deltaText }],
+            _temporary: true,
+          });
+          streamMsgIdx = messages.length - 1;
+        }
+      }
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
-      // Inject live tool calls as a synthetic message if the final doesn't include them
-      if (liveToolCalls.size > 0) {
-        const finalContent = Array.isArray(p.message?.content) ? p.message.content : [];
-        const hasTool = finalContent.some(
-          (b: any) => b.type === "tool_use" || b.type === "tool_result",
-        );
-        if (!hasTool) {
-          const syntheticContent: any[] = [];
-          for (const [, tc] of liveToolCalls) {
-            syntheticContent.push({
-              type: "tool_use",
-              id: tc.toolCallId,
-              name: tc.name,
-              input: tc.args,
-            });
-            syntheticContent.push({
-              type: "tool_result",
-              tool_use_id: tc.toolCallId,
-              content:
-                tc.result != null
-                  ? typeof tc.result === "string"
-                    ? tc.result
-                    : JSON.stringify(tc.result)
-                  : "(completed)",
-              is_error: tc.isError,
-            });
-          }
-          messages.push({ role: "assistant", content: syntheticContent, _synthetic: true });
-        }
-        liveToolCalls.clear();
+      // Remove temporary messages — the finalized message replaces them
+      if (p.state !== "error") {
+        messages = messages.filter((m: any) => !m._temporary);
       }
       if (p.message) {
         messages.push(p.message);
@@ -381,17 +369,11 @@ function onEvent(evt: any) {
         persistErrorMsg(sessionKey, errMsg);
       }
       if (p.state === "final") {
-        // Successful response — clear persisted errors for this session
         clearPersistedErrors(sessionKey);
       }
-      // During fallback the same runId gets a chat error for the failed model
-      // then a new start+deltas for the fallback model. Only clear streaming
-      // state on the FINAL event (final/aborted), not on intermediate errors.
-      if (p.state !== "error") {
-        streamText = "";
-        streamRunId = null;
-      }
-      // Only clear sending when no active runs remain AND no pending fallback
+      // Always reset streaming state — even on error (fallback will start fresh deltas)
+      streamMsgIdx = -1;
+      streamRunId = p.state !== "error" ? null : streamRunId;
       if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
         sending = false;
       }
@@ -411,29 +393,41 @@ function onEvent(evt: any) {
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
-        // Store the tool call for live rendering
-        liveToolCalls.set(d.toolCallId, {
-          name: d.name,
-          args: d.args ?? {},
-          toolCallId: d.toolCallId,
-          isError: false,
-          result: null,
+        // Freeze current streaming text — it becomes its own thinking bubble
+        streamMsgIdx = -1;
+        // Add tool_use as a temporary message
+        messages.push({
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: d.toolCallId,
+              name: d.name,
+              input: d.args ?? {},
+            },
+          ],
+          _temporary: true,
         });
         updateChat();
       } else if (d.phase === "result" && d.toolCallId) {
-        const existing = liveToolCalls.get(d.toolCallId);
-        if (existing) {
-          existing.isError = Boolean(d.isError);
-          existing.result = d.result ?? null;
-        } else {
-          liveToolCalls.set(d.toolCallId, {
-            name: d.name ?? "tool",
-            args: {},
-            toolCallId: d.toolCallId,
-            isError: Boolean(d.isError),
-            result: d.result ?? null,
-          });
-        }
+        // Push tool_result as a temporary message so renderMsg can pair it
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: d.toolCallId,
+              content:
+                d.result != null
+                  ? typeof d.result === "string"
+                    ? d.result
+                    : JSON.stringify(d.result)
+                  : "(completed)",
+              is_error: Boolean(d.isError),
+            },
+          ],
+          _temporary: true,
+        });
         updateChat();
       }
     }
@@ -634,7 +628,7 @@ async function loadSessions() {
 }
 
 async function loadChat() {
-  liveToolCalls.clear();
+  streamMsgIdx = -1;
   if (!sessionKey) {
     return;
   }
@@ -687,6 +681,7 @@ function retryProvider(provider: string) {
   }
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
+  streamMsgIdx = -1;
   messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
   clearPersistedErrors(sessionKey);
   // Find last user message and resend
@@ -715,7 +710,8 @@ function retryProvider(provider: string) {
 async function abort() {
   await req("chat.abort", { sessionKey }).catch(() => {});
   sending = false;
-  streamText = "";
+  messages = messages.filter((m: any) => !m._temporary);
+  streamMsgIdx = -1;
   streamRunId = null;
   activeRuns.clear();
   updateChat();
@@ -1054,8 +1050,9 @@ function renderMsg(
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
+      const streamingClass = msg._temporary ? " streaming" : "";
       const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-      h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+      h += `<div class="msg assistant${errorClass}${streamingClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
     } else {
       h += renderSystemMsg(text, idx);
     }
@@ -1093,12 +1090,13 @@ function renderMsg(
         }
       } else if (role === "assistant") {
         const errorClass = msg._isError ? " msg-error" : "";
+        const streamingClass = msg._temporary ? " streaming" : "";
         const retryBtn =
           msg._isError && msg._retryProvider
             ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
             : "";
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+        h += `<div class="msg assistant${errorClass}${streamingClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
       } else {
         h += renderSystemMsg(text, idx);
       }
@@ -1143,72 +1141,6 @@ function renderMsg(
       }
     }
   }
-  return h;
-}
-
-function renderMsgToolsOnly(msg: any, idx: number): string {
-  const content = Array.isArray(msg.content) ? msg.content : [];
-  const tus = content.filter((b: any) => b.type === "tool_use");
-  const trs = content.filter((b: any) => b.type === "tool_result");
-  const resultMap = new Map<string, { content: string; isError: boolean }>();
-  for (const tr of trs) {
-    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
-    resultMap.set(tr.tool_use_id ?? "", { content: rt, isError: tr.is_error === true });
-  }
-  let h = "";
-
-  for (const tu of tus) {
-    const a = tu.input ?? {};
-    const d = toolSummary(tu.name, a);
-    const tid = `t${idx}-${tu.id ?? tu.name}`;
-    const exp = expandedTools.has(tid);
-    const paired = resultMap.get(tu.id ?? "");
-    const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
-    const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
-    if (exp) {
-      h += `<div class="tool-detail">${toolExpandedDetail(tu.name, a)}`;
-      if (paired) {
-        h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
-      }
-      h += `</div>`;
-    }
-  }
-  const pairedIds = new Set(tus.map((tu: any) => tu.id ?? ""));
-  for (const tr of trs) {
-    const uid = tr.tool_use_id ?? "";
-    if (pairedIds.has(uid)) continue;
-    const rt = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
-    const err = tr.is_error === true;
-    const tid = `r${idx}-${uid || "r"}`;
-    const exp = expandedTools.has(tid);
-    h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(rt.replace(/\n/g, " "))}</span></div>`;
-    if (exp) {
-      h += `<div class="tool-detail">${esc(rt)}</div>`;
-    }
-  }
-  return h;
-}
-
-function renderThinkingBlock(msgs: { msg: any; idx: number }[], blockId: string): string {
-  const expanded = expandedTools.has(blockId);
-  const chevron = expanded ? "▾" : "▸";
-  let h = `<div class="thinking-block${expanded ? " expanded" : ""}" data-tid="${blockId}">`;
-  h += `<div class="thinking-header">${chevron} Thinking (${msgs.length} step${msgs.length > 1 ? "s" : ""})</div>`;
-  if (expanded) {
-    h += `<div class="thinking-content">`;
-    for (const { msg, idx } of msgs) {
-      const content = Array.isArray(msg.content) ? msg.content : [];
-      const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
-      const text = texts.join("\n") || (typeof msg.content === "string" ? msg.content : "");
-      if (text.trim()) {
-        const errClass = msg._isError ? " thinking-step-error" : "";
-        h += `<div class="thinking-step${errClass}">${md(text)}</div>`;
-      }
-    }
-    h += `</div>`;
-  }
-  h += `</div>`;
   return h;
 }
 
@@ -1339,25 +1271,39 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
   }
 
   if (provider === "google") {
-    const g = budgetUsageData.gemini;
+    const g = budgetUsageData?.gemini;
     if (!g) return null;
-    const entry = g[name] || g[name.replace("gemini-", "")] || Object.values(g)[0];
+    const entry =
+      g[name] ||
+      Object.entries(g).find(([k]) => name.startsWith(k) || k.startsWith(name))?.[1] ||
+      Object.values(g)[0];
     if (!entry) return null;
-    const pct = (entry as any).pct ?? 0;
-    const tip = `${(entry as any).metric || "RPD"}: ${(entry as any).used ?? 0}/${(entry as any).limit ?? 0} (${pct.toFixed(0)}%)`;
-    return { topPct: pct, bottomPct: pct, tooltip: tip };
+    const rpd = entry.rpd ?? 0;
+    const tpm = entry.tpm ?? 0;
+    // Show limits as capacity bars relative to paid-tier maximums
+    const maxRpd = 14400; // paid tier gemini-2.0-flash
+    const maxTpm = 4000000;
+    const rpdPct = maxRpd ? Math.min((rpd / maxRpd) * 100, 100) : 0;
+    const tpmPct = maxTpm ? Math.min((tpm / maxTpm) * 100, 100) : 0;
+    let tip = `RPD: ${rpd.toLocaleString()} (${entry.rpm ?? 0} RPM)`;
+    tip += `\nTPM: ${(tpm / 1000).toFixed(0)}k`;
+    if (entry.note) tip += `\n${entry.note}`;
+    return { topPct: rpdPct, bottomPct: tpmPct, tooltip: tip };
   }
 
   if (provider === "openai") {
-    const o = budgetUsageData.chatgpt;
-    if (!o?.models) return null;
-    const entry = o.models[name];
-    if (!entry) return null;
-    const reqPct = entry.utilization_pct ?? 0;
-    const tokPct = entry.tokens?.limit ? (entry.tokens.used / entry.tokens.limit) * 100 : 0;
-    let tip = `Requests: ${entry.requests?.used ?? 0}/${entry.requests?.limit ?? 0} (${reqPct.toFixed(0)}%)`;
-    tip += `\nTokens: ${formatNum(entry.tokens?.used ?? 0)}/${formatNum(entry.tokens?.limit ?? 0)} (${tokPct.toFixed(0)}%)`;
-    return { topPct: reqPct, bottomPct: tokPct, tooltip: tip };
+    const oc = budgetUsageData?.openaiCosts;
+    if (!oc || oc.monthSpend == null) return null;
+    const cap = 50;
+    const monthPct = Math.min((oc.monthSpend / cap) * 100, 100);
+    // Today's spend as fraction of total cap
+    const today = new Date().toISOString().slice(0, 10);
+    const todayEntry = (oc.dailyBreakdown || []).find((d: any) => d.date === today);
+    const todaySpend = todayEntry?.amount ?? 0;
+    const todayPct = Math.min((todaySpend / cap) * 100, 100);
+    let tip = `Today: $${todaySpend.toFixed(2)}/$${cap} (${todayPct.toFixed(0)}%)`;
+    tip += `\nMonth: $${oc.monthSpend.toFixed(2)}/$${cap} (${monthPct.toFixed(0)}%)`;
+    return { topPct: todayPct, bottomPct: monthPct, tooltip: tip };
   }
 
   return null;
@@ -1409,132 +1355,6 @@ function formatNum(n: number) {
   return n.toString();
 }
 
-function renderWithThinkingGroups(): string {
-  let h = "";
-  // Split messages into runs (bounded by user messages)
-  let runStart = 0;
-  for (let i = 0; i <= messages.length; i++) {
-    const isUserOrEnd = i === messages.length || (messages[i].role ?? "").toLowerCase() === "user";
-    if (!isUserOrEnd) continue;
-
-    // Process the run from runStart to i-1
-    // Find assistant messages with text in this run
-    const assistantTextIndices: number[] = [];
-    for (let j = runStart; j < i; j++) {
-      const m = messages[j];
-      if ((m.role ?? "").toLowerCase() !== "assistant") continue;
-      const content = Array.isArray(m.content) ? m.content : [];
-      const hasText = content.some((b: any) => b.type === "text" && (b.text ?? "").trim());
-      const plainText = typeof m.content === "string" && m.content.trim();
-      if (hasText || plainText) assistantTextIndices.push(j);
-    }
-
-    if (assistantTextIndices.length >= 2) {
-      // We have a thinking group: all-but-last are intermediate
-      const thinkingIndices = new Set(assistantTextIndices.slice(0, -1));
-      const blockId = `tk-${assistantTextIndices[0]}`;
-      const thinkingMsgs: { msg: any; idx: number }[] = [];
-      let blockInserted = false;
-
-      for (let j = runStart; j < i; j++) {
-        if (thinkingIndices.has(j)) {
-          thinkingMsgs.push({ msg: messages[j], idx: j });
-          // Render tool rows from this message even though text goes to thinking block
-          h += renderMsgToolsOnly(messages[j], j);
-          if (!blockInserted && j === assistantTextIndices[assistantTextIndices.length - 2]) {
-            // Insert the thinking block after the last intermediate message
-            h += renderThinkingBlock(thinkingMsgs, blockId);
-            blockInserted = true;
-          }
-        } else {
-          h += renderMsg(messages[j], j);
-        }
-      }
-    } else {
-      // No grouping needed — render normally
-      for (let j = runStart; j < i; j++) {
-        h += renderMsg(messages[j], j);
-      }
-    }
-
-    // Render the user message that ends this run (if not end-of-array)
-    if (i < messages.length) {
-      h += renderMsg(messages[i], i);
-    }
-    runStart = i + 1;
-  }
-  return h;
-}
-
-function renderLiveWithThinking(): string {
-  let h = "";
-  // Find the last user message to identify the current run
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if ((messages[i].role ?? "").toLowerCase() === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
-  // Render prior messages (before current run) normally
-  for (let i = 0; i <= lastUserIdx; i++) {
-    h += renderMsg(messages[i], i);
-  }
-
-  // Current run: assistant text messages are intermediate reasoning UNLESS
-  // streamText is empty (final answer already arrived) — then the LAST
-  // assistant text is the final answer and should render normally.
-  const currentRunStart = lastUserIdx + 1;
-  // Find assistant messages with text in the current run
-  const assistantTextIndices: number[] = [];
-  for (let j = currentRunStart; j < messages.length; j++) {
-    const m = messages[j];
-    if ((m.role ?? "").toLowerCase() !== "assistant") continue;
-    const content = Array.isArray(m.content) ? m.content : [];
-    const hasText = content.some((b: any) => b.type === "text" && (b.text ?? "").trim());
-    const plainText = typeof m.content === "string" && (m.content as string).trim();
-    if (hasText || plainText) assistantTextIndices.push(j);
-  }
-  // If no streamText, the last assistant text message is the final answer (not a thinking step)
-  const finalAnswerIdx =
-    !streamText && assistantTextIndices.length > 0
-      ? assistantTextIndices[assistantTextIndices.length - 1]
-      : -1;
-  let liveThinkingSteps = "";
-  for (let j = currentRunStart; j < messages.length; j++) {
-    const m = messages[j];
-    const role = (m.role ?? "").toLowerCase();
-    if (role === "assistant") {
-      // Tool rows render normally in the chat flow
-      h += renderMsgToolsOnly(m, j);
-      if (j === finalAnswerIdx) {
-        // This is the final answer — render as a normal message
-        h += renderMsg(m, j);
-      } else {
-        // Assistant text → live thinking step (stacks, never replaced)
-        const content = Array.isArray(m.content) ? m.content : [];
-        const texts = content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "");
-        const text = texts.join("\n") || (typeof m.content === "string" ? m.content : "");
-        if (text.trim()) {
-          const errClass = m._isError ? " thinking-step-error" : "";
-          liveThinkingSteps += `<div class="thinking-step live${errClass}">${md(text)}</div>`;
-        }
-      }
-    } else {
-      // System / other messages render normally
-      h += renderMsg(m, j);
-    }
-  }
-  // Show accumulated reasoning as an always-open block
-  if (liveThinkingSteps) {
-    h += `<div class="thinking-block expanded live-thinking">`;
-    h += `<div class="thinking-header">▾ Reasoning…</div>`;
-    h += `<div class="thinking-content">${liveThinkingSteps}</div>`;
-    h += `</div>`;
-  }
-  return h;
-}
-
 // ─── Targeted Updates ───
 function updateChat(skipScroll = false) {
   const el = $("messages");
@@ -1545,7 +1365,7 @@ function updateChat(skipScroll = false) {
   // Identify intermediate "thinking" assistant messages: in each run
   // (bounded by user messages), all assistant text messages except the last
   // are thinking steps. If streaming is active, ALL assistant texts in the
-  // current run are thinking (the live answer is in streamText).
+  // current run are thinking (the live answer is a temporary message).
   const thinkingSet = new Set<number>();
   {
     let runStart = 0;
@@ -1563,7 +1383,7 @@ function updateChat(skipScroll = false) {
         if (hasText || plainText) assistantTextIndices.push(j);
       }
       // If this is the last run and we're still streaming, all assistant texts are thinking
-      const isCurrentRun = i === messages.length && streamText;
+      const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
       const intermediates = isCurrentRun ? assistantTextIndices : assistantTextIndices.slice(0, -1);
       for (const idx of intermediates) thinkingSet.add(idx);
       runStart = i + 1;
@@ -1590,36 +1410,8 @@ function updateChat(skipScroll = false) {
     h += renderMsg(messages[i], i, thinkingSet.has(i), globalResultMap, globalToolNames);
   }
 
-  // Always show thinking indicator when a run is active
-  // Show live tool calls as they happen
-  if (liveToolCalls.size > 0) {
-    const liveIdx = messages.length + 9000; // offset to avoid id collisions
-    let i = 0;
-    for (const [, tc] of liveToolCalls) {
-      const d = toolSummary(tc.name, tc.args);
-      const tid = `live-${liveIdx}-${i++}`;
-      const done = tc.result != null;
-      const statusIcon = done ? (tc.isError ? "✗" : "✓") : "⋯";
-      const statusCls = done ? (tc.isError ? "err" : "ok") : "run";
-      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
-      if (expandedTools.has(tid)) {
-        h += `<div class="tool-detail">${toolExpandedDetail(tc.name, tc.args)}`;
-        const ln = (tc.name ?? "").toLowerCase();
-        const liveDetailHasContent = ln === "edit" || ln === "write";
-        if (done && (tc.isError || !liveDetailHasContent)) {
-          const rt = typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result ?? "");
-          h += `<div class="tool-result-inline"><div class="explanation">${tc.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(rt)}</div></div>`;
-        }
-        h += `</div>`;
-      }
-    }
-  }
   if (activeRuns.size > 0 || sending) {
     h += renderThinkingIndicator();
-  }
-  // Show streaming text below indicator
-  if (streamText) {
-    h += `<div class="msg assistant streaming">${md(streamText)}</div>`;
   }
   // Decide scroll behavior BEFORE replacing DOM content.
   const threshold = 80;
@@ -4201,8 +3993,7 @@ function init() {
     }
     // Clear UI immediately so the user sees a fresh slate
     messages.length = 0;
-    liveToolCalls.clear();
-    streamText = "";
+    streamMsgIdx = -1;
     streamRunId = null;
     sending = false;
     clearPersistedErrors(sessionKey);
