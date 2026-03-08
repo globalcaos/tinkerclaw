@@ -139,6 +139,17 @@ bash scripts/merge-guardian.sh --fix --learn
 - **Risk:** LOW — only triggered if fork import was previously wrong
 - **Added:** 2026-03-04
 
+### 15. `src/browser/extension-relay.ts`
+
+- **Patch:** Multi-extension relay — replace single `extensionWs` with `Map<string, ExtensionConnection>`, remove 409 rejection, per-extension session ownership and cleanup
+- **What:** Allows multiple Chrome extension instances to connect simultaneously. Each extension tracks its own sessions and pending requests. CDP commands are routed to the extension owning the target session. On disconnect, only that extension's targets are cleaned up. CDP clients are only torn down when ALL extensions disconnect.
+- **Guard strings:** `ExtensionConnection` (type def), `extensionConnections` (Map), `ownedSessions` (per-extension tracking)
+- **Auto-applied by:** Manual (structural change too large for regex-based auto-patch)
+- **Risk:** MEDIUM — upstream evolves this file frequently but the structural pattern is stable
+- **Re-apply:** Cherry-pick from commit `543658f8f` and adapt to current code, or re-read the diff in FORK_PATCHES.md
+- **Original PR:** #16689 (upstream, not merged)
+- **Added:** 2026-02-23, **Restored:** 2026-03-08
+
 ## Config Schema Patches
 
 | Schema file                        | Fork key                   | Pattern           | Date       |

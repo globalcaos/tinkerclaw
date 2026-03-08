@@ -44,7 +44,7 @@ That's what this skill gives your OpenClaw agent. The **voice** — offline text
 
 The humor isn't bolted on. It's baked in. Because a JARVIS that speaks without wit is just Siri with better reverb.
 
-📄 **The research behind the humor:** [LIMBIC — Computational Humor via Bisociation & Embedding Distances](https://github.com/globalcaos/clawdbot-moltbot-openclaw/blob/main/AI_reports/humor-embeddings-paper-draft.md)
+📄 **The research behind the humor:** [LIMBIC — Computational Humor via Bisociation & Embedding Distances](https://github.com/globalcaos/tinkerclaw/blob/main/AI_reports/humor-embeddings-paper-draft.md)
 
 ## ⚠️ CRITICAL: Do NOT use the `tts` tool
 
@@ -55,9 +55,11 @@ The built-in `tts` tool uses Edge TTS (cloud, wrong voice, no effects). **Always
 Every response that warrants voice output must include BOTH:
 
 1. **Audio execution FIRST** — run the jarvis command in background BEFORE writing the reply:
+
    ```
    exec(command='jarvis "Your spoken text here."', background=true)
    ```
+
    This fires immediately — the user hears the voice BEFORE the text appears on screen.
 
 2. **Visible transcript** — bold **Jarvis:** prefix followed by the spoken text:
@@ -185,7 +187,7 @@ ffmpeg -i raw.wav \
 
 This pairing is part of a 12-skill cognitive architecture we've been building — voice, humor, memory, reasoning, and more. Research papers included, because we're that kind of obsessive.
 
-👉 **Explore the full project:** [github.com/globalcaos/clawdbot-moltbot-openclaw](https://github.com/globalcaos/clawdbot-moltbot-openclaw)
+👉 **Explore the full project:** [github.com/globalcaos/tinkerclaw](https://github.com/globalcaos/tinkerclaw)
 
 Clone it. Fork it. Break it. Make it yours.
 
@@ -207,9 +209,9 @@ Both files are auto-loaded by OpenClaw's workspace injection. The agent will spe
 
 ## Included Files
 
-| File | Purpose |
-|------|---------|
-| `bin/jarvis` | The TTS + effects script (portable, uses $SHERPA_ONNX_TTS_DIR) |
-| `templates/VOICE.md` | Voice enforcement rules (copy to workspace root) |
-| `templates/SESSION.md` | Session start with voice greeting (copy to workspace root) |
-| `templates/HUMOR.md` | Humor config — four patterns, frequency 1.0 (copy to workspace root) |
+| File                   | Purpose                                                              |
+| ---------------------- | -------------------------------------------------------------------- |
+| `bin/jarvis`           | The TTS + effects script (portable, uses $SHERPA_ONNX_TTS_DIR)       |
+| `templates/VOICE.md`   | Voice enforcement rules (copy to workspace root)                     |
+| `templates/SESSION.md` | Session start with voice greeting (copy to workspace root)           |
+| `templates/HUMOR.md`   | Humor config — four patterns, frequency 1.0 (copy to workspace root) |

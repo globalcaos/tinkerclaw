@@ -6,7 +6,7 @@ We learn from experience — yours included. If you've encountered a situation t
 
 ### Option 1: GitHub Issue (Recommended)
 
-1. Go to [github.com/globalcaos/clawdbot-moltbot-openclaw/issues](https://github.com/globalcaos/clawdbot-moltbot-openclaw/issues)
+1. Go to [github.com/globalcaos/tinkerclaw/issues](https://github.com/globalcaos/tinkerclaw/issues)
 2. Create a new issue with the label `community-lesson`
 3. Use the template below
 
