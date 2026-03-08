@@ -180,7 +180,6 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 | [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent) | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call. |
 | [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer) | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
 | [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
-| [`ultimate-fork-and-skill-scanner`](https://clawhub.ai/globalcaos/ultimate-fork-and-skill-scanner) | Full fork + skill scanning with trend insights and actionable improvements. |
 | [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer) | Benchmark your agent's memory. Contribute anonymized scores to open research. |
 | [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer) | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics. |
 | [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter) | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
@@ -198,7 +197,6 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 
 | Skill | What it does |
 |-------|-------------|
-| [`ai-humor-ultimate`](https://clawhub.ai/globalcaos/ai-humor-ultimate) | Four humor patterns grounded in cognitive science. Funny when it should be, serious when it matters. |
 | [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
 
 ### 📖 Knowledge & Onboarding
