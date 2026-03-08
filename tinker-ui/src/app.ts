@@ -464,10 +464,7 @@ function onEvent(evt: any) {
       const modelLabel = fm || "unknown";
       const profileLabel = profileId ? ` (${profileId})` : "";
       const reasonLabel = describeError(reason, errMsg);
-      // Mark timeline placeholder as failed
-      if (p.runId) {
-        timelineCtrl?.failPlaceholder(p.runId, reasonLabel);
-      }
+      // (placeholder removed — real bars inserted on data arrival)
       const nextLabel =
         attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
       const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
@@ -558,8 +555,6 @@ function onEvent(evt: any) {
         updateChat();
         updateBtn();
         startThinkingTick();
-        // Activate timeline placeholder with provider/model info
-        timelineCtrl?.activatePlaceholder(p.runId, p.data.model, startProvider);
         // Poll anatomy API shortly after run starts — pre-prompt anatomy is written before LLM call
         {
           const sk = sessionKey;
@@ -573,8 +568,8 @@ function onEvent(evt: any) {
                   const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
                   if (events.length === 0) return;
                   const turnEvents = events.filter((ev: any) => ev.turn === tn);
-                  if (turnEvents.length > 0) {
-                    timelineCtrl!.replacePlaceholders(tn, turnEvents);
+                  for (const ev of turnEvents) {
+                    timelineCtrl!.pushEvent(ev);
                   }
                 })
                 .catch(() => {});
@@ -609,14 +604,13 @@ function onEvent(evt: any) {
                 if (events.length === 0) return;
                 // Find events for the current turn
                 const turnEvents = events.filter((ev: any) => ev.turn === turnNum);
-                if (turnEvents.length > 0) {
-                  timelineCtrl!.replacePlaceholders(turnNum, turnEvents);
-                } else {
+                if (turnEvents.length === 0) {
                   // Fallback: just use the latest event (backwards compat)
                   const latest = events[events.length - 1];
-                  if (latest?.turn) {
-                    timelineCtrl!.replacePlaceholders(latest.turn, [latest]);
-                  }
+                  if (latest) turnEvents.push(latest);
+                }
+                for (const ev of turnEvents) {
+                  timelineCtrl!.pushEvent(ev);
                 }
               })
               .catch(() => {});
@@ -673,7 +667,6 @@ async function send(text: string) {
   sending = true;
   currentTurnNumber++;
   messages.push({ role: "user", content: [{ type: "text", text }] });
-  timelineCtrl?.pushPlaceholder(currentTurnNumber);
   updateChat();
   updateBtn();
   scrollChat();
@@ -4386,7 +4379,6 @@ function init() {
       }
       requestAnimationFrame(step);
     },
-    PROVIDER_COLORS,
     (mode) => {
       if (mode === "all") {
         timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
