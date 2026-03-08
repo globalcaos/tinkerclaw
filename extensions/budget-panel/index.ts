@@ -27,10 +27,7 @@ const usageCache: Record<string, { data: Record<string, any> | null; ts: number 
 const CACHE_TTL_MS = 30 * 60_000;
 
 /** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
-async function resolveToken(
-  profileId: string,
-  log: (...args: any[]) => void = console.log,
-): Promise<string | null> {
+async function resolveToken(profileId: string, log: (...args: any[]) => void = console.log): Promise<string | null> {
   try {
     const store = ensureAuthProfileStore();
     const result = await resolveApiKeyForProfile({ store, profileId });
@@ -49,10 +46,7 @@ const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
  * The /api/oauth/usage endpoint has a per-access-token rate limit of ~5 requests.
  * Refreshing gives us a new access token with a fresh rate limit window.
  */
-async function forceRefreshToken(
-  profileId: string,
-  log: (...args: any[]) => void = console.log,
-): Promise<string | null> {
+async function forceRefreshToken(profileId: string, log: (...args: any[]) => void = console.log): Promise<string | null> {
   try {
     const store = ensureAuthProfileStore();
     const cred = store.profiles[profileId] as any;
@@ -73,7 +67,7 @@ async function forceRefreshToken(
       log(`[budget-panel] forceRefresh ${profileId}: HTTP ${res.status} ${body.slice(0, 120)}`);
       return null;
     }
-    const data = (await res.json()) as any;
+    const data = await res.json() as any;
     const newAccess = data.access_token;
     const newRefresh = data.refresh_token;
     if (!newAccess) return null;
@@ -97,20 +91,14 @@ async function forceRefreshToken(
 }
 
 /** Fetch live usage for a single OAuth profile (with cache + token rotation on 429). */
-async function fetchProfileUsage(
-  label: string,
-  log: (...args: any[]) => void = console.log,
-): Promise<Record<string, any> | null> {
+async function fetchProfileUsage(label: string, log: (...args: any[]) => void = console.log): Promise<Record<string, any> | null> {
   const cached = usageCache[label];
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
   const profileId = USAGE_PROFILES[label];
   if (!profileId) return cached?.data ?? null;
 
   let token = await resolveToken(profileId, log);
-  if (!token) {
-    usageCache[label] = { data: null, ts: Date.now() };
-    return null;
-  }
+  if (!token) { usageCache[label] = { data: null, ts: Date.now() }; return null; }
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -127,10 +115,7 @@ async function fetchProfileUsage(
         // Per-token rate limit exhausted — rotate token for fresh window
         log(`[budget-panel] ${label}: 429 on attempt 1, rotating token...`);
         const fresh = await forceRefreshToken(profileId, log);
-        if (fresh) {
-          token = fresh;
-          continue;
-        }
+        if (fresh) { token = fresh; continue; }
       }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -151,14 +136,59 @@ async function fetchProfileUsage(
 }
 
 /** Fetch live usage from all profiles sequentially. */
-async function fetchAllClaudeUsage(
-  log: (...args: any[]) => void = console.log,
-): Promise<Record<string, Record<string, any> | null>> {
+async function fetchAllClaudeUsage(log: (...args: any[]) => void = console.log): Promise<Record<string, Record<string, any> | null>> {
   const result: Record<string, Record<string, any> | null> = {};
   for (const p of Object.keys(USAGE_PROFILES)) {
     result[p] = await fetchProfileUsage(p, log);
   }
   return result;
+}
+
+/** ─── OpenAI Costs via Admin API ─── */
+let openaiCostsCache: { data: { monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null; ts: number } | null = null;
+const OPENAI_COSTS_CACHE_TTL_MS = 30 * 60_000;
+
+async function fetchOpenAICosts(log: (...args: any[]) => void = console.log): Promise<{ monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null> {
+  if (openaiCostsCache && Date.now() - openaiCostsCache.ts < OPENAI_COSTS_CACHE_TTL_MS) return openaiCostsCache.data;
+  const adminKey = process.env.OPENAI_ADMIN_API_KEY;
+  if (!adminKey) { log("[budget-panel] OPENAI_ADMIN_API_KEY not set, skipping costs fetch"); return null; }
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startTime = Math.floor(startOfMonth.getTime() / 1000);
+    const url = `https://api.openai.com/v1/organization/costs?start_time=${startTime}&limit=31&bucket_width=1d&group_by=line_item`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${adminKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      log(`[budget-panel] OpenAI costs: HTTP ${res.status} ${body.slice(0, 120)}`);
+      openaiCostsCache = { data: null, ts: Date.now() };
+      return null;
+    }
+    const data = (await res.json()) as any;
+    let monthSpend = 0;
+    const dailyBreakdown: { date: string; amount: number }[] = [];
+    for (const bucket of data.data || []) {
+      const date = (bucket.start_time_iso || "").slice(0, 10);
+      let dayTotal = 0;
+      for (const r of bucket.results || []) {
+        const amt = r.amount?.value ?? (typeof r.amount === "number" ? r.amount : 0);
+        dayTotal += typeof amt === "number" ? amt : parseFloat(amt) || 0;
+      }
+      monthSpend += dayTotal;
+      if (dayTotal > 0) dailyBreakdown.push({ date, amount: dayTotal });
+    }
+    const result = { monthSpend, dailyBreakdown };
+    openaiCostsCache = { data: result, ts: Date.now() };
+    log(`[budget-panel] OpenAI costs: $${monthSpend.toFixed(2)} this month`);
+    return result;
+  } catch (e) {
+    log(`[budget-panel] OpenAI costs error: ${e}`);
+    openaiCostsCache = { data: null, ts: Date.now() };
+    return null;
+  }
 }
 import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
@@ -358,6 +388,14 @@ export default function register(api: OpenClawPluginApi) {
         };
       })(),
     };
+
+    // OpenAI API Costs (via Admin key)
+    log("[budget-panel] Fetching OpenAI costs...");
+    const openaiCosts = await fetchOpenAICosts(log);
+    log(`[budget-panel] OpenAI costs result: ${openaiCosts ? `$${openaiCosts.monthSpend}` : "null"}`);
+    if (openaiCosts) {
+      result.openaiCosts = openaiCosts;
+    }
 
     // ChatGPT / OpenAI
     result.chatgpt = (() => {

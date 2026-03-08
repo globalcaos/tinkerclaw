@@ -1864,7 +1864,7 @@ function updateBudgetPanel() {
   }
   if (!modelConfigData) {
     el.innerHTML =
-      '<div style="padding:8px;color:var(--muted);font-size:11px">Loading config...</div>';
+      '<div style="padding:20px;color:var(--muted);font-size:11px">Loading config...</div>';
     return;
   }
 
@@ -2155,7 +2155,7 @@ function updateSessionsPanel() {
   }
 
   if (!sessions.length) {
-    el.innerHTML = '<div style="padding:8px;color:var(--muted);font-size:11px">No sessions</div>';
+    el.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:11px">No sessions</div>';
     return;
   }
 
@@ -2301,7 +2301,7 @@ function init() {
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
     </nav>
     <div class="topbar">
-      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:68px;height:68px;border-radius:6px"></div>
+      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="height:126px;width:auto;padding:20px"></div>
       <div class="toolbox">
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
@@ -2903,7 +2903,7 @@ function init() {
         const qrArea = document.getElementById("wa-qr-area");
         if (action === "qr" || action === "relink") {
           if (qrArea)
-            qrArea.innerHTML = `<div style="padding:8px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
+            qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
           const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
             message: (err as Error).message,
           }))) as any;
@@ -2911,7 +2911,7 @@ function init() {
             if (r?.qrDataUrl) {
               qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
             } else {
-              qrArea.innerHTML = `<div style="padding:8px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
+              qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
             }
           }
         } else if (action === "probe") {
@@ -3023,7 +3023,7 @@ function init() {
     sub.textContent = `${totalCount} session(s) · ${altTokens(totalTokens)} tokens`;
 
     // Filter bar
-    const filterBar = `<div class="alt-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 12px">
+    const filterBar = `<div class="alt-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:20px 12px">
       <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">Active:
         <select class="alt-sess-filter" data-field="active" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:2px 6px;font-size:10px">
           ${["all", "1h", "24h", "7d", "30d"].map((v) => `<option value="${v}"${v === sessFilterActive ? " selected" : ""}>${v === "all" ? "All time" : `Last ${v}`}</option>`).join("")}
@@ -3055,15 +3055,15 @@ function init() {
     <div class="alt-card" style="padding:0;overflow:hidden">
       <table style="width:100%;border-collapse:collapse;font-size:11px">
         <thead><tr style="border-bottom:1px solid var(--border);color:var(--muted);text-align:left">
-          <th style="padding:8px 10px">Session</th>
-          <th style="padding:8px 6px">Kind</th>
-          <th style="padding:8px 6px">Model / Provider</th>
-          <th style="padding:8px 6px;text-align:right">In</th>
-          <th style="padding:8px 6px;text-align:right">Out</th>
-          <th style="padding:8px 6px;text-align:right">Total</th>
-          <th style="padding:8px 6px">Updated</th>
-          <th style="padding:8px 6px">Thinking</th>
-          <th style="padding:8px 6px;text-align:center;width:30px"></th>
+          <th style="padding:20px 10px">Session</th>
+          <th style="padding:20px 6px">Kind</th>
+          <th style="padding:20px 6px">Model / Provider</th>
+          <th style="padding:20px 6px;text-align:right">In</th>
+          <th style="padding:20px 6px;text-align:right">Out</th>
+          <th style="padding:20px 6px;text-align:right">Total</th>
+          <th style="padding:20px 6px">Updated</th>
+          <th style="padding:20px 6px">Thinking</th>
+          <th style="padding:20px 6px;text-align:center;width:30px"></th>
         </tr></thead>
         <tbody>
           ${list
@@ -3158,7 +3158,7 @@ function init() {
       dailyCost.reduce((mx: number, d: any) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
 
     // Period selector
-    const periodBar = `<div class="alt-card" style="display:flex;gap:6px;align-items:center;padding:8px 12px;flex-wrap:wrap">
+    const periodBar = `<div class="alt-card" style="display:flex;gap:6px;align-items:center;padding:20px 12px;flex-wrap:wrap">
       <span style="font-size:10px;color:var(--muted)">Period:</span>
       ${["1d", "7d", "30d", "90d"].map((p) => `<button class="alt-usage-period" data-period="${p}" style="background:${p === usagePeriod ? "var(--accent)" : "var(--surface2)"};color:${p === usagePeriod ? "var(--bg)" : "var(--muted)"};border:1px solid ${p === usagePeriod ? "var(--accent)" : "var(--border)"};border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-weight:${p === usagePeriod ? "700" : "400"}">${p === "1d" ? "Today" : p}</button>`).join("")}
       <span style="flex:1"></span>
@@ -3346,7 +3346,7 @@ function init() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div>
           <div class="alt-card"><h3>Jobs (${jobs.length})</h3>
-            ${jobs.length ? jobs.map((j: any) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:8px 0">No cron jobs configured</div>`}
+            ${jobs.length ? jobs.map((j: any) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No cron jobs configured</div>`}
           </div>
         </div>
         <div>
@@ -3354,7 +3354,7 @@ function init() {
             <div style="margin-bottom:6px;display:flex;gap:4px">
               <button class="alt-cron-scope" data-scope="all" style="background:${!cronSelectedJobId ? "var(--surface2)" : "transparent"};border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer">All jobs</button>
             </div>
-            ${runs.length ? runs.map((r: any) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:8px 0">No runs recorded</div>`}
+            ${runs.length ? runs.map((r: any) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No runs recorded</div>`}
           </div>
         </div>
       </div>`;
@@ -3438,7 +3438,7 @@ function init() {
           : "?";
     }
 
-    return `<div class="alt-cron-job-card" data-job-id="${altEsc(j.id)}" style="background:${isSelected ? "rgba(193,154,107,0.1)" : "var(--bg)"};border:1px solid ${isSelected ? "var(--accent)" : "var(--border)"};border-radius:4px;padding:8px 10px;margin-bottom:6px;cursor:pointer;transition:background .15s">
+    return `<div class="alt-cron-job-card" data-job-id="${altEsc(j.id)}" style="background:${isSelected ? "rgba(193,154,107,0.1)" : "var(--bg)"};border:1px solid ${isSelected ? "var(--accent)" : "var(--border)"};border-radius:4px;padding:20px 10px;margin-bottom:6px;cursor:pointer;transition:background .15s">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:11px;font-weight:600;color:var(--accent)">${altEsc(j.name ?? j.id ?? "?")}</span>
         <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:${j.enabled ? "rgba(107,142,35,0.2)" : "rgba(205,92,92,0.2)"};color:${j.enabled ? "var(--green)" : "var(--red)"}">${j.enabled ? "Enabled" : "Disabled"}</span>
@@ -3705,7 +3705,7 @@ function init() {
           .map(
             (
               d: any,
-            ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:4px">
+            ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:20px 10px;margin-bottom:4px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:11px;font-weight:600;color:var(--yellow)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
             <span style="display:flex;gap:4px">
@@ -3890,7 +3890,7 @@ function init() {
         const view = document.getElementById("alt-config-section-view");
         if (!view) return;
         const sectionData = configObj[key];
-        view.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
+        view.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:20px 10px">
           <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">${altEsc(key)}</div>
           <pre style="white-space:pre-wrap;word-break:break-all;font-size:10px;color:var(--text);margin:0;max-height:300px;overflow-y:auto">${altEsc(JSON.stringify(sectionData, null, 2))}</pre>
         </div>`;

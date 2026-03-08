@@ -7,8 +7,8 @@
   font-size:13px;color-scheme:dark;
 }
 html,body{height:100%;background:var(--bg);color:var(--text)}
-#app{height:100%;display:grid;grid-template-columns:48px 3fr 1fr;grid-template-rows:80px 3fr 1fr;overflow:hidden;transition:grid-template-rows .5s cubic-bezier(.25,.1,.25,1),grid-template-columns .5s cubic-bezier(.25,.1,.25,1)}
-#app.bottom-collapsed{grid-template-rows:80px 3fr 0fr}
+#app{height:100%;display:grid;grid-template-columns:48px 3fr 1fr;grid-template-rows:106px 3fr 1fr;overflow:hidden;transition:grid-template-rows .5s cubic-bezier(.25,.1,.25,1),grid-template-columns .5s cubic-bezier(.25,.1,.25,1)}
+#app.bottom-collapsed{grid-template-rows:104px 3fr 0fr}
 #app.right-collapsed{grid-template-columns:48px 3fr 0fr}
 
 /* Left sidebar */
