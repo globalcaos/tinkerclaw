@@ -6,7 +6,7 @@
 set -euo pipefail
 
 OPENCLAW_SRC=""
-for dir in "$HOME/src/clawdbot-moltbot-openclaw" "$HOME/src/openclaw" "$HOME/.openclaw/src"; do
+for dir in "$HOME/src/tinkerclaw" "$HOME/src/openclaw" "$HOME/.openclaw/src"; do
   if [[ -f "$dir/src/auto-reply/reply/response-prefix-template.ts" ]]; then
     OPENCLAW_SRC="$dir"
     break
