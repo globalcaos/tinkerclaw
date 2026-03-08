@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Find OpenClaw source directory
 OPENCLAW_SRC=""
-for dir in "$HOME/src/clawdbot-moltbot-openclaw" "$HOME/src/openclaw" "$HOME/.openclaw/src"; do
+for dir in "$HOME/src/tinkerclaw" "$HOME/src/openclaw" "$HOME/.openclaw/src"; do
   if [[ -f "$dir/src/web/inbound/monitor.ts" ]]; then
     OPENCLAW_SRC="$dir"
     break
@@ -16,7 +16,7 @@ done
 
 if [[ -z "$OPENCLAW_SRC" ]]; then
   echo "❌ Could not find OpenClaw source directory."
-  echo "   Looked in: ~/src/clawdbot-moltbot-openclaw, ~/src/openclaw, ~/.openclaw/src"
+  echo "   Looked in: ~/src/tinkerclaw, ~/src/openclaw, ~/.openclaw/src"
   echo "   Set OPENCLAW_SRC env var to your OpenClaw repo path and re-run."
   exit 1
 fi
