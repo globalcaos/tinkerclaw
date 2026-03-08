@@ -201,6 +201,12 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 | [`ai-humor-ultimate`](https://clawhub.ai/globalcaos/ai-humor-ultimate) | Four humor patterns grounded in cognitive science. Funny when it should be, serious when it matters. |
 | [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
 
+### 📖 Knowledge & Onboarding
+
+| Skill | What it does |
+|-------|-------------|
+| [`field-guide`](https://clawhub.ai/globalcaos/field-guide) | 37 battle-tested lessons for AI agents. Ethics, memory, budget, messaging security, epistemic hygiene. |
+
 ### 📋 Data & Migration
 
 | Skill | What it does |
