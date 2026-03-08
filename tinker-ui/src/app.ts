@@ -2284,7 +2284,6 @@ function init() {
   initialized = true;
   app.innerHTML = `
     <nav class="sidebar">
-      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:36px;height:36px;border-radius:6px"></div>
       <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#6b8e23"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
       <div class="nav-sep"></div>
       <button class="nav-btn" data-tab="overview" data-hint="Overview"><svg viewBox="0 0 24 24" style="stroke:#4ade80"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg></button>
@@ -2302,6 +2301,7 @@ function init() {
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
     </nav>
     <div class="topbar">
+      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="width:68px;height:68px;border-radius:6px"></div>
       <div class="toolbox">
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
@@ -2319,7 +2319,7 @@ function init() {
     </div>
     <div class="right-panels">
       <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🎛️ Models <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button></div>
+        <div class="rpanel-header">🧠 Models <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button></div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="sessions-panel">
@@ -2471,6 +2471,1735 @@ function init() {
   mdBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("right-collapsed");
     mdBtn.classList.toggle("tb-active", !collapsed);
+  });
+
+  // ─── Sidebar tab switching ───
+  const altView = $("alt-view")!;
+  const chatArea = document.querySelector(".chat-area") as HTMLElement;
+  const topbar = document.querySelector(".topbar") as HTMLElement;
+  const ctxTimeline = $("context-timeline")!;
+  const rightPanels = document.querySelector(".right-panels") as HTMLElement;
+  const bottomRight = $("bottom-right-panel")!;
+  let activeTab = "chat";
+
+  type AltTab =
+    | "overview"
+    | "channels"
+    | "sessions"
+    | "usage"
+    | "cron"
+    | "agents"
+    | "skills"
+    | "nodes"
+    | "config"
+    | "debug"
+    | "logs";
+
+  const TAB_COLORS: Record<AltTab, string> = {
+    overview: "#4ade80",
+    channels: "#60a5fa",
+    sessions: "#c084fc",
+    usage: "#f59e0b",
+    cron: "#fb923c",
+    agents: "#34d399",
+    skills: "#facc15",
+    nodes: "#38bdf8",
+    config: "#a1a1aa",
+    debug: "#f87171",
+    logs: "#94a3b8",
+  };
+
+  function switchTab(tab: string) {
+    if (tab === activeTab) return;
+    activeTab = tab;
+    // Update nav-btn active states
+    document.querySelectorAll(".nav-btn[data-tab]").forEach((btn) => {
+      btn.classList.toggle("nav-active", (btn as HTMLElement).dataset.tab === tab);
+    });
+
+    if (tab === "chat") {
+      altView.classList.remove("alt-active");
+      chatArea.style.display = "";
+      topbar.style.display = "";
+      ctxTimeline.style.display = "";
+      rightPanels.style.display = "";
+      bottomRight.style.display = "";
+      return;
+    }
+    // Show alt-view, hide chat panels
+    chatArea.style.display = "none";
+    topbar.style.display = "none";
+    ctxTimeline.style.display = "none";
+    rightPanels.style.display = "none";
+    bottomRight.style.display = "none";
+    altView.classList.add("alt-active");
+    renderAltView(tab as AltTab);
+  }
+
+  // ─── Alt-view helpers ───
+  function altRelTime(ts: number | string | null | undefined): string {
+    if (!ts) return "—";
+    const ms = typeof ts === "string" ? new Date(ts).getTime() : ts;
+    const diff = Date.now() - ms;
+    if (diff < 60_000) return "just now";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return `${Math.floor(diff / 86_400_000)}d ago`;
+  }
+  function altDuration(ms: number | null | undefined): string {
+    if (!ms) return "—";
+    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+    return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
+  }
+  function altEsc(s: any): string {
+    if (s == null) return "";
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function altTokens(n: number | null | undefined): string {
+    if (n == null) return "—";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(n);
+  }
+  function altJson(obj: any): string {
+    try {
+      return `<pre style="white-space:pre-wrap;word-break:break-all;font-size:11px;color:var(--text);margin:0">${altEsc(JSON.stringify(obj, null, 2))}</pre>`;
+    } catch {
+      return `<span class="muted">—</span>`;
+    }
+  }
+  function altRow(label: string, value: string, cls = ""): string {
+    return `<div class="row"><span class="label">${altEsc(label)}</span><span class="value ${cls}">${value}</span></div>`;
+  }
+  function altRefreshBtn(id: string): string {
+    return `<button class="alt-refresh-btn" id="${id}" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;margin-left:8px">↻ Refresh</button>`;
+  }
+
+  // ─── Alt-view event wiring (delegated, survives innerHTML) ───
+  altView.addEventListener("click", (e) => {
+    const tgt = e.target as HTMLElement;
+    // Refresh buttons
+    if (tgt.classList.contains("alt-refresh-btn")) {
+      renderAltView(activeTab as AltTab);
+      return;
+    }
+    // Session switch
+    const sRow = tgt.closest("[data-session-key]") as HTMLElement | null;
+    if (sRow) {
+      const key = sRow.dataset.sessionKey!;
+      if (key && key !== sessionKey) {
+        sessionKey = key;
+        loadChat();
+        switchTab("chat");
+      }
+      return;
+    }
+    // Session delete
+    const delBtn = tgt.closest(".alt-session-del") as HTMLElement | null;
+    if (delBtn) {
+      const key = delBtn.dataset.key!;
+      if (key && confirm(`Delete session "${key}"?`)) {
+        req("sessions.delete", { key })
+          .then(() => renderAltView("sessions"))
+          .catch(() => {});
+      }
+      return;
+    }
+    // Cron run-now
+    const runBtn = tgt.closest(".alt-cron-run") as HTMLElement | null;
+    if (runBtn) {
+      const id = runBtn.dataset.id!;
+      req("cron.run", { id }).catch(() => {});
+      return;
+    }
+    // Cron enable/disable toggle
+    const cronToggle = tgt.closest(".alt-cron-toggle") as HTMLElement | null;
+    if (cronToggle) {
+      const id = cronToggle.dataset.id!;
+      const enable = cronToggle.dataset.enable === "true";
+      req("cron.update", { id, patch: { enabled: enable } })
+        .then(() => renderAltView("cron"))
+        .catch(() => {});
+      return;
+    }
+    // Debug RPC call
+    if (tgt.id === "alt-debug-call") {
+      const method = (
+        document.getElementById("alt-debug-method") as HTMLInputElement
+      )?.value?.trim();
+      const paramsStr = (
+        document.getElementById("alt-debug-params") as HTMLTextAreaElement
+      )?.value?.trim();
+      const resultEl = document.getElementById("alt-debug-result");
+      if (!method || !resultEl) return;
+      let params = {};
+      try {
+        if (paramsStr) params = JSON.parse(paramsStr);
+      } catch {
+        if (resultEl)
+          resultEl.innerHTML = `<span style="color:var(--red)">Invalid JSON params</span>`;
+        return;
+      }
+      resultEl.innerHTML = `<span class="muted">Calling ${altEsc(method)}…</span>`;
+      req(method, params)
+        .then((r) => {
+          debugRpcHistory.push({ method, params, result: r, ts: Date.now() });
+          resultEl.innerHTML = altJson(r);
+        })
+        .catch((err) => {
+          debugRpcHistory.push({
+            method,
+            params,
+            result: null,
+            ts: Date.now(),
+            error: (err as Error).message,
+          });
+          resultEl.innerHTML = `<span style="color:var(--red)">${altEsc((err as Error).message)}</span>`;
+        });
+      return;
+    }
+    // Skill toggle
+    const skillToggle = tgt.closest(".alt-skill-toggle") as HTMLElement | null;
+    if (skillToggle) {
+      const key = skillToggle.dataset.key!;
+      const enable = skillToggle.dataset.enable === "true";
+      req("skills.update", { skillKey: key, enabled: enable })
+        .then(() => renderAltView("skills"))
+        .catch(() => {});
+      return;
+    }
+  });
+
+  // Session thinking-level change (delegated on altView for <select> change events)
+  altView.addEventListener("change", (e) => {
+    const tgt = e.target as HTMLElement;
+    if (tgt.classList.contains("alt-sess-thinking")) {
+      const key = tgt.dataset.key;
+      const value = (tgt as HTMLSelectElement).value;
+      if (key) {
+        req("sessions.update", { key, patch: { thinkingLevel: value || null } }).catch(() => {});
+      }
+    }
+  });
+
+  // Logs auto-follow state
+  let logsAutoFollow = true;
+  let logsCursor: number | undefined;
+  let logsInterval: ReturnType<typeof setInterval> | null = null;
+  let logsLevelFilters = new Set(["info", "warn", "error", "fatal"]);
+  let logsFilterText = "";
+
+  async function renderAltView(tab: AltTab) {
+    // Stop logs polling when leaving logs tab
+    if (logsInterval && tab !== "logs") {
+      clearInterval(logsInterval);
+      logsInterval = null;
+    }
+
+    const color = TAB_COLORS[tab];
+    const title = tab.charAt(0).toUpperCase() + tab.slice(1);
+    const btnSvg = document.querySelector(`.nav-btn[data-tab="${tab}"] svg`)?.outerHTML || "";
+    altView.innerHTML = `
+      <div class="alt-view-header">
+        <h2 style="color:${color}">${btnSvg} ${title} ${altRefreshBtn("alt-tab-refresh")}</h2>
+        <p>Loading…</p>
+      </div>
+      <div class="alt-view-body">
+        <div class="alt-placeholder"><svg viewBox="0 0 24 24" style="stroke:${color}"><path d="M12 2v4"/><circle cx="12" cy="12" r="3"/></svg><span>Fetching data…</span></div>
+      </div>`;
+    try {
+      const body = altView.querySelector(".alt-view-body")!;
+      const sub = altView.querySelector(".alt-view-header p")!;
+      switch (tab) {
+        case "overview":
+          await renderOverviewTab(body, sub);
+          break;
+        case "channels":
+          await renderChannelsTab(body, sub);
+          break;
+        case "sessions":
+          await renderSessionsTab(body, sub);
+          break;
+        case "usage":
+          await renderUsageTab(body, sub);
+          break;
+        case "cron":
+          await renderCronTab(body, sub);
+          break;
+        case "agents":
+          await renderAgentsTab(body, sub);
+          break;
+        case "skills":
+          await renderSkillsTab(body, sub);
+          break;
+        case "nodes":
+          await renderNodesTab(body, sub);
+          break;
+        case "config":
+          await renderConfigTab(body, sub);
+          break;
+        case "debug":
+          await renderDebugTab(body, sub);
+          break;
+        case "logs":
+          await renderLogsTab(body, sub);
+          break;
+      }
+    } catch (e) {
+      const body = altView.querySelector(".alt-view-body");
+      if (body)
+        body.innerHTML = `<div class="alt-placeholder"><span style="color:var(--red)">Error: ${altEsc((e as Error).message)}</span></div>`;
+    }
+  }
+
+  // ═══════════════ OVERVIEW ═══════════════
+  async function renderOverviewTab(body: Element, sub: Element) {
+    const [status, health, presence, cronStatus] = await Promise.all([
+      req("status", {}).catch(() => null),
+      req("health", {}).catch(() => null),
+      req("system-presence", {}).catch(() => null),
+      req("cron.status", {}).catch(() => null),
+    ]);
+    const snapshot = (status as any) ?? {};
+    const presenceList = Array.isArray(presence) ? presence : ((presence as any)?.presence ?? []);
+    const uptimeMs = snapshot.uptimeMs ?? snapshot.uptime;
+    const tickMs = snapshot.policy?.tickIntervalMs ?? snapshot.tickIntervalMs;
+    const cronSt = cronStatus as any;
+    sub.textContent = "Gateway snapshot & system presence";
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="alt-card"><h3>Connection</h3>
+          ${altRow("Status", connected ? "Connected" : "Disconnected", connected ? "green" : "red")}
+          ${altRow("Gateway URL", altEsc(GW_WS || "—"))}
+          ${altRow("Session", altEsc(sessionKey || "—"))}
+          ${altRow("Uptime", altDuration(uptimeMs))}
+          ${altRow("Tick interval", tickMs ? `${tickMs}ms` : "—")}
+        </div>
+        <div class="alt-card"><h3>System Stats</h3>
+          ${altRow("Instances", String(presenceList.length))}
+          ${altRow("Sessions", String(sessions.length))}
+          ${altRow("Cron", cronSt?.enabled != null ? (cronSt.enabled ? "Enabled" : "Disabled") : "—", cronSt?.enabled ? "green" : "")}
+          ${altRow("Cron jobs", cronSt?.jobs != null ? String(cronSt.jobs) : "—")}
+          ${altRow("Next cron", cronSt?.nextWakeAtMs ? altRelTime(cronSt.nextWakeAtMs) : "—")}
+        </div>
+      </div>
+      ${
+        presenceList.length
+          ? `<div class="alt-card"><h3>System Presence (${presenceList.length} instance${presenceList.length > 1 ? "s" : ""})</h3>
+        ${presenceList
+          .map(
+            (p: any) => `<div class="row">
+          <span class="label">${altEsc(p.host ?? p.instanceId ?? "?")}</span>
+          <span class="value">${altEsc(p.version ?? "")} · ${altEsc(p.platform ?? "")}${p.roles?.length ? ` · ${p.roles.join(", ")}` : ""}</span>
+        </div>`,
+          )
+          .join("")}
+      </div>`
+          : ""
+      }
+      ${health ? `<div class="alt-card"><h3>Health</h3>${altJson(health)}</div>` : ""}`;
+  }
+
+  // ═══════════════ CHANNELS ═══════════════
+  async function renderChannelsTab(body: Element, sub: Element) {
+    const res = await req("channels.status", { probe: false }).catch(() => null);
+    const snap = res as any;
+    if (!snap || !snap.channels) {
+      sub.textContent = "Channel status";
+      body.innerHTML = `<div class="alt-placeholder"><span>No channel data available</span></div>`;
+      return;
+    }
+    const channelMeta: any[] = snap.channelMeta ?? [];
+    const order: string[] = channelMeta.length
+      ? channelMeta.map((m: any) => m.id)
+      : (snap.channelOrder ?? Object.keys(snap.channels));
+    const labels: Record<string, string> = snap.channelLabels ?? {};
+    const accounts: Record<string, any[]> = snap.channelAccounts ?? {};
+    const metaMap: Record<string, any> = {};
+    for (const m of channelMeta) metaMap[m.id] = m;
+
+    // Sort: enabled channels first, then disabled
+    const sorted = order
+      .map((ch, i) => {
+        const data = snap.channels[ch] ?? {};
+        const configured = data.configured ?? data.running ?? data.connected;
+        return { ch, configured, order: i };
+      })
+      .sort((a, b) => {
+        if (a.configured !== b.configured) return a.configured ? -1 : 1;
+        return a.order - b.order;
+      });
+
+    const enabledCount = sorted.filter((s) => s.configured).length;
+    sub.textContent = `${order.length} channel(s) · ${enabledCount} configured`;
+
+    body.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${sorted
+        .map(({ ch }) => {
+          const data = snap.channels[ch] ?? {};
+          const accts = accounts[ch] ?? [];
+          const meta = metaMap[ch];
+          const label = meta?.label ?? labels[ch] ?? ch.charAt(0).toUpperCase() + ch.slice(1);
+          const configured = data.configured !== false;
+          const running = data.running === true;
+          const connectedVal = data.connected === true;
+          const linked = data.linked === true;
+          const lastError = data.lastError ?? data.error;
+          const lastConnectedAt = data.lastConnectedAt;
+          const lastMessageAt = data.lastMessageAt;
+          const mode = data.mode;
+          const authAgeMs = data.authAgeMs;
+
+          // Derive overall status like upstream
+          const statusText = connectedVal
+            ? "Connected"
+            : running
+              ? "Running"
+              : configured
+                ? "Configured"
+                : "Not configured";
+          const statusCls = connectedVal ? "green" : running ? "green" : configured ? "yellow" : "";
+
+          return `<div class="alt-card"><h3>${altEsc(label)}</h3>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">${altEsc(meta?.description ?? `${label} channel status and configuration.`)}</div>
+          ${altRow("Configured", configured ? "Yes" : "No", configured ? "green" : "red")}
+          ${data.running != null ? altRow("Running", running ? "Yes" : "No", running ? "green" : "red") : ""}
+          ${data.connected != null ? altRow("Connected", connectedVal ? "Yes" : "No", connectedVal ? "green" : "red") : ""}
+          ${data.linked != null ? altRow("Linked", linked ? "Yes" : "No", linked ? "green" : "red") : ""}
+          ${mode ? altRow("Mode", altEsc(mode)) : ""}
+          ${lastConnectedAt ? altRow("Last connect", altRelTime(lastConnectedAt)) : ""}
+          ${lastMessageAt ? altRow("Last message", altRelTime(lastMessageAt)) : ""}
+          ${authAgeMs != null ? altRow("Auth age", altDuration(authAgeMs)) : ""}
+          ${lastError ? `<div style="margin-top:6px;padding:6px 8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:4px;font-size:10px;color:#fca5a5">${altEsc(lastError)}</div>` : ""}
+          ${accts.length ? renderChannelAccounts(accts, ch) : ""}
+          ${
+            ch === "whatsapp"
+              ? `<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">
+            <button class="alt-wa-btn" data-action="qr" style="background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Show QR</button>
+            <button class="alt-wa-btn" data-action="relink" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Relink</button>
+            <button class="alt-wa-btn" data-action="probe" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Probe</button>
+            <button class="alt-wa-btn" data-action="logout" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--red);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Logout</button>
+          </div>
+          <div id="wa-qr-area"></div>`
+              : ""
+          }
+          ${ch === "telegram" ? `<div style="margin-top:8px"><button class="alt-probe-btn" data-channel="telegram" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Probe</button></div>` : ""}
+        </div>`;
+        })
+        .join("")}
+    </div>
+    <div class="alt-card" style="margin-top:8px"><h3>Channel Health (raw)</h3>
+      <details><summary style="cursor:pointer;font-size:10px;color:var(--muted)">Show raw snapshot</summary>
+        ${altJson(snap)}
+      </details>
+    </div>`;
+
+    // Wire WhatsApp buttons
+    body.querySelectorAll(".alt-wa-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const action = (btn as HTMLElement).dataset.action;
+        const qrArea = document.getElementById("wa-qr-area");
+        if (action === "qr" || action === "relink") {
+          if (qrArea)
+            qrArea.innerHTML = `<div style="padding:8px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
+          const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
+            message: (err as Error).message,
+          }))) as any;
+          if (qrArea) {
+            if (r?.qrDataUrl) {
+              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
+            } else {
+              qrArea.innerHTML = `<div style="padding:8px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
+            }
+          }
+        } else if (action === "probe") {
+          await req("channels.status", { probe: true }).catch(() => null);
+          renderAltView("channels");
+        } else if (action === "logout") {
+          if (confirm("Logout from WhatsApp?")) {
+            await req("channels.logout", { channel: "whatsapp" }).catch(() => null);
+            renderAltView("channels");
+          }
+        }
+      });
+    });
+    // Wire probe buttons for other channels
+    body.querySelectorAll(".alt-probe-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await req("channels.status", { probe: true }).catch(() => null);
+        renderAltView("channels");
+      });
+    });
+  }
+
+  function renderChannelAccounts(accts: any[], channel: string): string {
+    const recentMs = 10 * 60 * 1000;
+    return `<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px">${accts.length} account(s)</div>
+      ${accts
+        .map((a: any) => {
+          const name = a.name || a.accountId || "?";
+          const runningVal = a.running
+            ? "Yes"
+            : a.lastInboundAt && Date.now() - a.lastInboundAt < recentMs
+              ? "Active"
+              : "No";
+          const connVal =
+            a.connected === true
+              ? "Yes"
+              : a.connected === false
+                ? "No"
+                : a.lastInboundAt && Date.now() - a.lastInboundAt < recentMs
+                  ? "Active"
+                  : "n/a";
+          const probe = a.probe as any;
+          const botUsername = probe?.bot?.username;
+          return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px">
+          <div style="font-size:11px;color:var(--text);font-weight:600">${botUsername ? `@${botUsername}` : altEsc(name)}</div>
+          <div style="font-size:10px;color:var(--muted)">${altEsc(a.accountId ?? "")}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-top:4px;font-size:10px">
+            <span>Running: <span style="color:${runningVal === "Yes" || runningVal === "Active" ? "var(--green)" : "var(--red)"}">${runningVal}</span></span>
+            <span>Configured: <span style="color:${a.configured ? "var(--green)" : "var(--red)"}">${a.configured ? "Yes" : "No"}</span></span>
+            <span>Connected: <span style="color:${connVal === "Yes" || connVal === "Active" ? "var(--green)" : connVal === "No" ? "var(--red)" : "var(--muted)"}">${connVal}</span></span>
+            <span>Last inbound: ${a.lastInboundAt ? altRelTime(a.lastInboundAt) : "n/a"}</span>
+          </div>
+          ${a.lastError ? `<div style="margin-top:4px;padding:4px 6px;background:rgba(239,68,68,0.1);border-radius:3px;font-size:10px;color:#fca5a5">${altEsc(a.lastError)}</div>` : ""}
+        </div>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  // ═══════════════ SESSIONS ═══════════════
+  async function renderSessionsTab(body: Element, sub: Element) {
+    const res = await req("sessions.list", {
+      includeGlobal: sessIncludeGlobal,
+      includeUnknown: sessIncludeUnknown,
+    }).catch(() => ({ sessions: [] }));
+    let list: any[] = (res as any)?.sessions ?? [];
+    const mainKey = (res as any)?.mainSessionKey;
+
+    // Filter by activity window
+    if (sessFilterActive !== "all") {
+      const cutoff =
+        Date.now() -
+        ({ "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 }[
+          sessFilterActive
+        ] ?? 0);
+      list = list.filter((s: any) => {
+        const ts = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
+        return ts >= cutoff;
+      });
+    }
+
+    // Sort
+    if (sessSortBy === "tokens") {
+      list.sort(
+        (a: any, b: any) =>
+          (b.inputTokens ?? 0) +
+          (b.outputTokens ?? 0) -
+          ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
+      );
+    } else if (sessSortBy === "key") {
+      list.sort((a: any, b: any) => (a.key ?? "").localeCompare(b.key ?? ""));
+    } else {
+      list.sort((a: any, b: any) => {
+        const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return tb - ta;
+      });
+    }
+
+    // Apply limit
+    const totalCount = list.length;
+    if (sessFilterLimit > 0) list = list.slice(0, sessFilterLimit);
+
+    const totalTokens = list.reduce(
+      (sum: number, s: any) => sum + (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
+      0,
+    );
+    sub.textContent = `${totalCount} session(s) · ${altTokens(totalTokens)} tokens`;
+
+    // Filter bar
+    const filterBar = `<div class="alt-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 12px">
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">Active:
+        <select class="alt-sess-filter" data-field="active" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:2px 6px;font-size:10px">
+          ${["all", "1h", "24h", "7d", "30d"].map((v) => `<option value="${v}"${v === sessFilterActive ? " selected" : ""}>${v === "all" ? "All time" : `Last ${v}`}</option>`).join("")}
+        </select>
+      </label>
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">Sort:
+        <select class="alt-sess-filter" data-field="sort" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:2px 6px;font-size:10px">
+          ${(["updated", "tokens", "key"] as const).map((v) => `<option value="${v}"${v === sessSortBy ? " selected" : ""}>${v === "updated" ? "Recently updated" : v === "tokens" ? "Most tokens" : "Key A-Z"}</option>`).join("")}
+        </select>
+      </label>
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">Limit:
+        <input class="alt-sess-filter" data-field="limit" type="number" min="0" max="500" value="${sessFilterLimit}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:2px 6px;font-size:10px">
+      </label>
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">
+        <input class="alt-sess-filter" data-field="global" type="checkbox" ${sessIncludeGlobal ? "checked" : ""}> Global
+      </label>
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">
+        <input class="alt-sess-filter" data-field="unknown" type="checkbox" ${sessIncludeUnknown ? "checked" : ""}> Unknown
+      </label>
+    </div>`;
+
+    if (!list.length) {
+      body.innerHTML = `${filterBar}<div class="alt-placeholder"><span>No sessions match filters</span></div>`;
+      wireSessionFilters(body);
+      return;
+    }
+
+    body.innerHTML = `${filterBar}
+    <div class="alt-card" style="padding:0;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr style="border-bottom:1px solid var(--border);color:var(--muted);text-align:left">
+          <th style="padding:8px 10px">Session</th>
+          <th style="padding:8px 6px">Kind</th>
+          <th style="padding:8px 6px">Model / Provider</th>
+          <th style="padding:8px 6px;text-align:right">In</th>
+          <th style="padding:8px 6px;text-align:right">Out</th>
+          <th style="padding:8px 6px;text-align:right">Total</th>
+          <th style="padding:8px 6px">Updated</th>
+          <th style="padding:8px 6px">Thinking</th>
+          <th style="padding:8px 6px;text-align:center;width:30px"></th>
+        </tr></thead>
+        <tbody>
+          ${list
+            .map((s: any) => {
+              const isActive = s.key === sessionKey;
+              const isMain = s.key === mainKey;
+              const inTok = s.inputTokens ?? 0;
+              const outTok = s.outputTokens ?? 0;
+              const total = inTok + outTok;
+              const thinkLv = s.thinkingLevel ?? "";
+              const modelStr = s.model ?? "—";
+              const providerStr = s.provider ?? "";
+              return `<tr class="alt-sess-row" style="border-bottom:1px solid rgba(74,63,48,0.3);cursor:pointer${isActive ? ";background:rgba(193,154,107,0.1)" : ""}" data-session-key="${altEsc(s.key)}">
+              <td style="padding:6px 10px;color:var(--accent);font-family:'SF Mono',monospace;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                ${altEsc(s.displayName ?? s.key)}${isMain ? ' <span style="color:var(--muted);font-size:9px">(main)</span>' : ""}${isActive ? ' <span style="color:var(--green);font-size:9px">*</span>' : ""}
+              </td>
+              <td style="padding:6px"><span style="padding:1px 5px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">${altEsc(s.kind ?? "—")}</span></td>
+              <td style="padding:6px;color:var(--muted);font-size:10px">${altEsc(modelStr)}${providerStr ? ` <span style="color:var(--border)">·</span> ${altEsc(providerStr)}` : ""}</td>
+              <td style="padding:6px;text-align:right;color:var(--muted);font-size:10px">${altTokens(inTok)}</td>
+              <td style="padding:6px;text-align:right;font-size:10px">${altTokens(outTok)}</td>
+              <td style="padding:6px;text-align:right;font-weight:600;font-size:10px">${altTokens(total)}</td>
+              <td style="padding:6px;color:var(--muted);font-size:10px">${altRelTime(s.updatedAt)}</td>
+              <td style="padding:6px">
+                <select class="alt-sess-thinking" data-key="${altEsc(s.key)}" style="background:var(--bg);border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:1px 4px;font-size:9px;cursor:pointer" title="Thinking level">
+                  ${["", "low", "medium", "high"].map((v) => `<option value="${v}"${v === thinkLv ? " selected" : ""}>${v || "auto"}</option>`).join("")}
+                </select>
+              </td>
+              <td style="padding:6px;text-align:center"><span class="alt-session-del" data-key="${altEsc(s.key)}" style="color:var(--red);cursor:pointer;font-size:10px" title="Delete session">✕</span></td>
+            </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    ${totalCount > list.length ? `<div style="color:var(--muted);font-size:10px;padding:6px 0;text-align:center">Showing ${list.length} of ${totalCount} sessions</div>` : ""}`;
+
+    wireSessionFilters(body);
+  }
+
+  function wireSessionFilters(container: Element) {
+    container.querySelectorAll(".alt-sess-filter").forEach((el) => {
+      const handler = () => {
+        const field = (el as HTMLElement).dataset.field;
+        if (field === "active") sessFilterActive = (el as HTMLSelectElement).value;
+        else if (field === "sort") sessSortBy = (el as HTMLSelectElement).value as any;
+        else if (field === "limit")
+          sessFilterLimit = parseInt((el as HTMLInputElement).value, 10) || 50;
+        else if (field === "global") sessIncludeGlobal = (el as HTMLInputElement).checked;
+        else if (field === "unknown") sessIncludeUnknown = (el as HTMLInputElement).checked;
+        renderAltView("sessions");
+      };
+      el.addEventListener("change", handler);
+    });
+  }
+
+  // ═══════════════ USAGE ═══════════════
+  async function renderUsageTab(body: Element, sub: Element) {
+    const periodDays = { "1d": 1, "7d": 7, "30d": 30, "90d": 90 }[usagePeriod] ?? 7;
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(Date.now() - periodDays * 86_400_000).toISOString().slice(0, 10);
+    const [usage, cost] = await Promise.all([
+      req("sessions.usage", { startDate, endDate: today, includeContextWeight: true }).catch(
+        () => null,
+      ),
+      req("usage.cost", { startDate, endDate: today }).catch(() => null),
+    ]);
+    const usageData = usage as any;
+    const costData = cost as any;
+    const totals = usageData?.totals ?? {};
+    const sessionUsage: any[] = usageData?.sessions ?? [];
+    const dailyCost: any[] = costData?.daily ?? [];
+    const totalIn = totals.inputTokens ?? 0;
+    const totalOut = totals.outputTokens ?? 0;
+    const totalCost = costData?.totalCost != null ? Number(costData.totalCost) : null;
+    sub.textContent = `${startDate} → ${today} · ${altTokens(totalIn + totalOut)} tokens${totalCost != null ? ` · $${totalCost.toFixed(2)}` : ""}`;
+
+    // Insights: top model, provider, session
+    const modelMap: Record<string, number> = {};
+    const providerMap: Record<string, number> = {};
+    let topSession = { key: "", tokens: 0 };
+    for (const s of sessionUsage) {
+      const tok = (s.inputTokens ?? 0) + (s.outputTokens ?? 0);
+      if (s.model) modelMap[s.model] = (modelMap[s.model] ?? 0) + tok;
+      if (s.provider) providerMap[s.provider] = (providerMap[s.provider] ?? 0) + tok;
+      if (tok > topSession.tokens) topSession = { key: s.sessionKey ?? s.key ?? "?", tokens: tok };
+    }
+    const topModel = Object.entries(modelMap).sort((a, b) => b[1] - a[1])[0];
+    const topProvider = Object.entries(providerMap).sort((a, b) => b[1] - a[1])[0];
+
+    // Daily bar chart data
+    const maxDailyCost =
+      dailyCost.reduce((mx: number, d: any) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
+
+    // Period selector
+    const periodBar = `<div class="alt-card" style="display:flex;gap:6px;align-items:center;padding:8px 12px;flex-wrap:wrap">
+      <span style="font-size:10px;color:var(--muted)">Period:</span>
+      ${["1d", "7d", "30d", "90d"].map((p) => `<button class="alt-usage-period" data-period="${p}" style="background:${p === usagePeriod ? "var(--accent)" : "var(--surface2)"};color:${p === usagePeriod ? "var(--bg)" : "var(--muted)"};border:1px solid ${p === usagePeriod ? "var(--accent)" : "var(--border)"};border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer;font-weight:${p === usagePeriod ? "700" : "400"}">${p === "1d" ? "Today" : p}</button>`).join("")}
+      <span style="flex:1"></span>
+      <button class="alt-usage-export" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:3px 10px;font-size:10px;cursor:pointer">Export JSON</button>
+    </div>`;
+
+    body.innerHTML = `${periodBar}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+        <div class="alt-card"><h3>Tokens</h3>
+          ${altRow("Input", altTokens(totalIn))}
+          ${altRow("Output", altTokens(totalOut))}
+          ${altRow("Total", `<strong>${altTokens(totalIn + totalOut)}</strong>`)}
+          ${totals.contextTokens != null ? altRow("Context", altTokens(totals.contextTokens)) : ""}
+        </div>
+        <div class="alt-card"><h3>Cost</h3>
+          ${totalCost != null ? altRow("Total", `<strong>$${totalCost.toFixed(4)}</strong>`) : ""}
+          ${costData?.inputCost != null ? altRow("Input", `$${Number(costData.inputCost).toFixed(4)}`) : ""}
+          ${costData?.outputCost != null ? altRow("Output", `$${Number(costData.outputCost).toFixed(4)}`) : ""}
+          ${totalCost != null && periodDays > 1 ? altRow("Avg/day", `$${(totalCost / periodDays).toFixed(4)}`) : ""}
+          ${!costData ? altRow("Info", "Cost API not available") : ""}
+        </div>
+        <div class="alt-card"><h3>Insights</h3>
+          ${altRow("Sessions", String(sessionUsage.length))}
+          ${topModel ? altRow("Top model", `${altEsc(topModel[0])} (${altTokens(topModel[1])})`) : ""}
+          ${topProvider ? altRow("Top provider", `${altEsc(topProvider[0])} (${altTokens(topProvider[1])})`) : ""}
+          ${topSession.tokens > 0 ? altRow("Top session", `${altEsc(topSession.key.slice(0, 30))} (${altTokens(topSession.tokens)})`) : ""}
+        </div>
+        <div class="alt-card"><h3>Breakdown</h3>
+          ${
+            Object.entries(modelMap)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([m, t]) => altRow(altEsc(m), altTokens(t)))
+              .join("") || altRow("—", "No data")
+          }
+        </div>
+      </div>
+
+      ${
+        dailyCost.length
+          ? `<div class="alt-card"><h3>Daily Cost</h3>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          ${dailyCost
+            .map((d: any) => {
+              const c = Number(d.cost ?? 0);
+              const pct = maxDailyCost > 0 ? (c / maxDailyCost) * 100 : 0;
+              return `<div style="display:flex;align-items:center;gap:8px;font-size:10px">
+              <span style="width:70px;color:var(--muted);font-family:'SF Mono',monospace;flex-shrink:0">${altEsc(d.date ?? "?")}</span>
+              <div style="flex:1;height:14px;background:var(--bg);border-radius:2px;overflow:hidden;position:relative">
+                <div style="width:${pct.toFixed(1)}%;height:100%;background:linear-gradient(90deg,rgba(245,158,11,0.3),rgba(245,158,11,0.7));border-radius:2px;transition:width .3s"></div>
+              </div>
+              <span style="width:60px;text-align:right;color:var(--text);font-family:'SF Mono',monospace;flex-shrink:0">\$${c.toFixed(4)}</span>
+            </div>`;
+            })
+            .join("")}
+        </div>
+      </div>`
+          : ""
+      }
+
+      ${
+        sessionUsage.length
+          ? `<div class="alt-card"><h3>Session Usage (${sessionUsage.length})</h3>
+        <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:10px">
+          <thead><tr style="border-bottom:1px solid var(--border);color:var(--muted);text-align:left">
+            <th style="padding:4px 8px">Session</th>
+            <th style="padding:4px 6px">Model</th>
+            <th style="padding:4px 6px">Provider</th>
+            <th style="padding:4px 6px;text-align:right">Input</th>
+            <th style="padding:4px 6px;text-align:right">Output</th>
+            <th style="padding:4px 6px;text-align:right">Total</th>
+          </tr></thead>
+          <tbody>
+            ${sessionUsage
+              .sort(
+                (a: any, b: any) =>
+                  (b.inputTokens ?? 0) +
+                  (b.outputTokens ?? 0) -
+                  ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
+              )
+              .slice(0, 50)
+              .map((s: any) => {
+                const inT = s.inputTokens ?? 0;
+                const outT = s.outputTokens ?? 0;
+                return `<tr style="border-bottom:1px solid rgba(74,63,48,0.2)">
+                <td style="padding:4px 8px;color:var(--accent);font-family:'SF Mono',monospace;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${altEsc(s.sessionKey ?? s.key ?? "?")}</td>
+                <td style="padding:4px 6px;color:var(--muted)">${altEsc(s.model ?? "—")}</td>
+                <td style="padding:4px 6px;color:var(--muted)">${altEsc(s.provider ?? "—")}</td>
+                <td style="padding:4px 6px;text-align:right;color:var(--muted)">${altTokens(inT)}</td>
+                <td style="padding:4px 6px;text-align:right">${altTokens(outT)}</td>
+                <td style="padding:4px 6px;text-align:right;font-weight:600">${altTokens(inT + outT)}</td>
+              </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+        </div>
+        ${sessionUsage.length > 50 ? `<div style="color:var(--muted);font-size:10px;padding:4px 0;text-align:center">Showing top 50 of ${sessionUsage.length}</div>` : ""}
+      </div>`
+          : ""
+      }`;
+
+    // Wire period buttons
+    body.querySelectorAll(".alt-usage-period").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        usagePeriod = (btn as HTMLElement).dataset.period ?? "7d";
+        renderAltView("usage");
+      });
+    });
+    // Wire export
+    body.querySelector(".alt-usage-export")?.addEventListener("click", () => {
+      const blob = new Blob(
+        [
+          JSON.stringify(
+            {
+              period: usagePeriod,
+              startDate,
+              endDate: today,
+              totals,
+              dailyCost,
+              sessions: sessionUsage,
+            },
+            null,
+            2,
+          ),
+        ],
+        { type: "application/json" },
+      );
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `usage-${startDate}-${today}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  }
+
+  // ═══════════════ TAB STATE ═══════════════
+  let cronSelectedJobId: string | null = null;
+  let sessFilterActive = "all"; // 1h | 24h | 7d | 30d | all
+  let sessFilterLimit = 50;
+  let sessIncludeGlobal = true;
+  let sessIncludeUnknown = true;
+  let sessSortBy: "updated" | "tokens" | "key" = "updated";
+  let usagePeriod = "7d"; // 1d | 7d | 30d | 90d
+
+  async function renderCronTab(body: Element, sub: Element) {
+    const [status, jobsRes] = await Promise.all([
+      req("cron.status", {}).catch(() => null),
+      req("cron.list", { includeDisabled: true }).catch(() => null),
+    ]);
+    const st = status as any;
+    const jobs: any[] = (jobsRes as any)?.jobs ?? [];
+    const enabledCount = jobs.filter((j: any) => j.enabled).length;
+    sub.textContent = `${jobs.length} job(s) · ${enabledCount} enabled · ${st?.enabled ? "Cron active" : "Cron disabled"}`;
+
+    // Fetch runs for selected job or all
+    let runs: any[] = [];
+    let runsTotal = 0;
+    if (cronSelectedJobId || jobs.length) {
+      const runsRes = (await req("cron.runs", {
+        jobId: cronSelectedJobId ?? undefined,
+        limit: 20,
+      }).catch(() => null)) as any;
+      runs = runsRes?.runs ?? runsRes?.entries ?? [];
+      runsTotal = runsRes?.total ?? runs.length;
+    }
+
+    body.innerHTML = `
+      <div class="alt-card" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+        <div style="flex:1;min-width:100px">
+          <div style="font-size:10px;color:var(--muted)">Enabled</div>
+          <div style="font-size:14px;font-weight:700;color:${st?.enabled ? "var(--green)" : "var(--red)"}">${st?.enabled ? "Yes" : "No"}</div>
+        </div>
+        <div style="flex:1;min-width:80px">
+          <div style="font-size:10px;color:var(--muted)">Jobs</div>
+          <div style="font-size:14px;font-weight:700">${st?.jobs ?? jobs.length}</div>
+        </div>
+        <div style="flex:2;min-width:150px">
+          <div style="font-size:10px;color:var(--muted)">Next wake</div>
+          <div style="font-size:12px">${st?.nextWakeAtMs ? `${altRelTime(st.nextWakeAtMs)} <span style="color:var(--muted);font-size:10px">(${new Date(st.nextWakeAtMs).toLocaleString()})</span>` : "—"}</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <div class="alt-card"><h3>Jobs (${jobs.length})</h3>
+            ${jobs.length ? jobs.map((j: any) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:8px 0">No cron jobs configured</div>`}
+          </div>
+        </div>
+        <div>
+          <div class="alt-card"><h3>Run History${cronSelectedJobId ? ` — ${altEsc(jobs.find((j: any) => j.id === cronSelectedJobId)?.name ?? cronSelectedJobId)}` : " — All jobs"} <span style="color:var(--muted);font-size:10px">(${runsTotal})</span></h3>
+            <div style="margin-bottom:6px;display:flex;gap:4px">
+              <button class="alt-cron-scope" data-scope="all" style="background:${!cronSelectedJobId ? "var(--surface2)" : "transparent"};border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer">All jobs</button>
+            </div>
+            ${runs.length ? runs.map((r: any) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:8px 0">No runs recorded</div>`}
+          </div>
+        </div>
+      </div>`;
+
+    // Wire cron-specific event handlers within the body
+    body.querySelectorAll(".alt-cron-job-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        cronSelectedJobId = (card as HTMLElement).dataset.jobId ?? null;
+        renderAltView("cron");
+      });
+    });
+    body.querySelectorAll(".alt-cron-scope").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cronSelectedJobId = null;
+        renderAltView("cron");
+      });
+    });
+    body.querySelectorAll(".alt-cron-run-due").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = (btn as HTMLElement).dataset.id!;
+        req("cron.run", { id, mode: "due" }).catch(() => {});
+      });
+    });
+    body.querySelectorAll(".alt-cron-del").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = (btn as HTMLElement).dataset.id!;
+        const name = (btn as HTMLElement).dataset.name ?? id;
+        if (confirm(`Remove cron job "${name}"?`)) {
+          req("cron.remove", { id })
+            .then(() => renderAltView("cron"))
+            .catch(() => {});
+        }
+      });
+    });
+  }
+
+  function renderCronJob(j: any): string {
+    const state = j.state ?? {};
+    const lastStatus = state.lastStatus ?? j.lastStatus;
+    const statusCls =
+      lastStatus === "ok"
+        ? "green"
+        : lastStatus === "error"
+          ? "red"
+          : lastStatus === "skipped"
+            ? "yellow"
+            : "";
+    const statusLabel =
+      lastStatus === "ok"
+        ? "OK"
+        : lastStatus === "error"
+          ? "Error"
+          : lastStatus === "skipped"
+            ? "Skipped"
+            : "—";
+    const nextRunAtMs = state.nextRunAtMs;
+    const lastRunAtMs = state.lastRunAtMs;
+    const isSelected = j.id === cronSelectedJobId;
+    const payload = j.payload ?? {};
+    const payloadKind = payload.kind ?? "agentTurn";
+    const payloadText =
+      payloadKind === "systemEvent" ? (payload.text ?? "") : (payload.message ?? "");
+    const delivery = j.delivery;
+    const deliveryText = delivery
+      ? `${delivery.mode ?? ""}${delivery.channel ? ` → ${delivery.channel}` : ""}${delivery.to ? ` → ${delivery.to}` : ""}`
+      : "";
+
+    // Schedule display like upstream
+    let scheduleText = "";
+    if (j.scheduleKind === "at" || j.schedule?.startsWith?.("at:")) {
+      scheduleText = `At: ${j.scheduleAt ?? j.schedule ?? "?"}`;
+    } else if (j.scheduleKind === "cron") {
+      scheduleText = `Cron: ${j.cronExpr ?? j.schedule ?? j.cron ?? "?"}`;
+    } else {
+      scheduleText =
+        (j.schedule ?? j.cron ?? j.everyAmount)
+          ? `Every ${j.everyAmount ?? "?"}${j.everyUnit ?? "m"}`
+          : "?";
+    }
+
+    return `<div class="alt-cron-job-card" data-job-id="${altEsc(j.id)}" style="background:${isSelected ? "rgba(193,154,107,0.1)" : "var(--bg)"};border:1px solid ${isSelected ? "var(--accent)" : "var(--border)"};border-radius:4px;padding:8px 10px;margin-bottom:6px;cursor:pointer;transition:background .15s">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;font-weight:600;color:var(--accent)">${altEsc(j.name ?? j.id ?? "?")}</span>
+        <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:${j.enabled ? "rgba(107,142,35,0.2)" : "rgba(205,92,92,0.2)"};color:${j.enabled ? "var(--green)" : "var(--red)"}">${j.enabled ? "Enabled" : "Disabled"}</span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:3px;font-family:'SF Mono',monospace">${altEsc(scheduleText)}</div>
+      ${j.description ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${altEsc(j.description)}</div>` : ""}
+      ${payloadText ? `<div style="font-size:10px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%"><span style="color:var(--text);font-size:9px;text-transform:uppercase">${payloadKind === "systemEvent" ? "System" : "Prompt"}:</span> ${altEsc(payloadText.slice(0, 120))}</div>` : ""}
+      ${deliveryText ? `<div style="font-size:10px;color:var(--muted);margin-top:2px"><span style="font-size:9px;color:var(--text);text-transform:uppercase">Delivery:</span> ${altEsc(deliveryText)}</div>` : ""}
+      <div style="display:flex;gap:6px;margin-top:4px;font-size:10px;flex-wrap:wrap;align-items:center">
+        <span style="color:var(--muted)">Status: <span style="color:var(--${statusCls})">${statusLabel}</span></span>
+        <span style="color:var(--muted)">Next: ${nextRunAtMs ? altRelTime(nextRunAtMs) : "—"}</span>
+        <span style="color:var(--muted)">Last: ${lastRunAtMs ? altRelTime(lastRunAtMs) : "—"}</span>
+        ${j.agentId ? `<span style="color:var(--muted)">Agent: ${altEsc(j.agentId)}</span>` : ""}
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+        <span style="padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">${j.sessionTarget ?? "main"}</span>
+        <span style="padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">${j.wakeMode ?? "now"}</span>
+        <span class="alt-cron-toggle" data-id="${altEsc(j.id)}" data-enable="${!j.enabled}" style="cursor:pointer;padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--accent)">${j.enabled ? "Disable" : "Enable"}</span>
+        <span class="alt-cron-run" data-id="${altEsc(j.id)}" style="cursor:pointer;padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--accent)">▶ Run</span>
+        <span class="alt-cron-run-due" data-id="${altEsc(j.id)}" style="cursor:pointer;padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">Run if due</span>
+        <span class="alt-cron-del" data-id="${altEsc(j.id)}" data-name="${altEsc(j.name ?? "")}" style="cursor:pointer;padding:1px 6px;border-radius:3px;font-size:9px;background:rgba(239,68,68,0.1);color:var(--red)">Remove</span>
+      </div>
+    </div>`;
+  }
+
+  function renderCronRun(r: any): string {
+    const status = r.status ?? "unknown";
+    const statusCls =
+      status === "ok" ? "green" : status === "error" ? "red" : status === "skipped" ? "yellow" : "";
+    const statusLabel =
+      status === "ok"
+        ? "OK"
+        : status === "error"
+          ? "Error"
+          : status === "skipped"
+            ? "Skipped"
+            : "Unknown";
+    const deliveryStatus = r.deliveryStatus ?? "not-requested";
+    const deliveryLabel =
+      deliveryStatus === "delivered"
+        ? "Delivered"
+        : deliveryStatus === "not-delivered"
+          ? "Not delivered"
+          : deliveryStatus === "not-requested"
+            ? "Not requested"
+            : "Unknown";
+    const usage = r.usage;
+    const usageSummary =
+      usage && typeof usage.total_tokens === "number"
+        ? `${altTokens(usage.total_tokens)} tokens`
+        : usage && typeof usage.input_tokens === "number"
+          ? `${altTokens(usage.input_tokens)} in / ${altTokens(usage.output_tokens)} out`
+          : null;
+    return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;color:var(--text)">${altEsc(r.jobName ?? r.jobId ?? "?")}</span>
+        <span style="font-size:10px;color:var(--${statusCls})">${statusLabel}</span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${altEsc(r.summary ?? r.error ?? "No summary")}</div>
+      <div style="display:flex;gap:6px;margin-top:4px;font-size:10px;flex-wrap:wrap">
+        <span style="padding:1px 5px;border-radius:3px;background:var(--surface2);color:var(--muted)">${deliveryLabel}</span>
+        ${r.model ? `<span style="padding:1px 5px;border-radius:3px;background:var(--surface2);color:var(--muted)">${altEsc(r.model)}</span>` : ""}
+        ${r.provider ? `<span style="padding:1px 5px;border-radius:3px;background:var(--surface2);color:var(--muted)">${altEsc(r.provider)}</span>` : ""}
+        ${usageSummary ? `<span style="padding:1px 5px;border-radius:3px;background:var(--surface2);color:var(--muted)">${usageSummary}</span>` : ""}
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:9px;color:var(--muted)">
+        <span>${r.startedAt ? new Date(r.startedAt).toLocaleString() : r.ts ? new Date(r.ts).toLocaleString() : "—"}</span>
+        ${r.durationMs != null ? `<span>${altDuration(r.durationMs)}</span>` : ""}
+        ${r.sessionKey ? `<span data-session-key="${altEsc(r.sessionKey)}" style="cursor:pointer;color:var(--accent)">→ chat</span>` : ""}
+      </div>
+    </div>`;
+  }
+
+  // ═══════════════ AGENTS ═══════════════
+  async function renderAgentsTab(body: Element, sub: Element) {
+    const [agentsRes, toolsRes] = await Promise.all([
+      req("agents.list", {}).catch(() => null),
+      req("tools.catalog", { includePlugins: true }).catch(() => null),
+    ]);
+    const data = agentsRes as any;
+    const agents: any[] = data?.agents ?? [];
+    const defaultId = data?.defaultId ?? "";
+    const toolsCat = toolsRes as any;
+    const profiles: any[] = toolsCat?.profiles ?? [];
+    const groups: any[] = toolsCat?.groups ?? [];
+    const totalTools = profiles.reduce(
+      (s: number, p: any) => s + (p.toolCount ?? p.tools?.length ?? 0),
+      0,
+    );
+    sub.textContent = `${agents.length} agent(s) · ${totalTools} tools · ${profiles.length} profile(s)`;
+
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${agents
+          .map((a: any) => {
+            const isDefault = a.id === defaultId;
+            const fb: any[] = Array.isArray(a.fallbacks) ? a.fallbacks : [];
+            const channels: any[] = Array.isArray(a.channels) ? a.channels : [];
+            const skills: any[] = Array.isArray(a.skills) ? a.skills : [];
+            return `<div class="alt-card">
+            <h3 style="display:flex;align-items:center;gap:6px">
+              ${a.emoji ? `<span style="font-size:16px">${a.emoji}</span>` : ""}
+              ${altEsc(a.name ?? a.id ?? "?")}
+              ${isDefault ? '<span style="padding:1px 6px;border-radius:3px;font-size:9px;background:rgba(193,154,107,0.2);color:var(--accent)">default</span>' : ""}
+            </h3>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-family:'SF Mono',monospace">${altEsc(a.id ?? "")}</div>
+            ${a.description ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">${altEsc(a.description.slice(0, 200))}</div>` : ""}
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px">
+              ${a.model ? altRow("Model", altEsc(a.model)) : ""}
+              ${a.provider ? altRow("Provider", altEsc(a.provider)) : ""}
+              ${a.workspace ? altRow("Workspace", `<span style="font-family:'SF Mono',monospace;font-size:9px">${altEsc(a.workspace)}</span>`) : ""}
+              ${a.thinkingLevel ? altRow("Thinking", altEsc(a.thinkingLevel)) : ""}
+              ${a.toolProfile ? altRow("Tool profile", altEsc(a.toolProfile)) : ""}
+              ${a.sessionTarget ? altRow("Session", altEsc(a.sessionTarget)) : ""}
+            </div>
+            ${
+              fb.length
+                ? `<div style="margin-top:6px">
+              <div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">Fallback chain</div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap">${fb
+                .map((f: any, i: number) => {
+                  const label =
+                    typeof f === "string" ? f : `${f.model ?? "?"} (${f.provider ?? "?"})`;
+                  return `<span style="padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">${i + 1}. ${altEsc(label)}</span>`;
+                })
+                .join("")}</div>
+            </div>`
+                : ""
+            }
+            ${channels.length ? `<div style="margin-top:4px;font-size:10px;color:var(--muted)">Channels: ${channels.map((c: any) => altEsc(typeof c === "string" ? c : (c.id ?? c.name ?? "?"))).join(", ")}</div>` : ""}
+            ${skills.length ? `<div style="margin-top:2px;font-size:10px;color:var(--muted)">Skills: ${skills.length}</div>` : ""}
+          </div>`;
+          })
+          .join("")}
+      </div>
+
+      ${
+        profiles.length
+          ? `<div class="alt-card"><h3>Tool Profiles (${profiles.length})</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          ${profiles
+            .map((p: any) => {
+              const tools: any[] = p.tools ?? [];
+              const count = p.toolCount ?? tools.length;
+              return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;font-weight:600;color:var(--accent)">${altEsc(p.id ?? p.name ?? "?")}</span>
+                <span style="font-size:10px;color:var(--muted)">${count} tool(s)</span>
+              </div>
+              ${p.description ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${altEsc(p.description.slice(0, 100))}</div>` : ""}
+              ${
+                tools.length
+                  ? `<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap">${tools
+                      .slice(0, 12)
+                      .map(
+                        (t: any) =>
+                          `<span style="padding:1px 4px;border-radius:2px;font-size:8px;background:var(--surface2);color:var(--muted)">${altEsc(typeof t === "string" ? t : (t.name ?? t.id ?? "?"))}</span>`,
+                      )
+                      .join(
+                        "",
+                      )}${tools.length > 12 ? `<span style="font-size:8px;color:var(--muted)">+${tools.length - 12}</span>` : ""}</div>`
+                  : ""
+              }
+            </div>`;
+            })
+            .join("")}
+        </div>
+      </div>`
+          : ""
+      }
+
+      ${
+        groups.length
+          ? `<div class="alt-card"><h3>Tool Groups (${groups.length})</h3>
+        ${groups
+          .map((g: any) => {
+            const tools: any[] = g.tools ?? [];
+            return `<div class="row" style="flex-wrap:wrap">
+            <span class="label" style="font-weight:600">${altEsc(g.id ?? g.name ?? "?")}</span>
+            <span class="value">${tools.length} tool(s)${g.description ? ` — ${altEsc(g.description.slice(0, 80))}` : ""}</span>
+          </div>`;
+          })
+          .join("")}
+      </div>`
+          : ""
+      }`;
+  }
+
+  // ═══════════════ SKILLS ═══════════════
+  async function renderSkillsTab(body: Element, sub: Element) {
+    const res = await req("skills.status", {}).catch(() => null);
+    const data = res as any;
+    const skills: any[] = data?.skills ?? [];
+    const enabledCount = skills.filter((s: any) => s.enabled !== false).length;
+    const issueCount = skills.filter(
+      (s: any) => s.missingBinaries?.length || s.unavailableReason,
+    ).length;
+    sub.textContent = `${skills.length} skill(s) · ${enabledCount} enabled${issueCount ? ` · ${issueCount} with issues` : ""}`;
+    if (!skills.length) {
+      body.innerHTML = `<div class="alt-placeholder"><span>No skills registered</span></div>`;
+      return;
+    }
+    const grouped: Record<string, any[]> = {};
+    for (const s of skills) {
+      const group = s.source ?? s.group ?? "other";
+      (grouped[group] ??= []).push(s);
+    }
+    body.innerHTML = Object.entries(grouped)
+      .map(
+        ([group, items]) => `
+      <div class="alt-card">
+        <h3 style="display:flex;justify-content:space-between;align-items:center">${altEsc(group)}
+          <span style="font-size:10px;font-weight:400;color:var(--muted)">${items.filter((s: any) => s.enabled !== false).length}/${items.length} enabled</span>
+        </h3>
+        ${items
+          .map((s: any) => {
+            const enabled = s.enabled !== false;
+            const missingBins: string[] = s.missingBinaries ?? [];
+            const unavail = s.unavailableReason;
+            const hasIssue = missingBins.length > 0 || !!unavail;
+            const version = s.version ?? s.skillVersion;
+            const author = s.author ?? s.publishedBy;
+            return `<div style="background:var(--bg);border:1px solid ${hasIssue ? "rgba(239,68,68,0.3)" : "var(--border)"};border-radius:4px;padding:6px 10px;margin-bottom:4px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11px;font-weight:600;color:${hasIssue ? "var(--yellow)" : "var(--text)"}">
+                ${s.emoji ? s.emoji + " " : ""}${altEsc(s.name ?? s.key ?? "?")}
+                ${version ? `<span style="font-size:9px;color:var(--muted);font-weight:400;margin-left:4px">v${altEsc(version)}</span>` : ""}
+              </span>
+              <span style="display:flex;align-items:center;gap:6px">
+                ${hasIssue ? `<span style="padding:1px 5px;border-radius:3px;font-size:9px;background:rgba(239,68,68,0.1);color:var(--red)">!</span>` : ""}
+                <span class="alt-skill-toggle" data-key="${altEsc(s.key ?? s.name)}" data-enable="${!enabled}" style="cursor:pointer;padding:2px 8px;border-radius:4px;font-size:10px;background:${enabled ? "rgba(107,142,35,0.2)" : "rgba(205,92,92,0.2)"};color:${enabled ? "var(--green)" : "var(--red)"}">${enabled ? "Enabled" : "Disabled"}</span>
+              </span>
+            </div>
+            ${s.description ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${altEsc(s.description.slice(0, 160))}</div>` : ""}
+            ${author ? `<div style="font-size:9px;color:var(--muted);margin-top:2px">by ${altEsc(author)}</div>` : ""}
+            ${missingBins.length ? `<div style="margin-top:4px;font-size:9px;color:var(--red)">Missing: ${missingBins.map((b: string) => `<code style="background:rgba(239,68,68,0.1);padding:0 3px;border-radius:2px">${altEsc(b)}</code>`).join(", ")}</div>` : ""}
+            ${unavail ? `<div style="margin-top:3px;font-size:9px;color:var(--red)">${altEsc(unavail)}</div>` : ""}
+            ${s.apiKeyRequired ? `<div style="margin-top:3px;font-size:9px;color:var(--yellow)">Requires API key${s.apiKeyConfigured ? " (configured)" : " (not set)"}</div>` : ""}
+          </div>`;
+          })
+          .join("")}
+      </div>`,
+      )
+      .join("");
+  }
+
+  // ═══════════════ NODES ═══════════════
+  async function renderNodesTab(body: Element, sub: Element) {
+    const [nodesRes, devicesRes] = await Promise.all([
+      req("node.list", {}).catch(() => null),
+      req("device.pair.list", {}).catch(() => null),
+    ]);
+    const nodes: any[] = (nodesRes as any)?.nodes ?? [];
+    const pending: any[] = (devicesRes as any)?.pending ?? [];
+    const paired: any[] = (devicesRes as any)?.paired ?? [];
+    const onlineNodes = nodes.filter((n: any) => n.connected !== false && n.status !== "offline");
+    sub.textContent = `${nodes.length} node(s) · ${onlineNodes.length} online · ${paired.length} device(s) · ${pending.length} pending`;
+
+    body.innerHTML = `
+      ${
+        pending.length
+          ? `<div class="alt-card" style="border-color:var(--yellow)"><h3>Pending Device Requests (${pending.length})</h3>
+        ${pending
+          .map(
+            (
+              d: any,
+            ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11px;font-weight:600;color:var(--yellow)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
+            <span style="display:flex;gap:4px">
+              <button class="alt-device-approve" data-request-id="${altEsc(d.requestId)}" style="background:var(--green);color:#fff;border:none;border-radius:3px;padding:2px 10px;font-size:10px;cursor:pointer">Approve</button>
+              <button class="alt-device-reject" data-request-id="${altEsc(d.requestId)}" style="background:var(--red);color:#fff;border:none;border-radius:3px;padding:2px 10px;font-size:10px;cursor:pointer">Reject</button>
+            </span>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:var(--muted);flex-wrap:wrap">
+            ${d.remoteIp ? `<span>IP: ${altEsc(d.remoteIp)}</span>` : ""}
+            ${d.userAgent ? `<span>UA: ${altEsc(d.userAgent.slice(0, 60))}</span>` : ""}
+            ${d.requestedAt ? `<span>Requested: ${altRelTime(d.requestedAt)}</span>` : ""}
+            ${d.roles?.length ? `<span>Roles: ${d.roles.join(", ")}</span>` : ""}
+          </div>
+        </div>`,
+          )
+          .join("")}
+      </div>`
+          : ""
+      }
+
+      ${
+        paired.length
+          ? `<div class="alt-card"><h3>Paired Devices (${paired.length})</h3>
+        ${paired
+          .map(
+            (
+              d: any,
+            ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 10px;margin-bottom:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11px;font-weight:600;color:var(--accent)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
+            <span style="font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(107,142,35,0.2);color:var(--green)">Paired</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:4px;font-size:10px;color:var(--muted);flex-wrap:wrap">
+            ${d.roles?.length ? `<span>Roles: ${d.roles.join(", ")}</span>` : ""}
+            <span>Since: ${altRelTime(d.approvedAtMs ?? d.createdAtMs)}</span>
+            ${d.lastSeenAt ? `<span>Last seen: ${altRelTime(d.lastSeenAt)}</span>` : ""}
+            ${d.tokenId ? `<span style="font-family:'SF Mono',monospace;font-size:9px">Token: ${altEsc(d.tokenId.slice(0, 12))}…</span>` : ""}
+          </div>
+        </div>`,
+          )
+          .join("")}
+      </div>`
+          : ""
+      }
+
+      ${
+        nodes.length
+          ? `<div class="alt-card"><h3>Exec Nodes (${nodes.length})</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          ${nodes
+            .map((n: any) => {
+              const online = n.connected !== false && n.status !== "offline";
+              const caps: string[] = n.capabilities ?? [];
+              return `<div style="background:var(--bg);border:1px solid ${online ? "var(--border)" : "rgba(239,68,68,0.3)"};border-radius:4px;padding:6px 10px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;font-weight:600;color:var(--text)">${altEsc(n.id ?? n.nodeId ?? "?")}</span>
+                <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${online ? "rgba(107,142,35,0.2)" : "rgba(239,68,68,0.2)"};color:${online ? "var(--green)" : "var(--red)"}">${online ? "Online" : "Offline"}</span>
+              </div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px">
+                ${(n.host ?? n.ip) ? `${altEsc(n.host ?? n.ip)}` : ""}
+                ${n.version ? ` · v${altEsc(n.version)}` : ""}
+                ${n.platform ? ` · ${altEsc(n.platform)}` : ""}
+              </div>
+              ${caps.length ? `<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap">${caps.map((c: string) => `<span style="padding:1px 5px;border-radius:2px;font-size:8px;background:var(--surface2);color:var(--muted)">${altEsc(c)}</span>`).join("")}</div>` : ""}
+              ${n.lastPingAt ? `<div style="font-size:9px;color:var(--muted);margin-top:3px">Last ping: ${altRelTime(n.lastPingAt)}</div>` : ""}
+            </div>`;
+            })
+            .join("")}
+        </div>
+      </div>`
+          : `<div class="alt-placeholder"><span>No exec nodes connected</span></div>`
+      }`;
+
+    // Wire device approve/reject buttons (delegated, no inline onclick)
+    body.querySelectorAll(".alt-device-approve").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await req("device.pair.approve", {
+          requestId: (btn as HTMLElement).dataset.requestId!,
+        }).catch(() => {});
+        renderAltView("nodes");
+      });
+    });
+    body.querySelectorAll(".alt-device-reject").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await req("device.pair.reject", {
+          requestId: (btn as HTMLElement).dataset.requestId!,
+        }).catch(() => {});
+        renderAltView("nodes");
+      });
+    });
+  }
+
+  // ═══════════════ CONFIG ═══════════════
+  async function renderConfigTab(body: Element, sub: Element) {
+    const [configRes, schemaRes, modelsRes] = await Promise.all([
+      req("config.get", {}).catch(() => null),
+      req("config.schema", {}).catch(() => null),
+      req("models.list", {}).catch(() => null),
+    ]);
+    const cfg = configRes as any;
+    const schema = schemaRes as any;
+    const models: any[] = (modelsRes as any)?.models ?? [];
+    const valid = cfg?.valid !== false;
+    const issues: any[] = cfg?.issues ?? [];
+    const configObj =
+      cfg?.config ?? cfg?.parsed ?? (typeof cfg?.raw === "string" ? null : cfg?.raw) ?? {};
+    const sections = Object.keys(configObj).filter(
+      (k) => typeof configObj[k] === "object" && configObj[k] !== null,
+    );
+    sub.textContent = `${valid ? "Valid" : "INVALID"} · ${models.length} model(s) · ${sections.length} section(s)${schema?.version ? ` · schema v${schema.version}` : ""}`;
+
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <div class="alt-card"><h3>Status</h3>
+          ${altRow("Valid", valid ? "Yes" : "No", valid ? "green" : "red")}
+          ${altRow("Path", `<span style="font-family:'SF Mono',monospace;font-size:9px">${altEsc(cfg?.path ?? "—")}</span>`)}
+          ${altRow("Hash", `<span style="font-family:'SF Mono',monospace;font-size:9px">${altEsc(cfg?.hash?.slice(0, 16) ?? "—")}</span>`)}
+          ${schema?.version ? altRow("Schema", `v${altEsc(schema.version)}`) : ""}
+          ${altRow("Sections", String(sections.length))}
+          ${issues.length ? altRow("Issues", `${issues.length}`, "yellow") : ""}
+        </div>
+        <div class="alt-card"><h3>Models (${models.length})</h3>
+          ${
+            models.length
+              ? models
+                  .map((m: any) => {
+                    const name = typeof m === "string" ? m : (m.id ?? m.name ?? m.model ?? "?");
+                    const provider = typeof m === "object" ? (m.provider ?? "") : "";
+                    return `<div class="row">
+              <span class="label">${altEsc(name)}</span>
+              <span class="value green">${provider ? altEsc(provider) : "configured"}</span>
+            </div>`;
+                  })
+                  .join("")
+              : altRow("—", "No models")
+          }
+        </div>
+        <div class="alt-card"><h3>Actions</h3>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="alt-config-action" data-action="apply" style="background:var(--accent);color:var(--bg);border:none;border-radius:4px;padding:6px 12px;font-size:11px;cursor:pointer;text-align:left">Apply Config <span style="font-size:9px;opacity:.7">— reload without restart</span></button>
+            <button class="alt-config-action" data-action="export" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:6px 12px;font-size:11px;cursor:pointer;text-align:left">Export JSON</button>
+          </div>
+        </div>
+      </div>
+
+      ${
+        issues.length
+          ? `<div class="alt-card" style="border-color:var(--yellow)"><h3>Validation Issues (${issues.length})</h3>
+        ${issues
+          .map((i: any) => {
+            const msg = typeof i === "string" ? i : (i.message ?? "");
+            const path = typeof i === "object" ? (i.path ?? i.schemaPath ?? "") : "";
+            return `<div style="background:rgba(245,158,11,0.05);border:1px solid rgba(245,158,11,0.2);border-radius:4px;padding:4px 8px;margin-bottom:3px;font-size:10px">
+            <span style="color:var(--yellow)">${altEsc(msg || JSON.stringify(i))}</span>
+            ${path ? `<span style="color:var(--muted);font-family:'SF Mono',monospace;font-size:9px;margin-left:6px">${altEsc(path)}</span>` : ""}
+          </div>`;
+          })
+          .join("")}
+      </div>`
+          : ""
+      }
+
+      ${
+        sections.length
+          ? `<div class="alt-card"><h3>Sections</h3>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+          ${sections.map((s) => `<button class="alt-config-section" data-section="${altEsc(s)}" style="background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:3px;padding:3px 8px;font-size:10px;cursor:pointer">${altEsc(s)}</button>`).join("")}
+        </div>
+        <div id="alt-config-section-view"></div>
+      </div>`
+          : ""
+      }
+
+      <div class="alt-card"><h3>Full Config</h3>
+        <pre id="alt-config-raw" style="white-space:pre-wrap;word-break:break-all;font-size:10px;color:var(--muted);max-height:500px;overflow-y:auto;margin:0;line-height:1.5">${altEsc(JSON.stringify(configObj, null, 2))}</pre>
+      </div>`;
+
+    // Wire section buttons
+    body.querySelectorAll(".alt-config-section").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = (btn as HTMLElement).dataset.section!;
+        const view = document.getElementById("alt-config-section-view");
+        if (!view) return;
+        const sectionData = configObj[key];
+        view.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px">
+          <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">${altEsc(key)}</div>
+          <pre style="white-space:pre-wrap;word-break:break-all;font-size:10px;color:var(--text);margin:0;max-height:300px;overflow-y:auto">${altEsc(JSON.stringify(sectionData, null, 2))}</pre>
+        </div>`;
+        // Highlight active section button
+        body.querySelectorAll(".alt-config-section").forEach((b) => {
+          (b as HTMLElement).style.background =
+            (b as HTMLElement).dataset.section === key ? "var(--accent)" : "var(--surface2)";
+          (b as HTMLElement).style.color =
+            (b as HTMLElement).dataset.section === key ? "var(--bg)" : "var(--accent)";
+        });
+      });
+    });
+    // Wire action buttons
+    body.querySelectorAll(".alt-config-action").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const action = (btn as HTMLElement).dataset.action;
+        if (action === "apply") {
+          try {
+            await req("config.apply", {});
+            (btn as HTMLElement).textContent = "Applied!";
+            setTimeout(() => renderAltView("config"), 1500);
+          } catch (e) {
+            (btn as HTMLElement).textContent = `Error: ${(e as Error).message}`;
+          }
+        } else if (action === "export") {
+          const blob = new Blob([JSON.stringify(configObj, null, 2)], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `openclaw-config-${new Date().toISOString().slice(0, 10)}.json`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }
+      });
+    });
+  }
+
+  // ═══════════════ DEBUG ═══════════════
+  const debugRpcHistory: {
+    method: string;
+    params: any;
+    result: any;
+    ts: number;
+    error?: string;
+  }[] = [];
+
+  async function renderDebugTab(body: Element, sub: Element) {
+    const [status, health, heartbeat, modelsRes] = await Promise.all([
+      req("status", {}).catch(() => null),
+      req("health", {}).catch(() => null),
+      req("last-heartbeat", {}).catch(() => null),
+      req("models.list", {}).catch(() => null),
+    ]);
+    sub.textContent = `Snapshots & RPC console · ${debugRpcHistory.length} call(s) in history`;
+    (window as any).__tinkerReq = req;
+
+    // Quick-call presets
+    const presets = [
+      "status",
+      "health",
+      "channels.status",
+      "sessions.list",
+      "cron.status",
+      "agents.list",
+      "skills.status",
+      "models.list",
+      "logs.tail",
+      "last-heartbeat",
+      "usage.cost",
+      "config.get",
+    ];
+
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <div class="alt-card"><h3>Local State</h3>
+            ${altRow("WebSocket", connected ? "Connected" : "Disconnected", connected ? "green" : "red")}
+            ${altRow("Gateway", altEsc(GW_WS || "—"))}
+            ${altRow("Session key", `<span style="font-family:'SF Mono',monospace;font-size:9px">${altEsc(sessionKey || "—")}</span>`)}
+            ${altRow("Messages loaded", String(messages.length))}
+            ${altRow("Active runs", String(activeRuns.size))}
+            ${altRow("Stream active", streamRunId ? `Yes (${altEsc(streamRunId.slice(0, 12))})` : "No", streamRunId ? "green" : "")}
+            ${altRow("Active tab", activeTab)}
+          </div>
+          <div class="alt-card" style="max-height:280px;overflow-y:auto"><h3>Status</h3>${altJson(status)}</div>
+          <div class="alt-card" style="max-height:280px;overflow-y:auto"><h3>Health</h3>${altJson(health)}</div>
+          <div class="alt-card" style="max-height:200px;overflow-y:auto"><h3>Last Heartbeat</h3>${altJson(heartbeat)}</div>
+          <div class="alt-card" style="max-height:200px;overflow-y:auto"><h3>Models</h3>${altJson(modelsRes)}</div>
+        </div>
+        <div>
+          <div class="alt-card"><h3>RPC Console</h3>
+            <div style="margin-bottom:6px;display:flex;gap:3px;flex-wrap:wrap">
+              ${presets.map((p) => `<button class="alt-debug-preset" data-method="${p}" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:1px 6px;font-size:9px;cursor:pointer">${p}</button>`).join("")}
+            </div>
+            <div style="margin-bottom:6px">
+              <input id="alt-debug-method" type="text" placeholder="method (e.g. status)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:11px;font-family:'SF Mono',monospace">
+            </div>
+            <div style="margin-bottom:6px">
+              <textarea id="alt-debug-params" rows="3" placeholder='{"key": "value"}' style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:11px;font-family:'SF Mono',monospace;resize:vertical"></textarea>
+            </div>
+            <button id="alt-debug-call" style="background:var(--accent);color:var(--bg);border:none;border-radius:4px;padding:4px 14px;font-size:11px;cursor:pointer">Call</button>
+            <button id="alt-debug-clear-history" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:4px 14px;font-size:11px;cursor:pointer;margin-left:6px">Clear history</button>
+          </div>
+          <div class="alt-card"><h3>Result</h3><div id="alt-debug-result" style="max-height:300px;overflow-y:auto"><span class="muted">—</span></div></div>
+          ${
+            debugRpcHistory.length
+              ? `<div class="alt-card"><h3>RPC History (${debugRpcHistory.length})</h3>
+            <div style="max-height:250px;overflow-y:auto">
+              ${debugRpcHistory
+                .slice()
+                .reverse()
+                .map(
+                  (
+                    h,
+                    i,
+                  ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:3px;padding:4px 8px;margin-bottom:3px;font-size:10px;cursor:pointer" class="alt-debug-history-item" data-idx="${debugRpcHistory.length - 1 - i}">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--accent);font-family:'SF Mono',monospace">${altEsc(h.method)}</span>
+                  <span style="color:${h.error ? "var(--red)" : "var(--green)"};font-size:9px">${h.error ? "ERR" : "OK"} · ${altRelTime(h.ts)}</span>
+                </div>
+              </div>`,
+                )
+                .join("")}
+            </div>
+          </div>`
+              : ""
+          }
+        </div>
+      </div>`;
+
+    // Wire preset buttons
+    body.querySelectorAll(".alt-debug-preset").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const methodInput = document.getElementById("alt-debug-method") as HTMLInputElement;
+        if (methodInput) methodInput.value = (btn as HTMLElement).dataset.method ?? "";
+      });
+    });
+    // Wire history items to replay
+    body.querySelectorAll(".alt-debug-history-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        const idx = parseInt((el as HTMLElement).dataset.idx ?? "0", 10);
+        const entry = debugRpcHistory[idx];
+        if (!entry) return;
+        const methodInput = document.getElementById("alt-debug-method") as HTMLInputElement;
+        const paramsInput = document.getElementById("alt-debug-params") as HTMLTextAreaElement;
+        const resultEl = document.getElementById("alt-debug-result");
+        if (methodInput) methodInput.value = entry.method;
+        if (paramsInput) paramsInput.value = JSON.stringify(entry.params, null, 2);
+        if (resultEl)
+          resultEl.innerHTML = entry.error
+            ? `<span style="color:var(--red)">${altEsc(entry.error)}</span>`
+            : altJson(entry.result);
+      });
+    });
+    // Wire clear history
+    document.getElementById("alt-debug-clear-history")?.addEventListener("click", () => {
+      debugRpcHistory.length = 0;
+      renderAltView("debug");
+    });
+  }
+
+  // ═══════════════ LOGS ═══════════════
+  let logsLineCount = 0;
+
+  async function renderLogsTab(body: Element, sub: Element) {
+    sub.textContent = "Live gateway logs";
+    logsCursor = undefined;
+    logsLineCount = 0;
+    body.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <input id="alt-logs-filter" type="text" placeholder="Filter text…" value="${altEsc(logsFilterText)}" style="flex:1;min-width:120px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:11px">
+        ${["trace", "debug", "info", "warn", "error", "fatal"]
+          .map(
+            (lv) =>
+              `<span data-level="${lv}" style="cursor:pointer;padding:2px 6px;border-radius:3px;font-size:10px;background:${logsLevelFilters.has(lv) ? "var(--surface2)" : "transparent"};color:${lv === "error" || lv === "fatal" ? "var(--red)" : lv === "warn" ? "var(--yellow)" : "var(--muted)"};border:1px solid var(--border)">${lv}</span>`,
+          )
+          .join("")}
+        <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">
+          <input type="checkbox" id="alt-logs-follow" ${logsAutoFollow ? "checked" : ""}> Auto-follow
+        </label>
+        <button id="alt-logs-export" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Export</button>
+        <button id="alt-logs-clear" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Clear</button>
+        <span id="alt-logs-count" style="font-size:9px;color:var(--muted)">0 lines</span>
+      </div>
+      <div id="alt-logs-stream" class="alt-card" style="font-family:'SF Mono',monospace;font-size:10px;max-height:calc(100vh - 200px);overflow-y:auto;padding:6px 10px;line-height:1.6">
+        <span class="muted">Loading logs…</span>
+      </div>`;
+    // Wire filter controls
+    const filterInput = document.getElementById("alt-logs-filter") as HTMLInputElement;
+    filterInput?.addEventListener("input", () => {
+      logsFilterText = filterInput.value;
+    });
+    const followCheck = document.getElementById("alt-logs-follow") as HTMLInputElement;
+    followCheck?.addEventListener("change", () => {
+      logsAutoFollow = followCheck.checked;
+    });
+    // Level filter toggles
+    body.querySelectorAll("[data-level]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const lv = (el as HTMLElement).dataset.level!;
+        if (logsLevelFilters.has(lv)) logsLevelFilters.delete(lv);
+        else logsLevelFilters.add(lv);
+        (el as HTMLElement).style.background = logsLevelFilters.has(lv)
+          ? "var(--surface2)"
+          : "transparent";
+      });
+    });
+    // Export logs
+    document.getElementById("alt-logs-export")?.addEventListener("click", () => {
+      const stream = document.getElementById("alt-logs-stream");
+      if (!stream) return;
+      const text = stream.innerText;
+      const blob = new Blob([text], { type: "text/plain" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `openclaw-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    // Clear logs
+    document.getElementById("alt-logs-clear")?.addEventListener("click", () => {
+      const stream = document.getElementById("alt-logs-stream");
+      if (stream) {
+        stream.innerHTML = `<span class="muted">Cleared. Waiting for new logs…</span>`;
+        logsLineCount = 0;
+      }
+      const counter = document.getElementById("alt-logs-count");
+      if (counter) counter.textContent = "0 lines";
+    });
+    // Initial fetch + polling
+    await fetchLogs();
+    logsInterval = setInterval(fetchLogs, 3000);
+  }
+
+  async function fetchLogs() {
+    const stream = document.getElementById("alt-logs-stream");
+    if (!stream || activeTab !== "logs") {
+      if (logsInterval) {
+        clearInterval(logsInterval);
+        logsInterval = null;
+      }
+      return;
+    }
+    const res = (await req("logs.tail", { cursor: logsCursor, limit: 200, maxBytes: 64_000 }).catch(
+      () => null,
+    )) as any;
+    if (!res?.lines?.length) {
+      if (!logsCursor) stream.innerHTML = `<span class="muted">No logs available</span>`;
+      return;
+    }
+    logsCursor = res.cursor;
+    const filtered = res.lines.filter((line: string) => {
+      if (logsFilterText && !line.toLowerCase().includes(logsFilterText.toLowerCase()))
+        return false;
+      const lvMatch = line.match(/\b(trace|debug|info|warn|error|fatal)\b/i);
+      if (lvMatch && !logsLevelFilters.has(lvMatch[1].toLowerCase())) return false;
+      return true;
+    });
+    if (!filtered.length) return;
+    const levelColors: Record<string, string> = {
+      error: "var(--red)",
+      fatal: "var(--red)",
+      warn: "var(--yellow)",
+      info: "var(--green)",
+      debug: "var(--muted)",
+      trace: "var(--muted)",
+    };
+    // Structured log parsing: try to extract time, level, subsystem, message
+    const html = filtered
+      .map((line: string) => {
+        const lvMatch = line.match(/\b(trace|debug|info|warn|error|fatal)\b/i);
+        const color = lvMatch
+          ? (levelColors[lvMatch[1].toLowerCase()] ?? "var(--text)")
+          : "var(--text)";
+        // Try structured parse: [TIME] LEVEL [SUBSYS] message
+        const structured = line.match(
+          /^\[?(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]?\s+(trace|debug|info|warn|error|fatal)\s+\[([^\]]+)\]\s+(.*)/i,
+        );
+        if (structured) {
+          const [, time, lv, sys, msg] = structured;
+          const lvColor = levelColors[lv.toLowerCase()] ?? color;
+          return `<div style="display:flex;gap:8px"><span style="color:var(--muted);flex-shrink:0;width:70px">${altEsc(time)}</span><span style="color:${lvColor};flex-shrink:0;width:40px;text-transform:uppercase;font-size:9px">${altEsc(lv)}</span><span style="color:var(--accent);flex-shrink:0;width:90px;overflow:hidden;text-overflow:ellipsis">${altEsc(sys)}</span><span style="color:${color};flex:1">${altEsc(msg)}</span></div>`;
+        }
+        return `<div style="color:${color}">${altEsc(line)}</div>`;
+      })
+      .join("");
+    logsLineCount += filtered.length;
+    const isFirstLoad =
+      stream.innerHTML.includes("Loading logs") ||
+      stream.innerHTML.includes("No logs") ||
+      stream.innerHTML.includes("Cleared");
+    if (isFirstLoad) {
+      stream.innerHTML = html;
+    } else {
+      stream.insertAdjacentHTML("beforeend", html);
+      // Cap DOM nodes to prevent memory leak
+      while (stream.children.length > 2000) stream.removeChild(stream.firstChild!);
+    }
+    // Update line counter
+    const counter = document.getElementById("alt-logs-count");
+    if (counter) counter.textContent = `${logsLineCount} lines`;
+    if (logsAutoFollow) stream.scrollTop = stream.scrollHeight;
+  }
+
+  // Delegated click handler for sidebar nav buttons
+  document.querySelector(".sidebar")!.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest(".nav-btn[data-tab]") as HTMLElement | null;
+    if (!btn) return;
+    const tab = btn.dataset.tab!;
+    switchTab(tab);
   });
 
   $("new-session-btn")!.addEventListener("click", async () => {
