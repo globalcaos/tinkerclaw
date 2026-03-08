@@ -68,8 +68,6 @@ interface BufferEntry {
   event: AnatomyEvent;
   runId?: string;
   groupId: string;
-  placeholder?: "pending" | "active" | "failed";
-  failReason?: string;
 }
 
 interface TimelineController {
@@ -77,10 +75,6 @@ interface TimelineController {
   loadSession(sessionKey: string): void;
   clear(): void;
   getSelected(): AnatomyEvent | null;
-  pushPlaceholder(turn: number): void;
-  activatePlaceholder(runId: string, model: string, provider: string): void;
-  failPlaceholder(runId: string, reason: string): void;
-  replacePlaceholders(turn: number, realEvents: AnatomyEvent[]): void;
   setFilterMode(mode: "session" | "all"): void;
   getFilterMode(): "session" | "all";
   loadAllSessions(sessionKeys: string[]): void;
@@ -110,7 +104,6 @@ export function mountContextTimeline(
   getGatewayBase: () => string,
   providerIcons?: Record<string, string>,
   onGroupLineClick?: (groupIndex: number, firstEvent: AnatomyEvent) => void,
-  providerColors?: Record<string, string>,
   onFilterModeChange?: (mode: "session" | "all") => void,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
@@ -127,21 +120,11 @@ export function mountContextTimeline(
     const ev = entry.event;
     const tip = document.createElement("div");
     tip.className = "ct-tooltip";
-    if (entry.placeholder === "pending") {
-      tip.textContent = "Sending prompt...";
-    } else if (entry.placeholder === "active") {
-      const model = cleanModelName(ev.model ?? "unknown");
-      tip.textContent = `${model} — processing...`;
-    } else if (entry.placeholder === "failed") {
-      const model = cleanModelName(ev.model ?? "unknown");
-      tip.textContent = `${model} — ${entry.failReason || "failed"}`;
-    } else {
-      const model = cleanModelName(ev.model ?? "unknown");
-      const total = totalTokensFor(ev);
-      const max = maxTokensFor(ev);
-      const util = max > 0 ? (total / max) * 100 : 0;
-      tip.textContent = `${model} · ${fmtK(total)} tokens (${util.toFixed(1)}%)`;
-    }
+    const model = cleanModelName(ev.model ?? "unknown");
+    const total = totalTokensFor(ev);
+    const max = maxTokensFor(ev);
+    const util = max > 0 ? (total / max) * 100 : 0;
+    tip.textContent = `${model} · ${fmtK(total)} tokens (${util.toFixed(1)}%)`;
     tip.style.left = `${x + 10}px`;
     tip.style.top = `${y - 28}px`;
     document.body.appendChild(tip);
@@ -414,8 +397,6 @@ export function mountContextTimeline(
       const ev = entry.event;
       const total = totalTokensFor(ev);
       const max = maxTokensFor(ev);
-      const isPlaceholder = !!entry.placeholder;
-      const isFailed = entry.placeholder === "failed";
 
       // Column wrapper: icon + bar-area + timestamp
       const col = document.createElement("div");
@@ -443,62 +424,36 @@ export function mountContextTimeline(
       if (modelShort) {
         iconEl.title = `${provider}/${cleanModelName(ev.model ?? "")}`;
       }
-      if (isFailed) {
-        const badge = document.createElement("span");
-        badge.className = "ct-fail-badge";
-        badge.textContent = "\u2717";
-        iconEl.appendChild(badge);
-        iconEl.title = entry.failReason || "Failed";
-      }
       barArea.appendChild(iconEl);
 
       // Bar: scaled to usedTokens / globalMax, grows from bottom
-      const barHeight = isPlaceholder
-        ? maxBarHeight
-        : Math.max(4, (total / globalMax) * maxBarHeight);
+      const barHeight = Math.max(4, (total / globalMax) * maxBarHeight);
       const bar = document.createElement("div");
       bar.className =
-        "ct-bar" +
-        (i === selectedIdx && selectedMode === "context" ? " ct-selected" : "") +
-        (entry.placeholder === "pending" ? " ct-placeholder" : "") +
-        (entry.placeholder === "active" ? " ct-placeholder ct-placeholder-active" : "") +
-        (isFailed ? " ct-failed" : "");
+        "ct-bar" + (i === selectedIdx && selectedMode === "context" ? " ct-selected" : "");
       bar.style.height = `${barHeight}px`;
 
-      if (isPlaceholder && !isFailed) {
-        const phColor = providerColors?.[ev.provider ?? ""] || "#6b7280";
-        bar.style.setProperty("--ct-placeholder-color", phColor);
-        const seg = document.createElement("div");
-        seg.className = "ct-segment";
-        seg.style.height = "100%";
-        seg.style.background = entry.placeholder === "active" ? phColor : "#6b7280";
-        seg.style.opacity = "0.4";
-        bar.appendChild(seg);
-      } else {
-        const segments = getSegmentTokens(ev);
-        const segTotal = segments.reduce((s, seg) => s + seg.tokens, 0);
+      const segments = getSegmentTokens(ev);
+      const segTotal = segments.reduce((s, seg) => s + seg.tokens, 0);
 
-        for (const seg of segments) {
-          const el = document.createElement("div");
-          el.className = "ct-segment";
-          const pct = segTotal > 0 ? (seg.tokens / segTotal) * 100 : 0;
-          el.style.height = `${pct}%`;
-          el.style.background = SEGMENT_COLORS[seg.key];
-          bar.appendChild(el);
-        }
+      for (const seg of segments) {
+        const el = document.createElement("div");
+        el.className = "ct-segment";
+        const pct = segTotal > 0 ? (seg.tokens / segTotal) * 100 : 0;
+        el.style.height = `${pct}%`;
+        el.style.background = SEGMENT_COLORS[seg.key];
+        bar.appendChild(el);
       }
 
       // Click — select; re-click triggers auto-summary
       const idx = i;
-      if (!isPlaceholder) {
-        bar.addEventListener("click", () => {
-          const isReclick = selectedIdx === idx && selectedMode === "context";
-          selectedIdx = idx;
-          selectedMode = "context";
-          onBarSelect(buffer[idx].event, isReclick ? "context-summarize" : "context");
-          render();
-        });
-      }
+      bar.addEventListener("click", () => {
+        const isReclick = selectedIdx === idx && selectedMode === "context";
+        selectedIdx = idx;
+        selectedMode = "context";
+        onBarSelect(buffer[idx].event, isReclick ? "context-summarize" : "context");
+        render();
+      });
 
       // Hover
       bar.addEventListener("mouseenter", (e) => {
@@ -530,7 +485,7 @@ export function mountContextTimeline(
       // Response bar — side by side with context bar
       const respTokens = respTokensArr[i];
       const respEstimated = !ev.responseTokens && respTokens > 0;
-      if (respTokens > 0 && !isPlaceholder) {
+      if (respTokens > 0) {
         const respBarArea = document.createElement("div");
         respBarArea.className = "ct-bar-area ct-resp-bar-area";
         respBarArea.style.height = `${maxBarHeight}px`;
@@ -680,79 +635,6 @@ export function mountContextTimeline(
         return buffer[selectedIdx].event;
       }
       return null;
-    },
-
-    pushPlaceholder(turn: number) {
-      // Synthetic pending entry — no real anatomy data
-      const event: AnatomyEvent = { turn, timestampMs: Date.now() };
-      const groupId = assignGroupId(undefined, event);
-      push({ event, groupId, placeholder: "pending" });
-      selectedIdx = buffer.length - 1;
-      render();
-    },
-
-    activatePlaceholder(runId: string, model: string, provider: string) {
-      // Find the latest pending placeholder and upgrade it to active
-      for (let i = buffer.length - 1; i >= 0; i--) {
-        if (buffer[i].placeholder === "pending") {
-          buffer[i].placeholder = "active";
-          buffer[i].runId = runId;
-          buffer[i].event.model = model;
-          buffer[i].event.provider = provider;
-          render();
-          return;
-        }
-      }
-      // No pending placeholder found — create a new active one
-      const event: AnatomyEvent = { turn: undefined, model, provider, timestampMs: Date.now() };
-      const groupId = assignGroupId(runId, event);
-      push({ event, runId, groupId, placeholder: "active" });
-      selectedIdx = buffer.length - 1;
-      render();
-    },
-
-    failPlaceholder(runId: string, reason: string) {
-      // Mark the active placeholder as failed, then add a new pending one for the next attempt
-      for (let i = buffer.length - 1; i >= 0; i--) {
-        if (buffer[i].placeholder === "active" && buffer[i].runId === runId) {
-          buffer[i].placeholder = "failed";
-          buffer[i].failReason = reason;
-          // Add a new pending placeholder in the same group for the next attempt
-          const newEntry: BufferEntry = {
-            event: { turn: buffer[i].event.turn, timestampMs: Date.now() },
-            groupId: buffer[i].groupId,
-            placeholder: "pending",
-          };
-          push(newEntry);
-          selectedIdx = buffer.length - 1;
-          render();
-          return;
-        }
-      }
-    },
-
-    replacePlaceholders(turn: number, realEvents: AnatomyEvent[]) {
-      // Remove all placeholder entries for this turn
-      let groupId: string | null = null;
-      for (let i = buffer.length - 1; i >= 0; i--) {
-        if (buffer[i].placeholder && buffer[i].event.turn === turn) {
-          if (!groupId) groupId = buffer[i].groupId;
-          buffer.splice(i, 1);
-          if (selectedIdx !== null && selectedIdx >= i) {
-            selectedIdx = Math.max(0, selectedIdx - 1);
-          }
-        }
-      }
-      // Push real events, reusing the placeholder's groupId
-      for (const ev of realEvents) {
-        const gid = groupId ?? assignGroupId(undefined, ev);
-        push({ event: ev, groupId: gid });
-      }
-      if (buffer.length > 0) {
-        selectedIdx = buffer.length - 1;
-        onBarSelect(buffer[selectedIdx].event, "context");
-      }
-      render();
     },
 
     setFilterMode(mode: "session" | "all") {
