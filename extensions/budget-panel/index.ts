@@ -27,7 +27,10 @@ const usageCache: Record<string, { data: Record<string, any> | null; ts: number 
 const CACHE_TTL_MS = 30 * 60_000;
 
 /** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
-async function resolveToken(profileId: string, log: (...args: any[]) => void = console.log): Promise<string | null> {
+async function resolveToken(
+  profileId: string,
+  log: (...args: any[]) => void = console.log,
+): Promise<string | null> {
   try {
     const store = ensureAuthProfileStore();
     const result = await resolveApiKeyForProfile({ store, profileId });
@@ -46,7 +49,10 @@ const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
  * The /api/oauth/usage endpoint has a per-access-token rate limit of ~5 requests.
  * Refreshing gives us a new access token with a fresh rate limit window.
  */
-async function forceRefreshToken(profileId: string, log: (...args: any[]) => void = console.log): Promise<string | null> {
+async function forceRefreshToken(
+  profileId: string,
+  log: (...args: any[]) => void = console.log,
+): Promise<string | null> {
   try {
     const store = ensureAuthProfileStore();
     const cred = store.profiles[profileId] as any;
@@ -67,7 +73,7 @@ async function forceRefreshToken(profileId: string, log: (...args: any[]) => voi
       log(`[budget-panel] forceRefresh ${profileId}: HTTP ${res.status} ${body.slice(0, 120)}`);
       return null;
     }
-    const data = await res.json() as any;
+    const data = (await res.json()) as any;
     const newAccess = data.access_token;
     const newRefresh = data.refresh_token;
     if (!newAccess) return null;
@@ -91,14 +97,20 @@ async function forceRefreshToken(profileId: string, log: (...args: any[]) => voi
 }
 
 /** Fetch live usage for a single OAuth profile (with cache + token rotation on 429). */
-async function fetchProfileUsage(label: string, log: (...args: any[]) => void = console.log): Promise<Record<string, any> | null> {
+async function fetchProfileUsage(
+  label: string,
+  log: (...args: any[]) => void = console.log,
+): Promise<Record<string, any> | null> {
   const cached = usageCache[label];
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
   const profileId = USAGE_PROFILES[label];
   if (!profileId) return cached?.data ?? null;
 
   let token = await resolveToken(profileId, log);
-  if (!token) { usageCache[label] = { data: null, ts: Date.now() }; return null; }
+  if (!token) {
+    usageCache[label] = { data: null, ts: Date.now() };
+    return null;
+  }
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -115,7 +127,10 @@ async function fetchProfileUsage(label: string, log: (...args: any[]) => void = 
         // Per-token rate limit exhausted — rotate token for fresh window
         log(`[budget-panel] ${label}: 429 on attempt 1, rotating token...`);
         const fresh = await forceRefreshToken(profileId, log);
-        if (fresh) { token = fresh; continue; }
+        if (fresh) {
+          token = fresh;
+          continue;
+        }
       }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -136,7 +151,9 @@ async function fetchProfileUsage(label: string, log: (...args: any[]) => void = 
 }
 
 /** Fetch live usage from all profiles sequentially. */
-async function fetchAllClaudeUsage(log: (...args: any[]) => void = console.log): Promise<Record<string, Record<string, any> | null>> {
+async function fetchAllClaudeUsage(
+  log: (...args: any[]) => void = console.log,
+): Promise<Record<string, Record<string, any> | null>> {
   const result: Record<string, Record<string, any> | null> = {};
   for (const p of Object.keys(USAGE_PROFILES)) {
     result[p] = await fetchProfileUsage(p, log);
@@ -145,13 +162,26 @@ async function fetchAllClaudeUsage(log: (...args: any[]) => void = console.log):
 }
 
 /** ─── OpenAI Costs via Admin API ─── */
-let openaiCostsCache: { data: { monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null; ts: number } | null = null;
+let openaiCostsCache: {
+  data: { monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null;
+  ts: number;
+} | null = null;
 const OPENAI_COSTS_CACHE_TTL_MS = 30 * 60_000;
 
-async function fetchOpenAICosts(log: (...args: any[]) => void = console.log): Promise<{ monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null> {
-  if (openaiCostsCache && Date.now() - openaiCostsCache.ts < OPENAI_COSTS_CACHE_TTL_MS) return openaiCostsCache.data;
+async function fetchOpenAICosts(
+  log: (...args: any[]) => void = console.log,
+): Promise<{ monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null> {
+  if (
+    openaiCostsCache &&
+    openaiCostsCache.data &&
+    Date.now() - openaiCostsCache.ts < OPENAI_COSTS_CACHE_TTL_MS
+  )
+    return openaiCostsCache.data;
   const adminKey = process.env.OPENAI_ADMIN_API_KEY;
-  if (!adminKey) { log("[budget-panel] OPENAI_ADMIN_API_KEY not set, skipping costs fetch"); return null; }
+  if (!adminKey) {
+    log("[budget-panel] OPENAI_ADMIN_API_KEY not set, skipping costs fetch");
+    return null;
+  }
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -190,6 +220,145 @@ async function fetchOpenAICosts(log: (...args: any[]) => void = console.log): Pr
     return null;
   }
 }
+/** ─── Gemini Usage via Google Cloud Monitoring ─── */
+import { createSign } from "crypto";
+
+const GOOGLE_SA_PATH = `${process.env.HOME}/.config/gcloud/service-account.json`;
+
+interface GeminiUsageResult {
+  rpm_used: number; // requests in last minute
+  rpm_limit: number; // RPM limit
+  rpd_used: number; // requests today
+  rpd_limit: number; // RPD limit
+}
+
+let geminiUsageCache: { data: GeminiUsageResult | null; ts: number } | null = null;
+const GEMINI_CACHE_TTL_MS = 10 * 60_000;
+
+/** Google access token cache (reused across calls, 1h lifetime). */
+let googleTokenCache: { token: string; exp: number } | null = null;
+
+function signJwt(payload: Record<string, any>, privateKey: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${body}`);
+  const signature = signer.sign(privateKey, "base64url");
+  return `${header}.${body}.${signature}`;
+}
+
+async function getGoogleToken(sa: any, log: (...a: any[]) => void): Promise<string | null> {
+  if (googleTokenCache && Date.now() < googleTokenCache.exp) return googleTokenCache.token;
+  const now = Math.floor(Date.now() / 1000);
+  const jwt = signJwt(
+    {
+      iss: sa.client_email,
+      scope: "https://www.googleapis.com/auth/monitoring.read",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    },
+    sa.private_key,
+  );
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    log(`[budget-panel] Google token error: ${res.status}`);
+    return null;
+  }
+  const { access_token } = (await res.json()) as any;
+  googleTokenCache = { token: access_token, exp: Date.now() + 3500_000 };
+  return access_token;
+}
+
+async function queryRequestCount(
+  token: string,
+  projectId: string,
+  hoursBack: number,
+): Promise<number> {
+  const end = new Date();
+  const start = new Date(end.getTime() - hoursBack * 3600_000);
+  const filter = encodeURIComponent(
+    'metric.type="serviceruntime.googleapis.com/api/request_count" AND resource.labels.service="generativelanguage.googleapis.com"',
+  );
+  const url =
+    `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries` +
+    `?filter=${filter}` +
+    `&interval.startTime=${start.toISOString().replace(/\.\d+Z$/, "Z")}` +
+    `&interval.endTime=${end.toISOString().replace(/\.\d+Z$/, "Z")}` +
+    `&aggregation.alignmentPeriod=${hoursBack * 3600}s` +
+    `&aggregation.perSeriesAligner=ALIGN_SUM`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) return 0;
+  const data = (await res.json()) as any;
+  let total = 0;
+  for (const ts of data.timeSeries || []) {
+    for (const p of ts.points || []) total += parseInt(p.value?.int64Value ?? "0") || 0;
+  }
+  return total;
+}
+
+async function fetchGeminiUsage(
+  log: (...args: any[]) => void = console.log,
+): Promise<GeminiUsageResult | null> {
+  if (
+    geminiUsageCache &&
+    geminiUsageCache.data &&
+    Date.now() - geminiUsageCache.ts < GEMINI_CACHE_TTL_MS
+  )
+    return geminiUsageCache.data;
+
+  let sa: any;
+  try {
+    sa = JSON.parse(readFileSync(GOOGLE_SA_PATH, "utf-8"));
+  } catch {
+    log("[budget-panel] Google service account not found");
+    return null;
+  }
+
+  try {
+    const token = await getGoogleToken(sa, log);
+    if (!token) return null;
+
+    // Query RPM window (1 min) and RPD window (24h) in parallel
+    const [rpm_used, rpd_used] = await Promise.all([
+      queryRequestCount(token, sa.project_id, 1 / 60), // 1 minute
+      queryRequestCount(token, sa.project_id, 24), // 24 hours
+    ]);
+
+    // Read limits from gemini-usage.json (use highest-traffic model's limits)
+    let rpm_limit = 0,
+      rpd_limit = 0;
+    try {
+      const gf = JSON.parse(
+        readFileSync(`${process.env.HOME}/.openclaw/workspace/memory/gemini-usage.json`, "utf-8"),
+      );
+      for (const val of Object.values(gf.models || {}) as any[]) {
+        const rl = val?.rate_limits || {};
+        if ((rl.rpd ?? 0) > rpd_limit) {
+          rpd_limit = rl.rpd;
+          rpm_limit = rl.rpm ?? 0;
+        }
+      }
+    } catch {}
+
+    const result: GeminiUsageResult = { rpm_used, rpm_limit, rpd_used, rpd_limit };
+    log(`[budget-panel] Gemini: ${rpm_used}/${rpm_limit} RPM, ${rpd_used}/${rpd_limit} RPD`);
+    geminiUsageCache = { data: result, ts: Date.now() };
+    return result;
+  } catch (e) {
+    log(`[budget-panel] Gemini usage error: ${e}`);
+    return null;
+  }
+}
+
 import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
 
@@ -265,8 +434,11 @@ export default function register(api: OpenClawPluginApi) {
     const manusData = readUsageFile(usageFiles.manus) as any;
     const chatgptData = readUsageFile(usageFiles.chatgpt) as any;
 
-    // Fetch live usage from both OAuth profiles in parallel
-    const liveProfiles = await fetchAllClaudeUsage(log);
+    // Fetch live usage from both OAuth profiles + Gemini in parallel
+    const [liveProfiles, geminiLive] = await Promise.all([
+      fetchAllClaudeUsage(log),
+      fetchGeminiUsage(log),
+    ]);
 
     function buildClaudeProfile(live: Record<string, any> | null) {
       if (!live) return null;
@@ -324,38 +496,7 @@ export default function register(api: OpenClawPluginApi) {
     const result: Record<string, unknown> = {
       claude: claudeResult,
       claudeProfiles,
-      gemini: (() => {
-        const models = geminiData?.models || {};
-        const result: Record<string, { pct: number; metric: string; used: number; limit: number }> =
-          {};
-        for (const [key, val] of Object.entries(models) as [string, any][]) {
-          const usage = val?.usage || {};
-          const limits = val?.limits || {};
-          // Calculate percentage for each metric, find the highest
-          const metrics = [
-            { name: "RPD", used: usage.rpd ?? 0, limit: limits.rpd },
-            { name: "RPM", used: usage.rpm ?? 0, limit: limits.rpm },
-            { name: "TPM", used: usage.tpm ?? 0, limit: limits.tpm },
-          ];
-          let maxPct = 0,
-            maxMetric = "RPD",
-            maxUsed = 0,
-            maxLimit = 0;
-          for (const m of metrics) {
-            if (m.limit && m.limit > 0) {
-              const pct = (m.used / m.limit) * 100;
-              if (pct > maxPct) {
-                maxPct = pct;
-                maxMetric = m.name;
-                maxUsed = m.used;
-                maxLimit = m.limit;
-              }
-            }
-          }
-          result[key] = { pct: maxPct, metric: maxMetric, used: maxUsed, limit: maxLimit };
-        }
-        return result;
-      })(),
+      gemini: geminiLive ?? { rpm_used: 0, rpm_limit: 0, rpd_used: 0, rpd_limit: 0 },
       manus: (() => {
         if (!manusData)
           return {
@@ -392,7 +533,9 @@ export default function register(api: OpenClawPluginApi) {
     // OpenAI API Costs (via Admin key)
     log("[budget-panel] Fetching OpenAI costs...");
     const openaiCosts = await fetchOpenAICosts(log);
-    log(`[budget-panel] OpenAI costs result: ${openaiCosts ? `$${openaiCosts.monthSpend}` : "null"}`);
+    log(
+      `[budget-panel] OpenAI costs result: ${openaiCosts ? `$${openaiCosts.monthSpend}` : "null"}`,
+    );
     if (openaiCosts) {
       result.openaiCosts = openaiCosts;
     }
