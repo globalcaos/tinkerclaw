@@ -149,6 +149,11 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .thinking-block.live-thinking{border-left-color:var(--green);background:rgba(107,142,35,0.06)}
 .thinking-step.live{opacity:.65;font-style:italic}
 .thinking-step.live:last-child{border-bottom:none}
+/* Reasoning group — collapsible wrapper for intermediate thinking + tool calls */
+.reasoning-group{margin:2px 0}
+.reasoning-header{padding:4px 10px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;border-left:2px solid var(--green);border-radius:0 4px 4px 0;background:var(--surface2);transition:color .1s,background .1s;font-weight:500}
+.reasoning-header:hover{color:var(--text);background:rgba(107,142,35,0.1)}
+.reasoning-content{padding:2px 0 2px 4px;border-left:1px solid var(--border);margin-left:1px}
 .msg.assistant.streaming{border-left:2px solid var(--accent);opacity:.85}
 
 /* Thinking indicator */
@@ -278,6 +283,9 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .budget-unlimited{color:var(--green);font-weight:600}
 .budget-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
 .budget-fill{height:100%;border-radius:2px;transition:width .3s}
+.openai-spend-inline{padding:2px 8px 4px 22px;display:flex;align-items:center;gap:6px}
+.openai-spend-inline .budget-bar{flex:1;height:3px}
+.openai-spend-tag{font-size:9px;font-family:monospace;font-weight:600;color:#10a37f;white-space:nowrap}
 .budget-detail{font-size:9px;color:var(--muted);margin-top:1px}
 .budget-updated{font-size:9px;color:var(--muted);text-align:center;margin-top:6px}
 .budget-refresh-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 4px;border-radius:3px}
