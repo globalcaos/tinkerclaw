@@ -7,20 +7,18 @@
   font-size:13px;color-scheme:dark;
 }
 html,body{height:100%;background:var(--bg);color:var(--text)}
-#app{height:100%;display:grid;grid-template-columns:48px 3fr 1fr;grid-template-rows:106px 3fr 1fr;overflow:hidden;transition:grid-template-rows .5s cubic-bezier(.25,.1,.25,1),grid-template-columns .5s cubic-bezier(.25,.1,.25,1)}
-#app.bottom-collapsed{grid-template-rows:104px 3fr 0fr}
+#app{height:100%;display:grid;grid-template-columns:48px 3fr 1fr;grid-template-rows:48px 3fr 1fr;overflow:hidden;transition:grid-template-rows .5s cubic-bezier(.25,.1,.25,1),grid-template-columns .5s cubic-bezier(.25,.1,.25,1);position:relative}
+#app.bottom-collapsed{grid-template-rows:48px 3fr 0fr}
 #app.right-collapsed{grid-template-columns:48px 3fr 0fr}
 
 /* Left sidebar */
-.sidebar{grid-column:1;grid-row:2/3;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px;overflow-y:auto;overflow-x:hidden}
+.sidebar{grid-column:1;grid-row:1/3;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:140px 0 6px;gap:2px;overflow-y:auto;overflow-x:hidden}
 .sidebar::-webkit-scrollbar{width:0}
 .nav-sep{width:28px;height:1px;background:var(--border);margin:4px 0}
 .nav-btn{width:36px;height:36px;border:none;border-radius:8px;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,box-shadow .25s;position:relative}
 .nav-btn svg{width:18px;height:18px;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .nav-btn:hover{background:var(--border)}
 .nav-btn.nav-active{background:var(--surface2);box-shadow:inset 3px 0 0 var(--accent)}
-.topbar .logo{cursor:pointer;transition:opacity .15s;display:flex;align-items:center}
-.topbar .logo:hover{opacity:.7}
 
 /* Alt view (non-chat tab content) */
 .alt-view{grid-column:2;grid-row:1/4;display:none;flex-direction:column;overflow-y:auto;position:relative;border-right:1px solid var(--border)}
@@ -44,8 +42,8 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .alt-placeholder span{font-size:11px}
 
 /* Top bar */
-.topbar{grid-column:1/3;grid-row:1;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:8px;font-size:12px}
-.topbar .logo{cursor:pointer;transition:opacity .1s;display:flex;align-items:center}
+.topbar{grid-column:2/3;grid-row:1;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px 0 140px;gap:8px;font-size:12px;position:relative}
+.topbar .logo{cursor:pointer;transition:opacity .1s;position:absolute;top:12px;left:-38px;z-index:50;pointer-events:auto;display:flex;align-items:center;filter:drop-shadow(0 2px 8px rgba(0,0,0,.6))}
 .topbar .logo:hover{opacity:.7}
 .topbar .logo:active{opacity:.5}
 .topbar .toolbox{display:flex;align-items:center;gap:6px;margin:0 auto}

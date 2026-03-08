@@ -2301,7 +2301,7 @@ function init() {
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
     </nav>
     <div class="topbar">
-      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="height:126px;width:auto;padding:20px"></div>
+      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="height:108px;width:auto"></div>
       <div class="toolbox">
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
