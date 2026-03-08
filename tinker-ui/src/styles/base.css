@@ -259,14 +259,6 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .msg.user.scroll-highlight{animation:msg-flash .8s ease-out}
 @keyframes msg-flash{0%{box-shadow:0 0 0 3px rgba(37,99,235,0.6)}100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}}
 
-/* Timeline placeholder + failed bars */
-.ct-bar.ct-placeholder{animation:ct-pulse 2s ease-in-out infinite}
-.ct-bar.ct-placeholder-active{animation:ct-pulse-active 1.5s ease-in-out infinite}
-@keyframes ct-pulse{0%,100%{opacity:.25;filter:brightness(1)}50%{opacity:.5;filter:brightness(1.3)}}
-@keyframes ct-pulse-active{0%,100%{opacity:.35;box-shadow:0 0 6px 1px var(--ct-placeholder-color,rgba(107,142,35,0.5))}50%{opacity:.65;box-shadow:0 0 14px 3px var(--ct-placeholder-color,rgba(107,142,35,0.7))}}
-.ct-bar.ct-failed{opacity:.5;position:relative}
-.ct-bar.ct-failed::after{content:"";position:absolute;inset:0;background:rgba(220,38,38,0.2);border-radius:inherit;pointer-events:none}
-.ct-fail-badge{position:absolute;bottom:-2px;right:-2px;font-size:7px;font-weight:700;color:#ef4444;line-height:1;text-shadow:0 0 2px rgba(0,0,0,0.5)}
 .ct-provider{position:relative}
 
 .mono{font-family:"SF Mono","Fira Code",monospace;font-size:11px}
