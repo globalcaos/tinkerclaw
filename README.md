@@ -148,15 +148,12 @@ Day 1: mediocre. Day 30: genuinely useful.
 | Skill | What it does |
 |-------|-------------|
 | [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. |
-| [`xurl`](https://clawhub.ai/globalcaos/xurl) | Post, reply, DM, upload media on X — from your agent, fully authenticated. |
 
 ### 📹 Media & Content
 
 | Skill | What it does |
 |-------|-------------|
 | [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned. |
-| [`video-frames`](https://clawhub.ai/globalcaos/video-frames) | Pull exact frames or clips from any video. ffmpeg, no UI, no cloud. |
-| [`ai-humanizer`](https://clawhub.ai/globalcaos/ai-humanizer) | 24 detectors, 500+ AI vocabulary terms. Makes AI text read like a human wrote it. |
 
 ### 💰 Cost & Token Management
 
