@@ -202,7 +202,7 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 
 | Skill | What it does |
 |-------|-------------|
-| [`field-guide`](https://clawhub.ai/globalcaos/field-guide) | 37 battle-tested lessons for AI agents. Ethics, memory, budget, messaging security, epistemic hygiene. |
+| [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate) | The sensei your agent never had. 40 lessons on ethics, memory, budget, self-evolution. Day 1: mediocre. Day 30: expert. |
 
 ### 📋 Data & Migration
 
