@@ -20,6 +20,7 @@ import {
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
+import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { consumeSessionResume } from "../infra/session-resume.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
@@ -198,6 +199,9 @@ export async function startGatewaySidecars(params: {
           const { sessionKey, userMessage } = resume.payload;
           const resumeMessage = `⚠️ Gateway restarted while processing your message. Resuming your request:\n\n${userMessage}`;
           enqueueSystemEvent(resumeMessage, { sessionKey });
+          // Trigger an actual LLM run so the resumed prompt is processed
+          // automatically, instead of waiting for the user to send a new message.
+          requestHeartbeatNow({ reason: "session-resume", sessionKey });
         })
         .catch(() => {});
     }, 1500);

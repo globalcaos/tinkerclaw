@@ -380,10 +380,10 @@ export async function getReplyFromConfig(
     workspaceDir,
   });
 
-  // Clear session resume — reply is about to be generated
-  await clearSessionResume(agentSessionKey).catch(() => {});
-
-  return runPreparedReply({
+  // Run the LLM reply, then clear session resume AFTER completion.
+  // Clearing before runPreparedReply would lose the resume file during the
+  // crash-prone LLM streaming phase, defeating restart recovery.
+  const result = await runPreparedReply({
     ctx,
     sessionCtx,
     cfg,
@@ -428,4 +428,6 @@ export async function getReplyFromConfig(
     workspaceDir,
     abortedLastRun,
   });
+  await clearSessionResume(agentSessionKey).catch(() => {});
+  return result;
 }
