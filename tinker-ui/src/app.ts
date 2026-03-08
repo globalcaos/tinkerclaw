@@ -1279,16 +1279,20 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
       Object.values(g)[0];
     if (!entry) return null;
     const rpd = entry.rpd ?? 0;
-    const tpm = entry.tpm ?? 0;
-    // Show limits as capacity bars relative to paid-tier maximums
-    const maxRpd = 14400; // paid tier gemini-2.0-flash
-    const maxTpm = 4000000;
-    const rpdPct = maxRpd ? Math.min((rpd / maxRpd) * 100, 100) : 0;
-    const tpmPct = maxTpm ? Math.min((tpm / maxTpm) * 100, 100) : 0;
-    let tip = `RPD: ${rpd.toLocaleString()} (${entry.rpm ?? 0} RPM)`;
-    tip += `\nTPM: ${(tpm / 1000).toFixed(0)}k`;
+    const reqs24h = entry.requestCount24h ?? 0;
+    // Top bar: requests used today vs RPD limit
+    const rpdPct = rpd > 0 ? Math.min((reqs24h / rpd) * 100, 100) : 0;
+    // Bottom bar: total requests across all Gemini models (24h) for context
+    const totalReqs = budgetUsageData.gemini?._total?.requestCount24h ?? 0;
+    const totalRpd = Object.values(budgetUsageData.gemini || {})
+      .filter((e: any) => e?.rpd)
+      .reduce((s: number, e: any) => s + (e.rpd ?? 0), 0);
+    const totalPct = totalRpd > 0 ? Math.min((totalReqs / totalRpd) * 100, 100) : 0;
+    let tip = `${name}: ${reqs24h}/${rpd} RPD (${rpdPct.toFixed(0)}%)`;
+    tip += `\nAll models: ${totalReqs} reqs (24h)`;
+    tip += `\nLimits: ${entry.rpm ?? 0} RPM, ${((entry.tpm ?? 0) / 1000).toFixed(0)}k TPM`;
     if (entry.note) tip += `\n${entry.note}`;
-    return { topPct: rpdPct, bottomPct: tpmPct, tooltip: tip };
+    return { topPct: rpdPct, bottomPct: totalPct, tooltip: tip };
   }
 
   if (provider === "openai") {
@@ -1405,9 +1409,96 @@ function updateChat(skipScroll = false) {
       }
     }
   }
-  // Render ALL messages as normal bubbles — no hiding, no collapsing, ever.
-  for (let i = 0; i < messages.length; i++) {
-    h += renderMsg(messages[i], i, thinkingSet.has(i), globalResultMap, globalToolNames);
+  // Render messages grouped by run. In completed runs, intermediate messages
+  // (thinking + tool calls + system) collapse into an expandable reasoning group.
+  {
+    let runStart = 0;
+    for (let i = 0; i <= messages.length; i++) {
+      const isUserOrEnd =
+        i === messages.length || (messages[i].role ?? "").toLowerCase() === "user";
+      if (!isUserOrEnd) continue;
+
+      // Collect intermediate vs final in this run
+      const runEnd = i; // exclusive
+      const intermediateIndices: number[] = [];
+      let finalIdx = -1;
+
+      for (let j = runStart; j < runEnd; j++) {
+        const m = messages[j];
+        if (thinkingSet.has(j)) {
+          intermediateIndices.push(j);
+        } else {
+          const role = (m.role ?? "").toLowerCase();
+          if (role === "assistant") {
+            // Check if it's a tool-only message (no text) — intermediate
+            const c = Array.isArray(m.content) ? m.content : [];
+            const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+            const plainText = typeof m.content === "string" && (m.content as string).trim();
+            if (!hasText && !plainText) {
+              intermediateIndices.push(j);
+            } else {
+              // If we already had a final candidate, demote it to intermediate
+              if (finalIdx >= 0) intermediateIndices.push(finalIdx);
+              finalIdx = j;
+            }
+          } else {
+            // user tool_result messages, system messages — intermediate
+            intermediateIndices.push(j);
+          }
+        }
+      }
+
+      // Count tool_use blocks only in intermediates (not the final answer)
+      let toolCount = 0;
+      for (const j of intermediateIndices) {
+        const tc = Array.isArray(messages[j].content) ? messages[j].content : [];
+        for (const b of tc) {
+          if (b.type === "tool_use") toolCount++;
+        }
+      }
+
+      // Determine if this run is still streaming (has temporary messages)
+      const hasTemporaries = intermediateIndices.some((j) => messages[j]._temporary);
+      const isStreaming = hasTemporaries || (i === messages.length && streamMsgIdx >= 0);
+
+      // Render the run
+      if (intermediateIndices.length > 0 && finalIdx >= 0 && !isStreaming) {
+        // Completed run with intermediates — wrap in collapsible group
+        const groupId = `rg-${intermediateIndices[0]}`;
+        const expanded = expandedTools.has(groupId);
+        const stepCount = intermediateIndices.filter((j) => thinkingSet.has(j)).length;
+        const chevron = expanded ? "▾" : "▸";
+        const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
+        const toolLabel =
+          toolCount > 0 ? `${toolCount} tool call${toolCount !== 1 ? "s" : ""}` : "";
+        const parts = [stepLabel, toolLabel].filter(Boolean).join(", ");
+        const summary = parts ? `Reasoning (${parts})` : "Reasoning";
+
+        h += `<div class="reasoning-group">`;
+        h += `<div class="reasoning-header" data-tid="${groupId}">${chevron} ${summary}</div>`;
+        if (expanded) {
+          h += `<div class="reasoning-content">`;
+          for (const j of intermediateIndices) {
+            h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
+          }
+          h += `</div>`;
+        }
+        h += `</div>`;
+        // Render the final answer normally
+        h += renderMsg(messages[finalIdx], finalIdx, false, globalResultMap, globalToolNames);
+      } else {
+        // Streaming run or no intermediates — render flat
+        for (let j = runStart; j < runEnd; j++) {
+          h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
+        }
+      }
+
+      // Render the user message that ends this run (if not end-of-array)
+      if (i < messages.length) {
+        h += renderMsg(messages[i], i, false, globalResultMap, globalToolNames);
+      }
+      runStart = i + 1;
+    }
   }
 
   if (activeRuns.size > 0 || sending) {
