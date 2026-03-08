@@ -148,12 +148,15 @@ Day 1: mediocre. Day 30: genuinely useful.
 | Skill | What it does |
 |-------|-------------|
 | [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. |
+| [`xurl`](https://clawhub.ai/globalcaos/xurl) | Post, reply, DM, upload media on X — from your agent, fully authenticated. |
 
 ### 📹 Media & Content
 
 | Skill | What it does |
 |-------|-------------|
 | [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned. |
+| [`video-frames`](https://clawhub.ai/globalcaos/video-frames) | Pull exact frames or clips from any video. ffmpeg, no UI, no cloud. |
+| [`ai-humanizer`](https://clawhub.ai/globalcaos/ai-humanizer) | 24 detectors, 500+ AI vocabulary terms. Makes AI text read like a human wrote it. |
 
 ### 💰 Cost & Token Management
 
@@ -171,11 +174,13 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 |-------|-------------|
 | [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack) | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
 | [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack) | Reads Teams chats, posts to channels, searches everything. One browser handshake. |
+| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Reads your HR portal — attendance, leave, payslips. No admin consent required. |
 
 ### 🤖 Agent & DevOps
 
 | Skill | What it does |
 |-------|-------------|
+| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent) | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call. |
 | [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer) | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
 | [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
 | [`ultimate-fork-and-skill-scanner`](https://clawhub.ai/globalcaos/ultimate-fork-and-skill-scanner) | Full fork + skill scanning with trend insights and actionable improvements. |
