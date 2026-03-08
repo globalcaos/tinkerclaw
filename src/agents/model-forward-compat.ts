@@ -14,6 +14,11 @@ const ANTHROPIC_SONNET_46_MODEL_ID = "claude-sonnet-4-6";
 const ANTHROPIC_SONNET_46_DOT_MODEL_ID = "claude-sonnet-4.6";
 const ANTHROPIC_SONNET_TEMPLATE_MODEL_IDS = ["claude-sonnet-4-5", "claude-sonnet-4.5"] as const;
 
+const OPENAI_GPT54_MODEL_ID = "gpt-5.4";
+const OPENAI_GPT54_PRO_MODEL_ID = "gpt-5.4-pro";
+const OPENAI_GPT54_TEMPLATE_MODEL_IDS = ["gpt-5.2"] as const;
+const OPENAI_GPT54_PRO_TEMPLATE_MODEL_IDS = ["gpt-5.2-pro"] as const;
+
 const ZAI_GLM5_MODEL_ID = "glm-5";
 const ZAI_GLM5_TEMPLATE_MODEL_IDS = ["glm-4.7"] as const;
 
@@ -242,6 +247,36 @@ function resolveZaiGlm5ForwardCompatModel(
   } as Model<Api>);
 }
 
+// GPT-5.4 / GPT-5.4-pro are not yet in pi-ai's built-in model catalog.
+// Clone gpt-5.2 / gpt-5.2-pro as forward-compat templates.
+function resolveOpenAIGpt54ForwardCompatModel(
+  provider: string,
+  modelId: string,
+  modelRegistry: ModelRegistry,
+): Model<Api> | undefined {
+  if (normalizeProviderId(provider) !== "openai") {
+    return undefined;
+  }
+  const trimmed = modelId.trim();
+  const lower = trimmed.toLowerCase();
+
+  let templateIds: readonly string[];
+  if (lower === OPENAI_GPT54_PRO_MODEL_ID || lower.startsWith(`${OPENAI_GPT54_PRO_MODEL_ID}-`)) {
+    templateIds = OPENAI_GPT54_PRO_TEMPLATE_MODEL_IDS;
+  } else if (lower === OPENAI_GPT54_MODEL_ID || lower.startsWith(`${OPENAI_GPT54_MODEL_ID}-`)) {
+    templateIds = OPENAI_GPT54_TEMPLATE_MODEL_IDS;
+  } else {
+    return undefined;
+  }
+
+  return cloneFirstTemplateModel({
+    normalizedProvider: "openai",
+    trimmedModelId: trimmed,
+    templateIds: [...templateIds],
+    modelRegistry,
+  });
+}
+
 export function resolveForwardCompatModel(
   provider: string,
   modelId: string,
@@ -249,6 +284,7 @@ export function resolveForwardCompatModel(
 ): Model<Api> | undefined {
   return (
     resolveOpenAICodexGpt53FallbackModel(provider, modelId, modelRegistry) ??
+    resolveOpenAIGpt54ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveAnthropicOpus46ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveAnthropicSonnet46ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveZaiGlm5ForwardCompatModel(provider, modelId, modelRegistry) ??
