@@ -61,11 +61,11 @@ These are the API costs Tinker tracks:
 
 ## Install
 
-Tinker is a **bundled OpenClaw plugin** in the [globalcaos fork](https://github.com/globalcaos/clawdbot-moltbot-openclaw). It ships as part of the build.
+Tinker is a **bundled OpenClaw plugin** in the [globalcaos fork](https://github.com/globalcaos/tinkerclaw). It ships as part of the build.
 
 ```bash
 # Clone the fork
-git clone https://github.com/globalcaos/clawdbot-moltbot-openclaw.git openclaw
+git clone https://github.com/globalcaos/tinkerclaw.git openclaw
 cd openclaw
 
 # Build (includes Tinker UI)
@@ -109,8 +109,8 @@ If you're switching to Claude API because you believe in Anthropic's mission —
 
 Tinker makes you informed.
 
-→ **[Get the fork](https://github.com/globalcaos/clawdbot-moltbot-openclaw)**
+→ **[Get the fork](https://github.com/globalcaos/tinkerclaw)**
 
 ---
 
-_Built by [globalcaos](https://github.com/globalcaos) · Part of [The Tinker Zone](https://github.com/globalcaos/clawdbot-moltbot-openclaw)_
+_Built by [globalcaos](https://github.com/globalcaos) · Part of [The Tinker Zone](https://github.com/globalcaos/tinkerclaw)_

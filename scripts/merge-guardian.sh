@@ -124,6 +124,9 @@ check_wiring "src/auto-reply/reply/session-reset-prompt.ts" "resolveSessionPromp
 check_wiring "src/auto-reply/reply/get-reply-run.ts" "workspaceDir" "workspaceDir passed to buildBareSessionResetPrompt"
 check_wiring "src/gateway/server-methods/agent.ts" "DEFAULT_AGENT_WORKSPACE_DIR" "Workspace dir import in agent.ts"
 check_wiring "src/web/outbound.ts" "Group & Extended Message Operations" "WhatsApp group wrappers in outbound.ts"
+check_wiring "src/browser/extension-relay.ts" "ExtensionConnection" "FORK: multi-extension relay in extension-relay.ts"
+check_wiring "src/browser/extension-relay.ts" "extensionConnections" "FORK: extensionConnections Map in extension-relay.ts"
+check_wiring "src/browser/extension-relay.ts" "ownedSessions" "FORK: per-extension session ownership in extension-relay.ts"
 check_wiring "src/agents/pi-embedded-subscribe.types.ts" "authProfileId" "authProfileId in SubscribeEmbeddedPiSessionParams"
 if [ -f "$ROOT/src/web/auto-reply/monitor.ts" ]; then
   if grep -q "unknown as.*ActiveWebListener\|unknown as import" "$ROOT/src/web/auto-reply/monitor.ts" 2>/dev/null; then

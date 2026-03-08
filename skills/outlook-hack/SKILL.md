@@ -40,10 +40,9 @@ Open the **classic Outlook** tab (`outlook.office.com`) in Chrome with the OpenC
 ```javascript
 // Extract the Outlook REST API bearer token from localStorage
 const keys = Object.keys(localStorage);
-const outlookKey = keys.find(k =>
-  k.includes('accesstoken') &&
-  k.includes('outlook.office.com') &&
-  k.includes('mail.readwrite')
+const outlookKey = keys.find(
+  (k) =>
+    k.includes("accesstoken") && k.includes("outlook.office.com") && k.includes("mail.readwrite"),
 );
 const parsed = JSON.parse(localStorage.getItem(outlookKey));
 // parsed.secret is the bearer token (valid ~25 hours)
@@ -72,18 +71,19 @@ node {baseDir}/scripts/outlook-mail-fetch.mjs --fetch-all --months 12
 ```
 
 **Output:** `~/.openclaw/workspace/data/outlook-emails/`
+
 - `raw-emails.jsonl` — full email data (subject, from, to, body text, preview)
 - `attachments-index.jsonl` — every attachment per message
 - `email-summary.md` — readable digest with stats and per-email summaries
 
 ## Critical: Classic vs New Outlook
 
-| Feature | Classic (`outlook.office.com`) | New (`outlook.cloud.microsoft`) |
-|---------|------|-----|
-| Token type | **Bearer** (plain `secret` in localStorage) | **PoP** (encrypted `data` + `nonce`) |
-| Extractable | ✅ Yes | ❌ No |
-| Service Worker | No | Yes (intercepts all API calls) |
-| API | Outlook REST v2.0 | MessageService + OWA substrate |
+| Feature        | Classic (`outlook.office.com`)              | New (`outlook.cloud.microsoft`)      |
+| -------------- | ------------------------------------------- | ------------------------------------ |
+| Token type     | **Bearer** (plain `secret` in localStorage) | **PoP** (encrypted `data` + `nonce`) |
+| Extractable    | ✅ Yes                                      | ❌ No                                |
+| Service Worker | No                                          | Yes (intercepts all API calls)       |
+| API            | Outlook REST v2.0                           | MessageService + OWA substrate       |
 
 **Always use the classic Outlook tab.** The new Outlook uses Proof-of-Possession tokens that are cryptographically bound to the browser — they cannot be extracted or replayed.
 
@@ -117,4 +117,4 @@ The skill is NOT scraping the page. It speaks Outlook's own REST API, authentica
 
 Pair with [**whatsapp-ultimate**](https://clawhub.com/globalcaos/whatsapp-ultimate) for messaging and [**jarvis-voice**](https://clawhub.com/globalcaos/jarvis-voice) for voice.
 
-👉 **[Clone it. Fork it. Break it. Make it yours.](https://github.com/globalcaos/clawdbot-moltbot-openclaw)**
+👉 **[Clone it. Fork it. Break it. Make it yours.](https://github.com/globalcaos/tinkerclaw)**

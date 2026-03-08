@@ -3,7 +3,7 @@
   "name": "Tinker Command Center",
   "description": "Your $200 Opus session didn't have to happen. Real-time treemaps of context, cost, and budget — before the bill arrives.",
   "version": "1.0.0",
-  "homepage": "https://github.com/globalcaos/clawdbot-moltbot-openclaw",
+  "homepage": "https://github.com/globalcaos/tinkerclaw",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
