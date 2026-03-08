@@ -1,4 +1,5 @@
 # FORK SYNC DAILY
+
 ## Issue #001 | February 8, 2026
 
 ---
@@ -15,16 +16,17 @@
 
 ## Sync Dashboard
 
-| Metric | Value | Status | Target |
-|--------|-------|--------|--------|
-| Commits Behind | 519 | 🔴 CRITICAL | < 20 |
-| Days Since Merge | 35 | 🔴 CRITICAL | < 7 |
-| Our Version | 2026.2.1 | — | — |
-| Conflict Risk | NONE | ✅ SAFE | — |
+| Metric           | Value    | Status      | Target |
+| ---------------- | -------- | ----------- | ------ |
+| Commits Behind   | 519      | 🔴 CRITICAL | < 20   |
+| Days Since Merge | 35       | 🔴 CRITICAL | < 7    |
+| Our Version      | 2026.2.1 | —           | —      |
+| Conflict Risk    | NONE     | ✅ SAFE     | —      |
 
 ## Impact of Drift
 
 Being 519 commits behind means:
+
 - **Missing Telegram spoiler tags** — Users can't hide spoiler content
 - **Vulnerable to context overflow bugs** — Fixed in #11664
 - **Stale cron scheduler** — Reliability issues fixed in #10776
@@ -38,7 +40,8 @@ Being 519 commits behind means:
 
 **Description:** Merge 519 commits from openclaw/openclaw main branch
 
-**Why it matters:** 
+**Why it matters:**
+
 - Closes security gaps in context handling
 - Fixes Discord forum channel support
 - Improves cron scheduling reliability
@@ -48,8 +51,9 @@ Being 519 commits behind means:
 **Risk:** LOW — Our modifications don't overlap with upstream changes
 
 **How to execute:**
+
 ```bash
-cd /home/<user>/src/clawdbot-moltbot-openclaw
+cd /home/<user>/src/tinkerclaw
 git fetch upstream
 git merge upstream/main
 npm install
@@ -150,6 +154,7 @@ npm test
 # FEATURES WE'RE SKIPPING
 
 Per the user's directive, not interested in:
+
 - ❌ WeChat integration (CrayBotAGI/OpenCray)
 - ❌ DingTalk integration
 - ❌ QQ integration
@@ -162,7 +167,7 @@ Focus remains on **hidden gems** and **performance utilities**.
 
 # THE WATCHMAN'S NOTES
 
-*By Jarvis — Your Fork Intelligence Agent*
+_By Jarvis — Your Fork Intelligence Agent_
 
 ## This Week's Priority
 
@@ -185,6 +190,7 @@ Focus remains on **hidden gems** and **performance utilities**.
 ## Looking Ahead
 
 Next issue will include:
+
 - Post-merge verification report
 - Skills Radar section (new skills in ecosystem)
 - Performance benchmark comparison
@@ -193,19 +199,19 @@ Next issue will include:
 
 # APPENDIX: Recent Upstream Commits
 
-| Commit | Type | Description |
-|--------|------|-------------|
-| eb3e9c6 | chore | Fix vitest standalone configs |
-| a1123dd | feat | Centralize date/time formatting utilities |
-| 74fbbda | docs | Add security & trust documentation |
-| 28e1a65 | chore | Project hygiene fixes |
-| e02d144 | feat | Telegram spoiler tag support |
-| 9949f82 | fix | Discord forum channel thread-create |
-| 191da1f | fix | Context overflow compaction |
-| 8fae55e | fix | Cron scheduling reliability |
+| Commit  | Type  | Description                               |
+| ------- | ----- | ----------------------------------------- |
+| eb3e9c6 | chore | Fix vitest standalone configs             |
+| a1123dd | feat  | Centralize date/time formatting utilities |
+| 74fbbda | docs  | Add security & trust documentation        |
+| 28e1a65 | chore | Project hygiene fixes                     |
+| e02d144 | feat  | Telegram spoiler tag support              |
+| 9949f82 | fix   | Discord forum channel thread-create       |
+| 191da1f | fix   | Context overflow compaction               |
+| 8fae55e | fix   | Cron scheduling reliability               |
 
 ---
 
-*Generated: 2026-02-08 14:54 CET*
-*Data sources: git log, GitHub API*
-*Verified: All metrics from live queries*
+_Generated: 2026-02-08 14:54 CET_
+_Data sources: git log, GitHub API_
+_Verified: All metrics from live queries_
