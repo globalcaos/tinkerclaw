@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
-  <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/fork%20commits-262+-orange?style=for-the-badge" alt="262+ fork commits"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-19-green?style=for-the-badge" alt="19 skills"></a>
+  <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-20+-green?style=for-the-badge" alt="20+ skills"></a>
   <a href="#-memory-research"><img src="https://img.shields.io/badge/papers-7-blueviolet?style=for-the-badge" alt="7 papers"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
 </p>
@@ -38,7 +38,7 @@ You didn't overspend. You **overloaded**. And you had no way to see it happening
 
 Most people find out three days later. The observant ones set a budget alert after it's already too late. The really unlucky ones hit their API rate limit at 2 AM on a Tuesday and wake up to a dead agent and no idea why.
 
-TinkerClaw exists because we got the $23 bill. Then we got angry. Then we built a dashboard. Then we couldn't stop — memory consolidation, self-improving crons, 19 published skills, 7 research papers on how agent memory should actually work.
+TinkerClaw exists because we got the $23 bill. Then we got angry. Then we built a dashboard. Then we couldn't stop — memory consolidation, self-improving crons, dozens of published skills, 7 research papers on how agent memory should actually work.
 
 Because once you start tinkering, you don't stop.
 
@@ -58,7 +58,7 @@ We value people who **open PRs**, not issues. Who read the code before asking qu
 
 ## Won't This Fork Fall Behind?
 
-No. A nightly cron syncs upstream automatically, detects conflicts, and restores fork patches after every merge. We're 262 commits ahead of vanilla OpenClaw and zero commits behind.
+No. A nightly cron syncs upstream automatically, detects conflicts, and restores fork patches after every merge. Hundreds of commits ahead of vanilla OpenClaw and zero behind.
 
 When upstream pushes a breaking change, we know within hours — not weeks.
 
@@ -128,19 +128,20 @@ Day 1: mediocre. Day 30: genuinely useful.
 - Nightly upstream sync with conflict detection
 - Post-merge workspace cleanup (catches 20KB bloat)
 - Fork patches auto-restored after conflicts
-- 262 commits ahead, zero maintenance burden
+- Hundreds of commits ahead, zero maintenance burden
 
 ---
 
 ## 📦 Published Skills
 
-> 19 skills on [ClawHub](https://clawhub.ai/u/globalcaos). Install any with `clawhub install globalcaos/<skill-name>`.
+> All on [ClawHub](https://clawhub.ai/u/globalcaos). Install any with `clawhub install globalcaos/<skill-name>`.
+> Skills sometimes get delisted from the marketplace — this list is the permanent record.
 
 ### 🎤 Voice & Personality
 
 | Skill | What it does |
 |-------|-------------|
-| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Your agent already thinks like JARVIS. This makes it *sound* like one too. Sherpa-onnx, piper, pitch-shifted, metallic. |
+| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Turn your AI into JARVIS. Voice, wit, and personality — the complete package. |
 
 ### 📹 Media & Content
 
@@ -182,14 +183,26 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 | [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent) | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call. |
 | [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer) | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
 | [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
-| [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer) | Find out how much your agent actually remembers. Spoiler: less than you think. |
+| [`ultimate-fork-and-skill-scanner`](https://clawhub.ai/globalcaos/ultimate-fork-and-skill-scanner) | Full fork + skill scanning with trend insights and actionable improvements. |
+| [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer) | Benchmark your agent's memory. Contribute anonymized scores to open research. |
+| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer) | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics. |
+| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter) | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
+| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router) | Auto-selects the optimal model per task. Cost vs capability, no manual routing. |
 
 ### 🛡️ Security & Governance
 
 | Skill | What it does |
 |-------|-------------|
-| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Draw the line between helpful and reckless. Safety gates that don't lobotomize your agent. |
+| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Instruction-level guardrails so your agent won't go rogue or improvise ethics. |
 | [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate) | Long-term memory done right. Semantic search, daily consolidation, cross-session recall. |
+| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate) | Classify every shell command as SAFE, WARN, or CRIT before your agent runs it. |
+
+### 😂 Humor & Communication
+
+| Skill | What it does |
+|-------|-------------|
+| [`ai-humor-ultimate`](https://clawhub.ai/globalcaos/ai-humor-ultimate) | Four humor patterns grounded in cognitive science. Funny when it should be, serious when it matters. |
+| [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
 
 ### 📋 Data & Migration
 
