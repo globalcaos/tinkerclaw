@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-FORK_REPO="globalcaos/clawdbot-moltbot-openclaw"
+FORK_REPO="globalcaos/tinkerclaw"
 BENCH_DIR="benchmarks/memory-bench"
 
 REPORT="$1"
@@ -158,8 +158,8 @@ print(f\"- **Consolidation runs:** {r['memory_stats']['consolidation']['total_ru
 ### Co-authorship
 
 This data contributes to the research papers at:
-- [ENGRAM (Context Compaction)](https://github.com/globalcaos/clawdbot-moltbot-openclaw/blob/main/docs/papers/context-compaction.md)
-- [CORTEX (Agent Memory)](https://github.com/globalcaos/clawdbot-moltbot-openclaw/blob/main/docs/papers/agent-memory.md)
+- [ENGRAM (Context Compaction)](https://github.com/globalcaos/tinkerclaw/blob/main/docs/papers/context-compaction.md)
+- [CORTEX (Agent Memory)](https://github.com/globalcaos/tinkerclaw/blob/main/docs/papers/agent-memory.md)
 
 By submitting benchmark data, you are eligible for co-authorship per [#13991](https://github.com/openclaw/openclaw/issues/13991).
 

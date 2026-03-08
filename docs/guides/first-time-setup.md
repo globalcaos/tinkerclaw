@@ -11,7 +11,7 @@ This guide walks you through setting up OpenClaw from our fork, with all the enh
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/globalcaos/clawdbot-moltbot-openclaw.git openclaw
+git clone https://github.com/globalcaos/tinkerclaw.git openclaw
 cd openclaw
 ```
 
@@ -28,6 +28,7 @@ npx openclaw init
 ```
 
 The wizard will ask for:
+
 - Your name (for the AI to address you)
 - Your phone number (for WhatsApp allowlist)
 - Your primary AI provider
@@ -51,10 +52,10 @@ Edit `~/.openclaw/openclaw.json`:
 
 ### Getting API Keys
 
-| Provider | Where to Get | Cost |
-|----------|--------------|------|
-| Anthropic (Claude) | [console.anthropic.com](https://console.anthropic.com) | Pay-as-you-go |
-| Google (Gemini) | [aistudio.google.com](https://aistudio.google.com) | Free tier available |
+| Provider           | Where to Get                                           | Cost                |
+| ------------------ | ------------------------------------------------------ | ------------------- |
+| Anthropic (Claude) | [console.anthropic.com](https://console.anthropic.com) | Pay-as-you-go       |
+| Google (Gemini)    | [aistudio.google.com](https://aistudio.google.com)     | Free tier available |
 
 ## Step 5: Link WhatsApp (Optional)
 
@@ -73,6 +74,7 @@ npx openclaw gateway start
 ```
 
 You should see:
+
 ```
 ✓ Gateway started (pid 12345)
 ✓ WhatsApp connected
@@ -82,9 +84,11 @@ You should see:
 ## Step 7: Talk to Your AI
 
 Send a WhatsApp message to your linked number:
+
 > "Hello! What can you help me with?"
 
 Or use the web chat:
+
 ```bash
 npx openclaw chat
 ```
@@ -92,9 +96,11 @@ npx openclaw chat
 ## Step 8: Let the AI Configure Itself
 
 Once connected, tell your AI:
+
 > "Read FORK.md and configure the recommended settings for me."
 
 The AI will:
+
 1. Enable Smart Router for cost savings
 2. Set up failover to Gemini
 3. Configure WhatsApp for full access
@@ -105,16 +111,19 @@ The AI will:
 ## What's Pre-Configured in This Fork
 
 ### Security (Already Applied)
+
 - DNS rebinding protection
 - Zip path traversal fix
 - WebSocket authentication
 
 ### Cost Optimization (Already Applied)
+
 - Smart Router V2 (auto model selection)
 - Rate limiting (prevents runaway costs)
 - Failover chain (Claude → Gemini)
 
 ### Skills (Already Installed)
+
 - `youtube-ultimate` — Free YouTube transcripts
 - `google-sheets` — Spreadsheet automation
 - `healthcheck` — System security audits
@@ -124,19 +133,24 @@ The AI will:
 ## Troubleshooting
 
 ### "WhatsApp not connecting"
+
 ```bash
 npx openclaw doctor
 npx openclaw channels login  # Re-link
 ```
 
 ### "Rate limit errors"
+
 The failover should handle this automatically. Check:
+
 ```bash
 npx openclaw status
 ```
 
 ### "Command not found: openclaw"
+
 Make sure you're in the openclaw directory, or install globally:
+
 ```bash
 npm link
 ```

@@ -11,8 +11,8 @@ How to replicate the full globalcaos OpenClaw fork stack from scratch.
 ## Quick Start
 
 ```bash
-git clone https://github.com/globalcaos/clawdbot-moltbot-openclaw.git
-cd clawdbot-moltbot-openclaw
+git clone https://github.com/globalcaos/tinkerclaw.git
+cd tinkerclaw
 bash scripts/fork-setup.sh
 ```
 
@@ -33,7 +33,7 @@ All three run locally. ClawMetry and Mission Control are companion repos cloned 
 ### 1. Install dependencies
 
 ```bash
-cd ~/src/clawdbot-moltbot-openclaw
+cd ~/src/tinkerclaw
 pnpm install    # or: npm install
 ```
 
@@ -165,7 +165,7 @@ Notable skills:
 ## Updating
 
 ```bash
-cd ~/src/clawdbot-moltbot-openclaw
+cd ~/src/tinkerclaw
 git pull origin main
 npm install        # or pnpm install
 npm run build      # or pnpm build
