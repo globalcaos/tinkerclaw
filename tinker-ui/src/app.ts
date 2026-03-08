@@ -25,6 +25,10 @@ let messages: any[] = [];
 /** Index into messages[] of the current streaming temporary message, or -1 if none. */
 let streamMsgIdx = -1;
 let streamRunId: string | null = null;
+/** Tracks how much of the server's accumulated text is already shown in frozen temp messages. */
+let frozenTextEnd = 0;
+/** Length of the last full delta text received (used to set frozenTextEnd on tool freeze). */
+let lastDeltaLen = 0;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
@@ -211,6 +215,8 @@ function gwConnect() {
     connected = false;
     sending = false;
     streamMsgIdx = -1;
+    frozenTextEnd = 0;
+    lastDeltaLen = 0;
     streamRunId = null;
     activeRuns.clear();
     saveActiveRuns();
@@ -333,18 +339,21 @@ function onEvent(evt: any) {
       streamRunId = p.runId;
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
+        lastDeltaLen = deltaText.length;
+        // Slice off text already shown in frozen thinking bubbles
+        const segmentText = frozenTextEnd > 0 ? deltaText.slice(frozenTextEnd) : deltaText;
         if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
           // Update existing temporary message's text
           const content = messages[streamMsgIdx].content;
           const textBlock = content.find((b: any) => b.type === "text");
           if (textBlock) {
-            textBlock.text = deltaText;
+            textBlock.text = segmentText;
           }
         } else {
           // Create a new temporary message
           messages.push({
             role: "assistant",
-            content: [{ type: "text", text: deltaText }],
+            content: [{ type: "text", text: segmentText }],
             _temporary: true,
           });
           streamMsgIdx = messages.length - 1;
@@ -373,6 +382,8 @@ function onEvent(evt: any) {
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
+      frozenTextEnd = 0;
+      lastDeltaLen = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
       if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
         sending = false;
@@ -394,6 +405,7 @@ function onEvent(evt: any) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
         // Freeze current streaming text — it becomes its own thinking bubble
+        frozenTextEnd = lastDeltaLen;
         streamMsgIdx = -1;
         // Add tool_use as a temporary message
         messages.push({
@@ -629,6 +641,8 @@ async function loadSessions() {
 
 async function loadChat() {
   streamMsgIdx = -1;
+  frozenTextEnd = 0;
+  lastDeltaLen = 0;
   if (!sessionKey) {
     return;
   }
@@ -682,6 +696,8 @@ function retryProvider(provider: string) {
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
   streamMsgIdx = -1;
+  frozenTextEnd = 0;
+  lastDeltaLen = 0;
   messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
   clearPersistedErrors(sessionKey);
   // Find last user message and resend
@@ -712,6 +728,8 @@ async function abort() {
   sending = false;
   messages = messages.filter((m: any) => !m._temporary);
   streamMsgIdx = -1;
+  frozenTextEnd = 0;
+  lastDeltaLen = 0;
   streamRunId = null;
   activeRuns.clear();
   updateChat();
@@ -1272,27 +1290,14 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 
   if (provider === "google") {
     const g = budgetUsageData?.gemini;
-    if (!g) return null;
-    const entry =
-      g[name] ||
-      Object.entries(g).find(([k]) => name.startsWith(k) || k.startsWith(name))?.[1] ||
-      Object.values(g)[0];
-    if (!entry) return null;
-    const rpd = entry.rpd ?? 0;
-    const reqs24h = entry.requestCount24h ?? 0;
-    // Top bar: requests used today vs RPD limit
-    const rpdPct = rpd > 0 ? Math.min((reqs24h / rpd) * 100, 100) : 0;
-    // Bottom bar: total requests across all Gemini models (24h) for context
-    const totalReqs = budgetUsageData.gemini?._total?.requestCount24h ?? 0;
-    const totalRpd = Object.values(budgetUsageData.gemini || {})
-      .filter((e: any) => e?.rpd)
-      .reduce((s: number, e: any) => s + (e.rpd ?? 0), 0);
-    const totalPct = totalRpd > 0 ? Math.min((totalReqs / totalRpd) * 100, 100) : 0;
-    let tip = `${name}: ${reqs24h}/${rpd} RPD (${rpdPct.toFixed(0)}%)`;
-    tip += `\nAll models: ${totalReqs} reqs (24h)`;
-    tip += `\nLimits: ${entry.rpm ?? 0} RPM, ${((entry.tpm ?? 0) / 1000).toFixed(0)}k TPM`;
-    if (entry.note) tip += `\n${entry.note}`;
-    return { topPct: rpdPct, bottomPct: totalPct, tooltip: tip };
+    if (!g || !g.rpd_limit) return null;
+    // Top bar: RPM (requests per minute — short-term pressure)
+    const rpmPct = g.rpm_limit > 0 ? Math.min((g.rpm_used / g.rpm_limit) * 100, 100) : 0;
+    // Bottom bar: RPD (requests per day — daily hard cap)
+    const rpdPct = g.rpd_limit > 0 ? Math.min((g.rpd_used / g.rpd_limit) * 100, 100) : 0;
+    let tip = `RPM: ${g.rpm_used}/${g.rpm_limit} (${rpmPct.toFixed(0)}%)`;
+    tip += `\nRPD: ${g.rpd_used}/${g.rpd_limit} (${rpdPct.toFixed(0)}%)`;
+    return { topPct: rpmPct, bottomPct: rpdPct, tooltip: tip };
   }
 
   if (provider === "openai") {
@@ -4085,6 +4090,8 @@ function init() {
     // Clear UI immediately so the user sees a fresh slate
     messages.length = 0;
     streamMsgIdx = -1;
+    frozenTextEnd = 0;
+    lastDeltaLen = 0;
     streamRunId = null;
     sending = false;
     clearPersistedErrors(sessionKey);
