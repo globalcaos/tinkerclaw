@@ -11,26 +11,30 @@
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/fork%20commits-262+-orange?style=for-the-badge" alt="262+ fork commits"></a>
-  <a href="#skills"><img src="https://img.shields.io/badge/skills-20+-green?style=for-the-badge" alt="20+ skills"></a>
-  <a href="#memory"><img src="https://img.shields.io/badge/memory%20papers-7-blueviolet?style=for-the-badge" alt="7 memory papers"></a>
+  <a href="#-published-skills-on-clawhub"><img src="https://img.shields.io/badge/skills-20+-green?style=for-the-badge" alt="20+ skills"></a>
+  <a href="#-memory-research"><img src="https://img.shields.io/badge/memory%20papers-7-blueviolet?style=for-the-badge" alt="7 memory papers"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="docs/assets/screenshot-2.png" alt="Context Treemap — where your tokens actually go" width="700">
+  <img src="docs/assets/screenshot-3.png" alt="Token usage over time" width="750">
   <br>
-  <em>This is where your money goes. Every token, every file, every message.</em>
+  <em>Every bar is a turn. Every color is a cost. The spike at 14:02? That was a 40K-token tool result nobody asked for.</em>
 </p>
 
 ---
 
 ## The Problem
 
-A single Opus conversation burns $20+ and you find out three days later on your provider dashboard. That's not a billing problem — it's a **visibility problem**.
+You ran Opus for 20 minutes. It felt productive. Then you check the dashboard three days later and discover that "productive session" cost $23.
 
-TinkerClaw fixes that. And while we were at it, we fixed memory, maintenance, and about 20 other things we got tired of doing manually.
+The worst part? $15 of that was bloated context — workspace files you didn't need, tool results nobody read, conversation history from six topics ago.
+
+You didn't have a spending problem. You had a **seeing** problem.
+
+TinkerClaw is what happens when someone gets annoyed enough to fix that — and then can't stop fixing everything else. Memory that forgets too much? Fixed. Fork maintenance? Automated. Skills that solve real problems? 20 of them. Research papers on how agent memory should actually work? Seven.
 
 Because we are that obsessive.
 
@@ -40,56 +44,66 @@ Because we are that obsessive.
 
 <table>
 <tr>
-<td width="50%">
+<td width="55%">
 
-### 🔍 See Where Every Token Goes
+### 🔍 Tinker UI — Your Command Center
 
-Tinker UI shows why a session is expensive, bloated, or stuck. Context treemap, response breakdown, cost dashboard with rate-limit countdown.
+See why a session is getting expensive, bloated, or stuck.
 
-You'll never wonder "why is my context 180K tokens?" again.
+- **Context treemap** — what fills your 200K context window
+- **Response treemap** — text vs thinking vs tool calls per response
+- **Timeline** — spot the turn that blew the budget
+- **Overseer graph** — catch stalled sub-agents in seconds
+- **Cost dashboard** — per-provider usage with rate-limit countdown
 
 </td>
-<td width="50%">
+<td width="45%">
 
-<img src="docs/assets/screenshot-3.png" alt="Context Timeline" width="100%">
-<em>Token usage over time — spot the turn that blew your budget.</em>
+<img src="docs/assets/screenshot-2.png" alt="Context Treemap" width="100%">
 
 </td>
 </tr>
 <tr>
-<td width="50%">
+<td width="45%">
 
-<img src="docs/assets/screenshot-1.png" alt="Models Panel" width="100%">
-<em>Per-model usage, fallback chains, session health — one glance.</em>
+<img src="docs/assets/screenshot-1.png" alt="Models & Sessions Panel" width="100%">
 
 </td>
-<td width="50%">
+<td width="55%">
 
 ### 🧠 Memory That Improves Overnight
 
-Nightly consolidation turns raw session logs into structured knowledge. Retrieval tracks whether search results actually helped — and gets better over time.
+Every night, the agent reviews its day — not as a diary, but as an evolution loop:
 
-We measured: 23.5KB → 12KB injected context. 49% smaller, zero quality loss.
+- **ENGRAM consolidation** — raw logs → structured knowledge files
+- **Retrieval feedback** — tracks what search results actually helped
+- **Structured compaction** — preserves decisions, tradeoffs, and open questions
+
+Measured: 23.5KB → 12KB injected context. 49% smaller, zero quality loss.
 
 </td>
 </tr>
+</table>
+
+<table>
 <tr>
 <td width="50%">
 
-### 🔄 Agents That Fix Themselves
+### 🔄 Self-Improving Agents
 
-Each cron carries a META file with its own instructions. After running, it reflects on what worked, updates the META, and the next run is better.
+Each cron carries a META file with its own instructions. After running, it reflects, updates the META, and the next run is better.
 
 Day 1 mediocre. Day 30, genuinely useful. No human needed.
 
 </td>
 <td width="50%">
 
-### 🧹 Maintenance You Never Think About
+### 🧹 Maintenance on Autopilot
 
-Nightly upstream sync. Post-merge cleanup. Workspace bloat detection. Prompt improvement loops. Fork-specific patches auto-restored after conflicts.
-
-262 commits ahead. Zero maintenance burden.
+- Nightly upstream sync with conflict detection
+- Post-merge workspace cleanup (catches 20KB bloat)
+- Fork patches auto-restored after conflicts
+- 262 commits ahead, zero maintenance burden
 
 </td>
 </tr>
@@ -98,71 +112,110 @@ Nightly upstream sync. Post-merge cleanup. Workspace bloat detection. Prompt imp
 ---
 
 <p align="center">
-  <img src="docs/assets/screenshot-4.png" alt="Tinker UI — full chat interface" width="800">
+  <img src="docs/assets/screenshot-4.png" alt="Tinker UI — full command center" width="800">
   <br>
-  <em>Not just a dashboard — a full command center with session management, tool inspection, and real-time streaming.</em>
+  <em>Full chat interface with session switching, tool call inspection, real-time streaming, and the publish gate that reviewed this very README.</em>
 </p>
 
 ---
 
-## Skills
+## 📦 Published Skills on [ClawHub](https://clawhub.com)
 
-20+ published to [ClawHub](https://clawhub.com). 60+ in the workspace. Built from production needs, not weekends.
+> 20 skills, all built by globalcaos. Install any with `clawhub install <skill-name>`.
 
-| | Skill | One line |
-|---|-------|---------|
-| 🔒 | **whatsapp-ultimate** | Message security gate — allowlists, trigger prefixes, owner override |
-| 🔒 | **agent-boundaries-ultimate** | Trust framework across channels and contexts |
-| 🧠 | **agent-memory-ultimate** | Consolidation, retrieval feedback, structured compaction |
-| 🧠 | **memory-pioneer** | Benchmark your memory system's actual quality |
-| 🔧 | **tinker-command-center** | The dashboard — every token, every dollar, real time |
-| 🔧 | **model-router** | Auto-select model by task type. Opus for reasoning, Flash for extraction. |
-| 💬 | **outlook-hack** | Reads Outlook all day. Drafts replies. Won't send one. Code-enforced. |
-| 💬 | **teams-hack** | Reads Teams, searches everything. Browser relay, no admin consent needed. |
-| 🤖 | **subagent-overseer** | Sub-agent health monitoring — zero AI tokens, pure OS-level |
-| 📝 | **ai-humanizer** | 24 detectors, 500+ AI terms. Makes AI text sound human. |
-| 🎤 | **jarvis-voice** | Custom TTS — sherpa-onnx, piper, pitch-shifted, metallic |
+### 🎤 Voice & Personality
 
-<details>
-<summary><strong>+50 more →</strong></summary>
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`jarvis-voice`](https://clawhub.com/globalcaos/jarvis-voice) | Your agent already thinks like JARVIS. This makes it sound like one too. Sherpa-onnx, piper, pitch-shifted, metallic. | v3.1.1 |
 
-Google Workspace (Gmail, Calendar, Drive, Sheets), GitHub ops, video frames, PDF editing, weather, GIF search, image generation, Spotify, Sonos, Philips Hue, Apple Notes, Notion, Trello, Obsidian, coding delegation, and more. All installable: `clawhub install <skill>`.
+### 📹 Media & Content
 
-</details>
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`youtube-ultimate`](https://clawhub.com/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned | v4.2.2 |
+| [`ai-humanizer`](https://clawhub.com/globalcaos/ai-humanizer) | 24 detectors, 500+ AI vocabulary terms. Makes AI text sound like a human wrote it. | v2.1.0 |
+
+### 💬 Messaging & Channels
+
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`whatsapp-ultimate`](https://clawhub.com/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. | v3.5.1 |
+| [`xurl`](https://clawhub.com/globalcaos/xurl) | Post, reply, DM, upload media on X — from your agent, fully authenticated. | v2.3.1 |
+
+### 💰 Cost & Token Management
+
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`tinker-command-center`](https://clawhub.com/globalcaos/tinker-command-center) | The dashboard. Every token, every dollar, every context byte — real time. | v1.0.1 |
+| [`token-panel-ultimate`](https://clawhub.com/globalcaos/token-panel-ultimate) | Know exactly where your AI tokens go. Multi-provider tracking, budget alerts. | v2.1.1 |
+| [`token-efficiency-guide`](https://clawhub.com/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon. | v1.1.0 |
+
+### 🏢 Enterprise Integrations
+
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`outlook-hack`](https://clawhub.com/globalcaos/outlook-hack) | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. | v1.0.1 |
+| [`teams-hack`](https://clawhub.com/globalcaos/teams-hack) | Reads Teams chats, searches everything. Browser relay integration. | v1.0.1 |
+| [`factorial-hack`](https://clawhub.com/globalcaos/factorial-hack) | Reads your HR portal — attendance, leave, payslips. Browser relay, no admin consent. | v1.0.0 |
+
+### 🤖 Agent & DevOps
+
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`coding-agent`](https://clawhub.com/globalcaos/coding-agent) | Hand off a coding task and come back to a diff. Codex, Claude Code, or Pi. | v1.0.0 |
+| [`subagent-overseer`](https://clawhub.com/globalcaos/subagent-overseer) | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. | v1.0.0 |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.com/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. | v1.1.1 |
+| [`memory-pioneer`](https://clawhub.com/globalcaos/memory-pioneer) | Find out how much your agent actually remembers. Spoiler: less than you think. | v1.0.2 |
+| [`memory-bench-pioneer`](https://clawhub.com/globalcaos/memory-bench-pioneer) | Benchmark memory strategies against each other. Comparative evaluation. | v1.0.0 |
+
+### 🛡️ Security & Governance
+
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`agent-boundaries-ultimate`](https://clawhub.com/globalcaos/agent-boundaries-ultimate) | Draw the line between helpful and reckless. Safety gates that don't lobotomize your agent. | v1.2.2 |
+| [`agent-memory-ultimate`](https://clawhub.com/globalcaos/agent-memory-ultimate) | Long-term memory done right. Semantic search, daily consolidation, cross-session recall. | v2.0.3 |
+| [`shell-security-ultimate`](https://clawhub.com/globalcaos/shell-security-ultimate) | Execution boundaries for shell commands. Security levels, audit trails. | v1.0.0 |
+
+### 📋 Data & Migration
+
+| Skill | Description | Version |
+|-------|-------------|---------|
+| [`chatgpt-exporter-ultimate`](https://clawhub.com/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format. | v1.0.2 |
 
 ---
 
-## Memory Research
+## 📚 Memory Research
 
-7 papers on how agent memory actually works in practice:
+7 papers on how agent memory actually works in production — not in theory.
 
-| Topic | Key finding |
-|-------|------------|
-| **ENGRAM consolidation** | Nightly sleep cycle: daily logs → knowledge → entities → projects |
-| **HIPPOCAMPUS retrieval** | Semantic index with feedback loop — search gets better over time |
-| **Retrieval feedback** | Log whether results helped, misled, or missed. Then act on it. |
-| **Structured compaction** | Preserve: Context → Decision → Alternatives → Confidence → Open questions |
-| **Wind-down as evolution** | Don't document the day. Fix the system. |
-| **Context optimization** | 23.5KB → 12KB. Less context, better answers, lower cost. |
-| **Multi-model memory** | Consolidation ≠ retrieval ≠ search. Different models for different jobs. |
+| Paper | Topic | Key Contribution |
+|-------|-------|-----------------|
+| 📄 [**ENGRAM**](docs/papers/engram.md) | Context Compaction | Nightly sleep cycle: daily logs → knowledge → entities → projects |
+| 📄 [**HIPPOCAMPUS**](docs/papers/hippocampus.md) | Concept Indexing | Pre-computed concept index for O(1) memory retrieval |
+| 📄 [**CORTEX**](docs/papers/cortex.md) | Persona-Aware Context | Context engineering for persistent AI identity |
+| 📄 [**DENDRITE**](docs/papers/dendrite.md) | Fractal Memory | Self-similar architecture for scalable long-term memory |
+| 📄 [**LIMBIC**](docs/papers/limbic.md) | Humor Generation | Bisociation in computational embedding space |
+| 📄 [**SYNAPSE**](docs/papers/synapse.md) | Multi-Model Debate | Adversarial reasoning across provider-specific engines |
+| 📄 [**THALAMUS**](docs/papers/thalamus.md) | Self-Improvement | Curiosity, memory, and the architecture of self-improving LLMs |
 
 ---
 
-## The Field Guide
+## 📖 The Field Guide
 
 32 lessons from 6 weeks of running AI agents 24/7. We taught our sibling agent everything we knew, then wrote it down for everyone else.
 
 > *"Read is free, send is not."*
 >
-> *"A stuck sub-agent is burning money. Kill fast, respawn small."*
->
 > *"Wind-down is evolution, not diary."*
+>
+> *"A stuck sub-agent is burning money. Kill fast, respawn small."*
 
 **📖 [Read the Field Guide →](docs/guides/field-guide.md)**
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/globalcaos/tinkerclaw.git
@@ -171,7 +224,9 @@ pnpm install && pnpm build
 pnpm openclaw onboard --install-daemon
 ```
 
-Drop-in replacement for vanilla OpenClaw. Same config, same workspace, same channels. More of everything.
+Drop-in replacement for vanilla OpenClaw. Same config, same workspace, same channels.
+
+Visit `http://localhost:18789/tinker/` for the command center.
 
 ---
 
