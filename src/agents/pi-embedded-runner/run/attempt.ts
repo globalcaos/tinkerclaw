@@ -1861,6 +1861,7 @@ export async function runEmbeddedAttempt(
               tools,
               effectivePrompt,
               authProfileId: params.authProfileId,
+              roundNumber: _forkRoundNumber,
               log,
             })
             .catch((err) => {
