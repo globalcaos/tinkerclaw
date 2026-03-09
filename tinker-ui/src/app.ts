@@ -361,12 +361,25 @@ function onEvent(evt: any) {
       }
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
-      // Remove temporary messages — the finalized message replaces them
       if (p.state !== "error") {
+        // Promote temp messages to permanent — they already have correctly
+        // segmented text from the frozenTextEnd slicing. The interlaced
+        // thinking bubbles + tool rows become the reasoning group content.
+        const hadTemps = messages.some((m: any) => m._temporary);
+        for (const m of messages) {
+          if (m._temporary) delete m._temporary;
+        }
+        // Only push server's final message if there were no temps to promote
+        // (e.g. instant response with no streaming). Otherwise the promoted
+        // temps already cover all content.
+        if (!hadTemps && p.message) {
+          messages.push(p.message);
+        }
+      } else {
         messages = messages.filter((m: any) => !m._temporary);
-      }
-      if (p.message) {
-        messages.push(p.message);
+        if (p.message) {
+          messages.push(p.message);
+        }
       }
       if (p.state === "error" && p.errorMessage) {
         const errMsg = {
@@ -1068,9 +1081,8 @@ function renderMsg(
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
-      const streamingClass = msg._temporary ? " streaming" : "";
       const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-      h += `<div class="msg assistant${errorClass}${streamingClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+      h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
     } else {
       h += renderSystemMsg(text, idx);
     }
@@ -1108,13 +1120,12 @@ function renderMsg(
         }
       } else if (role === "assistant") {
         const errorClass = msg._isError ? " msg-error" : "";
-        const streamingClass = msg._temporary ? " streaming" : "";
         const retryBtn =
           msg._isError && msg._retryProvider
             ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
             : "";
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-        h += `<div class="msg assistant${errorClass}${streamingClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
       } else {
         h += renderSystemMsg(text, idx);
       }
@@ -1254,6 +1265,7 @@ interface ModelUsageInfo {
   topPct: number;
   bottomPct: number;
   tooltip: string;
+  disconnected?: boolean;
 }
 
 function getModelUsage(provider: string, modelId: string, keyId?: string): ModelUsageInfo | null {
@@ -1266,7 +1278,17 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     const profiles = budgetUsageData.claudeProfiles || {};
     const matched = profileKey ? profiles[profileKey] : null;
     const c = matched || budgetUsageData.claude;
-    if (!c?.limits) return null;
+    if (!c?.limits) {
+      // Profile exists but no usage data — show disconnected state
+      if (profileKey)
+        return {
+          topPct: 0,
+          bottomPct: 0,
+          tooltip: `${profileKey}: disconnected`,
+          disconnected: true,
+        };
+      return null;
+    }
     const src = matched ? profileKey : "shared";
     const h5 = c.limits.five_hour?.utilization ?? 0;
     const isSonnet = name.includes("sonnet");
@@ -1320,6 +1342,14 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   if (!usage) return '<span class="usage-bars-col"></span>';
+  if (usage.disconnected) {
+    let h = '<span class="usage-bars-col">';
+    h += `<span class="usage-bars-wrap usage-disconnected" data-hint="${esc(usage.tooltip)}">`;
+    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,#6b728033 0,#6b728033 3px,transparent 3px,transparent 6px)"></span></span>`;
+    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,#6b728033 0,#6b728033 3px,transparent 3px,transparent 6px)"></span></span>`;
+    h += `</span></span>`;
+    return h;
+  }
   const topColor = "#4ade80";
   const bottomColor = "#f59e0b";
   const topW = Math.min(usage.topPct, 100);
@@ -1375,12 +1405,18 @@ function updateChat(skipScroll = false) {
   // (bounded by user messages), all assistant text messages except the last
   // are thinking steps. If streaming is active, ALL assistant texts in the
   // current run are thinking (the live answer is a temporary message).
+  // Tool result user messages are NOT run boundaries — they're mid-run tool responses.
+  const isRunBoundary = (m: any) => {
+    if ((m.role ?? "").toLowerCase() !== "user") return false;
+    const c = Array.isArray(m.content) ? m.content : [];
+    // Pure tool_result messages are part of the run, not boundaries
+    return c.length === 0 || c.some((b: any) => b.type !== "tool_result");
+  };
   const thinkingSet = new Set<number>();
   {
     let runStart = 0;
     for (let i = 0; i <= messages.length; i++) {
-      const isUserOrEnd =
-        i === messages.length || (messages[i].role ?? "").toLowerCase() === "user";
+      const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
       if (!isUserOrEnd) continue;
       const assistantTextIndices: number[] = [];
       for (let j = runStart; j < i; j++) {
@@ -1391,9 +1427,10 @@ function updateChat(skipScroll = false) {
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasText || plainText) assistantTextIndices.push(j);
       }
-      // If this is the last run and we're still streaming, all assistant texts are thinking
+      // During streaming, render all bubbles as normal assistant (no thinking style).
+      // After finalization, all except the last become thinking → reasoning group.
       const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
-      const intermediates = isCurrentRun ? assistantTextIndices : assistantTextIndices.slice(0, -1);
+      const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
       for (const idx of intermediates) thinkingSet.add(idx);
       runStart = i + 1;
     }
@@ -1419,8 +1456,7 @@ function updateChat(skipScroll = false) {
   {
     let runStart = 0;
     for (let i = 0; i <= messages.length; i++) {
-      const isUserOrEnd =
-        i === messages.length || (messages[i].role ?? "").toLowerCase() === "user";
+      const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
       if (!isUserOrEnd) continue;
 
       // Collect intermediate vs final in this run
