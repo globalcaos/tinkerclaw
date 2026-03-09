@@ -26,6 +26,7 @@ import {
   evaluateTurnSyncScore,
 } from "../agents/pi-extensions/mid-context-reinject.js";
 import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
+import { getRetrievalRuntime } from "../agents/pi-extensions/retrieval-runtime.js";
 import { captureForensicDump } from "../forensic/dump-writer.js";
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,33 @@ export function getPersonaBlock(effectiveWorkspace: string): string | undefined 
  * prepend the Tier 1A persona block to reinforce persona identity.
  * Returns the (possibly modified) system prompt text and whether it was applied.
  */
+/**
+ * ENGRAM Phase 1.2: Inject a retrieval pack of relevant past events
+ * into the system prompt. Uses FTS search + recency boost + MMR dedup.
+ */
+export async function injectRetrievalPack(
+  sessionManager: SessionManager,
+  systemPromptText: string,
+  query: string,
+  log: { info: (msg: string) => void },
+): Promise<string> {
+  const rt = getRetrievalRuntime(sessionManager);
+  if (!rt?.assemble) {
+    return systemPromptText;
+  }
+  try {
+    const pack = await rt.assemble(query, 4096);
+    if (!pack) {
+      return systemPromptText;
+    }
+    log.info(`engram: injected retrieval pack (${pack.length} chars)`);
+    return systemPromptText + "\n\n" + pack;
+  } catch (err) {
+    log.info(`engram: retrieval pack failed: ${String(err)}`);
+    return systemPromptText;
+  }
+}
+
 export function applyMidContextReinjectHook(
   sessionManager: SessionManager,
   systemPromptText: string,
