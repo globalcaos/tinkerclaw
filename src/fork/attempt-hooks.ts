@@ -11,6 +11,7 @@
 import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { buildContextAnatomy, writeAnatomyEvent } from "../agents/context-anatomy.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
@@ -214,6 +215,7 @@ export async function emitPrePromptAnatomy(params: {
   }
 
   // 1. Anatomy event (token breakdown for timeline bar)
+  //    Write to JSONL + push over WebSocket so the UI renders the bar instantly.
   if (params.systemPromptReport) {
     try {
       const turnNumber = params.messagesSnapshot.filter(
@@ -232,6 +234,16 @@ export async function emitPrePromptAnatomy(params: {
       });
       if (anatomy) {
         await writeAnatomyEvent(params.sessionKey, anatomy);
+        // Push anatomy to UI immediately via WebSocket — no polling delay
+        emitAgentEvent({
+          runId: params.runId,
+          stream: "lifecycle",
+          data: {
+            phase: "context-anatomy",
+            sessionKey: params.sessionKey,
+            anatomy,
+          },
+        });
       }
     } catch (err) {
       params.log.warn(`pre-prompt anatomy failed: ${String(err)}`);
@@ -239,22 +251,21 @@ export async function emitPrePromptAnatomy(params: {
   }
 
   // 2. Forensic dump (full text for treemap drill-down)
+  //    Fire-and-forget — don't block the LLM call or anatomy delivery.
   if (params.systemPromptText != null && params.effectivePrompt != null) {
-    try {
-      await captureForensicDump({
-        runId: params.runId,
-        sessionKey: params.sessionKey,
-        model: params.modelId,
-        provider: params.provider,
-        modelApi: params.modelApi ?? params.provider,
-        systemPrompt: params.systemPromptText,
-        messages: params.messagesSnapshot,
-        tools: params.tools ?? [],
-        effectivePrompt: params.effectivePrompt,
-      });
-    } catch (err) {
+    captureForensicDump({
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      model: params.modelId,
+      provider: params.provider,
+      modelApi: params.modelApi ?? params.provider,
+      systemPrompt: params.systemPromptText,
+      messages: params.messagesSnapshot,
+      tools: params.tools ?? [],
+      effectivePrompt: params.effectivePrompt,
+    }).catch((err) => {
       params.log.warn(`pre-prompt forensic dump failed: ${String(err)}`);
-    }
+    });
   }
 }
 
@@ -263,6 +274,7 @@ export async function emitPrePromptAnatomy(params: {
 // ---------------------------------------------------------------------------
 
 export interface PostTurnParams {
+  runId: string;
   sessionManager: SessionManager;
   sessionKey?: string;
   messagesSnapshot: unknown[];
@@ -310,6 +322,16 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
       if (contextAnatomy) {
         writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
           log.warn(`context-anatomy write failed: ${String(err)}`);
+        });
+        // Push updated anatomy (now with response tokens) to UI
+        emitAgentEvent({
+          runId: params.runId,
+          stream: "lifecycle",
+          data: {
+            phase: "context-anatomy",
+            sessionKey: params.sessionKey,
+            anatomy: contextAnatomy,
+          },
         });
       }
     } catch (err) {
