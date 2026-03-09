@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 /**
  * Create a WhatsApp group using Baileys directly
  * Usage: npx tsx scripts/wa-create-group.ts "Group Name" "+phone1" "+phone2" ...

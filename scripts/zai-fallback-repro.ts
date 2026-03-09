@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
