@@ -4,6 +4,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
+import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
@@ -115,7 +116,8 @@ export function buildEmbeddedExtensionFactories(params: {
     // getRetrievalRuntime(sessionManager) will be called by retrieval-aware
     // turn hooks to inject the assembled pack into each turn's system prompt.
     const eventStore = createEventStore({ baseDir: engramBaseDir, sessionKey });
-    setRetrievalRuntime(params.sessionManager, { eventStore });
+    // Use global FTS5 database for retrieval (878K+ events) instead of per-session JSONL
+    setRetrievalRuntime(params.sessionManager, { eventStore, searchIndex: globalFtsSearch });
 
     // Phase 1.3: register pointer compaction handler as a feature-flagged
     // alternative to narrative compaction. Works alongside compaction-engram.ts;
