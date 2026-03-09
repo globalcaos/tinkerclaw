@@ -1,5 +1,3 @@
-// refactored: clean code principles applied
-// Refactored according to 10 Clean Code principles
 #!/usr/bin/env bun
 import { execFile } from "node:child_process";
 // Manual ACP thread smoke for plain-language routing.

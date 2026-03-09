@@ -1,5 +1,3 @@
-// refactored: clean code principles applied
-// Refactored according to 10 Clean Code principles
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
