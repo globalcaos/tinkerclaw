@@ -27,6 +27,8 @@ export type ContextAnatomyFileEntry = {
 export type ContextAnatomyEvent = {
   /** Monotonically increasing turn number within this session. */
   turn: number;
+  /** Round number within this turn (1-based). Each tool-use loop iteration is one round. */
+  roundNumber?: number;
   /** How many compactions have occurred in this session so far. */
   compactionCycle: number;
   /** ISO-8601 timestamp. */
@@ -292,6 +294,7 @@ function computeTopicTransition(
 
 export function buildContextAnatomy(params: {
   turn: number;
+  roundNumber?: number;
   compactionCycle: number;
   provider: string;
   model: string;
@@ -390,6 +393,7 @@ export function buildContextAnatomy(params: {
 
   return {
     turn: params.turn,
+    roundNumber: params.roundNumber,
     compactionCycle: params.compactionCycle,
     timestamp: new Date(now).toISOString(),
     timestampMs: now,
