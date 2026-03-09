@@ -492,5 +492,5 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .tab-nav{display:none;align-items:center;justify-content:center;width:20px;height:28px;cursor:pointer;color:var(--muted);background:transparent;border:none;border-radius:4px;font-size:12px;transition:background .12s,color .12s;flex-shrink:0;align-self:center}
 .tab-nav:hover{background:rgba(0,0,0,0.25);color:var(--text)}
 .tab-bar.has-overflow .tab-nav{display:flex}
-.tab-title{max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.tab-title{white-space:nowrap}
 .tab-unattached .tab-title{font-style:italic;opacity:.7}
