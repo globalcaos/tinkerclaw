@@ -39,6 +39,7 @@ const SEGMENT_ORDER = [
 
 export interface AnatomyEvent {
   turn?: number;
+  roundNumber?: number; // which API call within the turn
   model?: string;
   provider?: string;
   contextSent?: {
@@ -59,6 +60,17 @@ export interface AnatomyEvent {
     utilizationPercent?: number;
   };
   responseTokens?: number;
+  durationMs?: number; // round duration from round-complete
+  stopReason?: string; // why the round ended
+  toolsTriggered?: Array<{
+    // tools called after this round
+    name: string;
+    toolCallId: string;
+    inputChars?: number;
+    outputChars?: number;
+    durationMs?: number;
+    isError?: boolean;
+  }>;
   timestampMs?: number;
   timestamp?: string;
   [k: string]: any;
@@ -72,6 +84,29 @@ interface BufferEntry {
 
 interface TimelineController {
   pushEvent(event: AnatomyEvent, runId?: string): void;
+  pushRoundComplete(
+    runId: string,
+    data: {
+      roundNumber: number;
+      outputTokens?: number;
+      durationMs?: number;
+      stopReason?: string;
+      toolCallsRequested?: number;
+    },
+  ): void;
+  pushToolExec(
+    runId: string,
+    data: {
+      roundNumber: number;
+      phase: string;
+      toolName: string;
+      toolCallId: string;
+      outputChars?: number;
+      durationMs?: number;
+      isError?: boolean;
+      inputChars?: number;
+    },
+  ): void;
   loadSession(sessionKey: string): void;
   clear(): void;
   getSelected(): AnatomyEvent | null;
@@ -122,9 +157,19 @@ export function mountContextTimeline(
     tip.className = "ct-tooltip";
     const model = cleanModelName(ev.model ?? "unknown");
     const total = totalTokensFor(ev);
-    const max = maxTokensFor(ev);
-    const util = max > 0 ? (total / max) * 100 : 0;
-    tip.textContent = `${model} · ${fmtK(total)} tokens (${util.toFixed(1)}%)`;
+    const resp = ev.responseTokens;
+    const dur = ev.durationMs;
+    const tools = ev.toolsTriggered?.length ?? 0;
+    const round = ev.roundNumber;
+
+    let text = model;
+    if (round) text = `R${round} · ${text}`;
+    text += ` · ${fmtK(total)} in`;
+    if (resp) text += ` · ${fmtK(resp)} out`;
+    if (dur) text += ` · ${(dur / 1000).toFixed(1)}s`;
+    if (tools > 0) text += ` · ${tools} tool${tools !== 1 ? "s" : ""}`;
+
+    tip.textContent = text;
     tip.style.left = `${x + 10}px`;
     tip.style.top = `${y - 28}px`;
     document.body.appendChild(tip);
@@ -292,9 +337,7 @@ export function mountContextTimeline(
     for (const entry of buffer) {
       const ev = entry.event;
       const sent = ev.contextSent?.totalTokens ?? 0;
-      respTokensArr.push(
-        ev.responseTokens ?? (sent > 0 ? Math.max(500, Math.round(sent * 0.12)) : 0),
-      );
+      respTokensArr.push(ev.responseTokens ?? 0);
     }
     let maxRespTokens = 0;
     for (const r of respTokensArr) {
@@ -484,7 +527,6 @@ export function mountContextTimeline(
 
       // Response bar — side by side with context bar
       const respTokens = respTokensArr[i];
-      const respEstimated = !ev.responseTokens && respTokens > 0;
       if (respTokens > 0) {
         const respBarArea = document.createElement("div");
         respBarArea.className = "ct-bar-area ct-resp-bar-area";
@@ -502,7 +544,13 @@ export function mountContextTimeline(
           removeTooltip();
           const tip = document.createElement("div");
           tip.className = "ct-tooltip";
-          tip.textContent = `Response · ${respEstimated ? "~" : ""}${fmtK(respTokens)} output tokens${respEstimated ? " (est)" : ""}`;
+          const dur = ev.durationMs;
+          const tools = ev.toolsTriggered?.length ?? 0;
+          let text = `Response · ${fmtK(respTokens)} out`;
+          if (dur) text += ` · ${(dur / 1000).toFixed(1)}s`;
+          if (tools > 0) text += ` · ${tools} tool${tools !== 1 ? "s" : ""}`;
+          if (ev.stopReason) text += ` · ${ev.stopReason}`;
+          tip.textContent = text;
           tip.style.left = `${e.clientX + 10}px`;
           tip.style.top = `${e.clientY - 28}px`;
           document.body.appendChild(tip);
@@ -577,6 +625,82 @@ export function mountContextTimeline(
       selectedIdx = buffer.length - 1;
       render();
       onBarSelect(event, "context");
+    },
+
+    pushRoundComplete(
+      runId: string,
+      data: {
+        roundNumber: number;
+        outputTokens?: number;
+        durationMs?: number;
+        stopReason?: string;
+        toolCallsRequested?: number;
+      },
+    ) {
+      // Find the matching buffer entry by runId + roundNumber
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        const entry = buffer[i];
+        if (entry.runId === runId && entry.event.roundNumber === data.roundNumber) {
+          entry.event.responseTokens = data.outputTokens;
+          entry.event.durationMs = data.durationMs;
+          entry.event.stopReason = data.stopReason;
+          render();
+          return;
+        }
+      }
+    },
+
+    pushToolExec(
+      runId: string,
+      data: {
+        roundNumber: number;
+        phase: string;
+        toolName: string;
+        toolCallId: string;
+        outputChars?: number;
+        durationMs?: number;
+        isError?: boolean;
+        inputChars?: number;
+      },
+    ) {
+      // Find the matching buffer entry — use runId primarily, fallback to latest
+      let target: BufferEntry | null = null;
+      for (let i = buffer.length - 1; i >= 0; i--) {
+        if (buffer[i].runId === runId) {
+          target = buffer[i];
+          break;
+        }
+      }
+      if (!target) return;
+
+      if (!target.event.toolsTriggered) {
+        target.event.toolsTriggered = [];
+      }
+
+      if (data.phase === "tool-exec-start") {
+        target.event.toolsTriggered.push({
+          name: data.toolName,
+          toolCallId: data.toolCallId,
+          inputChars: data.inputChars,
+        });
+      } else if (data.phase === "tool-exec-complete") {
+        // Find and update the matching tool entry
+        const existing = target.event.toolsTriggered.find((t) => t.toolCallId === data.toolCallId);
+        if (existing) {
+          existing.outputChars = data.outputChars;
+          existing.durationMs = data.durationMs;
+          existing.isError = data.isError;
+        } else {
+          target.event.toolsTriggered.push({
+            name: data.toolName,
+            toolCallId: data.toolCallId,
+            outputChars: data.outputChars,
+            durationMs: data.durationMs,
+            isError: data.isError,
+          });
+        }
+      }
+      render();
     },
 
     async loadSession(sessionKey: string) {
