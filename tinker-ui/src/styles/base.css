@@ -476,3 +476,21 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .usage-bar{display:block;height:3px;background:rgba(255,255,255,0.08);border-radius:1px;overflow:hidden}
 .usage-bar-fill{display:block;height:100%;border-radius:1px;min-width:1px;transition:width .3s ease,background-color .3s ease}
 .usage-cost-col{font-size:8px;font-family:"SF Mono",monospace;color:var(--muted);white-space:nowrap;text-align:right}
+
+/* ─── Session Tabs ─── */
+.tab-bar{display:flex;align-items:stretch;min-width:0;overflow:hidden;position:relative;flex:1;margin-right:8px}
+.tab-bar-scroll{display:flex;align-items:stretch;gap:1px;overflow:hidden;scroll-behavior:smooth}
+.tab{display:flex;align-items:center;gap:6px;padding:0 12px;height:32px;border-radius:6px 6px 0 0;cursor:pointer;font-size:11px;font-weight:500;color:var(--muted);background:rgba(0,0,0,0.15);white-space:nowrap;transition:background .12s,color .12s;user-select:none;flex-shrink:0;position:relative}
+.tab:hover{background:rgba(0,0,0,0.25);color:var(--text)}
+.tab.tab-active{background:var(--surface);color:var(--text);border-bottom:2px solid var(--accent)}
+.tab.tab-active:hover{background:var(--surface)}
+.tab-close{font-size:13px;opacity:0;transition:opacity .12s;cursor:pointer;padding:0 2px;border-radius:3px;line-height:1;color:var(--muted)}
+.tab:hover .tab-close{opacity:.6}
+.tab-close:hover{opacity:1!important;color:var(--red);background:rgba(239,68,68,0.15)}
+.tab-add{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:16px;color:var(--muted);background:transparent;transition:background .12s,color .12s;flex-shrink:0;align-self:center;border:none;font-weight:300}
+.tab-add:hover{background:rgba(0,0,0,0.25);color:var(--text)}
+.tab-nav{display:none;align-items:center;justify-content:center;width:20px;height:28px;cursor:pointer;color:var(--muted);background:transparent;border:none;border-radius:4px;font-size:12px;transition:background .12s,color .12s;flex-shrink:0;align-self:center}
+.tab-nav:hover{background:rgba(0,0,0,0.25);color:var(--text)}
+.tab-bar.has-overflow .tab-nav{display:flex}
+.tab-title{max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.tab-unattached .tab-title{font-style:italic;opacity:.7}
