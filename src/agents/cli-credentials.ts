@@ -11,6 +11,7 @@ const log = createSubsystemLogger("agents/auth-profiles");
 
 const CLAUDE_CLI_CREDENTIALS_RELATIVE_PATH = ".claude/.credentials.json";
 const CLAUDE_CLI_SV_CREDENTIALS_RELATIVE_PATH = ".claude/.credentials-sv.json";
+const CLAUDE_CLI_GM_CREDENTIALS_RELATIVE_PATH = ".claude/.credentials-gm.json";
 const CODEX_CLI_AUTH_FILENAME = "auth.json";
 const QWEN_CLI_CREDENTIALS_RELATIVE_PATH = ".qwen/oauth_creds.json";
 const MINIMAX_CLI_CREDENTIALS_RELATIVE_PATH = ".minimax/oauth_creds.json";
@@ -26,6 +27,7 @@ type CachedValue<T> = {
 
 let claudeCliCache: CachedValue<ClaudeCliCredential> | null = null;
 let claudeCliSvCache: CachedValue<ClaudeCliCredential> | null = null;
+let claudeCliGmCache: CachedValue<ClaudeCliCredential> | null = null;
 let codexCliCache: CachedValue<CodexCliCredential> | null = null;
 let qwenCliCache: CachedValue<QwenCliCredential> | null = null;
 let minimaxCliCache: CachedValue<MiniMaxCliCredential> | null = null;
@@ -33,6 +35,7 @@ let minimaxCliCache: CachedValue<MiniMaxCliCredential> | null = null;
 export function resetCliCredentialCachesForTest(): void {
   claudeCliCache = null;
   claudeCliSvCache = null;
+  claudeCliGmCache = null;
   codexCliCache = null;
   qwenCliCache = null;
   minimaxCliCache = null;
@@ -383,9 +386,9 @@ export function writeClaudeCliSvCredentials(
   try {
     const raw = loadJsonFile(credPath);
     const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-    const existingOauth = (data.claudeAiOauth && typeof data.claudeAiOauth === "object"
-      ? data.claudeAiOauth
-      : {}) as Record<string, unknown>;
+    const existingOauth = (
+      data.claudeAiOauth && typeof data.claudeAiOauth === "object" ? data.claudeAiOauth : {}
+    ) as Record<string, unknown>;
     data.claudeAiOauth = {
       ...existingOauth,
       accessToken: newCredentials.access,
@@ -401,6 +404,78 @@ export function writeClaudeCliSvCredentials(
     return true;
   } catch (error) {
     log.warn("failed to write SV credentials to cli file", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+// FORK: GM account credential file — separate from Claude Code's main credential.
+// Decouples GM from Claude Code's login (which may be SV account).
+function resolveClaudeCliGmCredentialsPath(homeDir?: string) {
+  const baseDir = homeDir ?? resolveUserPath("~");
+  return path.join(baseDir, CLAUDE_CLI_GM_CREDENTIALS_RELATIVE_PATH);
+}
+
+export function readClaudeCliGmCredentials(options?: {
+  homeDir?: string;
+}): ClaudeCliCredential | null {
+  const credPath = resolveClaudeCliGmCredentialsPath(options?.homeDir);
+  const raw = loadJsonFile(credPath);
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const data = raw as Record<string, unknown>;
+  return parseClaudeCliOauthCredential(data.claudeAiOauth);
+}
+
+export function readClaudeCliGmCredentialsCached(options?: {
+  ttlMs?: number;
+  homeDir?: string;
+}): ClaudeCliCredential | null {
+  const ttlMs = options?.ttlMs ?? 0;
+  const now = Date.now();
+  const cacheKey = resolveClaudeCliGmCredentialsPath(options?.homeDir);
+  if (
+    ttlMs > 0 &&
+    claudeCliGmCache &&
+    claudeCliGmCache.cacheKey === cacheKey &&
+    now - claudeCliGmCache.readAt < ttlMs
+  ) {
+    return claudeCliGmCache.value;
+  }
+  const value = readClaudeCliGmCredentials({ homeDir: options?.homeDir });
+  if (ttlMs > 0) {
+    claudeCliGmCache = { value, readAt: now, cacheKey };
+  }
+  return value;
+}
+
+export function writeClaudeCliGmCredentials(
+  newCredentials: OAuthCredentials,
+  options?: { homeDir?: string },
+): boolean {
+  const credPath = resolveClaudeCliGmCredentialsPath(options?.homeDir);
+  try {
+    const raw = loadJsonFile(credPath);
+    const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const existingOauth = (
+      data.claudeAiOauth && typeof data.claudeAiOauth === "object" ? data.claudeAiOauth : {}
+    ) as Record<string, unknown>;
+    data.claudeAiOauth = {
+      ...existingOauth,
+      accessToken: newCredentials.access,
+      refreshToken: newCredentials.refresh,
+      expiresAt: newCredentials.expires,
+    };
+    saveJsonFile(credPath, data);
+    claudeCliGmCache = null;
+    log.info("wrote refreshed GM credentials to cli file", {
+      expires: new Date(newCredentials.expires).toISOString(),
+    });
+    return true;
+  } catch (error) {
+    log.warn("failed to write GM credentials to cli file", {
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
