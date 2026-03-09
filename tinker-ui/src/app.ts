@@ -1199,10 +1199,83 @@ function onEvent(evt: any) {
         updateChat();
       }
     }
-    // Instant context anatomy bar — pushed over WebSocket, no polling needed
+    // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
     if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
       if (p.data.anatomy && timelineCtrl) {
-        timelineCtrl.pushEvent(p.data.anatomy as any);
+        const anatomy = p.data.anatomy as any;
+        if (anatomy.roundNumber) {
+          // Round-level anatomy: enrich existing round bar with full segment data
+          timelineCtrl.pushEvent(anatomy, p.runId);
+        } else {
+          // Legacy turn-level anatomy (fallback for non-round-aware sessions)
+          timelineCtrl.pushEvent(anatomy);
+        }
+      }
+    }
+
+    // Round-start: push a new bar to the timeline immediately
+    if (p?.stream === "lifecycle" && p.data?.phase === "round-start") {
+      if (
+        p.data.sessionKey &&
+        p.data.sessionKey !== sessionKey &&
+        !p.data.sessionKey.includes(":subagent:")
+      )
+        return;
+      if (timelineCtrl) {
+        const roundEvent: any = {
+          turn: p.data.turnNumber,
+          roundNumber: p.data.roundNumber,
+          model: p.data.model,
+          provider: p.data.provider,
+          timestampMs: p.data.timestampMs ?? Date.now(),
+          contextSent: { totalTokens: p.data.inputTokensEstimate ?? 0 },
+          contextWindow: { maxTokens: 200000, usedTokens: p.data.inputTokensEstimate ?? 0 },
+        };
+        timelineCtrl.pushEvent(roundEvent, p.runId);
+      }
+    }
+
+    // Round-complete: update the bar with response data
+    if (p?.stream === "lifecycle" && p.data?.phase === "round-complete") {
+      if (
+        p.data.sessionKey &&
+        p.data.sessionKey !== sessionKey &&
+        !p.data.sessionKey.includes(":subagent:")
+      )
+        return;
+      if (timelineCtrl) {
+        timelineCtrl.pushRoundComplete(p.runId, {
+          roundNumber: p.data.roundNumber,
+          outputTokens: p.data.outputTokens,
+          durationMs: p.data.durationMs,
+          stopReason: p.data.stopReason,
+          toolCallsRequested: p.data.toolCallsRequested,
+        });
+      }
+    }
+
+    // Tool execution events: attach to the round's detail
+    if (
+      p?.stream === "lifecycle" &&
+      (p.data?.phase === "tool-exec-start" || p.data?.phase === "tool-exec-complete")
+    ) {
+      if (
+        p.data.sessionKey &&
+        p.data.sessionKey !== sessionKey &&
+        !p.data.sessionKey.includes(":subagent:")
+      )
+        return;
+      if (timelineCtrl) {
+        timelineCtrl.pushToolExec(p.runId, {
+          roundNumber: p.data.roundNumber,
+          phase: p.data.phase,
+          toolName: p.data.toolName,
+          toolCallId: p.data.toolCallId,
+          outputChars: p.data.outputChars,
+          durationMs: p.data.durationMs,
+          isError: p.data.isError,
+          inputChars: p.data.inputChars,
+        });
       }
     }
     // Track provider failures from model fallback
@@ -5388,7 +5461,36 @@ function init() {
         triggerAutoSummary(event, "context");
       } else if (mode === "response") {
         switchBrpTab("response");
-        updateResponseMap();
+        // Show round detail in response panel
+        const sel = timelineCtrl?.getSelected();
+        if (sel) {
+          const respCanvas = $("response-canvas")!;
+          let h = `<div class="tm-detail" style="padding:12px;font-size:13px;line-height:1.6">`;
+          h += `<div style="font-weight:700;margin-bottom:8px;font-size:14px">Response — Round ${sel.roundNumber ?? "?"}</div>`;
+          if (sel.responseTokens)
+            h += `<div>Output tokens: <b>${sel.responseTokens.toLocaleString()}</b></div>`;
+          if (sel.durationMs)
+            h += `<div>Duration: <b>${(sel.durationMs / 1000).toFixed(1)}s</b></div>`;
+          if (sel.stopReason) h += `<div>Stop reason: <b>${sel.stopReason}</b></div>`;
+          if (sel.toolsTriggered?.length) {
+            h += `<div style="margin-top:8px"><b>Tools triggered (${sel.toolsTriggered.length}):</b></div>`;
+            for (const t of sel.toolsTriggered) {
+              const status = t.isError ? "\u2717" : "\u2713";
+              const dur = t.durationMs ? ` ${(t.durationMs / 1000).toFixed(1)}s` : "";
+              const out = t.outputChars ? ` \u2192 ${t.outputChars.toLocaleString()} chars` : "";
+              const inp = t.inputChars ? ` (${t.inputChars.toLocaleString()} in)` : "";
+              const color = t.isError ? "#ef4444" : "#22c55e";
+              h += `<div style="margin-left:8px;color:${color}">${status} <span style="color:var(--fg)">${t.name}${dur}${out}${inp}</span></div>`;
+            }
+          }
+          if (!sel.responseTokens && !sel.toolsTriggered?.length) {
+            h += `<div style="color:var(--muted)">Waiting for response data...</div>`;
+          }
+          h += `</div>`;
+          respCanvas.innerHTML = h;
+        } else {
+          updateResponseMap();
+        }
       } else {
         switchBrpTab("context");
         (tmCanvas as any).__treemapShowAnatomy?.(event);
