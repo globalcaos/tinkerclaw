@@ -492,16 +492,47 @@ function onEvent(evt: any) {
         // assistant text bubble and keep the remainder in the current one.
         mergeSentenceContinuations(messages);
 
-        // Promote temp messages to permanent — they already have correctly
-        // segmented text from the frozenTextEnd slicing. The interlaced
-        // thinking bubbles + tool rows become the reasoning group content.
+        // Promote temp messages to permanent.
+        // When tool calls split the streaming text (frozenTextEnd slicing),
+        // the final server message has the complete un-sliced text. Replace
+        // ALL temp text segments with the server's authoritative version so
+        // markdown elements (tables, lists) that span tool-call boundaries
+        // render correctly as a single block.
         const hadTemps = messages.some((m: any) => m._temporary);
-        for (const m of messages) {
-          if (m._temporary) delete m._temporary;
+        if (hadTemps && p.message) {
+          // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
+          const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
+          const finalText = finalContent
+            .filter((b: any) => b.type === "text")
+            .map((b: any) => b.text ?? "")
+            .join("");
+
+          // Remove temp text-only messages, keep temp tool messages
+          messages = messages.filter((m: any) => {
+            if (!m._temporary) return true;
+            const c = Array.isArray(m.content) ? m.content : [];
+            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+            return isToolMsg;
+          });
+
+          // Insert the complete text as a single non-temp message after the last tool row
+          if (finalText.trim()) {
+            messages.push({
+              role: "assistant",
+              content: [{ type: "text", text: finalText }],
+            });
+          }
+
+          // Clean up remaining temp flags
+          for (const m of messages) {
+            if (m._temporary) delete m._temporary;
+          }
+        } else if (hadTemps) {
+          // No server final message — promote temps as-is (fallback)
+          for (const m of messages) {
+            if (m._temporary) delete m._temporary;
+          }
         }
-        // Only push server's final message if there were no temps to promote
-        // (e.g. instant response with no streaming). Otherwise the promoted
-        // temps already cover all content.
         if (!hadTemps && p.message) {
           messages.push(p.message);
         }
@@ -681,7 +712,13 @@ function onEvent(evt: any) {
     }
     if (p?.stream === "lifecycle" && p.data?.model) {
       // Ignore lifecycle events that don't belong to the current session (e.g. heartbeat)
-      if (p.data.sessionKey && p.data.sessionKey !== sessionKey) return;
+      // Allow subagent sessions through — they're child runs the user cares about
+      if (
+        p.data.sessionKey &&
+        p.data.sessionKey !== sessionKey &&
+        !p.data.sessionKey.includes(":subagent:")
+      )
+        return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
@@ -799,7 +836,9 @@ async function loadChat() {
   if (!sessionKey) {
     return;
   }
-  const res = await req("chat.history", { sessionKey, limit: 200 }).catch(() => ({ messages: [] }));
+  const res = await req("chat.history", { sessionKey, limit: 1000 }).catch(() => ({
+    messages: [],
+  }));
   messages = res.messages ?? [];
   // Sync turn counter from loaded history
   const userMsgCount = messages.filter((m: any) => m.role === "user").length;
@@ -915,6 +954,7 @@ function md(text: string): string {
   // as tables even when they follow a list or paragraph with no gap.
   const fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
   let h = mdParser.render(fixed);
+
   // Jarvis voice styling
   h = h.replace(
     /<strong>Jarvis:<\/strong>\s*<em>(.*?)<\/em>/gi,
@@ -1214,7 +1254,12 @@ function renderMsg(
       }
       const userText = userLines.join("\n").trim();
       if (userText) {
-        h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+        // System-injected messages (runtime context, subagent results) → system style
+        if (SYSTEM_INJECTED_RE.test(userText)) {
+          h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
+        } else {
+          h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+        }
       }
     } else if (role === "assistant") {
       const errorClass = msg._isError ? " msg-error" : "";
@@ -1257,7 +1302,12 @@ function renderMsg(
         // Render remaining user text
         const userText = userLines.join("\n").trim();
         if (userText) {
-          h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+          // System-injected messages (runtime context, subagent results) → system style
+          if (SYSTEM_INJECTED_RE.test(userText)) {
+            h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
+          } else {
+            h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+          }
         }
       } else if (role === "assistant") {
         const errorClass = msg._isError ? " msg-error" : "";
@@ -1545,6 +1595,48 @@ function formatNum(n: number) {
   return n.toString();
 }
 
+// ─── System-injected user message detection ───
+// Some "user" messages are actually system-injected (subagent completions,
+// runtime context, etc.). They should render as system messages, not user
+// bubbles, and should NOT create run boundaries.
+const SYSTEM_INJECTED_RE =
+  /^\[.*?\]\s*OpenClaw runtime context \(internal\):|^OpenClaw runtime context \(internal\):/;
+
+/** Extract the actual user text from a user message, stripping System: prefixes.
+ *  Returns null if the message is entirely system-injected (no real user text). */
+function extractUserText(msg: any): string | null {
+  const content = Array.isArray(msg.content) ? msg.content : [];
+  let raw = "";
+  if (content.length === 0 && typeof msg.content === "string") {
+    raw = msg.content;
+  } else {
+    for (const b of content) {
+      if (b.type === "text" && (b.text ?? "").trim()) {
+        raw = b.text;
+        break;
+      }
+    }
+  }
+  if (!raw.trim()) return null;
+  // Strip System: prefix lines
+  const lines = raw.split("\n");
+  const userLines: string[] = [];
+  let inSys = true;
+  for (const line of lines) {
+    if (inSys && (line.startsWith("System:") || line.trim() === "")) {
+      // skip
+    } else {
+      inSys = false;
+      userLines.push(line);
+    }
+  }
+  const text = userLines.join("\n").trim();
+  if (!text) return null;
+  // Check if remaining text is system-injected runtime context
+  if (SYSTEM_INJECTED_RE.test(text)) return null;
+  return text;
+}
+
 // ─── Targeted Updates ───
 function updateChat(skipScroll = false) {
   const el = $("messages");
@@ -1561,7 +1653,10 @@ function updateChat(skipScroll = false) {
     if ((m.role ?? "").toLowerCase() !== "user") return false;
     const c = Array.isArray(m.content) ? m.content : [];
     // Pure tool_result messages are part of the run, not boundaries
-    return c.length === 0 || c.some((b: any) => b.type !== "tool_result");
+    if (c.length > 0 && !c.some((b: any) => b.type !== "tool_result")) return false;
+    // System-injected user messages (runtime context, subagent results) are not boundaries
+    if (extractUserText(m) === null) return false;
+    return true;
   };
   const thinkingSet = new Set<number>();
   {
