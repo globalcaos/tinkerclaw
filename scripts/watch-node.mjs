@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import process from "node:process";

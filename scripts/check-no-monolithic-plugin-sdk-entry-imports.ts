@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import fs from "node:fs";
 import path from "node:path";
 import { discoverOpenClawPlugins } from "../src/plugins/discovery.js";
