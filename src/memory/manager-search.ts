@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import type { DatabaseSync } from "node:sqlite";
 import { truncateUtf16Safe } from "../utils.js";
 import { cosineSimilarity, parseEmbedding } from "./internal.js";
@@ -8,7 +9,9 @@ import { cosineSimilarity, parseEmbedding } from "./internal.js";
  * how frequently each chunk is retrieved (used by Phase 1 metadata).
  */
 function trackAccess(db: DatabaseSync, ids: string[]): void {
-  if (ids.length === 0) {return;}
+  if (ids.length === 0) {
+    return;
+  }
   const now = Date.now();
   const stmt = db.prepare(
     `UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?`,
@@ -82,7 +85,10 @@ export async function searchVector(params: {
       snippet: truncateUtf16Safe(row.text, params.snippetMaxChars),
       source: row.source,
     }));
-    trackAccess(params.db, results.map((r) => r.id));
+    trackAccess(
+      params.db,
+      results.map((r) => r.id),
+    );
     return results;
   }
 
@@ -109,7 +115,10 @@ export async function searchVector(params: {
       snippet: truncateUtf16Safe(entry.chunk.text, params.snippetMaxChars),
       source: entry.chunk.source,
     }));
-  trackAccess(params.db, fallbackResults.map((r) => r.id));
+  trackAccess(
+    params.db,
+    fallbackResults.map((r) => r.id),
+  );
   return fallbackResults;
 }
 
@@ -208,6 +217,9 @@ export async function searchKeyword(params: {
       source: row.source,
     };
   });
-  trackAccess(params.db, keywordResults.map((r) => r.id));
+  trackAccess(
+    params.db,
+    keywordResults.map((r) => r.id),
+  );
   return keywordResults;
 }

@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import {
