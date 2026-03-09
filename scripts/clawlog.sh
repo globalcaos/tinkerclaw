@@ -1,52 +1,26 @@
 #!/bin/bash
 
-# VibeTunnel Logging Utility
-# Simplifies access to VibeTunnel logs using macOS unified logging system
+# clawlog — OpenClaw log viewer for macOS unified logging system.
+# Apple hides private data from non-root log readers by default; sudo bypasses this.
 
 set -euo pipefail
 
-# Configuration
-SUBSYSTEM="ai.openclaw"
-DEFAULT_LEVEL="info"
+# ── Constants ──────────────────────────────────────────────────────────────────
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+readonly SUBSYSTEM="ai.openclaw"
+readonly DEFAULT_LEVEL="info"
+readonly DEFAULT_TAIL_LINES=50
+readonly DEFAULT_TIME_RANGE="5m"
 
-# Function to handle sudo password errors
-handle_sudo_error() {
-    echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}⚠️  Password Required for Log Access${NC}"
-    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    echo -e "clawlog needs to use sudo to show complete log data (Apple hides sensitive info by default)."
-    echo -e "\nTo avoid password prompts, configure passwordless sudo for the log command:"
-    echo -e "See: ${BLUE}apple/docs/logging-private-fix.md${NC}\n"
-    echo -e "Quick fix:"
-    echo -e "  1. Run: ${GREEN}sudo visudo${NC}"
-    echo -e "  2. Add: ${GREEN}$(whoami) ALL=(ALL) NOPASSWD: /usr/bin/log${NC}"
-    echo -e "  3. Save and exit (:wq)\n"
-    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    exit 1
-}
+# Terminal colors
+readonly CLR_RED='\033[0;31m'
+readonly CLR_GREEN='\033[0;32m'
+readonly CLR_YELLOW='\033[1;33m'
+readonly CLR_BLUE='\033[0;34m'
+readonly CLR_NC='\033[0m'
 
-# Default values
-STREAM_MODE=false
-TIME_RANGE="5m"  # Default to last 5 minutes
-CATEGORY=""
-LOG_LEVEL="$DEFAULT_LEVEL"
-SEARCH_TEXT=""
-OUTPUT_FILE=""
-ERRORS_ONLY=false
-SERVER_ONLY=false
-TAIL_LINES=50  # Default number of lines to show
-SHOW_TAIL=true
-SHOW_HELP=false
-STYLE_JSON=false
+# ── Functions ──────────────────────────────────────────────────────────────────
 
-# Function to show usage
 show_usage() {
     cat << EOF
 clawlog - OpenClaw Logging Utility
@@ -122,11 +96,10 @@ TIME FORMATS:
 EOF
 }
 
-# Function to list categories
 list_categories() {
-    echo -e "${BLUE}Fetching VibeTunnel log categories from the last hour...${NC}\n"
+    echo -e "${CLR_BLUE}Fetching VibeTunnel log categories from the last hour...${CLR_NC}\n"
 
-    # Get unique categories from recent logs
+    # Pull unique categories from recent logs to show what's actively logging
     log show --predicate "subsystem == \"$SUBSYSTEM\"" --last 1h 2>/dev/null | \
         grep -E "category: \"[^\"]+\"" | \
         sed -E 's/.*category: "([^"]+)".*/\1/' | \
@@ -135,10 +108,10 @@ list_categories() {
             echo "  • $cat"
         done
 
-    echo -e "\n${YELLOW}Note: Only categories with recent activity are shown${NC}"
+    echo -e "\n${CLR_YELLOW}Note: Only categories with recent activity are shown${CLR_NC}"
 }
 
-# Escape user input embedded in macOS log predicate string literals.
+# Escape user input for safe embedding in macOS log predicate string literals.
 escape_predicate_literal() {
     local value="$1"
     value="${value//\\/\\\\}"
@@ -146,13 +119,101 @@ escape_predicate_literal() {
     printf '%s' "$value"
 }
 
-# Show help if no arguments provided
+# Prompt for passwordless sudo setup — Apple hides sensitive log data from regular users.
+handle_sudo_error() {
+    echo -e "\n${CLR_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${CLR_NC}"
+    echo -e "${CLR_YELLOW}⚠️  Password Required for Log Access${CLR_NC}"
+    echo -e "${CLR_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${CLR_NC}\n"
+    echo -e "clawlog needs to use sudo to show complete log data (Apple hides sensitive info by default)."
+    echo -e "\nTo avoid password prompts, configure passwordless sudo for the log command:"
+    echo -e "See: ${CLR_BLUE}apple/docs/logging-private-fix.md${CLR_NC}\n"
+    echo -e "Quick fix:"
+    echo -e "  1. Run: ${CLR_GREEN}sudo visudo${CLR_NC}"
+    echo -e "  2. Add: ${CLR_GREEN}$(whoami) ALL=(ALL) NOPASSWD: /usr/bin/log${CLR_NC}"
+    echo -e "  3. Save and exit (:wq)\n"
+    echo -e "${CLR_RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${CLR_NC}\n"
+    exit 1
+}
+
+build_predicate() {
+    local predicate="subsystem == \"$SUBSYSTEM\""
+
+    if [[ -n "$category" ]]; then
+        local escaped_category
+        escaped_category=$(escape_predicate_literal "$category")
+        predicate="$predicate AND category == \"$escaped_category\""
+    fi
+
+    if [[ "$errors_only" == true ]]; then
+        predicate="$predicate AND (eventType == \"error\" OR messageType == \"error\" OR eventMessage CONTAINS \"ERROR\" OR eventMessage CONTAINS \"[31m\")"
+    fi
+
+    if [[ -n "$search_text" ]]; then
+        local escaped_search
+        escaped_search=$(escape_predicate_literal "$search_text")
+        predicate="$predicate AND eventMessage CONTAINS[c] \"$escaped_search\""
+    fi
+
+    printf '%s' "$predicate"
+}
+
+check_sudo_works() {
+    # Apple restricts private log fields; sudo bypasses the restriction
+    if sudo -n /usr/bin/log show --last 1s 2>&1 | grep -q "password"; then
+        handle_sudo_error
+    fi
+}
+
+run_log_command() {
+    local log_cmd=("$@")
+
+    if [[ -n "$output_file" ]]; then
+        check_sudo_works
+        echo -e "${CLR_BLUE}Exporting logs to: $output_file${CLR_NC}\n"
+        if [[ "$show_tail" == true ]] && [[ "$stream_mode" == false ]]; then
+            "${log_cmd[@]}" 2>&1 | tail -n "$tail_lines" > "$output_file"
+        else
+            "${log_cmd[@]}" > "$output_file" 2>&1
+        fi
+
+        if [[ -s "$output_file" ]]; then
+            local line_count
+            line_count=$(wc -l < "$output_file" | tr -d ' ')
+            echo -e "${CLR_GREEN}✓ Exported $line_count lines to $output_file${CLR_NC}"
+        else
+            echo -e "${CLR_YELLOW}⚠ No logs found matching the criteria${CLR_NC}"
+        fi
+    else
+        check_sudo_works
+        if [[ "$show_tail" == true ]] && [[ "$stream_mode" == false ]]; then
+            "${log_cmd[@]}" 2>&1 | tail -n "$tail_lines"
+            echo -e "\n${CLR_YELLOW}Showing last $tail_lines lines. Use --all or -n to see more.${CLR_NC}"
+        else
+            "${log_cmd[@]}"
+        fi
+    fi
+}
+
+# ── Argument defaults ──────────────────────────────────────────────────────────
+
+stream_mode=false
+time_range="$DEFAULT_TIME_RANGE"
+category=""
+log_level="$DEFAULT_LEVEL"
+search_text=""
+output_file=""
+errors_only=false
+tail_lines="$DEFAULT_TAIL_LINES"
+show_tail=true
+style_json=false
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
 if [[ $# -eq 0 ]]; then
     show_usage
     exit 0
 fi
 
-# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -160,41 +221,40 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -f|--follow)
-            STREAM_MODE=true
-            SHOW_TAIL=false
+            stream_mode=true
+            show_tail=false
             shift
             ;;
         -n|--lines)
-            TAIL_LINES="$2"
+            tail_lines="$2"
             shift 2
             ;;
         -l|--last)
-            TIME_RANGE="$2"
+            time_range="$2"
             shift 2
             ;;
         -c|--category)
-            CATEGORY="$2"
+            category="$2"
             shift 2
             ;;
         -e|--errors)
-            ERRORS_ONLY=true
+            errors_only=true
             shift
             ;;
         -d|--debug)
-            LOG_LEVEL="debug"
+            log_level="debug"
             shift
             ;;
         -s|--search)
-            SEARCH_TEXT="$2"
+            search_text="$2"
             shift 2
             ;;
         -o|--output)
-            OUTPUT_FILE="$2"
+            output_file="$2"
             shift 2
             ;;
         --server)
-            SERVER_ONLY=true
-            CATEGORY="ServerOutput"
+            category="ServerOutput"
             shift
             ;;
         --list-categories)
@@ -202,120 +262,50 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --json)
-            STYLE_JSON=true
+            style_json=true
             shift
             ;;
         --all)
-            SHOW_TAIL=false
+            show_tail=false
             shift
             ;;
         *)
-            echo -e "${RED}Unknown option: $1${NC}"
+            echo -e "${CLR_RED}Unknown option: $1${CLR_NC}"
             echo "Use -h or --help for usage information"
             exit 1
             ;;
     esac
 done
 
-# Build the predicate
-PREDICATE="subsystem == \"$SUBSYSTEM\""
+predicate=$(build_predicate)
 
-# Add category filter if specified
-if [[ -n "$CATEGORY" ]]; then
-    ESCAPED_CATEGORY=$(escape_predicate_literal "$CATEGORY")
-    PREDICATE="$PREDICATE AND category == \"$ESCAPED_CATEGORY\""
-fi
+log_cmd=(sudo log)
 
-# Add error filter if specified
-if [[ "$ERRORS_ONLY" == true ]]; then
-    PREDICATE="$PREDICATE AND (eventType == \"error\" OR messageType == \"error\" OR eventMessage CONTAINS \"ERROR\" OR eventMessage CONTAINS \"[31m\")"
-fi
-
-# Add search filter if specified
-if [[ -n "$SEARCH_TEXT" ]]; then
-    ESCAPED_SEARCH_TEXT=$(escape_predicate_literal "$SEARCH_TEXT")
-    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$ESCAPED_SEARCH_TEXT\""
-fi
-
-# Build the command as argv array to avoid shell eval injection
-LOG_CMD=(sudo log)
-if [[ "$STREAM_MODE" == true ]]; then
-    # Streaming mode
-    LOG_CMD+=(stream --predicate "$PREDICATE" --level "$LOG_LEVEL" --info)
-
-    echo -e "${GREEN}Streaming VibeTunnel logs continuously...${NC}"
-    echo -e "${YELLOW}Press Ctrl+C to stop${NC}\n"
+if [[ "$stream_mode" == true ]]; then
+    log_cmd+=(stream --predicate "$predicate" --level "$log_level" --info)
+    echo -e "${CLR_GREEN}Streaming VibeTunnel logs continuously...${CLR_NC}"
+    echo -e "${CLR_YELLOW}Press Ctrl+C to stop${CLR_NC}\n"
 else
-    # Show mode
-    LOG_CMD+=(show --predicate "$PREDICATE")
-
-    # Add log level for show command
-    if [[ "$LOG_LEVEL" == "debug" ]]; then
-        LOG_CMD+=(--debug)
+    log_cmd+=(show --predicate "$predicate")
+    if [[ "$log_level" == "debug" ]]; then
+        log_cmd+=(--debug)
     else
-        LOG_CMD+=(--info)
+        log_cmd+=(--info)
     fi
+    log_cmd+=(--last "$time_range")
 
-    # Add time range
-    LOG_CMD+=(--last "$TIME_RANGE")
-
-    if [[ "$SHOW_TAIL" == true ]]; then
-        echo -e "${GREEN}Showing last $TAIL_LINES log lines from the past $TIME_RANGE${NC}"
+    if [[ "$show_tail" == true ]]; then
+        echo -e "${CLR_GREEN}Showing last $tail_lines log lines from the past $time_range${CLR_NC}"
     else
-        echo -e "${GREEN}Showing all logs from the past $TIME_RANGE${NC}"
+        echo -e "${CLR_GREEN}Showing all logs from the past $time_range${CLR_NC}"
     fi
 
-    # Show applied filters
-    if [[ "$ERRORS_ONLY" == true ]]; then
-        echo -e "${RED}Filter: Errors only${NC}"
-    fi
-    if [[ -n "$CATEGORY" ]]; then
-        echo -e "${BLUE}Category: $CATEGORY${NC}"
-    fi
-    if [[ -n "$SEARCH_TEXT" ]]; then
-        echo -e "${YELLOW}Search: \"$SEARCH_TEXT\"${NC}"
-    fi
-    echo ""  # Empty line for readability
+    [[ "$errors_only" == true ]] && echo -e "${CLR_RED}Filter: Errors only${CLR_NC}"
+    [[ -n "$category" ]]        && echo -e "${CLR_BLUE}Category: $category${CLR_NC}"
+    [[ -n "$search_text" ]]     && echo -e "${CLR_YELLOW}Search: \"$search_text\"${CLR_NC}"
+    echo ""
 fi
 
-# Add style arguments if specified
-if [[ "$STYLE_JSON" == true ]]; then
-    LOG_CMD+=(--style json)
-fi
+[[ "$style_json" == true ]] && log_cmd+=(--style json)
 
-# Execute the command
-if [[ -n "$OUTPUT_FILE" ]]; then
-    # First check if sudo works without password for the log command
-    if sudo -n /usr/bin/log show --last 1s 2>&1 | grep -q "password"; then
-        handle_sudo_error
-    fi
-
-    echo -e "${BLUE}Exporting logs to: $OUTPUT_FILE${NC}\n"
-    if [[ "$SHOW_TAIL" == true ]] && [[ "$STREAM_MODE" == false ]]; then
-        "${LOG_CMD[@]}" 2>&1 | tail -n "$TAIL_LINES" > "$OUTPUT_FILE"
-    else
-        "${LOG_CMD[@]}" > "$OUTPUT_FILE" 2>&1
-    fi
-
-    # Check if file was created and has content
-    if [[ -s "$OUTPUT_FILE" ]]; then
-        LINE_COUNT=$(wc -l < "$OUTPUT_FILE" | tr -d ' ')
-        echo -e "${GREEN}✓ Exported $LINE_COUNT lines to $OUTPUT_FILE${NC}"
-    else
-        echo -e "${YELLOW}⚠ No logs found matching the criteria${NC}"
-    fi
-else
-    # Run interactively
-    # First check if sudo works without password for the log command
-    if sudo -n /usr/bin/log show --last 1s 2>&1 | grep -q "password"; then
-        handle_sudo_error
-    fi
-
-    if [[ "$SHOW_TAIL" == true ]] && [[ "$STREAM_MODE" == false ]]; then
-        # Apply tail for non-streaming mode
-        "${LOG_CMD[@]}" 2>&1 | tail -n "$TAIL_LINES"
-        echo -e "\n${YELLOW}Showing last $TAIL_LINES lines. Use --all or -n to see more.${NC}"
-    else
-        "${LOG_CMD[@]}"
-    fi
-fi
+run_log_command "${log_cmd[@]}"

@@ -446,7 +446,6 @@ else
   pnpm build 2>&1 | tail -5 || log_warn "Workspace build failed"
 
   git -C "$RUNTIME_DIR" add -A --ignore-errors 2>/dev/null || true
-  local sync_version
   sync_version=$(get_pkg_version "$FORK_DIR")
   git -C "$RUNTIME_DIR" commit --no-verify \
     -m "chore: sync from tinkerclaw ($sync_version)" 2>/dev/null || true
