@@ -941,18 +941,100 @@ async function loadChat() {
   updateChat();
   scrollChat();
   updateResponseMap();
+
+  // Generate title for non-main tabs after loading history
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  if (activeTab && activeTab.id !== "tab-main" && activeTab.isAttached && messages.length > 0) {
+    if (FORTUNE_COOKIES.includes(activeTab.title)) {
+      generateTabTitle(activeTab);
+    }
+  }
+}
+
+async function generateTabTitle(tab: Tab) {
+  if (!tab.sessionKey || tab.id === "tab-main") return;
+
+  // Collect last N Q&A pairs from messages
+  const pairs: string[] = [];
+  let count = 0;
+  for (let i = messages.length - 1; i >= 0 && count < TAB_TITLE_INTERVAL; i--) {
+    const m = messages[i];
+    if (!m?.content) continue;
+    const text = Array.isArray(m.content)
+      ? m.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join(" ")
+      : String(m.content);
+    if (!text.trim()) continue;
+    const role = (m.role || "").toLowerCase();
+    if (role === "user" || role === "assistant") {
+      pairs.unshift(`${role}: ${text.slice(0, 200)}`);
+      if (role === "user") count++;
+    }
+  }
+
+  if (pairs.length === 0) return;
+
+  const prompt = `Summarize this conversation in 1-3 words (short title, no quotes, no punctuation):\n\n${pairs.join("\n")}`;
+
+  try {
+    // Try local Ollama first (free, fast)
+    const ollamaRes = await fetch("http://localhost:11434/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "qwen3:1.7b", prompt, stream: false }),
+    })
+      .then((r) => r.json())
+      .catch(() => null);
+
+    let title = ollamaRes?.response?.trim();
+
+    // Strip any quotes or punctuation wrapping
+    if (title) {
+      title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
+    }
+
+    if (title && title.length > 0 && title.length <= 40) {
+      tab.title = title;
+      renderTabs();
+      saveTabs();
+    }
+  } catch {
+    // Silent fail — keep existing title
+  }
 }
 
 async function send(text: string) {
-  if (!text.trim() || !sessionKey) {
-    return;
+  if (!text.trim()) return;
+
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  // If no session (unattached tab), create one by generating a key
+  // (the gateway auto-creates sessions on first chat.send)
+  if (!sessionKey && activeTab && !activeTab.isAttached) {
+    const newKey = `tinker:${Date.now().toString(36)}`;
+    sessionKey = newKey;
+    activeTab.sessionKey = newKey;
+    activeTab.isAttached = true;
+    saveTabs();
+    renderTabs();
   }
+
+  if (!sessionKey) return;
+
   sending = true;
   currentTurnNumber++;
   messages.push({ role: "user", content: [{ type: "text", text }] });
   updateChat();
   updateBtn();
   scrollChat();
+
+  // Check if we should regenerate tab title
+  if (activeTab && activeTab.id !== "tab-main" && currentTurnNumber % TAB_TITLE_INTERVAL === 1) {
+    generateTabTitle(activeTab);
+  }
+
   await req("chat.send", { sessionKey, message: text, idempotencyKey: uuid() }).catch((e) => {
     console.error(e);
     sending = false;
@@ -2085,6 +2167,8 @@ function closeTab(tabId: string) {
 
   if (activeTabId === tabId) {
     switchToTab("tab-main");
+    // switchToTab already calls renderTabs + saveTabs
+    return;
   }
 
   renderTabs();
