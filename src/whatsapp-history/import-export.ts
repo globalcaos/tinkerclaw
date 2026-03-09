@@ -13,13 +13,13 @@ import path from "node:path";
 import readline from "node:readline";
 import { insertMessages, type MessageRecord, upsertChat, getStats } from "./db.js";
 
-// Common WhatsApp export line patterns
+// WhatsApp export line patterns (varies by platform and locale)
 const LINE_PATTERNS = [
-  // European format: [DD/MM/YYYY, HH:MM:SS]
+  // iOS/bracketed format: [DD/MM/YYYY, HH:MM:SS] Sender: text
   /^\[(\d{1,2}\/\d{1,2}\/\d{2,4}),\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)\]\s*([^:]+):\s*(.*)$/i,
-  // US format: [M/D/YY, H:MM:SS AM/PM]
+  // Android/dash format with full seconds: DD/MM/YYYY, HH:MM:SS - Sender: text
   /^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)\s*-\s*([^:]+):\s*(.*)$/i,
-  // Android format without brackets
+  // Android/dash format without seconds: DD/MM/YYYY, HH:MM - Sender: text
   /^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s*(\d{1,2}:\d{2})\s*-\s*([^:]+):\s*(.*)$/i,
 ];
 
@@ -57,14 +57,12 @@ function parseLine(line: string): ParsedLine | null {
 }
 
 function parseDateTime(date: string, time: string): number {
-  // Try various date formats
+  // Match date component regardless of 2-digit vs 4-digit year
   const dateFormats = [
-    // DD/MM/YYYY
+    // 4-digit year: DD/MM/YYYY or M/D/YYYY
     /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
-    // DD/MM/YY
+    // 2-digit year: DD/MM/YY
     /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/,
-    // M/D/YYYY
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
   ];
 
   let day: number, month: number, year: number;
@@ -72,9 +70,8 @@ function parseDateTime(date: string, time: string): number {
   for (const fmt of dateFormats) {
     const match = date.match(fmt);
     if (match) {
-      // Assume DD/MM/YYYY for European format (most common)
-      // This could be ambiguous, but we'll go with day-first
-      [, day, month, year] = match.map(Number) as [any, number, number, number];
+      // Assume DD/MM/YYYY (day-first) — most WhatsApp exports use European locale
+      [, day, month, year] = match.map(Number) as [number, number, number, number];
       if (year < 100) year += 2000;
       break;
     }

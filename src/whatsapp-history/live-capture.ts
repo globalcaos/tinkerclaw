@@ -157,28 +157,24 @@ function waMessageToRecord(msg: WAMessage, chatName?: string): MessageRecord | n
 export function bindHistoryCapture(ev: BaileysEventEmitter): void {
   logger.info("Binding WhatsApp history capture to Baileys events");
 
-  // Capture history sync on connect
   ev.on("messaging-history.set", ({ chats, contacts, messages, isLatest }) => {
     logger.info(
       { chats: chats.length, contacts: contacts.length, messages: messages.length, isLatest },
       "Received messaging history sync",
     );
 
-    // Store contacts
     for (const c of contacts) {
       if (c.id) {
         upsertContact(jidNormalizedUser(c.id), c.name || undefined, c.notify || undefined);
       }
     }
 
-    // Store chats
     for (const chat of chats) {
       if (chat.id) {
         upsertChat(jidNormalizedUser(chat.id), chat.name || undefined, chat.id.includes("@g.us"));
       }
     }
 
-    // Store messages
     let stored = 0;
     for (const msg of messages) {
       const record = waMessageToRecord(msg);
@@ -186,8 +182,8 @@ export function bindHistoryCapture(ev: BaileysEventEmitter): void {
         try {
           insertMessage(record);
           stored++;
-        } catch (err) {
-          // Ignore duplicates
+        } catch {
+          // INSERT OR REPLACE handles most cases; catch covers any unexpected constraint violations
         }
       }
     }
@@ -195,8 +191,8 @@ export function bindHistoryCapture(ev: BaileysEventEmitter): void {
     logger.info({ stored, total: messages.length }, "History sync messages stored");
   });
 
-  // Capture new messages
   ev.on("messages.upsert", ({ messages, type }) => {
+    // "notify" = new incoming; "append" = sent from another device — both need capturing
     if (type !== "notify" && type !== "append") return;
 
     for (const msg of messages) {
@@ -208,14 +204,13 @@ export function bindHistoryCapture(ev: BaileysEventEmitter): void {
             { id: record.id, chat: record.chat_name || record.chat_jid, type: record.message_type },
             "Message captured",
           );
-        } catch (err) {
-          // Ignore duplicates
+        } catch {
+          // INSERT OR REPLACE handles most cases; catch covers any unexpected constraint violations
         }
       }
     }
   });
 
-  // Update contacts
   ev.on("contacts.upsert", (contacts) => {
     for (const c of contacts) {
       if (c.id) {
@@ -232,7 +227,6 @@ export function bindHistoryCapture(ev: BaileysEventEmitter): void {
     }
   });
 
-  // Update chats
   ev.on("chats.upsert", (chats) => {
     for (const chat of chats) {
       if (chat.id) {
