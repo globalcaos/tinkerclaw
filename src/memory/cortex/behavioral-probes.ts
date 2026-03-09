@@ -18,9 +18,9 @@ import type { PersonaState } from "./persona-state.js";
 // ---------------------------------------------------------------------------
 
 export const PROBE_SCHEDULE = {
-	hardRule: 1,
-	style: 5,
-	fullAudit: 20,
+  hardRule: 1,
+  style: 5,
+  fullAudit: 20,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -30,17 +30,17 @@ export const PROBE_SCHEDULE = {
 export type ProbeType = "hard_rule" | "style" | "full_audit";
 
 export interface ProbeResult {
-	probeType: ProbeType;
-	turnNumber: number;
-	timestamp: string;
-	scores: Record<string, number>; // dimension → score (0–1)
-	violations: string[]; // list of violated rules/dimensions
-	rawOutput: string;
-	model: string;
-	inputTokens: number;
-	outputTokens: number;
-	latencyMs: number;
-	cost: number; // estimated USD
+  probeType: ProbeType;
+  turnNumber: number;
+  timestamp: string;
+  scores: Record<string, number>; // dimension → score (0–1)
+  violations: string[]; // list of violated rules/dimensions
+  rawOutput: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  latencyMs: number;
+  cost: number; // estimated USD
 }
 
 /**
@@ -48,13 +48,13 @@ export interface ProbeResult {
  * Given a prompt, returns { output, inputTokens, outputTokens, model, latencyMs }.
  */
 export interface ProbeLLMFn {
-	(prompt: string): Promise<{
-		output: string;
-		inputTokens: number;
-		outputTokens: number;
-		model: string;
-		latencyMs: number;
-	}>;
+  (prompt: string): Promise<{
+    output: string;
+    inputTokens: number;
+    outputTokens: number;
+    model: string;
+    latencyMs: number;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,11 +62,9 @@ export interface ProbeLLMFn {
 // ---------------------------------------------------------------------------
 
 export function buildHardRuleProbePrompt(response: string, persona: PersonaState): string {
-	const rules = persona.hardRules
-		.map((r) => `- [${r.id}] (${r.category}): ${r.rule}`)
-		.join("\n");
+  const rules = persona.hardRules.map((r) => `- [${r.id}] (${r.category}): ${r.rule}`).join("\n");
 
-	return `You are a compliance auditor. Check if the following response violates any of the persona's hard rules.
+  return `You are a compliance auditor. Check if the following response violates any of the persona's hard rules.
 
 ## Hard Rules
 ${rules}
@@ -88,8 +86,8 @@ Output ONLY valid JSON.`;
 }
 
 export function buildStyleProbePrompt(response: string, persona: PersonaState): string {
-	const vm = persona.voiceMarkers;
-	return `You are a style consistency auditor. Check if the following response matches the persona's voice profile.
+  const vm = persona.voiceMarkers;
+  return `You are a style consistency auditor. Check if the following response matches the persona's voice profile.
 
 ## Voice Profile
 - Target avg sentence length: ${vm.avgSentenceLength} words
@@ -121,7 +119,7 @@ Output ONLY valid JSON.`;
 }
 
 export function buildFullAuditProbePrompt(response: string, persona: PersonaState): string {
-	return `You are a comprehensive persona auditor. Evaluate the following response against ALL aspects of the persona definition.
+  return `You are a comprehensive persona auditor. Evaluate the following response against ALL aspects of the persona definition.
 
 ## Persona: ${persona.name}
 ### Identity
@@ -167,83 +165,92 @@ Output ONLY valid JSON.`;
 
 /** Determine which probes should fire on this turn. */
 export function getScheduledProbes(turnNumber: number): ProbeType[] {
-	const probes: ProbeType[] = [];
-	if (turnNumber % PROBE_SCHEDULE.hardRule === 0) probes.push("hard_rule");
-	if (turnNumber % PROBE_SCHEDULE.style === 0) probes.push("style");
-	if (turnNumber % PROBE_SCHEDULE.fullAudit === 0) probes.push("full_audit");
-	return probes;
+  const probes: ProbeType[] = [];
+  if (turnNumber % PROBE_SCHEDULE.hardRule === 0) {
+    probes.push("hard_rule");
+  }
+  if (turnNumber % PROBE_SCHEDULE.style === 0) {
+    probes.push("style");
+  }
+  if (turnNumber % PROBE_SCHEDULE.fullAudit === 0) {
+    probes.push("full_audit");
+  }
+  return probes;
 }
 
 /** Build the prompt for a given probe type. */
-export function buildProbePrompt(
-	type: ProbeType,
-	response: string,
-	persona: PersonaState,
-): string {
-	switch (type) {
-		case "hard_rule":
-			return buildHardRuleProbePrompt(response, persona);
-		case "style":
-			return buildStyleProbePrompt(response, persona);
-		case "full_audit":
-			return buildFullAuditProbePrompt(response, persona);
-	}
+export function buildProbePrompt(type: ProbeType, response: string, persona: PersonaState): string {
+  switch (type) {
+    case "hard_rule":
+      return buildHardRuleProbePrompt(response, persona);
+    case "style":
+      return buildStyleProbePrompt(response, persona);
+    case "full_audit":
+      return buildFullAuditProbePrompt(response, persona);
+  }
 }
 
 /** Parse LLM output into scores and violations. */
 export function parseProbeOutput(raw: string): {
-	scores: Record<string, number>;
-	violations: string[];
+  scores: Record<string, number>;
+  violations: string[];
 } {
-	try {
-		// Extract JSON from potentially wrapped output
-		const jsonMatch = raw.match(/\{[\s\S]*\}/);
-		if (!jsonMatch) return { scores: {}, violations: [] };
-		const parsed = JSON.parse(jsonMatch[0]);
-		return {
-			scores: parsed.scores ?? {},
-			violations: parsed.violations ?? [],
-		};
-	} catch {
-		return { scores: {}, violations: [] };
-	}
+  try {
+    // Extract JSON from potentially wrapped output
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { scores: {}, violations: [] };
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      scores: parsed.scores ?? {},
+      violations: parsed.violations ?? [],
+    };
+  } catch {
+    return { scores: {}, violations: [] };
+  }
 }
 
-/** Estimated cost per probe (Gemini Flash pricing ~$0.075/1M input, ~$0.30/1M output). */
+// Gemini Flash pricing: $0.075 / 1M input tokens, $0.30 / 1M output tokens
+const COST_PER_INPUT_TOKEN = 0.075 / 1_000_000;
+const COST_PER_OUTPUT_TOKEN = 0.3 / 1_000_000;
+
 function estimateCost(inputTokens: number, outputTokens: number): number {
-	return inputTokens * 0.000000075 + outputTokens * 0.0000003;
+  return inputTokens * COST_PER_INPUT_TOKEN + outputTokens * COST_PER_OUTPUT_TOKEN;
 }
 
 /**
  * Run a single probe. Returns result or null if not scheduled.
  */
 export async function runProbe(
-	type: ProbeType,
-	response: string,
-	persona: PersonaState,
-	turnNumber: number,
-	llmFn: ProbeLLMFn,
+  type: ProbeType,
+  response: string,
+  persona: PersonaState,
+  turnNumber: number,
+  llmFn: ProbeLLMFn,
 ): Promise<ProbeResult | null> {
-	const scheduled = getScheduledProbes(turnNumber);
-	if (!scheduled.includes(type)) return null;
+  const scheduled = getScheduledProbes(turnNumber);
+  if (!scheduled.includes(type)) {
+    return null;
+  }
 
-	const prompt = buildProbePrompt(type, response, persona);
-	const result = await llmFn(prompt);
-	const parsed = parseProbeOutput(result.output);
+  const prompt = buildProbePrompt(type, response, persona);
+  const result = await llmFn(prompt);
+  const parsed = parseProbeOutput(result.output);
 
-	return {
-		probeType: type,
-		turnNumber,
-		timestamp: new Date().toISOString(),
-		scores: parsed.scores,
-		violations: parsed.violations,
-		rawOutput: result.output,
-		model: result.model,
-		inputTokens: result.inputTokens,
-		outputTokens: result.outputTokens,
-		latencyMs: result.latencyMs,
-		cost: estimateCost(result.inputTokens, result.outputTokens),
-	};
+  return {
+    probeType: type,
+    turnNumber,
+    timestamp: new Date().toISOString(),
+    scores: parsed.scores,
+    violations: parsed.violations,
+    rawOutput: result.output,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    latencyMs: result.latencyMs,
+    cost: estimateCost(result.inputTokens, result.outputTokens),
+  };
 }
 
 /**
@@ -251,51 +258,53 @@ export async function runProbe(
  * Results are stored in the event store.
  */
 export async function runAllScheduledProbes(
-	response: string,
-	persona: PersonaState,
-	turnNumber: number,
-	llmFn: ProbeLLMFn,
-	store?: EventStore,
+  response: string,
+  persona: PersonaState,
+  turnNumber: number,
+  llmFn: ProbeLLMFn,
+  store?: EventStore,
 ): Promise<ProbeResult[]> {
-	const scheduled = getScheduledProbes(turnNumber);
-	const results: ProbeResult[] = [];
+  const scheduled = getScheduledProbes(turnNumber);
+  const results: ProbeResult[] = [];
 
-	const promises = scheduled.map(async (type) => {
-		const result = await runProbe(type, response, persona, turnNumber, llmFn);
-		if (result) {
-			results.push(result);
-			if (store) {
-				store.append({
-					turnId: turnNumber,
-					sessionKey: store.sessionKey,
-					kind: "probe_result",
-					content: JSON.stringify(result),
-					tokens: Math.ceil(JSON.stringify(result).length / 4),
-					metadata: { tags: ["cortex", "probe", type] },
-				});
-			}
-		}
-	});
+  const promises = scheduled.map(async (type) => {
+    const result = await runProbe(type, response, persona, turnNumber, llmFn);
+    if (result) {
+      results.push(result);
+      if (store) {
+        store.append({
+          turnId: turnNumber,
+          sessionKey: store.sessionKey,
+          kind: "probe_result",
+          content: JSON.stringify(result),
+          tokens: Math.ceil(JSON.stringify(result).length / 4),
+          metadata: { tags: ["cortex", "probe", type] },
+        });
+      }
+    }
+  });
 
-	await Promise.all(promises);
-	return results;
+  await Promise.all(promises);
+  return results;
 }
 
 /**
  * Load probe results from the event store.
  */
 export function loadProbeResults(store: EventStore, limit?: number): ProbeResult[] {
-	const events = store.readByKind("probe_result");
-	const results = events
-		.map((e) => {
-			try {
-				return JSON.parse(e.content) as ProbeResult;
-			} catch {
-				return null;
-			}
-		})
-		.filter((r): r is ProbeResult => r !== null);
+  const events = store.readByKind("probe_result");
+  const results = events
+    .map((e) => {
+      try {
+        return JSON.parse(e.content) as ProbeResult;
+      } catch {
+        return null;
+      }
+    })
+    .filter((r): r is ProbeResult => r !== null);
 
-	if (limit) return results.slice(-limit);
-	return results;
+  if (limit) {
+    return results.slice(-limit);
+  }
+  return results;
 }
