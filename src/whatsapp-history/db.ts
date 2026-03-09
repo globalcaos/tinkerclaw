@@ -15,16 +15,15 @@ let db: Database.Database | null = null;
 export function getDb(): Database.Database {
   if (db) {return db;}
 
-  // Ensure directory exists
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
   db = new Database(DB_PATH);
+  // WAL mode allows concurrent reads during writes — essential for live capture + query overlap
   db.pragma("journal_mode = WAL");
 
-  // Create tables
   db.exec(`
     -- Main messages table
     CREATE TABLE IF NOT EXISTS messages (
@@ -46,7 +45,7 @@ export function getDb(): Database.Database {
       created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
 
-    -- Full-text search index
+    -- FTS5 index enables fast substring/keyword search across message text
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
       text_content,
       caption,
@@ -56,7 +55,7 @@ export function getDb(): Database.Database {
       content_rowid='rowid'
     );
 
-    -- Triggers to keep FTS in sync
+    -- Triggers keep the FTS index in sync with the messages table (content table pattern)
     CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
       INSERT INTO messages_fts(rowid, text_content, caption, sender_name, chat_name)
       VALUES (NEW.rowid, NEW.text_content, NEW.caption, NEW.sender_name, NEW.chat_name);
@@ -220,28 +219,26 @@ export interface SearchResult {
 function resolveChatJids(db: Database.Database, chat: string): string[] {
   const jids = new Set<string>();
 
-  // 1. Direct LIKE match on chat_jid from the messages table (existing behavior)
+  // Start with the most direct match — exact or partial JID in messages
   const directJids = db
     .prepare(`SELECT DISTINCT chat_jid FROM messages WHERE chat_jid LIKE ?`)
     .all(`%${chat}%`) as { chat_jid: string }[];
   for (const row of directJids) {jids.add(row.chat_jid);}
 
-  // 2. Match by chat name in the chats table → collect all their JIDs
+  // Name-based lookup so users can filter by display name, not just JID
   const chatsByName = db
     .prepare(`SELECT jid FROM chats WHERE name LIKE ?`)
     .all(`%${chat}%`) as { jid: string }[];
   for (const row of chatsByName) {jids.add(row.jid);}
 
-  // 3. Match by contact name/notify in the contacts table → collect all their JIDs
+  // Also check contacts table — a contact's push name may differ from their chat name
   const contactsByName = db
     .prepare(`SELECT jid FROM contacts WHERE name LIKE ? OR notify LIKE ?`)
     .all(`%${chat}%`, `%${chat}%`) as { jid: string }[];
   for (const row of contactsByName) {jids.add(row.jid);}
 
-  // 4. If any collected JID is a phone-based JID, also find associated LIDs:
-  //    Look in chats table for LID-format JIDs whose name matches any of the
-  //    phone JID holder names. We do this by cross-referencing names.
-  //    Conversely, if any JID is a LID, find the phone JID via name matching.
+  // Cross-reference by name to bridge phone JIDs ↔ LIDs for the same contact.
+  // WhatsApp now issues LIDs alongside legacy phone JIDs; name is the only stable link.
   const resolvedNames = new Set<string>();
   for (const jid of jids) {
     // Get name from contacts table

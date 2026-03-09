@@ -19,8 +19,7 @@ import {
   executeTextToolCalls,
   formatTextToolResults,
 } from "../agents/pi-embedded-runner/text-tool-calls.js";
-import { createCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
-import { getCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
+import { createCortexRuntime, getCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
 import { getIngestionRuntime } from "../agents/pi-extensions/ingestion-runtime.js";
 import {
   applyMidContextReinject,
@@ -54,11 +53,6 @@ export function getPersonaBlock(effectiveWorkspace: string): string | undefined 
 // ---------------------------------------------------------------------------
 
 /**
- * When the session-bound CortexRuntime's EWMA SyncScore drops below 0.6,
- * prepend the Tier 1A persona block to reinforce persona identity.
- * Returns the (possibly modified) system prompt text and whether it was applied.
- */
-/**
  * ENGRAM Phase 1.2: Inject a retrieval pack of relevant past events
  * into the system prompt. Uses FTS search + recency boost + MMR dedup.
  */
@@ -76,7 +70,7 @@ export async function injectRetrievalPack(
     return systemPromptText;
   }
   try {
-    const pack = await rt.assemble(query, 4096);
+    const pack = await rt.assemble(query, RETRIEVAL_PACK_MAX_TOKENS);
     if (!pack) {
       return systemPromptText;
     }
@@ -88,6 +82,11 @@ export async function injectRetrievalPack(
   }
 }
 
+/**
+ * When the session-bound CortexRuntime's EWMA SyncScore drops below 0.6,
+ * prepend the Tier 1A persona block to reinforce persona identity.
+ * Returns the (possibly modified) system prompt text and whether it was applied.
+ */
 export function applyMidContextReinjectHook(
   sessionManager: SessionManager,
   systemPromptText: string,
@@ -111,6 +110,11 @@ export function applyMidContextReinjectHook(
 // ---------------------------------------------------------------------------
 
 const TEXT_TOOL_CALL_MAX_RETRIES = 3;
+const RETRIEVAL_PACK_MAX_TOKENS = 4096;
+// How many recent messages to scan for observations — balances recall vs. processing cost
+const RECENT_MESSAGES_WINDOW = 20;
+// Every N turns, force observation extraction regardless of threshold
+const OBSERVATION_FORCE_INTERVAL = 10;
 
 /**
  * Detect and execute text-based tool calls from local providers that don't
@@ -148,7 +152,7 @@ export async function interceptTextToolCalls(params: {
   }
 
   let promptError = params.promptError;
-  for (let ttcRetry = 0; ttcRetry < TEXT_TOOL_CALL_MAX_RETRIES; ttcRetry++) {
+  for (let retryIndex = 0; retryIndex < TEXT_TOOL_CALL_MAX_RETRIES; retryIndex++) {
     const lastMsg = (params.activeSession.messages as Array<{ role: string; content?: unknown }>)
       .slice()
       .toReversed()
@@ -164,7 +168,7 @@ export async function interceptTextToolCalls(params: {
     }
 
     params.log.info(
-      `text-tool-call: found ${textCalls.length} call(s) in assistant text (retry ${ttcRetry + 1}/${TEXT_TOOL_CALL_MAX_RETRIES})`,
+      `text-tool-call: found ${textCalls.length} call(s) in assistant text (retry ${retryIndex + 1}/${TEXT_TOOL_CALL_MAX_RETRIES})`,
     );
 
     const results = await executeTextToolCalls(
@@ -357,8 +361,8 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   {
     const observationRuntime = getObservationRuntime(sessionManager);
     if (observationRuntime) {
-      const recentTexts = messagesSnapshot.slice(-20).flatMap((_m) => {
-        const m = _m as { role?: string; content?: unknown };
+      const recentTexts = messagesSnapshot.slice(-RECENT_MESSAGES_WINDOW).flatMap((rawMsg) => {
+        const m = rawMsg as { role?: string; content?: unknown };
         if (!m.content) {
           return [];
         }
@@ -375,7 +379,7 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
       });
 
       if (recentTexts.length > 0) {
-        const forceByTurn = turnNumber > 0 && turnNumber % 10 === 0;
+        const forceByTurn = turnNumber > 0 && turnNumber % OBSERVATION_FORCE_INTERVAL === 0;
         const threshold = forceByTurn ? 1 : undefined;
 
         const extracted = observationRuntime.extractObservations(recentTexts, threshold);
