@@ -77,6 +77,30 @@ check_signing_keys() {
 
 trap cleanup EXIT INT TERM
 
+kill_all_openclaw() {
+  local max_attempts=10
+  local attempt
+  for (( attempt=1; attempt<=max_attempts; attempt++ )); do
+    pkill -f "${APP_PROCESS_PATTERN}" 2>/dev/null || true
+    pkill -f "${DEBUG_PROCESS_PATTERN}" 2>/dev/null || true
+    pkill -f "${LOCAL_PROCESS_PATTERN}" 2>/dev/null || true
+    pkill -f "${RELEASE_PROCESS_PATTERN}" 2>/dev/null || true
+    pkill -x "OpenClaw" 2>/dev/null || true
+    if ! pgrep -f "${APP_PROCESS_PATTERN}" >/dev/null 2>&1 \
+       && ! pgrep -f "${DEBUG_PROCESS_PATTERN}" >/dev/null 2>&1 \
+       && ! pgrep -f "${LOCAL_PROCESS_PATTERN}" >/dev/null 2>&1 \
+       && ! pgrep -f "${RELEASE_PROCESS_PATTERN}" >/dev/null 2>&1 \
+       && ! pgrep -x "OpenClaw" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.3
+  done
+}
+
+stop_launch_agent() {
+  launchctl bootout gui/"$UID"/ai.openclaw.mac 2>/dev/null || true
+}
+
 for arg in "$@"; do
   case "${arg}" in
     --wait|-w) WAIT_FOR_LOCK=1 ;;
@@ -125,28 +149,6 @@ if [[ "$ATTACH_ONLY" -eq 1 ]]; then
 fi
 
 acquire_lock
-
-kill_all_openclaw() {
-  for _ in {1..10}; do
-    pkill -f "${APP_PROCESS_PATTERN}" 2>/dev/null || true
-    pkill -f "${DEBUG_PROCESS_PATTERN}" 2>/dev/null || true
-    pkill -f "${LOCAL_PROCESS_PATTERN}" 2>/dev/null || true
-    pkill -f "${RELEASE_PROCESS_PATTERN}" 2>/dev/null || true
-    pkill -x "OpenClaw" 2>/dev/null || true
-    if ! pgrep -f "${APP_PROCESS_PATTERN}" >/dev/null 2>&1 \
-       && ! pgrep -f "${DEBUG_PROCESS_PATTERN}" >/dev/null 2>&1 \
-       && ! pgrep -f "${LOCAL_PROCESS_PATTERN}" >/dev/null 2>&1 \
-       && ! pgrep -f "${RELEASE_PROCESS_PATTERN}" >/dev/null 2>&1 \
-       && ! pgrep -x "OpenClaw" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.3
-  done
-}
-
-stop_launch_agent() {
-  launchctl bootout gui/"$UID"/ai.openclaw.mac 2>/dev/null || true
-}
 
 # 1) Kill all running instances first.
 log "==> Killing existing OpenClaw instances"
