@@ -1696,7 +1696,7 @@ export async function runEmbeddedAttempt(
                 ? (lastUserMsg as { content: string }).content.slice(0, 512)
                 : "recent conversation";
             systemPromptText = await _forkAttemptHooks.injectRetrievalPack(
-              activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+              sessionManager as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
               systemPromptText ?? "",
               query,
               log,
