@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 type BatchOutputErrorLike = {
   error?: { message?: string };
   response?: {

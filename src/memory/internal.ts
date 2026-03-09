@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import crypto from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -321,25 +322,37 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  * - 'topic': topic files, bank files, project index files
  * - 'detail': daily logs and everything else
  */
-export function detectGranularity(relPath: string): 'detail' | 'topic' | 'global' {
+export function detectGranularity(relPath: string): "detail" | "topic" | "global" {
   const normalized = normalizeRelPath(relPath);
 
   // Daily logs are episodic detail (memory/YYYY-MM-DD.md)
-  if (/^memory\/\d{4}-\d{2}-\d{2}\.md$/.test(normalized)) {return 'detail';}
+  if (/^memory\/\d{4}-\d{2}-\d{2}\.md$/.test(normalized)) {
+    return "detail";
+  }
 
   // Top-level memory index files are global summaries
-  if (normalized === 'MEMORY.md' || normalized === 'memory.md') {return 'global';}
-  if (normalized === 'memory/memory-index.md') {return 'global';}
-  if (normalized.endsWith('/index.md') && !normalized.includes('/projects/')) {return 'global';}
+  if (normalized === "MEMORY.md" || normalized === "memory.md") {
+    return "global";
+  }
+  if (normalized === "memory/memory-index.md") {
+    return "global";
+  }
+  if (normalized.endsWith("/index.md") && !normalized.includes("/projects/")) {
+    return "global";
+  }
 
   // Topic files are topic-level
-  if (normalized.startsWith('memory/topics/') || normalized.startsWith('bank/')) {return 'topic';}
+  if (normalized.startsWith("memory/topics/") || normalized.startsWith("bank/")) {
+    return "topic";
+  }
 
   // Project index files are topic-level
-  if (normalized.includes('/projects/') && normalized.endsWith('/index.md')) {return 'topic';}
+  if (normalized.includes("/projects/") && normalized.endsWith("/index.md")) {
+    return "topic";
+  }
 
   // Everything else defaults to detail
-  return 'detail';
+  return "detail";
 }
 
 /**
@@ -351,21 +364,29 @@ export function detectTopicCluster(relPath: string): string {
 
   // bank/entities/Oscar.md → 'entity_oscar'
   const entityMatch = normalized.match(/bank\/entities\/(\w+)\.md$/);
-  if (entityMatch) {return `entity_${entityMatch[1].toLowerCase()}`;}
+  if (entityMatch) {
+    return `entity_${entityMatch[1].toLowerCase()}`;
+  }
 
   // memory/topics/work_business.md → 'work_business'
   const topicMatch = normalized.match(/memory\/topics\/(\w+)\.md$/);
-  if (topicMatch) {return topicMatch[1];}
+  if (topicMatch) {
+    return topicMatch[1];
+  }
 
   // memory/projects/openclaw/... → 'project_openclaw'
   const projectMatch = normalized.match(/memory\/projects\/([^/]+)/);
-  if (projectMatch) {return `project_${projectMatch[1]}`;}
+  if (projectMatch) {
+    return `project_${projectMatch[1]}`;
+  }
 
   // bank/opinions.md → 'opinions'
   const bankMatch = normalized.match(/bank\/(\w+)\.md$/);
-  if (bankMatch) {return bankMatch[1];}
+  if (bankMatch) {
+    return bankMatch[1];
+  }
 
-  return '';
+  return "";
 }
 
 export async function runWithConcurrency<T>(
