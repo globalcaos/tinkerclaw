@@ -7,6 +7,11 @@
  * the assembled retrieval pack into each agent turn.
  */
 
+import {
+  hasWriteIntent,
+  findContradictions,
+  formatContradictionWarnings,
+} from "../../memory/engram/contradiction-gate.js";
 import { loadTodayDailyLog } from "../../memory/engram/daily-log-cache.js";
 import { extractEntities, entitiesToQueries } from "../../memory/engram/entity-extraction.js";
 import type { EventStore } from "../../memory/engram/event-store.js";
@@ -79,6 +84,19 @@ function buildDefaultAssemble(
       if (dailyTokens < remainingBudget) {
         sections.push(dailySection);
         remainingBudget -= dailyTokens;
+      }
+    }
+
+    // Contradiction gate: if write-intent detected, check for state conflicts
+    if (hasWriteIntent(query)) {
+      const contradictions = findContradictions(query, runtime.eventStore, workspaceDir);
+      if (contradictions.length > 0) {
+        const warningSection = formatContradictionWarnings(contradictions);
+        const warningTokens = estimateTokens(warningSection);
+        if (warningTokens < remainingBudget) {
+          sections.push(warningSection);
+          remainingBudget -= warningTokens;
+        }
       }
     }
 
