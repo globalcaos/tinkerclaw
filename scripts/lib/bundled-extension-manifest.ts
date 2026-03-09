@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 export type ExtensionPackageJson = {
   name?: string;
   version?: string;

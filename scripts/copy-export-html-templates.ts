@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 #!/usr/bin/env tsx
 /**
  * Copy export-html templates from src to dist

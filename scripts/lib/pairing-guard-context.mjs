@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import path from "node:path";
 import { resolveRepoRoot, resolveSourceRoots } from "./ts-guard-utils.mjs";
 

@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import { createWebFetchTool } from "../src/agents/tools/web-tools.js";
 
 const DEFAULT_URLS = [

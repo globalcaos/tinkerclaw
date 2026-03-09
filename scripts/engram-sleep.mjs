@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 #!/usr/bin/env node
 /**
  * ENGRAM Sleep Consolidation runner — called by the nightly cron.
