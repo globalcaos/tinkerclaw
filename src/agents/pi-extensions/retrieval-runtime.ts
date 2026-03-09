@@ -7,8 +7,11 @@
  * the assembled retrieval pack into each agent turn.
  */
 
+import { loadTodayDailyLog } from "../../memory/engram/daily-log-cache.js";
+import { extractEntities, entitiesToQueries } from "../../memory/engram/entity-extraction.js";
 import type { EventStore } from "../../memory/engram/event-store.js";
 import { estimateTokens } from "../../memory/engram/event-store.js";
+import { globalFtsMultiSearch } from "../../memory/engram/global-fts-bridge.js";
 import type { SearchResult, SearchFilters } from "../../memory/engram/search-index.js";
 import { ftsSearch } from "../../memory/engram/search-index.js";
 import type { MMRItem } from "../../memory/mmr.js";
@@ -20,10 +23,10 @@ import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-r
  * Provided as a field to enable clean injection in tests.
  */
 export type SearchIndexFn = (
-	store: EventStore,
-	query: string,
-	topN?: number,
-	filters?: SearchFilters,
+  store: EventStore,
+  query: string,
+  topN?: number,
+  filters?: SearchFilters,
 ) => SearchResult[];
 
 /**
@@ -31,24 +34,24 @@ export type SearchIndexFn = (
  * from retrieval-integration. Provided to enable clean test injection.
  */
 export type PushPackFn = (
-	query: string,
-	store: EventStore,
-	opts?: { maxTokens?: number; taskId?: string },
+  query: string,
+  store: EventStore,
+  opts?: { maxTokens?: number; taskId?: string },
 ) => string;
 
 export interface RetrievalRuntime {
-	/** Live event store for this session. */
-	eventStore: EventStore;
-	/** Optional FTS search override; falls back to module-level ftsSearch. */
-	searchIndex?: SearchIndexFn;
-	/** Optional pack assembly override; falls back to assembleRetrievalPack. */
-	pushPack?: PushPackFn;
-	/**
-	 * Per-turn retrieval: assemble a bounded text pack of relevant past events.
-	 * Uses FTS search + recency boost + MMR deduplication.
-	 * Auto-injected by setRetrievalRuntime when not provided.
-	 */
-	assemble?: (query: string, budgetTokens: number) => Promise<string | null>;
+  /** Live event store for this session. */
+  eventStore: EventStore;
+  /** Optional FTS search override; falls back to module-level ftsSearch. */
+  searchIndex?: SearchIndexFn;
+  /** Optional pack assembly override; falls back to assembleRetrievalPack. */
+  pushPack?: PushPackFn;
+  /**
+   * Per-turn retrieval: assemble a bounded text pack of relevant past events.
+   * Uses FTS search + recency boost + MMR deduplication.
+   * Auto-injected by setRetrievalRuntime when not provided.
+   */
+  assemble?: (query: string, budgetTokens: number) => Promise<string | null>;
 }
 
 /**
@@ -61,54 +64,93 @@ export interface RetrievalRuntime {
  *   4. Pack events into text until the token budget is reached.
  */
 function buildDefaultAssemble(
-	runtime: Pick<RetrievalRuntime, "eventStore" | "searchIndex">,
+  runtime: Pick<RetrievalRuntime, "eventStore" | "searchIndex">,
 ): (query: string, budgetTokens: number) => Promise<string | null> {
-	return async (query: string, budgetTokens: number): Promise<string | null> => {
-		const searchFn = runtime.searchIndex ?? ftsSearch;
-		const candidates = searchFn(runtime.eventStore, query, 40);
+  return async (query: string, budgetTokens: number): Promise<string | null> => {
+    let remainingBudget = budgetTokens;
+    const sections: string[] = [];
 
-		if (candidates.length === 0) {return null;}
+    // Daily log hot cache — prepend as context, counts against budget
+    const workspaceDir = (process.env.HOME ?? "~") + "/.openclaw/workspace";
+    const dailyLog = loadTodayDailyLog(workspaceDir);
+    if (dailyLog) {
+      const dailySection = "## Todays Context\n" + dailyLog + "\n";
+      const dailyTokens = estimateTokens(dailySection);
+      if (dailyTokens < remainingBudget) {
+        sections.push(dailySection);
+        remainingBudget -= dailyTokens;
+      }
+    }
 
-		// Recency boost: exponential decay with ~1 day half-life
-		const now = Date.now();
-		const boosted = candidates.map((r) => {
-			const ageMs = now - new Date(r.event.timestamp).getTime();
-			const recencyBoost = Math.exp(-ageMs / (24 * 60 * 60 * 1000)) * 0.5;
-			return { ...r, score: r.score + recencyBoost };
-		});
+    // Entity-aware multi-query retrieval
+    const entities = extractEntities(query);
+    const entityQueries = entitiesToQueries(entities);
 
-		// MMR re-ranking: λ=0.7 balances relevance with content diversity
-		const mmrItems: MMRItem[] = boosted.map((r) => ({
-			id: r.event.id,
-			score: r.score,
-			content: r.event.content,
-		}));
-		const reranked = mmrRerank(mmrItems, { enabled: true, lambda: 0.7 });
+    let candidates: SearchResult[];
+    if (entityQueries.length > 0) {
+      // Use multi-search with entity-derived queries
+      candidates = globalFtsMultiSearch(runtime.eventStore, entityQueries, 20, 40);
+    } else {
+      // Fall back to original single-query behavior
+      const searchFn = runtime.searchIndex ?? ftsSearch;
+      candidates = searchFn(runtime.eventStore, query, 40);
+    }
 
-		// Fast lookup by event id
-		const byId = new Map(boosted.map((r) => [r.event.id, r]));
+    if (candidates.length === 0 && sections.length === 0) {
+      return null;
+    }
 
-		// Pack events into the token budget
-		const header = "## Retrieved Memory Context\n";
-		const lines: string[] = [header];
-		let tokensUsed = estimateTokens(header);
+    if (candidates.length > 0) {
+      // Recency boost: exponential decay with ~1 day half-life
+      const now = Date.now();
+      const boosted = candidates.map((r) => {
+        const ageMs = now - new Date(r.event.timestamp).getTime();
+        const recencyBoost = Math.exp(-ageMs / (24 * 60 * 60 * 1000)) * 0.5;
+        return { ...r, score: r.score + recencyBoost };
+      });
 
-		for (const item of reranked) {
-			const result = byId.get(item.id);
-			if (!result) {continue;}
-			const { event } = result;
-			const line = `[${event.timestamp}] [${event.kind}] ${event.content}`;
-			const lineTokens = estimateTokens(line);
-			if (tokensUsed + lineTokens > budgetTokens) {break;}
-			lines.push(line);
-			tokensUsed += lineTokens;
-		}
+      // MMR re-ranking: λ=0.7 balances relevance with content diversity
+      const mmrItems: MMRItem[] = boosted.map((r) => ({
+        id: r.event.id,
+        score: r.score,
+        content: r.event.content,
+      }));
+      const reranked = mmrRerank(mmrItems, { enabled: true, lambda: 0.7 });
 
-		// Return null if no events fit beyond the header
-		if (lines.length <= 1) {return null;}
+      // Fast lookup by event id
+      const byId = new Map(boosted.map((r) => [r.event.id, r]));
 
-		return lines.join("\n");
-	};
+      // Pack events into the remaining token budget
+      const header = "## Retrieved Memory Context\n";
+      const lines: string[] = [header];
+      let tokensUsed = estimateTokens(header);
+
+      for (const item of reranked) {
+        const result = byId.get(item.id);
+        if (!result) {
+          continue;
+        }
+        const { event } = result;
+        const line = `[${event.timestamp}] [${event.kind}] ${event.content}`;
+        const lineTokens = estimateTokens(line);
+        if (tokensUsed + lineTokens > remainingBudget) {
+          break;
+        }
+        lines.push(line);
+        tokensUsed += lineTokens;
+      }
+
+      if (lines.length > 1) {
+        sections.push(lines.join("\n"));
+      }
+    }
+
+    if (sections.length === 0) {
+      return null;
+    }
+
+    return sections.join("\n");
+  };
 }
 
 const registry = createSessionManagerRuntimeRegistry<RetrievalRuntime>();
@@ -118,17 +160,17 @@ const registry = createSessionManagerRuntimeRegistry<RetrievalRuntime>();
  * Automatically injects a default `assemble` implementation when none is provided.
  */
 export const setRetrievalRuntime = (
-	sessionManager: unknown,
-	value: Omit<RetrievalRuntime, "assemble"> & Partial<Pick<RetrievalRuntime, "assemble">> | null,
+  sessionManager: unknown,
+  value: (Omit<RetrievalRuntime, "assemble"> & Partial<Pick<RetrievalRuntime, "assemble">>) | null,
 ): void => {
-	if (value !== null && !value.assemble) {
-		registry.set(sessionManager, {
-			...value,
-			assemble: buildDefaultAssemble(value),
-		});
-		return;
-	}
-	registry.set(sessionManager, value);
+  if (value !== null && !value.assemble) {
+    registry.set(sessionManager, {
+      ...value,
+      assemble: buildDefaultAssemble(value),
+    });
+    return;
+  }
+  registry.set(sessionManager, value);
 };
 
 /** Retrieve the retrieval runtime for a given session manager instance, or null. */
