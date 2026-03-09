@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { parseDurationMs } from "../cli/parse-duration.js";

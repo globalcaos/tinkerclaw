@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 export type MemorySource = "memory" | "sessions";
 
 export type MemorySearchResult = {

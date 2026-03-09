@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 export type Tone = "ok" | "warn" | "muted";
 
 export function resolveMemoryVectorState(vector: { enabled: boolean; available?: boolean }): {

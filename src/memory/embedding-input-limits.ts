@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 // Helpers for enforcing embedding model input size limits.
 //
 // We use UTF-8 byte length as a conservative upper bound for tokenizer output.

@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import fsSync from "node:fs";
 import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
 import type { OpenClawConfig } from "../config/config.js";

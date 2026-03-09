@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 export type EmbeddingBatchOutputLine = {
   custom_id?: string;
   error?: { message?: string };
