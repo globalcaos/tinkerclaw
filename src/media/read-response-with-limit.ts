@@ -24,7 +24,7 @@ async function readChunkWithIdleTimeout(
       (result) => {
         clear();
         if (!timedOut) {
-          resolve(result);
+          resolve(result as ReadableStreamReadResult<Uint8Array>);
         }
       },
       (err) => {
