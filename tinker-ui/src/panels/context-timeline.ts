@@ -479,6 +479,10 @@ export function mountContextTimeline(
       const segments = getSegmentTokens(ev);
       const segTotal = segments.reduce((s, seg) => s + seg.tokens, 0);
 
+      if (segments.length === 0 && total > 0) {
+        // No segment breakdown yet (round-start before anatomy arrives) — show placeholder
+        bar.style.background = "rgba(148,163,184,0.35)";
+      }
       for (const seg of segments) {
         const el = document.createElement("div");
         el.className = "ct-segment";
@@ -619,6 +623,20 @@ export function mountContextTimeline(
   // ─── Controller ───
   const ctrl: TimelineController = {
     pushEvent(event: AnatomyEvent, runId?: string) {
+      // If this event has a runId + roundNumber, try to enrich an existing bar
+      if (runId && event.roundNumber != null) {
+        for (let i = buffer.length - 1; i >= 0; i--) {
+          const entry = buffer[i];
+          if (entry.runId === runId && entry.event.roundNumber === event.roundNumber) {
+            // Merge: preserve existing fields, overlay new segment data
+            Object.assign(entry.event, event);
+            selectedIdx = i;
+            render();
+            onBarSelect(entry.event, "context");
+            return;
+          }
+        }
+      }
       const groupId = assignGroupId(runId, event);
       push({ event, runId, groupId });
       // Auto-select latest
