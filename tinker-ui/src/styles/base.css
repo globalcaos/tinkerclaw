@@ -107,8 +107,8 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .msg blockquote{border-left:3px solid var(--border);margin:4px 0;padding:2px 8px;color:var(--muted)}
 .msg h1,.msg h2,.msg h3,.msg h4,.msg h5,.msg h6{margin:6px 0 2px;font-weight:700}
 .msg h1{font-size:16px}.msg h2{font-size:14px}.msg h3{font-size:13px}
-.msg table{border-collapse:collapse;margin:4px 0;font-size:11px;display:block;overflow-x:auto;max-width:100%}
-.msg th,.msg td{border:1px solid var(--border);padding:2px 6px}
+.msg table{border-collapse:collapse;margin:4px 0;font-size:11px;width:100%;table-layout:fixed;word-wrap:break-word}
+.msg th,.msg td{border:1px solid var(--border);padding:2px 6px;overflow-wrap:break-word;word-break:break-word}
 .msg th{background:var(--surface);font-weight:600}
 .msg hr{border:none;border-top:1px solid var(--border);margin:6px 0}
 
