@@ -5,12 +5,15 @@ import { DEFAULT_GROUP_HISTORY_LIMIT } from "../../auto-reply/reply/history.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { waitForever } from "../../cli/wait.js";
 import { loadConfig } from "../../config/config.js";
+import { createConnectedChannelStatusPatch } from "../../gateway/channel-status-patches.js";
 import { logVerbose } from "../../globals.js";
 import { formatDurationPrecise } from "../../infra/format-time/format-duration.ts";
+import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { registerUnhandledRejectionHandler } from "../../infra/unhandled-rejections.js";
 import { getChildLogger } from "../../logging.js";
+import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
-import { resolveWhatsAppAccount } from "../accounts.js";
+import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "../accounts.js";
 import { setActiveWebListener } from "../active-listener.js";
 import { monitorWebInbox } from "../inbound.js";
 import {
@@ -20,8 +23,7 @@ import {
   resolveReconnectPolicy,
   sleepWithAbort,
 } from "../reconnect.js";
-import { formatError, getWebAuthAgeMs } from "../session.js";
-import { DEFAULT_WEB_MEDIA_BYTES } from "./constants.js";
+import { formatError, getWebAuthAgeMs, readWebSelfId } from "../session.js";
 import { whatsappHeartbeatLog, whatsappLog } from "./loggers.js";
 import { buildMentionConfig } from "./mentions.js";
 import { createEchoTracker } from "./monitor/echo.js";
@@ -91,11 +93,7 @@ export async function monitorWebChannel(
     },
   } satisfies ReturnType<typeof loadConfig>;
 
-  const configuredMaxMb = cfg.agents?.defaults?.mediaMaxMb;
-  const maxMediaBytes =
-    typeof configuredMaxMb === "number" && configuredMaxMb > 0
-      ? configuredMaxMb * 1024 * 1024
-      : DEFAULT_WEB_MEDIA_BYTES;
+  const maxMediaBytes = resolveWhatsAppMediaMaxBytes(account);
   const heartbeatSeconds = resolveHeartbeatSeconds(cfg, tuning.heartbeatSeconds);
   const reconnectPolicy = resolveReconnectPolicy(cfg, tuning.reconnect);
   const baseMentionConfig = buildMentionConfig(cfg);
@@ -202,7 +200,6 @@ export async function monitorWebChannel(
       sendReadReceipts: account.sendReadReceipts,
       debounceMs: inboundDebounceMs,
       shouldDebounce,
-      ...(account.syncFullHistory != null ? { syncFullHistory: account.syncFullHistory } : {}),
       onMessage: async (msg: WebInboundMsg) => {
         handledMessages += 1;
         lastMessageAt = Date.now();
@@ -214,14 +211,20 @@ export async function monitorWebChannel(
       },
     });
 
-    status.connected = true;
-    status.lastConnectedAt = Date.now();
-    status.lastEventAt = status.lastConnectedAt;
+    Object.assign(status, createConnectedChannelStatusPatch());
     status.lastError = null;
     emitStatus();
 
-    // WhatsApp lifecycle events are logged to the journal — no need to
-    // enqueue them as system events (they pollute the main session).
+    // Surface a concise connection event for the next main-session turn/heartbeat.
+    const { e164: selfE164 } = readWebSelfId(account.authDir);
+    const connectRoute = resolveAgentRoute({
+      cfg,
+      channel: "whatsapp",
+      accountId: account.accountId,
+    });
+    enqueueSystemEvent(`WhatsApp gateway connected${selfE164 ? ` as ${selfE164}` : ""}.`, {
+      sessionKey: connectRoute.sessionKey,
+    });
 
     setActiveWebListener(
       account.accountId,
@@ -390,56 +393,16 @@ export async function monitorWebChannel(
       "web reconnect: connection closed",
     );
 
+    enqueueSystemEvent(`WhatsApp gateway disconnected (status ${statusCode ?? "unknown"})`, {
+      sessionKey: connectRoute.sessionKey,
+    });
+
     if (loggedOut) {
       runtime.error(
         `WhatsApp session logged out. Run \`${formatCliCommand("openclaw channels login --channel web")}\` to relink.`,
       );
       await closeListener();
-
-      // Instead of exiting, wait for re-authentication (QR relink).
-      // Check periodically if credentials have been restored.
-      const REAUTH_CHECK_INTERVAL_MS = 5000;
-      const MAX_REAUTH_WAIT_MS = 10 * 60 * 1000; // 10 minutes max wait
-      const reauthStartedAt = Date.now();
-      reconnectLogger.info(
-        { connectionId, maxWaitMs: MAX_REAUTH_WAIT_MS },
-        "web reconnect: waiting for re-authentication (QR relink)",
-      );
-      let reauthDetected = false;
-      while (!stopRequested() && !sigintStop && !abortSignal?.aborted) {
-        const elapsed = Date.now() - reauthStartedAt;
-        if (elapsed > MAX_REAUTH_WAIT_MS) {
-          reconnectLogger.warn(
-            { connectionId, elapsedMs: elapsed },
-            "web reconnect: reauth wait timed out",
-          );
-          break;
-        }
-        try {
-          await sleepWithAbort(REAUTH_CHECK_INTERVAL_MS, abortSignal);
-        } catch {
-          break;
-        }
-        // Check if auth credentials exist (user re-scanned QR)
-        const { webAuthExists } = await import("../auth-store.js");
-        const authExists = await webAuthExists(account.authDir);
-        if (authExists) {
-          reconnectLogger.info(
-            { connectionId },
-            "web reconnect: re-authentication detected, restarting listener",
-          );
-          reauthDetected = true;
-          reconnectAttempts = 0; // Reset backoff after successful reauth
-          break;
-        }
-      }
-
-      if (!reauthDetected) {
-        // Timed out or aborted without reauth - exit the monitor
-        break;
-      }
-      // Continue the reconnect loop with fresh credentials
-      continue;
+      break;
     }
 
     if (isNonRetryableWebCloseStatus(statusCode)) {
