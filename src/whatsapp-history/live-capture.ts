@@ -3,7 +3,7 @@
  * Bridges Baileys events to the SQLite history database
  */
 
-import type { BaileysEventEmitter, WAMessage, Chat, Contact } from "@whiskeysockets/baileys";
+import type { BaileysEventEmitter, WAMessage } from "@whiskeysockets/baileys";
 import { jidNormalizedUser } from "@whiskeysockets/baileys";
 import { getChildLogger } from "../logging.js";
 import {
@@ -22,7 +22,9 @@ const logger = getChildLogger({ module: "wa-history" });
  */
 function extractTextContent(msg: WAMessage): { text: string | null; type: string } {
   const m = msg.message;
-  if (!m) return { text: null, type: "unknown" };
+  if (!m) {
+    return { text: null, type: "unknown" };
+  }
 
   if (m.conversation) {
     return { text: m.conversation, type: "text" };
@@ -102,7 +104,9 @@ function extractQuotedInfo(msg: WAMessage): { quotedId: string | null; quotedTex
  */
 function waMessageToRecord(msg: WAMessage, chatName?: string): MessageRecord | null {
   const key = msg.key;
-  if (!key.remoteJid || !key.id) return null;
+  if (!key.remoteJid || !key.id) {
+    return null;
+  }
 
   const chatJid = jidNormalizedUser(key.remoteJid);
   const { text, type } = extractTextContent(msg);
@@ -193,7 +197,9 @@ export function bindHistoryCapture(ev: BaileysEventEmitter): void {
 
   ev.on("messages.upsert", ({ messages, type }) => {
     // "notify" = new incoming; "append" = sent from another device — both need capturing
-    if (type !== "notify" && type !== "append") return;
+    if (type !== "notify" && type !== "append") {
+      return;
+    }
 
     for (const msg of messages) {
       const record = waMessageToRecord(msg);
