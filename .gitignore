@@ -127,6 +127,7 @@ employees.txt
 *.db
 auth-profiles.json
 memory/
+!src/memory/
 morning-briefings/
 skills/
 config/
