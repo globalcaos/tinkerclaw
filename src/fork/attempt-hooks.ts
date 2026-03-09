@@ -76,7 +76,6 @@ export async function injectRetrievalPack(
   }
   try {
     const pack = await rt.assemble(query, 4096);
-    console.log(`[ENGRAM] retrieval pack assembled: ${pack ? pack.length + " chars" : "null"}`);
     if (!pack) {
       return systemPromptText;
     }
