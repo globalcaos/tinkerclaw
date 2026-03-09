@@ -1173,7 +1173,12 @@ async function generateTabTitle(tab: Tab) {
     }
 
     if (title && title.length > 0 && title.length <= 40) {
-      tab.title = title;
+      // Preserve the original emoji prefix from the fortune cookie
+      const originalEmoji =
+        tab.title.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u)?.[0] || "";
+      // Strip any emoji the LLM may have added
+      const stripped = title.replace(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u, "").trim();
+      tab.title = originalEmoji + stripped;
       renderTabs();
       saveTabs();
     }
@@ -1207,8 +1212,12 @@ async function send(text: string) {
   updateBtn();
   scrollChat();
 
-  // Check if we should regenerate tab title
-  if (activeTab && activeTab.id !== "tab-main" && currentTurnNumber % TAB_TITLE_INTERVAL === 1) {
+  // Regenerate tab title on first prompt and every N prompts after
+  if (
+    activeTab &&
+    activeTab.id !== "tab-main" &&
+    (currentTurnNumber === 1 || currentTurnNumber % TAB_TITLE_INTERVAL === 0)
+  ) {
     generateTabTitle(activeTab);
   }
 
