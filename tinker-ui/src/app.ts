@@ -47,38 +47,38 @@ interface Tab {
 }
 
 const FORTUNE_COOKIES = [
-  "Seek boldly",
-  "Begin again",
-  "Trust the path",
-  "Stay curious",
-  "Dream bigger",
-  "Keep going",
-  "Find the way",
-  "Rise above",
-  "Breathe deep",
-  "Step forward",
-  "Open doors",
-  "Chase light",
-  "Be present",
-  "Start small",
-  "Aim true",
-  "Break through",
-  "Look within",
-  "Forge ahead",
-  "Stand tall",
-  "Let go",
-  "Think deep",
-  "Move fast",
-  "Stay sharp",
-  "Go beyond",
-  "Take heart",
-  "Reach far",
-  "Hold steady",
-  "Push on",
-  "Spark joy",
-  "Own it",
-  "See clear",
-  "Live now",
+  "🔭 Seek boldly",
+  "🌱 Begin again",
+  "🧭 Trust the path",
+  "🔍 Stay curious",
+  "🚀 Dream bigger",
+  "⛰️ Keep going",
+  "🗺️ Find the way",
+  "🦅 Rise above",
+  "🌊 Breathe deep",
+  "👣 Step forward",
+  "🚪 Open doors",
+  "✨ Chase light",
+  "🧘 Be present",
+  "🌿 Start small",
+  "🎯 Aim true",
+  "💥 Break through",
+  "🪞 Look within",
+  "🔥 Forge ahead",
+  "🏔️ Stand tall",
+  "🍃 Let go",
+  "🧠 Think deep",
+  "⚡ Move fast",
+  "🗡️ Stay sharp",
+  "🌌 Go beyond",
+  "❤️ Take heart",
+  "🌟 Reach far",
+  "⚓ Hold steady",
+  "💪 Push on",
+  "🎉 Spark joy",
+  "👑 Own it",
+  "👁️ See clear",
+  "🌅 Live now",
 ];
 
 function randomFortune(): string {
@@ -356,7 +356,7 @@ function onFrame(f: any) {
           const mainTab: Tab = {
             id: "tab-main",
             sessionKey: sessionKey,
-            title: "Main",
+            title: "🏠 Main",
             isAttached: true,
           };
           const restored = loadTabs();
@@ -996,7 +996,7 @@ async function generateTabTitle(tab: Tab) {
 
   if (pairs.length === 0) return;
 
-  const prompt = `Summarize this conversation in 1-3 words (short title, no quotes, no punctuation):\n\n${pairs.join("\n")}`;
+  const prompt = `Summarize this conversation in 1-3 words (short title, no quotes, no punctuation). Start with a relevant emoji. Example: "🔧 Fix auth bug". Here is the conversation:\n\n${pairs.join("\n")}`;
 
   try {
     // Try local Ollama first (free, fast)
