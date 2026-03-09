@@ -75,7 +75,6 @@ export async function migrateJsonStore(jsonPath: string): Promise<{
   let messageCount = 0;
   let errorCount = 0;
 
-  // Import contacts
   for (const [jid, contact] of Object.entries(store.contacts || {})) {
     try {
       upsertContact(jidNormalizedUser(jid), contact.name, contact.notify);
@@ -85,7 +84,6 @@ export async function migrateJsonStore(jsonPath: string): Promise<{
     }
   }
 
-  // Import chats
   for (const [jid, chat] of Object.entries(store.chats || {})) {
     try {
       upsertChat(jidNormalizedUser(jid), chat.name, jid.includes("@g.us"));
@@ -95,7 +93,7 @@ export async function migrateJsonStore(jsonPath: string): Promise<{
     }
   }
 
-  // Build chat name lookup
+  // Build lookup so messages can reference their chat display name
   const chatNames: Record<string, string> = {};
   for (const [jid, chat] of Object.entries(store.chats || {})) {
     if (chat.name) {
@@ -103,7 +101,6 @@ export async function migrateJsonStore(jsonPath: string): Promise<{
     }
   }
 
-  // Import messages
   const records: MessageRecord[] = [];
 
   for (const [chatJid, msgMap] of Object.entries(store.messages || {})) {
@@ -141,7 +138,7 @@ export async function migrateJsonStore(jsonPath: string): Promise<{
     }
   }
 
-  // Batch insert
+  // Batch insert with INSERT OR IGNORE so re-runs are safe
   messageCount = insertMessages(records);
 
   return { chats: chatCount, contacts: contactCount, messages: messageCount, errors: errorCount };
