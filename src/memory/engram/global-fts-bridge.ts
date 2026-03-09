@@ -85,3 +85,32 @@ export function globalFtsSearch(
     return [];
   }
 }
+
+/**
+ * Run multiple FTS queries and merge results, deduplicating by event id.
+ * Keeps the highest score when the same event appears in multiple queries.
+ */
+export function globalFtsMultiSearch(
+  store: EventStore,
+  queries: string[],
+  topNPerQuery: number = 20,
+  totalMax: number = 40,
+  filters?: SearchFilters,
+): SearchResult[] {
+  const byId = new Map<string, SearchResult>();
+
+  for (const query of queries) {
+    const results = globalFtsSearch(store, query, topNPerQuery, filters);
+    for (const result of results) {
+      const existing = byId.get(result.event.id);
+      if (!existing || result.score > existing.score) {
+        byId.set(result.event.id, result);
+      }
+    }
+  }
+
+  // Sort by score descending and limit
+  return Array.from(byId.values())
+    .toSorted((a, b) => b.score - a.score)
+    .slice(0, totalMax);
+}
