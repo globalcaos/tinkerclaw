@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";

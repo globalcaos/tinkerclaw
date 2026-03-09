@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 #!/usr/bin/env tsx
 /**
  * Copy HOOK.md files from src/hooks/bundled to dist/bundled
