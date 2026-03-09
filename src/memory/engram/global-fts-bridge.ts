@@ -29,7 +29,7 @@ export function globalFtsSearch(
     return [];
   }
 
-  // Sanitize query for FTS5: remove special chars, keep words
+  // FTS5 treats punctuation as delimiters, so strip non-word chars to avoid parse errors.
   const sanitized = query
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
@@ -80,8 +80,8 @@ export function globalFtsSearch(
       matchType: "fts" as const,
     }));
   } catch (err) {
-    // Log but don't crash — retrieval is best-effort
-    console.log(`[ENGRAM] global FTS query failed: ${String(err)}`);
+    // Retrieval is best-effort; a broken FTS DB should not crash the agent.
+    console.error(`[ENGRAM] global FTS query failed: ${String(err)}`);
     return [];
   }
 }
