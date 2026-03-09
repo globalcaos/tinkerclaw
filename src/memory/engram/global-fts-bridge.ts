@@ -87,30 +87,84 @@ export function globalFtsSearch(
 }
 
 /**
- * Run multiple FTS queries and merge results, deduplicating by event id.
- * Keeps the highest score when the same event appears in multiple queries.
+ * Run multiple FTS queries with a SINGLE db connection, merge results,
+ * deduplicating by event id. Keeps the highest score per event.
  */
 export function globalFtsMultiSearch(
-  store: EventStore,
+  _store: EventStore,
   queries: string[],
   topNPerQuery: number = 20,
   totalMax: number = 40,
-  filters?: SearchFilters,
+  _filters?: SearchFilters,
 ): SearchResult[] {
-  const byId = new Map<string, SearchResult>();
-
-  for (const query of queries) {
-    const results = globalFtsSearch(store, query, topNPerQuery, filters);
-    for (const result of results) {
-      const existing = byId.get(result.event.id);
-      if (!existing || result.score > existing.score) {
-        byId.set(result.event.id, result);
-      }
-    }
+  if (!existsSync(FTS_DB_PATH) || queries.length === 0) {
+    return [];
   }
 
-  // Sort by score descending and limit
-  return Array.from(byId.values())
-    .toSorted((a, b) => b.score - a.score)
-    .slice(0, totalMax);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3");
+    const db = new Database(FTS_DB_PATH, { readonly: true });
+    const stmt = db.prepare(
+      `SELECT id, timestamp, kind, session_key, content, rank
+       FROM events_fts
+       WHERE events_fts MATCH ?
+       ORDER BY rank
+       LIMIT ?`,
+    );
+
+    const byId = new Map<string, SearchResult>();
+
+    for (const query of queries) {
+      const sanitized = query
+        .replace(/[^\w\s]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length > 2)
+        .join(" ");
+      if (!sanitized) {
+        continue;
+      }
+
+      const rows = stmt.all(sanitized, topNPerQuery) as Array<{
+        id: string;
+        timestamp: string;
+        kind: string;
+        session_key: string;
+        content: string;
+        rank: number;
+      }>;
+
+      for (const row of rows) {
+        const score = Math.abs(row.rank);
+        const existing = byId.get(row.id);
+        if (!existing || score > existing.score) {
+          byId.set(row.id, {
+            event: {
+              id: row.id,
+              timestamp: row.timestamp,
+              kind: row.kind as MemoryEvent["kind"],
+              content: row.content,
+              turnId: 0,
+              sessionKey: row.session_key,
+              tokens: 0,
+              metadata: { sessionKey: row.session_key },
+            } as unknown as MemoryEvent,
+            score,
+            matchType: "fts" as const,
+          });
+        }
+      }
+    }
+
+    db.close();
+
+    console.log(`[ENGRAM] multiSearch: ${queries.length} queries, ${byId.size} unique results`);
+
+    return Array.from(byId.values())
+      .toSorted((a, b) => b.score - a.score)
+      .slice(0, totalMax);
+  } catch (err) {
+    console.error(`[ENGRAM] global FTS multi-query failed: ${String(err)}`);
+    return [];
+  }
 }
