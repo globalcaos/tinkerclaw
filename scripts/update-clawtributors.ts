@@ -1,5 +1,3 @@
-// refactored: clean code principles applied
-// Refactored according to 10 Clean Code principles
 import { execFileSync, execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";

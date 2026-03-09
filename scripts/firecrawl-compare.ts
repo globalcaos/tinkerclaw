@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 import { extractReadableContent, fetchFirecrawlContent } from "../src/agents/tools/web-tools.js";
 
 const DEFAULT_URLS = [

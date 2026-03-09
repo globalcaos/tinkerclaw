@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 #!/usr/bin/env bun
 /**
  * Validation script for Memory Phase 1: Schema Extension
