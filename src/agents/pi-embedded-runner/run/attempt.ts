@@ -1049,6 +1049,7 @@ export async function runEmbeddedAttempt(
       const extensionFactories = buildEmbeddedExtensionFactories({
         cfg: params.config,
         sessionManager,
+        sessionKey: params.sessionKey,
         provider: params.provider,
         modelId: params.modelId,
         model: params.model,
