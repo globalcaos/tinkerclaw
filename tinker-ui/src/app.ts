@@ -909,6 +909,18 @@ async function loadSessions() {
   }
   updateSelect();
   updateSessionsPanel();
+  // Sync tabs with server-side sessions (detect deleted sessions)
+  for (const tab of tabs) {
+    if (tab.isAttached && tab.sessionKey && tab.id !== "tab-main") {
+      const sess = sessions.find((s: any) => s.key === tab.sessionKey);
+      if (!sess) {
+        tab.sessionKey = null;
+        tab.isAttached = false;
+        tab.title = randomFortune();
+      }
+    }
+  }
+  renderTabs();
   loadChat();
 }
 
@@ -2938,17 +2950,7 @@ function init() {
       ta.focus();
     }
   });
-  $("session-select")?.addEventListener("change", (e) => {
-    sessionKey = (e.target as HTMLSelectElement).value;
-    messages = [];
-    updateChat();
-    loadChat();
-    if (timelineCtrl?.getFilterMode() === "all") {
-      timelineCtrl.loadAllSessions(sessions.map((s: any) => s.key));
-    } else {
-      timelineCtrl?.loadSession(sessionKey);
-    }
-  });
+  // Session-select dropdown removed — tabs handle session switching now
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
