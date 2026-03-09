@@ -696,7 +696,8 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ) {
-    // FTS-only mode: skip indexing if no provider
+    // Skip embedding indexing when no provider is configured — FTS-only mode
+    // still stores text in chunks but does not produce vector embeddings.
     if (!this.provider) {
       log.debug("Skipping embedding indexing in FTS-only mode", {
         path: entry.path,
@@ -722,85 +723,30 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     const sample = embeddings.find((embedding) => embedding.length > 0);
     const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
     const now = Date.now();
-    if (vectorReady) {
-      try {
-        this.db
-          .prepare(
-            `DELETE FROM ${VECTOR_TABLE} WHERE id IN (SELECT id FROM chunks WHERE path = ? AND source = ?)`,
-          )
-          .run(entry.path, options.source);
-      } catch {}
-    }
-    if (this.fts.enabled && this.fts.available) {
-      try {
-        this.db
-          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-          .run(entry.path, options.source, this.provider.model);
-      } catch {}
-    }
-    this.db
-      .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
-      .run(entry.path, options.source);
     const granularity = detectGranularity(entry.path);
     const topicCluster = detectTopicCluster(entry.path);
+
+    this.deleteStaleChunkData(entry.path, options.source, vectorReady);
+
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const embedding = embeddings[i] ?? [];
-      const id = hashText(
+      const chunkId = hashText(
         `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${this.provider.model}`,
       );
-      this.db
-        .prepare(
-          `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at, granularity, topic_cluster)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             hash=excluded.hash,
-             model=excluded.model,
-             text=excluded.text,
-             embedding=excluded.embedding,
-             updated_at=excluded.updated_at,
-             granularity=excluded.granularity,
-             topic_cluster=excluded.topic_cluster`,
-        )
-        .run(
-          id,
-          entry.path,
-          options.source,
-          chunk.startLine,
-          chunk.endLine,
-          chunk.hash,
-          this.provider.model,
-          chunk.text,
-          JSON.stringify(embedding),
-          now,
-          granularity,
-          topicCluster,
-        );
-      if (vectorReady && embedding.length > 0) {
-        try {
-          this.db.prepare(`DELETE FROM ${VECTOR_TABLE} WHERE id = ?`).run(id);
-        } catch {}
-        this.db
-          .prepare(`INSERT INTO ${VECTOR_TABLE} (id, embedding) VALUES (?, ?)`)
-          .run(id, vectorToBlob(embedding));
-      }
-      if (this.fts.enabled && this.fts.available) {
-        this.db
-          .prepare(
-            `INSERT INTO ${FTS_TABLE} (text, id, path, source, model, start_line, end_line)\n` +
-              ` VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            chunk.text,
-            id,
-            entry.path,
-            options.source,
-            this.provider.model,
-            chunk.startLine,
-            chunk.endLine,
-          );
-      }
+      this.persistChunk({
+        chunk,
+        embedding,
+        chunkId,
+        entry,
+        source: options.source,
+        now,
+        granularity,
+        topicCluster,
+        vectorReady,
+      });
     }
+
     this.db
       .prepare(
         `INSERT INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)
@@ -811,5 +757,98 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
            size=excluded.size`,
       )
       .run(entry.path, options.source, entry.hash, entry.mtimeMs, entry.size);
+  }
+
+  private deleteStaleChunkData(path: string, source: MemorySource, vectorReady: boolean): void {
+    // Vectors must be removed before chunks because the vec table references chunk ids.
+    if (vectorReady) {
+      try {
+        this.db
+          .prepare(
+            `DELETE FROM ${VECTOR_TABLE} WHERE id IN (SELECT id FROM chunks WHERE path = ? AND source = ?)`,
+          )
+          .run(path, source);
+      } catch {}
+    }
+    if (this.fts.enabled && this.fts.available && this.provider) {
+      try {
+        this.db
+          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
+          .run(path, source, this.provider.model);
+      } catch {}
+    }
+    this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(path, source);
+  }
+
+  private persistChunk(params: {
+    chunk: MemoryChunk;
+    embedding: number[];
+    chunkId: string;
+    entry: MemoryFileEntry | SessionFileEntry;
+    source: MemorySource;
+    now: number;
+    granularity: string;
+    topicCluster: string;
+    vectorReady: boolean;
+  }): void {
+    if (!this.provider) {
+      return;
+    }
+    const { chunk, embedding, chunkId, entry, source, now, granularity, topicCluster, vectorReady } = params;
+
+    this.db
+      .prepare(
+        `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at, granularity, topic_cluster)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           hash=excluded.hash,
+           model=excluded.model,
+           text=excluded.text,
+           embedding=excluded.embedding,
+           updated_at=excluded.updated_at,
+           granularity=excluded.granularity,
+           topic_cluster=excluded.topic_cluster`,
+      )
+      .run(
+        chunkId,
+        entry.path,
+        source,
+        chunk.startLine,
+        chunk.endLine,
+        chunk.hash,
+        this.provider.model,
+        chunk.text,
+        JSON.stringify(embedding),
+        now,
+        granularity,
+        topicCluster,
+      );
+
+    if (vectorReady && embedding.length > 0) {
+      // Delete-then-insert avoids vec0 upsert limitations on some builds.
+      try {
+        this.db.prepare(`DELETE FROM ${VECTOR_TABLE} WHERE id = ?`).run(chunkId);
+      } catch {}
+      this.db
+        .prepare(`INSERT INTO ${VECTOR_TABLE} (id, embedding) VALUES (?, ?)`)
+        .run(chunkId, vectorToBlob(embedding));
+    }
+
+    if (this.fts.enabled && this.fts.available) {
+      this.db
+        .prepare(
+          `INSERT INTO ${FTS_TABLE} (text, id, path, source, model, start_line, end_line)\n` +
+            ` VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          chunk.text,
+          chunkId,
+          entry.path,
+          source,
+          this.provider.model,
+          chunk.startLine,
+          chunk.endLine,
+        );
+    }
   }
 }
