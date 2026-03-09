@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";

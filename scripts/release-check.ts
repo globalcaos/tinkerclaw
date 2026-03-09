@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 #!/usr/bin/env -S node --import tsx
 
 import { execSync } from "node:child_process";

@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 export type MapConfig = {
   ensureLogins?: string[];
   displayName?: Record<string, string>;
