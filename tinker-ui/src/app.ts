@@ -351,7 +351,8 @@ function onFrame(f: any) {
           if (defs?.mainSessionKey) {
             sessionKey = defs.mainSessionKey;
           }
-          // Initialize tabs
+          // Initialize tabs (preserve active tab across reconnects)
+          const prevActiveTabId = activeTabId;
           const mainTab: Tab = {
             id: "tab-main",
             sessionKey: sessionKey,
@@ -360,7 +361,14 @@ function onFrame(f: any) {
           };
           const restored = loadTabs();
           tabs = [mainTab, ...restored];
-          activeTabId = "tab-main";
+          // Restore previous active tab if it still exists, otherwise default to main
+          const prevTabExists = tabs.some((t) => t.id === prevActiveTabId);
+          activeTabId = prevTabExists ? prevActiveTabId : "tab-main";
+          // Restore the session key from the active tab
+          const activeTab = tabs.find((t) => t.id === activeTabId);
+          if (activeTab?.isAttached && activeTab.sessionKey) {
+            sessionKey = activeTab.sessionKey;
+          }
           renderTabs();
           updateDots();
           updateBtn();
@@ -2073,16 +2081,7 @@ function updateDots() {
 }
 
 function updateSelect() {
-  const s = $("session-select") as HTMLSelectElement | null;
-  if (!s) {
-    return;
-  }
-  s.innerHTML = sessions
-    .map(
-      (x) =>
-        `<option value="${x.key}" ${x.key === sessionKey ? "selected" : ""}>${x.label || x.key.slice(0, 16)}</option>`,
-    )
-    .join("");
+  // Session dropdown removed — tabs handle session switching now. Kept as no-op for callers.
 }
 
 function renderTabs() {
@@ -2685,23 +2684,14 @@ function updateSessionsPanel() {
         return;
       }
 
-      sessionKey = key;
-      if (activeTab) {
-        activeTab.sessionKey = key;
-        activeTab.isAttached = true;
-        const sess = sessions.find((s: any) => s.key === key);
-        if (sess?.label) activeTab.title = sess.label.slice(0, 30);
-        saveTabs();
-      }
-      messages = [];
-      updateChat();
-      updateSelect();
-      loadChat();
-      updateSessionsPanel();
+      // Active tab is already attached — open this session in a new tab instead of rebinding
+      const newTab = createTab();
+      newTab.sessionKey = key;
+      newTab.isAttached = true;
+      const sess = sessions.find((s: any) => s.key === key);
+      if (sess?.label) newTab.title = sess.label.slice(0, 30);
       renderTabs();
-      const tmCanvas = $("treemap-canvas");
-      if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
-      timelineCtrl?.loadSession(key);
+      switchToTab(newTab.id);
     });
   });
 
