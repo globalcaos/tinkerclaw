@@ -25,6 +25,7 @@ export function globalFtsSearch(
   topN: number = 40,
   _filters?: SearchFilters,
 ): SearchResult[] {
+  console.log(`[ENGRAM] globalFtsSearch called, query="${query.slice(0, 80)}", dbExists=${existsSync(FTS_DB_PATH)}`);
   if (!existsSync(FTS_DB_PATH)) {
     return [];
   }
