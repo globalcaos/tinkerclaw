@@ -33,6 +33,8 @@ export type ResolvedWhatsAppAccount = {
   syncFullHistory?: boolean;
 };
 
+export const DEFAULT_WHATSAPP_MEDIA_MAX_MB = 50;
+
 const { listConfiguredAccountIds, listAccountIds, resolveDefaultAccountId } =
   createAccountListHelpers("whatsapp");
 export const listWhatsAppAccountIds = listAccountIds;
@@ -148,6 +150,16 @@ export function resolveWhatsAppAccount(params: {
     debounceMs: accountCfg?.debounceMs ?? rootCfg?.debounceMs,
     syncFullHistory: accountCfg?.syncFullHistory ?? rootCfg?.syncFullHistory ?? false,
   };
+}
+
+export function resolveWhatsAppMediaMaxBytes(
+  account: Pick<ResolvedWhatsAppAccount, "mediaMaxMb">,
+): number {
+  const mediaMaxMb =
+    typeof account.mediaMaxMb === "number" && account.mediaMaxMb > 0
+      ? account.mediaMaxMb
+      : DEFAULT_WHATSAPP_MEDIA_MAX_MB;
+  return mediaMaxMb * 1024 * 1024;
 }
 
 export function listEnabledWhatsAppAccounts(cfg: OpenClawConfig): ResolvedWhatsAppAccount[] {

@@ -71,8 +71,10 @@ export function globalFtsSearch(
         kind: row.kind as MemoryEvent["kind"],
         content: row.content,
         turnId: 0,
+        sessionKey: row.session_key,
+        tokens: 0,
         metadata: { sessionKey: row.session_key },
-      } as MemoryEvent,
+      } as unknown as MemoryEvent,
       // BM25 rank is negative (more negative = more relevant); normalize to positive score
       score: Math.abs(row.rank),
       matchType: "fts" as const,

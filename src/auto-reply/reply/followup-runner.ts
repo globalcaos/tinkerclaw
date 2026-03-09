@@ -8,8 +8,9 @@ import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
-import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { defaultRuntime } from "../../runtime.js";
+import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import type { OriginatingChannelType } from "../templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -131,10 +132,17 @@ export function createFollowupRunner(params: {
   return async (queued: FollowupRun) => {
     try {
       const runId = crypto.randomUUID();
+      const shouldSurfaceToControlUi = isInternalMessageChannel(
+        resolveOriginMessageProvider({
+          originatingChannel: queued.originatingChannel,
+          provider: queued.run.messageProvider,
+        }),
+      );
       if (queued.run.sessionKey) {
         registerAgentRunContext(runId, {
           sessionKey: queued.run.sessionKey,
           verboseLevel: queued.run.verboseLevel,
+          isControlUiVisible: shouldSurfaceToControlUi,
         });
       }
       let autoCompactionCompleted = false;
@@ -157,30 +165,7 @@ export function createFollowupRunner(params: {
             agentId: queued.run.agentId,
             sessionKey: queued.run.sessionKey,
           }),
-          // FORK: emit fallback-error lifecycle events so Tinker UI can show per-model failures
-          onError: async ({ provider, model, error, attempt, total }) => {
-            const errMsg = error instanceof Error ? error.message : String(error);
-            const errObj =
-              error && typeof error === "object" ? (error as Record<string, unknown>) : undefined;
-            const failedProfileId =
-              errObj && "profileId" in errObj ? String(errObj.profileId) : undefined;
-            emitAgentEvent({
-              runId,
-              sessionKey: queued.run.sessionKey,
-              stream: "lifecycle",
-              data: {
-                phase: "fallback-error",
-                failedProvider: provider,
-                failedModel: model,
-                reason: errObj && "reason" in errObj ? String(errObj.reason) : "unknown",
-                error: errMsg,
-                attempt,
-                total,
-                failedProfileId,
-              },
-            });
-          },
-          run: async (provider, model) => {
+          run: async (provider, model, runOptions) => {
             const authProfile = resolveRunAuthProfile(queued.run, provider);
             const result = await runEmbeddedPiAgent({
               sessionId: queued.run.sessionId,
@@ -223,6 +208,7 @@ export function createFollowupRunner(params: {
               bashElevated: queued.run.bashElevated,
               timeoutMs: queued.run.timeoutMs,
               runId,
+              allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
               blockReplyBreak: queued.run.blockReplyBreak,
               bootstrapPromptWarningSignaturesSeen,
               bootstrapPromptWarningSignature:
