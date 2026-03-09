@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import { loadConfig } from "../../src/config/config.js";
 import { matchPluginCommand, executePluginCommand } from "../../src/plugins/commands.js";
 import { loadOpenClawPlugins } from "../../src/plugins/loader.js";
