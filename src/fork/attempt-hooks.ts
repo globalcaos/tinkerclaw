@@ -212,6 +212,7 @@ export async function emitPrePromptAnatomy(params: {
   tools?: unknown[];
   effectivePrompt?: string;
   authProfileId?: string;
+  roundNumber?: number;
   log: { info: (msg: string) => void; warn: (msg: string) => void };
 }): Promise<void> {
   if (!params.sessionKey) {
@@ -235,6 +236,7 @@ export async function emitPrePromptAnatomy(params: {
         messagesSnapshot: params.messagesSnapshot as never,
         contextWindowTokens: params.contextWindowTokens ?? 0,
         authProfileId: params.authProfileId,
+        roundNumber: params.roundNumber,
       });
       if (anatomy) {
         await writeAnatomyEvent(params.sessionKey, anatomy);
