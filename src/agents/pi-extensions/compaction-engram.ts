@@ -131,7 +131,7 @@ export default function compactionEngramExtension(cfg?: OpenClawConfig): (api: E
       }
 
       // 2. Choose compaction summary strategy based on feature flag
-      const pointerMode = cfg?.agents?.defaults?.compaction?.pointerMode === true;
+      const pointerMode = (cfg?.agents?.defaults?.compaction as Record<string, unknown> | undefined)?.pointerMode === true;
       const ptrHandler = pointerMode ? getPointerCompactionRuntime(ctx.sessionManager) : null;
 
       let rendered: string;
