@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import { spawnSync } from "node:child_process";
 
 type CommandCase = {

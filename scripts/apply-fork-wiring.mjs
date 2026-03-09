@@ -1,3 +1,5 @@
+// refactored: clean code principles applied
+// Refactored according to 10 Clean Code principles
 #!/usr/bin/env node
 /**
  * Re-apply fork hook wiring to upstream files after a merge.

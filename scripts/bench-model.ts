@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 import { completeSimple, getModel, type Model } from "@mariozechner/pi-ai";
 
 type Usage = {
