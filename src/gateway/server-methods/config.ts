@@ -261,7 +261,11 @@ export const configHandlers: GatewayRequestHandlers = {
       const allModelIds = [primary, ...fallbacks].filter(Boolean) as string[];
       const seenProviders = new Set<string>();
       const authOrder: Record<string, string[]> = {};
-      const authProfiles: Record<string, { label?: string; mode?: string }> = {};
+      const authProfiles: Record<
+        string,
+        { label?: string; mode?: string; disabled?: boolean; disabledReason?: string }
+      > = {};
+      const now = Date.now();
 
       for (const modelId of allModelIds) {
         const provider = modelId.split("/")[0];
@@ -274,9 +278,19 @@ export const configHandlers: GatewayRequestHandlers = {
           authOrder[provider] = order;
           for (const profileId of order) {
             const cred = store.profiles[profileId];
+            const stats = store.usageStats?.[profileId] as Record<string, unknown> | undefined;
+            const disabledUntil =
+              typeof stats?.disabledUntil === "number" ? (stats.disabledUntil as number) : 0;
+            const isDisabled = disabledUntil > now;
             authProfiles[profileId] = {
               label: (cred as Record<string, unknown>)?.label as string | undefined,
               mode: cred?.type,
+              ...(isDisabled
+                ? {
+                    disabled: true,
+                    disabledReason: (stats?.disabledReason as string) || "cooldown",
+                  }
+                : {}),
             };
           }
         }
