@@ -136,14 +136,13 @@ async function fetchProfileUsage(
         },
         signal: AbortSignal.timeout(8000),
       });
-      if (res.status === 429 && attempt === 0) {
-        // Per-token rate limit exhausted — rotate token for fresh window
-        log(`[budget-panel] ${label}: 429 on attempt 1, rotating token...`);
-        const fresh = await forceRefreshToken(profileId, log);
-        if (fresh) {
-          token = fresh;
-          continue;
-        }
+      if (res.status === 429) {
+        // Usage API rate limit — return cached data, do NOT rotate token.
+        // Token rotation invalidates the old refresh token (Anthropic strict
+        // rotation) which kills the agent runner's in-memory credentials.
+        log(`[budget-panel] ${label}: 429 on usage API, using cached data`);
+        usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
+        return cached?.data ?? null;
       }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
