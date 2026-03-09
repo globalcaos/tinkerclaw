@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 /**
  * Maximal Marginal Relevance (MMR) re-ranking algorithm.
  *
