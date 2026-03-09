@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 

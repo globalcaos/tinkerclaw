@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 /**
  * Fetch all WhatsApp contacts from groups using Baileys
  * Resolves LIDs to real phone numbers
