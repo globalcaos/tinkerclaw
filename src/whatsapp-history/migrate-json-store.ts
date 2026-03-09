@@ -3,9 +3,8 @@
  * Run this once to import all messages from baileys_store_multi.json
  */
 
-import { jidNormalizedUser } from "@whiskeysockets/baileys";
 import fs from "node:fs";
-import path from "node:path";
+import { jidNormalizedUser } from "@whiskeysockets/baileys";
 import { insertMessages, upsertChat, upsertContact, getStats, type MessageRecord } from "./db.js";
 
 interface JsonStoreMessage {
@@ -15,7 +14,8 @@ interface JsonStoreMessage {
     id?: string;
     participant?: string;
   };
-  message?: any;
+  // Untyped protobuf payload — shape varies by message type
+  message?: Record<string, unknown>;
   messageTimestamp?: number | { low: number; high: number };
   pushName?: string;
 }
@@ -26,33 +26,83 @@ interface JsonStore {
   messages: Record<string, Record<string, JsonStoreMessage>>;
 }
 
-function extractTextFromMessage(msg: any): { text: string | null; type: string } {
-  if (!msg) return { text: null, type: "unknown" };
+// Raw protobuf JSON from the Baileys store — shape is dynamic, typed access would require
+// a full schema. We narrow intentionally in each branch, but use a loose alias at the boundary.
+type RawMessagePayload = Record<
+  string,
+  Record<string, unknown> | string | number | boolean | null | undefined
+>;
 
-  if (msg.conversation) return { text: msg.conversation, type: "text" };
-  if (msg.extendedTextMessage?.text) return { text: msg.extendedTextMessage.text, type: "text" };
-  if (msg.imageMessage) return { text: msg.imageMessage.caption || null, type: "image" };
-  if (msg.videoMessage) return { text: msg.videoMessage.caption || null, type: "video" };
-  if (msg.documentMessage)
-    return {
-      text: msg.documentMessage.caption || msg.documentMessage.fileName || null,
-      type: "document",
-    };
-  if (msg.audioMessage) return { text: null, type: msg.audioMessage.ptt ? "voice" : "audio" };
-  if (msg.stickerMessage) return { text: null, type: "sticker" };
-  if (msg.locationMessage) return { text: msg.locationMessage.name || null, type: "location" };
-  if (msg.pollCreationMessage || msg.pollCreationMessageV3) {
-    const poll = msg.pollCreationMessage || msg.pollCreationMessageV3;
-    return { text: poll?.name || null, type: "poll" };
+function extractTextFromMessage(rawMsg: Record<string, unknown> | undefined): {
+  text: string | null;
+  type: string;
+} {
+  if (!rawMsg) {
+    return { text: null, type: "unknown" };
   }
-  if (msg.reactionMessage) return { text: msg.reactionMessage.text || null, type: "reaction" };
+  // Cast once at the boundary; each branch then checks presence before access
+  const msg = rawMsg as RawMessagePayload;
+
+  if (msg.conversation) {
+    return { text: msg.conversation as string, type: "text" };
+  }
+
+  const ext = msg.extendedTextMessage as Record<string, unknown> | undefined;
+  if (ext?.text) {
+    return { text: ext.text as string, type: "text" };
+  }
+
+  const image = msg.imageMessage as Record<string, unknown> | undefined;
+  if (image) {
+    return { text: (image.caption as string | null) ?? null, type: "image" };
+  }
+
+  const video = msg.videoMessage as Record<string, unknown> | undefined;
+  if (video) {
+    return { text: (video.caption as string | null) ?? null, type: "video" };
+  }
+
+  const doc = msg.documentMessage as Record<string, unknown> | undefined;
+  if (doc) {
+    return { text: ((doc.caption ?? doc.fileName) as string | null) ?? null, type: "document" };
+  }
+
+  const audio = msg.audioMessage as Record<string, unknown> | undefined;
+  if (audio) {
+    return { text: null, type: audio.ptt ? "voice" : "audio" };
+  }
+
+  if (msg.stickerMessage) {
+    return { text: null, type: "sticker" };
+  }
+
+  const loc = msg.locationMessage as Record<string, unknown> | undefined;
+  if (loc) {
+    return { text: (loc.name as string | null) ?? null, type: "location" };
+  }
+
+  const poll = (msg.pollCreationMessage ?? msg.pollCreationMessageV3) as
+    | Record<string, unknown>
+    | undefined;
+  if (poll) {
+    return { text: (poll.name as string | null) ?? null, type: "poll" };
+  }
+
+  const reaction = msg.reactionMessage as Record<string, unknown> | undefined;
+  if (reaction) {
+    return { text: (reaction.text as string | null) ?? null, type: "reaction" };
+  }
 
   return { text: null, type: "unknown" };
 }
 
 function getTimestamp(ts: number | { low: number; high: number } | undefined): number {
-  if (!ts) return Math.floor(Date.now() / 1000);
-  if (typeof ts === "number") return ts;
+  if (!ts) {
+    return Math.floor(Date.now() / 1000);
+  }
+  if (typeof ts === "number") {
+    return ts;
+  }
   // Handle Long object from protobuf
   return ts.low;
 }
