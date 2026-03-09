@@ -8,11 +8,8 @@ import { convertMarkdownTables } from "../markdown/tables.js";
 import { markdownToWhatsApp } from "../markdown/whatsapp.js";
 import { normalizePollInput, type PollInput } from "../polls.js";
 import { toWhatsappJid } from "../utils.js";
-import {
-  type ActiveWebSendOptions,
-  type MessageKey,
-  requireActiveWebListener,
-} from "./active-listener.js";
+import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "./accounts.js";
+import { type ActiveWebSendOptions, type MessageKey, requireActiveWebListener } from "./active-listener.js";
 import { loadWebMedia } from "./media.js";
 
 const outboundLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound");
@@ -36,6 +33,10 @@ export async function sendMessageWhatsApp(
     options.accountId,
   );
   const cfg = options.cfg ?? loadConfig();
+  const account = resolveWhatsAppAccount({
+    cfg,
+    accountId: resolvedAccountId ?? options.accountId,
+  });
   const tableMode = resolveMarkdownTableMode({
     cfg,
     channel: "whatsapp",
@@ -57,6 +58,7 @@ export async function sendMessageWhatsApp(
     let documentFileName: string | undefined;
     if (options.mediaUrl) {
       const media = await loadWebMedia(options.mediaUrl, {
+        maxBytes: resolveWhatsAppMediaMaxBytes(account),
         localRoots: options.mediaLocalRoots,
       });
       const caption = text || undefined;
@@ -262,109 +264,59 @@ export async function sendStickerWhatsApp(
   return { messageId: result.messageId, toJid: jid };
 }
 
-export async function groupUpdateSubjectWhatsApp(
-  groupJid: string,
-  newSubject: string,
-  options?: OutboundOptions,
-): Promise<void> {
+export async function groupUpdateSubjectWhatsApp(groupJid: string, newSubject: string, options?: OutboundOptions): Promise<void> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupUpdateSubject(groupJid, newSubject);
 }
 
-export async function groupUpdateDescriptionWhatsApp(
-  groupJid: string,
-  description: string,
-  options?: OutboundOptions,
-): Promise<void> {
+export async function groupUpdateDescriptionWhatsApp(groupJid: string, description: string, options?: OutboundOptions): Promise<void> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupUpdateDescription(groupJid, description);
 }
 
-export async function groupUpdateIconWhatsApp(
-  groupJid: string,
-  imagePathOrBuffer: string | Buffer,
-  options?: OutboundOptions,
-): Promise<void> {
+export async function groupUpdateIconWhatsApp(groupJid: string, imagePathOrBuffer: string | Buffer, options?: OutboundOptions): Promise<void> {
   const { listener } = requireActiveWebListener(options?.accountId);
   let buf: Buffer;
-  if (typeof imagePathOrBuffer === "string") {
-    const media = await loadWebMedia(imagePathOrBuffer);
-    buf = media.buffer;
-  } else {
-    buf = imagePathOrBuffer;
-  }
+  if (typeof imagePathOrBuffer === "string") { const media = await loadWebMedia(imagePathOrBuffer); buf = media.buffer; } else { buf = imagePathOrBuffer; }
   return listener.groupUpdateIcon(groupJid, buf);
 }
 
-export async function groupAddParticipantsWhatsApp(
-  groupJid: string,
-  participants: string[],
-  options?: OutboundOptions,
-): Promise<{ [jid: string]: string }> {
+export async function groupAddParticipantsWhatsApp(groupJid: string, participants: string[], options?: OutboundOptions): Promise<{ [jid: string]: string }> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupAddParticipants(groupJid, participants.map(toWhatsappJid));
 }
 
-export async function groupRemoveParticipantsWhatsApp(
-  groupJid: string,
-  participants: string[],
-  options?: OutboundOptions,
-): Promise<{ [jid: string]: string }> {
+export async function groupRemoveParticipantsWhatsApp(groupJid: string, participants: string[], options?: OutboundOptions): Promise<{ [jid: string]: string }> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupRemoveParticipants(groupJid, participants.map(toWhatsappJid));
 }
 
-export async function groupPromoteParticipantsWhatsApp(
-  groupJid: string,
-  participants: string[],
-  options?: OutboundOptions,
-): Promise<{ [jid: string]: string }> {
+export async function groupPromoteParticipantsWhatsApp(groupJid: string, participants: string[], options?: OutboundOptions): Promise<{ [jid: string]: string }> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupPromoteParticipants(groupJid, participants.map(toWhatsappJid));
 }
 
-export async function groupDemoteParticipantsWhatsApp(
-  groupJid: string,
-  participants: string[],
-  options?: OutboundOptions,
-): Promise<{ [jid: string]: string }> {
+export async function groupDemoteParticipantsWhatsApp(groupJid: string, participants: string[], options?: OutboundOptions): Promise<{ [jid: string]: string }> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupDemoteParticipants(groupJid, participants.map(toWhatsappJid));
 }
 
-export async function groupLeaveWhatsApp(
-  groupJid: string,
-  options?: OutboundOptions,
-): Promise<void> {
+export async function groupLeaveWhatsApp(groupJid: string, options?: OutboundOptions): Promise<void> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupLeave(groupJid);
 }
 
-export async function groupGetInviteCodeWhatsApp(
-  groupJid: string,
-  options?: OutboundOptions,
-): Promise<string> {
+export async function groupGetInviteCodeWhatsApp(groupJid: string, options?: OutboundOptions): Promise<string> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupGetInviteCode(groupJid);
 }
 
-export async function groupRevokeInviteCodeWhatsApp(
-  groupJid: string,
-  options?: OutboundOptions,
-): Promise<string> {
+export async function groupRevokeInviteCodeWhatsApp(groupJid: string, options?: OutboundOptions): Promise<string> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupRevokeInviteCode(groupJid);
 }
 
-export async function groupGetMetadataWhatsApp(
-  groupJid: string,
-  options?: OutboundOptions,
-): Promise<{
-  id: string;
-  subject: string;
-  description?: string;
-  participants: Array<{ id: string; admin?: string }>;
-}> {
+export async function groupGetMetadataWhatsApp(groupJid: string, options?: OutboundOptions): Promise<{ id: string; subject: string; description?: string; participants: Array<{ id: string; admin?: string }> }> {
   const { listener } = requireActiveWebListener(options?.accountId);
   return listener.groupMetadata(groupJid);
 }

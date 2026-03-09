@@ -78,7 +78,7 @@ function buildContextPruningFactory(params: {
 }
 
 function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
-  const mode = cfg?.agents?.defaults?.compaction?.mode;
+  const mode = cfg?.agents?.defaults?.compaction?.mode as string | undefined;
   if (mode === "engram") {
     return "engram";
   }
@@ -165,6 +165,7 @@ export function buildEmbeddedExtensionFactories(params: {
       qualityGuardEnabled: qualityGuardCfg?.enabled ?? false,
       qualityGuardMaxRetries: qualityGuardCfg?.maxRetries,
       model: params.model,
+      recentTurnsPreserve: compactionCfg?.recentTurnsPreserve,
     });
     factories.push(compactionSafeguardExtension);
   }
