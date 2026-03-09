@@ -1273,6 +1273,13 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
   const name = modelId.split("/").slice(1).join("/") || modelId;
 
   if (provider === "anthropic") {
+    // Check if profile is disabled (billing cap, cooldown, etc.)
+    const prof = keyId ? modelConfigData?.authProfiles?.[keyId] : null;
+    if (prof?.disabled) {
+      const reason = prof.disabledReason || "cooldown";
+      const label = keyId?.split(":").slice(1).join(":") || keyId || "api";
+      return { topPct: 100, bottomPct: 100, tooltip: `${label}: ${reason}`, disconnected: true };
+    }
     // Use per-profile data if available (e.g. "anthropic:cli-sv" → "cli-sv")
     const profileKey = keyId?.split(":").slice(1).join(":") || "";
     const profiles = budgetUsageData.claudeProfiles || {};
@@ -1343,10 +1350,13 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   if (!usage) return '<span class="usage-bars-col"></span>';
   if (usage.disconnected) {
+    // Red-tinted dashes for billing/cooldown, gray for plain disconnected
+    const isCapped = usage.topPct >= 100;
+    const color = isCapped ? "#ef444450" : "#6b728033";
     let h = '<span class="usage-bars-col">';
     h += `<span class="usage-bars-wrap usage-disconnected" data-hint="${esc(usage.tooltip)}">`;
-    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,#6b728033 0,#6b728033 3px,transparent 3px,transparent 6px)"></span></span>`;
-    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,#6b728033 0,#6b728033 3px,transparent 3px,transparent 6px)"></span></span>`;
+    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,${color} 0,${color} 3px,transparent 3px,transparent 6px)"></span></span>`;
+    h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,${color} 0,${color} 3px,transparent 3px,transparent 6px)"></span></span>`;
     h += `</span></span>`;
     return h;
   }

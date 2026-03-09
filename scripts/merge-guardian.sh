@@ -97,7 +97,7 @@ check_wiring "src/agents/pi-embedded-runner/run.ts" "agent-events" "emitAgentEve
 check_wiring "src/agents/pi-embedded-helpers/failover-matches.ts" "regain access" "Anthropic billing pattern in failover-matches.ts"
 check_wiring "src/agents/pi-embedded-helpers/errors.ts" "regain access" "Early billing check in errors.ts"
 check_wiring "src/agents/auth-profiles/store.ts" "diskCred.expires > memCred.expires" "OAuth refresh token preservation in saveAuthProfileStore"
-check_wiring "src/agents/auth-profiles/external-cli-sync.ts" "readClaudeCliCredentialsCached" "Claude Code CLI GM credential sync in external-cli-sync.ts"
+check_wiring "src/agents/auth-profiles/external-cli-sync.ts" "readClaudeCliGmCredentialsCached" "Dedicated GM credential sync in external-cli-sync.ts"
 check_wiring "src/agents/auth-profiles/external-cli-sync.ts" "readClaudeCliSvCredentialsCached" "Claude Code CLI SV credential sync in external-cli-sync.ts"
 check_wiring "src/agents/auth-profiles/oauth.ts" "CLAUDE_CLI_PROFILE_ID" "Claude CLI GM refresh guard in oauth.ts"
 check_wiring "src/agents/auth-profiles/oauth.ts" "CLAUDE_CLI_SV_PROFILE_ID" "Claude CLI SV refresh guard in oauth.ts"
@@ -160,6 +160,7 @@ fi
 # Budget-panel live API wiring
 check_wiring "extensions/budget-panel/index.ts" "resolveApiKeyForProfile" "Budget-panel live OAuth token resolution"
 check_wiring "extensions/budget-panel/index.ts" "ensureAuthProfileStore" "Budget-panel auth store access"
+check_wiring "extensions/budget-panel/index.ts" "writeClaudeCliGmCredentials" "Budget-panel GM token write-back"
 
 # ─── 3. Config schema fork additions ───
 log "--- Phase 3: Config schemas ---"
