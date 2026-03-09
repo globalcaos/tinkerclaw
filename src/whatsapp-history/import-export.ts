@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { insertMessages, type MessageRecord, upsertChat, getStats } from "./db.js";
+import { insertMessages, type MessageRecord, upsertChat } from "./db.js";
 
 // WhatsApp export line patterns (varies by platform and locale)
 const LINE_PATTERNS = [
@@ -72,7 +72,9 @@ function parseDateTime(date: string, time: string): number {
     if (match) {
       // Assume DD/MM/YYYY (day-first) — most WhatsApp exports use European locale
       [, day, month, year] = match.map(Number) as [number, number, number, number];
-      if (year < 100) year += 2000;
+      if (year < 100) {
+        year += 2000;
+      }
       break;
     }
   }
@@ -80,7 +82,9 @@ function parseDateTime(date: string, time: string): number {
   if (!day! || !month! || !year!) {
     // Fallback: try Date.parse
     const parsed = Date.parse(`${date} ${time}`);
-    if (!isNaN(parsed)) return Math.floor(parsed / 1000);
+    if (!isNaN(parsed)) {
+      return Math.floor(parsed / 1000);
+    }
     return Math.floor(Date.now() / 1000);
   }
 
@@ -94,8 +98,12 @@ function parseDateTime(date: string, time: string): number {
     minutes = parseInt(timeMatch[2], 10);
     seconds = parseInt(timeMatch[3] || "0", 10);
     const ampm = timeMatch[4]?.toUpperCase();
-    if (ampm === "PM" && hours < 12) hours += 12;
-    if (ampm === "AM" && hours === 12) hours = 0;
+    if (ampm === "PM" && hours < 12) {
+      hours += 12;
+    }
+    if (ampm === "AM" && hours === 12) {
+      hours = 0;
+    }
   }
 
   const dt = new Date(year, month - 1, day, hours, minutes, seconds);
@@ -237,7 +245,9 @@ export async function importDirectory(dirPath: string): Promise<ImportResult[]> 
 }
 
 export function formatImportResults(results: ImportResult[]): string {
-  if (results.length === 0) return "No files imported.";
+  if (results.length === 0) {
+    return "No files imported.";
+  }
 
   let output = "## Import Results\n\n";
   output += "| Chat | Messages | Imported | Date Range |\n";
