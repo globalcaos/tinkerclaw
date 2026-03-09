@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
+import { emitToolExec } from "../fork/attempt-hooks.js"; // FORK: round-level tool tracking
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
@@ -230,6 +231,17 @@ export async function handleToolExecutionStart(
       args: args as Record<string, unknown>,
     },
   });
+  // FORK: emit tool-exec-start for timeline round-level tracking
+  emitToolExec({
+    runId: ctx.params.runId,
+    sessionKey: ctx.params.sessionKey,
+    roundNumber: 0, // round number not available in subscription context
+    phase: "tool-exec-start",
+    toolName,
+    toolCallId,
+    inputChars: typeof args === "object" ? JSON.stringify(args).length : 0,
+  });
+
   // Best-effort typing signal; do not block tool summaries on slow emitters.
   void ctx.params.onAgentEvent?.({
     stream: "tool",
@@ -422,6 +434,23 @@ export async function handleToolExecutionEnd(
       isError: isToolError,
     },
   });
+
+  // FORK: emit tool-exec-complete for timeline round-level tracking
+  {
+    const toolDurationMs =
+      startData?.startTime != null ? Date.now() - startData.startTime : undefined;
+    emitToolExec({
+      runId: ctx.params.runId,
+      sessionKey: ctx.params.sessionKey,
+      roundNumber: 0, // round number not available in subscription context
+      phase: "tool-exec-complete",
+      toolName,
+      toolCallId,
+      outputChars: typeof result === "string" ? result.length : JSON.stringify(result ?? "").length,
+      durationMs: toolDurationMs,
+      isError: isToolError,
+    });
+  }
 
   ctx.log.debug(
     `embedded run tool end: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
