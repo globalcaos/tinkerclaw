@@ -140,6 +140,34 @@ function clearPersistedErrors(sk: string) {
 type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
+const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
+
+function persistProviderErrors() {
+  try {
+    const obj: Record<string, { error: string; reason: string; ts: number }> = {};
+    for (const [k, v] of providerErrors) obj[k] = v;
+    localStorage.setItem(PROVIDER_ERRORS_STORAGE_KEY, JSON.stringify(obj));
+  } catch {
+    /* ignore */
+  }
+}
+
+function restoreProviderErrors() {
+  try {
+    const raw = localStorage.getItem(PROVIDER_ERRORS_STORAGE_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw) as Record<string, { error: string; reason: string; ts: number }>;
+    const now = Date.now();
+    for (const [k, v] of Object.entries(obj)) {
+      // Discard errors older than 2 hours
+      if (v.ts && now - v.ts < 2 * 60 * 60 * 1000) {
+        providerErrors.set(k, v);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
 const collapsedModelSections = new Set<string>();
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
@@ -322,7 +350,10 @@ function startHealthPoll() {
           }
         }
       }
-      if (changed) updateBudgetPanel();
+      if (changed) {
+        persistProviderErrors();
+        updateBudgetPanel();
+      }
     } catch {
       /* gateway disconnected */
     }
@@ -573,6 +604,7 @@ function onEvent(evt: any) {
           reason,
           ts: Date.now(),
         });
+        persistProviderErrors();
         updateBudgetPanel();
         startHealthPoll();
       }
@@ -615,6 +647,7 @@ function onEvent(evt: any) {
           reason,
           ts: Date.now(),
         });
+        persistProviderErrors();
         updateBudgetPanel();
         startHealthPoll();
       }
@@ -653,13 +686,15 @@ function onEvent(evt: any) {
           clearTimeout(pendingTimeout);
           pendingRunDeletes.delete(p.runId);
         }
-        // Clear provider-level, per-profile, and per-model errors on successful start
+        // Clear errors only for the specific profile/model that succeeded.
+        // Don't wipe sibling profiles — cli-sv can stay errored while cli-gm works.
         const startModel = p.data.model as string;
-        providerErrors.delete(startProvider);
-        providerErrors.delete(startModel);
-        for (const k of providerErrors.keys()) {
-          if (k.startsWith(startProvider + ":")) providerErrors.delete(k);
+        const startProfileId = p.data.authProfileId as string | undefined;
+        if (startProfileId) {
+          providerErrors.delete(startProfileId);
         }
+        providerErrors.delete(startModel);
+        persistProviderErrors();
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: startProvider,
@@ -805,6 +840,7 @@ function retryProvider(provider: string) {
       providerErrors.delete(k);
     }
   }
+  persistProviderErrors();
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
   streamMsgIdx = -1;
@@ -2308,6 +2344,7 @@ function init() {
     return;
   }
   initialized = true;
+  restoreProviderErrors();
   app.innerHTML = `
     <nav class="sidebar">
       <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#6b8e23"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
