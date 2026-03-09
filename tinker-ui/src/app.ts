@@ -329,6 +329,98 @@ function startHealthPoll() {
   }, 60_000);
 }
 
+/**
+ * Find the first sentence-ending position in `text` starting search from `from`.
+ * A sentence end is a '.' followed by whitespace, newline, or end-of-string.
+ * Returns the index of the '.', or -1 if none found.
+ */
+function findSentenceEnd(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === ".") {
+      const next = text[i + 1];
+      // '.' at end of string, or followed by space/newline = sentence boundary
+      if (next === undefined || next === " " || next === "\n" || next === "\r") {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * After streaming completes, merge sentence continuations back into
+ * their predecessor bubbles. If a text bubble starts with a lowercase
+ * letter (or mid-sentence punctuation), the text up to the first
+ * sentence-ending '.' is appended to the previous assistant text bubble.
+ * The remainder (after the '.') stays in the current bubble. If nothing
+ * remains, the bubble is removed entirely.
+ */
+function mergeSentenceContinuations(msgs: any[]): void {
+  // Only operate on _temporary messages from the current run.
+  // Find the range of temporary messages (they're always at the tail).
+  let tempStart = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i]._temporary) tempStart = i;
+    else if (tempStart >= 0) break; // walked past the temp block
+  }
+  if (tempStart < 0) return;
+
+  for (let i = tempStart + 1; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (!m._temporary) continue;
+    if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+    const content = Array.isArray(m.content) ? m.content : [];
+    const textBlock = content.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+    if (!textBlock) continue;
+
+    const text = textBlock.text as string;
+    const trimmed = text.trimStart();
+    const firstChar = trimmed.charAt(0);
+    // Detect mid-sentence start: lowercase letter or continuation punctuation
+    const isLower =
+      firstChar !== "" &&
+      firstChar === firstChar.toLowerCase() &&
+      firstChar !== firstChar.toUpperCase();
+    const isMidSentence = isLower || /^[\d,;:.!?)}\]"'…–—\-]/.test(trimmed);
+    if (!isMidSentence) continue;
+
+    // Find the previous temporary assistant text bubble
+    let prevTextBlock: any = null;
+    for (let k = i - 1; k >= tempStart; k--) {
+      const prev = msgs[k];
+      if (!prev._temporary) continue;
+      if ((prev.role ?? "").toLowerCase() !== "assistant") continue;
+      const pc = Array.isArray(prev.content) ? prev.content : [];
+      const pt = pc.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+      if (pt) {
+        prevTextBlock = pt;
+        break;
+      }
+    }
+    if (!prevTextBlock) continue;
+
+    // Find sentence boundary in the current text
+    const dotIdx = findSentenceEnd(text, 0);
+    if (dotIdx >= 0) {
+      // Merge up to and including the period
+      prevTextBlock.text += text.slice(0, dotIdx + 1);
+      const remainder = text.slice(dotIdx + 1);
+      if (remainder.trim()) {
+        textBlock.text = remainder;
+      } else {
+        // Nothing left — remove this message
+        msgs.splice(i, 1);
+        i--;
+      }
+    } else {
+      // No period found — merge the entire fragment
+      prevTextBlock.text += text;
+      msgs.splice(i, 1);
+      i--;
+    }
+  }
+}
+
 function onEvent(evt: any) {
   if (evt.event === "chat") {
     const p = evt.payload;
@@ -362,6 +454,13 @@ function onEvent(evt: any) {
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
       if (p.state !== "error") {
+        // ─── Continuation merge ───
+        // Before promoting, merge sentence fragments: if an assistant text
+        // bubble starts with lowercase (mid-sentence continuation after a
+        // tool call), move text up to the first '.' into the previous
+        // assistant text bubble and keep the remainder in the current one.
+        mergeSentenceContinuations(messages);
+
         // Promote temp messages to permanent — they already have correctly
         // segmented text from the frozenTextEnd slicing. The interlaced
         // thinking bubbles + tool rows become the reasoning group content.
