@@ -586,6 +586,12 @@ function onEvent(evt: any) {
         updateChat();
       }
     }
+    // Instant context anatomy bar — pushed over WebSocket, no polling needed
+    if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
+      if (p.data.anatomy && timelineCtrl) {
+        timelineCtrl.pushEvent(p.data.anatomy as any);
+      }
+    }
     // Track provider failures from model fallback
     if (p?.stream === "lifecycle" && p.data?.phase === "fallback-error") {
       const fp = p.data.failedProvider as string | undefined;
