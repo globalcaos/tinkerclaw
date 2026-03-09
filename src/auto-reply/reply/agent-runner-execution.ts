@@ -26,6 +26,7 @@ import {
   isMarkdownCapableMessageChannel,
   resolveMessageChannel,
 } from "../../utils/message-channel.js";
+import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
@@ -42,9 +43,9 @@ import {
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
 import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
-import { applyJarvisVoiceMarkup } from "./jarvis-voice-markup.js";
 import type { FollowupRun } from "./queue.js";
 import { createBlockReplyDeliveryHandler } from "./reply-delivery.js";
+import { createReplyMediaPathNormalizer } from "./reply-media-paths.js";
 import type { TypingSignaler } from "./typing-mode.js";
 
 export type RuntimeFallbackAttempt = {
@@ -54,7 +55,6 @@ export type RuntimeFallbackAttempt = {
   reason?: string;
   status?: number;
   code?: string;
-  failedProfileId?: string; // FORK: auth profile that triggered this fallback attempt
 };
 
 export type AgentRunLoopResult =
@@ -107,6 +107,11 @@ export async function runAgentTurnWithFallback(params: {
   const directlySentBlockKeys = new Set<string>();
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
+  const normalizeReplyMediaPaths = createReplyMediaPathNormalizer({
+    cfg: params.followupRun.run.config,
+    sessionKey: params.sessionKey,
+    workspaceDir: params.followupRun.run.workspaceDir,
+  });
   let didNotifyAgentRunStart = false;
   const notifyAgentRunStart = () => {
     if (didNotifyAgentRunStart) {
@@ -115,11 +120,17 @@ export async function runAgentTurnWithFallback(params: {
     didNotifyAgentRunStart = true;
     params.opts?.onAgentRunStart?.(runId);
   };
+  const shouldSurfaceToControlUi = isInternalMessageChannel(
+    params.followupRun.run.messageProvider ??
+      params.sessionCtx.Surface ??
+      params.sessionCtx.Provider,
+  );
   if (params.sessionKey) {
     registerAgentRunContext(runId, {
       sessionKey: params.sessionKey,
       verboseLevel: params.resolvedVerboseLevel,
       isHeartbeat: params.isHeartbeat,
+      isControlUiVisible: shouldSurfaceToControlUi,
     });
   }
   let runResult: Awaited<ReturnType<typeof runEmbeddedPiAgent>>;
@@ -171,7 +182,7 @@ export async function runAgentTurnWithFallback(params: {
         if (!sanitized.trim()) {
           return { skip: true };
         }
-        return { text: applyJarvisVoiceMarkup(sanitized), skip: false };
+        return { text: sanitized, skip: false };
       };
       const handlePartialForTyping = async (payload: ReplyPayload): Promise<string | undefined> => {
         if (isSilentReplyPrefixText(payload.text, SILENT_REPLY_TOKEN)) {
@@ -188,30 +199,7 @@ export async function runAgentTurnWithFallback(params: {
       const onToolResult = params.opts?.onToolResult;
       const fallbackResult = await runWithModelFallback({
         ...resolveModelFallbackOptions(params.followupRun.run),
-        // FORK: emit fallback-error lifecycle events so Tinker UI can show per-model failures
-        onError: async ({ provider, model, error, attempt, total }) => {
-          const errMsg = error instanceof Error ? error.message : String(error);
-          const errObj =
-            error && typeof error === "object" ? (error as Record<string, unknown>) : undefined;
-          const failedProfileId =
-            errObj && "profileId" in errObj ? String(errObj.profileId) : undefined;
-          emitAgentEvent({
-            runId,
-            sessionKey: params.sessionKey,
-            stream: "lifecycle",
-            data: {
-              phase: "fallback-error",
-              failedProvider: provider,
-              failedModel: model,
-              reason: errObj && "reason" in errObj ? String(errObj.reason) : "unknown",
-              error: errMsg,
-              attempt,
-              total,
-              failedProfileId,
-            },
-          });
-        },
-        run: (provider, model) => {
+        run: (provider, model, runOptions) => {
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
           params.opts?.onModelSelected?.({
@@ -329,6 +317,7 @@ export async function runAgentTurnWithFallback(params: {
             model,
             runId,
             authProfile,
+            allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
           });
           return (async () => {
             const result = await runEmbeddedPiAgent({
@@ -419,6 +408,7 @@ export async function runAgentTurnWithFallback(params: {
                       params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid,
                     normalizeStreamingText,
                     applyReplyToMode: params.applyReplyToMode,
+                    normalizeMediaPaths: normalizeReplyMediaPaths,
                     typingSignals: params.typingSignals,
                     blockStreamingEnabled: params.blockStreamingEnabled,
                     blockReplyPipeline,
@@ -488,7 +478,6 @@ export async function runAgentTurnWithFallback(params: {
             reason: attempt.reason ? String(attempt.reason) : undefined,
             status: typeof attempt.status === "number" ? attempt.status : undefined,
             code: attempt.code ? String(attempt.code) : undefined,
-            failedProfileId: attempt.failedProfileId ? String(attempt.failedProfileId) : undefined, // FORK
           }))
         : [];
 

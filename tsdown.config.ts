@@ -4,6 +4,44 @@ const env = {
   NODE_ENV: "production",
 };
 
+function buildInputOptions(options: { onLog?: unknown; [key: string]: unknown }) {
+  if (process.env.OPENCLAW_BUILD_VERBOSE === "1") {
+    return undefined;
+  }
+
+  const previousOnLog = typeof options.onLog === "function" ? options.onLog : undefined;
+
+  return {
+    ...options,
+    onLog(
+      level: string,
+      log: { code?: string },
+      defaultHandler: (level: string, log: { code?: string }) => void,
+    ) {
+      if (log.code === "PLUGIN_TIMINGS") {
+        return;
+      }
+      if (typeof previousOnLog === "function") {
+        previousOnLog(level, log, defaultHandler);
+        return;
+      }
+      defaultHandler(level, log);
+    },
+  };
+}
+
+function nodeBuildConfig(config: Record<string, unknown>) {
+  return {
+    ...config,
+    env,
+    fixedExtension: false,
+    platform: "node",
+    inputOptions: buildInputOptions,
+    // FORK: native addons must stay external (better-sqlite3 uses node-gyp bindings)
+    external: ["better-sqlite3", "bindings"],
+  };
+}
+
 const pluginSdkEntrypoints = [
   "index",
   "core",
@@ -52,36 +90,20 @@ const pluginSdkEntrypoints = [
 ] as const;
 
 export default defineConfig([
-  {
+  nodeBuildConfig({
     entry: "src/index.ts",
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external (ESM __filename crash)
-  },
-  {
+  }),
+  nodeBuildConfig({
     entry: "src/entry.ts",
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  },
-  {
+  }),
+  nodeBuildConfig({
     // Ensure this module is bundled as an entry so legacy CLI shims can resolve its exports.
     entry: "src/cli/daemon-cli.ts",
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  },
-  {
+  }),
+  nodeBuildConfig({
     entry: "src/infra/warning-filter.ts",
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  },
-  {
+  }),
+  nodeBuildConfig({
     // Keep sync lazy-runtime channel modules as concrete dist files.
     entry: {
       "channels/plugins/agent-tools/whatsapp-login":
@@ -95,31 +117,17 @@ export default defineConfig([
       "line/send": "src/line/send.ts",
       "line/template-messages": "src/line/template-messages.ts",
     },
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  },
-  ...pluginSdkEntrypoints.map((entry) => ({
-    entry: `src/plugin-sdk/${entry}.ts`,
-    outDir: "dist/plugin-sdk",
-    env,
-    fixedExtension: false,
-    platform: "node" as const,
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  })),
-  {
+  }),
+  ...pluginSdkEntrypoints.map((entry) =>
+    nodeBuildConfig({
+      entry: `src/plugin-sdk/${entry}.ts`,
+      outDir: "dist/plugin-sdk",
+    }),
+  ),
+  nodeBuildConfig({
     entry: "src/extensionAPI.ts",
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  },
-  {
+  }),
+  nodeBuildConfig({
     entry: ["src/hooks/bundled/*/handler.ts", "src/hooks/llm-slug-generator.ts"],
-    env,
-    fixedExtension: false,
-    platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
-  },
+  }),
 ]);
