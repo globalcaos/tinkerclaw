@@ -11,7 +11,6 @@
 import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { buildContextAnatomy, writeAnatomyEvent } from "../agents/context-anatomy.js";
-import { emitAgentEvent } from "../infra/agent-events.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
@@ -28,6 +27,7 @@ import {
 import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
 import { getRetrievalRuntime } from "../agents/pi-extensions/retrieval-runtime.js";
 import { captureForensicDump } from "../forensic/dump-writer.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 
 // ---------------------------------------------------------------------------
 // Hook: Persona block (before system prompt build)
@@ -271,6 +271,122 @@ export async function emitPrePromptAnatomy(params: {
       params.log.warn(`pre-prompt forensic dump failed: ${String(err)}`);
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Hook: Round-level event emission (per LLM API call + tool execution)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit a round-start event immediately before each LLM API call.
+ * This tells the Tinker UI to show a new bar in the timeline.
+ */
+export function emitRoundStart(params: {
+  runId: string;
+  sessionKey?: string;
+  roundNumber: number;
+  turnNumber: number;
+  model: string;
+  provider: string;
+  authProfileId?: string;
+  inputTokensEstimate: number;
+  toolsAvailable: number;
+}): void {
+  if (!params.sessionKey) {
+    return;
+  }
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "lifecycle",
+    data: {
+      phase: "round-start",
+      sessionKey: params.sessionKey,
+      roundNumber: params.roundNumber,
+      turnNumber: params.turnNumber,
+      model: params.model,
+      provider: params.provider,
+      authProfileId: params.authProfileId,
+      inputTokensEstimate: params.inputTokensEstimate,
+      toolsAvailable: params.toolsAvailable,
+      timestampMs: Date.now(),
+    },
+  });
+}
+
+/**
+ * Emit a round-complete event after an LLM API call finishes (streaming done).
+ * This tells the Tinker UI to show the purple response bar.
+ */
+export function emitRoundComplete(params: {
+  runId: string;
+  sessionKey?: string;
+  roundNumber: number;
+  turnNumber: number;
+  model: string;
+  provider: string;
+  outputTokens?: number;
+  inputTokens?: number;
+  stopReason?: string;
+  durationMs: number;
+  toolCallsRequested: number;
+}): void {
+  if (!params.sessionKey) {
+    return;
+  }
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "lifecycle",
+    data: {
+      phase: "round-complete",
+      sessionKey: params.sessionKey,
+      roundNumber: params.roundNumber,
+      turnNumber: params.turnNumber,
+      model: params.model,
+      provider: params.provider,
+      outputTokens: params.outputTokens,
+      inputTokens: params.inputTokens,
+      stopReason: params.stopReason,
+      durationMs: params.durationMs,
+      toolCallsRequested: params.toolCallsRequested,
+      timestampMs: Date.now(),
+    },
+  });
+}
+
+/**
+ * Emit tool execution start/complete events for timeline detail.
+ */
+export function emitToolExec(params: {
+  runId: string;
+  sessionKey?: string;
+  roundNumber: number;
+  phase: "tool-exec-start" | "tool-exec-complete";
+  toolName: string;
+  toolCallId: string;
+  inputChars?: number;
+  outputChars?: number;
+  durationMs?: number;
+  isError?: boolean;
+}): void {
+  if (!params.sessionKey) {
+    return;
+  }
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "lifecycle",
+    data: {
+      phase: params.phase,
+      sessionKey: params.sessionKey,
+      roundNumber: params.roundNumber,
+      toolName: params.toolName,
+      toolCallId: params.toolCallId,
+      inputChars: params.inputChars,
+      outputChars: params.outputChars,
+      durationMs: params.durationMs,
+      isError: params.isError,
+      timestampMs: Date.now(),
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
