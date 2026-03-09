@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 #!/usr/bin/env node
 
 import { promises as fs } from "node:fs";

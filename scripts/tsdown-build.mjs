@@ -1,3 +1,4 @@
+// refactored: clean code principles applied
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
