@@ -1685,6 +1685,24 @@ export async function runEmbeddedAttempt(
             }
           }
 
+          // FORK: ENGRAM retrieval pack injection — inject relevant past events into system prompt
+          {
+            const lastUserMsg = activeSession.messages
+              .slice()
+              .toReversed()
+              .find((m: { role?: string }) => (m as { role?: string }).role === "user");
+            const query =
+              typeof (lastUserMsg as { content?: unknown })?.content === "string"
+                ? (lastUserMsg as { content: string }).content.slice(0, 512)
+                : "recent conversation";
+            systemPromptText = await _forkAttemptHooks.injectRetrievalPack(
+              activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+              systemPromptText ?? "",
+              query,
+              log,
+            );
+          }
+
           // FORK: emit anatomy + forensic dump before LLM call so Tinker UI shows bar + details immediately
           _forkAttemptHooks
             .emitPrePromptAnatomy({
