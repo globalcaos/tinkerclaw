@@ -38,6 +38,78 @@ let budgetUsageData: any = null;
 let forensicMode = false;
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
+// ─── Tab State ───
+interface Tab {
+  id: string;
+  sessionKey: string | null; // null = unattached
+  title: string;
+  isAttached: boolean;
+}
+
+const FORTUNE_COOKIES = [
+  "Seek boldly",
+  "Begin again",
+  "Trust the path",
+  "Stay curious",
+  "Dream bigger",
+  "Keep going",
+  "Find the way",
+  "Rise above",
+  "Breathe deep",
+  "Step forward",
+  "Open doors",
+  "Chase light",
+  "Be present",
+  "Start small",
+  "Aim true",
+  "Break through",
+  "Look within",
+  "Forge ahead",
+  "Stand tall",
+  "Let go",
+  "Think deep",
+  "Move fast",
+  "Stay sharp",
+  "Go beyond",
+  "Take heart",
+  "Reach far",
+  "Hold steady",
+  "Push on",
+  "Spark joy",
+  "Own it",
+  "See clear",
+  "Live now",
+];
+
+function randomFortune(): string {
+  return FORTUNE_COOKIES[Math.floor(Math.random() * FORTUNE_COOKIES.length)];
+}
+
+let tabs: Tab[] = [];
+let activeTabId = "";
+const TAB_STORAGE_KEY = "tinker-tabs";
+const TAB_TITLE_INTERVAL = 5;
+
+function generateTabId(): string {
+  return "tab-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function saveTabs() {
+  try {
+    const persistable = tabs.filter((t) => t.id !== "tab-main");
+    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(persistable));
+  } catch {}
+}
+
+function loadTabs() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "[]");
+    return stored as Tab[];
+  } catch {
+    return [];
+  }
+}
+
 const $ = (id: string) => document.getElementById(id);
 const app = $("app")!;
 
@@ -279,6 +351,17 @@ function onFrame(f: any) {
           if (defs?.mainSessionKey) {
             sessionKey = defs.mainSessionKey;
           }
+          // Initialize tabs
+          const mainTab: Tab = {
+            id: "tab-main",
+            sessionKey: sessionKey,
+            title: "Main",
+            isAttached: true,
+          };
+          const restored = loadTabs();
+          tabs = [mainTab, ...restored];
+          activeTabId = "tab-main";
+          renderTabs();
           updateDots();
           updateBtn();
           loadSessions();
@@ -1908,6 +1991,131 @@ function updateSelect() {
     .join("");
 }
 
+function renderTabs() {
+  const container = $("tab-bar-scroll");
+  if (!container) return;
+
+  let html = "";
+  for (const tab of tabs) {
+    const isActive = tab.id === activeTabId;
+    const classes = ["tab"];
+    if (isActive) classes.push("tab-active");
+    if (!tab.isAttached) classes.push("tab-unattached");
+
+    const isMain = tab.id === "tab-main";
+    const closeBtn = isMain
+      ? ""
+      : `<span class="tab-close" data-tab-close="${tab.id}">&times;</span>`;
+
+    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}">
+      <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
+    </div>`;
+  }
+  container.innerHTML = html;
+  checkTabOverflow();
+
+  const activeEl = container.querySelector(".tab-active") as HTMLElement | null;
+  if (activeEl) {
+    activeEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function checkTabOverflow() {
+  const bar = $("tab-bar");
+  const scroll = $("tab-bar-scroll");
+  if (!bar || !scroll) return;
+  const overflows = scroll.scrollWidth > scroll.clientWidth;
+  bar.classList.toggle("has-overflow", overflows);
+}
+
+function switchToTab(tabId: string) {
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab || tab.id === activeTabId) return;
+
+  activeTabId = tab.id;
+
+  if (tab.isAttached && tab.sessionKey) {
+    sessionKey = tab.sessionKey;
+    messages = [];
+    updateChat();
+    loadChat();
+    updateSelect();
+    updateSessionsPanel();
+    const tmCanvas = $("treemap-canvas");
+    if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
+    timelineCtrl?.loadSession(sessionKey);
+  } else {
+    sessionKey = "";
+    messages = [];
+    updateChat();
+    updateSelect();
+  }
+
+  renderTabs();
+  saveTabs();
+}
+
+function createTab(): Tab {
+  const tab: Tab = {
+    id: generateTabId(),
+    sessionKey: null,
+    title: randomFortune(),
+    isAttached: false,
+  };
+  tabs.push(tab);
+  saveTabs();
+  return tab;
+}
+
+function closeTab(tabId: string) {
+  if (tabId === "tab-main") return;
+
+  const idx = tabs.findIndex((t) => t.id === tabId);
+  if (idx < 0) return;
+
+  tabs.splice(idx, 1);
+
+  if (activeTabId === tabId) {
+    switchToTab("tab-main");
+  }
+
+  renderTabs();
+  saveTabs();
+}
+
+function attachSessionToTab(key: string) {
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (!tab) return;
+
+  const existing = tabs.find((t) => t.sessionKey === key && t.id !== activeTabId);
+  if (existing) {
+    switchToTab(existing.id);
+    return;
+  }
+
+  tab.sessionKey = key;
+  tab.isAttached = true;
+  const sess = sessions.find((s: any) => s.key === key);
+  if (sess?.label) tab.title = sess.label.slice(0, 30);
+
+  sessionKey = key;
+  messages = [];
+  updateChat();
+  loadChat();
+  updateSelect();
+  updateSessionsPanel();
+  renderTabs();
+  saveTabs();
+}
+
 function updateBtn() {
   const btn = $("action-btn") as HTMLButtonElement | null;
   if (!btn) {
@@ -2366,19 +2574,38 @@ function updateSessionsPanel() {
   el.querySelectorAll(".session-row").forEach((row) => {
     row.addEventListener("click", () => {
       const key = (row as HTMLElement).dataset.sessionKey;
-      if (key && key !== sessionKey) {
-        sessionKey = key;
-        messages = [];
-        updateChat();
-        updateSelect();
-        loadChat();
-        updateSessionsPanel();
-        const tmCanvas = $("treemap-canvas");
-        if (tmCanvas) {
-          (tmCanvas as any).__treemapRefresh?.();
-        }
-        timelineCtrl?.loadSession(key);
+      if (!key || key === sessionKey) return;
+
+      const activeTab = tabs.find((t) => t.id === activeTabId);
+
+      if (activeTab && !activeTab.isAttached) {
+        attachSessionToTab(key);
+        return;
       }
+
+      const existingTab = tabs.find((t) => t.sessionKey === key);
+      if (existingTab) {
+        switchToTab(existingTab.id);
+        return;
+      }
+
+      sessionKey = key;
+      if (activeTab) {
+        activeTab.sessionKey = key;
+        activeTab.isAttached = true;
+        const sess = sessions.find((s: any) => s.key === key);
+        if (sess?.label) activeTab.title = sess.label.slice(0, 30);
+        saveTabs();
+      }
+      messages = [];
+      updateChat();
+      updateSelect();
+      loadChat();
+      updateSessionsPanel();
+      renderTabs();
+      const tmCanvas = $("treemap-canvas");
+      if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
+      timelineCtrl?.loadSession(key);
     });
   });
 
@@ -2390,6 +2617,20 @@ function updateSessionsPanel() {
       if (!key) return;
       try {
         await req("sessions.delete", { key });
+        // Revert any tab using this session to unattached
+        const affectedTab = tabs.find((t) => t.sessionKey === key);
+        if (affectedTab && affectedTab.id !== "tab-main") {
+          affectedTab.sessionKey = null;
+          affectedTab.isAttached = false;
+          affectedTab.title = randomFortune();
+          if (affectedTab.id === activeTabId) {
+            sessionKey = "";
+            messages = [];
+            updateChat();
+          }
+          renderTabs();
+          saveTabs();
+        }
         // Reload from server to get authoritative list
         await loadSessions();
       } catch (err) {
@@ -2466,11 +2707,16 @@ function init() {
     </nav>
     <div class="topbar">
       <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="height:108px;width:auto"></div>
+      <div class="tab-bar" id="tab-bar">
+        <button class="tab-nav tab-nav-left" id="tab-nav-left" data-hint="Scroll left">&#9664;</button>
+        <div class="tab-bar-scroll" id="tab-bar-scroll"></div>
+        <button class="tab-add" id="tab-add" data-hint="New tab">+</button>
+        <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
+      </div>
       <div class="toolbox">
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
-      <span style="flex:1"></span>
       <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
     <div class="alt-view" id="alt-view"></div>
@@ -4367,25 +4613,81 @@ function init() {
   });
 
   $("new-session-btn")!.addEventListener("click", async () => {
-    if (!connected || !sessionKey) {
-      return;
-    }
-    // Clear UI immediately so the user sees a fresh slate
+    if (!connected) return;
+
+    const tab = tabs.find((t) => t.id === activeTabId);
+
     messages.length = 0;
     streamMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
     streamRunId = null;
     sending = false;
-    clearPersistedErrors(sessionKey);
+    if (sessionKey) clearPersistedErrors(sessionKey);
     updateChat();
     updateBtn();
-    // Abort any active run before creating a new session
+
     if (activeRuns.size > 0 || pendingRunDeletes.size > 0) {
       await abort();
     }
-    send("/new");
+
+    if (tab && !tab.isAttached) {
+      const mainKey = tabs.find((t) => t.id === "tab-main")?.sessionKey || "";
+      if (mainKey) {
+        sessionKey = mainKey;
+        send("/new");
+      }
+    } else {
+      send("/new");
+    }
   });
+
+  // ─── Tab bar events ───
+  $("tab-bar-scroll")!.addEventListener("click", (e) => {
+    const tgt = e.target as HTMLElement;
+
+    const closeBtn = tgt.closest("[data-tab-close]") as HTMLElement | null;
+    if (closeBtn) {
+      e.stopPropagation();
+      closeTab(closeBtn.dataset.tabClose!);
+      return;
+    }
+
+    const tabEl = tgt.closest("[data-tab-id]") as HTMLElement | null;
+    if (tabEl) {
+      switchToTab(tabEl.dataset.tabId!);
+    }
+  });
+
+  $("tab-add")!.addEventListener("click", () => {
+    const tab = createTab();
+    renderTabs();
+    switchToTab(tab.id);
+  });
+
+  $("tab-nav-left")!.addEventListener("click", () => {
+    const scroll = $("tab-bar-scroll");
+    if (scroll) scroll.scrollBy({ left: -150, behavior: "smooth" });
+  });
+  $("tab-nav-right")!.addEventListener("click", () => {
+    const scroll = $("tab-bar-scroll");
+    if (scroll) scroll.scrollBy({ left: 150, behavior: "smooth" });
+  });
+
+  $("tab-bar")!.addEventListener(
+    "wheel",
+    (e) => {
+      const scroll = $("tab-bar-scroll");
+      if (!scroll) return;
+      e.preventDefault();
+      scroll.scrollBy({ left: e.deltaY > 0 ? 80 : -80 });
+      checkTabOverflow();
+    },
+    { passive: false },
+  );
+
+  window.addEventListener("resize", checkTabOverflow);
+
   // Delegated stop-button handler on messages container — survives innerHTML wipes
   $("messages")!.addEventListener("click", (e) => {
     const run = (e.target as HTMLElement).closest(".thinking-run[data-run-id]");
