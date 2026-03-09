@@ -90,6 +90,7 @@ function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | 
 export function buildEmbeddedExtensionFactories(params: {
   cfg: OpenClawConfig | undefined;
   sessionManager: SessionManager;
+  sessionKey?: string;
   provider: string;
   modelId: string;
   model: Model<Api> | undefined;
@@ -102,8 +103,11 @@ export function buildEmbeddedExtensionFactories(params: {
     // agent-runner-execution.ts to hook every turn event.
     const engramBaseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
     mkdirSync(engramBaseDir, { recursive: true });
+    // Use the explicit sessionKey passed from the runner (e.g. "agent:main:main").
+    // Fall back to reading sessionId off the SessionManager internals only as a
+    // last resort — the internal field is unreliable and produced "live" previously.
     const smInternal = params.sessionManager as unknown as { sessionId?: string };
-    const sessionKey = smInternal.sessionId ?? "default";
+    const sessionKey = params.sessionKey?.trim() || smInternal.sessionId || "default";
     const pipeline = createIngestionPipeline({ baseDir: engramBaseDir, sessionKey });
     setIngestionRuntime(params.sessionManager, pipeline);
 
