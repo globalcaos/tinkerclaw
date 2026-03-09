@@ -13,7 +13,9 @@ export interface ExtractedEntities {
   raw_keywords: string[];
 }
 
+// English + Spanish + Catalan stopwords (merged, deduplicated)
 const STOPWORDS = new Set([
+  // English
   "a",
   "an",
   "the",
@@ -131,9 +133,143 @@ const STOPWORDS = new Set([
   "his",
   "our",
   "out",
+  // Spanish
+  "el",
+  "la",
+  "los",
+  "las",
+  "un",
+  "una",
+  "unos",
+  "unas",
+  "del",
+  "al",
+  "este",
+  "esta",
+  "estos",
+  "estas",
+  "ese",
+  "esa",
+  "esos",
+  "esas",
+  "aquel",
+  "aquella",
+  "que",
+  "quien",
+  "como",
+  "donde",
+  "cuando",
+  "cual",
+  "cuyo",
+  "porque",
+  "pero",
+  "sino",
+  "aunque",
+  "pues",
+  "ya",
+  "muy",
+  "más",
+  "menos",
+  "algo",
+  "nada",
+  "todo",
+  "otra",
+  "otro",
+  "otros",
+  "otra",
+  "hay",
+  "ser",
+  "estar",
+  "tener",
+  "hacer",
+  "poder",
+  "decir",
+  "saber",
+  "querer",
+  "deber",
+  "dar",
+  "ver",
+  "poner",
+  "para",
+  "por",
+  "con",
+  "sin",
+  "sobre",
+  "entre",
+  "hasta",
+  "desde",
+  "durante",
+  "según",
+  "también",
+  "así",
+  "bien",
+  "mal",
+  "aquí",
+  "allí",
+  "ahora",
+  "después",
+  "antes",
+  "siempre",
+  "solo",
+  "puede",
+  "tiene",
+  "hace",
+  "dice",
+  "creo",
+  "vamos",
+  "vale",
+  // Catalan
+  "els",
+  "les",
+  "uns",
+  "unes",
+  "amb",
+  "però",
+  "doncs",
+  "perquè",
+  "quan",
+  "aquest",
+  "aquesta",
+  "aquests",
+  "aquestes",
+  "aquell",
+  "aquella",
+  "què",
+  "qui",
+  "com",
+  "on",
+  "també",
+  "ara",
+  "després",
+  "abans",
+  "sempre",
+  "sols",
+  "molt",
+  "més",
+  "menys",
+  "bé",
+  "bon",
+  "dia",
+  "tot",
+  "tota",
+  "tots",
+  "totes",
+  "fer",
+  "dir",
+  "ser",
+  "estar",
+  "tenir",
+  "poder",
+  "saber",
+  "voler",
+  "deure",
+  "veure",
+  "posar",
 ]);
 
+// English + Spanish + Catalan event keywords
 const EVENT_KEYWORDS = new Set([
+  // English
   "meeting",
   "call",
   "appointment",
@@ -155,6 +291,26 @@ const EVENT_KEYWORDS = new Set([
   "lunch",
   "dinner",
   "deadline",
+  // Spanish
+  "reunión",
+  "reunion",
+  "cita",
+  "llamada",
+  "entrevista",
+  "taller",
+  "presentación",
+  "presentacion",
+  "almuerzo",
+  "cena",
+  "plazo",
+  // Catalan
+  "reunió",
+  "trucada",
+  "formació",
+  "formacion",
+  "dinar",
+  "sopar",
+  "termini",
 ]);
 
 const DAY_NAMES = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
@@ -168,7 +324,9 @@ const DATE_MONTH_PATTERN =
   /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi;
 
 // Capitalized word sequences mid-sentence (potential people names)
-const MID_SENTENCE_NAMES = /(?<=\s)([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){0,2})(?=[\s,.'!?]|$)/g;
+// Supports accented chars common in Spanish/Catalan names (Raventós, Ortodó, García)
+const MID_SENTENCE_NAMES =
+  /(?<=\s)([A-ZÀ-ÚÑÇ][a-zà-úñçü]{1,20}(?:\s+[A-ZÀ-ÚÑÇ][a-zà-úñçü]{1,20}){0,2})(?=[\s,.'!?]|$)/g;
 
 // Acronyms (3+ uppercase letters)
 const ACRONYMS = /\b([A-Z]{3,})\b/g;
@@ -283,36 +441,68 @@ export function extractEntities(text: string): ExtractedEntities {
 
 /**
  * Convert extracted entities into FTS5-ready query strings.
- * Returns at most 5 queries, prioritizing specific entities over raw keywords.
+ * Returns at most 5 queries, prioritizing by specificity:
+ *   1. Events with context (most specific — "security meeting")
+ *   2. People names (high-value anchors)
+ *   3. Projects
+ *   4. Dates combined with any available context
+ *   5. Raw keywords as fallback combined query
  */
 export function entitiesToQueries(entities: ExtractedEntities): string[] {
   const queries: string[] = [];
 
-  // People get their own queries (high-value)
-  for (const person of entities.people) {
-    queries.push(person);
-  }
-
-  // Events with context
+  // Events with context are the most specific (e.g. "security meeting tomorrow")
   for (const event of entities.events) {
+    if (queries.length >= 5) {
+      break;
+    }
     queries.push(event);
   }
 
-  // Dates combined with other context if available
-  for (const date of entities.dates) {
-    queries.push(date);
+  // People are high-value anchors
+  for (const person of entities.people) {
+    if (queries.length >= 5) {
+      break;
+    }
+    queries.push(person);
   }
 
   // Projects
   for (const project of entities.projects) {
+    if (queries.length >= 5) {
+      break;
+    }
     queries.push(project);
   }
 
-  // If we have room, add raw keywords as a combined query
+  // Dates — combine with other entities for context if possible
+  if (queries.length < 5 && entities.dates.length > 0) {
+    const dateContext = entities.dates.slice(0, 2).join(" ");
+    // If we have event or people context, combine date with first one for richer query
+    if (entities.events.length > 0) {
+      queries.push(`${entities.events[0]} ${dateContext}`);
+    } else if (entities.people.length > 0) {
+      queries.push(`${entities.people[0]} ${dateContext}`);
+    } else {
+      queries.push(dateContext);
+    }
+  }
+
+  // Raw keywords as a combined fallback query
   if (queries.length < 5 && entities.raw_keywords.length > 0) {
     queries.push(entities.raw_keywords.slice(0, 5).join(" "));
   }
 
-  // Limit to 5 queries total
+  console.log(
+    `[ENGRAM] entity extraction: ${JSON.stringify({
+      people: entities.people.length,
+      events: entities.events.length,
+      dates: entities.dates.length,
+      projects: entities.projects.length,
+      keywords: entities.raw_keywords.length,
+      queries: queries.length,
+    })}`,
+  );
+
   return queries.slice(0, 5);
 }
