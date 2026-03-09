@@ -478,9 +478,9 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .usage-cost-col{font-size:8px;font-family:"SF Mono",monospace;color:var(--muted);white-space:nowrap;text-align:right}
 
 /* ─── Session Tabs ─── */
-.tab-bar{display:flex;align-items:stretch;min-width:0;overflow:hidden;position:relative;flex:1;margin-right:8px}
-.tab-bar-scroll{display:flex;align-items:stretch;gap:1px;overflow:hidden;scroll-behavior:smooth}
-.tab{display:flex;align-items:center;gap:6px;padding:0 12px;height:32px;border-radius:6px 6px 0 0;cursor:pointer;font-size:11px;font-weight:500;color:var(--muted);background:rgba(0,0,0,0.15);white-space:nowrap;transition:background .12s,color .12s;user-select:none;flex-shrink:0;position:relative}
+.tab-bar{display:flex;align-items:flex-end;min-width:0;overflow:hidden;position:relative;flex:1;margin-right:8px;align-self:flex-end}
+.tab-bar-scroll{display:flex;align-items:flex-end;gap:1px;overflow:hidden;scroll-behavior:smooth}
+.tab{display:flex;align-items:center;gap:6px;padding:0 12px;height:32px;border-radius:6px 6px 0 0;cursor:pointer;font-size:11px;font-weight:500;color:var(--muted);background:rgba(0,0,0,0.15);white-space:nowrap;transition:background .12s,color .12s;user-select:none;flex-shrink:0;position:relative;margin-bottom:-1px}
 .tab:hover{background:rgba(0,0,0,0.25);color:var(--text)}
 .tab.tab-active{background:var(--surface);color:var(--text);border-bottom:2px solid var(--accent)}
 .tab.tab-active:hover{background:var(--surface)}
