@@ -316,7 +316,7 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .auth-key-label{font-weight:400;color:var(--muted);font-size:10px;white-space:nowrap}
 .auth-key-sep{color:var(--muted);font-size:10px;opacity:.5}
 .model-error-badge{font-size:8px;font-weight:700;color:#ff6b6b;background:rgba(255,60,60,0.15);border:1px solid rgba(255,60,60,0.3);padding:1px 5px;border-radius:8px;margin-left:auto;font-family:"SF Mono",monospace;letter-spacing:.02em;text-transform:uppercase;cursor:help}
-.model-row.model-errored{opacity:0.7}
+.model-row.model-errored{opacity:0.85;background:rgba(255,60,60,0.08);border:1px solid rgba(255,60,60,0.15)}
 .model-row.model-errored .model-name{text-decoration:line-through;text-decoration-color:rgba(255,60,60,0.4)}
 
 /* Panel interactive icons — unified hover: scale + brighten + hint label */
