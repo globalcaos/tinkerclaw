@@ -1,7 +1,7 @@
 import {
   readQwenCliCredentialsCached,
   readMiniMaxCliCredentialsCached,
-  readClaudeCliCredentialsCached,
+  readClaudeCliGmCredentialsCached,
   readClaudeCliSvCredentialsCached,
 } from "../cli-credentials.js";
 import {
@@ -161,10 +161,10 @@ export function syncExternalCliCredentials(store: AuthProfileStore): boolean {
     }
   }
 
-  // FORK: Sync GM credentials from Claude Code CLI (~/.claude/.credentials.json)
-  // Claude Code handles OAuth refresh as a single-writer — no token rotation
-  // race conditions. OpenClaw piggybacks on Claude Code's always-fresh token.
-  const claudeCred = readClaudeCliCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS });
+  // FORK: Sync GM credentials from ~/.claude/.credentials-gm.json
+  // Separate file from Claude Code's main credential (which may be SV account).
+  // GM tokens managed independently via anthropic-oauth-login.mjs + auto-refresh.
+  const claudeCred = readClaudeCliGmCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS });
   if (claudeCred && claudeCred.type === "oauth") {
     const existing = store.profiles[CLAUDE_CLI_PROFILE_ID];
     const existingOAuth = existing?.type === "oauth" ? existing : undefined;
