@@ -1119,13 +1119,8 @@ async function loadChat() {
   scrollChat();
   updateResponseMap();
 
-  // Generate title for non-main tabs after loading history
-  const activeTab = tabs.find((t) => t.id === activeTabId);
-  if (activeTab && activeTab.id !== "tab-main" && activeTab.isAttached && messages.length > 0) {
-    if (FORTUNE_COOKIES.includes(activeTab.title)) {
-      generateTabTitle(activeTab);
-    }
-  }
+  // Tab titles are persisted in localStorage — no regeneration on load.
+  // Title generation happens in send() on first prompt and every N prompts.
 }
 
 async function generateTabTitle(tab: Tab) {
