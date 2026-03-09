@@ -1691,10 +1691,20 @@ export async function runEmbeddedAttempt(
               .slice()
               .toReversed()
               .find((m: { role?: string }) => (m as { role?: string }).role === "user");
-            const query =
-              typeof (lastUserMsg as { content?: unknown })?.content === "string"
-                ? (lastUserMsg as { content: string }).content.slice(0, 512)
-                : "recent conversation";
+            // Extract text from string or structured content blocks
+            const rawContent = (lastUserMsg as { content?: unknown })?.content;
+            let query: string;
+            if (typeof rawContent === "string") {
+              query = rawContent.slice(0, 512);
+            } else if (Array.isArray(rawContent)) {
+              query = (rawContent as Array<{ type?: string; text?: string }>)
+                .filter((b) => b.type === "text" && typeof b.text === "string")
+                .map((b) => b.text)
+                .join(" ")
+                .slice(0, 512) || "recent conversation";
+            } else {
+              query = "recent conversation";
+            }
             systemPromptText = await _forkAttemptHooks.injectRetrievalPack(
               sessionManager as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
               systemPromptText ?? "",
