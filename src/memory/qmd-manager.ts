@@ -48,6 +48,8 @@ const QMD_EMBED_BACKOFF_BASE_MS = 60_000;
 const QMD_EMBED_BACKOFF_MAX_MS = 60 * 60 * 1000;
 const HAN_SCRIPT_RE = /[\u3400-\u9fff]/u;
 const QMD_BM25_HAN_KEYWORD_LIMIT = 12;
+const MCPORTER_TIMEOUT_BUFFER_MS = 2_000;
+const QMD_UPDATE_RETRY_BASE_DELAY_MS = 500;
 
 let qmdEmbedQueueTail: Promise<void> = Promise.resolve();
 
@@ -826,17 +828,25 @@ export class QmdMemoryManager implements MemorySearchManager {
       }
     };
 
-    let parsed: QmdQueryResult[];
+    let rawResults: QmdQueryResult[];
     try {
-      parsed = await runSearchAttempt(true);
+      rawResults = await runSearchAttempt(true);
     } catch (err) {
       if (!(await this.tryRepairMissingCollectionSearch(err))) {
         throw err instanceof Error ? err : new Error(String(err));
       }
-      parsed = await runSearchAttempt(false);
+      rawResults = await runSearchAttempt(false);
     }
+    const results = await this.mapRawResultsToSearchResults(rawResults, opts?.minScore ?? 0);
+    return this.clampResultsByInjectedChars(this.diversifyResultsBySource(results, limit));
+  }
+
+  private async mapRawResultsToSearchResults(
+    rawResults: QmdQueryResult[],
+    minScore: number,
+  ): Promise<MemorySearchResult[]> {
     const results: MemorySearchResult[] = [];
-    for (const entry of parsed) {
+    for (const entry of rawResults) {
       const docHints = this.normalizeDocHints({
         preferredCollection: entry.collection,
         preferredFile: entry.file,
@@ -848,7 +858,6 @@ export class QmdMemoryManager implements MemorySearchManager {
       const snippet = entry.snippet?.slice(0, this.qmd.limits.maxSnippetChars) ?? "";
       const lines = this.extractSnippetLines(snippet);
       const score = typeof entry.score === "number" ? entry.score : 0;
-      const minScore = opts?.minScore ?? 0;
       if (score < minScore) {
         continue;
       }
@@ -861,7 +870,7 @@ export class QmdMemoryManager implements MemorySearchManager {
         source: doc.source,
       });
     }
-    return this.clampResultsByInjectedChars(this.diversifyResultsBySource(results, limit));
+    return results;
   }
 
   async sync(params?: {
@@ -1038,7 +1047,7 @@ export class QmdMemoryManager implements MemorySearchManager {
         if (attempt >= maxAttempts || !this.isRetryableUpdateError(err)) {
           throw err;
         }
-        const delayMs = 500 * 2 ** (attempt - 1);
+        const delayMs = QMD_UPDATE_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
         log.warn(
           `qmd update retry ${attempt}/${maxAttempts - 1} after failure (${reason}): ${String(err)}`,
         );
@@ -1322,7 +1331,7 @@ export class QmdMemoryManager implements MemorySearchManager {
         "--timeout",
         String(Math.max(0, params.timeoutMs)),
       ],
-      { timeoutMs: Math.max(params.timeoutMs + 2_000, 5_000) },
+      { timeoutMs: Math.max(params.timeoutMs + MCPORTER_TIMEOUT_BUFFER_MS, 5_000) },
     );
 
     const parsedUnknown: unknown = JSON.parse(result.stdout);

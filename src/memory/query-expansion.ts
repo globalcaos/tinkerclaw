@@ -642,23 +642,19 @@ export function isQueryStopWordToken(token: string): boolean {
   );
 }
 
-/**
- * Check if a token looks like a meaningful keyword.
- * Returns false for short tokens, numbers-only, etc.
- */
 function isValidKeyword(token: string): boolean {
   if (!token || token.length === 0) {
     return false;
   }
-  // Skip very short English words (likely stop words or fragments)
+  // Very short Latin words are almost always stop words or fragmented tokens.
   if (/^[a-zA-Z]+$/.test(token) && token.length < 3) {
     return false;
   }
-  // Skip pure numbers (not useful for semantic search)
+  // Raw numbers carry no semantic signal for text search.
   if (/^\d+$/.test(token)) {
     return false;
   }
-  // Skip tokens that are all punctuation
+  // All-punctuation tokens are noise from the tokenizer.
   if (/^[\p{P}\p{S}]+$/u.test(token)) {
     return false;
   }
@@ -666,9 +662,12 @@ function isValidKeyword(token: string): boolean {
 }
 
 /**
- * Simple tokenizer that handles English, Chinese, Korean, and Japanese text.
- * For Chinese, we do character-based splitting since we don't have a proper segmenter.
- * For English, we split on whitespace and punctuation.
+ * Tokenize mixed-language text for keyword extraction.
+ *
+ * CJK scripts require special handling because they lack whitespace delimiters.
+ * We use bigrams for Chinese to capture two-character phrases, which are
+ * the minimal meaningful unit for most terms.  Korean particles are stripped
+ * so the search term is the bare stem, not the inflected form.
  */
 function tokenize(text: string): string[] {
   const tokens: string[] = [];
@@ -694,12 +693,9 @@ function tokenize(text: string): string[] {
         }
       }
     } else if (/[\u4e00-\u9fff]/.test(segment)) {
-      // Check if segment contains CJK characters (Chinese)
-      // For Chinese, extract character n-grams (unigrams and bigrams)
       const chars = Array.from(segment).filter((c) => /[\u4e00-\u9fff]/.test(c));
-      // Add individual characters
       tokens.push(...chars);
-      // Add bigrams for better phrase matching
+      // Bigrams give better phrase coverage than unigrams alone for Chinese.
       for (let i = 0; i < chars.length - 1; i++) {
         tokens.push(chars[i] + chars[i + 1]);
       }

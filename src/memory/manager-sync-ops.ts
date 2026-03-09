@@ -1061,43 +1061,9 @@ export abstract class MemoryManagerSyncOps {
 
     try {
       this.seedEmbeddingCache(originalDb);
-      const shouldSyncMemory = this.sources.has("memory");
-      const shouldSyncSessions = this.shouldSyncSessions(
-        { reason: params.reason, force: params.force },
-        true,
-      );
+      await this.syncSourcesForReindex(params);
 
-      if (shouldSyncMemory) {
-        await this.syncMemoryFiles({ needsFullReindex: true, progress: params.progress });
-        this.dirty = false;
-      }
-
-      if (shouldSyncSessions) {
-        await this.syncSessionFiles({ needsFullReindex: true, progress: params.progress });
-        this.sessionsDirty = false;
-        this.sessionsDirtyFiles.clear();
-      } else if (this.sessionsDirtyFiles.size > 0) {
-        this.sessionsDirty = true;
-      } else {
-        this.sessionsDirty = false;
-      }
-
-      nextMeta = {
-        model: this.provider?.model ?? "fts-only",
-        provider: this.provider?.id ?? "none",
-        providerKey: this.providerKey!,
-        sources: this.resolveConfiguredSourcesForMeta(),
-        chunkTokens: this.settings.chunking.tokens,
-        chunkOverlap: this.settings.chunking.overlap,
-      };
-      if (!nextMeta) {
-        throw new Error("Failed to compute memory index metadata for reindexing.");
-      }
-
-      if (this.vector.available && this.vector.dims) {
-        nextMeta.vectorDims = this.vector.dims;
-      }
-
+      nextMeta = this.buildNextMeta();
       this.writeMeta(nextMeta);
       this.pruneEmbeddingCacheIfNeeded?.();
 
@@ -1112,7 +1078,7 @@ export abstract class MemoryManagerSyncOps {
       this.vector.available = null;
       this.vector.loadError = undefined;
       this.ensureSchema();
-      this.vector.dims = nextMeta?.vectorDims;
+      this.vector.dims = nextMeta.vectorDims;
     } catch (err) {
       try {
         this.db.close();
@@ -1128,10 +1094,20 @@ export abstract class MemoryManagerSyncOps {
     force?: boolean;
     progress?: MemorySyncProgressState;
   }): Promise<void> {
-    // Perf: for test runs, skip atomic temp-db swapping. The index is isolated
-    // under the per-test HOME anyway, and this cuts substantial fs+sqlite churn.
+    // Skip atomic temp-db swapping in tests — the index is isolated under a
+    // per-test HOME anyway, so avoiding the swap cuts substantial fs+sqlite churn.
     this.resetIndex();
+    await this.syncSourcesForReindex(params);
+    const nextMeta = this.buildNextMeta();
+    this.writeMeta(nextMeta);
+    this.pruneEmbeddingCacheIfNeeded?.();
+  }
 
+  private async syncSourcesForReindex(params: {
+    reason?: string;
+    force?: boolean;
+    progress?: MemorySyncProgressState;
+  }): Promise<void> {
     const shouldSyncMemory = this.sources.has("memory");
     const shouldSyncSessions = this.shouldSyncSessions(
       { reason: params.reason, force: params.force },
@@ -1152,8 +1128,10 @@ export abstract class MemoryManagerSyncOps {
     } else {
       this.sessionsDirty = false;
     }
+  }
 
-    const nextMeta: MemoryIndexMeta = {
+  private buildNextMeta(): MemoryIndexMeta {
+    const meta: MemoryIndexMeta = {
       model: this.provider?.model ?? "fts-only",
       provider: this.provider?.id ?? "none",
       providerKey: this.providerKey!,
@@ -1162,11 +1140,9 @@ export abstract class MemoryManagerSyncOps {
       chunkOverlap: this.settings.chunking.overlap,
     };
     if (this.vector.available && this.vector.dims) {
-      nextMeta.vectorDims = this.vector.dims;
+      meta.vectorDims = this.vector.dims;
     }
-
-    this.writeMeta(nextMeta);
-    this.pruneEmbeddingCacheIfNeeded?.();
+    return meta;
   }
 
   private resetIndex() {
