@@ -4,17 +4,22 @@
 # Run from the repo root: bash scripts/fork-setup.sh
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-OPENCLAW_DIR="${HOME}/.openclaw"
-CONFIG_FILE="${OPENCLAW_DIR}/openclaw.json"
+readonly REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+readonly OPENCLAW_DIR="${HOME}/.openclaw"
+readonly CONFIG_FILE="${OPENCLAW_DIR}/openclaw.json"
 
-echo "=== OpenClaw Fork Setup ==="
+log()      { echo "$*"; }
+log_step() { echo "▸ $*"; }
+log_ok()   { echo "  ✓ $*"; }
+log_warn() { echo "  ⚠ $*"; }
+
+log "=== OpenClaw Fork Setup ==="
 echo "Repo: ${REPO_DIR}"
 echo "Config: ${CONFIG_FILE}"
 echo ""
 
 # ─── Step 1: Dependencies ──────────────────────────────────────────
-echo "▸ Step 1: Installing Node dependencies..."
+log_step "Step 1: Installing Node dependencies..."
 cd "${REPO_DIR}"
 if command -v pnpm &>/dev/null; then
   pnpm install
@@ -24,10 +29,10 @@ else
   echo "ERROR: Neither pnpm nor npm found. Install Node.js 22+ first."
   exit 1
 fi
-echo "  ✓ Dependencies installed"
+log_ok "Dependencies installed"
 
 # ─── Step 2: Build ─────────────────────────────────────────────────
-echo "▸ Step 2: Building..."
+log_step "Step 2: Building..."
 if command -v pnpm &>/dev/null; then
   pnpm build || {
     echo "  ⚠ Full build failed. Trying tsdown only (skipping A2UI)..."
@@ -39,14 +44,14 @@ else
     npx tsdown
   }
 fi
-echo "  ✓ Build complete"
+log_ok "Build complete"
 
 # ─── Step 3: Companion Tools (ClawMetry + Mission Control) ────────
 SRC_DIR="${HOME}/src"
 mkdir -p "${SRC_DIR}"
 
 # ── ClawMetry (OTEL diagnostics dashboard) ──
-echo "▸ Step 3a: Setting up ClawMetry (diagnostics dashboard)..."
+log_step "Step 3a: Setting up ClawMetry (diagnostics dashboard)..."
 CLAWMETRY_DIR="${SRC_DIR}/clawmetry"
 if [ -d "${CLAWMETRY_DIR}/.git" ]; then
   echo "  ✓ ClawMetry already cloned at ${CLAWMETRY_DIR}"
@@ -79,7 +84,7 @@ else
 fi
 
 # ── Mission Control (task orchestration UI) ──
-echo "▸ Step 3b: Setting up Mission Control (task orchestration)..."
+log_step "Step 3b: Setting up Mission Control (task orchestration)..."
 MC_DIR="${SRC_DIR}/mission-control"
 if [ -d "${MC_DIR}/.git" ]; then
   echo "  ✓ Mission Control already cloned at ${MC_DIR}"
@@ -110,7 +115,7 @@ else
 fi
 
 # ─── Step 3c: Contributor fork remotes ────────────────────────────
-echo "▸ Step 3c: Adding contributor fork remotes..."
+log_step "Step 3c: Adding contributor fork remotes..."
 cd "${REPO_DIR}"
 
 # Contributor forks we cherry-pick from.
@@ -141,7 +146,7 @@ CONTRIBUTOR_COUNT=${#CONTRIBUTOR_REMOTES[@]}
 echo "  ✓ ${CONTRIBUTOR_COUNT} contributor remotes configured"
 
 # ─── Step 4: Config template ──────────────────────────────────────
-echo "▸ Step 4: Checking config..."
+log_step "Step 4: Checking config..."
 mkdir -p "${OPENCLAW_DIR}"
 
 if [ -f "${CONFIG_FILE}" ]; then
@@ -192,14 +197,14 @@ else
 fi
 
 # ─── Step 5: Skills ───────────────────────────────────────────────
-echo "▸ Step 5: Skills available in workspace/skills/:"
+log_step "Step 5: Skills available in workspace/skills/:"
 ls "${REPO_DIR}/skills/" 2>/dev/null | head -20
 SKILL_COUNT=$(ls "${REPO_DIR}/skills/" 2>/dev/null | wc -l)
 echo "  ✓ ${SKILL_COUNT} skills available"
 
 # ─── Step 6: Gateway ──────────────────────────────────────────────
 echo ""
-echo "▸ Step 6: Gateway"
+log_step "Step 6: Gateway"
 if ss -ltnp 2>/dev/null | grep -q ":18789"; then
   echo "  ✓ Gateway already running on port 18789"
 else
