@@ -106,6 +106,14 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "synapse_debate",
+    label: "synapse_debate",
+    description: "Multi-model structured debate",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "memory_get",
     label: "memory_get",
     description: "Read memory files",
