@@ -4896,6 +4896,14 @@ function init() {
     }
   });
 
+  // Middle-click to close tab
+  $("tab-bar-scroll")!.addEventListener("auxclick", (e) => {
+    if (e.button !== 1) return; // middle button only
+    e.preventDefault();
+    const tabEl = (e.target as HTMLElement).closest("[data-tab-id]") as HTMLElement | null;
+    if (tabEl) closeTab(tabEl.dataset.tabId!);
+  });
+
   $("tab-add")!.addEventListener("click", () => {
     const tab = createTab();
     renderTabs();
