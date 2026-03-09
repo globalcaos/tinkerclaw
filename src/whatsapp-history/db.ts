@@ -3,9 +3,9 @@
  * SQLite + FTS5 for full-text search across all messages
  */
 
-import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { resolveUserPath } from "../utils.js";
 
 const DB_PATH = resolveUserPath("~/.openclaw/data/whatsapp-history.db");
@@ -13,7 +13,9 @@ const DB_PATH = resolveUserPath("~/.openclaw/data/whatsapp-history.db");
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
-  if (db) {return db;}
+  if (db) {
+    return db;
+  }
 
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) {
@@ -176,7 +178,9 @@ export function insertMessages(messages: MessageRecord[]): number {
         msg.raw_json || null,
         msg.source || "live",
       );
-      if (result.changes > 0) {count++;}
+      if (result.changes > 0) {
+        count++;
+      }
     }
     return count;
   });
@@ -223,61 +227,83 @@ function resolveChatJids(db: Database.Database, chat: string): string[] {
   const directJids = db
     .prepare(`SELECT DISTINCT chat_jid FROM messages WHERE chat_jid LIKE ?`)
     .all(`%${chat}%`) as { chat_jid: string }[];
-  for (const row of directJids) {jids.add(row.chat_jid);}
+  for (const row of directJids) {
+    jids.add(row.chat_jid);
+  }
 
   // Name-based lookup so users can filter by display name, not just JID
-  const chatsByName = db
-    .prepare(`SELECT jid FROM chats WHERE name LIKE ?`)
-    .all(`%${chat}%`) as { jid: string }[];
-  for (const row of chatsByName) {jids.add(row.jid);}
+  const chatsByName = db.prepare(`SELECT jid FROM chats WHERE name LIKE ?`).all(`%${chat}%`) as {
+    jid: string;
+  }[];
+  for (const row of chatsByName) {
+    jids.add(row.jid);
+  }
 
   // Also check contacts table — a contact's push name may differ from their chat name
   const contactsByName = db
     .prepare(`SELECT jid FROM contacts WHERE name LIKE ? OR notify LIKE ?`)
     .all(`%${chat}%`, `%${chat}%`) as { jid: string }[];
-  for (const row of contactsByName) {jids.add(row.jid);}
+  for (const row of contactsByName) {
+    jids.add(row.jid);
+  }
 
   // Cross-reference by name to bridge phone JIDs ↔ LIDs for the same contact.
   // WhatsApp now issues LIDs alongside legacy phone JIDs; name is the only stable link.
   const resolvedNames = new Set<string>();
   for (const jid of jids) {
     // Get name from contacts table
-    const contact = db
-      .prepare(`SELECT name, notify FROM contacts WHERE jid = ?`)
-      .get(jid) as { name: string | null; notify: string | null } | undefined;
-    if (contact?.name) {resolvedNames.add(contact.name);}
-    if (contact?.notify) {resolvedNames.add(contact.notify);}
+    const contact = db.prepare(`SELECT name, notify FROM contacts WHERE jid = ?`).get(jid) as
+      | { name: string | null; notify: string | null }
+      | undefined;
+    if (contact?.name) {
+      resolvedNames.add(contact.name);
+    }
+    if (contact?.notify) {
+      resolvedNames.add(contact.notify);
+    }
 
     // Get name from chats table
-    const chatRow = db
-      .prepare(`SELECT name FROM chats WHERE jid = ?`)
-      .get(jid) as { name: string | null } | undefined;
-    if (chatRow?.name) {resolvedNames.add(chatRow.name);}
+    const chatRow = db.prepare(`SELECT name FROM chats WHERE jid = ?`).get(jid) as
+      | { name: string | null }
+      | undefined;
+    if (chatRow?.name) {
+      resolvedNames.add(chatRow.name);
+    }
 
     // Also check chat_name stored in messages
     const msgChatName = db
-      .prepare(`SELECT chat_name FROM messages WHERE chat_jid = ? AND chat_name IS NOT NULL LIMIT 1`)
+      .prepare(
+        `SELECT chat_name FROM messages WHERE chat_jid = ? AND chat_name IS NOT NULL LIMIT 1`,
+      )
       .get(jid) as { chat_name: string | null } | undefined;
-    if (msgChatName?.chat_name) {resolvedNames.add(msgChatName.chat_name);}
+    if (msgChatName?.chat_name) {
+      resolvedNames.add(msgChatName.chat_name);
+    }
   }
 
   // For each resolved name, find all JIDs (phone + LID) in chats and contacts
   for (const name of resolvedNames) {
-    const chatJids = db
-      .prepare(`SELECT jid FROM chats WHERE name = ?`)
-      .all(name) as { jid: string }[];
-    for (const row of chatJids) {jids.add(row.jid);}
+    const chatJids = db.prepare(`SELECT jid FROM chats WHERE name = ?`).all(name) as {
+      jid: string;
+    }[];
+    for (const row of chatJids) {
+      jids.add(row.jid);
+    }
 
     const contactJids = db
       .prepare(`SELECT jid FROM contacts WHERE name = ? OR notify = ?`)
       .all(name, name) as { jid: string }[];
-    for (const row of contactJids) {jids.add(row.jid);}
+    for (const row of contactJids) {
+      jids.add(row.jid);
+    }
 
     // Also search messages table for any chat_jid that uses this name
     const msgJids = db
       .prepare(`SELECT DISTINCT chat_jid FROM messages WHERE chat_name = ?`)
       .all(name) as { chat_jid: string }[];
-    for (const row of msgJids) {jids.add(row.chat_jid);}
+    for (const row of msgJids) {
+      jids.add(row.chat_jid);
+    }
   }
 
   return [...jids];
@@ -286,7 +312,7 @@ function resolveChatJids(db: Database.Database, chat: string): string[] {
 export function searchMessages(opts: SearchOptions): SearchResult[] {
   const db = getDb();
   const conditions: string[] = [];
-  const params: any[] = [];
+  const params: unknown[] = [];
 
   if (opts.query) {
     conditions.push(`m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)`);
@@ -300,9 +326,7 @@ export function searchMessages(opts: SearchOptions): SearchResult[] {
     if (chatJids.length > 0) {
       // Build an IN clause for all resolved JIDs, plus keep name fallback
       const placeholders = chatJids.map(() => "?").join(", ");
-      conditions.push(
-        `(m.chat_jid IN (${placeholders}) OR m.chat_name LIKE ?)`,
-      );
+      conditions.push(`(m.chat_jid IN (${placeholders}) OR m.chat_name LIKE ?)`);
       params.push(...chatJids, `%${opts.chat}%`);
     } else {
       // No JIDs found — fall back to original LIKE behavior
@@ -346,7 +370,9 @@ export function searchMessages(opts: SearchOptions): SearchResult[] {
 
   params.push(limit, offset);
 
-  const rows = db.prepare(sql).all(...params) as any[];
+  // SQLite stores booleans as integers; map to JS boolean on the way out
+  type RawSearchRow = Omit<SearchResult, "from_me"> & { from_me: number };
+  const rows = db.prepare(sql).all(...params) as RawSearchRow[];
   return rows.map((r) => ({
     ...r,
     from_me: r.from_me === 1,
@@ -372,7 +398,13 @@ export function getStats(): {
       (SELECT MAX(timestamp) FROM messages) as newest_message
   `,
     )
-    .get() as any;
+    .get() as {
+    total_messages: number;
+    total_chats: number;
+    total_contacts: number;
+    oldest_message: number | null;
+    newest_message: number | null;
+  };
 
   return stats;
 }
@@ -403,13 +435,17 @@ export function upsertChat(jid: string, name?: string, isGroup?: boolean): void 
 
 export function getContactName(jid: string): string | null {
   const db = getDb();
-  const row = db.prepare(`SELECT name, notify FROM contacts WHERE jid = ?`).get(jid) as any;
+  const row = db.prepare(`SELECT name, notify FROM contacts WHERE jid = ?`).get(jid) as
+    | { name: string | null; notify: string | null }
+    | undefined;
   return row?.name || row?.notify || null;
 }
 
 export function getChatName(jid: string): string | null {
   const db = getDb();
-  const row = db.prepare(`SELECT name FROM chats WHERE jid = ?`).get(jid) as any;
+  const row = db.prepare(`SELECT name FROM chats WHERE jid = ?`).get(jid) as
+    | { name: string | null }
+    | undefined;
   return row?.name || null;
 }
 
