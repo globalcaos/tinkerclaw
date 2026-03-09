@@ -68,11 +68,15 @@ export async function injectRetrievalPack(
   log: { info: (msg: string) => void },
 ): Promise<string> {
   const rt = getRetrievalRuntime(sessionManager);
+  console.log(
+    `[ENGRAM] retrieval runtime lookup: ${rt ? "FOUND" : "NULL"}, assemble: ${!!rt?.assemble}`,
+  );
   if (!rt?.assemble) {
     return systemPromptText;
   }
   try {
     const pack = await rt.assemble(query, 4096);
+    console.log(`[ENGRAM] retrieval pack assembled: ${pack ? pack.length + " chars" : "null"}`);
     if (!pack) {
       return systemPromptText;
     }
