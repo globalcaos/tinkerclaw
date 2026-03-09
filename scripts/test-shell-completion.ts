@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 /**
  * Test script for shell completion installation feature.
  *

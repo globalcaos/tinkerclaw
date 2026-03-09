@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 import { DatabaseSync } from "node:sqlite";
 import { load, getLoadablePath } from "sqlite-vec";
 

@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 

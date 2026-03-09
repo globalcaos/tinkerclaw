@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";

@@ -1,4 +1,3 @@
-// refactored: clean code principles applied
 import { createArgReader, createGatewayWsClient, resolveGatewayUrl } from "./gateway-ws-client.ts";
 
 const { get: getArg } = createArgReader();
