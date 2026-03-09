@@ -44,6 +44,7 @@ import {
   listChannelSupportedActions,
   resolveChannelMessageToolHints,
 } from "../../channel-tools.js";
+import { estimateTokens } from "../../context-anatomy.js"; // FORK: round-start token estimate
 import { ensureCustomApiRegistered } from "../../custom-api-registry.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
@@ -1568,6 +1569,7 @@ export async function runEmbeddedAttempt(
       setActiveEmbeddedRun(params.sessionId, queueHandle, params.sessionKey);
 
       let abortWarnTimer: NodeJS.Timeout | undefined;
+      let _forkRoundNumber = 0;
       const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
       const abortTimer = setTimeout(
         () => {
@@ -1634,6 +1636,7 @@ export async function runEmbeddedAttempt(
       let promptError: unknown = null;
       let promptErrorSource: "prompt" | "compaction" | null = null;
       const prePromptMessageCount = activeSession.messages.length;
+      let roundTurnNumber = 0; // FORK: declared here so both pre-prompt and finally can access
       try {
         const promptStartedAt = Date.now();
 
@@ -1807,11 +1810,12 @@ export async function runEmbeddedAttempt(
             if (typeof rawContent === "string") {
               query = rawContent.slice(0, 512);
             } else if (Array.isArray(rawContent)) {
-              query = (rawContent as Array<{ type?: string; text?: string }>)
-                .filter((b) => b.type === "text" && typeof b.text === "string")
-                .map((b) => b.text)
-                .join(" ")
-                .slice(0, 512) || "recent conversation";
+              query =
+                (rawContent as Array<{ type?: string; text?: string }>)
+                  .filter((b) => b.type === "text" && typeof b.text === "string")
+                  .map((b) => b.text)
+                  .join(" ")
+                  .slice(0, 512) || "recent conversation";
             } else {
               query = "recent conversation";
             }
@@ -1822,6 +1826,23 @@ export async function runEmbeddedAttempt(
               log,
             );
           }
+
+          // FORK: emit round-start event for real-time timeline
+          _forkRoundNumber++;
+          roundTurnNumber = activeSession.messages.filter(
+            (m: { role?: string }) => (m as { role?: string }).role === "user",
+          ).length;
+          _forkAttemptHooks.emitRoundStart({
+            runId: params.runId,
+            sessionKey: params.sessionKey,
+            roundNumber: _forkRoundNumber,
+            turnNumber: roundTurnNumber,
+            model: params.modelId,
+            provider: params.provider,
+            authProfileId: params.authProfileId,
+            inputTokensEstimate: estimateTokens(JSON.stringify(activeSession.messages).length),
+            toolsAvailable: tools.length,
+          });
 
           // FORK: emit anatomy + forensic dump before LLM call so Tinker UI shows bar + details immediately
           _forkAttemptHooks
@@ -1857,6 +1878,24 @@ export async function runEmbeddedAttempt(
           promptError = err;
           promptErrorSource = "prompt";
         } finally {
+          // FORK: emit round-complete with timing
+          {
+            const promptDuration = Date.now() - promptStartedAt;
+            const roundUsage = getUsageTotals();
+            _forkAttemptHooks.emitRoundComplete({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              roundNumber: _forkRoundNumber,
+              turnNumber: roundTurnNumber,
+              model: params.modelId,
+              provider: params.provider,
+              outputTokens: roundUsage?.output,
+              inputTokens: roundUsage?.input,
+              stopReason: promptError ? "error" : "complete",
+              durationMs: promptDuration,
+              toolCallsRequested: (toolMetas as unknown[]).length,
+            });
+          }
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
           );
