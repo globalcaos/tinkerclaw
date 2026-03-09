@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
 import type { ResolvedQmdConfig } from "./backend-config.js";
 

@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {

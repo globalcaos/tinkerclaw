@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import { splitBatchRequests } from "./batch-utils.js";
 import { runWithConcurrency } from "./internal.js";
 

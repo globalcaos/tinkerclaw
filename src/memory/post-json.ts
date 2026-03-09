@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { withRemoteHttpResponse } from "./remote-http.js";
 

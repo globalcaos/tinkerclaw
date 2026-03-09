@@ -1,3 +1,4 @@
+// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import fs from "node:fs/promises";
 import path from "node:path";
 
