@@ -94,6 +94,8 @@ export interface IngestionPipelineConfig {
 }
 
 export interface IngestionPipeline {
+  /** Access the underlying event store (for pointer compaction). */
+  readonly eventStore: import("./event-store.js").EventStore;
   /** Ingest a user-authored message. Returns the stored MemoryEvent. */
   ingestUserMessage(text: string, turnId: number): MemoryEvent;
   /** Ingest an assistant (agent) reply. Returns the stored MemoryEvent. */
@@ -161,6 +163,8 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
   }
 
   return {
+    eventStore,
+
     ingestUserMessage(text, turnId) {
       return append("user_message", text, turnId);
     },

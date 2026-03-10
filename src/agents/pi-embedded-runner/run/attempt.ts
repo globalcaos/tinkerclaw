@@ -1835,6 +1835,27 @@ export async function runEmbeddedAttempt(
             );
           }
 
+          // FORK: ENGRAM pointer compaction — proactively evict old events before prompt
+          {
+            const contextWindowTokens =
+              params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS;
+            const ptrResult = _forkAttemptHooks.tryPointerCompaction(
+              sessionManager as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+              activeSession.messages as Array<{ role: string; content?: unknown }>,
+              contextWindowTokens,
+              params.sessionKey ?? params.sessionId,
+              log,
+            );
+            if (ptrResult.compacted && ptrResult.messages) {
+              activeSession.agent.replaceMessages(
+                ptrResult.messages as import("@mariozechner/pi-agent-core").AgentMessage[],
+              );
+              log.info(
+                `engram: pre-prompt pointer compaction applied — ${ptrResult.eventsEvicted} events evicted, ~${ptrResult.tokensFreed} tokens freed`,
+              );
+            }
+          }
+
           // FORK: emit round-start event for real-time timeline
           _forkRoundNumber++;
           roundTurnNumber = activeSession.messages.filter(
