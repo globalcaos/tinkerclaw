@@ -42,10 +42,10 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .alt-placeholder span{font-size:11px}
 
 /* Top bar */
-.topbar{grid-column:2/3;grid-row:1;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px 0 80px;gap:8px;font-size:12px;position:relative}
+.topbar{grid-column:2/3;grid-row:1;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px 0 110px;gap:8px;font-size:12px;position:relative}
 .topbar .logo{cursor:pointer;transition:opacity .1s;position:absolute;top:14px;left:-28px;z-index:50;pointer-events:auto;display:flex;align-items:center;filter:drop-shadow(0 2px 8px rgba(0,0,0,.6))}
-.topbar .logo:hover{opacity:.7}
-.topbar .logo:active{opacity:.5}
+.topbar .logo:hover{opacity:1}
+.topbar .logo:active{opacity:.9}
 .topbar .toolbox{display:flex;align-items:center;gap:6px;margin:0 auto}
 .topbar-icon-btn{cursor:pointer;font-size:16px;opacity:.5;transition:opacity .15s,background .15s,box-shadow .25s;padding:4px 6px;border-radius:6px}
 .topbar-icon-btn:hover{opacity:.85;background:var(--border)}
@@ -216,7 +216,12 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .brp-back-btn:hover{opacity:1;background:rgba(255,255,255,0.15)}
 
 .rpanel{border-bottom:1px solid var(--border);padding:10px 12px}
-.rpanel-header{font-size:11px;font-weight:600;color:#e8dcc8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.rpanel-header{font-size:11px;font-weight:600;color:#e8dcc8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.rpanel-header:hover{color:var(--text)}
+.rpanel-arrow{font-size:10px;color:var(--muted);transition:color .12s}
+.rpanel-header:hover .rpanel-arrow{color:var(--text)}
+.rpanel-collapsed .rpanel-body{display:none}
+.rpanel-collapsed .rpanel-header{margin-bottom:0}
 .rpanel-body{font-size:12px;line-height:1.5;color:#7CFC00}
 
 /* Context Timeline (bottom bar) */
@@ -244,7 +249,7 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .ct-legend{position:absolute;right:4px;top:0;display:flex;align-items:center;gap:6px;font-size:9px;color:#e8dcc8;font-family:"SF Mono",monospace;padding:2px 6px;background:var(--surface);border-radius:3px;white-space:nowrap}
 /* Toggle switch for session/all filter */
 .ct-switch{display:inline-flex;align-items:center;gap:4px;cursor:pointer;user-select:none;margin-left:6px}
-.ct-switch-label{font-size:8px;font-family:"SF Mono",monospace;color:var(--muted);transition:color .12s}
+.ct-switch-label{font-size:8px;font-family:"SF Mono",monospace;color:var(--muted);transition:color .12s;text-transform:none}
 .ct-switch-label.ct-switch-label--active{color:var(--text);font-weight:600}
 .ct-switch-track{width:28px;height:14px;border-radius:7px;background:var(--border);position:relative;transition:background .2s;flex-shrink:0}
 .ct-switch-track.ct-switch-track--on{background:var(--accent)}
@@ -499,7 +504,4 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .msg.msg-queued{opacity:.45;border-style:dashed;position:relative;transition:opacity .3s ease}
 .queued-badge{position:absolute;top:-8px;right:8px;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:var(--bg);padding:0 4px;border-radius:3px;border:1px dashed rgba(107,142,35,0.4)}
 
-/* FORK: Session/All scope toggle */
-.scope-toggle{display:inline-flex;gap:1px;margin-left:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden}
-.scope-btn{background:transparent;border:none;color:var(--muted);font-size:9px;padding:1px 6px;cursor:pointer;text-transform:uppercase;letter-spacing:.3px}
-.scope-btn-active{background:var(--surface2);color:var(--text)}
+/* FORK: Session/All scope toggle — reuses .ct-switch classes from context-timeline */
