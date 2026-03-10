@@ -1278,7 +1278,12 @@ function onEvent(evt: any) {
       }
     }
     // Track provider failures from model fallback
-    if (p?.stream === "lifecycle" && p.data?.phase === "fallback-error") {
+    // FORK: Only show fallback errors for the active session (skip other tabs' failures)
+    if (
+      p?.stream === "lifecycle" &&
+      p.data?.phase === "fallback-error" &&
+      (!p.data.sessionKey || p.data.sessionKey === sessionKey)
+    ) {
       const fp = p.data.failedProvider as string | undefined;
       const fm = p.data.failedModel as string | undefined;
       const reason = (p.data.reason || "unknown") as string;
@@ -1320,7 +1325,12 @@ function onEvent(evt: any) {
       updateChat();
     }
     // Show per-profile failure events (auth profile rotation within a provider)
-    if (p?.stream === "lifecycle" && p.data?.phase === "fallback-profile-error") {
+    // FORK: Only show profile errors for the active session
+    if (
+      p?.stream === "lifecycle" &&
+      p.data?.phase === "fallback-profile-error" &&
+      (!p.data.sessionKey || p.data.sessionKey === sessionKey)
+    ) {
       const prov = (p.data.provider || "unknown") as string;
       const model = (p.data.model || "unknown") as string;
       const pid = (p.data.profileId || "") as string;
@@ -1353,7 +1363,12 @@ function onEvent(evt: any) {
       updateChat();
     }
     // Overseer periodic chat updates
-    if (p?.stream === "lifecycle" && p.data?.phase === "overseer-update") {
+    // FORK: Only show overseer updates for the active session
+    if (
+      p?.stream === "lifecycle" &&
+      p.data?.phase === "overseer-update" &&
+      (!p.data.sessionKey || p.data.sessionKey === sessionKey)
+    ) {
       const mdText = p.data.markdown as string;
       if (mdText) {
         messages.push({
@@ -1365,13 +1380,12 @@ function onEvent(evt: any) {
       }
     }
     if (p?.stream === "lifecycle" && p.data?.model) {
-      // Ignore lifecycle events that don't belong to the current session (e.g. heartbeat)
-      // Allow subagent sessions through — they're child runs the user cares about
-      if (
-        p.data.sessionKey &&
-        p.data.sessionKey !== sessionKey &&
-        !p.data.sessionKey.includes(":subagent:")
-      )
+      // FORK: Ignore lifecycle events that don't belong to the current session.
+      // Events without a sessionKey (cron, heartbeat) are also ignored — they would
+      // set sending=true and disrupt the active tab's UI.
+      // Allow subagent sessions through — they're child runs the user cares about.
+      const evtSessionKey = p.data.sessionKey as string | undefined;
+      if (!evtSessionKey || (evtSessionKey !== sessionKey && !evtSessionKey.includes(":subagent:")))
         return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
@@ -2146,6 +2160,7 @@ function renderThinkingIndicator(): string {
     return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
+  <span class="thinking-stop">Stop</span>
 </div></div>`;
   }
   return "";
@@ -5348,8 +5363,9 @@ function init() {
 
   // Delegated stop-button handler on messages container — survives innerHTML wipes
   $("messages")!.addEventListener("click", (e) => {
-    const run = (e.target as HTMLElement).closest(".thinking-run[data-run-id]");
-    if (run) abort();
+    const stop = (e.target as HTMLElement).closest(".thinking-stop");
+    const run = (e.target as HTMLElement).closest(".thinking-run");
+    if (stop && run) abort();
   });
 
   // Mount context treemap into bottom-right panel
