@@ -191,7 +191,9 @@ export async function monitorWebInbox(options: {
     const senderE164 = group
       ? participantJid
         ? await resolveInboundJid(participantJid)
-        : null
+        : Boolean(msg.key?.fromMe) && selfE164
+          ? selfE164 // FORK: fromMe group messages lack participant — use own E164
+          : null
       : from;
 
     let groupSubject: string | undefined;
