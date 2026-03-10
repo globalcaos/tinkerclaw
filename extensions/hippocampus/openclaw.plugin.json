@@ -1,0 +1,11 @@
+{
+  "id": "hippocampus",
+  "name": "Hippocampus",
+  "description": "Concept-index memory enhancement with importance scoring, deduplication, and episodic buffer",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
