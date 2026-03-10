@@ -7,12 +7,12 @@
   font-size:13px;color-scheme:dark;
 }
 html,body{height:100%;background:var(--bg);color:var(--text)}
-#app{height:100%;display:grid;grid-template-columns:48px 3fr 1fr;grid-template-rows:48px 3fr 1fr;overflow:hidden;transition:grid-template-rows .5s cubic-bezier(.25,.1,.25,1),grid-template-columns .5s cubic-bezier(.25,.1,.25,1);position:relative}
-#app.bottom-collapsed{grid-template-rows:48px 3fr 0fr}
+#app{height:100%;display:grid;grid-template-columns:48px 3fr 1fr;grid-template-rows:82px 3fr 1fr;overflow:hidden;transition:grid-template-rows .5s cubic-bezier(.25,.1,.25,1),grid-template-columns .5s cubic-bezier(.25,.1,.25,1);position:relative}
+#app.bottom-collapsed{grid-template-rows:82px 3fr 0fr}
 #app.right-collapsed{grid-template-columns:48px 3fr 0fr}
 
 /* Left sidebar */
-.sidebar{grid-column:1;grid-row:1/3;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:140px 0 6px;gap:2px;overflow-y:auto;overflow-x:hidden}
+.sidebar{grid-column:1;grid-row:1/3;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:104px 0 6px;gap:2px;overflow-y:auto;overflow-x:hidden}
 .sidebar::-webkit-scrollbar{width:0}
 .nav-sep{width:28px;height:1px;background:var(--border);margin:4px 0}
 .nav-btn{width:36px;height:36px;border:none;border-radius:8px;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,box-shadow .25s;position:relative}
@@ -42,8 +42,8 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .alt-placeholder span{font-size:11px}
 
 /* Top bar */
-.topbar{grid-column:2/3;grid-row:1;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px 0 140px;gap:8px;font-size:12px;position:relative}
-.topbar .logo{cursor:pointer;transition:opacity .1s;position:absolute;top:12px;left:-38px;z-index:50;pointer-events:auto;display:flex;align-items:center;filter:drop-shadow(0 2px 8px rgba(0,0,0,.6))}
+.topbar{grid-column:2/3;grid-row:1;background:url("./wood-panel.jpg") repeat;background-blend-mode:multiply;background-color:#6B5545;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px 0 80px;gap:8px;font-size:12px;position:relative}
+.topbar .logo{cursor:pointer;transition:opacity .1s;position:absolute;top:14px;left:-28px;z-index:50;pointer-events:auto;display:flex;align-items:center;filter:drop-shadow(0 2px 8px rgba(0,0,0,.6))}
 .topbar .logo:hover{opacity:.7}
 .topbar .logo:active{opacity:.5}
 .topbar .toolbox{display:flex;align-items:center;gap:6px;margin:0 auto}
@@ -91,6 +91,8 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .msg.system-alert:hover{color:#fdba74;background:rgba(251,146,60,0.18)}
 .msg.msg-thinking{position:relative;font-size:12px;color:#d4c4a8;border:1px solid rgba(139,115,85,0.06)}.msg.msg-thinking::before{content:"";position:absolute;inset:0;background:url("./earth-thinking.jpg") repeat;opacity:0.10;pointer-events:none;border-radius:inherit}
 .thinking-label{font-weight:600;color:#6b4c2a;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.msg.msg-queued{opacity:.45;border-style:dashed;position:relative;transition:opacity .3s ease}
+.queued-badge{position:absolute;top:-8px;right:8px;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:var(--bg);padding:0 4px;border-radius:3px;border:1px dashed rgba(107,142,35,0.4)}
 .msg.msg-error{background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;position:relative;align-self:center}
 .retry-provider-btn{position:absolute;top:3px;right:3px;background:none;border:1px solid rgba(239,68,68,0.3);color:#fca5a5;font-size:13px;cursor:pointer;padding:1px 5px;border-radius:4px;line-height:1;opacity:.5;transition:opacity .15s,background .15s}
 .retry-provider-btn:hover{opacity:1;background:rgba(239,68,68,0.25)}
@@ -492,3 +494,12 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .tab-bar.has-overflow .tab-nav{display:flex}
 .tab-title{white-space:nowrap}
 .tab-unattached .tab-title{font-style:italic;opacity:.7}
+
+/* FORK: Queued message styling */
+.msg.msg-queued{opacity:.45;border-style:dashed;position:relative;transition:opacity .3s ease}
+.queued-badge{position:absolute;top:-8px;right:8px;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);background:var(--bg);padding:0 4px;border-radius:3px;border:1px dashed rgba(107,142,35,0.4)}
+
+/* FORK: Session/All scope toggle */
+.scope-toggle{display:inline-flex;gap:1px;margin-left:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.scope-btn{background:transparent;border:none;color:var(--muted);font-size:9px;padding:1px 6px;cursor:pointer;text-transform:uppercase;letter-spacing:.3px}
+.scope-btn-active{background:var(--surface2);color:var(--text)}
