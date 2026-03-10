@@ -324,14 +324,30 @@ if [ "$commits_behind" -gt 0 ]; then
     escalate "Merge left $unresolved unresolved conflicts (max $MAX_CONFLICTS_BEFORE_ABORT). Aborted."
   fi
 
+  # For remaining conflicts: keep ours (safe default), complete the merge,
+  # and record conflicted files for the cron agent to attempt intelligent resolution.
+  conflict_files=""
   if [ "$unresolved" -gt 0 ]; then
-    git merge --abort 2>/dev/null || true
-    escalate "$unresolved unresolved conflicts: $(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ', ')"
+    conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    log_warn "$unresolved unresolved conflicts — keeping ours: $conflict_files"
+    for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do
+      git checkout --ours "$f"
+      git add "$f"
+    done
+    log_ok "Kept fork versions for conflicted files"
   fi
 
   # Finalize merge commit if still in progress
   if [ -f "$FORK_DIR/.git/MERGE_HEAD" ]; then
     git commit --no-edit || escalate "Failed to finalize merge commit."
+  fi
+
+  # Write conflict manifest for the cron agent to process
+  if [ -n "$conflict_files" ]; then
+    echo "$conflict_files" > "$FORK_DIR/.merge-conflicts-kept-ours"
+    log "  Conflict manifest: $FORK_DIR/.merge-conflicts-kept-ours"
+  else
+    rm -f "$FORK_DIR/.merge-conflicts-kept-ours"
   fi
 
   log_ok "Merge complete in tinkerclaw"
