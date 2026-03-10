@@ -28,6 +28,11 @@ import { getObservationRuntime } from "../agents/pi-extensions/observation-runti
 import { getRetrievalRuntime } from "../agents/pi-extensions/retrieval-runtime.js";
 import { captureForensicDump } from "../forensic/dump-writer.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { estimateTokens } from "../memory/engram/event-store.js";
+import type { MemoryEvent } from "../memory/engram/event-types.js";
+import type { ContextCache, CompactionBudgets } from "../memory/engram/pointer-compaction.js";
+import { pointerCompact, estimateCacheTokens } from "../memory/engram/pointer-compaction.js";
+import { renderMarkers } from "../memory/engram/time-range-marker.js";
 
 // ---------------------------------------------------------------------------
 // Hook: Persona block (before system prompt build)
@@ -508,5 +513,169 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         }
       }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hook: Pointer-based compaction (ENGRAM Phase 1B)
+// ---------------------------------------------------------------------------
+
+/**
+ * Feature flag: set ENGRAM_POINTER_COMPACTION=1 to enable.
+ */
+function isPointerCompactionEnabled(): boolean {
+  return process.env["ENGRAM_POINTER_COMPACTION"] === "1";
+}
+
+/**
+ * Convert SDK messages to MemoryEvents for pointer compaction.
+ * Uses already-ingested events when available, falls back to mapping messages directly.
+ */
+function messagesToMemoryEvents(
+  messages: Array<{ role: string; content?: unknown }>,
+  sessionKey: string,
+): MemoryEvent[] {
+  const events: MemoryEvent[] = [];
+  let turnId = 0;
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      turnId++;
+    }
+
+    const text =
+      typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? (msg.content as Array<{ type?: string; text?: string }>)
+              .filter((c) => c.type === "text" && typeof c.text === "string")
+              .map((c) => c.text as string)
+              .join("")
+          : "";
+
+    if (!text) {
+      continue;
+    }
+
+    const kind =
+      msg.role === "user"
+        ? "user_message"
+        : msg.role === "assistant"
+          ? "agent_message"
+          : msg.role === "toolResult"
+            ? "tool_result"
+            : "system_event";
+
+    events.push({
+      id: `ptr-${events.length}`,
+      timestamp: new Date().toISOString(),
+      turnId,
+      sessionKey,
+      kind: kind as MemoryEvent["kind"],
+      content: text,
+      tokens: estimateTokens(text),
+      metadata: { importance: 5 },
+    });
+  }
+
+  return events;
+}
+
+export interface PointerCompactionResult {
+  /** Whether compaction was performed. */
+  compacted: boolean;
+  /** New messages array with markers injected, or null if not compacted. */
+  messages: Array<{ role: string; content: unknown }> | null;
+  /** Number of events evicted. */
+  eventsEvicted: number;
+  /** Tokens freed. */
+  tokensFreed: number;
+}
+
+/**
+ * Attempt pointer-based compaction on the session messages.
+ * Returns the compacted message list with time-range markers,
+ * or { compacted: false } if not enabled or nothing to evict.
+ *
+ * Called from run.ts BEFORE narrative compaction.
+ */
+export function tryPointerCompaction(
+  sessionManager: SessionManager,
+  messages: Array<{ role: string; content?: unknown }>,
+  contextWindowTokens: number,
+  sessionKey: string,
+  log: { info: (msg: string) => void; warn: (msg: string) => void },
+): PointerCompactionResult {
+  if (!isPointerCompactionEnabled()) {
+    return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
+  }
+
+  const ingestionRuntime = getIngestionRuntime(sessionManager);
+  const eventStore = ingestionRuntime?.eventStore ?? null;
+
+  // Build context cache from messages
+  const events = messagesToMemoryEvents(messages, sessionKey);
+  if (events.length === 0) {
+    return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
+  }
+
+  const cache: ContextCache = { events: [...events], markers: [] };
+  const tokensBefore = estimateCacheTokens(cache);
+
+  const budgets: CompactionBudgets = {
+    ctx: contextWindowTokens,
+    headroom: Math.floor(contextWindowTokens * 0.2), // 20% headroom
+    hotTailTurns: 3,
+    markerSoftCap: 15,
+  };
+
+  try {
+    const cycles = pointerCompact(cache, budgets, eventStore ?? undefined);
+    if (cycles === 0) {
+      return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
+    }
+
+    const tokensAfter = estimateCacheTokens(cache);
+    const tokensFreed = tokensBefore - tokensAfter;
+    const eventsEvicted = events.length - cache.events.length;
+
+    log.info(
+      `engram: pointer compaction completed — ${cycles} cycles, ${eventsEvicted} events evicted, ~${tokensFreed} tokens freed`,
+    );
+
+    // Rebuild messages: surviving events as messages + markers as system message
+    const newMessages: Array<{ role: string; content: unknown }> = [];
+
+    // Prepend markers as a system message
+    const markersText = renderMarkers(cache.markers);
+    if (markersText) {
+      newMessages.push({
+        role: "system",
+        content: markersText,
+      });
+    }
+
+    // Add surviving events back as messages
+    for (const event of cache.events) {
+      const role =
+        event.kind === "user_message"
+          ? "user"
+          : event.kind === "agent_message"
+            ? "assistant"
+            : event.kind === "tool_result" || event.kind === "artifact_reference"
+              ? "toolResult"
+              : "system";
+      newMessages.push({ role, content: event.content });
+    }
+
+    return {
+      compacted: true,
+      messages: newMessages,
+      eventsEvicted,
+      tokensFreed,
+    };
+  } catch (err) {
+    log.warn(`engram: pointer compaction failed: ${String(err)}`);
+    return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
   }
 }
