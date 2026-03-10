@@ -196,7 +196,9 @@ export async function runReplyAgent(params: {
 
   if (shouldSteer && isStreaming) {
     const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, followupRun.prompt);
-    if (steered && !shouldFollowup) {
+    if (steered) {
+      // FORK: Always return after successful steer — don't also enqueue as
+      // followup, which would cause the message to be processed twice.
       await touchActiveSessionEntry();
       typing.cleanup();
       return undefined;

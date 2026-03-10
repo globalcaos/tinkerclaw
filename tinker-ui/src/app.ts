@@ -36,6 +36,7 @@ let initialized = false;
 let budgetData: any = null;
 let budgetUsageData: any = null;
 let forensicMode = false;
+let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
 // ─── Tab State ───
@@ -575,6 +576,82 @@ function randomFortune(): string {
   return FORTUNE_COOKIES[Math.floor(Math.random() * FORTUNE_COOKIES.length)];
 }
 
+// FORK: Per-tab state isolation — each tab has its own chat state.
+// The globals (messages, sending, etc.) are always the "active tab's" working copy.
+// switchToTab does atomic save/load swap via saveCurrentTabState/loadTabState.
+interface TabState {
+  messages: any[];
+  streamMsgIdx: number;
+  streamRunId: string | null;
+  frozenTextEnd: number;
+  lastDeltaLen: number;
+  sending: boolean;
+  currentTurnNumber: number;
+  expandedTools: Set<string>;
+  draft: string;
+}
+
+const tabStates = new Map<string, TabState>();
+
+function freshTabState(): TabState {
+  return {
+    messages: [],
+    streamMsgIdx: -1,
+    streamRunId: null,
+    frozenTextEnd: 0,
+    lastDeltaLen: 0,
+    sending: false,
+    currentTurnNumber: 0,
+    expandedTools: new Set(),
+    draft: "",
+  };
+}
+
+/** Save current globals into the active tab's TabState. */
+function saveCurrentTabState() {
+  if (!activeTabId) return;
+  const s = tabStates.get(activeTabId) ?? freshTabState();
+  s.messages = messages;
+  s.streamMsgIdx = streamMsgIdx;
+  s.streamRunId = streamRunId;
+  s.frozenTextEnd = frozenTextEnd;
+  s.lastDeltaLen = lastDeltaLen;
+  s.sending = sending;
+  s.currentTurnNumber = currentTurnNumber;
+  s.expandedTools = expandedTools;
+  const ta = $("chat-textarea") as HTMLTextAreaElement | null;
+  if (ta) s.draft = ta.value;
+  tabStates.set(activeTabId, s);
+}
+
+/** Load a tab's TabState into the globals. */
+function loadTabState(tabId: string) {
+  const s = tabStates.get(tabId) ?? freshTabState();
+  messages = s.messages;
+  streamMsgIdx = s.streamMsgIdx;
+  streamRunId = s.streamRunId;
+  frozenTextEnd = s.frozenTextEnd;
+  lastDeltaLen = s.lastDeltaLen;
+  sending = s.sending;
+  currentTurnNumber = s.currentTurnNumber;
+  expandedTools = s.expandedTools;
+  const ta = $("chat-textarea") as HTMLTextAreaElement | null;
+  if (ta) {
+    ta.value = s.draft;
+    ta.dispatchEvent(new Event("input")); // trigger auto-resize
+  }
+  tabStates.set(tabId, s);
+}
+
+// FORK: Session keys may be short ("tinker:xxx") or canonical ("agent:main:tinker:xxx").
+// Used as fallback in event filters during the window between chat.send and canonicalization.
+function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): boolean {
+  const ref = refKey ?? sessionKey;
+  if (!evtKey || !ref) return false;
+  if (evtKey === ref) return true;
+  return evtKey.endsWith(":" + ref) || ref.endsWith(":" + evtKey);
+}
+
 let tabs: Tab[] = [];
 let activeTabId = "";
 const TAB_STORAGE_KEY = "tinker-tabs";
@@ -699,7 +776,13 @@ function clearPersistedErrors(sk: string) {
 }
 
 // ─── Active Model Tracking ───
-type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number };
+type ActiveRunInfo = {
+  model: string;
+  provider: string;
+  authProfileId?: string;
+  startedAt: number;
+  sessionKey?: string;
+};
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
@@ -785,6 +868,9 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const info of activeRuns.values()) {
     if (forModel && info.model !== forModel) continue;
+    // FORK: Filter by scope toggle — "session" only counts runs for the active session
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+      continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -851,6 +937,13 @@ function onFrame(f: any) {
           };
           const restored = loadTabs();
           tabs = [mainTab, ...restored];
+          // FORK: Initialize TabState for main and all restored tabs
+          tabStates.set(mainTab.id, freshTabState());
+          for (const t of restored) {
+            if (!tabStates.has(t.id)) {
+              tabStates.set(t.id, freshTabState());
+            }
+          }
           // Restore previous active tab if it still exists, otherwise default to main
           const prevTabExists = tabs.some((t) => t.id === prevActiveTabId);
           activeTabId = prevTabExists ? prevActiveTabId : "tab-main";
@@ -862,7 +955,7 @@ function onFrame(f: any) {
           renderTabs();
           updateDots();
           updateBtn();
-          loadSessions();
+          loadSessions({ loadChat: true });
           loadBudget();
           refreshTreemap();
           timelineCtrl?.loadSession(sessionKey);
@@ -1036,11 +1129,15 @@ function mergeSentenceContinuations(msgs: any[]): void {
 function onEvent(evt: any) {
   if (evt.event === "chat") {
     const p = evt.payload;
-    if (p.sessionKey !== sessionKey) {
+    if (p.sessionKey !== sessionKey && !sessionKeyMatches(p.sessionKey)) {
       return;
     }
     if (p.state === "delta") {
       streamRunId = p.runId;
+      // FORK: Un-queue any queued user messages — LLM absorbed them via steer
+      for (const m of messages) {
+        if (m._queued) delete m._queued;
+      }
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
         lastDeltaLen = deltaText.length;
@@ -1065,6 +1162,10 @@ function onEvent(evt: any) {
       }
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+      // FORK: Un-queue any queued user messages on final/error
+      for (const m of messages) {
+        if (m._queued) delete m._queued;
+      }
       if (p.state !== "error") {
         // ─── Continuation merge ───
         // Before promoting, merge sentence fragments: if an assistant text
@@ -1147,6 +1248,7 @@ function onEvent(evt: any) {
       updateBtn();
       if (p.state !== "error") {
         loadBudget();
+        loadSessions();
         refreshTreemap();
         updateResponseMap();
       }
@@ -1282,7 +1384,7 @@ function onEvent(evt: any) {
     if (
       p?.stream === "lifecycle" &&
       p.data?.phase === "fallback-error" &&
-      (!p.data.sessionKey || p.data.sessionKey === sessionKey)
+      (!p.data.sessionKey || sessionKeyMatches(p.data.sessionKey))
     ) {
       const fp = p.data.failedProvider as string | undefined;
       const fm = p.data.failedModel as string | undefined;
@@ -1329,7 +1431,7 @@ function onEvent(evt: any) {
     if (
       p?.stream === "lifecycle" &&
       p.data?.phase === "fallback-profile-error" &&
-      (!p.data.sessionKey || p.data.sessionKey === sessionKey)
+      (!p.data.sessionKey || sessionKeyMatches(p.data.sessionKey))
     ) {
       const prov = (p.data.provider || "unknown") as string;
       const model = (p.data.model || "unknown") as string;
@@ -1367,7 +1469,7 @@ function onEvent(evt: any) {
     if (
       p?.stream === "lifecycle" &&
       p.data?.phase === "overseer-update" &&
-      (!p.data.sessionKey || p.data.sessionKey === sessionKey)
+      (!p.data.sessionKey || sessionKeyMatches(p.data.sessionKey))
     ) {
       const mdText = p.data.markdown as string;
       if (mdText) {
@@ -1385,7 +1487,10 @@ function onEvent(evt: any) {
       // set sending=true and disrupt the active tab's UI.
       // Allow subagent sessions through — they're child runs the user cares about.
       const evtSessionKey = p.data.sessionKey as string | undefined;
-      if (!evtSessionKey || (evtSessionKey !== sessionKey && !evtSessionKey.includes(":subagent:")))
+      if (
+        !evtSessionKey ||
+        (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
+      )
         return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
@@ -1411,6 +1516,7 @@ function onEvent(evt: any) {
           provider: startProvider,
           authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
+          sessionKey: p.data.sessionKey as string | undefined,
         });
         // Re-assert sending in case a chat error event cleared it during fallback
         sending = true;
@@ -1441,16 +1547,28 @@ function onEvent(evt: any) {
           }, 800);
         }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
-        // Regenerate tab title after assistant responds (first prompt and every N prompts)
+        // FORK: Regenerate tab title after assistant responds — works for any tab via TabState
         if (p.data.phase === "end") {
-          const activeTab = tabs.find((t) => t.id === activeTabId);
-          if (
-            activeTab &&
-            activeTab.id !== "tab-main" &&
-            (currentTurnNumber === 1 || currentTurnNumber % TAB_TITLE_INTERVAL === 0)
-          ) {
-            console.log("[tabs] triggering title generation for turn", currentTurnNumber);
-            generateTabTitle(activeTab);
+          const evtKey = p.data.sessionKey as string | undefined;
+          const targetTab = evtKey
+            ? tabs.find(
+                (t) =>
+                  t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey),
+              )
+            : tabs.find((t) => t.id === activeTabId && t.id !== "tab-main");
+          if (targetTab) {
+            const ts = tabStates.get(targetTab.id);
+            const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
+            const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
+            if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
+              console.log(
+                "[tabs] triggering title generation for turn",
+                tabTurns,
+                "tab",
+                targetTab.id,
+              );
+              generateTabTitle(targetTab);
+            }
           }
         }
         const endRunId = p.runId;
@@ -1498,7 +1616,7 @@ function onEvent(evt: any) {
 }
 
 // ─── API ───
-async function loadSessions() {
+async function loadSessions(opts?: { loadChat?: boolean }) {
   const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
   sessions = res.sessions ?? [];
   if (!sessionKey && sessions.length) {
@@ -1506,31 +1624,56 @@ async function loadSessions() {
   }
   updateSelect();
   updateSessionsPanel();
-  // Sync tabs with server-side sessions (detect deleted sessions)
+  // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
     if (tab.isAttached && tab.sessionKey && tab.id !== "tab-main") {
-      const sess = sessions.find((s: any) => s.key === tab.sessionKey);
+      let sess = sessions.find((s: any) => s.key === tab.sessionKey);
       if (!sess) {
-        tab.sessionKey = null;
-        tab.isAttached = false;
-        tab.title = randomFortune();
+        // Try suffix match: tab has "tinker:xxx", server has "agent:main:tinker:xxx"
+        sess = sessions.find((s: any) => s.key.endsWith(":" + tab.sessionKey));
+      }
+      if (sess && tab.sessionKey !== sess.key) {
+        // Upgrade to canonical key
+        tab.sessionKey = sess.key;
+        if (activeTabId === tab.id) sessionKey = sess.key;
+      } else if (!sess) {
+        // Session doesn't exist on server yet — keep tab (don't detach new tabs)
+        // Only detach if tab was previously canonicalized (key contains "agent:")
+        if (tab.sessionKey!.startsWith("agent:")) {
+          tab.sessionKey = null;
+          tab.isAttached = false;
+          tab.title = randomFortune();
+        }
       }
     }
   }
+  saveTabs();
   renderTabs();
-  loadChat();
+  if (opts?.loadChat) loadChat();
 }
 
 async function loadChat() {
-  streamMsgIdx = -1;
-  frozenTextEnd = 0;
-  lastDeltaLen = 0;
   if (!sessionKey) {
     return;
   }
+  const keyAtStart = sessionKey;
   const res = await req("chat.history", { sessionKey, limit: 1000 }).catch(() => ({
     messages: [],
   }));
+  // FORK: If user switched tabs while loading, write to that tab's state, not globals
+  if (!sessionKeyMatches(keyAtStart)) {
+    const targetTab = tabs.find((t) => sessionKeyMatches(keyAtStart, t.sessionKey ?? ""));
+    if (targetTab) {
+      const ts = tabStates.get(targetTab.id) ?? freshTabState();
+      ts.messages = res.messages ?? [];
+      ts.currentTurnNumber = ts.messages.filter((m: any) => m.role === "user").length;
+      tabStates.set(targetTab.id, ts);
+    }
+    return;
+  }
+  streamMsgIdx = -1;
+  frozenTextEnd = 0;
+  lastDeltaLen = 0;
   messages = res.messages ?? [];
   // Sync turn counter from loaded history
   const userMsgCount = messages.filter((m: any) => m.role === "user").length;
@@ -1558,11 +1701,14 @@ async function loadChat() {
 async function generateTabTitle(tab: Tab) {
   if (!tab.sessionKey || tab.id === "tab-main") return;
 
+  // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
+  const tabMessages =
+    tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
   // Collect last N Q&A pairs from messages
   const pairs: string[] = [];
   let count = 0;
-  for (let i = messages.length - 1; i >= 0 && count < TAB_TITLE_INTERVAL; i--) {
-    const m = messages[i];
+  for (let i = tabMessages.length - 1; i >= 0 && count < TAB_TITLE_INTERVAL; i--) {
+    const m = tabMessages[i];
     if (!m?.content) continue;
     const text = Array.isArray(m.content)
       ? m.content
@@ -1610,6 +1756,7 @@ async function generateTabTitle(tab: Tab) {
       console.log("[tabs] title updated to:", tab.title);
       renderTabs();
       saveTabs();
+      updateSessionsPanel();
     } else {
       console.log("[tabs] title rejected — length:", title?.length, "value:", title);
     }
@@ -1636,11 +1783,23 @@ async function send(text: string) {
 
   if (!sessionKey) return;
 
-  sending = true;
+  const isFirstMessage = messages.length === 0;
+  // FORK: Mark message as queued only if THIS session has an active run
+  const hasActiveRunForSession = Array.from(activeRuns.values()).some(
+    (r) => r.sessionKey && sessionKeyMatches(r.sessionKey),
+  );
+  const isQueued = hasActiveRunForSession || streamRunId != null;
+  if (!isQueued) {
+    sending = true;
+  }
   currentTurnNumber++;
-  messages.push({ role: "user", content: [{ type: "text", text }] });
+  messages.push({
+    role: "user",
+    content: [{ type: "text", text }],
+    ...(isQueued ? { _queued: true } : {}),
+  });
   updateChat();
-  updateBtn();
+  if (!isQueued) updateBtn();
   scrollChat();
 
   await req("chat.send", { sessionKey, message: text, idempotencyKey: uuid() }).catch((e) => {
@@ -1648,6 +1807,10 @@ async function send(text: string) {
     sending = false;
     updateBtn();
   });
+  // FORK: After first message in a tab session, refresh to canonicalize key
+  if (isFirstMessage) {
+    loadSessions();
+  }
 }
 
 function retryProvider(provider: string) {
@@ -1991,6 +2154,9 @@ function renderMsg(
   const content = Array.isArray(msg.content) ? msg.content : [];
   const resultMap = globalResults ?? new Map();
   const toolNameMap = globalToolNames ?? new Map();
+  // FORK: Queued message styling
+  const queuedClass = msg._queued ? " msg-queued" : "";
+  const queuedBadge = msg._queued ? `<span class="queued-badge">queued</span>` : "";
   let h = "";
   let blockIdx = 0;
   let hasNonToolContent = false;
@@ -2031,7 +2197,7 @@ function renderMsg(
         if (SYSTEM_INJECTED_RE.test(userText)) {
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
         } else {
-          h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+          h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
         }
       }
     } else if (role === "assistant") {
@@ -2079,7 +2245,7 @@ function renderMsg(
           if (SYSTEM_INJECTED_RE.test(userText)) {
             h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
           } else {
-            h += `<div class="msg user" data-msg-idx="${idx}">${md(userText)}</div>`;
+            h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
           }
         }
       } else if (role === "assistant") {
@@ -2722,22 +2888,29 @@ function switchToTab(tabId: string) {
   const tab = tabs.find((t) => t.id === tabId);
   if (!tab || tab.id === activeTabId) return;
 
+  // FORK: Save current tab's full state before switching
+  saveCurrentTabState();
+
   activeTabId = tab.id;
 
   if (tab.isAttached && tab.sessionKey) {
     sessionKey = tab.sessionKey;
-    messages = [];
+    // FORK: Restore per-tab state atomically — no async, no clearing
+    loadTabState(tab.id);
     updateChat();
-    loadChat();
+    updateBtn();
     updateSelect();
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
     timelineCtrl?.loadSession(sessionKey);
+    // Background refresh from server — guarded inside loadChat
+    loadChat();
   } else {
     sessionKey = "";
-    messages = [];
+    loadTabState(tab.id); // loads fresh empty state
     updateChat();
+    updateBtn();
     updateSelect();
   }
 
@@ -2746,13 +2919,16 @@ function switchToTab(tabId: string) {
 }
 
 function createTab(): Tab {
+  // FORK: Eagerly assign a session key so the tab appears in the
+  // sessions panel immediately. Gateway auto-creates on first chat.send.
   const tab: Tab = {
     id: generateTabId(),
-    sessionKey: null,
+    sessionKey: `tinker:${Date.now().toString(36)}`,
     title: randomFortune(),
-    isAttached: false,
+    isAttached: true,
   };
   tabs.push(tab);
+  tabStates.set(tab.id, freshTabState());
   saveTabs();
   return tab;
 }
@@ -2764,6 +2940,7 @@ function closeTab(tabId: string) {
   if (idx < 0) return;
 
   tabs.splice(idx, 1);
+  tabStates.delete(tabId);
 
   if (activeTabId === tabId) {
     switchToTab("tab-main");
@@ -3186,6 +3363,13 @@ function classifySession(key: string): { group: string; shortLabel: string } {
   if (/:main$/.test(key)) {
     return { group: "pinned", shortLabel: "main" };
   }
+  // FORK: tinker tab sessions — canonical "agent:main:tinker:xxx" or short "tinker:xxx"
+  if (/:tinker:/.test(key) || key.startsWith("tinker:")) {
+    const tab = tabs.find((t) => t.sessionKey === key);
+    const tinkerSuffix = key.includes(":tinker:") ? key.split(":tinker:")[1] : key.slice(7);
+    const label = tab?.title || tinkerSuffix?.slice(0, 8) || "tab";
+    return { group: "pinned", shortLabel: label };
+  }
   return { group: "other", shortLabel: key.slice(0, 24) };
 }
 
@@ -3209,17 +3393,31 @@ function updateSessionsPanel() {
     countEl.textContent = `(${sessions.length})`;
   }
 
-  if (!sessions.length) {
-    el.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:11px">No sessions</div>';
-    return;
-  }
-
   // Group sessions
   const groups = new Map<string, Array<{ session: any; shortLabel: string }>>();
   for (const s of sessions) {
     const { group, shortLabel } = classifySession(s.key);
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group)!.push({ session: s, shortLabel });
+  }
+  // FORK: Inject tab sessions not yet on the server
+  for (const tab of tabs) {
+    if (tab.id === "tab-main" || !tab.sessionKey) continue;
+    const serverKeys = sessions.map((s: any) => s.key);
+    const hasServer =
+      serverKeys.includes(tab.sessionKey) ||
+      serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
+    if (!hasServer) {
+      const fakeSession = { key: tab.sessionKey, label: tab.title };
+      if (!groups.has("pinned")) groups.set("pinned", []);
+      groups.get("pinned")!.push({ session: fakeSession, shortLabel: tab.title });
+    }
+  }
+
+  const totalEntries = [...groups.values()].reduce((n, arr) => n + arr.length, 0);
+  if (!totalEntries) {
+    el.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:11px">No sessions</div>';
+    return;
   }
 
   let html = '<div class="session-list">';
@@ -3329,8 +3527,14 @@ function updateSessionsPanel() {
 }
 
 function renderSessionRow(s: any, shortLabel: string): string {
-  const isActive = s.key === sessionKey;
-  const label = s.label || s.displayName || shortLabel;
+  const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
+  const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
+  const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
+  const isMainSession = /:main$/.test(s.key);
+  const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
+  const label = isMainSession
+    ? mainTab?.title || "🏠 Main"
+    : tinkerTab?.title || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
@@ -3381,7 +3585,7 @@ function init() {
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
     </nav>
     <div class="topbar">
-      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=3" alt="T" style="height:108px;width:auto"></div>
+      <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=4" alt="T" style="height:76px;width:auto" onmouseenter="this.src='${BASE}icon-neon.png?v=1'" onmouseleave="this.src='${BASE}icon.png?v=4'"><img src="${BASE}icon-neon.png?v=1" style="display:none" aria-hidden="true"></div>
       <div class="tab-bar" id="tab-bar">
         <button class="tab-nav tab-nav-left" id="tab-nav-left" data-hint="Scroll left">&#9664;</button>
         <div class="tab-bar-scroll" id="tab-bar-scroll"></div>
@@ -3403,13 +3607,19 @@ function init() {
       </div>
     </div>
     <div class="right-panels">
-      <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🧠 Models <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button></div>
-        <div id="budget-panel" class="rpanel-body">Loading...</div>
-      </div>
       <div class="rpanel" id="sessions-panel">
         <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
+      </div>
+      <div class="rpanel budget-panel-wrapper">
+        <div class="rpanel-header">🧠 Models
+          <span class="scope-toggle" id="budget-scope-toggle">
+            <button class="scope-btn scope-btn-active" data-scope="session">Session</button>
+            <button class="scope-btn" data-scope="all">All</button>
+          </span>
+          <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
+        </div>
+        <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="overseer-panel">
         <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
@@ -3532,6 +3742,18 @@ function init() {
   // Session-select dropdown removed — tabs handle session switching now
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
+  });
+  // FORK: Session/All scope toggle for Models panel
+  $("budget-scope-toggle")?.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
+    if (!btn) return;
+    budgetScope = btn.dataset.scope as "session" | "all";
+    $("budget-scope-toggle")!
+      .querySelectorAll(".scope-btn")
+      .forEach((b) => {
+        b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
+      });
+    updateBudgetPanel();
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
@@ -5296,15 +5518,20 @@ function init() {
       await abort();
     }
 
-    if (tab && !tab.isAttached) {
-      const mainKey = tabs.find((t) => t.id === "tab-main")?.sessionKey || "";
-      if (mainKey) {
-        sessionKey = mainKey;
-        send("/new");
-      }
-    } else {
-      send("/new");
+    // FORK: /new resets the current tab in place — never switches to main.
+    if (tab && tab.id !== "tab-main") {
+      const newKey = `tinker:${Date.now().toString(36)}`;
+      tab.sessionKey = newKey;
+      tab.isAttached = true;
+      sessionKey = newKey;
+      tab.title = randomFortune();
+      tabStates.set(tab.id, freshTabState());
+      loadTabState(tab.id);
+      saveTabs();
+      renderTabs();
+      updateSessionsPanel();
     }
+    send("/new");
   });
 
   // ─── Tab bar events ───
@@ -5336,6 +5563,7 @@ function init() {
     const tab = createTab();
     renderTabs();
     switchToTab(tab.id);
+    updateSessionsPanel();
   });
 
   $("tab-nav-left")!.addEventListener("click", () => {
