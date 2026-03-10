@@ -4,7 +4,12 @@ import { normalizeQueueDropPolicy, normalizeQueueMode } from "./normalize.js";
 import { DEFAULT_QUEUE_CAP, DEFAULT_QUEUE_DEBOUNCE_MS, DEFAULT_QUEUE_DROP } from "./state.js";
 import type { QueueMode, QueueSettings, ResolveQueueSettingsParams } from "./types.js";
 
-function defaultQueueModeForChannel(_channel?: string): QueueMode {
+function defaultQueueModeForChannel(channel?: string): QueueMode {
+  // FORK: Webchat uses steer mode — inject new messages between agentic rounds
+  // instead of queuing behind the entire run. Matches Claude Code behavior.
+  if (channel === "web" || channel === "webchat") {
+    return "steer-backlog";
+  }
   return "collect";
 }
 

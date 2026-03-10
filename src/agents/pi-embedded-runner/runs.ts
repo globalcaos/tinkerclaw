@@ -18,6 +18,30 @@ type EmbeddedRunWaiter = {
 };
 const EMBEDDED_RUN_WAITERS = new Map<string, Set<EmbeddedRunWaiter>>();
 
+// FORK: Batch multiple steered messages into a single injection.
+// Messages arriving within the debounce window are concatenated with
+// double-newline separators and steered as one combined user message.
+const STEER_DEBOUNCE_MS = 300;
+const steerBuffers = new Map<string, { texts: string[]; timer: NodeJS.Timeout }>();
+
+function flushSteerBuffer(sessionId: string) {
+  const buf = steerBuffers.get(sessionId);
+  if (!buf || buf.texts.length === 0) {
+    return;
+  }
+  steerBuffers.delete(sessionId);
+  const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
+  if (!handle) {
+    diag.debug(`steer flush skipped: sessionId=${sessionId} reason=no_active_run`);
+    return;
+  }
+  const combined = buf.texts.join("\n\n");
+  diag.debug(
+    `steer flush: sessionId=${sessionId} messages=${buf.texts.length} chars=${combined.length}`,
+  );
+  void handle.queueMessage(combined);
+}
+
 export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean {
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (!handle) {
@@ -33,7 +57,19 @@ export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean
     return false;
   }
   logMessageQueued({ sessionId, source: "pi-embedded-runner" });
-  void handle.queueMessage(text);
+  // FORK: Buffer the message — flush after debounce window so rapid
+  // follow-up messages are combined into a single steer injection.
+  const existing = steerBuffers.get(sessionId);
+  if (existing) {
+    clearTimeout(existing.timer);
+    existing.texts.push(text);
+    existing.timer = setTimeout(() => flushSteerBuffer(sessionId), STEER_DEBOUNCE_MS);
+  } else {
+    steerBuffers.set(sessionId, {
+      texts: [text],
+      timer: setTimeout(() => flushSteerBuffer(sessionId), STEER_DEBOUNCE_MS),
+    });
+  }
   return true;
 }
 
@@ -224,6 +260,13 @@ export function clearActiveEmbeddedRun(
   sessionKey?: string,
 ) {
   if (ACTIVE_EMBEDDED_RUNS.get(sessionId) === handle) {
+    // FORK: Flush any pending steer buffer before clearing the run
+    // so buffered messages aren't silently lost.
+    const pending = steerBuffers.get(sessionId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      flushSteerBuffer(sessionId);
+    }
     ACTIVE_EMBEDDED_RUNS.delete(sessionId);
     logSessionStateChange({ sessionId, sessionKey, state: "idle", reason: "run_completed" });
     if (!sessionId.startsWith("probe-")) {
