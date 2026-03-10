@@ -1518,8 +1518,10 @@ function onEvent(evt: any) {
           startedAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
         });
-        // Re-assert sending in case a chat error event cleared it during fallback
-        sending = true;
+        // FORK: Only re-assert sending for the active session (not subagent pass-through)
+        if (sessionKeyMatches(p.data.sessionKey as string | undefined)) {
+          sending = true;
+        }
         saveActiveRuns();
         updateBudgetPanel();
         updateChat();
@@ -2307,9 +2309,13 @@ function renderMsg(
 let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
 
 function renderThinkingIndicator(): string {
-  if (activeRuns.size > 0) {
+  // FORK: Filter active runs to only show those for the current session
+  const sessionRuns = [...activeRuns].filter(
+    ([, info]) => !info.sessionKey || sessionKeyMatches(info.sessionKey),
+  );
+  if (sessionRuns.length > 0) {
     let rows = "";
-    for (const [runId, info] of activeRuns) {
+    for (const [runId, info] of sessionRuns) {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
@@ -2335,11 +2341,17 @@ function renderThinkingIndicator(): string {
 function startThinkingTick() {
   if (thinkingTickInterval) return;
   thinkingTickInterval = setInterval(() => {
+    // FORK: Stop ticking when no runs remain globally (not just per-session)
     if (activeRuns.size === 0) {
       clearInterval(thinkingTickInterval!);
       thinkingTickInterval = null;
       return;
     }
+    // Skip DOM updates if no runs for the active session
+    const hasSessionRuns = [...activeRuns.values()].some(
+      (info) => !info.sessionKey || sessionKeyMatches(info.sessionKey),
+    );
+    if (!hasSessionRuns) return;
     document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
       const runId = el.getAttribute("data-run-id");
       if (!runId) return;
@@ -3607,22 +3619,23 @@ function init() {
       </div>
     </div>
     <div class="right-panels">
-      <div class="rpanel" id="sessions-panel">
-        <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
+      <div class="rpanel" id="sessions-panel" data-rpanel="sessions">
+        <div class="rpanel-header" data-rpanel-toggle="sessions"><span class="rpanel-arrow">▾</span> 📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🧠 Models
-          <span class="scope-toggle" id="budget-scope-toggle">
-            <button class="scope-btn scope-btn-active" data-scope="session">Session</button>
-            <button class="scope-btn" data-scope="all">All</button>
+      <div class="rpanel budget-panel-wrapper" data-rpanel="models">
+        <div class="rpanel-header" data-rpanel-toggle="models"><span class="rpanel-arrow">▾</span> 🧠 Models
+          <span class="ct-switch" id="budget-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active">Session</span>
+            <span class="ct-switch-track"><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label">All</span>
           </span>
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel" id="overseer-panel">
-        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
+      <div class="rpanel" id="overseer-panel" data-rpanel="overseer">
+        <div class="rpanel-header" data-rpanel-toggle="overseer"><span class="rpanel-arrow">▾</span> 🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
         <div id="overseer-graph" class="rpanel-body overseer-graph-container"></div>
       </div>
     </div>
@@ -3743,16 +3756,15 @@ function init() {
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
-  // FORK: Session/All scope toggle for Models panel
-  $("budget-scope-toggle")?.addEventListener("click", (e) => {
-    const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
-    if (!btn) return;
-    budgetScope = btn.dataset.scope as "session" | "all";
-    $("budget-scope-toggle")!
-      .querySelectorAll(".scope-btn")
-      .forEach((b) => {
-        b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
-      });
+  // FORK: Session/All scope toggle for Models panel (same switch style as timeline)
+  $("budget-scope-toggle")?.addEventListener("click", () => {
+    budgetScope = budgetScope === "session" ? "all" : "session";
+    const toggle = $("budget-scope-toggle")!;
+    const labels = toggle.querySelectorAll(".ct-switch-label");
+    const track = toggle.querySelector(".ct-switch-track");
+    if (labels[0]) labels[0].classList.toggle("ct-switch-label--active", budgetScope === "session");
+    if (labels[1]) labels[1].classList.toggle("ct-switch-label--active", budgetScope === "all");
+    track?.classList.toggle("ct-switch-track--on", budgetScope === "all");
     updateBudgetPanel();
   });
 
@@ -3768,6 +3780,39 @@ function init() {
   mdBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("right-collapsed");
     mdBtn.classList.toggle("tb-active", !collapsed);
+  });
+
+  // FORK: Right panel section collapse (Sessions / Models / Overseer)
+  const collapsedPanels = new Set<string>(
+    JSON.parse(localStorage.getItem("tinker-collapsed-panels") || "[]"),
+  );
+  // Apply saved collapsed state on init
+  document.querySelectorAll<HTMLElement>("[data-rpanel]").forEach((panel) => {
+    const key = panel.dataset.rpanel!;
+    if (collapsedPanels.has(key)) {
+      panel.classList.add("rpanel-collapsed");
+      const arrow = panel.querySelector(".rpanel-arrow");
+      if (arrow) arrow.textContent = "\u25B8";
+    }
+  });
+  document.querySelector(".right-panels")?.addEventListener("click", (e) => {
+    const header = (e.target as HTMLElement).closest("[data-rpanel-toggle]") as HTMLElement | null;
+    if (!header) return;
+    // Don't collapse when clicking interactive children (toggle switch, refresh button)
+    const target = e.target as HTMLElement;
+    if (target.closest(".ct-switch") || target.closest(".budget-refresh-btn")) return;
+    const key = header.dataset.rpanelToggle!;
+    const panel = document.querySelector(`[data-rpanel="${key}"]`) as HTMLElement | null;
+    if (!panel) return;
+    const isCollapsed = panel.classList.toggle("rpanel-collapsed");
+    const arrow = header.querySelector(".rpanel-arrow");
+    if (arrow) arrow.textContent = isCollapsed ? "\u25B8" : "\u25BE";
+    if (isCollapsed) {
+      collapsedPanels.add(key);
+    } else {
+      collapsedPanels.delete(key);
+    }
+    localStorage.setItem("tinker-collapsed-panels", JSON.stringify([...collapsedPanels]));
   });
 
   // ─── Sidebar tab switching ───
