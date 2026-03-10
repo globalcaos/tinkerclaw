@@ -162,7 +162,6 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .thinking-indicator{display:flex;flex-direction:column;gap:3px;padding:4px 10px}
 .thinking-run{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);font-size:11px;color:var(--muted);cursor:pointer;position:relative;transition:background .15s,border-color .15s}
 .thinking-run:hover{background:rgba(220,38,38,0.1);border-color:rgba(220,38,38,0.3)}
-.thinking-run:hover .thinking-dots,.thinking-run:hover .thinking-model,.thinking-run:hover .thinking-elapsed{opacity:0}
 .thinking-run:hover .thinking-stop{opacity:1}
 .thinking-dots{display:flex;gap:3px;transition:opacity .15s}
 .thinking-dots span{width:6px;height:6px;border-radius:50%;background:var(--thinking-dot-color,var(--muted));animation:thinking-bounce 1.4s ease-in-out infinite}
@@ -172,10 +171,9 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .thinking-model{display:flex;align-items:center;gap:4px;color:var(--text);font-weight:500;transition:opacity .15s}
 .thinking-model .model-provider-icon,.thinking-model .model-provider-dot{flex-shrink:0}
 .thinking-elapsed{font-family:"SF Mono",monospace;font-size:10px;color:var(--muted);transition:opacity .15s}
-.thinking-stop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--red);font-size:12px;opacity:0;transition:opacity .15s}
-.thinking-indicator[data-state="pending"] .thinking-run{background:transparent;border-color:transparent;cursor:default}
-.thinking-indicator[data-state="pending"] .thinking-run:hover{background:transparent;border-color:transparent}
-.thinking-indicator[data-state="pending"] .thinking-run:hover .thinking-model{opacity:1}
+.thinking-stop{margin-left:auto;font-weight:600;color:var(--red);font-size:11px;opacity:0;transition:opacity .15s;padding:0 2px}
+.thinking-indicator[data-state="pending"] .thinking-run{background:transparent;border-color:transparent}
+.thinking-indicator[data-state="pending"] .thinking-run:hover{background:rgba(220,38,38,0.1);border-color:rgba(220,38,38,0.3)}
 
 /* Chat header */
 .chat-header{display:flex;align-items:center;justify-content:flex-end;padding:2px 8px;border-bottom:1px solid var(--border);background:var(--surface);gap:4px}
