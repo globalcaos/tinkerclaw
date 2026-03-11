@@ -145,6 +145,7 @@ check_extended_wirings() {
   check_wiring "src/browser/extension-relay.ts" "ownedSessions" "FORK: per-extension session ownership in extension-relay.ts"
   check_wiring "src/agents/pi-embedded-subscribe.types.ts" "authProfileId" "authProfileId in SubscribeEmbeddedPiSessionParams"
   check_wiring "src/agents/openclaw-tools.ts" "createWhatsAppHistoryTool" "WhatsApp history tool in openclaw-tools.ts"
+  check_wiring "src/agents/pi-embedded-runner/run.ts" "FORK: Use session-scoped global lane" "Per-session global lane (no cross-session serialization)"
 
   if [[ -f "$ROOT/src/web/auto-reply/monitor.ts" ]]; then
     if grep -q "unknown as.*ActiveWebListener\|unknown as import" "$ROOT/src/web/auto-reply/monitor.ts" 2>/dev/null; then
