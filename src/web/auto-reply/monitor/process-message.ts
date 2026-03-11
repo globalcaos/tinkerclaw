@@ -286,6 +286,9 @@ export async function processMessage(params: {
     channel: "whatsapp",
     accountId: params.route.accountId,
   });
+  // FORK: debug — verify processMessage is actually called
+  console.log(`[PROCESS-MSG] ENTERED sessionKey=${params.route.sessionKey} chatType=${params.msg.chatType} from=${params.msg.from} body=${params.msg.body?.substring(0, 40)}`);
+
   const isSelfChat =
     params.msg.chatType !== "group" &&
     Boolean(params.msg.selfE164) &&
@@ -408,6 +411,7 @@ export async function processMessage(params: {
   });
   thinkingReaction.start();
 
+  console.log(`[PROCESS-MSG] DISPATCHING sessionKey=${params.route.sessionKey}`);
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
