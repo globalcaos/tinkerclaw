@@ -172,13 +172,14 @@ This isn't academic research — it's cost engineering. Every paper translates d
 
 | Paper                                            | What it solves                                                                | Measured impact                                                                                      |
 | ------------------------------------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| 📄 [**ENGRAM**](docs/papers/engram.md)           | Context compaction — treats the model window as a smart cache, not a dumpster | **49% fewer tokens** injected, same quality                                                          |
-| 📄 [**TRACE**](docs/papers/trace.md)             | Long-term memory compaction with verified recall                              | **94% recall** over 847 real compactions — you compress without forgetting                           |
+| 📄 [**ENGRAM**](docs/papers/engram.md)           | Context compaction — treats the model window as a smart cache, not a dumpster | **49% fewer tokens** injected, same quality. **94% recall** verified over 847 real compactions       |
 | 📄 [**HIPPOCAMPUS**](docs/papers/hippocampus.md) | Multi-strategy memory retrieval — not just storing, but finding               | **8/10 benchmark score** — fewer retrieval misses = fewer re-fetches = fewer tokens                  |
 | 📄 [**CEREBELLUM**](docs/papers/cerebellum.md)   | Self-improvement through nightly reflection                                   | **14 autonomous improvements** in 30 days — the agent fixes its own inefficiencies                   |
 | 📄 [**CORTEX**](docs/papers/cortex.md)           | Identity persistence across sessions                                          | No more re-explaining context — the agent remembers who it is and who you are                        |
 | 📄 [**SYNAPSE**](docs/papers/synapse.md)         | Multi-model deliberation                                                      | Better decisions from cheaper models working together, instead of one expensive model guessing alone |
+| 📄 [**DENDRITE**](docs/papers/dendrite.md)       | Fractal memory — self-similar architecture for scalable long-term memory      | Hierarchical storage that scales without ballooning context                                          |
 | 📄 [**LIMBIC**](docs/papers/limbic.md)           | Humor from embedding geometry                                                 | Communication that's natural, not robotic — fewer clarification round-trips                          |
+| 📄 [**THALAMUS**](docs/papers/thalamus.md)       | Curiosity-driven self-improvement                                             | The agent explores what it doesn't know — filling gaps before they become costly failures            |
 
 **Combined effect:** An agent that consumes significantly fewer tokens than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste.
 
