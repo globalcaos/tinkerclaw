@@ -74,6 +74,8 @@ export type EmbeddedPiRunResult = {
   messagingToolSentTargets?: MessagingToolSend[];
   // Count of successful cron.add tool calls in this run.
   successfulCronAdds?: number;
+  // FORK: True if a deterministic approval prompt was sent during the run.
+  didSendDeterministicApprovalPrompt?: boolean;
 };
 
 export type EmbeddedPiCompactResult = {
