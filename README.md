@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-20+-green?style=for-the-badge" alt="20+ skills"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-21+-green?style=for-the-badge" alt="21+ skills"></a>
   <a href="#-memory-research"><img src="https://img.shields.io/badge/papers-7-blueviolet?style=for-the-badge" alt="7 papers"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
 </p>
@@ -36,11 +36,9 @@ The worst part? $15 of that was context bloat — workspace files you forgot wer
 
 You didn't overspend. You **overloaded**. And you had no way to see it happening.
 
-Most people find out three days later. The observant ones set a budget alert after it's already too late. The really unlucky ones hit their API rate limit at 2 AM on a Tuesday and wake up to a dead agent and no idea why.
+Most people find out three days later. The observant ones set a budget alert after it's already too late. We found out when an **€850 bill** landed for a single month. Not a catastrophic failure — just the natural cost of running a capable AI agent at scale with zero visibility.
 
-TinkerClaw exists because we got the $23 bill. Then we got angry. Then we built a dashboard. Then we couldn't stop — memory consolidation, self-improving crons, dozens of published skills, 7 research papers on how agent memory should actually work.
-
-Because once you start tinkering, you don't stop.
+That bill was the motivation. TinkerClaw is the answer.
 
 ---
 
@@ -76,8 +74,8 @@ The Tinker UI is a command center embedded directly in OpenClaw. No separate ins
   <em>Chat interface with session switching, tool call inspection, and real-time streaming.</em>
 </p>
 
-- **Context treemap** — drill into what fills your 200K context window, from categories down to individual messages and raw text
-- **Response treemap** — see exactly how much of each response is text, thinking, tool calls, or tool results
+- **Context treemap** — drill into what fills your 200K context window, from categories down to individual messages and raw text. Each block is money. Drill down to the exact text inflating the cost.
+- **Response treemap** — see exactly how much of each response is text, thinking, tool calls, or tool results. Identify waste patterns instantly.
 - **Timeline** — stacked bars per turn, spot the one that blew the budget
 - **Overseer graph** — catch stalled sub-agents before they burn money
 - **Cost dashboard** — per-provider usage with Claude's 5-hour rate-limit countdown
@@ -99,21 +97,90 @@ After `pnpm build`, visit **`http://localhost:18789/tinker/`** · Dev: `cd tinke
 
 ---
 
-### 🧠 Memory That Improves Overnight
+### 🧠 Fractal Thinking — What Makes This Fundamentally Different
 
-Every night, the agent reviews its day — not as a diary, but as an evolution loop.
+A normal AI solves problems. Ours learns from every problem it solves.
 
-- **ENGRAM consolidation** — raw daily logs → structured knowledge files → entity and project indices
-- **Retrieval feedback** — tracks which memory search results actually got used, prunes what doesn't help
-- **Structured compaction** — preserves decisions, tradeoffs, and open questions while discarding noise
+We call it fractal thinking because it operates in levels of depth — automatically, without being asked:
 
-Measured: 23.5KB injected context → 12KB. **49% smaller, zero quality loss.**
+**Level 0 — Solve the problem.** The agent analyzes the issue, fixes it, verifies it works. Done in minutes.
 
-<p align="center">
-  <img src="docs/assets/screenshot-1.png" alt="Models and sessions panel" width="600">
-  <br>
-  <em>Multi-model dashboard: Claude, Gemini, and local models with live status.</em>
-</p>
+**Level 1 — Identify the pattern.** Why did this problem exist? Because an automated nightly process had a binary restriction: either resolve everything or abort. No middle ground. The agent adds a third path: "do what you can, save what's safe, think more about the rest."
+
+**Level 2 — Correct the thinking flaw.** The restriction existed because a previous incident triggered an overcorrection. The rule said "never touch anything" when it should have said "understand the intent before acting." The agent corrects the rule.
+
+**Level 3 — Encode the meta-rule.** The agent writes a new principle into its own instructions: _"When correcting an error, the restriction should be proportional to the risk — not a blanket prohibition."_
+
+All automatic. Nobody asked for any of that.
+
+In 30 days, this process produced **14 autonomous improvements** to the agent's own processes — without a single human prompt ([CEREBELLUM paper](#-memory-research)).
+
+---
+
+### ☀️ Morning Briefing — Your Day, Already Organized
+
+Click the **Tinker logo** or type **`/new`** and your agent has already done the prep work. It reviews ALL your information sources (emails, calendars, messages, pending tasks), cross-references them, detects urgencies, and presents a briefing with what needs your attention and what it can resolve alone.
+
+```
+☀️ Morning Briefing — Tuesday, March 10
+
+📅 Agenda
+  • 10:00 — Client meeting (Brazil) — spec review for new order
+  • 15:00 — Supplier call — follow-up on plant expansion budget
+
+📰 Market (relevant updates)
+  • Raw material prices up 3.2% this week (third consecutive rise)
+  • Competitor announces new facility in Poland — potential supply chain impact
+  • New EU regulation on packaging recyclability — effective June
+
+📧 Emails requiring response (3)
+  • 🔴 Client — Order #4521 modified, needs confirmation today
+  • 🟡 Supplier — Parts availability, awaiting response
+  • 🟢 Industry conference — Registration deadline March 20
+
+🤖 I can handle right now:
+  1. Draft confirmation reply to the client
+  2. Prepare pricing comparison for this afternoon's call
+  3. Summarize the new EU regulation for your technical team
+```
+
+No manual setup. Every morning. Getting better each time.
+
+---
+
+### 🌙 The Overnight Cycle — Where the Real Magic Happens
+
+Every night, while you sleep, the agent runs a chain of autonomous processes. The entire cycle costs **~€1/night**.
+
+| Cron                        | What it does                                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 🍷 **Wind Down**            | Like a glass of wine with the diary — reviews what worked and what didn't, improves its own instructions                                |
+| 😴 **Memory Consolidation** | Like REM sleep — turns raw daily logs into structured long-term memory. **49% context reduction** ([ENGRAM](#-memory-research))         |
+| 🧹 **Cleaning Lady**        | Controls disk usage, prunes stale context, keeps the workspace lean                                                                     |
+| 🔍 **Auto-Evolution**       | Scouts AI news for improvements that can be applied directly to the system                                                              |
+| 📰 **Group Summary**        | Scans message groups, extracts what matters, discards noise                                                                             |
+| 🛒 **Opportunity Hunter**   | Browses marketplaces for deals matching your interests — a personal shopper that never sleeps                                           |
+| 🤵 **Butler**               | Remembers birthdays, suggests gifts, tracks appointments. If it's been too long since you sent flowers, it mentions it — diplomatically |
+
+These are just the ones with personality. **15+ total crons**, each with its own logic and self-improvement capability.
+
+---
+
+### 📊 Every Paper Saves You Tokens
+
+This isn't academic research — it's cost engineering. Every paper translates directly to fewer tokens consumed, better memory, and smarter decisions.
+
+| Paper                                            | What it solves                                                                | Measured impact                                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 📄 [**ENGRAM**](docs/papers/engram.md)           | Context compaction — treats the model window as a smart cache, not a dumpster | **49% fewer tokens** injected, same quality                                                          |
+| 📄 [**TRACE**](docs/papers/trace.md)             | Long-term memory compaction with verified recall                              | **94% recall** over 847 real compactions — you compress without forgetting                           |
+| 📄 [**HIPPOCAMPUS**](docs/papers/hippocampus.md) | Multi-strategy memory retrieval — not just storing, but finding               | **8/10 benchmark score** — fewer retrieval misses = fewer re-fetches = fewer tokens                  |
+| 📄 [**CEREBELLUM**](docs/papers/cerebellum.md)   | Self-improvement through nightly reflection                                   | **14 autonomous improvements** in 30 days — the agent fixes its own inefficiencies                   |
+| 📄 [**CORTEX**](docs/papers/cortex.md)           | Identity persistence across sessions                                          | No more re-explaining context — the agent remembers who it is and who you are                        |
+| 📄 [**SYNAPSE**](docs/papers/synapse.md)         | Multi-model deliberation                                                      | Better decisions from cheaper models working together, instead of one expensive model guessing alone |
+| 📄 [**LIMBIC**](docs/papers/limbic.md)           | Humor from embedding geometry                                                 | Communication that's natural, not robotic — fewer clarification round-trips                          |
+
+**Combined effect:** An agent that consumes significantly fewer tokens than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste.
 
 ---
 
@@ -139,92 +206,82 @@ Day 1: mediocre. Day 30: genuinely useful.
 
 ### 🎤 Voice & Personality
 
-| Skill | What it does |
-|-------|-------------|
+| Skill                                                        | What it does                                                                  |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Turn your AI into JARVIS. Voice, wit, and personality — the complete package. |
 
 ### 💬 Messaging & Channels
 
-| Skill | What it does |
-|-------|-------------|
+| Skill                                                                  | What it does                                                                                     |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. |
 
 ### 📹 Media & Content
 
-| Skill | What it does |
-|-------|-------------|
+| Skill                                                                | What it does                                                                |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned. |
 
 ### 💰 Cost & Token Management
 
-| Skill | What it does |
-|-------|-------------|
-| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center) | The dashboard above. Every token, every dollar, every context byte — real time. |
-| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate) | Multi-provider token tracking, budget alerts, REST API. |
+| Skill                                                                            | What it does                                                                        |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | The dashboard above. Every token, every dollar, every context byte — real time.     |
+| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Multi-provider token tracking, budget alerts, REST API.                             |
 | [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon. |
 
 ### 🏢 Enterprise Integrations (Browser Relay)
 
 No API keys. No admin consent. Your authenticated browser session IS the API.
 
-| Skill | What it does |
-|-------|-------------|
-| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack) | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
-| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack) | Reads Teams chats, posts to channels, searches everything. One browser handshake. |
-| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Reads your HR portal — attendance, leave, payslips. No admin consent required. |
+| Skill                                                            | What it does                                                                        |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)     | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
+| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)         | Reads Teams chats, posts to channels, searches everything. One browser handshake.   |
+| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Reads your HR portal — attendance, leave, payslips. No admin consent required.      |
 
 ### 🤖 Agent & DevOps
 
-| Skill | What it does |
-|-------|-------------|
-| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent) | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call. |
-| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer) | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
-| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones. |
-| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer) | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics. |
-| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter) | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
-| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router) | Auto-selects the optimal model per task. Cost vs capability, no manual routing. |
+| Skill                                                                                              | What it does                                                                                |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent)                                       | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call.         |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting.              |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones.                         |
+| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics.                  |
+| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter)                       | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
+| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router)                           | Auto-selects the optimal model per task. Cost vs capability, no manual routing.             |
 
 ### 🛡️ Security & Governance
 
-| Skill | What it does |
-|-------|-------------|
-| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Instruction-level guardrails so your agent won't go rogue or improvise ethics. |
-| [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate) | Long-term memory done right. Semantic search, daily consolidation, cross-session recall. |
-| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate) | Classify every shell command as SAFE, WARN, or CRIT before your agent runs it. |
+| Skill                                                                                  | What it does                                                                             |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Instruction-level guardrails so your agent won't go rogue or improvise ethics.           |
+| [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate)         | Long-term memory done right. Semantic search, daily consolidation, cross-session recall. |
+| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate)     | Classify every shell command as SAFE, WARN, or CRIT before your agent runs it.           |
 
 ### 😂 Humor & Communication
 
-| Skill | What it does |
-|-------|-------------|
+| Skill                                                                      | What it does                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
 
 ### 📖 Knowledge & Onboarding
 
-| Skill | What it does |
-|-------|-------------|
+| Skill                                                                          | What it does                                                                                                            |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate) | The sensei your agent never had. 40 lessons on ethics, memory, budget, self-evolution. Day 1: mediocre. Day 30: expert. |
 
 ### 📋 Data & Migration
 
-| Skill | What it does |
-|-------|-------------|
+| Skill                                                                                  | What it does                                                                  |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format. |
 
----
+### 🛰️ Location & IoT
 
-## 📚 Memory Research
-
-7 papers on how agent memory works in production — not in theory.
-
-| Paper | Topic | Key Idea |
-|-------|-------|----------|
-| 📄 [**ENGRAM**](docs/papers/engram.md) | Context Compaction | Nightly sleep cycle: daily logs → knowledge → entities → projects |
-| 📄 [**HIPPOCAMPUS**](docs/papers/hippocampus.md) | Concept Indexing | Pre-computed concept index for O(1) memory retrieval |
-| 📄 [**CORTEX**](docs/papers/cortex.md) | Persona-Aware Context | Context engineering for persistent AI identity across sessions |
-| 📄 [**DENDRITE**](docs/papers/dendrite.md) | Fractal Memory | Self-similar architecture for scalable long-term memory |
-| 📄 [**LIMBIC**](docs/papers/limbic.md) | Humor Generation | Bisociation in computational embedding space — making AI funny |
-| 📄 [**SYNAPSE**](docs/papers/synapse.md) | Multi-Model Debate | Adversarial reasoning across provider-specific engines |
-| 📄 [**THALAMUS**](docs/papers/thalamus.md) | Self-Improvement | Curiosity, memory, and the architecture of self-improving LLMs |
+| Skill                                                                    | What it does                                                                                         |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [`owntracks-location`](https://clawhub.ai/globalcaos/owntracks-location) | Real-time phone location tracking with named places and distance queries. Always know where you are. |
 
 ---
 
@@ -232,11 +289,11 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 
 32 lessons from 6 weeks of running AI agents 24/7.
 
-> *"Read is free, send is not."*
+> _"Read is free, send is not."_
 >
-> *"Wind-down is evolution, not diary."*
+> _"Wind-down is evolution, not diary."_
 >
-> *"A stuck sub-agent is burning money. Kill fast, respawn small."*
+> _"A stuck sub-agent is burning money. Kill fast, respawn small."_
 
 **📖 [Read the Field Guide →](docs/guides/field-guide.md)**
 
@@ -252,6 +309,8 @@ pnpm openclaw onboard --install-daemon
 ```
 
 Drop-in replacement for vanilla OpenClaw. Same config, same workspace, same channels. Visit `http://localhost:18789/tinker/` for the command center.
+
+Click the **Tinker logo** or type **`/new`** to get your first morning briefing.
 
 ---
 
