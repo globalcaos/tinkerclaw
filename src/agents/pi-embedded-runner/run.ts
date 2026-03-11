@@ -277,7 +277,7 @@ export async function runEmbeddedPiAgent(
       : "markdown");
   const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
 
-  const runLlm = async () => {
+  const runLlm = async (): Promise<EmbeddedPiRunResult> => {
     const started = Date.now();
     const workspaceResolution = resolveRunWorkspaceDir({
       workspaceDir: params.workspaceDir,
