@@ -203,6 +203,7 @@ export async function dispatchReplyFromConfig(params: {
   };
 
   if (shouldSkipDuplicateInbound(ctx)) {
+    console.log(`[DISPATCH] SKIP: duplicate sessionKey=${sessionKey}`);
     recordProcessed("skipped", { reason: "duplicate" });
     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
   }
@@ -217,7 +218,10 @@ export async function dispatchReplyFromConfig(params: {
   const triggerPrefixExemptList =
     (cfg.channels as Record<string, { triggerPrefixExempt?: string[] } | undefined>)?.[channel]
       ?.triggerPrefixExempt ?? [];
-  const isTriggerExempt = chatId ? triggerPrefixExemptList.includes(chatId) : false;
+  // FORK: for groups, use ConversationLabel (group JID) for exempt check, not ctx.To (which is the bot's E164)
+  const exemptLookupId = ctx.ConversationLabel ?? ctx.From ?? chatId;
+  const isTriggerExempt = exemptLookupId ? triggerPrefixExemptList.includes(exemptLookupId) : false;
+  console.log(`[DISPATCH] triggerPrefix=${triggerPrefix} isTriggerExempt=${isTriggerExempt} exemptLookupId=${exemptLookupId} chatId=${chatId} sessionKey=${sessionKey}`);
   if (triggerPrefix && !isTriggerExempt) {
     let messageBody = ctx.BodyForCommands ?? ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "";
 
@@ -413,6 +417,7 @@ export async function dispatchReplyFromConfig(params: {
         undefined,
       chatType: sessionStoreEntry.entry?.chatType,
     });
+    console.log(`[DISPATCH] sendPolicy=${sendPolicy} bypassAcp=${bypassAcpForCommand} sessionKey=${sessionKey}`);
     if (sendPolicy === "deny" && !bypassAcpForCommand) {
       logVerbose(
         `Send blocked by policy for session ${sessionStoreEntry.sessionKey ?? sessionKey ?? "unknown"}`,

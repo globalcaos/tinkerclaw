@@ -39,17 +39,21 @@ export async function dispatchInboundMessage(params: {
   replyOptions?: Omit<GetReplyOptions, "onToolResult" | "onBlockReply">;
   replyResolver?: typeof import("./reply.js").getReplyFromConfig;
 }): Promise<DispatchInboundResult> {
+  console.log(`[DISPATCH-ENTRY] dispatchInboundMessage called sessionKey=${(params.ctx as Record<string,unknown>).SessionKey}`);
   const finalized = finalizeInboundContext(params.ctx);
+  console.log(`[DISPATCH-ENTRY] finalized ok, calling withReplyDispatcher`);
   return await withReplyDispatcher({
     dispatcher: params.dispatcher,
-    run: () =>
-      dispatchReplyFromConfig({
+    run: () => {
+      console.log(`[DISPATCH-ENTRY] run() called — entering dispatchReplyFromConfig`);
+      return dispatchReplyFromConfig({
         ctx: finalized,
         cfg: params.cfg,
         dispatcher: params.dispatcher,
         replyOptions: params.replyOptions,
         replyResolver: params.replyResolver,
-      }),
+      });
+    },
   });
 }
 

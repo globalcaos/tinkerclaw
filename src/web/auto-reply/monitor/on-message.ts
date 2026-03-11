@@ -85,6 +85,11 @@ export function createWebOnMessageHandler(params: {
           })
         : route.sessionKey;
 
+    // FORK: debug session routing for groups
+    if (msg.chatType === "group") {
+      console.log(`[SESSION-ROUTE] group=${conversationId} peerId=${peerId} sessionKey=${route.sessionKey} mainSessionKey=${route.mainSessionKey} agentId=${route.agentId}`);
+    }
+
     // Same-phone mode logging retained
     if (msg.from === msg.to) {
       logVerbose(`📱 Same-phone mode detected (from === to: ${msg.from})`);
@@ -194,6 +199,8 @@ export function createWebOnMessageHandler(params: {
       return;
     }
 
+    console.log(`[ON-MSG] About to call processForRoute sessionKey=${route.sessionKey} chatType=${msg.chatType} body=${msg.body?.substring(0, 40)}`);
     await processForRoute(msg, route, groupHistoryKey);
+    console.log(`[ON-MSG] processForRoute completed sessionKey=${route.sessionKey}`);
   };
 }
