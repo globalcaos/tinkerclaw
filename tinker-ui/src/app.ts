@@ -1181,6 +1181,29 @@ function onEvent(evt: any) {
         // markdown elements (tables, lists) that span tool-call boundaries
         // render correctly as a single block.
         const hadTemps = messages.some((m: any) => m._temporary);
+        const tempCount = messages.filter((m: any) => m._temporary).length;
+        console.warn(
+          "[final-debug] hadTemps:",
+          hadTemps,
+          "tempCount:",
+          tempCount,
+          "p.message?",
+          !!p.message,
+          "p.message.content?",
+          p.message?.content?.length,
+        );
+        if (p.message) {
+          const fc = Array.isArray(p.message.content) ? p.message.content : [];
+          const ft = fc
+            .filter((b: any) => b.type === "text")
+            .map((b: any) => (b.text ?? "").length);
+          console.warn(
+            "[final-debug] finalText lengths:",
+            ft,
+            "first 200 chars:",
+            fc.find((b: any) => b.type === "text")?.text?.substring(0, 200),
+          );
+        }
         if (hadTemps && p.message) {
           // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
@@ -1209,11 +1232,46 @@ function onEvent(evt: any) {
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
           }
+          console.warn("[final-debug] MAIN PATH: rebuilt messages, count:", messages.length);
         } else if (hadTemps) {
-          // No server final message — promote temps as-is (fallback)
+          // No server final message — merge all temp assistant text into a
+          // single message so markdown elements (tables, lists) that span
+          // tool-call boundaries render correctly, then promote.
+          const mergedParts: string[] = [];
+          const kept: any[] = [];
           for (const m of messages) {
-            if (m._temporary) delete m._temporary;
+            if (!m._temporary) {
+              kept.push(m);
+              continue;
+            }
+            const c = Array.isArray(m.content) ? m.content : [];
+            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+            if (isToolMsg) {
+              delete m._temporary;
+              kept.push(m);
+            } else {
+              // Collect text from temp text-only messages
+              for (const b of c) {
+                if (b.type === "text" && (b.text ?? "").trim()) {
+                  mergedParts.push(b.text);
+                }
+              }
+            }
           }
+          // Push merged text as a single permanent message
+          if (mergedParts.length > 0) {
+            kept.push({
+              role: "assistant",
+              content: [{ type: "text", text: mergedParts.join("") }],
+            });
+          }
+          messages = kept;
+          console.warn(
+            "[final-debug] FALLBACK PATH: merged temps, count:",
+            messages.length,
+            "mergedParts:",
+            mergedParts.length,
+          );
         }
         if (!hadTemps && p.message) {
           messages.push(p.message);
@@ -2595,6 +2653,7 @@ function updateChat(skipScroll = false) {
   if (!el) {
     return;
   }
+
   let h = "";
   // Identify intermediate "thinking" assistant messages: in each run
   // (bounded by user messages), all assistant text messages except the last
