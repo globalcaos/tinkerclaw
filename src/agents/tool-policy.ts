@@ -74,7 +74,12 @@ export const TOOL_GROUPS: Record<string, string[]> = {
   ],
 };
 
-const OWNER_ONLY_TOOL_NAME_FALLBACKS = new Set<string>(["whatsapp_login", "cron", "gateway"]);
+const OWNER_ONLY_TOOL_NAME_FALLBACKS = new Set<string>([
+  "whatsapp_login",
+  "cron",
+  "gateway",
+  "nodes",
+]);
 
 const TOOL_PROFILES: Record<ToolProfileId, ToolProfilePolicy> = {
   minimal: {

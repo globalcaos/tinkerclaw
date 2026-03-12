@@ -54,6 +54,7 @@ const ERROR_PATTERNS = {
     "insufficient balance",
     /regain access/i, // FORK: Anthropic spending cap message
     /specified.*usage limits/i, // FORK: Anthropic API usage limit message
+    "insufficient usd or diem balance",
   ],
   authPermanent: [
     /api[_ ]?key[_ ]?(?:revoked|invalid|deactivated|deleted)/i,
