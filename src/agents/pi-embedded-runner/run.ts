@@ -6,6 +6,7 @@ import {
   resolveContextEngine,
 } from "../../context-engine/index.js";
 import { computeBackoff, sleepWithAbort, type BackoffPolicy } from "../../infra/backoff.js";
+import { emitAgentEvent } from "../../infra/agent-events.js"; // FORK: per-profile fallback error events
 import { generateSecureToken } from "../../infra/secure-random.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookBeforeAgentStartResult } from "../../plugins/types.js";
@@ -638,6 +639,19 @@ export async function runEmbeddedPiAgent(
         while (nextIndex < profileCandidates.length) {
           const candidate = profileCandidates[nextIndex];
           if (candidate && isProfileInCooldown(authStore, candidate)) {
+            // FORK: emit per-profile fallback error for cooldown skip
+            emitAgentEvent({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-profile-error",
+                profileId: candidate,
+                profileIndex: nextIndex,
+                totalProfiles: profileCandidates.length,
+                reason: "cooldown",
+              },
+            });
             nextIndex += 1;
             continue;
           }
@@ -651,6 +665,20 @@ export async function runEmbeddedPiAgent(
             if (candidate && candidate === lockedProfileId) {
               throw err;
             }
+            // FORK: emit per-profile fallback error for key resolution failure
+            emitAgentEvent({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-profile-error",
+                profileId: candidate,
+                profileIndex: nextIndex,
+                totalProfiles: profileCandidates.length,
+                reason: "auth",
+                message: String(err),
+              },
+            });
             nextIndex += 1;
           }
         }
