@@ -2274,8 +2274,28 @@ function renderMsg(
     return h;
   }
 
-  // Render content blocks in order — text, tool_use, tool_result interlaced
+  // ─── Pre-pass: merge all text blocks into one so markdown elements
+  // (tables, lists) that span tool-call boundaries render as a single block. ───
+  const mergedContent: typeof content = [];
+  let pendingText = "";
   for (const block of content) {
+    if (block.type === "text") {
+      const t = (block.text ?? "").trim();
+      if (t) pendingText += (pendingText ? "\n\n" : "") + t;
+    } else {
+      if (pendingText) {
+        mergedContent.push({ type: "text", text: pendingText });
+        pendingText = "";
+      }
+      mergedContent.push(block);
+    }
+  }
+  if (pendingText) {
+    mergedContent.push({ type: "text", text: pendingText });
+  }
+
+  // Render content blocks in order — text, tool_use, tool_result interlaced
+  for (const block of mergedContent) {
     if (block.type === "text") {
       const text = (block.text ?? "").trim();
       if (!text) continue;
