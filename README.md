@@ -12,7 +12,7 @@
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
   <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-21+-green?style=for-the-badge" alt="21+ skills"></a>
-  <a href="#-memory-research"><img src="https://img.shields.io/badge/papers-7-blueviolet?style=for-the-badge" alt="7 papers"></a>
+  <a href="#-memory-research"><img src="https://img.shields.io/badge/papers-8-blueviolet?style=for-the-badge" alt="7 papers"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
 </p>
 
@@ -168,20 +168,22 @@ These are just the ones with personality. **15+ total crons**, each with its own
 
 ### 📊 Every Paper Saves You Tokens
 
-This isn't academic research — it's cost engineering. Every paper translates directly to fewer tokens consumed, better memory, and smarter decisions.
+This isn't academic research — it's cost engineering. Every paper translates directly to fewer tokens consumed, better memory, and smarter decisions. The "Cumulative Saving" column shows the compounding effect — each layer builds on the previous ones.
 
-| Paper                                            | What it solves                                                                | Measured impact                                                                                      |
-| ------------------------------------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| 📄 [**ENGRAM**](docs/papers/engram.md)           | Context compaction — treats the model window as a smart cache, not a dumpster | **49% fewer tokens** injected, same quality. **94% recall** verified over 847 real compactions       |
-| 📄 [**HIPPOCAMPUS**](docs/papers/hippocampus.md) | Multi-strategy memory retrieval — not just storing, but finding               | **8/10 benchmark score** — fewer retrieval misses = fewer re-fetches = fewer tokens                  |
-| 📄 [**CEREBELLUM**](docs/papers/cerebellum.md)   | Self-improvement through nightly reflection                                   | **14 autonomous improvements** in 30 days — the agent fixes its own inefficiencies                   |
-| 📄 [**CORTEX**](docs/papers/cortex.md)           | Identity persistence across sessions                                          | No more re-explaining context — the agent remembers who it is and who you are                        |
-| 📄 [**SYNAPSE**](docs/papers/synapse.md)         | Multi-model deliberation                                                      | Better decisions from cheaper models working together, instead of one expensive model guessing alone |
-| 📄 [**DENDRITE**](docs/papers/dendrite.md)       | Fractal memory — self-similar architecture for scalable long-term memory      | Hierarchical storage that scales without ballooning context                                          |
-| 📄 [**LIMBIC**](docs/papers/limbic.md)           | Humor from embedding geometry                                                 | Communication that's natural, not robotic — fewer clarification round-trips                          |
-| 📄 [**THALAMUS**](docs/papers/thalamus.md)       | Curiosity-driven self-improvement                                             | The agent explores what it doesn't know — filling gaps before they become costly failures            |
+| #   | Paper                                                                                   | What it solves                                                                    | Measured impact                                                                                       | Cumulative Saving |
+| --- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | :---------------: |
+| 1   | 📄 [**Total Recall**](docs/papers/total-recall/total-recall.md)                         | Event-navigated episodic memory — stores everything, retrieves what matters       | **49% fewer tokens** injected per turn, 94% recall over 847 compactions                               |     **~49%**      |
+| 2   | 📄 [**Instant Recall**](docs/papers/instant-recall/instant-recall.md)                   | Pre-computed concept index for O(1) retrieval — no more brute-force search        | **8/10 benchmark score** — fewer retrieval misses = fewer re-fetches                                  |     **~55%**      |
+| 3   | 📄 [**Fractal Reasoning**](docs/papers/fractal-reasoning/fractal-reasoning.md)          | Self-similar memory hierarchy — zoom in for detail, zoom out for patterns         | Hierarchical storage that scales without ballooning context                                           |     **~60%**      |
+| 4   | 📄 [**Identity Persistence**](docs/papers/identity-persistence/identity-persistence.md) | The agent remembers who it is and who you are across sessions                     | Eliminates re-explanation overhead — no more "as an AI, I don't have context"                         |     **~65%**      |
+| 5   | 📄 [**Sleep Consolidation**](docs/papers/sleep-consolidation/sleep-consolidation.md)    | Nightly self-improvement — the agent rewrites its own prompts while you sleep     | **14 autonomous improvements** in 30 days, compounding efficiency gains                               |     **~68%**      |
+| 6   | 📄 [**Round Table**](docs/papers/round-table/round-table.md)                            | Multi-model adversarial debate — cognitive diversity as computational resource    | **8pp accuracy gain** on GPQA Diamond; cheaper models collaborating beat one expensive model guessing |     **~72%**      |
+| 7   | 📄 [**Humor Embeddings**](docs/papers/humor-embeddings/humor-embeddings.md)             | Humor from embedding geometry — communication that's natural, not robotic         | Fewer clarification round-trips, more efficient human-agent interaction                               |     **~74%**      |
+| 8   | 📄 [**Curiosity Motivation**](docs/papers/curiosity-motivation/curiosity-motivation.md) | Intrinsic motivation — the agent explores gaps before they become costly failures | Proactive knowledge acquisition reduces future retrieval failures                                     |     **~76%**      |
 
-**Combined effect:** An agent that consumes significantly fewer tokens than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste.
+**Reading order:** Top to bottom — from storing memories (1) to finding them instantly (2) to scaling them fractally (3) to maintaining identity (4) to improving overnight (5) to multi-model debate (6) to natural communication (7) to self-directed learning (8).
+
+**Combined effect:** An agent that consumes roughly **¾ fewer tokens** than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste at every layer.
 
 ---
 
