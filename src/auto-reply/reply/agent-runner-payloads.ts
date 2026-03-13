@@ -5,8 +5,8 @@ import type { OriginatingChannelType } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { ReplyPayload } from "../types.js";
 import { formatBunFetchSocketError, isBunFetchSocketError } from "./agent-runner-utils.js";
+import { createBlockReplyContentKey, type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { applyJarvisVoiceMarkup } from "./jarvis-voice-markup.js";
-import { createBlockReplyPayloadKey, type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import {
   resolveOriginAccountId,
   resolveOriginMessageProvider,
@@ -135,7 +135,12 @@ export async function buildReplyPayloads(params: {
         if (stripped.shouldSkip && !hasMedia) {
           return [];
         }
-        return [{ ...payload, text: stripped.text ? applyJarvisVoiceMarkup(stripped.text) : stripped.text }];
+        return [
+          {
+            ...payload,
+            text: stripped.text ? applyJarvisVoiceMarkup(stripped.text) : stripped.text,
+          },
+        ];
       });
 
   const replyTaggedPayloads = (
@@ -214,7 +219,7 @@ export async function buildReplyPayloads(params: {
         )
       : params.directlySentBlockKeys?.size
         ? mediaFilteredPayloads.filter(
-            (payload) => !params.directlySentBlockKeys!.has(createBlockReplyPayloadKey(payload)),
+            (payload) => !params.directlySentBlockKeys!.has(createBlockReplyContentKey(payload)),
           )
         : mediaFilteredPayloads;
   const replyPayloads = suppressMessagingToolReplies ? [] : filteredPayloads;
