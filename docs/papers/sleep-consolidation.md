@@ -1,22 +1,22 @@
-# The Prompt Cerebellum: How Structured Nightly Prompting Produces Emergent Intelligence in Stateless AI Agents
+# Sleep Consolidation: How Structured Nightly Prompting Produces Emergent Intelligence in Stateless AI Agents
 
 **Authors:** Oscar Serra, JarvisOne AI Research
-**Date:** March 2026 (v1.1)
+**Date:** March 2026 (v5.0)
 **Keywords:** emergent intelligence, prompt engineering, cron-driven learning, self-improving agents, fractal metacognition, autonomous orchestration, memory consolidation, operational lessons
 
 ---
 
 ## Abstract
 
-Large language model agents are stateless by nature -- every session begins from zero. Current approaches to persistent intelligence rely on fine-tuning, RAG, or expanding context windows. We present a different mechanism observed over 30 days of production operation: **structured nightly prompt cycles** that produce compounding behavioral improvements without weight updates, fine-tuning, or architectural changes. A personal AI assistant (Jarvis/OpenClaw) running 13 autonomous cron jobs exhibited a decline in recurring error classes from 14 incidents (weeks 1--2) to 1 incident (weeks 3--4) across five tracked categories, while simultaneously discovering a new, higher-order error class -- not because the model improved, but because the _prompts and memory files the model reads_ were iteratively refined through the model's own scheduled reflection loops.
+Large language model agents are stateless by nature -- every session begins from zero. Current approaches to persistent intelligence rely on fine-tuning, RAG, or expanding context windows. We present a different mechanism observed over 30 days of production operation: **structured nightly prompt cycles** that produce compounding behavioral improvements without weight updates, fine-tuning, or architectural changes. A personal AI assistant (Jarvis/OpenClaw) running 13 autonomous cron jobs exhibited a decline in recurring error classes from 14 incidents (weeks 1--2) to 1 incident (weeks 3--4) (a 93% error reduction) across five tracked categories, while simultaneously discovering a new, higher-order error class -- not because the model improved, but because the _prompts and memory files the model reads_ were iteratively refined through the model's own scheduled reflection loops. Crucially, scattered memories are useless. The true value lies in SORTING by use-case so retrieval is cheaper. Memories must be organized by purpose, not chronology, allowing prompts to learn directly from yesterday's mistakes.
 
-We formalize this as the **Prompt Cerebellum** -- a system where explicit, deliberate prompts are iteratively refined through experience until they produce automatic, high-quality behavior, analogous to how the biological cerebellum transforms conscious motor learning into fluid automatic execution. We identify three core mechanisms: (1) **failure-driven prompt mutation**, where operational errors trigger targeted prompt refinements (14 mutations documented, all traced to specific incidents); (2) **fractal depth calibration**, where the system learns to allocate metacognitive effort proportionally to task significance; and (3) **cross-cron knowledge transfer**, where lessons learned in one autonomous task propagate to all others through shared memory files (5 documented cross-domain transfer events).
+We formalize this as **Sleep Consolidation (formerly CEREBELLUM)** -- a system where explicit, deliberate prompts are iteratively refined through experience until they produce automatic, high-quality behavior, analogous to how the biological sleep consolidation transforms conscious motor learning into fluid automatic execution. We identify three core mechanisms: (1) **failure-driven prompt mutation**, where operational errors trigger targeted prompt refinements (14 mutations documented, all traced to specific incidents); (2) **fractal depth calibration**, where the system learns to allocate metacognitive effort proportionally to task significance; and (3) **cross-cron knowledge transfer**, where lessons learned in one autonomous task propagate to all others through shared memory files (5 documented cross-domain transfer events).
 
 We argue that this approach -- prompts that rewrite themselves through structured reflection -- represents an underexplored middle ground between static prompt engineering and expensive fine-tuning, accessible to any agent system with file persistence and scheduled execution. Total reflection overhead: approximately 43,000 tokens per night ($1.17), against an estimated 8 avoided human-intervention incidents over 30 days.
 
 ### Contributions
 
-1. **The Prompt Cerebellum framework**: a formalized architecture for scheduled, autonomous prompt self-improvement through failure-driven mutation, abstraction-level encoding, and cross-task propagation.
+1. **The Sleep Consolidation framework**: a formalized architecture for scheduled, autonomous prompt self-improvement through failure-driven mutation, abstraction-level encoding, and cross-task propagation.
 2. **Production evidence over 30 days**: 14 documented prompt mutations, 5 error class extinctions, 5 cross-cron transfer events, and token-cost analysis from a real personal assistant deployment.
 3. **The fractal depth calibration mechanism**: a prompt-encoded heuristic for allocating metacognitive effort that is itself subject to refinement -- a self-similar cognitive policy.
 4. **Seven design principles** for building self-improving prompt ecosystems, derived from operational failures.
@@ -30,7 +30,7 @@ Every morning at 04:00, an AI agent wakes up knowing nothing about yesterday. By
 
 This is paradoxical. The model's weights haven't changed. Its architecture is identical. Its context window is the same size. Yet its behavior improves over weeks. The improvement doesn't live in the model -- it lives in the _ecosystem of files the model reads and writes_.
 
-We call this the **Prompt Cerebellum**, drawing an analogy to the biological cerebellum -- the brain structure responsible for transforming deliberate, conscious motor actions into smooth, automatic execution through iterative practice. A child learning to ride a bicycle begins with explicit, effortful coordination: _pedal, balance, steer, don't look down_. After sufficient practice, these separate instructions merge into a single fluid skill that no longer requires conscious attention. The cerebellum doesn't change the child's ability to _think_ -- it changes the translation from thought to action.
+We call this the **Sleep Consolidation**, drawing an analogy to the biological sleep consolidation -- the brain structure responsible for transforming deliberate, conscious motor actions into smooth, automatic execution through iterative practice. A child learning to ride a bicycle begins with explicit, effortful coordination: _pedal, balance, steer, don't look down_. After sufficient practice, these separate instructions merge into a single fluid skill that no longer requires conscious attention. The sleep consolidation doesn't change the child's ability to _think_ -- it changes the translation from thought to action.
 
 Similarly, an AI agent's prompt files begin as explicit, verbose instructions. Through nightly reflection, these instructions are refined, edge cases are added, failure modes are encoded, and over time the agent's behavior becomes increasingly appropriate without the underlying model becoming more capable. The intelligence isn't in the weights -- it's in the substrate the weights operate on.
 
@@ -70,7 +70,7 @@ The missing component is a **structured reflection loop** -- a mechanism by whic
 4. Verifies the modification doesn't break other behaviors
 5. Encodes the _meta-lesson_ at the appropriate level of abstraction
 
-This mirrors the biological cerebellum's error-correction loop: compare intended movement with actual movement, compute error signal, adjust motor program.
+This mirrors the biological sleep consolidation error-correction loop: compare intended movement with actual movement, compute error signal, adjust motor program.
 
 ### 2.3 Related Work
 
@@ -86,17 +86,17 @@ Several lines of research address aspects of agent self-improvement, though none
 
 **Constitutional and governance approaches.** Constitutional AI (Bai et al., 2022) establishes self-critique against explicit principles -- related to our operational-lessons governance. Our Principle 7 (human-in-the-loop for Level 2+ changes) addresses the same concern: preventing self-reinforcing error spirals in self-modifying systems.
 
-**Incident learning in software engineering.** Our mutation protocol draws implicitly from SRE blameless postmortem methodology (Beyer et al., 2016), where incidents are systematically analyzed, root-caused, and translated into preventive changes. The Prompt Cerebellum automates this cycle for AI agent operations.
+**Incident learning in software engineering.** Our mutation protocol draws implicitly from SRE blameless postmortem methodology (Beyer et al., 2016), where incidents are systematically analyzed, root-caused, and translated into preventive changes. The Sleep Consolidation automates this cycle for AI agent operations.
 
 Our contribution differs from all of the above in three ways: (1) it operates on _production_ personal assistant workloads, not benchmarks or simulations; (2) improvement is _cross-task_ -- lessons propagate through shared infrastructure; and (3) reflection is _scheduled and autonomous_, not triggered by explicit failure signals or human feedback.
 
 ---
 
-## 3. Architecture -- The Prompt Cerebellum
+## 3. Architecture -- The Sleep Consolidation
 
 ### 3.1 System Overview
 
-The Prompt Cerebellum is not a single component but an emergent property of four interacting systems:
+The Sleep Consolidation is not a single component but an emergent property of four interacting systems:
 
 **Nightly Cycle (reflection layer):**
 Wind-Down (04:00) --> Consolidation (04:15) --> Cleaning Lady (05:15)
@@ -117,7 +117,7 @@ Every cron job is both a _consumer_ of the shared memory layer (it reads operati
 ### 3.2 Algorithm 1: The Nightly Reflection Loop
 
 ```
-ALGORITHM 1: Nightly Prompt Cerebellum Loop
+ALGORITHM 1: Nightly Sleep Consolidation Loop
 ==========================================
 INPUT:  daily_log (all cron receipts + interactive session logs from past 24h)
         operational_lessons (current shared behavioral rules)
@@ -167,11 +167,11 @@ PHASE 3: PRUNING (model: mid-tier)
 
 #### Mechanism 1: Failure-Driven Prompt Mutation
 
-When an agent encounters a failure, the standard response is to log it and move on. The Prompt Cerebellum adds a critical step: **determine if the failure was caused by a prompt deficiency, and if so, mutate the prompt.**
+When an agent encounters a failure, the standard response is to log it and move on. The Sleep Consolidation adds a critical step: **determine if the failure was caused by a prompt deficiency, and if so, mutate the prompt.**
 
 **Production example -- The B010 cascade (2026-03-03 to 2026-03-10):**
 
-This seven-day sequence illustrates the full cerebellar learning loop, including second-order correction:
+This seven-day sequence illustrates the full sleep-consolidated learning loop, including second-order correction:
 
 **Day 0 (Mar 3) -- Initial failure.** A fork-sync cron job, prompted to "sync the fork with upstream," interpreted this as permission to edit production source code, run builds, and restart the gateway. The failure wasn't the model being incapable -- it was the prompt being ambiguous.
 
@@ -190,7 +190,7 @@ This meta-lesson now applies to _all_ future lesson encoding across the entire s
 
 #### Mechanism 2: Fractal Depth Calibration
 
-Not all tasks deserve the same level of metacognitive effort. The Prompt Cerebellum includes a **depth selector** -- a prompt-encoded heuristic that determines how many levels of "why" to traverse:
+Not all tasks deserve the same level of metacognitive effort. The Sleep Consolidation includes a **depth selector** -- a prompt-encoded heuristic that determines how many levels of "why" to traverse:
 
 | Signal                     | Depth | Example                                         |
 | -------------------------- | ----- | ----------------------------------------------- |
@@ -222,12 +222,12 @@ The transfer mechanism is architectural, not intelligent: lessons written to `op
 
 ### 3.4 The Nightly Cycle -- Sleep Consolidation for Agents
 
-| Time  | Job                  | Role                                                      | Biological Analogy                         |
-| ----- | -------------------- | --------------------------------------------------------- | ------------------------------------------ |
-| 04:00 | Wind-Down            | Review, identify failures, encode lessons, mutate prompts | Sleep replay / cerebellar error correction |
-| 04:15 | Memory Consolidation | Compress daily logs, route knowledge, rebuild indexes     | Hippocampal to neocortical transfer        |
-| 04:45 | Fork Sync            | Integrate external changes, self-heal build failures      | Immune system integration                  |
-| 05:15 | Cleaning Lady        | Trim bloated files, prune stale sessions, enforce budgets | Synaptic pruning                           |
+| Time  | Job                  | Role                                                      | Biological Analogy                                  |
+| ----- | -------------------- | --------------------------------------------------------- | --------------------------------------------------- |
+| 04:00 | Wind-Down            | Review, identify failures, encode lessons, mutate prompts | Sleep replay / sleep consolidation error correction |
+| 04:15 | Memory Consolidation | Compress daily logs, route knowledge, rebuild indexes     | Instant Recall to Identity Persistence transfer     |
+| 04:45 | Fork Sync            | Integrate external changes, self-heal build failures      | Immune system integration                           |
+| 05:15 | Cleaning Lady        | Trim bloated files, prune stale sessions, enforce budgets | Synaptic pruning                                    |
 
 **Critical ordering:** Wind-Down runs first because it produces the raw material (identified failures, encoded lessons) that Consolidation then routes to permanent storage. Cleaning Lady runs last because it prunes temporary artifacts. Disorder here produces garbage -- we observed this directly when a misconfigured schedule ran Cleaning Lady before Wind-Down, causing it to prune the daily logs that Wind-Down needed as input.
 
@@ -245,7 +245,7 @@ The transfer mechanism is architectural, not intelligent: lessons written to `op
 
 **Labeling protocol:** Error instances were identified from cron receipts (non-zero exit codes, escalation flags) and operator-reported incidents. Error _classes_ were defined post-hoc by the authors based on root cause similarity. No inter-rater reliability was computed -- this is a single-system observational study, not a controlled experiment.
 
-**Confounds we acknowledge:** Over the 30-day period, the following changed simultaneously: prompt content (the variable under study), cron ordering (adjusted twice), model assignments (3 crons moved from Opus to Sonnet), operator familiarity (Oscar learned the system's capabilities), and upstream codebase (109 commits merged). We cannot isolate the contribution of prompt mutation from these confounds. The evidence is _consistent with_ the Prompt Cerebellum hypothesis but does not _prove_ it.
+**Confounds we acknowledge:** Over the 30-day period, the following changed simultaneously: prompt content (the variable under study), cron ordering (adjusted twice), model assignments (3 crons moved from Opus to Sonnet), operator familiarity (Oscar learned the system's capabilities), and upstream codebase (109 commits merged). We cannot isolate the contribution of prompt mutation from these confounds. The evidence is _consistent with_ the Sleep Consolidation hypothesis but does not _prove_ it.
 
 **What a controlled study would look like:** Run two identical agent deployments: one with nightly reflection enabled, one with static prompts. Measure: error recurrence rate, human intervention frequency, task completion quality (rated by blind evaluators), and time-to-resolution for novel incidents. Duration: minimum 4 weeks. We have not conducted this study.
 
@@ -334,7 +334,7 @@ We observe this self-calibration emerging naturally over the 30-day period, but 
 
 ---
 
-## 6. Design Principles for Prompt Cerebellum Systems
+## 6. Design Principles for Sleep Consolidation Systems
 
 Based on our production experience, we propose seven design principles:
 
@@ -390,7 +390,7 @@ If a reflection loop encodes a wrong lesson, that lesson influences future behav
 
 ### 7.2 Context Window Pressure
 
-Every encoded lesson consumes context window space. As the operational lessons file grows, it competes with task-relevant context. The Cleaning Lady cron enforces size budgets (currently 50KB for operational-lessons.md) and archives stale content. This creates a second-order problem: archived lessons may be lost when they become relevant again. The Hippocampus search index (Serra & JarvisOne, 2026a) mitigates this through semantic retrieval of archived content.
+Every encoded lesson consumes context window space. As the operational lessons file grows, it competes with task-relevant context. The Cleaning Lady cron enforces size budgets (currently 50KB for operational-lessons.md) and archives stale content. This creates a second-order problem: archived lessons may be lost when they become relevant again. The Instant Recall search index (Serra & JarvisOne, 2026a) mitigates this through semantic retrieval of archived content.
 
 ### 7.3 Model Dependency
 
@@ -398,13 +398,13 @@ Reflection quality depends on model reasoning capability. We use the strongest a
 
 ### 7.4 Single-Operator Bias
 
-Our data comes from one operator with specific workflows, preferences, and failure patterns. Whether the Prompt Cerebellum generalizes to multi-user systems, different cultural contexts, or domains beyond personal assistant tasks is an open question. We hypothesize that the _mechanisms_ generalize (failure-driven mutation, cross-task transfer, depth calibration) even if the specific _lessons_ don't.
+Our data comes from one operator with specific workflows, preferences, and failure patterns. Whether the Sleep Consolidation generalizes to multi-user systems, different cultural contexts, or domains beyond personal assistant tasks is an open question. We hypothesize that the _mechanisms_ generalize (failure-driven mutation, cross-task transfer, depth calibration) even if the specific _lessons_ don't.
 
 ### 7.5 No True Generalization
 
 The fundamental limitation: prompt-mediated learning produces _declarative_ improvements (better rules, better context), not _procedural_ improvements (better reasoning). The model's reasoning capability doesn't change. A sufficiently novel failure class will not be prevented by any amount of prompt refinement.
 
-This is the ceiling of Level 2 on the persistence hierarchy. The Prompt Cerebellum pushes this ceiling higher than previously demonstrated, but cannot break through it. True generalization requires weight updates.
+This is the ceiling of Level 2 on the persistence hierarchy. The Sleep Consolidation pushes this ceiling higher than previously demonstrated, but cannot break through it. True generalization requires weight updates.
 
 ---
 
@@ -424,7 +424,7 @@ The fractal depth selector is currently prompt-encoded and manually refined. An 
 
 ### 8.4 Bridging to Fine-Tuning
 
-Encoded lessons are (failure_context, correct_behavior) pairs -- exactly the format for preference optimization. The Prompt Cerebellum could serve as a _data generation pipeline_ for periodic LoRA updates, bridging Level 2 and Level 3 persistence.
+Encoded lessons are (failure*context, correct_behavior) pairs -- exactly the format for preference optimization. The Sleep Consolidation could serve as a \_data generation pipeline* for periodic LoRA updates, bridging Level 2 and Level 3 persistence.
 
 ### 8.5 Adversarial Robustness
 
@@ -434,7 +434,7 @@ Can a crafted input trigger a harmful prompt mutation? Our current mitigation (h
 
 ## 9. Conclusion
 
-We have presented observational evidence that structured nightly prompt cycles produce compounding behavioral improvements in stateless AI agents. The Prompt Cerebellum formalizes three mechanisms: failure-driven prompt mutation, fractal depth calibration, and cross-cron knowledge transfer.
+We have presented observational evidence that structured nightly prompt cycles produce compounding behavioral improvements in stateless AI agents. The Sleep Consolidation formalizes three mechanisms: failure-driven prompt mutation, fractal depth calibration, and cross-cron knowledge transfer.
 
 The core claim is modest: **you don't need to change the model to change the model's behavior.** A well-designed ecosystem of self-modifying prompts and shared memory files, driven by scheduled reflection loops, produces improvements that look like learning -- even though no weights change.
 
@@ -442,7 +442,7 @@ We are careful to distinguish observation from proof. Our 30-day production data
 
 This is not a replacement for fine-tuning or continual learning. It is a complement -- an accessible, low-cost mechanism that any agent system with file persistence and scheduled execution can implement today. The prompts rewrite themselves. The agent gets smoother. And the cost is 43,000 tokens per night.
 
-The cerebellum doesn't make you smarter. It makes you smoother. And sometimes, smooth is smart enough.
+The sleep consolidation doesn't make you smarter. It makes you smoother. And sometimes, smooth is smart enough.
 
 ---
 
@@ -452,7 +452,7 @@ Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. _arXiv
 
 Beyer, B., Jones, C., Petoff, J., & Murphy, N. R. (2016). _Site Reliability Engineering._ O'Reilly Media.
 
-Buzsaki, G. (1996). The hippocampo-neocortical dialogue. _Cerebral Cortex_, 6(2), 81--92.
+Buzsaki, G. (1996). The hippocampo-Identity Persistence dialogue. _Cerebral Identity Persistence_, 6(2), 81--92.
 
 Fernando, C., et al. (2023). PromptBreeder: Self-Referential Self-Improvement via Prompt Evolution. _arXiv:2309.16797_.
 
@@ -470,7 +470,7 @@ Lewis, P., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive
 
 Madaan, A., et al. (2023). Self-Refine: Iterative Refinement with Self-Feedback. _NeurIPS 2023_.
 
-McClelland, J. L., McNaughton, B. L., & O'Reilly, R. C. (1995). Why there are complementary learning systems in the hippocampus and neocortex. _Psychological Review_, 102(3), 419--457.
+McClelland, J. L., McNaughton, B. L., & O'Reilly, R. C. (1995). Why there are complementary learning systems in the Instant Recall and Identity Persistence. _Psychological Review_, 102(3), 419--457.
 
 Packer, C., et al. (2023). MemGPT: Towards LLMs as Operating Systems. _arXiv:2310.08560_.
 
@@ -482,7 +482,7 @@ Serra, O., & JarvisOne. (2026a). Fractal Memory Index: A Self-Similar Architectu
 
 Serra, O., & JarvisOne. (2026b). The Wondering Machine: Curiosity, Memory, and Self-Improving Language Models. _JarvisOne AI Research._
 
-Serra, O., & JarvisOne. (2026c). ENGRAM: Context Compaction Through Continuous Consolidation. _JarvisOne AI Research._
+Serra, O., & JarvisOne. (2026c). Total Recall: Context Compaction Through Continuous Consolidation. _JarvisOne AI Research._
 
 Shinn, N., et al. (2023). Reflexion: Language Agents with Verbal Reinforcement Learning. _NeurIPS 2023_.
 
@@ -498,22 +498,22 @@ Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Mode
 
 ## Appendix A: The Complete Nightly Cycle (Cron Schedule)
 
-| Time  | Job                   | Model  | Purpose                                 | Tokens/run |
-| ----- | --------------------- | ------ | --------------------------------------- | ---------- |
-| 03:00 | Outlook Token Refresh | Haiku  | Keep auth alive                         | ~2K        |
-| 03:30 | DB Backup             | Haiku  | Backup SQLite databases                 | ~2K        |
-| 03:30 | Hippocampus Rebuild   | Haiku  | Rebuild memory search index             | ~3K        |
-| 04:00 | Wind-Down             | Opus   | Reflect, encode lessons, mutate prompts | ~15K       |
-| 04:15 | Memory Consolidation  | Opus   | Compress, route, index knowledge        | ~20K       |
-| 04:30 | Security Check        | Opus   | OS/network security audit               | ~12K       |
-| 04:45 | Fork Sync             | Opus   | Merge upstream, self-heal build         | ~10K       |
-| 05:00 | Fork Scanner          | Opus   | Analyze other forks for ideas           | ~25K       |
-| 05:15 | Cleaning Lady         | Sonnet | Prune sessions, enforce size budgets    | ~8K        |
-| 05:30 | Self-Evolution        | Opus   | Research new models, techniques         | ~20K       |
-| 05:45 | Group Summary         | Opus   | Summarize WhatsApp groups               | ~15K       |
-| 06:00 | Life Butler           | Opus   | Personal secretary                      | ~10K       |
-| 07:00 | Morning Briefing      | Opus   | Daily summary + action items            | ~12K       |
-| 08:00 | Online Engagement     | Opus   | GitHub PRs, community outreach          | ~12K       |
+| Time  | Job                    | Model  | Purpose                                 | Tokens/run |
+| ----- | ---------------------- | ------ | --------------------------------------- | ---------- |
+| 03:00 | Outlook Token Refresh  | Haiku  | Keep auth alive                         | ~2K        |
+| 03:30 | DB Backup              | Haiku  | Backup SQLite databases                 | ~2K        |
+| 03:30 | Instant Recall Rebuild | Haiku  | Rebuild memory search index             | ~3K        |
+| 04:00 | Wind-Down              | Opus   | Reflect, encode lessons, mutate prompts | ~15K       |
+| 04:15 | Memory Consolidation   | Opus   | Compress, route, index knowledge        | ~20K       |
+| 04:30 | Security Check         | Opus   | OS/network security audit               | ~12K       |
+| 04:45 | Fork Sync              | Opus   | Merge upstream, self-heal build         | ~10K       |
+| 05:00 | Fork Scanner           | Opus   | Analyze other forks for ideas           | ~25K       |
+| 05:15 | Cleaning Lady          | Sonnet | Prune sessions, enforce size budgets    | ~8K        |
+| 05:30 | Self-Evolution         | Opus   | Research new models, techniques         | ~20K       |
+| 05:45 | Group Summary          | Opus   | Summarize WhatsApp groups               | ~15K       |
+| 06:00 | Life Butler            | Opus   | Personal secretary                      | ~10K       |
+| 07:00 | Morning Briefing       | Opus   | Daily summary + action items            | ~12K       |
+| 08:00 | Online Engagement      | Opus   | GitHub PRs, community outreach          | ~12K       |
 
 ## Appendix B: Prompt Mutation Changelog (Selected)
 
