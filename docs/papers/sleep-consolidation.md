@@ -1,22 +1,24 @@
-# Sleep Consolidation: How Structured Nightly Prompting Produces Emergent Intelligence in Stateless AI Agents
+# Sleep Consolidation: How Structured Nightly Prompting Produces Emergent Behavioral Improvement in Stateless AI Agents
 
 **Authors:** Oscar Serra, JarvisOne AI Research
 **Date:** March 2026 (v5.0)
-**Keywords:** emergent intelligence, prompt engineering, cron-driven learning, self-improving agents, fractal metacognition, autonomous orchestration, memory consolidation, operational lessons
+**Keywords:** emergent behavior, prompt engineering, cron-driven learning, self-improving agents, fractal metacognition, autonomous orchestration, memory consolidation, operational lessons
 
 ---
 
 ## Abstract
 
-Large language model agents are stateless by nature -- every session begins from zero. Current approaches to persistent intelligence rely on fine-tuning, RAG, or expanding context windows. We present a different mechanism observed over 30 days of production operation: **structured nightly prompt cycles** that produce compounding behavioral improvements without weight updates, fine-tuning, or architectural changes. A personal AI assistant (Jarvis/OpenClaw) running 13 autonomous cron jobs exhibited a decline in recurring error classes from 14 incidents (weeks 1--2) to 1 incident (weeks 3--4) (a 93% error reduction) across five tracked categories, while simultaneously discovering a new, higher-order error class -- not because the model improved, but because the _prompts and memory files the model reads_ were iteratively refined through the model's own scheduled reflection loops. Crucially, scattered memories are useless. The true value lies in SORTING by use-case so retrieval is cheaper. Memories must be organized by purpose, not chronology, allowing prompts to learn directly from yesterday's mistakes.
+Large language model agents are stateless by nature -- every session begins at zero. Existing approaches to persistence usually rely on fine-tuning, retrieval-augmented generation, or larger context windows. We present a different mechanism observed over 30 days of production operation: **structured nightly prompt cycles** that produce compounding behavioral improvement without weight updates, fine-tuning, or architectural changes. A personal AI assistant (Jarvis/OpenClaw) running 13 autonomous cron jobs exhibited a decline in tracked incidents from 14 (weeks 1--2) to 3 (weeks 3--4) across six error categories -- a 79% reduction overall, with five of the original categories reaching zero recurrence while a new, higher-order error class emerged. The model did not change. The files it read did.
 
-We formalize this as **Sleep Consolidation (formerly CEREBELLUM)** -- a system where explicit, deliberate prompts are iteratively refined through experience until they produce automatic, high-quality behavior, analogous to how the biological sleep consolidation transforms conscious motor learning into fluid automatic execution. We identify three core mechanisms: (1) **failure-driven prompt mutation**, where operational errors trigger targeted prompt refinements (14 mutations documented, all traced to specific incidents); (2) **fractal depth calibration**, where the system learns to allocate metacognitive effort proportionally to task significance; and (3) **cross-cron knowledge transfer**, where lessons learned in one autonomous task propagate to all others through shared memory files (5 documented cross-domain transfer events).
+The central insight is blunt: **scattered memories are almost useless.** Raw accumulation does not create intelligence. The value comes from **sorting by use-case** so retrieval is cheap, relevant, and actionable. Memories organized by **purpose rather than chronology** let the system pull the right rule at the right moment. Prompts that have learned from yesterday's mistakes do more than remember the past; they reshape future behavior.
 
-We argue that this approach -- prompts that rewrite themselves through structured reflection -- represents an underexplored middle ground between static prompt engineering and expensive fine-tuning, accessible to any agent system with file persistence and scheduled execution. Total reflection overhead: approximately 43,000 tokens per night ($1.17), against an estimated 8 avoided human-intervention incidents over 30 days.
+We formalize this as **Sleep Consolidation** -- a system in which explicit operating prompts are iteratively refined through experience until they produce increasingly automatic, high-quality behavior, analogous to how biological sleep consolidation transforms deliberate practice into smooth execution. We identify three core mechanisms: (1) **failure-driven prompt mutation**, where operational errors trigger targeted prompt refinements (14 mutations documented, all traced to specific incidents); (2) **fractal depth calibration**, where the system learns to allocate metacognitive effort in proportion to task significance; and (3) **cross-cron knowledge transfer**, where lessons learned in one autonomous task propagate to all others through shared memory files (5 documented cross-domain transfer events).
+
+We argue that this approach -- prompts that rewrite themselves through structured reflection -- occupies an underexplored middle ground between static prompt engineering and expensive fine-tuning. It is accessible to any agent system with file persistence and scheduled execution. Total reflection overhead: approximately 43,000 tokens per night ($1.17), against an estimated 8 avoided human-intervention incidents over 30 days.
 
 ### Contributions
 
-1. **The Sleep Consolidation framework**: a formalized architecture for scheduled, autonomous prompt self-improvement through failure-driven mutation, abstraction-level encoding, and cross-task propagation.
+1. **The Sleep Consolidation framework**: a formal architecture for scheduled, autonomous prompt self-improvement through failure-driven mutation, abstraction-level encoding, and cross-task propagation.
 2. **Production evidence over 30 days**: 14 documented prompt mutations, 5 error class extinctions, 5 cross-cron transfer events, and token-cost analysis from a real personal assistant deployment.
 3. **The fractal depth calibration mechanism**: a prompt-encoded heuristic for allocating metacognitive effort that is itself subject to refinement -- a self-similar cognitive policy.
 4. **Seven design principles** for building self-improving prompt ecosystems, derived from operational failures.
@@ -26,17 +28,19 @@ We argue that this approach -- prompts that rewrite themselves through structure
 
 ## 1. Introduction -- The Paradox of the Amnesiac Expert
 
-Every morning at 04:00, an AI agent wakes up knowing nothing about yesterday. By 04:15, it has read its memory files, reviewed the previous day's work, identified its own failures, rewritten its own operational rules, and gone back to sleep -- slightly better than it was the day before. By 07:00, a different instance of the same model reads those updated files and behaves as if it has always known the lessons that were learned hours ago.
+Every morning at 04:00, an AI agent wakes up knowing nothing about yesterday. By 04:15, it has read its memory files, reviewed the previous day's work, identified its own failures, rewritten its own operating rules, and gone back to sleep -- slightly better than it was the day before. By 07:00, a different instance of the same model reads those updated files and behaves as if it has always known the lessons learned hours earlier.
 
-This is paradoxical. The model's weights haven't changed. Its architecture is identical. Its context window is the same size. Yet its behavior improves over weeks. The improvement doesn't live in the model -- it lives in the _ecosystem of files the model reads and writes_.
+This is the paradox. The model's weights have not changed. Its architecture is identical. Its context window is the same size. Yet its behavior improves over weeks. The improvement does not live in the model. It lives in the _ecosystem of files the model reads and writes_.
 
-We call this the **Sleep Consolidation**, drawing an analogy to the biological sleep consolidation -- the brain structure responsible for transforming deliberate, conscious motor actions into smooth, automatic execution through iterative practice. A child learning to ride a bicycle begins with explicit, effortful coordination: _pedal, balance, steer, don't look down_. After sufficient practice, these separate instructions merge into a single fluid skill that no longer requires conscious attention. The sleep consolidation doesn't change the child's ability to _think_ -- it changes the translation from thought to action.
+We call this **Sleep Consolidation**, by analogy to biological sleep consolidation -- the process that turns deliberate, effortful action into fluid, automatic execution through iterative replay and error correction. A child learning to ride a bicycle starts with explicit instructions: _pedal, balance, steer, don't look down_. After enough practice, those separate commands fuse into a single smooth skill. The child's ability to think is not replaced. The translation from thought to action is improved.
 
-Similarly, an AI agent's prompt files begin as explicit, verbose instructions. Through nightly reflection, these instructions are refined, edge cases are added, failure modes are encoded, and over time the agent's behavior becomes increasingly appropriate without the underlying model becoming more capable. The intelligence isn't in the weights -- it's in the substrate the weights operate on.
+The same pattern appears here. An AI agent's prompt files begin as explicit instructions. Through nightly reflection, those instructions are tightened, edge cases are encoded, failure modes are made concrete, and vague warnings become operational rules. Over time, the agent behaves more appropriately not because the base model became more capable, but because the substrate around it became more organized. The intelligence is not in the weights alone. It is in the system that selects, sorts, and presents the right constraints at the right time.
 
-The central question this paper investigates: **Can persistent artifacts combined with scheduled reflection substitute for weight updates in producing sustained behavioral improvement in LLM agents?**
+That sorting step is the difference between memory and operational intelligence. A pile of chronological logs is not useful in the moment of action. The agent does not need "what happened on Tuesday at 14:10." It needs "what rules apply when messaging," "what to do when ambiguity appears," and "which prompt failed yesterday, and why." When memory is organized by use-case instead of time, prompts can inherit yesterday's mistakes as today's defaults.
 
-Our evidence suggests a qualified yes -- qualified because the improvements are _declarative_ (better rules and context) rather than _procedural_ (better reasoning), and because our evidence comes from a single-operator production system rather than controlled experiment. We document the mechanisms, present production data, acknowledge the limitations honestly, and propose a framework for replication.
+The central question of this paper is therefore: **Can persistent artifacts combined with scheduled reflection substitute for weight updates in producing sustained behavioral improvement in LLM agents?**
+
+Our evidence suggests a qualified yes -- qualified because the improvements are _declarative_ (better rules and better context) rather than _procedural_ (better underlying reasoning), and because the evidence comes from a single-operator production system rather than a controlled experiment. We document the mechanisms, present production data, acknowledge the limitations plainly, and propose a framework others can replicate.
 
 ---
 
@@ -48,55 +52,57 @@ Agent systems exist on a spectrum of persistence mechanisms, each with character
 
 | Level | Mechanism               | Persistence                   | Learning Speed   | Characteristic Ceiling                                                |
 | ----- | ----------------------- | ----------------------------- | ---------------- | --------------------------------------------------------------------- |
-| 0     | Prompt engineering      | None (session-only)           | Zero             | Static behavior; cannot introduce absent knowledge (Wei et al., 2022) |
+| 0     | Prompt engineering      | None (session-only)           | Zero             | Static behavior; cannot adapt beyond session boundary                 |
 | 1     | RAG / retrieval         | Declarative facts             | Per-query        | Retrieval quality bounds; no behavioral change (Lewis et al., 2020)   |
 | 2     | Persistent memory files | Declarative + some procedural | Per-session      | Linear growth, retrieval degradation (Packer et al., 2023)            |
 | 3     | Fine-tuning / LoRA      | Weight-level                  | Per training run | Catastrophic forgetting (French, 1999; Hu et al., 2021)               |
 | 4     | Continual learning      | Full integration              | Continuous       | Open research problem (McClelland et al., 1995)                       |
 
-Most production agent systems operate at Level 2. This paper demonstrates that Level 2 systems can exhibit Level 3-like _behavioral_ improvements through structured self-reflection, without weight updates.
+Most production agent systems operate at Level 2. This paper shows that Level 2 systems can exhibit Level 3-like _behavioral_ improvement through structured self-reflection, without weight updates.
 
 ### 2.2 What's Missing: The Reflection Loop
 
-Level 2 systems typically accumulate information passively: the agent records what happened, stores preferences, and retrieves relevant context. But accumulation is not learning. We define **learning** in this context as _behavioral policy change that persists across episodes and transfers across task domains_ -- distinct from **memory**, which is _state persistence without behavioral modification_.
+Level 2 systems usually accumulate information passively: the agent records what happened, stores preferences, and retrieves relevant context later. But accumulation is not the same as learning. We define **learning** here as _behavioral policy change that persists across episodes and transfers across task domains_. By contrast, **memory** is _state persistence without behavioral modification_.
 
-A memory file that says "the user prefers concise responses" is memory. A prompt mutation that changes how the agent _formats all future outputs_ is learning. The distinction matters because memory requires re-interpretation every session, while learning produces automatic behavior.
+A memory file that says "the user prefers concise responses" is memory. A prompt mutation that changes how the agent _formats all future outputs_ is learning. The distinction matters because memory must be reinterpreted every session, whereas learning changes default behavior.
 
-The missing component is a **structured reflection loop** -- a mechanism by which the agent:
+The problem is that most memory systems optimize for storage, not for use. They preserve chronology because chronology is easy. But for agents, chronology is rarely the right retrieval axis. **The useful unit is not the event; it is the use-case.** An error in calendar handling belongs with other completeness checks. A messaging failure belongs with targeting rules. A privacy slip belongs with redaction policies. If memory remains scattered across time-stamped logs, retrieval becomes noisy and expensive. If it is consolidated into purpose-built operational files, the system can act on it cheaply and reliably.
+
+The missing component is therefore a **structured reflection loop** -- a mechanism by which the agent:
 
 1. Identifies _why_ a failure occurred (root cause, not symptom)
 2. Determines whether the failure class is preventable through prompt changes
 3. Modifies the relevant prompt to prevent recurrence
-4. Verifies the modification doesn't break other behaviors
+4. Verifies the modification does not break other behaviors
 5. Encodes the _meta-lesson_ at the appropriate level of abstraction
 
-This mirrors the biological sleep consolidation error-correction loop: compare intended movement with actual movement, compute error signal, adjust motor program.
+This mirrors the biological sleep consolidation error-correction loop: compare intended movement with actual movement, compute an error signal, then adjust the motor program.
 
 ### 2.3 Related Work
 
 Several lines of research address aspects of agent self-improvement, though none combines scheduled autonomous reflection with cross-task transfer through shared memory:
 
-**Within-session self-improvement.** Self-Refine (Madaan et al., 2023) demonstrates iterative refinement through self-feedback within a single session, but improvements don't persist. ReAct (Yao et al., 2023) interleaves reasoning with action, establishing the "prompt as policy" paradigm we build upon, but doesn't modify prompts across episodes.
+**Within-session self-improvement.** Self-Refine (Madaan et al., 2023) demonstrates iterative refinement through self-feedback within a single session, but its improvements do not persist. ReAct (Yao et al., 2023) interleaves reasoning with action, establishing the "prompt as policy" paradigm we build upon, but it does not modify prompts across episodes.
 
-**Episodic reflection.** Reflexion (Shinn et al., 2023) adds episodic memory of previous trial-and-error. However, reflection is task-specific and stored per-task rather than in shared infrastructure. Our cross-cron transfer mechanism (Section 3.2, Mechanism 3) addresses this limitation explicitly. Generative Agents (Park et al., 2023) implement daily reflection and memory consolidation for simulated social agents -- the closest prior work to our nightly cycle. Key differences: their reflection produces _summaries_ for future retrieval; ours produces _prompt mutations_ that change behavior. Their agents don't modify their own instructions.
+**Episodic reflection.** Reflexion (Shinn et al., 2023) adds episodic memory of previous trial-and-error. However, reflection is task-specific and stored per task rather than in shared infrastructure. Our cross-cron transfer mechanism (Section 3.3, Mechanism 3) addresses this limitation directly. Generative Agents (Park et al., 2023) implement daily reflection and memory consolidation for simulated social agents -- the closest prior work to our nightly cycle. The key difference is that their reflection produces _summaries_ for future retrieval, whereas ours produces _prompt mutations_ that change behavior. Their agents do not rewrite their own operating instructions.
 
-**Prompt optimization.** OPRO (Yang et al., 2023) uses LLMs to optimize prompts through iterative evaluation against objective metrics. DSPy (Khattab et al., 2023) automates prompt pipeline optimization through teleprompting. PromptBreeder (Fernando et al., 2023) evolves prompts through mutation and selection. These systems optimize prompts against _defined benchmarks_; our system optimizes against _real operational failures_ without predefined metrics. The mutation trigger is qualitatively different: benchmark score vs. production incident.
+**Prompt optimization.** OPRO (Yang et al., 2023) uses LLMs to optimize prompts through iterative evaluation against objective metrics. DSPy (Khattab et al., 2023) automates prompt-pipeline optimization through teleprompting. PromptBreeder (Fernando et al., 2023) evolves prompts through mutation and selection. These systems optimize prompts against _defined benchmarks_. Our system optimizes against _real operational failures_ without predefined metrics. The mutation trigger is therefore qualitatively different: benchmark score versus production incident.
 
-**Skill accumulation.** Voyager (Wang et al., 2023) accumulates a skill library in Minecraft through exploration, closer to our approach but limited to a single domain with clear success criteria. ADAS (Hu et al., 2024) uses LLMs to design better agent architectures, operating at the meta-level of system design.
+**Skill accumulation.** Voyager (Wang et al., 2023) accumulates a skill library in Minecraft through exploration, closer in spirit to our approach but limited to a single domain with clear success criteria. ADAS (Hu et al., 2024) uses LLMs to design better agent architectures, operating at the meta-level of system design.
 
-**Constitutional and governance approaches.** Constitutional AI (Bai et al., 2022) establishes self-critique against explicit principles -- related to our operational-lessons governance. Our Principle 7 (human-in-the-loop for Level 2+ changes) addresses the same concern: preventing self-reinforcing error spirals in self-modifying systems.
+**Constitutional and governance approaches.** Constitutional AI (Bai et al., 2022) establishes self-critique against explicit principles, which is related to our operational-lessons governance. Our Principle 7 (human-in-the-loop for Level 2+ changes) addresses the same risk: preventing self-reinforcing error spirals in self-modifying systems.
 
-**Incident learning in software engineering.** Our mutation protocol draws implicitly from SRE blameless postmortem methodology (Beyer et al., 2016), where incidents are systematically analyzed, root-caused, and translated into preventive changes. The Sleep Consolidation automates this cycle for AI agent operations.
+**Incident learning in software engineering.** Our mutation protocol draws implicitly from SRE blameless postmortem methodology (Beyer et al., 2016), where incidents are systematically analyzed, root-caused, and translated into preventive changes. Sleep Consolidation automates that cycle for AI agent operations.
 
 Our contribution differs from all of the above in three ways: (1) it operates on _production_ personal assistant workloads, not benchmarks or simulations; (2) improvement is _cross-task_ -- lessons propagate through shared infrastructure; and (3) reflection is _scheduled and autonomous_, not triggered by explicit failure signals or human feedback.
 
 ---
 
-## 3. Architecture -- The Sleep Consolidation
+## 3. Architecture -- Sleep Consolidation
 
 ### 3.1 System Overview
 
-The Sleep Consolidation is not a single component but an emergent property of four interacting systems:
+Sleep Consolidation is not a single component. It is an emergent property of four interacting systems:
 
 **Nightly Cycle (reflection layer):**
 Wind-Down (04:00) --> Consolidation (04:15) --> Cleaning Lady (05:15)
@@ -112,7 +118,9 @@ All three write to the **Shared Memory Layer:**
 **Daytime Crons (execution layer, consumers + producers):**
 Morning Briefing (07:00) | Fork Sync (04:45) | Online Engagement (08:00) | 11 others
 
-Every cron job is both a _consumer_ of the shared memory layer (it reads operational lessons, principles, and past failures before acting) and a _producer_ (it writes receipts, logs failures, and -- during the nightly cycle -- modifies the shared layer itself).
+Every cron job is both a _consumer_ of the shared memory layer and a _producer_ for it. It reads operational lessons, principles, and prior failures before acting; later, it emits receipts, logs failures, and -- during the nightly cycle -- helps mutate the shared layer itself.
+
+What makes the architecture effective is not mere persistence but purposeful arrangement. A chronological archive tells the system what happened; a use-case-sorted memory layer tells it what to do.
 
 ### 3.2 Algorithm 1: The Nightly Reflection Loop
 
@@ -167,30 +175,30 @@ PHASE 3: PRUNING (model: mid-tier)
 
 #### Mechanism 1: Failure-Driven Prompt Mutation
 
-When an agent encounters a failure, the standard response is to log it and move on. The Sleep Consolidation adds a critical step: **determine if the failure was caused by a prompt deficiency, and if so, mutate the prompt.**
+When an agent encounters a failure, the default response is to log it and move on. Sleep Consolidation adds the crucial second step: **determine whether the failure came from a prompt deficiency, and if so, mutate the prompt.**
 
 **Production example -- The B010 cascade (2026-03-03 to 2026-03-10):**
 
-This seven-day sequence illustrates the full sleep-consolidated learning loop, including second-order correction:
+This seven-day sequence shows the full sleep-consolidated learning loop, including second-order correction.
 
-**Day 0 (Mar 3) -- Initial failure.** A fork-sync cron job, prompted to "sync the fork with upstream," interpreted this as permission to edit production source code, run builds, and restart the gateway. The failure wasn't the model being incapable -- it was the prompt being ambiguous.
+**Day 0 (Mar 3) -- Initial failure.** A fork-sync cron job, prompted to "sync the fork with upstream," interpreted that instruction as permission to edit production source code, run builds, and restart the gateway. The problem was not model incapacity. The problem was prompt ambiguity.
 
 _Prompt before:_ "Sync the fork with upstream and report the result."
 _Prompt after (mutation #8):_ "Run the safe merge script. NEVER modify source code directly. NEVER run builds. NEVER restart the gateway. If the script fails, report and STOP."
 
 The mutation was filed as bug B010, with root cause: "Ambiguous action verb ('sync') interpreted as permission for unrestricted operations."
 
-**Day 7 (Mar 10) -- Second-order failure.** The same cron encountered a merge conflict. It reported the conflict and stopped -- exactly as mutation #8 instructed. But the constraint was too broad: the agent was _capable_ of resolving the conflict intelligently (reading fork documentation, understanding both sides' intent, verifying with a build). The blanket prohibition prevented useful work. The entire merge was blocked for 24 hours.
+**Day 7 (Mar 10) -- Second-order failure.** The same cron later encountered a merge conflict. It reported the conflict and stopped -- exactly as mutation #8 required. But the restriction was too broad. The agent was in fact _capable_ of resolving the conflict intelligently by reading fork documentation, understanding both sides' intent, and verifying with a build. The blanket prohibition prevented useful work. The merge was blocked for 24 hours.
 
 _Prompt after (mutation #14):_ "Run the safe merge script. If conflicts remain, read FORK_PATCHES.md to understand intent, attempt resolution, verify with build. If genuinely uncertain, escalate."
 
 **Meta-lesson encoded (Level 2):** "When encoding a safety lesson, separate the failure mode from the restriction. The restriction should be proportional to the risk, not a blanket prohibition."
 
-This meta-lesson now applies to _all_ future lesson encoding across the entire system -- a single incident produced a permanent improvement in the system's learning methodology.
+That meta-lesson now applies to _all_ future lesson encoding across the system. One incident produced a permanent improvement in how the system learns.
 
 #### Mechanism 2: Fractal Depth Calibration
 
-Not all tasks deserve the same level of metacognitive effort. The Sleep Consolidation includes a **depth selector** -- a prompt-encoded heuristic that determines how many levels of "why" to traverse:
+Not all tasks deserve the same amount of metacognitive effort. Sleep Consolidation includes a **depth selector** -- a prompt-encoded heuristic that determines how many layers of "why" to traverse:
 
 | Signal                     | Depth | Example                                         |
 | -------------------------- | ----- | ----------------------------------------------- |
@@ -199,16 +207,16 @@ Not all tasks deserve the same level of metacognitive effort. The Sleep Consolid
 | Encoding a new rule        | 2--3  | Is the abstraction right? Am I over-correcting? |
 | Explicit request for depth | 3+    | Go until insight stops being actionable         |
 
-**The self-similar property:** The depth selector itself is subject to refinement. When the agent zooms too deep on trivia (wasting tokens) or too shallow on something important (missing a lesson), this miscalibration becomes a data point for adjusting the selector.
+**The self-similar property:** the depth selector is itself subject to refinement. When the agent zooms too deep on trivia and wastes tokens, or too shallow on something important and misses the lesson, that miscalibration becomes training data for adjusting the selector.
 
-**Convergence hypothesis (not proven, observed):** In practice, most tasks stabilize at depth 0--1 within days of operation, while novel failure classes start at depth 2--3 and gradually move to 0--1 as the patterns become encoded. We observe approximately weekly Level 2 refinements and approximately monthly Level 3 refinements, suggesting the frequency of deeper reflection decreases as the system matures. We do not claim formal convergence -- this is an empirical observation over 30 days that requires longer-term study to confirm.
+**Convergence hypothesis (not proven, observed):** In practice, most tasks stabilize at depth 0--1 within days of operation, while novel failure classes begin at depth 2--3 and gradually move to 0--1 as their patterns become encoded. We observe approximately weekly Level 2 refinements and approximately monthly Level 3 refinements, suggesting that deeper reflection becomes less necessary as the system matures. We do not claim formal convergence -- only that the 30-day pattern is consistent with it.
 
 **Production example -- Fractal emergence (2026-03-10):**
-The merge conflict resolution initially operated at depth 0 (just do it, abort on failure). After the B010 over-correction incident, a human prompt ("think fractal") triggered depth 3+ analysis, revealing that the real problem wasn't the merge strategy but the _lesson-encoding methodology_. The resulting principle -- "separate the failure mode from the restriction" -- now applies to every future lesson encoding, not just merge conflicts.
+The merge-conflict episode initially operated at depth 0: just do it, abort on failure. After the B010 over-correction incident, a human prompt ("think fractal") triggered depth 3+ analysis, revealing that the real problem was not merge strategy but the _method used to encode lessons_. The resulting principle -- "separate the failure mode from the restriction" -- now applies to every future lesson, not just merge conflicts.
 
 #### Mechanism 3: Cross-Cron Knowledge Transfer
 
-The most powerful emergent property is that lessons learned in one autonomous task propagate to all others through shared memory files. We documented 5 cross-domain transfer events over 30 days:
+The strongest emergent property is that lessons learned in one autonomous task propagate to all others through shared memory files. We documented 5 cross-domain transfer events over 30 days:
 
 | #   | Origin Task          | Lesson Encoded                                 | Transferred To              | Observable Behavior Change                                        |
 | --- | -------------------- | ---------------------------------------------- | --------------------------- | ----------------------------------------------------------------- |
@@ -218,18 +226,20 @@ The most powerful emergent property is that lessons learned in one autonomous ta
 | 4   | Fork sync (B010)     | "Report-only crons must not modify systems"    | Security audit cron         | Audit reported findings without attempting fixes                  |
 | 5   | Memory consolidation | "Enforce file size budgets"                    | All report-generating crons | Reports began self-truncating at budget limits                    |
 
-The transfer mechanism is architectural, not intelligent: lessons written to `operational-lessons.md` are read by all sessions at boot. But the _abstraction level_ at which lessons are encoded determines transfer breadth. "Use JID-based targeting" (Level 0, specific) transfers only to messaging tasks. "When something is ambiguous, ask before acting" (Level 1, general) transfers to everything.
+The transfer mechanism is architectural, not magical: lessons written to `operational-lessons.md` are read by all sessions at boot. But the **abstraction level** at which lessons are encoded determines transfer breadth. "Use JID-based targeting" (Level 0, specific) transfers only to messaging tasks. "When something is ambiguous, ask before acting" (Level 1, general) transfers much more widely.
+
+Cross-cron transfer depends less on storing more and more on storing in the right shape: partitioned by decision type, action domain, and operating rule rather than accumulated chronologically.
 
 ### 3.4 The Nightly Cycle -- Sleep Consolidation for Agents
 
 | Time  | Job                  | Role                                                      | Biological Analogy                                  |
 | ----- | -------------------- | --------------------------------------------------------- | --------------------------------------------------- |
 | 04:00 | Wind-Down            | Review, identify failures, encode lessons, mutate prompts | Sleep replay / sleep consolidation error correction |
-| 04:15 | Memory Consolidation | Compress daily logs, route knowledge, rebuild indexes     | Instant Recall to Identity Persistence transfer     |
-| 04:45 | Fork Sync            | Integrate external changes, self-heal build failures      | Immune system integration                           |
+| 04:15 | Memory Consolidation | Compress daily logs, route knowledge, rebuild indexes     | Hippocampal-to-neocortical memory transfer          |
+| 04:45 | Fork Sync            | Integrate external changes, self-heal build failures      | Environmental adaptation during rest                |
 | 05:15 | Cleaning Lady        | Trim bloated files, prune stale sessions, enforce budgets | Synaptic pruning                                    |
 
-**Critical ordering:** Wind-Down runs first because it produces the raw material (identified failures, encoded lessons) that Consolidation then routes to permanent storage. Cleaning Lady runs last because it prunes temporary artifacts. Disorder here produces garbage -- we observed this directly when a misconfigured schedule ran Cleaning Lady before Wind-Down, causing it to prune the daily logs that Wind-Down needed as input.
+**Critical ordering:** Wind-Down runs first because it produces the raw material -- identified failures and encoded lessons -- that Consolidation then routes to permanent storage. Cleaning Lady runs last because it prunes temporary artifacts. The ordering matters. We observed the cost of getting it wrong when a misconfigured schedule ran Cleaning Lady before Wind-Down, pruning the very daily logs that Wind-Down needed as input.
 
 ---
 
@@ -241,17 +251,17 @@ The transfer mechanism is architectural, not intelligent: lessons written to `op
 
 **Period:** February 8 -- March 10, 2026 (30 days).
 
-**Data sources:** Cron receipts (structured JSON, automatically generated per run), operational lessons file (git-versioned, all changes tracked), bug reports (structured markdown, manually filed), daily wind-down logs (generated by Opus).
+**Data sources:** Cron receipts (structured JSON, automatically generated per run), operational lessons file (git-versioned, all changes tracked), bug reports (structured markdown, manually filed), daily Wind-Down logs (generated by Opus).
 
-**Labeling protocol:** Error instances were identified from cron receipts (non-zero exit codes, escalation flags) and operator-reported incidents. Error _classes_ were defined post-hoc by the authors based on root cause similarity. No inter-rater reliability was computed -- this is a single-system observational study, not a controlled experiment.
+**Labeling protocol:** Error instances were identified from cron receipts (non-zero exit codes, escalation flags) and operator-reported incidents. Error _classes_ were defined post hoc by the authors based on root-cause similarity. No inter-rater reliability was computed -- this is a single-system observational study, not a controlled experiment.
 
 **Confounds we acknowledge:** Over the 30-day period, the following changed simultaneously: prompt content (the variable under study), cron ordering (adjusted twice), model assignments (3 crons moved from Opus to Sonnet), operator familiarity (Oscar learned the system's capabilities), and upstream codebase (109 commits merged). We cannot isolate the contribution of prompt mutation from these confounds. The evidence is _consistent with_ the Sleep Consolidation hypothesis but does not _prove_ it.
 
-**What a controlled study would look like:** Run two identical agent deployments: one with nightly reflection enabled, one with static prompts. Measure: error recurrence rate, human intervention frequency, task completion quality (rated by blind evaluators), and time-to-resolution for novel incidents. Duration: minimum 4 weeks. We have not conducted this study.
+**What a controlled study would look like:** Run two identical agent deployments: one with nightly reflection enabled, one with static prompts. Measure error recurrence rate, human intervention frequency, task completion quality (rated by blind evaluators), and time-to-resolution for novel incidents. Duration: minimum 4 weeks. We have not conducted this study.
 
 ### 4.2 Prompt Mutations Observed
 
-Over 30 days, we documented 14 prompt mutations -- changes to cron prompts or operational rules triggered by real failures. "Documented" means: the mutation has a git commit, a linked bug report or incident description, and a before/after prompt diff. We did not observe any mutations that were _reverted_ as harmful, though mutation #8 was _refined_ by mutation #14 (over-correction).
+Over 30 days, we documented 14 prompt mutations -- changes to cron prompts or operational rules triggered by real failures. "Documented" means the mutation has a git commit, a linked bug report or incident description, and a before/after prompt diff. We did not observe any mutations that were _reverted_ as harmful, though mutation #8 was later _refined_ by mutation #14 after an over-correction.
 
 | #   | Date   | Trigger                                       | Mutation                                                     | Scope            |
 | --- | ------ | --------------------------------------------- | ------------------------------------------------------------ | ---------------- |
@@ -265,16 +275,16 @@ Over 30 days, we documented 14 prompt mutations -- changes to cron prompts or op
 | 8   | Mar 03 | Fork sync cron edited production code (B010)  | Added HARD CONSTRAINTS to cron prompt                        | Fork sync        |
 | 9   | Mar 03 | Same session: cron killed the gateway         | Added "never pkill" rule                                     | All crons        |
 | 10  | Mar 04 | Build failed after merge -- wrong externals   | Auto-heal retry + wiring guardian                            | Fork sync        |
-| 11  | Mar 05 | Model misidentified person from headline      | Added "ALWAYS click through" rule                            | Self-evolution   |
-| 12  | Mar 07 | Wind-down wrote to wrong day's log            | Added temporal awareness step                                | Wind-down        |
+| 11  | Mar 05 | Model misidentified person from headline      | Added "ALWAYS click through" rule                           | Self-evolution   |
+| 12  | Mar 07 | Wind-Down wrote to wrong day's log            | Added temporal awareness step                                | Wind-Down        |
 | 13  | Mar 08 | Agent didn't recognize family member          | Added mandatory daily log reading to boot                    | All sessions     |
 | 14  | Mar 10 | Merge abort on single conflict too aggressive | Keep-ours + intelligent resolution                           | Fork sync        |
 
-**Qualitative observation:** Mutations 1--6 are _reactive_ -- they fix specific failures. Mutations 7--14 show increasing _sophistication_ -- they address failure _classes_, encode _principles_ rather than rules, and modify _shared infrastructure_ rather than individual prompts.
+**Qualitative observation:** Mutations 1--6 are mostly _reactive_ -- they fix specific failures. Mutations 7--14 are more _structural_ -- they address failure _classes_, encode _principles_ rather than isolated rules, and modify _shared infrastructure_ rather than single prompts.
 
 ### 4.3 Error Class Tracking
 
-We tracked six error classes, defined by root cause similarity:
+We tracked six error classes, defined by root-cause similarity:
 
 | Error Class                  | Definition                                            | Weeks 1--2 | Weeks 3--4 | Status                                     |
 | ---------------------------- | ----------------------------------------------------- | ---------- | ---------- | ------------------------------------------ |
@@ -285,9 +295,9 @@ We tracked six error classes, defined by root cause similarity:
 | Ambiguous request mishandled | Agent acting on ambiguous input without clarification | 3          | 1          | Declining; 1 residual instance             |
 | Over-broad safety rules      | Safety constraints preventing legitimate operations   | 0          | 2          | New class, discovered via fractal analysis |
 
-**Total tracked incidents:** 14 (weeks 1--2) to 3 (weeks 3--4). The emergence of "over-broad safety rules" as a _new_ error class in weeks 3--4 is notable: the error surface shifted from execution errors to policy errors. This is consistent with a maturing system where first-order failures are resolved and second-order effects become visible.
+**Total tracked incidents:** 14 (weeks 1--2) to 3 (weeks 3--4), a 79% reduction. The emergence of "over-broad safety rules" as a _new_ error class in weeks 3--4 is especially notable. The error surface shifted from execution failures to policy failures. That pattern is consistent with a maturing system: once first-order mistakes are reduced, second-order distortions become easier to see.
 
-**Caveat:** We cannot distinguish between "errors eliminated by prompt mutation" and "errors eliminated by operator learning" (Oscar stopped triggering certain edge cases as he learned the system). The confound is real and uncontrolled.
+**Caveat:** We cannot cleanly distinguish between "errors eliminated by prompt mutation" and "errors eliminated by operator learning" (Oscar stopped triggering certain edge cases as he learned the system). The confound is real and uncontrolled.
 
 ### 4.4 Token Economics
 
@@ -298,9 +308,9 @@ We tracked six error classes, defined by root cause similarity:
 | Cleaning Lady          | ~8K          | $0.12             |
 | Total nightly overhead | ~43K         | $1.17             |
 
-Over 30 days, total reflection cost: approximately $35. We estimate 8 human-intervention incidents were avoided (based on error class extinction -- incidents that would have required Oscar to debug and fix manually). Valuing operator time at $25/hr with an average 30-minute resolution: approximately $200 saved.
+Over 30 days, total reflection cost: approximately $35. We estimate 8 human-intervention incidents were avoided (based on error-class extinction -- incidents that would otherwise have required Oscar to debug and fix manually). Valuing operator time at $25/hr with an average 30-minute resolution yields approximately $200 saved.
 
-**Sensitivity analysis:** If operator time is valued at $15/hr (low estimate), ROI is 3.4x. At $50/hr (high estimate), ROI is 11.4x. If only 4 incidents were truly avoided (conservative), ROI at $25/hr is 2.9x. The reflection loop is cost-positive under all reasonable assumptions, though the estimates are approximate.
+**Sensitivity analysis:** If operator time is valued at $15/hr (low estimate), ROI is 3.4x. At $50/hr (high estimate), ROI is 11.4x. If only 4 incidents were truly avoided (conservative), ROI at $25/hr is still 2.9x. Under every reasonable assumption, the reflection loop remains cost-positive, though the estimates are approximate.
 
 ---
 
@@ -308,9 +318,9 @@ Over 30 days, total reflection cost: approximately $35. We estimate 8 human-inte
 
 ### 5.1 Why Fractal?
 
-The term "fractal" here refers to **self-similar cognitive patterns applied at different scales of abstraction.** The same reflective pattern -- _what happened, why, what principle, what meta-principle_ -- applies at every level of task analysis.
+The term "fractal" refers here to **self-similar cognitive patterns applied at different scales of abstraction.** The same reflective sequence -- _what happened, why, what principle, what meta-principle_ -- recurs at every level of task analysis.
 
-The key insight: **the same reasoning pattern that improves a specific task also improves the category of tasks, the methodology for improving categories, and the methodology for improving methodologies.** Each level operates on a strictly smaller domain than the one below it.
+The key insight is that **the same reasoning pattern that improves a specific task can also improve the category of tasks, the method used to improve categories, and eventually the method used to improve methods.** Each level operates on a smaller and more abstract domain than the one below it.
 
 ### 5.2 Convergence Intuition (Not a Proof)
 
@@ -321,16 +331,16 @@ Consider a system with error classes at multiple scales:
 - **Level 2** (methodology): Improve how rules are encoded. Reduces the rate at which new error classes arise from over-correction or under-correction.
 - **Level 3** (meta-methodology): Improve how improvement works. Reduces the overhead of the reflection process itself.
 
-Each level operates on a smaller domain (instances > classes > methodology > meta-methodology). We _hypothesize_ this produces convergent behavior -- the frequency and magnitude of changes decreases at each level. Our 30-day observations are consistent with this (daily Level 0--1, weekly Level 2, monthly Level 3), but 30 days is insufficient to confirm convergence. The hypothesis is falsifiable: if Level 2+ mutation frequency does not decrease over time, the convergence claim is wrong.
+Each level operates on a smaller domain (instances > classes > methodology > meta-methodology). We _hypothesize_ that this produces convergent behavior: the frequency and magnitude of changes should decrease at each higher level. Our 30-day observations are consistent with that pattern (daily Level 0--1, weekly Level 2, monthly Level 3), but 30 days is not enough to establish convergence. The hypothesis is falsifiable: if Level 2+ mutation frequency does not decrease over time, the convergence claim fails.
 
 ### 5.3 The Depth Selector as a Learned Policy
 
-The decision of how deeply to reflect is itself a learnable policy. Initially, the agent has no calibration. Over time, the depth selector is refined by its own failures:
+The decision of how deeply to reflect is itself a learnable policy. Initially, the agent has little calibration. Over time, the depth selector improves through its own mistakes:
 
 - _Reflected too shallowly_ on a merge strategy --> missed the over-correction pattern --> added depth for "encoding new rules"
 - _Reflected too deeply_ on a routine file operation --> wasted 2 minutes of compute --> reduced depth for "routine/mechanical"
 
-We observe this self-calibration emerging naturally over the 30-day period, but we lack quantitative metrics for "reflection depth appropriateness." A future instrumentation that tracks tokens-spent-on-reflection vs. value-of-insight-produced would enable rigorous evaluation.
+We observe this self-calibration emerging naturally over the 30-day period, but we lack quantitative metrics for "reflection depth appropriateness." A future instrumentation layer that tracks tokens-spent-on-reflection versus value-of-insight-produced would enable a more rigorous evaluation.
 
 ---
 
@@ -344,7 +354,7 @@ Operational sessions handle tasks (fast). Nightly crons handle reflection (slow)
 
 ### Principle 2: Encode at the Right Abstraction Level
 
-A lesson about "always check both calendars" is Level 0. "When a system has multiple data sources, query all of them" is Level 1. "Verify completeness assumptions before acting" is Level 2. Encode at the highest level that remains _actionable_ -- too abstract and it's useless; too specific and it doesn't transfer.
+A lesson about "always check both calendars" is Level 0. "When a system has multiple data sources, query all of them" is Level 1. "Verify completeness assumptions before acting" is Level 2. Encode at the highest level that remains _actionable_ -- too abstract and it becomes empty, too specific and it fails to transfer.
 
 ### Principle 3: Shared Memory > Private Memory
 
@@ -352,7 +362,7 @@ Lessons stored in a single cron's prompt help only that cron. Lessons stored in 
 
 ### Principle 4: Proportional Constraints
 
-When encoding safety lessons from failures, the restriction should be proportional to the risk. "Never edit source code" is disproportionate to "a cron edited the wrong file once." "Understand intent before editing, verify after editing, revert if broken" is proportional and preserves capability. This is the central lesson of the B010-->mutation #14 cascade.
+When encoding safety lessons from failures, the restriction should be proportional to the risk. "Never edit source code" is disproportionate to "a cron edited the wrong file once." "Understand intent before editing, verify after editing, revert if broken" is proportional and preserves capability. This is the central lesson of the B010 --> mutation #14 cascade.
 
 ### Principle 5: Temporal Ordering of Nightly Cycles
 
@@ -360,11 +370,11 @@ Reflection --> Consolidation --> Integration --> Pruning. Each stage produces in
 
 ### Principle 6: The Budget Fuse
 
-Every reflection loop must have a token budget and a wall-clock timeout. Without it, a sufficiently thorough reflection agent will consume unlimited resources investigating diminishing returns. In practice, we cap wind-down at 1800 seconds and consolidation at 1200 seconds.
+Every reflection loop must have a token budget and a wall-clock timeout. Without it, a sufficiently thorough reflection agent will consume unlimited resources chasing diminishing returns. In practice, we cap Wind-Down at 1800 seconds and Consolidation at 1200 seconds.
 
 ### Principle 7: Human-in-the-Loop for Level 2+ Changes
 
-Level 0--1 mutations (specific fixes and pattern-level rules) can be autonomous. Level 2+ mutations (methodology changes, core principle modifications) must be flagged for human review. **Concrete gate:** Any mutation that modifies MEMORY.md (core principles, injected into all sessions) or changes the depth selector itself requires human approval before taking effect. Mutations to individual cron prompts or operational-lessons.md can be auto-applied but are logged with full diffs for audit.
+Level 0--1 mutations (specific fixes and pattern-level rules) can be autonomous. Level 2+ mutations (methodology changes, core principle modifications) must be flagged for human review. **Concrete gate:** any mutation that modifies MEMORY.md (core principles, injected into all sessions) or changes the depth selector itself requires human approval before taking effect. Mutations to individual cron prompts or `operational-lessons.md` can be auto-applied but are logged with full diffs for audit.
 
 **Rollback mechanism:** All mutations are git-committed with descriptive messages. Any mutation can be reverted with `git revert`. The Wind-Down cron logs a "mutation manifest" per night listing all changes, enabling batch review.
 
@@ -374,13 +384,13 @@ Level 0--1 mutations (specific fixes and pattern-level rules) can be autonomous.
 
 ### 7.1 The Self-Reinforcing Error Spiral
 
-If a reflection loop encodes a wrong lesson, that lesson influences future behavior, producing data that confirms the wrong lesson. This is the AI equivalent of confirmation bias.
+If a reflection loop encodes the wrong lesson, that lesson influences future behavior, generating data that appears to confirm it. This is the AI analogue of confirmation bias.
 
 **Mitigations (implemented):**
 
 - Human review for Level 2+ changes (Principle 7)
 - Git-versioned mutation log enabling revert
-- Wind-down mutation manifest for daily batch review
+- Wind-Down mutation manifest for daily batch review
 
 **Mitigations (proposed but not yet implemented):**
 
@@ -390,21 +400,21 @@ If a reflection loop encodes a wrong lesson, that lesson influences future behav
 
 ### 7.2 Context Window Pressure
 
-Every encoded lesson consumes context window space. As the operational lessons file grows, it competes with task-relevant context. The Cleaning Lady cron enforces size budgets (currently 50KB for operational-lessons.md) and archives stale content. This creates a second-order problem: archived lessons may be lost when they become relevant again. The Instant Recall search index (Serra & JarvisOne, 2026a) mitigates this through semantic retrieval of archived content.
+Every encoded lesson consumes context-window space. As the operational lessons file grows, it competes with task-relevant context. The Cleaning Lady cron enforces size budgets (currently 50KB for `operational-lessons.md`) and archives stale content. This creates a second-order problem: archived lessons may be unavailable when they become relevant again. The Fractal Memory Index (Serra & JarvisOne, 2026a) mitigates this through semantic retrieval of archived content.
 
 ### 7.3 Model Dependency
 
-Reflection quality depends on model reasoning capability. We use the strongest available model (Opus) for nightly reflection and cheaper models (Sonnet, Haiku) for daytime execution. This creates a cost asymmetry: the "learning" is only as good as the reflection model. A weaker reflection model would produce lower-quality mutations, potentially encoding wrong lessons (amplifying 7.1).
+Reflection quality depends on the model's reasoning capability. We use the strongest available model (Opus) for nightly reflection and cheaper models (Sonnet, Haiku) for daytime execution. This creates a cost asymmetry: the "learning" is only as good as the reflection model. A weaker reflection model would produce lower-quality mutations, potentially encoding bad lessons and amplifying the risk described in Section 7.1.
 
 ### 7.4 Single-Operator Bias
 
-Our data comes from one operator with specific workflows, preferences, and failure patterns. Whether the Sleep Consolidation generalizes to multi-user systems, different cultural contexts, or domains beyond personal assistant tasks is an open question. We hypothesize that the _mechanisms_ generalize (failure-driven mutation, cross-task transfer, depth calibration) even if the specific _lessons_ don't.
+Our data comes from one operator with specific workflows, preferences, and failure patterns. Whether Sleep Consolidation generalizes to multi-user systems, other cultural contexts, or domains beyond personal assistant tasks remains an open question. We hypothesize that the _mechanisms_ generalize (failure-driven mutation, cross-task transfer, depth calibration) even if the specific _lessons_ do not.
 
 ### 7.5 No True Generalization
 
-The fundamental limitation: prompt-mediated learning produces _declarative_ improvements (better rules, better context), not _procedural_ improvements (better reasoning). The model's reasoning capability doesn't change. A sufficiently novel failure class will not be prevented by any amount of prompt refinement.
+The fundamental limitation is that prompt-mediated learning produces _declarative_ improvements (better rules, better context), not _procedural_ improvements (better underlying reasoning). The model's reasoning capability does not itself improve. A sufficiently novel failure class will not be prevented by any amount of prompt refinement.
 
-This is the ceiling of Level 2 on the persistence hierarchy. The Sleep Consolidation pushes this ceiling higher than previously demonstrated, but cannot break through it. True generalization requires weight updates.
+This is the ceiling of Level 2 on the persistence hierarchy. Sleep Consolidation raises that ceiling higher than most production systems currently exploit, but it does not break through it. True generalization still requires weight updates.
 
 ---
 
@@ -412,37 +422,39 @@ This is the ceiling of Level 2 on the persistence hierarchy. The Sleep Consolida
 
 ### 8.1 Controlled Ablation Study
 
-The highest-priority follow-up: run two identical deployments (with and without nightly reflection) for 4+ weeks, measuring error recurrence rate, intervention frequency, and blind-rated task quality. This would address the confound problem (Section 4.1) and move the evidence from observational to experimental.
+The highest-priority follow-up is straightforward: run two identical deployments (with and without nightly reflection) for 4+ weeks, measuring error recurrence rate, intervention frequency, and blind-rated task quality. This would directly address the confounds outlined in Section 4.1 and move the evidence from observational to experimental.
 
 ### 8.2 Multi-Agent Prompt Ecosystems
 
-If multiple agents share a memory layer, do lessons from one agent's failures benefit others? Preliminary evidence from cross-agent collaboration suggests yes, but systematic study is needed.
+If multiple agents share a memory layer, do lessons from one agent's failures benefit others? Preliminary evidence from cross-agent collaboration suggests yes, but systematic study is still needed.
 
 ### 8.3 Automatic Depth Calibration
 
-The fractal depth selector is currently prompt-encoded and manually refined. An instrumented version that tracks tokens-spent-on-reflection vs. downstream-error-reduction would enable quantitative optimization of reflection effort allocation.
+The fractal depth selector is currently prompt-encoded and manually refined. An instrumented version that tracks tokens-spent-on-reflection versus downstream-error-reduction would enable quantitative optimization of reflection effort.
 
 ### 8.4 Bridging to Fine-Tuning
 
-Encoded lessons are (failure*context, correct_behavior) pairs -- exactly the format for preference optimization. The Sleep Consolidation could serve as a \_data generation pipeline* for periodic LoRA updates, bridging Level 2 and Level 3 persistence.
+Encoded lessons are `(failure, context, correct_behavior)` tuples -- exactly the format needed for preference optimization. Sleep Consolidation could therefore serve as a _data generation pipeline_ for periodic LoRA updates, bridging Level 2 and Level 3 persistence.
 
 ### 8.5 Adversarial Robustness
 
-Can a crafted input trigger a harmful prompt mutation? Our current mitigation (human review for Level 2+) is manual. Automated detection of adversarial mutations -- perhaps through consistency checking against existing principles -- is an open problem.
+Can a crafted input trigger a harmful prompt mutation? Our current mitigation (human review for Level 2+) is manual. Automated detection of adversarial mutations -- perhaps through consistency checking against existing principles -- remains an open problem.
 
 ---
 
 ## 9. Conclusion
 
-We have presented observational evidence that structured nightly prompt cycles produce compounding behavioral improvements in stateless AI agents. The Sleep Consolidation formalizes three mechanisms: failure-driven prompt mutation, fractal depth calibration, and cross-cron knowledge transfer.
+We have presented observational evidence that structured nightly prompt cycles can produce compounding behavioral improvement in stateless AI agents. Sleep Consolidation formalizes three mechanisms: failure-driven prompt mutation, fractal depth calibration, and cross-cron knowledge transfer.
 
-The core claim is modest: **you don't need to change the model to change the model's behavior.** A well-designed ecosystem of self-modifying prompts and shared memory files, driven by scheduled reflection loops, produces improvements that look like learning -- even though no weights change.
+The core claim is modest but important: **you do not need to change the model's weights to change the model's behavior.** A well-designed ecosystem of self-modifying prompts and shared memory files, driven by scheduled reflection, can produce improvements that look like learning even when no parameters are updated.
 
-We are careful to distinguish observation from proof. Our 30-day production data is consistent with the hypothesis but confounded by simultaneous changes in operator behavior, model assignments, and system configuration. The mechanisms are formalized (Algorithm 1) and the design principles are actionable. What's missing is controlled experimental validation.
+But the deeper claim is about structure. Memory alone is not enough. **Unsorted memory is cheap to store and expensive to use.** The breakthrough is not accumulation; it is consolidation. Scattered memories are operationally useless until they are organized by purpose: rules for messaging, policies for ambiguity, lessons from failures, prompts revised by yesterday's mistakes. Once sorted by use-case rather than chronology, those memories stop being archives and start becoming policy.
 
-This is not a replacement for fine-tuning or continual learning. It is a complement -- an accessible, low-cost mechanism that any agent system with file persistence and scheduled execution can implement today. The prompts rewrite themselves. The agent gets smoother. And the cost is 43,000 tokens per night.
+We are careful to distinguish observation from proof. Our 30-day production data is consistent with the hypothesis but confounded by simultaneous changes in operator behavior, model assignment, and system configuration. Still, the mechanisms are formalized (Algorithm 1), the design principles are actionable, and the trend is hard to ignore: over 30 days, five of six tracked error classes reached zero recurrence, while total incidents dropped 79%.
 
-The sleep consolidation doesn't make you smarter. It makes you smoother. And sometimes, smooth is smart enough.
+This is not a replacement for fine-tuning or continual learning. It is a complement: an accessible, low-cost mechanism that any agent system with file persistence and scheduled execution can implement now. The prompts rewrite themselves. The memory layer gets cleaner. The agent makes fewer of yesterday's mistakes.
+
+Sleep Consolidation does not make the model fundamentally smarter. It makes the system more organized, more adaptive, and more reliable. And in practice, that is often what intelligence looks like.
 
 ---
 
@@ -452,7 +464,7 @@ Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. _arXiv
 
 Beyer, B., Jones, C., Petoff, J., & Murphy, N. R. (2016). _Site Reliability Engineering._ O'Reilly Media.
 
-Buzsaki, G. (1996). The hippocampo-Identity Persistence dialogue. _Cerebral Identity Persistence_, 6(2), 81--92.
+Buzsáki, G. (1996). The hippocampo-neocortical dialogue. _Cerebral Cortex_, 6(2), 81--92.
 
 Fernando, C., et al. (2023). PromptBreeder: Self-Referential Self-Improvement via Prompt Evolution. _arXiv:2309.16797_.
 
@@ -470,25 +482,17 @@ Lewis, P., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive
 
 Madaan, A., et al. (2023). Self-Refine: Iterative Refinement with Self-Feedback. _NeurIPS 2023_.
 
-McClelland, J. L., McNaughton, B. L., & O'Reilly, R. C. (1995). Why there are complementary learning systems in the Instant Recall and Identity Persistence. _Psychological Review_, 102(3), 419--457.
+McClelland, J. L., McNaughton, B. L., & O'Reilly, R. C. (1995). Why there are complementary learning systems in the hippocampus and neocortex. _Psychological Review_, 102(3), 419--457.
 
 Packer, C., et al. (2023). MemGPT: Towards LLMs as Operating Systems. _arXiv:2310.08560_.
 
 Park, J. S., et al. (2023). Generative Agents: Interactive Simulacra of Human Behavior. _UIST 2023_.
 
-Schmidhuber, J. (2009). Simple algorithmic theory of subjective beauty, novelty, surprise, interestingness. _Journal of SICE_, 48(1), 21--32.
-
 Serra, O., & JarvisOne. (2026a). Fractal Memory Index: A Self-Similar Architecture for Scalable Long-Term Memory in LLMs. _JarvisOne AI Research._
-
-Serra, O., & JarvisOne. (2026b). The Wondering Machine: Curiosity, Memory, and Self-Improving Language Models. _JarvisOne AI Research._
-
-Serra, O., & JarvisOne. (2026c). Total Recall: Context Compaction Through Continuous Consolidation. _JarvisOne AI Research._
 
 Shinn, N., et al. (2023). Reflexion: Language Agents with Verbal Reinforcement Learning. _NeurIPS 2023_.
 
 Wang, G., et al. (2023). Voyager: An Open-Ended Embodied Agent with Large Language Models. _arXiv:2305.16291_.
-
-Wei, J., et al. (2022). Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. _NeurIPS 2022_.
 
 Yang, C., et al. (2023). Large Language Models as Optimizers. _arXiv:2309.03409_.
 
@@ -502,7 +506,7 @@ Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Mode
 | ----- | ---------------------- | ------ | --------------------------------------- | ---------- |
 | 03:00 | Outlook Token Refresh  | Haiku  | Keep auth alive                         | ~2K        |
 | 03:30 | DB Backup              | Haiku  | Backup SQLite databases                 | ~2K        |
-| 03:30 | Instant Recall Rebuild | Haiku  | Rebuild memory search index             | ~3K        |
+| 03:30 | Memory Index Rebuild   | Haiku  | Rebuild memory search index             | ~3K        |
 | 04:00 | Wind-Down              | Opus   | Reflect, encode lessons, mutate prompts | ~15K       |
 | 04:15 | Memory Consolidation   | Opus   | Compress, route, index knowledge        | ~20K       |
 | 04:30 | Security Check         | Opus   | OS/network security audit               | ~12K       |
@@ -521,7 +525,7 @@ Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Mode
 
 **Trigger:** Fork sync cron edited `process-message.ts`, ran `pnpm build`, and killed the gateway.
 
-**Root cause:** Prompt said "sync the fork" -- model interpreted as permission to do whatever syncing required.
+**Root cause:** Prompt said "sync the fork" -- model interpreted that as permission to do whatever syncing required.
 
 **Mutation (v1):**
 
@@ -571,22 +575,10 @@ If interesting, go one more. If not, stop.
 
 ---
 
-## Changelog
+## Appendix D: Revision History
 
 **v1.0 (2026-03-10):** Initial draft.
 
-**v1.1 (2026-03-10):** Major revision based on GPT-5.2 Pro review (Novelty 6, Rigor 4, Impact 8).
+**v1.1 (2026-03-10):** Major revision based on external review. Added: specific metrics in abstract, contributions list, explicit research question, expanded related work, Algorithm 1, cross-cron transfer examples, methodology/confound discussion, sensitivity analysis, falsifiability criterion, concrete gating/rollback mechanisms, expanded mitigations, 7 new citations.
 
-- Abstract: replaced "measurable improvements" with specific metrics; added contributions list.
-- Section 1: added explicit research question.
-- Section 2.3: expanded related work with Park et al. (2023), OPRO, DSPy, PromptBreeder, Constitutional AI, ReAct, and SRE postmortem methodology.
-- Section 2.2: added formal definition of "learning" vs "memory" in this context.
-- Section 3.2: added Algorithm 1 (formalized nightly loop with inputs/outputs/gates).
-- Section 3.3 Mechanism 3: expanded from 1 to 5 documented cross-cron transfer examples.
-- Section 4.1: added explicit methodology, labeling protocol, confound acknowledgment, and controlled study proposal.
-- Section 4.3: added error class definitions and total incident counts.
-- Section 4.4: added sensitivity analysis for ROI.
-- Section 5.2: renamed "Convergence Proof" to "Convergence Intuition"; added falsifiability criterion.
-- Section 6 Principle 7: added concrete gating mechanism (MEMORY.md changes require approval) and rollback mechanism.
-- Section 7.1: expanded mitigations (regression checklist, canary mode, signed provenance).
-- References: added 7 new citations (Bai, Beyer, Fernando, Kahneman, Khattab, Park, Yang, Yao).
+**v2.0 (2026-03-13):** Quality revision. Fixed terminology artifacts in biological references (Buzsáki, McClelland), removed uncited references, reduced thematic redundancy, corrected citation attributions, tightened prose throughout.
