@@ -50,13 +50,13 @@ Our evidence suggests a qualified yes -- qualified because the improvements are 
 
 Agent systems exist on a spectrum of persistence mechanisms, each with characteristic ceilings (Lewis et al., 2020; Packer et al., 2023; Hu et al., 2021):
 
-| Level | Mechanism               | Persistence                   | Learning Speed   | Characteristic Ceiling                                                |
-| ----- | ----------------------- | ----------------------------- | ---------------- | --------------------------------------------------------------------- |
-| 0     | Prompt engineering      | None (session-only)           | Zero             | Static behavior; cannot adapt beyond session boundary                 |
-| 1     | RAG / retrieval         | Declarative facts             | Per-query        | Retrieval quality bounds; no behavioral change (Lewis et al., 2020)   |
-| 2     | Persistent memory files | Declarative + some procedural | Per-session      | Linear growth, retrieval degradation (Packer et al., 2023)            |
-| 3     | Fine-tuning / LoRA      | Weight-level                  | Per training run | Catastrophic forgetting (French, 1999; Hu et al., 2021)               |
-| 4     | Continual learning      | Full integration              | Continuous       | Open research problem (McClelland et al., 1995)                       |
+| Level | Mechanism               | Persistence                   | Learning Speed   | Characteristic Ceiling                                              |
+| ----- | ----------------------- | ----------------------------- | ---------------- | ------------------------------------------------------------------- |
+| 0     | Prompt engineering      | None (session-only)           | Zero             | Static behavior; cannot adapt beyond session boundary               |
+| 1     | RAG / retrieval         | Declarative facts             | Per-query        | Retrieval quality bounds; no behavioral change (Lewis et al., 2020) |
+| 2     | Persistent memory files | Declarative + some procedural | Per-session      | Linear growth, retrieval degradation (Packer et al., 2023)          |
+| 3     | Fine-tuning / LoRA      | Weight-level                  | Per training run | Catastrophic forgetting (French, 1999; Hu et al., 2021)             |
+| 4     | Continual learning      | Full integration              | Continuous       | Open research problem (McClelland et al., 1995)                     |
 
 Most production agent systems operate at Level 2. This paper shows that Level 2 systems can exhibit Level 3-like _behavioral_ improvement through structured self-reflection, without weight updates.
 
@@ -275,7 +275,7 @@ Over 30 days, we documented 14 prompt mutations -- changes to cron prompts or op
 | 8   | Mar 03 | Fork sync cron edited production code (B010)  | Added HARD CONSTRAINTS to cron prompt                        | Fork sync        |
 | 9   | Mar 03 | Same session: cron killed the gateway         | Added "never pkill" rule                                     | All crons        |
 | 10  | Mar 04 | Build failed after merge -- wrong externals   | Auto-heal retry + wiring guardian                            | Fork sync        |
-| 11  | Mar 05 | Model misidentified person from headline      | Added "ALWAYS click through" rule                           | Self-evolution   |
+| 11  | Mar 05 | Model misidentified person from headline      | Added "ALWAYS click through" rule                            | Self-evolution   |
 | 12  | Mar 07 | Wind-Down wrote to wrong day's log            | Added temporal awareness step                                | Wind-Down        |
 | 13  | Mar 08 | Agent didn't recognize family member          | Added mandatory daily log reading to boot                    | All sessions     |
 | 14  | Mar 10 | Merge abort on single conflict too aggressive | Keep-ours + intelligent resolution                           | Fork sync        |
@@ -502,22 +502,22 @@ Yao, S., et al. (2023). ReAct: Synergizing Reasoning and Acting in Language Mode
 
 ## Appendix A: The Complete Nightly Cycle (Cron Schedule)
 
-| Time  | Job                    | Model  | Purpose                                 | Tokens/run |
-| ----- | ---------------------- | ------ | --------------------------------------- | ---------- |
-| 03:00 | Outlook Token Refresh  | Haiku  | Keep auth alive                         | ~2K        |
-| 03:30 | DB Backup              | Haiku  | Backup SQLite databases                 | ~2K        |
-| 03:30 | Memory Index Rebuild   | Haiku  | Rebuild memory search index             | ~3K        |
-| 04:00 | Wind-Down              | Opus   | Reflect, encode lessons, mutate prompts | ~15K       |
-| 04:15 | Memory Consolidation   | Opus   | Compress, route, index knowledge        | ~20K       |
-| 04:30 | Security Check         | Opus   | OS/network security audit               | ~12K       |
-| 04:45 | Fork Sync              | Opus   | Merge upstream, self-heal build         | ~10K       |
-| 05:00 | Fork Scanner           | Opus   | Analyze other forks for ideas           | ~25K       |
-| 05:15 | Cleaning Lady          | Sonnet | Prune sessions, enforce size budgets    | ~8K        |
-| 05:30 | Self-Evolution         | Opus   | Research new models, techniques         | ~20K       |
-| 05:45 | Group Summary          | Opus   | Summarize WhatsApp groups               | ~15K       |
-| 06:00 | Life Butler            | Opus   | Personal secretary                      | ~10K       |
-| 07:00 | Morning Briefing       | Opus   | Daily summary + action items            | ~12K       |
-| 08:00 | Online Engagement      | Opus   | GitHub PRs, community outreach          | ~12K       |
+| Time  | Job                   | Model  | Purpose                                 | Tokens/run |
+| ----- | --------------------- | ------ | --------------------------------------- | ---------- |
+| 03:00 | Outlook Token Refresh | Haiku  | Keep auth alive                         | ~2K        |
+| 03:30 | DB Backup             | Haiku  | Backup SQLite databases                 | ~2K        |
+| 03:30 | Memory Index Rebuild  | Haiku  | Rebuild memory search index             | ~3K        |
+| 04:00 | Wind-Down             | Opus   | Reflect, encode lessons, mutate prompts | ~15K       |
+| 04:15 | Memory Consolidation  | Opus   | Compress, route, index knowledge        | ~20K       |
+| 04:30 | Security Check        | Opus   | OS/network security audit               | ~12K       |
+| 04:45 | Fork Sync             | Opus   | Merge upstream, self-heal build         | ~10K       |
+| 05:00 | Fork Scanner          | Opus   | Analyze other forks for ideas           | ~25K       |
+| 05:15 | Cleaning Lady         | Sonnet | Prune sessions, enforce size budgets    | ~8K        |
+| 05:30 | Self-Evolution        | Opus   | Research new models, techniques         | ~20K       |
+| 05:45 | Group Summary         | Opus   | Summarize WhatsApp groups               | ~15K       |
+| 06:00 | Life Butler           | Opus   | Personal secretary                      | ~10K       |
+| 07:00 | Morning Briefing      | Opus   | Daily summary + action items            | ~12K       |
+| 08:00 | Online Engagement     | Opus   | GitHub PRs, community outreach          | ~12K       |
 
 ## Appendix B: Prompt Mutation Changelog (Selected)
 

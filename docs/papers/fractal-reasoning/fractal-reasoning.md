@@ -1,0 +1,1 @@
+fractal-reasoning-v7.0.md
