@@ -1,3 +1,4 @@
+import { exec } from "node:child_process";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { resolveAuthProfileOrder } from "../../agents/auth-profiles/order.js";
 import { loadAuthProfileStoreForSecretsRuntime } from "../../agents/auth-profiles/store.js";
@@ -587,5 +588,20 @@ export const configHandlers: GatewayRequestHandlers = {
       },
       undefined,
     );
+  },
+  "config.openFile": ({ params, respond }) => {
+    if (!assertValidParams(params, validateConfigGetParams, "config.openFile", respond)) {
+      return;
+    }
+    const configPath = createConfigIO().configPath;
+    const platform = process.platform;
+    const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open";
+    exec(`${cmd} ${JSON.stringify(configPath)}`, (err) => {
+      if (err) {
+        respond(true, { ok: false, path: configPath, error: err.message }, undefined);
+        return;
+      }
+      respond(true, { ok: true, path: configPath }, undefined);
+    });
   },
 };
