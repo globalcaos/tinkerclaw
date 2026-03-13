@@ -92,6 +92,7 @@ const BASE_METHODS = [
   "cron.remove",
   "cron.run",
   "cron.runs",
+  "gateway.identity.get",
   "system-presence",
   "system-event",
   "send",

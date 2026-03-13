@@ -67,4 +67,6 @@ export type EmbeddedRunAttemptResult = {
   clientToolCall?: { name: string; params: Record<string, unknown> };
   /** Per-turn context anatomy — decomposition of what was sent to the model. */
   contextAnatomy?: ContextAnatomyEvent;
+  /** True when sessions_yield tool was called during this attempt. */
+  yieldDetected?: boolean;
 };
