@@ -222,10 +222,17 @@ export async function acquireGatewayLock(
 
       lastPayload = await readLockPayload(lockPath);
       const ownerPid = lastPayload?.pid;
-      const ownerStatus = ownerPid
-        ? await resolveGatewayOwnerStatus(ownerPid, lastPayload, platform, port)
-        : "unknown";
-      if (ownerStatus === "dead" && ownerPid) {
+      // FORK: When lock has no payload (crashed mid-write), check port to detect dead owner.
+      // Without this, an empty lock + systemd Restart=always creates an unbreakable cycle.
+      let ownerStatus: LockOwnerStatus;
+      if (ownerPid) {
+        ownerStatus = await resolveGatewayOwnerStatus(ownerPid, lastPayload, platform, port);
+      } else if (port != null && await checkPortFree(port)) {
+        ownerStatus = "dead";
+      } else {
+        ownerStatus = "unknown";
+      }
+      if (ownerStatus === "dead") {
         await fs.rm(lockPath, { force: true });
         continue;
       }
