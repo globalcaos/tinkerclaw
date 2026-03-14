@@ -550,12 +550,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
           throw err;
         }
-        const waitMs = Math.min(
-          EMBEDDING_RETRY_MAX_DELAY_MS,
-          Math.round(delayMs * (1 + Math.random() * 0.2)),
-        );
-        log.warn(`memory embeddings rate limited; retrying in ${waitMs}ms`);
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await this.waitForEmbeddingRetry(delayMs, "retrying");
         delayMs *= 2;
         attempt += 1;
       }
@@ -589,16 +584,20 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
           throw err;
         }
-        const waitMs = Math.min(
-          EMBEDDING_RETRY_MAX_DELAY_MS,
-          Math.round(delayMs * (1 + Math.random() * 0.2)),
-        );
-        log.warn(`memory embeddings rate limited; retrying structured batch in ${waitMs}ms`);
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await this.waitForEmbeddingRetry(delayMs, "retrying structured batch");
         delayMs *= 2;
         attempt += 1;
       }
     }
+  }
+
+  private async waitForEmbeddingRetry(delayMs: number, action: string): Promise<void> {
+    const waitMs = Math.min(
+      EMBEDDING_RETRY_MAX_DELAY_MS,
+      Math.round(delayMs * (1 + Math.random() * 0.2)),
+    );
+    log.warn(`memory embeddings rate limited; ${action} in ${waitMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
   private isRetryableEmbeddingError(message: string): boolean {
