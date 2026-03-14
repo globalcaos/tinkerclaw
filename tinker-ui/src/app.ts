@@ -910,7 +910,7 @@ function onFrame(f: any) {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: "webchat-ui",
+          id: "openclaw-control-ui",
           displayName: "Tinker UI",
           version: "0.3",
           platform: "web",
