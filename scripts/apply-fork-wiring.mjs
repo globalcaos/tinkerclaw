@@ -722,6 +722,44 @@ function patchErrors() {
 }
 
 // ---------------------------------------------------------------------------
+// 13. message-handler.ts — scope-clearing fix for authenticated operators
+// ---------------------------------------------------------------------------
+function patchMessageHandlerScopes() {
+  const file = "src/gateway/server/ws-connection/message-handler.ts";
+  let src = readFile(file);
+
+  // Upstream has: if (!device && (!isControlUi || decision.kind !== "allow"))
+  // Fork needs:  if (!device && decision.kind !== "allow")
+  // This allows ANY authenticated operator (not just control-ui) to keep declared scopes.
+  const upstream = /if \(!device && \(!isControlUi \|\| decision\.kind !== "allow"\)\)/;
+  const forkLine = 'if (!device && decision.kind !== "allow")';
+
+  if (src.includes(forkLine) && !upstream.test(src)) {
+    console.log(`  ✅ ${file} — scope-clearing fix already applied`);
+    return;
+  }
+
+  if (!upstream.test(src)) {
+    console.warn(`  ⚠️  ${file} — could not find upstream scope-clearing pattern to patch`);
+    return;
+  }
+
+  src = src.replace(
+    upstream,
+    `// FORK: extended from control-ui-only to all authenticated operators (#scope-fix).
+          ${forkLine}`,
+  );
+
+  // Also update the comment block above if the old upstream comment exists
+  src = src.replace(
+    /\/\/ device-less backend clients must not self-declare scopes\.\s*Only\s*control[\s\S]*?(?=\n\s*(?:\/\/ FORK|if \(!device))/,
+    "// device-less backend clients must not self-declare scopes. Any operator\n          // that passed auth checks (decision === \"allow\") keeps its declared scopes;\n          ",
+  );
+
+  writeFile(file, src);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 console.log("🔌 Applying fork hook wiring...\n");
@@ -785,6 +823,11 @@ try {
   patchErrors();
 } catch (err) {
   console.warn(`  ⚠️  errors.ts: ${err.message}`);
+}
+try {
+  patchMessageHandlerScopes();
+} catch (err) {
+  console.warn(`  ⚠️  message-handler.ts scopes: ${err.message}`);
 }
 
 console.log("\n✅ Fork wiring applied. Run: pnpm build");
