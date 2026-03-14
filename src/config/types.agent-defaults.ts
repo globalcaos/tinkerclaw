@@ -286,7 +286,7 @@ export type AgentDefaultsConfig = {
   sandbox?: AgentSandboxConfig;
 };
 
-export type AgentCompactionMode = "default" | "safeguard";
+export type AgentCompactionMode = "default" | "safeguard" | "engram";
 export type AgentCompactionPostIndexSyncMode = "off" | "async" | "await";
 export type AgentCompactionIdentifierPolicy = "strict" | "off" | "custom";
 export type AgentCompactionQualityGuardConfig = {
@@ -307,6 +307,8 @@ export type AgentCompactionConfig = {
   reserveTokensFloor?: number;
   /** Max share of context window for history during safeguard pruning (0.1–0.9, default 0.5). */
   maxHistoryShare?: number;
+  /** Engram pointer-mode retrieval toggle. */
+  pointerMode?: boolean;
   /** Additional compaction-summary instructions that can preserve language or persona continuity. */
   customInstructions?: string;
   /** Preserve this many most-recent user/assistant turns verbatim in compaction summary context. */
