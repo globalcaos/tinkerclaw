@@ -24,6 +24,8 @@ let sessions: any[] = [];
 let messages: any[] = [];
 /** Index into messages[] of the current streaming temporary message, or -1 if none. */
 let streamMsgIdx = -1;
+/** Index into messages[] of the current streaming thinking message, or -1 if none. */
+let thinkingMsgIdx = -1;
 let streamRunId: string | null = null;
 /** Tracks how much of the server's accumulated text is already shown in frozen temp messages. */
 let frozenTextEnd = 0;
@@ -582,6 +584,7 @@ function randomFortune(): string {
 interface TabState {
   messages: any[];
   streamMsgIdx: number;
+  thinkingMsgIdx: number;
   streamRunId: string | null;
   frozenTextEnd: number;
   lastDeltaLen: number;
@@ -597,6 +600,7 @@ function freshTabState(): TabState {
   return {
     messages: [],
     streamMsgIdx: -1,
+    thinkingMsgIdx: -1,
     streamRunId: null,
     frozenTextEnd: 0,
     lastDeltaLen: 0,
@@ -613,6 +617,7 @@ function saveCurrentTabState() {
   const s = tabStates.get(activeTabId) ?? freshTabState();
   s.messages = messages;
   s.streamMsgIdx = streamMsgIdx;
+  s.thinkingMsgIdx = thinkingMsgIdx;
   s.streamRunId = streamRunId;
   s.frozenTextEnd = frozenTextEnd;
   s.lastDeltaLen = lastDeltaLen;
@@ -629,6 +634,7 @@ function loadTabState(tabId: string) {
   const s = tabStates.get(tabId) ?? freshTabState();
   messages = s.messages;
   streamMsgIdx = s.streamMsgIdx;
+  thinkingMsgIdx = s.thinkingMsgIdx;
   streamRunId = s.streamRunId;
   frozenTextEnd = s.frozenTextEnd;
   lastDeltaLen = s.lastDeltaLen;
@@ -891,6 +897,7 @@ function gwConnect() {
     connected = false;
     sending = false;
     streamMsgIdx = -1;
+    thinkingMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
     streamRunId = null;
@@ -1161,6 +1168,32 @@ function onEvent(evt: any) {
         }
       }
       updateChat();
+    } else if (p.state === "thinking_delta") {
+      streamRunId = p.runId;
+      const thinkingText = p.message?.content?.[0]?.text ?? "";
+      if (thinkingText) {
+        if (thinkingMsgIdx >= 0 && messages[thinkingMsgIdx]?._temporary) {
+          // Update existing thinking temporary message
+          const content = messages[thinkingMsgIdx].content;
+          const block = content.find((b: any) => b.type === "thinking");
+          if (block) {
+            block.text = thinkingText;
+          }
+        } else {
+          // Create a new thinking temporary message
+          messages.push({
+            role: "assistant",
+            content: [{ type: "thinking", text: thinkingText }],
+            _temporary: true,
+          });
+          thinkingMsgIdx = messages.length - 1;
+        }
+      }
+      updateChat();
+    } else if (p.state === "thinking_end") {
+      // Freeze the thinking message — next delta (text or thinking) starts a new bubble
+      thinkingMsgIdx = -1;
+      updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
       // FORK: Un-queue any queued user messages on final/error
       for (const m of messages) {
@@ -1296,6 +1329,7 @@ function onEvent(evt: any) {
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
+      thinkingMsgIdx = -1;
       frozenTextEnd = 0;
       lastDeltaLen = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
@@ -1732,6 +1766,7 @@ async function loadChat() {
     return;
   }
   streamMsgIdx = -1;
+  thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
   messages = res.messages ?? [];
@@ -1885,6 +1920,7 @@ function retryProvider(provider: string) {
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
   streamMsgIdx = -1;
+  thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
   messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
@@ -1917,6 +1953,7 @@ async function abort() {
   sending = false;
   messages = messages.filter((m: any) => !m._temporary);
   streamMsgIdx = -1;
+  thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
   streamRunId = null;
@@ -2238,10 +2275,10 @@ function renderMsg(
   let blockIdx = 0;
   let hasNonToolContent = false;
 
-  // Check if this message has any non-tool content (text blocks or plain string)
+  // Check if this message has any non-tool content (text, thinking blocks, or plain string)
   if (typeof msg.content === "string" && msg.content.trim()) hasNonToolContent = true;
   for (const b of content) {
-    if (b.type === "text" && (b.text ?? "").trim()) {
+    if ((b.type === "text" || b.type === "thinking") && (b.text ?? "").trim()) {
       hasNonToolContent = true;
       break;
     }
@@ -2292,7 +2329,8 @@ function renderMsg(
   }
 
   // ─── Pre-pass: merge all text blocks into one so markdown elements
-  // (tables, lists) that span tool-call boundaries render as a single block. ───
+  // (tables, lists) that span tool-call boundaries render as a single block.
+  // Thinking blocks are kept separate — they render with their own styling. ───
   const mergedContent: typeof content = [];
   let pendingText = "";
   for (const block of content) {
@@ -2355,6 +2393,12 @@ function renderMsg(
         h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
       } else {
         h += renderSystemMsg(text, idx);
+      }
+    } else if (block.type === "thinking") {
+      // Thinking content blocks always render with thinking styling
+      const text = (block.text ?? "").trim();
+      if (text) {
+        h += `<div class="msg assistant msg-thinking"><span class="thinking-label">Thinking:</span> ${md(text)}</div>`;
       }
     } else if (block.type === "tool_use") {
       const a = block.input ?? {};
@@ -2717,6 +2761,12 @@ function updateChat(skipScroll = false) {
         const m = messages[j];
         if ((m.role ?? "").toLowerCase() !== "assistant") continue;
         const c = Array.isArray(m.content) ? m.content : [];
+        // Messages with type:"thinking" blocks are always thinking
+        const hasThinkingBlock = c.some((b: any) => b.type === "thinking");
+        if (hasThinkingBlock) {
+          thinkingSet.add(j);
+          continue;
+        }
         const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasText || plainText) assistantTextIndices.push(j);
@@ -5647,6 +5697,7 @@ function init() {
 
     messages.length = 0;
     streamMsgIdx = -1;
+    thinkingMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
     streamRunId = null;
