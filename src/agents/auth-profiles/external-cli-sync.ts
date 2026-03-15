@@ -1,12 +1,9 @@
 import {
+  readCodexCliCredentialsCached,
   readQwenCliCredentialsCached,
   readMiniMaxCliCredentialsCached,
-  readClaudeCliGmCredentialsCached,
-  readClaudeCliSvCredentialsCached,
 } from "../cli-credentials.js";
 import {
-  CLAUDE_CLI_PROFILE_ID,
-  CLAUDE_CLI_SV_PROFILE_ID,
   EXTERNAL_CLI_NEAR_EXPIRY_MS,
   EXTERNAL_CLI_SYNC_TTL_MS,
   QWEN_CLI_PROFILE_ID,
@@ -14,6 +11,8 @@ import {
   log,
 } from "./constants.js";
 import type { AuthProfileCredential, AuthProfileStore, OAuthCredential } from "./types.js";
+
+const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai-codex:default";
 
 function shallowEqualOAuthCredentials(a: OAuthCredential | undefined, b: OAuthCredential): boolean {
   if (!a) {
@@ -44,7 +43,7 @@ function isExternalProfileFresh(cred: AuthProfileCredential | undefined, now: nu
   if (
     cred.provider !== "qwen-portal" &&
     cred.provider !== "minimax-portal" &&
-    cred.provider !== "anthropic"
+    cred.provider !== "openai-codex"
   ) {
     return false;
   }
@@ -90,7 +89,8 @@ function syncExternalCliCredentialsForProvider(
 }
 
 /**
- * Sync OAuth credentials from external CLI tools (Qwen Code CLI, MiniMax CLI) into the store.
+ * Sync OAuth credentials from external CLI tools (Qwen Code CLI, MiniMax CLI, Codex CLI)
+ * into the store.
  *
  * Returns true if any credentials were updated.
  */
@@ -138,50 +138,16 @@ export function syncExternalCliCredentials(store: AuthProfileStore): boolean {
   ) {
     mutated = true;
   }
-
-  // FORK: Sync SV credentials from ~/.claude/.credentials-sv.json
-  // OpenClaw is the sole writer for this file — refresh is race-free.
-  const svCred = readClaudeCliSvCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS });
-  if (svCred && svCred.type === "oauth") {
-    const existing = store.profiles[CLAUDE_CLI_SV_PROFILE_ID];
-    const existingOAuth = existing?.type === "oauth" ? existing : undefined;
-    const shouldUpdate =
-      !existingOAuth ||
-      existingOAuth.provider !== "anthropic" ||
-      existingOAuth.expires <= now ||
-      svCred.expires > existingOAuth.expires;
-
-    if (shouldUpdate && !shallowEqualOAuthCredentials(existingOAuth, svCred)) {
-      store.profiles[CLAUDE_CLI_SV_PROFILE_ID] = svCred;
-      mutated = true;
-      log.info("synced anthropic SV credentials from cli file", {
-        profileId: CLAUDE_CLI_SV_PROFILE_ID,
-        expires: new Date(svCred.expires).toISOString(),
-      });
-    }
-  }
-
-  // FORK: Sync GM credentials from ~/.claude/.credentials-gm.json
-  // Separate file from Claude Code's main credential (which may be SV account).
-  // GM tokens managed independently via anthropic-oauth-login.mjs + auto-refresh.
-  const claudeCred = readClaudeCliGmCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS });
-  if (claudeCred && claudeCred.type === "oauth") {
-    const existing = store.profiles[CLAUDE_CLI_PROFILE_ID];
-    const existingOAuth = existing?.type === "oauth" ? existing : undefined;
-    const shouldUpdate =
-      !existingOAuth ||
-      existingOAuth.provider !== "anthropic" ||
-      existingOAuth.expires <= now ||
-      claudeCred.expires > existingOAuth.expires;
-
-    if (shouldUpdate && !shallowEqualOAuthCredentials(existingOAuth, claudeCred)) {
-      store.profiles[CLAUDE_CLI_PROFILE_ID] = claudeCred;
-      mutated = true;
-      log.info("synced anthropic credentials from claude code cli", {
-        profileId: CLAUDE_CLI_PROFILE_ID,
-        expires: new Date(claudeCred.expires).toISOString(),
-      });
-    }
+  if (
+    syncExternalCliCredentialsForProvider(
+      store,
+      OPENAI_CODEX_DEFAULT_PROFILE_ID,
+      "openai-codex",
+      () => readCodexCliCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS }),
+      now,
+    )
+  ) {
+    mutated = true;
   }
 
   return mutated;

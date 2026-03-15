@@ -7,10 +7,12 @@ import {
   DefaultResourceLoader,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
+import { resolveSignalReactionLevel } from "../../../../extensions/signal/src/reaction-level.js";
+import { resolveTelegramInlineButtonsScope } from "../../../../extensions/telegram/src/inline-buttons.js";
+import { resolveTelegramReactionLevel } from "../../../../extensions/telegram/src/reaction-level.js";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
-import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: used by full attempt hooks
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import {
   ensureGlobalUndiciEnvProxyDispatcher,
@@ -25,9 +27,6 @@ import type {
 } from "../../../plugins/types.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../../../routing/session-key.js";
 import { joinPresentTextSegments } from "../../../shared/text/join-segments.js";
-import { resolveSignalReactionLevel } from "../../../signal/reaction-level.js";
-import { resolveTelegramInlineButtonsScope } from "../../../telegram/inline-buttons.js";
-import { resolveTelegramReactionLevel } from "../../../telegram/reaction-level.js";
 import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { resolveUserPath } from "../../../utils.js";
 import { normalizeMessageChannel } from "../../../utils/message-channel.js";
@@ -47,7 +46,6 @@ import {
   listChannelSupportedActions,
   resolveChannelMessageToolHints,
 } from "../../channel-tools.js";
-import { estimateTokens } from "../../context-anatomy.js"; // FORK: round-start token estimate
 import { ensureCustomApiRegistered } from "../../custom-api-registry.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
@@ -113,6 +111,7 @@ import {
   clearActiveEmbeddedRun,
   type EmbeddedPiQueueHandle,
   setActiveEmbeddedRun,
+  updateActiveEmbeddedRunSnapshot,
 } from "../runs.js";
 import { buildEmbeddedSandboxInfo } from "../sandbox-info.js";
 import { prewarmSessionFile, trackSessionManagerAccess } from "../session-manager-cache.js";
@@ -832,6 +831,7 @@ function extractBalancedJsonPrefix(raw: string): string | null {
 const MAX_TOOLCALL_REPAIR_BUFFER_CHARS = 64_000;
 const MAX_TOOLCALL_REPAIR_TRAILING_CHARS = 3;
 const TOOLCALL_REPAIR_ALLOWED_TRAILING_RE = /^[^\s{}[\]":,\\]{1,3}$/;
+const MAX_BTW_SNAPSHOT_MESSAGES = 100;
 
 function shouldAttemptMalformedToolCallRepair(partialJson: string, delta: string): boolean {
   if (/[}\]]/.test(delta)) {
@@ -1641,9 +1641,6 @@ export async function runEmbeddedAttempt(
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
 
-    // FORK: persona block injection from CORTEX/SOUL.md
-    const personaBlock = _forkAttemptHooks.getPersonaBlock(effectiveWorkspace);
-
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -1674,7 +1671,6 @@ export async function runEmbeddedAttempt(
       contextFiles,
       bootstrapTruncationWarningLines: bootstrapPromptWarning.lines,
       memoryCitationsMode: params.config?.memory?.citations,
-      personaBlock, // FORK: Tier 1 persona block from CORTEX runtime
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
@@ -1778,7 +1774,6 @@ export async function runEmbeddedAttempt(
       const extensionFactories = buildEmbeddedExtensionFactories({
         cfg: params.config,
         sessionManager,
-        sessionKey: params.sessionKey,
         provider: params.provider,
         modelId: params.modelId,
         model: params.model,
@@ -2215,9 +2210,6 @@ export async function runEmbeddedAttempt(
         sessionKey: sandboxSessionKey,
         sessionId: params.sessionId,
         agentId: sessionAgentId,
-        authProfileId: params.authProfileId,
-        modelId: params.modelId,
-        modelProvider: params.provider,
       });
 
       const {
@@ -2247,7 +2239,6 @@ export async function runEmbeddedAttempt(
       setActiveEmbeddedRun(params.sessionId, queueHandle, params.sessionKey);
 
       let abortWarnTimer: NodeJS.Timeout | undefined;
-      let _forkRoundNumber = 0;
       const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
       const abortTimer = setTimeout(
         () => {
@@ -2314,7 +2305,6 @@ export async function runEmbeddedAttempt(
       let promptError: unknown = null;
       let promptErrorSource: "prompt" | "compaction" | null = null;
       const prePromptMessageCount = activeSession.messages.length;
-      let roundTurnNumber = 0; // FORK: declared here so both pre-prompt and finally can access
       try {
         const promptStartedAt = Date.now();
 
@@ -2388,6 +2378,8 @@ export async function runEmbeddedAttempt(
               `runId=${params.runId} sessionId=${params.sessionId}`,
           );
         }
+        const transcriptLeafId =
+          (sessionManager.getLeafEntry() as { id?: string } | null | undefined)?.id ?? null;
 
         try {
           // Idempotent cleanup for legacy sessions with persisted image payloads.
@@ -2466,108 +2458,12 @@ export async function runEmbeddedAttempt(
               });
           }
 
-          // FORK: mid-context persona re-injection when SyncScore drops
-          {
-            const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
-              activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-              systemPromptText ?? "",
-              log,
-            );
-            if (reinjectResult.reinjected && systemPromptText != null) {
-              systemPromptText = reinjectResult.systemPromptText;
-            }
-          }
-
-          // FORK: ENGRAM retrieval pack injection — inject relevant past events into system prompt
-          {
-            const lastUserMsg = activeSession.messages
-              .slice()
-              .toReversed()
-              .find((m: { role?: string }) => (m as { role?: string }).role === "user");
-            // Extract text from string or structured content blocks
-            const rawContent = (lastUserMsg as { content?: unknown })?.content;
-            let query: string;
-            if (typeof rawContent === "string") {
-              query = rawContent.slice(0, 512);
-            } else if (Array.isArray(rawContent)) {
-              query =
-                (rawContent as Array<{ type?: string; text?: string }>)
-                  .filter((b) => b.type === "text" && typeof b.text === "string")
-                  .map((b) => b.text)
-                  .join(" ")
-                  .slice(0, 512) || "recent conversation";
-            } else {
-              query = "recent conversation";
-            }
-            systemPromptText = await _forkAttemptHooks.injectRetrievalPack(
-              sessionManager as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-              systemPromptText ?? "",
-              query,
-              log,
-            );
-          }
-
-          // FORK: ENGRAM pointer compaction — proactively evict old events before prompt
-          {
-            const contextWindowTokens =
-              params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS;
-            const ptrResult = _forkAttemptHooks.tryPointerCompaction(
-              sessionManager as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-              activeSession.messages as Array<{ role: string; content?: unknown }>,
-              contextWindowTokens,
-              params.sessionKey ?? params.sessionId,
-              log,
-            );
-            if (ptrResult.compacted && ptrResult.messages) {
-              activeSession.agent.replaceMessages(
-                ptrResult.messages as import("@mariozechner/pi-agent-core").AgentMessage[],
-              );
-              log.info(
-                `engram: pre-prompt pointer compaction applied — ${ptrResult.eventsEvicted} events evicted, ~${ptrResult.tokensFreed} tokens freed`,
-              );
-            }
-          }
-
-          // FORK: emit round-start event for real-time timeline
-          _forkRoundNumber++;
-          roundTurnNumber = activeSession.messages.filter(
-            (m: { role?: string }) => (m as { role?: string }).role === "user",
-          ).length;
-          _forkAttemptHooks.emitRoundStart({
-            runId: params.runId,
-            sessionKey: params.sessionKey,
-            roundNumber: _forkRoundNumber,
-            turnNumber: roundTurnNumber,
-            model: params.modelId,
-            provider: params.provider,
-            authProfileId: params.authProfileId,
-            inputTokensEstimate: estimateTokens(JSON.stringify(activeSession.messages).length),
-            toolsAvailable: tools.length,
+          const btwSnapshotMessages = activeSession.messages.slice(-MAX_BTW_SNAPSHOT_MESSAGES);
+          updateActiveEmbeddedRunSnapshot(params.sessionId, {
+            transcriptLeafId,
+            messages: btwSnapshotMessages,
+            inFlightPrompt: effectivePrompt,
           });
-
-          // FORK: emit anatomy + forensic dump before LLM call so Tinker UI shows bar + details immediately
-          _forkAttemptHooks
-            .emitPrePromptAnatomy({
-              runId: params.runId,
-              sessionKey: params.sessionKey,
-              messagesSnapshot: activeSession.messages.slice(),
-              systemPromptReport,
-              provider: params.provider,
-              modelId: params.modelId,
-              modelApi: params.provider,
-              contextWindowTokens:
-                params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-              getCompactionCount,
-              systemPromptText: systemPromptText ?? "",
-              tools,
-              effectivePrompt,
-              authProfileId: params.authProfileId,
-              roundNumber: _forkRoundNumber,
-              log,
-            })
-            .catch((err) => {
-              log.warn(`pre-prompt anatomy emit failed: ${String(err)}`);
-            });
 
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
@@ -2601,24 +2497,6 @@ export async function runEmbeddedAttempt(
             promptErrorSource = "prompt";
           }
         } finally {
-          // FORK: emit round-complete with timing
-          {
-            const promptDuration = Date.now() - promptStartedAt;
-            const roundUsage = getUsageTotals();
-            _forkAttemptHooks.emitRoundComplete({
-              runId: params.runId,
-              sessionKey: params.sessionKey,
-              roundNumber: _forkRoundNumber,
-              turnNumber: roundTurnNumber,
-              model: params.modelId,
-              provider: params.provider,
-              outputTokens: roundUsage?.output,
-              inputTokens: roundUsage?.input,
-              stopReason: promptError ? "error" : "complete",
-              durationMs: promptDuration,
-              toolCallsRequested: (toolMetas as unknown[]).length,
-            });
-          }
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
           );
@@ -2829,24 +2707,6 @@ export async function runEmbeddedAttempt(
               log.warn(`agent_end hook failed: ${err}`);
             });
         }
-
-        // FORK: text-tool-call interception for local providers (ollama/lmstudio/vllm)
-        if (!promptError && !aborted && tools.length > 0) {
-          const ttcResult = await _forkAttemptHooks.interceptTextToolCalls({
-            provider: params.provider,
-            activeSession: activeSession as never,
-            tools: tools as never,
-            toolMetas: toolMetas as never,
-            promptError,
-            aborted,
-            abortSignal: params.abortSignal,
-            abortable,
-            log,
-          });
-          if (ttcResult.promptError) {
-            promptError = ttcResult.promptError;
-          }
-        }
       } finally {
         clearTimeout(abortTimer);
         if (abortWarnTimer) {
@@ -2909,29 +2769,6 @@ export async function runEmbeddedAttempt(
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
       }
-
-      // FORK: fire-and-forget post-turn processing (context anatomy, ENGRAM, SyncScore, observations)
-      _forkAttemptHooks
-        .onTurnComplete({
-          runId: params.runId,
-          sessionManager:
-            activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-          sessionKey: params.sessionKey,
-          messagesSnapshot,
-          assistantTexts,
-          systemPromptReport,
-          provider: params.provider,
-          modelId: params.modelId,
-          contextWindowTokens:
-            params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-          getCompactionCount,
-          getUsageTotals,
-          authProfileId: params.authProfileId,
-          log,
-        })
-        .catch((err) => {
-          log.warn(`fork onTurnComplete failed: ${String(err)}`);
-        });
 
       return {
         aborted,

@@ -4,32 +4,17 @@ import type {
   GroupPolicy,
   MarkdownConfig,
 } from "./types.base.js";
-import type { ChannelHeartbeatVisibilityConfig } from "./types.channels.js";
+import type {
+  ChannelHealthMonitorConfig,
+  ChannelHeartbeatVisibilityConfig,
+} from "./types.channels.js";
 import type { DmConfig } from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
 export type WhatsAppActionConfig = {
-  // Messaging
   reactions?: boolean;
   sendMessage?: boolean;
   polls?: boolean;
-  edit?: boolean;
-  unsend?: boolean;
-  reply?: boolean;
-  sticker?: boolean;
-  // Group management
-  groupCreate?: boolean;
-  renameGroup?: boolean;
-  setGroupDescription?: boolean;
-  setGroupIcon?: boolean;
-  addParticipant?: boolean;
-  removeParticipant?: boolean;
-  promoteParticipant?: boolean;
-  demoteParticipant?: boolean;
-  leaveGroup?: boolean;
-  getInviteCode?: boolean;
-  revokeInviteCode?: boolean;
-  groupMetadata?: boolean;
 };
 
 export type WhatsAppGroupConfig = {
@@ -49,21 +34,6 @@ export type WhatsAppAckReactionConfig = {
    * - "mentions": react only when bot is mentioned
    * - "never": never react in groups
    * Default: "mentions"
-   */
-  group?: "always" | "mentions" | "never";
-};
-
-export type WhatsAppAckMessageConfig = {
-  /** Text to send as an instant acknowledgment message (e.g., "⚡"). Empty = disabled. */
-  text?: string;
-  /** Send ack message in direct chats. Default: true. */
-  direct?: boolean;
-  /**
-   * Send ack message in group chats:
-   * - "always": send for all group messages
-   * - "mentions": send only when bot is mentioned
-   * - "never": never send in groups
-   * Default: "never"
    */
   group?: "always" | "mentions" | "never";
 };
@@ -107,21 +77,12 @@ type WhatsAppSharedConfig = {
   groups?: Record<string, WhatsAppGroupConfig>;
   /** Acknowledgment reaction sent immediately upon message receipt. */
   ackReaction?: WhatsAppAckReactionConfig;
-  /** Acknowledgment message sent immediately upon message receipt (e.g., "⚡"). */
-  ackMessage?: WhatsAppAckMessageConfig;
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
   debounceMs?: number;
   /** Heartbeat visibility settings. */
   heartbeat?: ChannelHeartbeatVisibilityConfig;
-  /**
-   * Request full history sync from WhatsApp on connect (OPT-IN, default false).
-   * Warning: This can download thousands of messages and consume significant memory.
-   */
-  syncFullHistory?: boolean;
-  /** Prefix that must appear at the start of a group message for the bot to respond. */
-  triggerPrefix?: string;
-  /** Group JIDs exempt from triggerPrefix (messages forwarded without prefix check). */
-  triggerPrefixExempt?: string[];
+  /** Channel health monitor overrides for this channel/account. */
+  healthMonitor?: ChannelHealthMonitorConfig;
 };
 
 type WhatsAppConfigCore = {
