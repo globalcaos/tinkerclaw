@@ -11,7 +11,7 @@
  * minimal (two function calls).
  */
 
-import { sendReactionWhatsApp } from "../../outbound.js";
+import { sendReactionWhatsApp } from "../../send.js";
 
 const THINKING_EMOJIS = ["🤔", "🧐"] as const;
 const HEARTBEAT_INTERVAL_MS = 1000;
