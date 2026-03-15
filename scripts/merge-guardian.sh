@@ -147,6 +147,11 @@ check_extended_wirings() {
   check_wiring "src/agents/openclaw-tools.ts" "createWhatsAppHistoryTool" "WhatsApp history tool in openclaw-tools.ts"
   check_wiring "src/agents/pi-embedded-runner/run.ts" "FORK: Use session-scoped global lane" "Per-session global lane (no cross-session serialization)"
 
+  # Thinking block preservation (2026-03-15)
+  check_wiring "src/agents/pi-embedded-subscribe.handlers.messages.ts" "phase.*end" "thinking-end agent event in emitReasoningEnd"
+  check_wiring "src/gateway/server-chat.ts" "thinking_delta" "thinking_delta chat broadcast in server-chat.ts"
+  check_wiring "src/gateway/server-chat.ts" "thinking_end" "thinking_end chat broadcast in server-chat.ts"
+
   if [[ -f "$ROOT/src/web/auto-reply/monitor.ts" ]]; then
     if grep -q "unknown as.*ActiveWebListener\|unknown as import" "$ROOT/src/web/auto-reply/monitor.ts" 2>/dev/null; then
       ok "ActiveWebListener cast in monitor.ts"
@@ -180,6 +185,13 @@ check_bundler_deps() {
   check_wiring "extensions/budget-panel/index.ts" "resolveApiKeyForProfile" "Budget-panel live OAuth token resolution"
   check_wiring "extensions/budget-panel/index.ts" "ensureAuthProfileStore" "Budget-panel auth store access"
   check_wiring "extensions/budget-panel/index.ts" "writeClaudeCliGmCredentials" "Budget-panel GM token write-back"
+
+  # live-capture must be a named import (not default) for tsdown bundling
+  if grep -q 'import _liveCapture from' "$ROOT/extensions/whatsapp/src/session.ts" 2>/dev/null; then
+    warn "session.ts still uses default import _liveCapture (breaks tsdown bundling)"
+  else
+    ok "session.ts uses named import for bindHistoryCapture"
+  fi
 }
 
 check_config_schemas() {

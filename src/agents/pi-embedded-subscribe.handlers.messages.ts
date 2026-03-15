@@ -38,6 +38,12 @@ function emitReasoningEnd(ctx: EmbeddedPiSubscribeContext) {
     return;
   }
   ctx.state.reasoningStreamOpen = false;
+  // FORK: emit thinking-end event for Tinker UI thinking block separation
+  emitAgentEvent({
+    runId: ctx.params.runId,
+    stream: "thinking",
+    data: { phase: "end" },
+  });
   void ctx.params.onReasoningEnd?.();
 }
 
