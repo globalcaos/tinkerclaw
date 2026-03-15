@@ -1,40 +1,4 @@
-// fork: triggerPrefix support
-import type { OpenClawConfig as TriggerPrefixConfig } from "../../config/config.js";
-
-/**
- * Resolve the triggerPrefix for a channel.
- * Returns undefined if no prefix is configured.
- */
-function resolveTriggerPrefix(cfg: TriggerPrefixConfig, channel: string): string | undefined {
-  const channelConfig = (cfg.channels as Record<string, { triggerPrefix?: string } | undefined>)?.[
-    channel
-  ];
-  return channelConfig?.triggerPrefix ?? cfg.channels?.defaults?.triggerPrefix;
-}
-
-/**
- * Check if message passes triggerPrefix filter.
- * Returns { pass: true, strippedBody } if prefix matches (or no prefix configured).
- * Returns { pass: false } if prefix required but not found.
- */
-function checkTriggerPrefix(
-  body: string,
-  prefix: string | undefined,
-): { pass: true; strippedBody: string } | { pass: false } {
-  if (!prefix) {
-    return { pass: true, strippedBody: body };
-  }
-  const trimmed = body.trim();
-  const prefixLower = prefix.toLowerCase();
-  const bodyLower = trimmed.toLowerCase();
-  if (!bodyLower.startsWith(prefixLower)) {
-    return { pass: false };
-  }
-  let stripped = trimmed.slice(prefix.length);
-  stripped = stripped.replace(/^[,:\s]+/, "");
-  return { pass: true, strippedBody: stripped || trimmed };
-}
-// end fork: triggerPrefix
+import { shouldSuppressLocalDiscordExecApprovalPrompt } from "../../../extensions/discord/src/exec-approvals.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
@@ -44,7 +8,6 @@ import {
   resolveStorePath,
   type SessionEntry,
 } from "../../config/sessions.js";
-import { shouldSuppressLocalDiscordExecApprovalPrompt } from "../../discord/exec-approvals.js";
 import { logVerbose } from "../../globals.js";
 import { fireAndForgetHook } from "../../hooks/fire-and-forget.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
@@ -204,7 +167,6 @@ export async function dispatchReplyFromConfig(params: {
   };
 
   if (shouldSkipDuplicateInbound(ctx)) {
-    console.log(`[DISPATCH] SKIP: duplicate sessionKey=${sessionKey}`);
     recordProcessed("skipped", { reason: "duplicate" });
     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
   }
@@ -218,60 +180,6 @@ export async function dispatchReplyFromConfig(params: {
   const routeThreadId =
     ctx.MessageThreadId ?? parseSessionThreadInfo(acpDispatchSessionKey).threadId;
   const inboundAudio = isInboundAudioContext(ctx);
-
-  // Check triggerPrefix filter (e.g., "Jarvis" prefix requirement)
-  // For audio messages: transcribe first, then check prefix against transcript.
-  const triggerPrefix = resolveTriggerPrefix(cfg, channel);
-  const triggerPrefixExemptList =
-    (cfg.channels as Record<string, { triggerPrefixExempt?: string[] } | undefined>)?.[channel]
-      ?.triggerPrefixExempt ?? [];
-  // FORK: for groups, use ConversationLabel (group JID) for exempt check, not ctx.To (which is the bot's E164)
-  const exemptLookupId = ctx.ConversationLabel ?? ctx.From ?? chatId;
-  const isTriggerExempt = exemptLookupId ? triggerPrefixExemptList.includes(exemptLookupId) : false;
-  console.log(
-    `[DISPATCH] triggerPrefix=${triggerPrefix} isTriggerExempt=${isTriggerExempt} exemptLookupId=${exemptLookupId} chatId=${chatId} sessionKey=${sessionKey}`,
-  );
-  if (triggerPrefix && !isTriggerExempt) {
-    let messageBody = ctx.BodyForCommands ?? ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "";
-
-    // Audio preflight: transcribe voice note before prefix check
-    if (inboundAudio && messageBody.replace(/\s/g, "").match(/^<media:audio/i)) {
-      try {
-        const { transcribeFirstAudio } =
-          await import("../../media-understanding/audio-preflight.js");
-        const transcript = await transcribeFirstAudio({ ctx, cfg });
-        if (transcript) {
-          logVerbose(
-            `Audio preflight transcript (${transcript.length} chars): ${transcript.substring(0, 100)}`,
-          );
-          // Use transcript for prefix check and update context
-          messageBody = transcript;
-          ctx.Body = transcript;
-          ctx.BodyForAgent = transcript;
-          ctx.RawBody = transcript;
-          ctx.CommandBody = transcript;
-          ctx.BodyForCommands = transcript;
-        } else {
-          logVerbose(
-            "Audio preflight: no transcript returned, skipping triggerPrefix check for audio",
-          );
-          messageBody = ""; // will fail prefix check below
-        }
-      } catch (err) {
-        logVerbose(`Audio preflight transcription failed: ${String(err)}`);
-        messageBody = ""; // fail prefix check on error
-      }
-    }
-
-    const prefixCheck = checkTriggerPrefix(messageBody, triggerPrefix);
-    if (!prefixCheck.pass) {
-      logVerbose(
-        `Skipped message (triggerPrefix "${triggerPrefix}" not found in: ${messageBody.substring(0, 80)})`,
-      );
-      recordProcessed("skipped", { reason: `triggerPrefix:${triggerPrefix}` });
-      return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
-    }
-  }
   const sessionTtsAuto = normalizeTtsAutoMode(sessionStoreEntry.entry?.ttsAuto);
   const hookRunner = getGlobalHookRunner();
 
@@ -426,9 +334,6 @@ export async function dispatchReplyFromConfig(params: {
         undefined,
       chatType: sessionStoreEntry.entry?.chatType,
     });
-    console.log(
-      `[DISPATCH] sendPolicy=${sendPolicy} bypassAcp=${bypassAcpForCommand} sessionKey=${sessionKey}`,
-    );
     if (sendPolicy === "deny" && !bypassAcpForCommand) {
       logVerbose(
         `Send blocked by policy for session ${sessionStoreEntry.sessionKey ?? sessionKey ?? "unknown"}`,
