@@ -18,6 +18,14 @@ export type ChannelHeartbeatVisibilityConfig = {
   useIndicator?: boolean;
 };
 
+export type ChannelHealthMonitorConfig = {
+  /**
+   * Enable channel-health-monitor restarts for this channel or account.
+   * Inherits the global gateway setting when omitted.
+   */
+  enabled?: boolean;
+};
+
 export type ChannelDefaultsConfig = {
   groupPolicy?: GroupPolicy;
   /** Default heartbeat visibility for all channels. */
@@ -46,6 +54,7 @@ export type ExtensionChannelConfig = {
   defaultAccount?: string;
   dmPolicy?: string;
   groupPolicy?: GroupPolicy;
+  healthMonitor?: ChannelHealthMonitorConfig;
   accounts?: Record<string, unknown>;
   [key: string]: unknown;
 };
