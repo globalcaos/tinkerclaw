@@ -1948,7 +1948,24 @@ function esc(s: string) {
 function md(text: string): string {
   // Ensure a blank line before table-header rows so markdown-it parses them
   // as tables even when they follow a list or paragraph with no gap.
-  const fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
+  let fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
+
+  // Auto-repair table separator rows: if header has N columns but separator
+  // has fewer, pad separator to match. Handles LLM output like |---|---| → |---|
+  // which makes markdown-it reject the entire table.
+  fixed = fixed.replace(
+    /(\|[^\n]+\|\s*\n)(\|[\s:|-]+\|\s*\n)/g,
+    (_match: string, headerLine: string, sepLine: string) => {
+      const headerCols = (headerLine.match(/\|/g) || []).length - 1;
+      const sepCols = (sepLine.match(/\|/g) || []).length - 1;
+      if (headerCols > 1 && sepCols < headerCols) {
+        const pad = Array(headerCols).fill("---").join(" | ");
+        return headerLine + "| " + pad + " |\n";
+      }
+      return headerLine + sepLine;
+    },
+  );
+
   let h = mdParser.render(fixed);
 
   // Jarvis voice styling
