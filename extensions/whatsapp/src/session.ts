@@ -13,6 +13,8 @@ import { danger, success } from "../../../src/globals.js";
 import { getChildLogger, toPinoLikeLogger } from "../../../src/logging.js";
 import { ensureDir, resolveUserPath } from "../../../src/utils.js";
 import { VERSION } from "../../../src/version.js";
+// FORK: SQLite history capture
+import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js";
 import {
   maybeRestoreCredsFromBackup,
   readCredsJsonRaw,
@@ -117,6 +119,14 @@ export async function createWaSocket(
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });
+
+  // FORK: bind SQLite history capture for persistent, searchable message storage
+  try {
+    bindHistoryCapture(sock.ev);
+    sessionLogger.info("WhatsApp history live-capture bound to socket events");
+  } catch (err) {
+    sessionLogger.warn({ error: String(err) }, "whatsapp-history live-capture failed to bind");
+  }
 
   sock.ev.on("creds.update", () => enqueueSaveCreds(authDir, saveCreds, sessionLogger));
   sock.ev.on(
