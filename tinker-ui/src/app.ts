@@ -1256,12 +1256,13 @@ function onEvent(evt: any) {
             .map((b: any) => b.text ?? "")
             .join("");
 
-          // Remove temp text-only messages, keep temp tool messages
+          // Remove temp text-only messages, keep temp tool and thinking messages
           messages = messages.filter((m: any) => {
             if (!m._temporary) return true;
             const c = Array.isArray(m.content) ? m.content : [];
             const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
-            return isToolMsg;
+            const isThinkingMsg = c.some((b: any) => b.type === "thinking");
+            return isToolMsg || isThinkingMsg;
           });
 
           // Insert the complete text as a single non-temp message after the last tool row
@@ -1290,7 +1291,8 @@ function onEvent(evt: any) {
             }
             const c = Array.isArray(m.content) ? m.content : [];
             const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
-            if (isToolMsg) {
+            const isThinkingMsg = c.some((b: any) => b.type === "thinking");
+            if (isToolMsg || isThinkingMsg) {
               delete m._temporary;
               kept.push(m);
             } else {
