@@ -1248,81 +1248,18 @@ function onEvent(evt: any) {
             fc.find((b: any) => b.type === "text")?.text?.substring(0, 200),
           );
         }
-        if (hadTemps && p.message) {
-          // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
-          const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
-          const finalText = finalContent
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text ?? "")
-            .join("");
-
-          // Remove temp text-only messages, keep temp tool and thinking messages
-          messages = messages.filter((m: any) => {
-            if (!m._temporary) return true;
-            const c = Array.isArray(m.content) ? m.content : [];
-            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
-            const isThinkingMsg = c.some((b: any) => b.type === "thinking");
-            return isToolMsg || isThinkingMsg;
-          });
-
-          // FORK: Strip intermediate preamble — text before frozenTextEnd was
-          // already shown as thinking bubbles during streaming. Only the text
-          // after the last tool call is the actual final answer.
-          const answerText = frozenTextEnd > 0 ? finalText.slice(frozenTextEnd) : finalText;
-          if (answerText.trim()) {
-            messages.push({
-              role: "assistant",
-              content: [{ type: "text", text: answerText }],
-            });
-          }
-
-          // Clean up remaining temp flags
+        if (hadTemps) {
+          // FORK: Promote all temporary messages to permanent instead of
+          // replacing with the server's full text. Each text temp already has
+          // correctly-segmented text (via frozenTextEnd slicing during streaming).
+          // The thinkingSet logic in updateChat() handles which text segments
+          // are intermediates (thinking style) and which is the final answer
+          // (the last one in the run). This prevents intermediate preamble
+          // ("Let me check...") from leaking into the final answer bubble.
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
           }
-          console.warn("[final-debug] MAIN PATH: rebuilt messages, count:", messages.length);
-        } else if (hadTemps) {
-          // No server final message — merge all temp assistant text into a
-          // single message so markdown elements (tables, lists) that span
-          // tool-call boundaries render correctly, then promote.
-          const mergedParts: string[] = [];
-          const kept: any[] = [];
-          for (const m of messages) {
-            if (!m._temporary) {
-              kept.push(m);
-              continue;
-            }
-            const c = Array.isArray(m.content) ? m.content : [];
-            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
-            const isThinkingMsg = c.some((b: any) => b.type === "thinking");
-            if (isToolMsg || isThinkingMsg) {
-              delete m._temporary;
-              kept.push(m);
-            } else {
-              // Collect text from temp text-only messages
-              for (const b of c) {
-                if (b.type === "text" && (b.text ?? "").trim()) {
-                  mergedParts.push(b.text);
-                }
-              }
-            }
-          }
-          // FORK: Only the last text segment is the final answer — earlier
-          // segments were intermediate (shown as thinking during streaming).
-          const lastPart = mergedParts.length > 0 ? mergedParts[mergedParts.length - 1] : "";
-          if (lastPart.trim()) {
-            kept.push({
-              role: "assistant",
-              content: [{ type: "text", text: lastPart }],
-            });
-          }
-          messages = kept;
-          console.warn(
-            "[final-debug] FALLBACK PATH: merged temps, count:",
-            messages.length,
-            "mergedParts:",
-            mergedParts.length,
-          );
+          console.warn("[final-debug] PROMOTED temps, count:", messages.length);
         }
         if (!hadTemps && p.message) {
           messages.push(p.message);
