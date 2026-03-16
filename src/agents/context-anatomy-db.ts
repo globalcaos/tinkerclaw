@@ -1,0 +1,440 @@
+/**
+ * FORK: Context Anatomy DB — SQLite persistence for timeline anatomy events.
+ *
+ * Stores per-turn/per-round LLM context anatomy events to
+ * `~/.openclaw/data/anatomy-timeline.db` for real-time timeline UI queries
+ * and 24-hour historical analysis.
+ *
+ * Wired in: anatomy events are inserted by context-anatomy-collector.ts
+ * (or equivalent) after each LLM round completes. Queried by the timeline
+ * API route (server-timeline.ts) to serve the Tinker UI round-level view.
+ *
+ * Pattern follows src/whatsapp-history/db.ts — singleton + WAL mode.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import type { ContextAnatomyEvent } from "./context-anatomy.js";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const DB_PATH = (() => {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
+  return path.join(homeDir, ".openclaw", "data", "anatomy-timeline.db");
+})();
+
+/** Auto-prune every N inserts to avoid unbounded growth. */
+const PRUNE_INTERVAL = 50;
+
+// ---------------------------------------------------------------------------
+// Singleton state
+// ---------------------------------------------------------------------------
+
+let db: Database.Database | null = null;
+let insertStmt: Database.Statement | null = null;
+let insertCount = 0;
+
+// ---------------------------------------------------------------------------
+// Open / close
+// ---------------------------------------------------------------------------
+
+/**
+ * Open (or return the cached) anatomy SQLite database.
+ *
+ * Creates the data directory if needed, enables WAL mode + busy_timeout,
+ * creates the `anatomy_events` table and indexes, and sets user_version=1.
+ */
+export function openAnatomyDb(): Database.Database {
+  if (db) {
+    return db;
+  }
+
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  db = new Database(DB_PATH);
+
+  // WAL mode allows concurrent reads during writes — essential for live timeline + query overlap
+  db.pragma("journal_mode = WAL");
+  // Busy timeout prevents SQLITE_BUSY errors when another process briefly holds the write lock
+  db.pragma("busy_timeout = 5000");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS anatomy_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_key TEXT NOT NULL,
+      run_id TEXT,
+      turn INTEGER NOT NULL,
+      round_number INTEGER,
+      timestamp_ms INTEGER NOT NULL,
+      model TEXT,
+      provider TEXT,
+      auth_profile_id TEXT,
+      duration_ms INTEGER,
+      stop_reason TEXT,
+      compaction_cycle INTEGER,
+      context_sent TEXT,
+      context_window TEXT,
+      tools_triggered TEXT,
+      topics TEXT,
+      topic_transition TEXT,
+      memories_injected TEXT,
+      response_tokens INTEGER,
+      response_thinking_tokens INTEGER,
+      response_text_tokens INTEGER,
+      response_tool_call_tokens INTEGER,
+      cache_read_tokens INTEGER,
+      cache_creation_tokens INTEGER,
+      response_content TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_timestamp_ms ON anatomy_events(timestamp_ms);
+    CREATE INDEX IF NOT EXISTS idx_session_key ON anatomy_events(session_key);
+  `);
+
+  // Mark schema version for future migrations
+  db.pragma("user_version = 1");
+
+  return db;
+}
+
+/** Close the database handle and reset singleton state. */
+export function closeAnatomyDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+    insertStmt = null;
+    insertCount = 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Insert
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert a new anatomy event row.
+ *
+ * Uses a cached prepared statement for performance. Auto-prunes rows older
+ * than 24h every {@link PRUNE_INTERVAL} inserts.
+ */
+export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
+  const database = openAnatomyDb();
+
+  if (!insertStmt) {
+    insertStmt = database.prepare(`
+      INSERT INTO anatomy_events (
+        session_key, run_id, turn, round_number, timestamp_ms,
+        model, provider, auth_profile_id, duration_ms, stop_reason,
+        compaction_cycle, context_sent, context_window, tools_triggered,
+        topics, topic_transition, memories_injected,
+        response_tokens, response_thinking_tokens, response_text_tokens,
+        response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
+        response_content
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?
+      )
+    `);
+  }
+
+  insertStmt.run(
+    event.sessionKey ?? null,
+    ((event as unknown as Record<string, unknown>)["runId"] as string) ?? null,
+    event.turn,
+    event.roundNumber ?? null,
+    event.timestampMs,
+    event.model ?? null,
+    event.provider ?? null,
+    event.authProfileId ?? null,
+    ((event as unknown as Record<string, unknown>)["durationMs"] as number) ?? null,
+    ((event as unknown as Record<string, unknown>)["stopReason"] as string) ?? null,
+    event.compactionCycle ?? null,
+    event.contextSent ? JSON.stringify(event.contextSent) : null,
+    event.contextWindow ? JSON.stringify(event.contextWindow) : null,
+    (event as unknown as Record<string, unknown>)["toolsTriggered"]
+      ? JSON.stringify((event as unknown as Record<string, unknown>)["toolsTriggered"])
+      : null,
+    event.topics ? JSON.stringify(event.topics) : null,
+    event.topicTransition ? JSON.stringify(event.topicTransition) : null,
+    event.memoriesInjected ? JSON.stringify(event.memoriesInjected) : null,
+    event.responseTokens ?? null,
+    ((event as unknown as Record<string, unknown>)["responseThinkingTokens"] as number) ?? null,
+    ((event as unknown as Record<string, unknown>)["responseTextTokens"] as number) ?? null,
+    ((event as unknown as Record<string, unknown>)["responseToolCallTokens"] as number) ?? null,
+    ((event as unknown as Record<string, unknown>)["cacheReadTokens"] as number) ?? null,
+    ((event as unknown as Record<string, unknown>)["cacheCreationTokens"] as number) ?? null,
+    ((event as unknown as Record<string, unknown>)["responseContent"] as string) ?? null,
+  );
+
+  insertCount++;
+  if (insertCount % PRUNE_INTERVAL === 0) {
+    pruneOldEvents();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+/**
+ * Update response-side columns for an existing event identified by
+ * (run_id, round_number). Falls back to a minimal INSERT if no row exists.
+ *
+ * Used when response metadata (token counts, stop reason, duration) arrives
+ * after the initial context event was already written.
+ */
+export function updateAnatomyResponse(
+  runId: string,
+  roundNumber: number,
+  data: {
+    durationMs?: number;
+    stopReason?: string;
+    responseTokens?: number;
+    responseThinkingTokens?: number;
+    responseTextTokens?: number;
+    responseToolCallTokens?: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    responseContent?: string;
+    toolsTriggered?: unknown;
+  },
+): void {
+  const database = openAnatomyDb();
+
+  const result = database
+    .prepare(
+      `
+      UPDATE anatomy_events SET
+        duration_ms = COALESCE(?, duration_ms),
+        stop_reason = COALESCE(?, stop_reason),
+        response_tokens = COALESCE(?, response_tokens),
+        response_thinking_tokens = COALESCE(?, response_thinking_tokens),
+        response_text_tokens = COALESCE(?, response_text_tokens),
+        response_tool_call_tokens = COALESCE(?, response_tool_call_tokens),
+        cache_read_tokens = COALESCE(?, cache_read_tokens),
+        cache_creation_tokens = COALESCE(?, cache_creation_tokens),
+        response_content = COALESCE(?, response_content),
+        tools_triggered = COALESCE(?, tools_triggered)
+      WHERE run_id = ? AND round_number = ?
+    `,
+    )
+    .run(
+      data.durationMs ?? null,
+      data.stopReason ?? null,
+      data.responseTokens ?? null,
+      data.responseThinkingTokens ?? null,
+      data.responseTextTokens ?? null,
+      data.responseToolCallTokens ?? null,
+      data.cacheReadTokens ?? null,
+      data.cacheCreationTokens ?? null,
+      data.responseContent ?? null,
+      data.toolsTriggered != null ? JSON.stringify(data.toolsTriggered) : null,
+      runId,
+      roundNumber,
+    );
+
+  if (result.changes === 0) {
+    // No matching row — insert a minimal fallback so the data is not lost
+    database
+      .prepare(
+        `
+        INSERT INTO anatomy_events (
+          session_key, run_id, turn, timestamp_ms,
+          round_number, duration_ms, stop_reason,
+          response_tokens, response_thinking_tokens, response_text_tokens,
+          response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
+          response_content, tools_triggered
+        ) VALUES (
+          '', ?, 0, ?,
+          ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?,
+          ?, ?
+        )
+      `,
+      )
+      .run(
+        runId,
+        Date.now(),
+        roundNumber,
+        data.durationMs ?? null,
+        data.stopReason ?? null,
+        data.responseTokens ?? null,
+        data.responseThinkingTokens ?? null,
+        data.responseTextTokens ?? null,
+        data.responseToolCallTokens ?? null,
+        data.cacheReadTokens ?? null,
+        data.cacheCreationTokens ?? null,
+        data.responseContent ?? null,
+        data.toolsTriggered != null ? JSON.stringify(data.toolsTriggered) : null,
+      );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prune
+// ---------------------------------------------------------------------------
+
+/**
+ * Delete anatomy events older than 24 hours.
+ * Called automatically every {@link PRUNE_INTERVAL} inserts.
+ */
+export function pruneOldEvents(): void {
+  const database = openAnatomyDb();
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  database.prepare(`DELETE FROM anatomy_events WHERE timestamp_ms < ?`).run(cutoff);
+}
+
+// ---------------------------------------------------------------------------
+// Row parsing
+// ---------------------------------------------------------------------------
+
+/** Raw DB row shape (all JSON columns are still strings). */
+interface AnatomyRow {
+  id: number;
+  session_key: string;
+  run_id: string | null;
+  turn: number;
+  round_number: number | null;
+  timestamp_ms: number;
+  model: string | null;
+  provider: string | null;
+  auth_profile_id: string | null;
+  duration_ms: number | null;
+  stop_reason: string | null;
+  compaction_cycle: number | null;
+  context_sent: string | null;
+  context_window: string | null;
+  tools_triggered: string | null;
+  topics: string | null;
+  topic_transition: string | null;
+  memories_injected: string | null;
+  response_tokens: number | null;
+  response_thinking_tokens: number | null;
+  response_text_tokens: number | null;
+  response_tool_call_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_creation_tokens: number | null;
+  response_content: string | null;
+}
+
+/** Safely parse a JSON string field; returns undefined on failure. */
+function safeJsonParse<T>(value: string | null): T | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Convert a raw DB row back to a {@link ContextAnatomyEvent}.
+ *
+ * Extended fields (runId, durationMs, etc.) that are not yet on the
+ * canonical type are attached via object spread so callers can access them.
+ */
+export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, unknown> {
+  return {
+    // Core ContextAnatomyEvent fields
+    turn: row.turn,
+    roundNumber: row.round_number ?? undefined,
+    compactionCycle: row.compaction_cycle ?? 0,
+    timestamp: new Date(row.timestamp_ms).toISOString(),
+    timestampMs: row.timestamp_ms,
+    model: row.model ?? "",
+    provider: row.provider ?? "",
+    sessionKey: row.session_key || undefined,
+    topics: safeJsonParse<string[]>(row.topics) ?? [],
+    topicTransition: safeJsonParse<{ from: string[]; to: string[]; changed: boolean }>(
+      row.topic_transition,
+    ),
+    contextSent: safeJsonParse(row.context_sent) ?? {
+      systemPromptChars: 0,
+      systemPromptTokens: 0,
+      injectedFiles: [],
+      injectedFilesTotalChars: 0,
+      injectedFilesTotalTokens: 0,
+      skillsChars: 0,
+      skillsTokens: 0,
+      toolSchemasChars: 0,
+      toolSchemasTokens: 0,
+      conversationHistoryChars: 0,
+      conversationHistoryTokens: 0,
+      toolResultsChars: 0,
+      toolResultsTokens: 0,
+      userMessageChars: 0,
+      userMessageTokens: 0,
+      totalChars: 0,
+      totalTokens: 0,
+    },
+    contextWindow: safeJsonParse(row.context_window) ?? {
+      maxTokens: 0,
+      usedTokens: 0,
+      utilizationPercent: 0,
+    },
+    authProfileId: row.auth_profile_id ?? undefined,
+    responseTokens: row.response_tokens ?? undefined,
+    memoriesInjected: safeJsonParse(row.memories_injected) ?? { autoRecall: [], searched: [] },
+    // Extended fields not yet on the canonical type
+    runId: row.run_id ?? undefined,
+    durationMs: row.duration_ms ?? undefined,
+    stopReason: row.stop_reason ?? undefined,
+    toolsTriggered: safeJsonParse(row.tools_triggered),
+    responseThinkingTokens: row.response_thinking_tokens ?? undefined,
+    responseTextTokens: row.response_text_tokens ?? undefined,
+    responseToolCallTokens: row.response_tool_call_tokens ?? undefined,
+    cacheReadTokens: row.cache_read_tokens ?? undefined,
+    cacheCreationTokens: row.cache_creation_tokens ?? undefined,
+    responseContent: row.response_content ?? undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Query
+// ---------------------------------------------------------------------------
+
+/**
+ * Return all anatomy events from the last `hours` hours, oldest first.
+ * Defaults to the last 24 hours.
+ */
+export function queryRecentEvents(
+  hours = 24,
+): Array<ContextAnatomyEvent & Record<string, unknown>> {
+  const database = openAnatomyDb();
+  const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  const rows = database
+    .prepare(`SELECT * FROM anatomy_events WHERE timestamp_ms > ? ORDER BY timestamp_ms ASC`)
+    .all(cutoff) as AnatomyRow[];
+  return rows.map(parseRow);
+}
+
+/**
+ * Return the most recent `limit` anatomy events for a given session key,
+ * newest first.
+ */
+export function querySessionEvents(
+  sessionKey: string,
+  limit = 50,
+): Array<ContextAnatomyEvent & Record<string, unknown>> {
+  const database = openAnatomyDb();
+  const rows = database
+    .prepare(
+      `SELECT * FROM anatomy_events WHERE session_key = ? ORDER BY timestamp_ms DESC LIMIT ?`,
+    )
+    .all(sessionKey, limit) as AnatomyRow[];
+  return rows.map(parseRow);
+}
