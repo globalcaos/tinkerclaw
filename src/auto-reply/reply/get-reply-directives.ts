@@ -410,15 +410,23 @@ export async function resolveReplyDirectives(params: {
     (agentCfg?.thinkingDefault as ThinkLevel | undefined);
 
   // When neither directive nor session set reasoning, default to model capability
-  // (e.g. OpenRouter with reasoning: true). Skip auto-enabling when thinking is
-  // active, including model-inferred defaults, or internal thinking blocks can
-  // be emitted as visible "Reasoning:" messages.
+  // (e.g. OpenRouter with reasoning: true). When thinking is active, default to
+  // "stream" so that native thinking blocks are broadcast to WebSocket clients
+  // (Tinker UI) as separate thinking_delta events — "stream" mode only affects
+  // the WebSocket path, not messaging block replies (WhatsApp/Telegram).
+  // Skip auto-enabling "on" mode when thinking is active, or internal thinking
+  // blocks can be emitted as visible "Reasoning:" messages in block replies.
   const reasoningExplicitlySet =
     directives.reasoningLevel !== undefined ||
     (sessionEntry?.reasoningLevel !== undefined && sessionEntry?.reasoningLevel !== null);
   const thinkingActive = resolvedThinkLevelWithDefault !== "off";
-  if (!reasoningExplicitlySet && resolvedReasoningLevel === "off" && !thinkingActive) {
-    resolvedReasoningLevel = await modelState.resolveDefaultReasoningLevel();
+  if (!reasoningExplicitlySet && resolvedReasoningLevel === "off") {
+    if (thinkingActive) {
+      // FORK: stream thinking blocks to WebSocket clients when extended thinking is on
+      resolvedReasoningLevel = "stream";
+    } else {
+      resolvedReasoningLevel = await modelState.resolveDefaultReasoningLevel();
+    }
   }
 
   let contextTokens = resolveContextTokens({
