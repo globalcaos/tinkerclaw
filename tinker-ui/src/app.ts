@@ -1265,11 +1265,14 @@ function onEvent(evt: any) {
             return isToolMsg || isThinkingMsg;
           });
 
-          // Insert the complete text as a single non-temp message after the last tool row
-          if (finalText.trim()) {
+          // FORK: Strip intermediate preamble — text before frozenTextEnd was
+          // already shown as thinking bubbles during streaming. Only the text
+          // after the last tool call is the actual final answer.
+          const answerText = frozenTextEnd > 0 ? finalText.slice(frozenTextEnd) : finalText;
+          if (answerText.trim()) {
             messages.push({
               role: "assistant",
-              content: [{ type: "text", text: finalText }],
+              content: [{ type: "text", text: answerText }],
             });
           }
 
@@ -1304,11 +1307,13 @@ function onEvent(evt: any) {
               }
             }
           }
-          // Push merged text as a single permanent message
-          if (mergedParts.length > 0) {
+          // FORK: Only the last text segment is the final answer — earlier
+          // segments were intermediate (shown as thinking during streaming).
+          const lastPart = mergedParts.length > 0 ? mergedParts[mergedParts.length - 1] : "";
+          if (lastPart.trim()) {
             kept.push({
               role: "assistant",
-              content: [{ type: "text", text: mergedParts.join("") }],
+              content: [{ type: "text", text: lastPart }],
             });
           }
           messages = kept;
