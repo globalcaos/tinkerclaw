@@ -191,7 +191,7 @@ export async function startGatewaySidecars(params: {
 
     // Resume interrupted session if gateway restarted within TTL
     setTimeout(() => {
-      void consumeSessionResume(60)
+      void consumeSessionResume(300)
         .then((resume) => {
           if (!resume) {
             return;
