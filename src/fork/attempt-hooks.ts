@@ -10,7 +10,8 @@
  */
 import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
-import { buildContextAnatomy, writeAnatomyEvent } from "../agents/context-anatomy.js";
+import { insertAnatomyEvent, updateAnatomyResponse } from "../agents/context-anatomy-db.js";
+import { buildContextAnatomy } from "../agents/context-anatomy.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
@@ -121,6 +122,23 @@ const RECENT_MESSAGES_WINDOW = 20;
 // Every N turns, force observation extraction regardless of threshold
 const OBSERVATION_FORCE_INTERVAL = 10;
 
+// ---------------------------------------------------------------------------
+// Per-run tool execution accumulator
+// ---------------------------------------------------------------------------
+
+/** Accumulates tool-exec-complete events per runId until round completion. */
+const pendingToolExecs = new Map<
+  string,
+  Array<{
+    name: string;
+    toolCallId: string;
+    inputChars?: number;
+    outputChars?: number;
+    durationMs?: number;
+    isError?: boolean;
+  }>
+>();
+
 /**
  * Detect and execute text-based tool calls from local providers that don't
  * use structured tool_calls. Returns true if any retries were performed.
@@ -225,7 +243,7 @@ export async function emitPrePromptAnatomy(params: {
   }
 
   // 1. Anatomy event (token breakdown for timeline bar)
-  //    Write to JSONL + push over WebSocket so the UI renders the bar instantly.
+  //    Insert into SQLite + push over WebSocket so the UI renders the bar instantly.
   if (params.systemPromptReport) {
     try {
       const turnNumber = params.messagesSnapshot.filter(
@@ -244,7 +262,9 @@ export async function emitPrePromptAnatomy(params: {
         roundNumber: params.roundNumber,
       });
       if (anatomy) {
-        await writeAnatomyEvent(params.sessionKey, anatomy);
+        anatomy.runId = params.runId;
+        anatomy.sessionKey = anatomy.sessionKey ?? params.sessionKey;
+        insertAnatomyEvent(anatomy);
         // Push anatomy to UI immediately via WebSocket — no polling delay
         emitAgentEvent({
           runId: params.runId,
@@ -358,6 +378,14 @@ export function emitRoundComplete(params: {
       timestampMs: Date.now(),
     },
   });
+  const toolsTriggered = pendingToolExecs.get(params.runId);
+  pendingToolExecs.delete(params.runId);
+  updateAnatomyResponse(params.runId, params.roundNumber, {
+    responseTokens: params.outputTokens,
+    durationMs: params.durationMs,
+    stopReason: params.stopReason,
+    toolsTriggered: toolsTriggered ?? [],
+  });
 }
 
 /**
@@ -394,6 +422,18 @@ export function emitToolExec(params: {
       timestampMs: Date.now(),
     },
   });
+  if (params.phase === "tool-exec-complete") {
+    const list = pendingToolExecs.get(params.runId) ?? [];
+    list.push({
+      name: params.toolName,
+      toolCallId: params.toolCallId,
+      inputChars: params.inputChars,
+      outputChars: params.outputChars,
+      durationMs: params.durationMs,
+      isError: params.isError,
+    });
+    pendingToolExecs.set(params.runId, list);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +451,17 @@ export interface PostTurnParams {
   modelId: string;
   contextWindowTokens?: number;
   getCompactionCount?: () => number | null;
-  getUsageTotals?: (() => { total?: number; output?: number } | undefined) | null;
+  getUsageTotals?:
+    | (() =>
+        | {
+            total?: number;
+            output?: number;
+            input?: number;
+            cacheRead?: number;
+            cacheWrite?: number;
+          }
+        | undefined)
+    | null;
   authProfileId?: string;
   log: { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void };
 }
@@ -447,9 +497,6 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         authProfileId: params.authProfileId,
       });
       if (contextAnatomy) {
-        writeAnatomyEvent(params.sessionKey, contextAnatomy).catch((err) => {
-          log.warn(`context-anatomy write failed: ${String(err)}`);
-        });
         // Push updated anatomy (now with response tokens) to UI
         emitAgentEvent({
           runId: params.runId,
@@ -460,6 +507,15 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
             anatomy: contextAnatomy,
           },
         });
+        // Update cache token columns on the existing row (inserted by emitPrePromptAnatomy)
+        const usage = params.getUsageTotals?.();
+        if (params.runId && usage) {
+          const roundNumber = (contextAnatomy as { roundNumber?: number }).roundNumber ?? 0;
+          updateAnatomyResponse(params.runId, roundNumber, {
+            cacheReadTokens: usage.cacheRead,
+            cacheCreationTokens: usage.cacheWrite,
+          });
+        }
       }
     } catch (err) {
       log.warn(`context-anatomy build failed: ${String(err)}`);
