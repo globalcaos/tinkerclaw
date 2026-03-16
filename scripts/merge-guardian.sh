@@ -249,6 +249,43 @@ check_debug_artifacts() {
   fi
 }
 
+check_systemd_service() {
+  log "--- Phase 5b: Systemd service customizations ---"
+
+  local svc="$HOME/.config/systemd/user/openclaw-gateway.service"
+  if [[ ! -f "$svc" ]]; then
+    ok "No systemd service file (not installed as service)"
+    return
+  fi
+
+  # ExecStartPre stale lock cleanup — prevents restart loops after unclean shutdown
+  if ! grep -q 'ExecStartPre.*gateway.*lock' "$svc"; then
+    warn "Missing ExecStartPre stale lock cleanup in systemd service"
+    if [[ "$fix_mode" == true ]]; then
+      # Insert ExecStartPre before ExecStart
+      sed -i '/^ExecStart=/i ExecStartPre=/bin/bash -c '\''rm -f /tmp/openclaw-$(id -u)/gateway.*.lock'\''' "$svc"
+      ok "Added ExecStartPre lock cleanup to systemd service"
+    fi
+  else
+    ok "ExecStartPre lock cleanup present"
+  fi
+
+  # KillMode=control-group — prevents orphan processes across restarts
+  if ! grep -q 'KillMode=control-group' "$svc"; then
+    warn "KillMode is not control-group in systemd service (orphan risk)"
+    if [[ "$fix_mode" == true ]]; then
+      if grep -q 'KillMode=' "$svc"; then
+        sed -i 's/KillMode=.*/KillMode=control-group/' "$svc"
+      else
+        sed -i '/^\[Service\]/a KillMode=control-group' "$svc"
+      fi
+      ok "Set KillMode=control-group in systemd service"
+    fi
+  else
+    ok "KillMode=control-group present"
+  fi
+}
+
 run_build_check() {
   if [[ "$no_build" == true ]]; then
     log "--- Phase 6: Build (skipped — --no-build) ---"
@@ -393,6 +430,7 @@ check_bundler_deps
 check_config_schemas
 check_ui_integrity
 check_debug_artifacts
+check_systemd_service
 
 build_failed=false
 run_build_check || build_failed=true
