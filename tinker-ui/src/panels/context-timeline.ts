@@ -374,10 +374,12 @@ export function mountContextTimeline(
     }
     if (maxRespTokens <= 0) maxRespTokens = 1;
 
-    // Legend (sticky right)
+    // Legend (sticky right) — only show input segments + toggle (response segments
+    // are self-explanatory from their distinct colors in the bar)
     const legend = document.createElement("div");
     legend.className = "ct-legend";
-    for (const key of SEGMENT_ORDER) {
+    const INPUT_LEGEND_KEYS = SEGMENT_ORDER.filter((k) => !k.startsWith("response"));
+    for (const key of INPUT_LEGEND_KEYS) {
       const item = document.createElement("span");
       item.className = "ct-legend-item";
       const swatch = document.createElement("span");
@@ -388,15 +390,6 @@ export function mountContextTimeline(
       item.appendChild(lbl);
       legend.appendChild(item);
     }
-    // Response legend entry
-    const respItem = document.createElement("span");
-    respItem.className = "ct-legend-item";
-    const respSwatch = document.createElement("span");
-    respSwatch.className = "ct-legend-swatch";
-    respSwatch.style.background = RESPONSE_COLOR;
-    respItem.appendChild(respSwatch);
-    respItem.appendChild(document.createTextNode("Response"));
-    legend.appendChild(respItem);
     // Filter mode toggle switch
     const switchWrap = document.createElement("span");
     switchWrap.className = "ct-switch";
