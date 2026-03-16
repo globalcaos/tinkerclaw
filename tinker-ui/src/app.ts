@@ -965,7 +965,18 @@ function onFrame(f: any) {
           loadSessions({ loadChat: true });
           loadBudget();
           refreshTreemap();
-          timelineCtrl?.loadSession(sessionKey);
+          // Load 24h cross-session feed instead of per-session
+          {
+            const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+            fetch(`${base}/api/context-anatomy/recent?hours=24`)
+              .then((r) => r.json())
+              .then((data) => {
+                if (data?.events && timelineCtrl) {
+                  timelineCtrl.loadEvents(data.events);
+                }
+              })
+              .catch((err) => console.warn("[timeline] failed to load recent events:", err));
+          }
           scheduleUnconfirmedPrune();
           req("forensic.setMode", { enabled: true })
             .then((res: any) => {
