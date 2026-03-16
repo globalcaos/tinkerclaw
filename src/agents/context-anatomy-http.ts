@@ -5,12 +5,13 @@
  * Registered as plugin HTTP routes on the gateway.
  *
  * Endpoints:
+ *   GET /api/context-anatomy/recent              — events across all sessions (last N hours)
  *   GET /api/context-anatomy/:sessionKey         — last N events for a session
  *   GET /api/context-anatomy/:sessionKey/latest   — latest event only
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readAnatomyEvents, readLatestAnatomyEvent } from "./context-anatomy.js";
+import { queryRecentEvents, querySessionEvents } from "./context-anatomy-db.js";
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, {
@@ -61,6 +62,20 @@ export async function handleContextAnatomyRequest(
     return true;
   }
 
+  // Check for /api/context-anatomy/recent before session key parsing
+  const recentMatch = url.pathname.match(/\/api\/context-anatomy\/recent$/);
+  if (recentMatch) {
+    const hoursParam = url.searchParams.get("hours");
+    const hours = Math.min(Math.max(parseInt(hoursParam ?? "24", 10) || 24, 1), 24);
+    const events = queryRecentEvents(hours);
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(JSON.stringify({ count: events.length, events }));
+    return true;
+  }
+
   const { sessionKey, latest } = parseSessionKeyFromPath(pathname);
   if (!sessionKey) {
     sendJson(res, 400, { error: "Missing session key" });
@@ -68,7 +83,8 @@ export async function handleContextAnatomyRequest(
   }
 
   if (latest) {
-    const event = await readLatestAnatomyEvent(sessionKey);
+    const events = querySessionEvents(sessionKey, 1);
+    const event = events[0] ?? null;
     if (!event) {
       sendJson(res, 404, { error: "No anatomy events found", sessionKey });
       return true;
@@ -80,7 +96,7 @@ export async function handleContextAnatomyRequest(
   // Return last N events
   const limitParam = url.searchParams.get("limit");
   const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 50), 500) : 50;
-  const events = await readAnatomyEvents(sessionKey, limit);
+  const events = querySessionEvents(sessionKey, limit);
   sendJson(res, 200, { sessionKey, count: events.length, events });
   return true;
 }
