@@ -1,11 +1,9 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { buildContextAnatomy, writeAnatomyEvent } from "./context-anatomy.js";
-import { handleContextAnatomyRequest } from "./context-anatomy-http.js";
-import type { SessionSystemPromptReport } from "../config/sessions/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { afterEach, describe, expect, test } from "vitest";
+import type { SessionSystemPromptReport } from "../config/sessions/types.js";
+import { closeAnatomyDb, insertAnatomyEvent } from "./context-anatomy-db.js";
+import { handleContextAnatomyRequest } from "./context-anatomy-http.js";
+import { buildContextAnatomy } from "./context-anatomy.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -17,7 +15,14 @@ function makeReport(): SessionSystemPromptReport {
     generatedAt: Date.now(),
     systemPrompt: { chars: 15000, projectContextChars: 5000, nonProjectContextChars: 10000 },
     injectedWorkspaceFiles: [
-      { name: "MEMORY.md", path: "MEMORY.md", missing: false, rawChars: 500, injectedChars: 500, truncated: false },
+      {
+        name: "MEMORY.md",
+        path: "MEMORY.md",
+        missing: false,
+        rawChars: 500,
+        injectedChars: 500,
+        truncated: false,
+      },
     ],
     skills: { promptChars: 2000, entries: [] },
     tools: { listChars: 500, schemaChars: 3000, entries: [] },
@@ -73,17 +78,9 @@ function mockRes(): MockRes {
 // Tests
 // ---------------------------------------------------------------------------
 
-const testDir = path.join(os.tmpdir(), `anatomy-http-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-const originalHome = process.env.HOME;
-
-beforeEach(async () => {
-  process.env.HOME = testDir;
-  await fs.mkdir(testDir, { recursive: true });
-});
-
-afterEach(async () => {
-  process.env.HOME = originalHome;
-  await fs.rm(testDir, { recursive: true, force: true }).catch(() => {});
+afterEach(() => {
+  // Close the singleton DB between tests so each test gets a fresh in-memory state
+  closeAnatomyDb();
 });
 
 describe("handleContextAnatomyRequest", () => {
@@ -111,8 +108,8 @@ describe("handleContextAnatomyRequest", () => {
   });
 
   test("returns latest event", async () => {
-    await writeAnatomyEvent("http-test", makeEvent(1));
-    await writeAnatomyEvent("http-test", makeEvent(2));
+    insertAnatomyEvent({ ...makeEvent(1), sessionKey: "http-test" });
+    insertAnatomyEvent({ ...makeEvent(2), sessionKey: "http-test" });
 
     const req = mockReq("GET", "/api/context-anatomy/http-test/latest");
     const res = mockRes();
@@ -125,7 +122,7 @@ describe("handleContextAnatomyRequest", () => {
 
   test("returns event list with limit", async () => {
     for (let i = 0; i < 5; i++) {
-      await writeAnatomyEvent("list-test", makeEvent(i));
+      insertAnatomyEvent({ ...makeEvent(i), sessionKey: "list-test" });
     }
 
     const req = mockReq("GET", "/api/context-anatomy/list-test?limit=3");
@@ -141,7 +138,7 @@ describe("handleContextAnatomyRequest", () => {
 
   test("handles URL-encoded session keys", async () => {
     const key = "agent:main:main";
-    await writeAnatomyEvent(key, makeEvent(1));
+    insertAnatomyEvent({ ...makeEvent(1), sessionKey: key });
 
     const req = mockReq("GET", `/api/context-anatomy/${encodeURIComponent(key)}/latest`);
     const res = mockRes();
