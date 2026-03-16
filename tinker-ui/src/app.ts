@@ -2801,9 +2801,9 @@ function updateChat(skipScroll = false) {
         const intermediates = assistantTextIndices.slice(0, -1);
         for (const idx of intermediates) thinkingSet.add(idx);
       } else {
-        // Streaming: frozen text temps are intermediates, active one is not
+        // Streaming: ALL text temps are thinking — final answer only on finalization
         for (const idx of assistantTextIndices) {
-          if (idx !== streamMsgIdx) thinkingSet.add(idx);
+          thinkingSet.add(idx);
         }
       }
       runStart = i + 1;
