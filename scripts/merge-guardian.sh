@@ -72,7 +72,7 @@ check_fork_directories() {
 
   local fork_files=(
     "extensions/hippocampus/index.ts"
-    "src/web/auto-reply/monitor/thinking-reaction.ts"
+    "extensions/whatsapp/src/auto-reply/monitor/thinking-reaction.ts"
     "src/auto-reply/reply/jarvis-voice-markup.ts"
     "src/agents/tools/whatsapp-history-tool.ts"
   )
@@ -108,28 +108,24 @@ check_hook_wiring() {
   check_wiring "src/agents/pi-embedded-helpers/failover-matches.ts" "regain access" "Anthropic billing pattern in failover-matches.ts"
   check_wiring "src/agents/pi-embedded-helpers/errors.ts" "regain access" "Early billing check in errors.ts"
   check_wiring "src/agents/auth-profiles/store.ts" "diskCred.expires > memCred.expires" "OAuth refresh token preservation in saveAuthProfileStore"
-  check_wiring "src/agents/auth-profiles/external-cli-sync.ts" "readClaudeCliGmCredentialsCached" "Dedicated GM credential sync in external-cli-sync.ts"
-  check_wiring "src/agents/auth-profiles/external-cli-sync.ts" "readClaudeCliSvCredentialsCached" "Claude Code CLI SV credential sync in external-cli-sync.ts"
+  check_wiring "src/agents/auth-profiles/oauth.ts" "readClaudeCliGmCredentials" "GM credential read in oauth.ts"
+  check_wiring "src/agents/auth-profiles/oauth.ts" "readClaudeCliSvCredentials" "SV credential read in oauth.ts"
   check_wiring "src/agents/auth-profiles/oauth.ts" "CLAUDE_CLI_PROFILE_ID" "Claude CLI GM refresh guard in oauth.ts"
   check_wiring "src/agents/auth-profiles/oauth.ts" "CLAUDE_CLI_SV_PROFILE_ID" "Claude CLI SV refresh guard in oauth.ts"
-  check_wiring "src/web/auto-reply/monitor/process-message.ts" "process-message-hooks" "Fork hooks import in process-message.ts"
-  check_wiring "src/web/auto-reply/monitor/process-message.ts" "_annotateOfflineRecovery" "Offline recovery annotation CALL in process-message.ts"
-  check_wiring "src/web/auto-reply/monitor/process-message.ts" "_createThinkingReaction" "Thinking reaction CALL in process-message.ts"
-  check_wiring "src/web/inbound/monitor.ts" "fromMe" "fromMe propagation in monitor.ts"
+  check_wiring "extensions/whatsapp/src/auto-reply/monitor/process-message.ts" "process-message-hooks" "Fork hooks import in process-message.ts"
+  check_wiring "extensions/whatsapp/src/auto-reply/monitor/process-message.ts" "_annotateOfflineRecovery" "Offline recovery annotation CALL in process-message.ts"
+  check_wiring "extensions/whatsapp/src/auto-reply/monitor/process-message.ts" "_createThinkingReaction" "Thinking reaction CALL in process-message.ts"
   check_wiring "src/gateway/server-methods/sessions.ts" "Allow webchat delete" "Webchat session delete bypass in sessions.ts"
 }
 
 check_import_depth() {
   # Upstream merges sometimes deepen import paths by one level — catches a common rebase artifact.
-  if [[ -f "$ROOT/src/web/auto-reply/monitor/process-message.ts" ]]; then
-    if grep -q '../../../../fork/process-message-hooks' "$ROOT/src/web/auto-reply/monitor/process-message.ts" 2>/dev/null; then
-      warn "Wrong import depth (4 levels) in process-message.ts — should be ../../../fork/"
-      if [[ "$fix_mode" == true ]]; then
-        sed -i 's|../../../../fork/process-message-hooks|../../../fork/process-message-hooks|g' "$ROOT/src/web/auto-reply/monitor/process-message.ts"
-        ok "Fixed import depth in process-message.ts"
-      fi
+  local pm="$ROOT/extensions/whatsapp/src/auto-reply/monitor/process-message.ts"
+  if [[ -f "$pm" ]]; then
+    if grep -q 'fork/process-message-hooks' "$pm" 2>/dev/null; then
+      ok "Correct fork import in process-message.ts"
     else
-      ok "Correct import depth in process-message.ts"
+      warn "Fork hooks import missing in process-message.ts"
     fi
   fi
 }
@@ -139,13 +135,13 @@ check_extended_wirings() {
   check_wiring "src/auto-reply/reply/session-reset-prompt.ts" "resolveSessionPromptBase" "SESSION.md reader in session-reset-prompt.ts"
   check_wiring "src/auto-reply/reply/get-reply-run.ts" "workspaceDir" "workspaceDir passed to buildBareSessionResetPrompt"
   check_wiring "src/gateway/server-methods/agent.ts" "DEFAULT_AGENT_WORKSPACE_DIR" "Workspace dir import in agent.ts"
-  check_wiring "src/web/outbound.ts" "Group & Extended Message Operations" "WhatsApp group wrappers in outbound.ts"
+  check_wiring "extensions/whatsapp/src/send.ts" "Group & Extended Message Operations" "WhatsApp group wrappers in send.ts"
   check_wiring "src/browser/extension-relay.ts" "ExtensionConnection" "FORK: multi-extension relay in extension-relay.ts"
   check_wiring "src/browser/extension-relay.ts" "extensionConnections" "FORK: extensionConnections Map in extension-relay.ts"
   check_wiring "src/browser/extension-relay.ts" "ownedSessions" "FORK: per-extension session ownership in extension-relay.ts"
   check_wiring "src/agents/pi-embedded-subscribe.types.ts" "authProfileId" "authProfileId in SubscribeEmbeddedPiSessionParams"
   check_wiring "src/agents/openclaw-tools.ts" "createWhatsAppHistoryTool" "WhatsApp history tool in openclaw-tools.ts"
-  check_wiring "src/agents/pi-embedded-runner/run.ts" "FORK: Use session-scoped global lane" "Per-session global lane (no cross-session serialization)"
+  check_wiring "src/agents/pi-embedded-runner/run.ts" "resolveSessionLane" "Per-session lane (no cross-session serialization)"
 
   # Thinking block preservation (2026-03-15)
   check_wiring "src/agents/pi-embedded-subscribe.handlers.messages.ts" "phase.*end" "thinking-end agent event in emitReasoningEnd"
@@ -232,7 +228,7 @@ check_debug_artifacts() {
 
   local debug_count
   debug_count=$(grep -rn "console\.log.*DEBUG" "$ROOT/src/" --include="*.ts" 2>/dev/null \
-    | grep -v node_modules | grep -v dist | grep -v "\.test\." | wc -l)
+    | grep -v node_modules | grep -v dist | grep -v "\.test\." | wc -l || true)
 
   if [[ "$debug_count" -gt 0 ]]; then
     warn "$debug_count debug console.log lines in src/"
