@@ -5,12 +5,9 @@
  * skills, tool schemas, conversation history, tool results, and user message.
  * Each record is tagged with a compaction cycle counter and context utilization.
  *
- * Events are written to a JSONL file per session for historical analysis,
- * and returned on the attempt result for real-time consumption.
+ * Events are returned on the attempt result for real-time consumption.
  */
 
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { SessionSystemPromptReport } from "../config/sessions/types.js";
 
@@ -81,6 +78,29 @@ export type ContextAnatomyEvent = {
     autoRecall: string[];
     /** Files retrieved via memory_search tool calls (populated later). */
     searched: string[];
+  };
+
+  // --- response breakdown (new) ---
+  runId?: string;
+  durationMs?: number;
+  stopReason?: string;
+  toolsTriggered?: Array<{
+    name: string;
+    toolCallId: string;
+    inputChars?: number;
+    outputChars?: number;
+    durationMs?: number;
+    isError?: boolean;
+  }>;
+  responseThinkingTokens?: number;
+  responseTextTokens?: number;
+  responseToolCallTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  responseContent?: {
+    thinkingChars?: number;
+    textChars?: number;
+    toolCallChars?: number;
   };
 };
 
@@ -433,55 +453,4 @@ export function buildContextAnatomy(params: {
       searched: [],
     },
   };
-}
-
-// ---------------------------------------------------------------------------
-// JSONL persistence
-// ---------------------------------------------------------------------------
-
-const ANATOMY_DIR = ".openclaw/context-anatomy";
-
-function resolveAnatomyPath(sessionKey: string): string {
-  const safeName = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
-  return path.join(homeDir, ANATOMY_DIR, `${safeName}.jsonl`);
-}
-
-export async function writeAnatomyEvent(
-  sessionKey: string,
-  event: ContextAnatomyEvent,
-): Promise<void> {
-  const filePath = resolveAnatomyPath(sessionKey);
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.appendFile(filePath, JSON.stringify(event) + "\n", "utf-8");
-}
-
-export async function readAnatomyEvents(
-  sessionKey: string,
-  limit = 50,
-): Promise<ContextAnatomyEvent[]> {
-  const filePath = resolveAnatomyPath(sessionKey);
-  try {
-    const content = await fs.readFile(filePath, "utf-8");
-    const lines = content.trim().split("\n").filter(Boolean);
-    const events = lines
-      .map((line) => {
-        try {
-          return JSON.parse(line) as ContextAnatomyEvent;
-        } catch {
-          return null;
-        }
-      })
-      .filter((e): e is ContextAnatomyEvent => e !== null);
-    return events.slice(-limit);
-  } catch {
-    return [];
-  }
-}
-
-export async function readLatestAnatomyEvent(
-  sessionKey: string,
-): Promise<ContextAnatomyEvent | null> {
-  const events = await readAnatomyEvents(sessionKey, 1);
-  return events[0] ?? null;
 }
