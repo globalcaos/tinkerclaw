@@ -153,6 +153,8 @@ check_extended_wirings() {
   check_wiring "src/agents/pi-embedded-subscribe.ts" 'streamReasoning:.*reasoningMode' "streamReasoning not gated on callback"
   check_wiring "src/agents/pi-embedded-subscribe.handlers.types.ts" "currentThinkingBlock" "Per-round thinking state field"
   check_wiring "src/agents/pi-embedded-subscribe.handlers.messages.ts" "currentThinkingBlock" "Per-round thinking tracking in message handler"
+  check_wiring "tinker-ui/src/app.ts" "isThinkingMsg" "Thinking temps preserved in finalization"
+  check_wiring "tinker-ui/src/app.ts" "hasRunTemps" "Stable isCurrentRun check (no style flicker)"
 
   if [[ -f "$ROOT/src/web/auto-reply/monitor.ts" ]]; then
     if grep -q "unknown as.*ActiveWebListener\|unknown as import" "$ROOT/src/web/auto-reply/monitor.ts" 2>/dev/null; then
