@@ -12,6 +12,10 @@ export const SEGMENT_COLORS: Record<string, string> = {
   conversation: "#ef4444",
   toolResults: "#a855f7",
   userMessage: "#94a3b8",
+  // response segments
+  responseThinking: "#06b6d4", // cyan-500  (thinking/reasoning)
+  responseText: "#10b981", // emerald-500 (text output)
+  responseToolCalls: "#f59e0b", // amber-500 (tool call inputs)
 };
 
 export const RESPONSE_COLOR = "#c084fc"; // purple-400 — LLM output
@@ -24,6 +28,10 @@ export const SEGMENT_LABELS: Record<string, string> = {
   conversation: "Conv",
   toolResults: "Results",
   userMessage: "User",
+  // response segments
+  responseThinking: "Thinking",
+  responseText: "Text Output",
+  responseToolCalls: "Tool Calls",
 };
 
 // Ordered top-to-bottom in the stacked bar (rendered bottom-to-top via column-reverse)
@@ -35,6 +43,9 @@ const SEGMENT_ORDER = [
   "conversation",
   "toolResults",
   "userMessage",
+  "responseThinking",
+  "responseText",
+  "responseToolCalls",
 ];
 
 export interface AnatomyEvent {
@@ -73,6 +84,19 @@ export interface AnatomyEvent {
   }>;
   timestampMs?: number;
   timestamp?: string;
+  // response breakdown
+  runId?: string;
+  sessionKey?: string;
+  responseThinkingTokens?: number;
+  responseTextTokens?: number;
+  responseToolCallTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  responseContent?: {
+    thinkingChars?: number;
+    textChars?: number;
+    toolCallChars?: number;
+  };
   [k: string]: any;
 }
 
@@ -108,6 +132,7 @@ interface TimelineController {
     },
   ): void;
   loadSession(sessionKey: string): void;
+  loadEvents(events: AnatomyEvent[]): void;
   clear(): void;
   getSelected(): AnatomyEvent | null;
   setFilterMode(mode: "session" | "all"): void;
@@ -119,7 +144,7 @@ const MAX_BUFFER = 200;
 // Per-column chrome: provider icon (16) + timestamp 2-line (24) + group border (4) + legend (16) = 60px
 const COLUMN_CHROME_PX = 60;
 
-// Map our segment keys to the flat field names in contextSent
+// Map our segment keys to the flat field names in contextSent (input) or top-level event (response)
 const SEGMENT_TOKEN_FIELDS: Record<string, string> = {
   systemPrompt: "systemPromptTokens",
   injectedFiles: "injectedFilesTotalTokens",
@@ -128,6 +153,10 @@ const SEGMENT_TOKEN_FIELDS: Record<string, string> = {
   conversation: "conversationHistoryTokens",
   toolResults: "toolResultsTokens",
   userMessage: "userMessageTokens",
+  // response segments — read from top-level event fields
+  responseThinking: "responseThinkingTokens",
+  responseText: "responseTextTokens",
+  responseToolCalls: "responseToolCallTokens",
 };
 
 export type BarSelectMode = "context" | "response" | "context-summarize" | "response-summarize";
@@ -247,11 +276,11 @@ export function mountContextTimeline(
 
   function getSegmentTokens(ev: AnatomyEvent): { key: string; tokens: number }[] {
     const cs = ev.contextSent;
-    if (!cs) return [];
     const out: { key: string; tokens: number }[] = [];
     for (const key of SEGMENT_ORDER) {
       const field = SEGMENT_TOKEN_FIELDS[key];
-      const tokens = cs[field] ?? 0;
+      // Input segments come from contextSent, response segments from top-level event
+      const tokens = cs?.[field] ?? (ev as any)[field] ?? 0;
       if (tokens > 0) out.push({ key, tokens });
     }
     return out;
@@ -761,6 +790,36 @@ export function mountContextTimeline(
         }
       } catch {
         // API not available — show empty
+      }
+      render();
+    },
+
+    loadEvents(events: AnatomyEvent[]): void {
+      buffer.length = 0;
+      selectedIdx = null;
+      groupCounter = 0;
+
+      for (const event of events) {
+        // Detect session boundary — force new group when sessionKey changes
+        const prevEntry = buffer[buffer.length - 1];
+        const prevSession = prevEntry?.event?.sessionKey;
+        const curSession = event.sessionKey;
+
+        let groupId: string;
+        if (prevSession && curSession && prevSession !== curSession) {
+          // Session boundary — assign a fresh group id, bypassing time-gap heuristic
+          groupId = `grp-${++groupCounter}`;
+        } else {
+          // Use existing logic (turn-based + time-gap)
+          groupId = assignGroupId(event.runId, event);
+        }
+
+        push({ event, runId: event.runId, groupId });
+      }
+
+      if (buffer.length > 0) {
+        selectedIdx = buffer.length - 1;
+        onBarSelect(buffer[selectedIdx].event, "context");
       }
       render();
     },
