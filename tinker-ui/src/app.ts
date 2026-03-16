@@ -968,7 +968,7 @@ function onFrame(f: any) {
           // Load 24h cross-session feed instead of per-session
           {
             const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-            fetch(`${base}/api/context-anatomy/recent?hours=24`)
+            fetch(`${base}/tinker/api/context-anatomy/recent?hours=24`)
               .then((r) => r.json())
               .then((data) => {
                 if (data?.events && timelineCtrl) {
@@ -1639,7 +1639,7 @@ function onEvent(evt: any) {
           setTimeout(() => {
             if (sk && timelineCtrl) {
               const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-              fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+              fetch(`${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
                   const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
@@ -1698,7 +1698,7 @@ function onEvent(evt: any) {
         setTimeout(() => {
           if (sk && timelineCtrl) {
             const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-            fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+            fetch(`${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
                 const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);

@@ -763,7 +763,7 @@ export function mountContextTimeline(
       const base = getGatewayBase();
       try {
         const resp = await fetch(
-          `${base}/api/context-anatomy/${encodeURIComponent(sessionKey)}?limit=${MAX_BUFFER}`,
+          `${base}/tinker/api/context-anatomy/${encodeURIComponent(sessionKey)}?limit=${MAX_BUFFER}`,
         );
         if (!resp.ok) {
           render();
@@ -858,7 +858,7 @@ export function mountContextTimeline(
         sessionKeys.map(async (sk) => {
           try {
             const resp = await fetch(
-              `${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=${MAX_BUFFER}`,
+              `${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=${MAX_BUFFER}`,
             );
             if (!resp.ok) return;
             const body = await resp.json();

@@ -517,3 +517,14 @@ export function querySessionEvents(
     .all(sessionKey, limit) as AnatomyRow[];
   return rows.map(parseRow);
 }
+
+// ---------------------------------------------------------------------------
+// Global registry — allows extensions to call query functions without
+// importing better-sqlite3 (extensions run in the same process but can't
+// import bundled gateway internals).
+// ---------------------------------------------------------------------------
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bridge for extensions
+(globalThis as any).__anatomyDb = {
+  queryRecentEvents,
+  querySessionEvents,
+};
