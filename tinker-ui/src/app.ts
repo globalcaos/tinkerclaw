@@ -2786,7 +2786,17 @@ function updateChat(skipScroll = false) {
       }
       // During streaming, render all bubbles as normal assistant (no thinking style).
       // After finalization, all except the last become thinking → reasoning group.
-      const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
+      // FORK: also check thinkingMsgIdx and presence of _temporary messages —
+      // streamMsgIdx alone oscillates to -1 between tool calls and during
+      // thinking-only streaming, causing text temps to flip styles.
+      const hasRunTemps = (() => {
+        for (let k = runStart; k < i; k++) {
+          if (messages[k]._temporary) return true;
+        }
+        return false;
+      })();
+      const isCurrentRun =
+        i === messages.length && (streamMsgIdx >= 0 || thinkingMsgIdx >= 0 || hasRunTemps);
       const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
       for (const idx of intermediates) thinkingSet.add(idx);
       runStart = i + 1;
