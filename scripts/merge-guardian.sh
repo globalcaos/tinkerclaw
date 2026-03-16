@@ -148,6 +148,12 @@ check_extended_wirings() {
   check_wiring "src/gateway/server-chat.ts" "thinking_delta" "thinking_delta chat broadcast in server-chat.ts"
   check_wiring "src/gateway/server-chat.ts" "thinking_end" "thinking_end chat broadcast in server-chat.ts"
 
+  # Thinking/response separation (2026-03-16) — 6 fixes, all must survive upstream merges
+  check_wiring "src/auto-reply/reply/get-reply-directives.ts" "thinkingActive" "Auto-enable reasoning stream when thinking active"
+  check_wiring "src/agents/pi-embedded-subscribe.ts" 'streamReasoning:.*reasoningMode' "streamReasoning not gated on callback"
+  check_wiring "src/agents/pi-embedded-subscribe.handlers.types.ts" "currentThinkingBlock" "Per-round thinking state field"
+  check_wiring "src/agents/pi-embedded-subscribe.handlers.messages.ts" "currentThinkingBlock" "Per-round thinking tracking in message handler"
+
   if [[ -f "$ROOT/src/web/auto-reply/monitor.ts" ]]; then
     if grep -q "unknown as.*ActiveWebListener\|unknown as import" "$ROOT/src/web/auto-reply/monitor.ts" 2>/dev/null; then
       ok "ActiveWebListener cast in monitor.ts"
