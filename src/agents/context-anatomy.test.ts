@@ -1,18 +1,8 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { afterEach, describe, expect, test } from "vitest";
 import type { SessionSystemPromptReport } from "../config/sessions/types.js";
-import {
-  buildContextAnatomy,
-  estimateTokens,
-  extractTopics,
-  readAnatomyEvents,
-  readLatestAnatomyEvent,
-  writeAnatomyEvent,
-  type ContextAnatomyEvent,
-} from "./context-anatomy.js";
+import { closeAnatomyDb, insertAnatomyEvent, querySessionEvents } from "./context-anatomy-db.js";
+import { buildContextAnatomy, estimateTokens, extractTopics } from "./context-anatomy.js";
 
 // ---------------------------------------------------------------------------
 // estimateTokens
@@ -41,14 +31,45 @@ function makeReport(overrides?: Partial<SessionSystemPromptReport>): SessionSyst
       nonProjectContextChars: 10000,
     },
     injectedWorkspaceFiles: [
-      { name: "MEMORY.md", path: "MEMORY.md", missing: false, rawChars: 500, injectedChars: 500, truncated: false },
-      { name: "SOUL.md", path: "SOUL.md", missing: false, rawChars: 300, injectedChars: 300, truncated: false },
-      { name: "AGENTS.md", path: "AGENTS.md", missing: false, rawChars: 1200, injectedChars: 1200, truncated: false },
-      { name: "MISSING.md", path: "MISSING.md", missing: true, rawChars: 0, injectedChars: 0, truncated: false },
+      {
+        name: "MEMORY.md",
+        path: "MEMORY.md",
+        missing: false,
+        rawChars: 500,
+        injectedChars: 500,
+        truncated: false,
+      },
+      {
+        name: "SOUL.md",
+        path: "SOUL.md",
+        missing: false,
+        rawChars: 300,
+        injectedChars: 300,
+        truncated: false,
+      },
+      {
+        name: "AGENTS.md",
+        path: "AGENTS.md",
+        missing: false,
+        rawChars: 1200,
+        injectedChars: 1200,
+        truncated: false,
+      },
+      {
+        name: "MISSING.md",
+        path: "MISSING.md",
+        missing: true,
+        rawChars: 0,
+        injectedChars: 0,
+        truncated: false,
+      },
     ],
     skills: {
       promptChars: 2000,
-      entries: [{ name: "coding-agent", blockChars: 1000 }, { name: "github", blockChars: 1000 }],
+      entries: [
+        { name: "coding-agent", blockChars: 1000 },
+        { name: "github", blockChars: 1000 },
+      ],
     },
     tools: {
       listChars: 500,
@@ -67,7 +88,10 @@ function makeMessages(): AgentMessage[] {
     { role: "user", content: "Hello, how are you?" },
     { role: "assistant", content: "I'm doing well, thanks for asking!" },
     { role: "user", content: "Search my memory for the project plan" },
-    { role: "tool", content: JSON.stringify({ results: [{ path: "memory/plans/plan.md", score: 0.9 }] }) },
+    {
+      role: "tool",
+      content: JSON.stringify({ results: [{ path: "memory/plans/plan.md", score: 0.9 }] }),
+    },
     { role: "assistant", content: "I found the project plan. Here's what it says..." },
     { role: "user", content: "Great, now build the feature" },
   ];
@@ -205,8 +229,9 @@ describe("extractTopics", () => {
     expect(topics.length).toBeLessThanOrEqual(5);
     // At least one meaningful keyword from the last user message
     const lowerTopics = topics.map((t) => t.toLowerCase());
-    const hasKeyword =
-      lowerTopics.some((t) => ["refactor", "authentication", "middleware", "module"].includes(t));
+    const hasKeyword = lowerTopics.some((t) =>
+      ["refactor", "authentication", "middleware", "module"].includes(t),
+    );
     expect(hasKeyword).toBe(true);
   });
 
@@ -326,85 +351,87 @@ describe("topic transitions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// JSONL persistence
+// SQLite persistence
 // ---------------------------------------------------------------------------
 
-describe("JSONL persistence", () => {
-  const testDir = path.join(os.tmpdir(), `anatomy-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  const originalHome = process.env.HOME;
+describe("SQLite persistence", () => {
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  beforeEach(async () => {
-    process.env.HOME = testDir;
-    await fs.mkdir(testDir, { recursive: true });
+  afterEach(() => {
+    // Close the singleton DB between tests so each test gets a fresh state
+    closeAnatomyDb();
   });
 
-  afterEach(async () => {
-    process.env.HOME = originalHome;
-    await fs.rm(testDir, { recursive: true, force: true }).catch(() => {});
-  });
-
-  test("write and read back events", async () => {
+  test("write and read back events", () => {
+    const sessionKey = `test-session-${uniqueSuffix}`;
     const event = buildContextAnatomy({
       turn: 1,
       compactionCycle: 0,
       provider: "anthropic",
       model: "claude-opus-4-6",
+      sessionKey,
       systemPromptReport: makeReport(),
       messagesSnapshot: [{ role: "user", content: "hi" }],
       contextWindowTokens: 200000,
     });
 
-    await writeAnatomyEvent("test-session", event);
-    await writeAnatomyEvent("test-session", { ...event, turn: 2 });
+    insertAnatomyEvent(event);
+    insertAnatomyEvent({ ...event, turn: 2 });
 
-    const events = await readAnatomyEvents("test-session");
+    // querySessionEvents returns newest-first; reverse for ascending order
+    const events = querySessionEvents(sessionKey, 50).toReversed();
     expect(events).toHaveLength(2);
     expect(events[0]!.turn).toBe(1);
     expect(events[1]!.turn).toBe(2);
   });
 
-  test("readLatestAnatomyEvent returns last event", async () => {
+  test("querySessionEvents with limit=1 returns latest event", () => {
+    const sessionKey = `latest-test-${uniqueSuffix}`;
     const event = buildContextAnatomy({
       turn: 5,
       compactionCycle: 2,
       provider: "anthropic",
       model: "claude-opus-4-6",
+      sessionKey,
       systemPromptReport: makeReport(),
       messagesSnapshot: [{ role: "user", content: "hi" }],
       contextWindowTokens: 200000,
     });
 
-    await writeAnatomyEvent("latest-test", { ...event, turn: 1 });
-    await writeAnatomyEvent("latest-test", { ...event, turn: 5 });
+    insertAnatomyEvent({ ...event, turn: 1 });
+    insertAnatomyEvent({ ...event, turn: 5 });
 
-    const latest = await readLatestAnatomyEvent("latest-test");
+    const latest = querySessionEvents(sessionKey, 1)[0] ?? null;
     expect(latest).not.toBeNull();
     expect(latest!.turn).toBe(5);
   });
 
-  test("readAnatomyEvents returns empty for nonexistent session", async () => {
-    const events = await readAnatomyEvents("nonexistent");
+  test("querySessionEvents returns empty for nonexistent session", () => {
+    const events = querySessionEvents(`nonexistent-${uniqueSuffix}`);
     expect(events).toHaveLength(0);
   });
 
-  test("readAnatomyEvents respects limit", async () => {
+  test("querySessionEvents respects limit", () => {
+    const sessionKey = `limit-test-${uniqueSuffix}`;
     const event = buildContextAnatomy({
       turn: 1,
       compactionCycle: 0,
       provider: "anthropic",
       model: "claude-opus-4-6",
+      sessionKey,
       systemPromptReport: makeReport(),
       messagesSnapshot: [{ role: "user", content: "hi" }],
       contextWindowTokens: 200000,
     });
 
     for (let i = 0; i < 10; i++) {
-      await writeAnatomyEvent("limit-test", { ...event, turn: i });
+      insertAnatomyEvent({ ...event, turn: i });
     }
 
-    const events = await readAnatomyEvents("limit-test", 3);
+    // querySessionEvents returns newest-first; reverse for ascending order
+    const events = querySessionEvents(sessionKey, 3).toReversed();
     expect(events).toHaveLength(3);
-    // Should return last 3
+    // Should return last 3 in ascending order
     expect(events[0]!.turn).toBe(7);
     expect(events[2]!.turn).toBe(9);
   });
