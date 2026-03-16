@@ -57,6 +57,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     lastStreamedAssistantCleaned: undefined,
     emittedAssistantUpdate: false,
     lastStreamedReasoning: undefined,
+    currentThinkingBlock: "",
     lastBlockReplyText: undefined,
     reasoningStreamOpen: false,
     assistantMessageIndex: 0,
@@ -566,35 +567,38 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     if (!state.streamReasoning) {
       return;
     }
-    const formatted = formatReasoningMessage(text);
-    if (!formatted) {
+    const trimmed = text.trim();
+    if (!trimmed) {
       return;
     }
-    if (formatted === state.lastStreamedReasoning) {
+    // FORK: Use raw text for dedup and agent events (Tinker UI).
+    // formatReasoningMessage adds "Reasoning:\n_italic_" which is for
+    // messaging channels — Tinker UI has its own "Thinking:" label + CSS.
+    if (trimmed === state.lastStreamedReasoning) {
       return;
     }
-    // Compute delta: new text since the last emitted reasoning.
-    // Guard against non-prefix changes (e.g. trim/format altering earlier content).
     const prior = state.lastStreamedReasoning ?? "";
-    const delta = formatted.startsWith(prior) ? formatted.slice(prior.length) : formatted;
-    state.lastStreamedReasoning = formatted;
+    const delta = trimmed.startsWith(prior) ? trimmed.slice(prior.length) : trimmed;
+    state.lastStreamedReasoning = trimmed;
 
-    // FORK: Broadcast thinking event to WebSocket clients in real-time
-    // regardless of whether onReasoningStream callback exists — the agent
-    // event feeds the gateway's thinking_delta broadcast (Tinker UI).
+    // FORK: Broadcast RAW thinking text to WebSocket clients (Tinker UI).
+    // No "Reasoning:" prefix, no italic wrapping — the UI handles styling.
     emitAgentEvent({
       runId: params.runId,
       stream: "thinking",
       data: {
-        text: formatted,
+        text: trimmed,
         delta,
       },
     });
 
-    // onReasoningStream callback is optional — used by messaging channels
-    void params.onReasoningStream?.({
-      text: formatted,
-    });
+    // Messaging channels get the formatted version (with "Reasoning:" prefix + italics)
+    const formatted = formatReasoningMessage(text);
+    if (formatted) {
+      void params.onReasoningStream?.({
+        text: formatted,
+      });
+    }
   };
 
   const resetForCompactionRetry = () => {

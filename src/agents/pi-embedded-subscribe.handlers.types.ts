@@ -51,6 +51,8 @@ export type EmbeddedPiSubscribeState = {
   lastStreamedAssistantCleaned?: string;
   emittedAssistantUpdate: boolean;
   lastStreamedReasoning?: string;
+  /** FORK: Raw thinking text for current block only (reset on thinking_end). */
+  currentThinkingBlock: string;
   lastBlockReplyText?: string;
   reasoningStreamOpen: boolean;
   assistantMessageIndex: number;
