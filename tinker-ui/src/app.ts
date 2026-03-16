@@ -6008,7 +6008,16 @@ function init() {
     },
     (mode) => {
       if (mode === "all") {
-        timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
+        // Use the /recent endpoint for cross-session 24h feed
+        const b = import.meta.env.DEV ? "http://localhost:18789" : "";
+        fetch(`${b}/tinker/api/context-anatomy/recent?hours=24`)
+          .then((r) => r.json())
+          .then((data) => {
+            if (data?.events && timelineCtrl) {
+              timelineCtrl.loadEvents(data.events);
+            }
+          })
+          .catch((err) => console.warn("[timeline] failed to load recent events:", err));
       } else {
         timelineCtrl?.loadSession(sessionKey);
       }

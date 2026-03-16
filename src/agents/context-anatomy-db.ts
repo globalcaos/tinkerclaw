@@ -371,8 +371,23 @@ export function updateAnatomyResponse(
  */
 export function pruneOldEvents(): void {
   const database = openAnatomyDb();
+  const MIN_KEEP = 100;
+  const totalRows = (
+    database.prepare(`SELECT COUNT(*) as cnt FROM anatomy_events`).get() as { cnt: number }
+  ).cnt;
+  if (totalRows <= MIN_KEEP) {
+    return;
+  } // never prune below minimum
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  database.prepare(`DELETE FROM anatomy_events WHERE timestamp_ms < ?`).run(cutoff);
+  // Only delete rows older than 24h AND keep at least MIN_KEEP rows
+  const rowsToKeep = Math.max(MIN_KEEP, totalRows);
+  database
+    .prepare(
+      `DELETE FROM anatomy_events WHERE timestamp_ms < ? AND id NOT IN (
+        SELECT id FROM anatomy_events ORDER BY timestamp_ms DESC LIMIT ?
+      )`,
+    )
+    .run(cutoff, rowsToKeep > MIN_KEEP ? MIN_KEEP : rowsToKeep);
 }
 
 // ---------------------------------------------------------------------------
