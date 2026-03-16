@@ -74,6 +74,7 @@ check_fork_directories() {
     "extensions/hippocampus/index.ts"
     "extensions/whatsapp/src/auto-reply/monitor/thinking-reaction.ts"
     "src/auto-reply/reply/jarvis-voice-markup.ts"
+    "src/agents/context-anatomy-db.ts"
     "src/agents/tools/whatsapp-history-tool.ts"
   )
 
@@ -153,6 +154,12 @@ check_extended_wirings() {
   check_wiring "src/agents/pi-embedded-subscribe.ts" 'streamReasoning:.*reasoningMode' "streamReasoning not gated on callback"
   check_wiring "src/agents/pi-embedded-subscribe.handlers.types.ts" "currentThinkingBlock" "Per-round thinking state field"
   check_wiring "src/agents/pi-embedded-subscribe.handlers.messages.ts" "currentThinkingBlock" "Per-round thinking tracking in message handler"
+  # Timeline SQLite persistence (2026-03-16)
+  check_wiring "src/fork/attempt-hooks.ts" "insertAnatomyEvent" "SQLite anatomy insert in attempt-hooks"
+  check_wiring "src/fork/attempt-hooks.ts" "updateAnatomyResponse" "SQLite anatomy update in attempt-hooks"
+  check_wiring "src/agents/pi-embedded-subscribe.handlers.types.ts" "responseBreakdown" "Response breakdown state type"
+  check_wiring "src/agents/pi-embedded-subscribe.handlers.messages.ts" "thinkingChars\|textChars\|toolCallChars" "Response breakdown char accumulators"
+
   check_wiring "tinker-ui/src/app.ts" "isThinkingMsg" "Thinking temps preserved in finalization"
   check_wiring "tinker-ui/src/app.ts" "hasRunTemps" "Stable isCurrentRun check (no style flicker)"
 
