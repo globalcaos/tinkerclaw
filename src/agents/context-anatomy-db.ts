@@ -13,6 +13,7 @@
  */
 
 import fs from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type { ContextAnatomyEvent } from "./context-anatomy.js";
@@ -97,10 +98,88 @@ export function openAnatomyDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_session_key ON anatomy_events(session_key);
   `);
 
-  // Mark schema version for future migrations
-  db.pragma("user_version = 1");
+  // Mark schema version if this is a brand-new DB (version 0).
+  // migrateFromJsonl() will advance version to 2 when done.
+  const currentVersion = db.pragma("user_version", { simple: true }) as number;
+  if (currentVersion < 1) {
+    db.pragma("user_version = 1");
+  }
+
+  migrateFromJsonl(db);
 
   return db;
+}
+
+// ---------------------------------------------------------------------------
+// One-time JSONL migration
+// ---------------------------------------------------------------------------
+
+/**
+ * Migrate historical anatomy events from `~/.openclaw/context-anatomy/*.jsonl`
+ * into the SQLite DB.
+ *
+ * Runs exactly once: guarded by `user_version >= 2`. After a successful
+ * migration (or when there is nothing to migrate) `user_version` is set to 2.
+ * The original JSONL files are left on disk as a backup.
+ *
+ * @param database - Already-open DB handle (passed from openAnatomyDb to avoid
+ *   re-entering the singleton guard).
+ */
+function migrateFromJsonl(database: Database.Database): void {
+  // user_version >= 2 means migration already ran — skip.
+  const version = database.pragma("user_version", { simple: true }) as number;
+  if (version >= 2) {
+    return;
+  }
+
+  const anatomyDir = path.join(homedir(), ".openclaw", "context-anatomy");
+  if (!fs.existsSync(anatomyDir)) {
+    database.pragma("user_version = 2");
+    return;
+  }
+
+  const files = fs.readdirSync(anatomyDir).filter((f) => f.endsWith(".jsonl"));
+  if (files.length === 0) {
+    database.pragma("user_version = 2");
+    return;
+  }
+
+  console.log(`[anatomy-db] Migrating ${files.length} JSONL files to SQLite...`);
+  let totalEvents = 0;
+
+  // Wrap each file's inserts in a transaction for bulk-insert performance.
+  const insertMany = database.transaction((events: ContextAnatomyEvent[]) => {
+    for (const event of events) {
+      insertAnatomyEvent(event);
+    }
+  });
+
+  for (const file of files) {
+    try {
+      const content = fs.readFileSync(path.join(anatomyDir, file), "utf-8");
+      const events: ContextAnatomyEvent[] = [];
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          continue;
+        }
+        try {
+          events.push(JSON.parse(trimmed) as ContextAnatomyEvent);
+        } catch {
+          // Skip malformed lines — don't abort the whole file.
+        }
+      }
+      if (events.length > 0) {
+        insertMany(events);
+        totalEvents += events.length;
+      }
+    } catch (err) {
+      console.warn(`[anatomy-db] Failed to migrate ${file}:`, err);
+    }
+  }
+
+  database.pragma("user_version = 2");
+  console.log(`[anatomy-db] Migration complete: ${totalEvents} events from ${files.length} files`);
 }
 
 /** Close the database handle and reset singleton state. */
