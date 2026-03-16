@@ -123,6 +123,10 @@ export function handleMessageUpdate(
       const partialThinking = extractAssistantThinking(msg);
       ctx.emitReasoningStream(partialThinking || thinkingContent || thinkingDelta);
     }
+    // Count thinking chars from delta (incremental, avoids double-counting full content)
+    if (evtType === "thinking_delta" && thinkingDelta) {
+      ctx.state.responseBreakdown.thinkingChars += thinkingDelta.length;
+    }
     if (evtType === "thinking_end") {
       if (!ctx.state.reasoningStreamOpen) {
         ctx.state.reasoningStreamOpen = true;
@@ -170,6 +174,7 @@ export function handleMessageUpdate(
 
   if (chunk) {
     ctx.state.deltaBuffer += chunk;
+    ctx.state.responseBreakdown.textChars += chunk.length;
     if (ctx.blockChunker) {
       ctx.blockChunker.append(chunk);
     } else {
@@ -270,6 +275,26 @@ export function handleMessageEnd(
   const assistantMessage = msg;
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
+  // Count tool_use input chars from assistant message content blocks
+  const assistantContent = (assistantMessage as { content?: unknown }).content;
+  if (Array.isArray(assistantContent)) {
+    for (const block of assistantContent) {
+      if (
+        block &&
+        typeof block === "object" &&
+        (block as Record<string, unknown>).type === "tool_use" &&
+        (block as Record<string, unknown>).input !== undefined
+      ) {
+        try {
+          ctx.state.responseBreakdown.toolCallChars += JSON.stringify(
+            (block as Record<string, unknown>).input,
+          ).length;
+        } catch {
+          // ignore serialization errors
+        }
+      }
+    }
+  }
   if (ctx.state.deterministicApprovalPromptSent) {
     return;
   }

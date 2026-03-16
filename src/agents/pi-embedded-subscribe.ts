@@ -79,6 +79,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     successfulCronAdds: 0,
     pendingMessagingMediaUrls: new Map(),
     deterministicApprovalPromptSent: false,
+    responseBreakdown: { thinkingChars: 0, textChars: 0, toolCallChars: 0 },
   };
   const usageTotals = {
     input: 0,
@@ -305,6 +306,12 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   };
   const incrementCompactionCount = () => {
     compactionCount += 1;
+  };
+  const getResponseBreakdown = () => ({ ...state.responseBreakdown });
+  const resetResponseBreakdown = () => {
+    state.responseBreakdown.thinkingChars = 0;
+    state.responseBreakdown.textChars = 0;
+    state.responseBreakdown.toolCallChars = 0;
   };
 
   const blockChunking = params.blockReplyChunking;
@@ -601,6 +608,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     state.pendingMessagingMediaUrls.clear();
     state.deterministicApprovalPromptSent = false;
     resetAssistantMessageState(0);
+    resetResponseBreakdown();
   };
 
   const noteLastAssistant = (msg: AgentMessage) => {
@@ -639,6 +647,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     incrementCompactionCount,
     getUsageTotals,
     getCompactionCount: () => compactionCount,
+    getResponseBreakdown,
+    resetResponseBreakdown,
   };
 
   const sessionUnsubscribe = params.session.subscribe(createEmbeddedPiSessionEventHandler(ctx));
@@ -693,6 +703,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     didSendDeterministicApprovalPrompt: () => state.deterministicApprovalPromptSent,
     getLastToolError: () => (state.lastToolError ? { ...state.lastToolError } : undefined),
     getUsageTotals,
+    getResponseBreakdown,
     getCompactionCount: () => compactionCount,
     waitForCompactionRetry: () => {
       // Reject after unsubscribe so callers treat it as cancellation, not success
