@@ -2784,11 +2784,10 @@ function updateChat(skipScroll = false) {
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasText || plainText) assistantTextIndices.push(j);
       }
-      // During streaming, render all bubbles as normal assistant (no thinking style).
+      // FORK: During streaming, frozen text temps (all except the actively
+      // streaming one at streamMsgIdx) are intermediates → thinking style.
+      // Only the active streaming text renders as normal assistant.
       // After finalization, all except the last become thinking → reasoning group.
-      // FORK: also check thinkingMsgIdx and presence of _temporary messages —
-      // streamMsgIdx alone oscillates to -1 between tool calls and during
-      // thinking-only streaming, causing text temps to flip styles.
       const hasRunTemps = (() => {
         for (let k = runStart; k < i; k++) {
           if (messages[k]._temporary) return true;
@@ -2797,8 +2796,16 @@ function updateChat(skipScroll = false) {
       })();
       const isCurrentRun =
         i === messages.length && (streamMsgIdx >= 0 || thinkingMsgIdx >= 0 || hasRunTemps);
-      const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
-      for (const idx of intermediates) thinkingSet.add(idx);
+      if (!isCurrentRun) {
+        // Finalized: all text except last are intermediates
+        const intermediates = assistantTextIndices.slice(0, -1);
+        for (const idx of intermediates) thinkingSet.add(idx);
+      } else {
+        // Streaming: frozen text temps are intermediates, active one is not
+        for (const idx of assistantTextIndices) {
+          if (idx !== streamMsgIdx) thinkingSet.add(idx);
+        }
+      }
       runStart = i + 1;
     }
   }
