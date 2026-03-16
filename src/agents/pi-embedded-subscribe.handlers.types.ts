@@ -78,6 +78,7 @@ export type EmbeddedPiSubscribeState = {
   pendingMessagingMediaUrls: Map<string, string[]>;
   deterministicApprovalPromptSent: boolean;
   lastAssistant?: AgentMessage;
+  responseBreakdown: { thinkingChars: number; textChars: number; toolCallChars: number };
 };
 
 export type EmbeddedPiSubscribeContext = {
@@ -124,6 +125,8 @@ export type EmbeddedPiSubscribeContext = {
   incrementCompactionCount: () => void;
   getUsageTotals: () => NormalizedUsage | undefined;
   getCompactionCount: () => number;
+  getResponseBreakdown: () => { thinkingChars: number; textChars: number; toolCallChars: number };
+  resetResponseBreakdown: () => void;
 };
 
 /**
