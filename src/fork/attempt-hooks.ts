@@ -507,7 +507,13 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
             anatomy: contextAnatomy,
           },
         });
-        // Update cache token columns on the existing row (inserted by emitPrePromptAnatomy)
+        // Insert the anatomy row here in onTurnComplete (emitPrePromptAnatomy is not wired into attempt.ts).
+        // If emitPrePromptAnatomy is wired in the future, add a UNIQUE(run_id, round_number) constraint
+        // and switch to INSERT OR REPLACE to avoid duplicates.
+        contextAnatomy.runId = params.runId;
+        contextAnatomy.sessionKey = contextAnatomy.sessionKey ?? params.sessionKey;
+        insertAnatomyEvent(contextAnatomy);
+        // Update cache/response token columns on the row we just inserted
         const usage = params.getUsageTotals?.();
         if (params.runId && usage) {
           const roundNumber = (contextAnatomy as { roundNumber?: number }).roundNumber ?? 0;
