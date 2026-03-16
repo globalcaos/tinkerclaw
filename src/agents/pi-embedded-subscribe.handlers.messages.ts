@@ -119,9 +119,18 @@ export function handleMessageUpdate(
       content: thinkingContent,
     });
     if (ctx.state.streamReasoning) {
-      // Prefer full partial-message thinking when available; fall back to event payloads.
-      const partialThinking = extractAssistantThinking(msg);
-      ctx.emitReasoningStream(partialThinking || thinkingContent || thinkingDelta);
+      // FORK: Track per-block thinking text (not accumulated across rounds).
+      // extractAssistantThinking(msg) returns ALL blocks — would duplicate
+      // earlier rounds in subsequent thinking temps on the Tinker UI.
+      if (evtType === "thinking_start") {
+        ctx.state.currentThinkingBlock = "";
+      }
+      if (thinkingDelta) {
+        ctx.state.currentThinkingBlock += thinkingDelta;
+      } else if (thinkingContent && !ctx.state.currentThinkingBlock) {
+        ctx.state.currentThinkingBlock = thinkingContent;
+      }
+      ctx.emitReasoningStream(ctx.state.currentThinkingBlock);
     }
     // Count thinking chars from delta (incremental, avoids double-counting full content)
     if (evtType === "thinking_delta" && thinkingDelta) {
@@ -132,6 +141,9 @@ export function handleMessageUpdate(
         ctx.state.reasoningStreamOpen = true;
       }
       emitReasoningEnd(ctx);
+      // FORK: Reset per-round tracking so the next thinking block starts fresh
+      ctx.state.currentThinkingBlock = "";
+      ctx.state.lastStreamedReasoning = undefined;
     }
     return;
   }
