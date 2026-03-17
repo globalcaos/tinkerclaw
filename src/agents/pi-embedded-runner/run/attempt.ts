@@ -137,7 +137,7 @@ import { pruneProcessedHistoryImages } from "./history-image-prune.js";
 import { detectAndLoadPromptImages } from "./images.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack
-import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
+import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 
 type PromptBuildHookRunner = {
   hasHooks: (hookName: "before_prompt_build" | "before_agent_start") => boolean;

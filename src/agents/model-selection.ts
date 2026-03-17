@@ -538,9 +538,28 @@ export function buildAllowedModelSet(params: {
     allowedKeys.add(defaultKey);
   }
 
+  // Build a rank map from config: agents.defaults.models entries with a rank field.
+  const rankMap = new Map<string, number>();
+  const modelMap = params.cfg.agents?.defaults?.models ?? {};
+  for (const [raw, value] of Object.entries(modelMap)) {
+    const parsed = parseModelRef(String(raw), params.defaultProvider);
+    if (!parsed) continue;
+    const r = (value as Record<string, unknown> | null)?.rank;
+    if (typeof r === "number" && Number.isFinite(r)) {
+      rankMap.set(modelKey(parsed.provider, parsed.model), r);
+    }
+  }
+
+  const attachRank = (entry: ModelCatalogEntry): ModelCatalogEntry => {
+    const r = rankMap.get(modelKey(entry.provider, entry.id));
+    return r !== undefined ? { ...entry, rank: r } : entry;
+  };
+
   const allowedCatalog = [
-    ...params.catalog.filter((entry) => allowedKeys.has(modelKey(entry.provider, entry.id))),
-    ...syntheticCatalogEntries.values(),
+    ...params.catalog
+      .filter((entry) => allowedKeys.has(modelKey(entry.provider, entry.id)))
+      .map(attachRank),
+    ...[...syntheticCatalogEntries.values()].map(attachRank),
   ];
 
   if (allowedCatalog.length === 0 && allowedKeys.size === 0) {
