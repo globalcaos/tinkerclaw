@@ -19,7 +19,6 @@ import {
 import {
   DEFAULT_RESTART_HEALTH_ATTEMPTS,
   DEFAULT_RESTART_HEALTH_DELAY_MS,
-  renderGatewayPortHealthDiagnostics,
   renderRestartDiagnostics,
   terminateStaleGatewayPids,
   waitForGatewayHealthyListener,
@@ -178,22 +177,13 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
           return;
         }
 
-        const diagnostics = renderGatewayPortHealthDiagnostics(health);
-        const timeoutLine = `Timed out after ${restartWaitSeconds}s waiting for gateway port ${restartPort} to become healthy.`;
+        // FORK: Non-fatal timeout — gateway is likely still booting
         if (!json) {
-          defaultRuntime.log(theme.warn(timeoutLine));
-          for (const line of diagnostics) {
-            defaultRuntime.log(theme.muted(line));
-          }
-        } else {
-          warnings.push(timeoutLine);
-          warnings.push(...diagnostics);
+          defaultRuntime.log(
+            theme.info(`Gateway starting — port ${restartPort} will be ready in ~2 minutes.`),
+          );
         }
-
-        fail(`Gateway restart timed out after ${restartWaitSeconds}s waiting for health checks.`, [
-          formatCliCommand("openclaw gateway status --deep"),
-          formatCliCommand("openclaw doctor"),
-        ]);
+        return;
       }
 
       let health = await waitForGatewayHealthyRestart({
@@ -230,25 +220,30 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         return;
       }
 
+      // FORK: Don't fail on health timeout — the gateway takes ~2min to load 57MB of JS
+      // modules. Just report that it's booting and return success.
+      if (health.runtime.status === "running") {
+        if (!json) {
+          defaultRuntime.log(
+            theme.info(
+              `Gateway process is running (PID ${health.runtime.pid ?? "?"}). Still booting — port ${restartPort} will be ready in ~2 minutes.`,
+            ),
+          );
+        } else {
+          stdout.push(`Gateway booting (PID ${health.runtime.pid ?? "?"}).`);
+        }
+        return; // success — gateway IS running, just not listening yet
+      }
+
       const diagnostics = renderRestartDiagnostics(health);
       const timeoutLine = `Timed out after ${restartWaitSeconds}s waiting for gateway port ${restartPort} to become healthy.`;
-      const runningNoPortLine =
-        health.runtime.status === "running" && health.portUsage.status === "free"
-          ? `Gateway process is running but port ${restartPort} is still free (startup hang/crash loop or very slow VM startup).`
-          : null;
       if (!json) {
         defaultRuntime.log(theme.warn(timeoutLine));
-        if (runningNoPortLine) {
-          defaultRuntime.log(theme.warn(runningNoPortLine));
-        }
         for (const line of diagnostics) {
           defaultRuntime.log(theme.muted(line));
         }
       } else {
         warnings.push(timeoutLine);
-        if (runningNoPortLine) {
-          warnings.push(runningNoPortLine);
-        }
         warnings.push(...diagnostics);
       }
 

@@ -1361,8 +1361,15 @@ function onEvent(evt: any) {
       }
     }
 
-    // Round-start: push a new bar to the timeline immediately
+    // Round-start: update activeRun with authProfileId (the "start" event lacks it,
+    // but round-start has the actual profile used). This narrows glow to the correct row.
     if (p?.stream === "lifecycle" && p.data?.phase === "round-start") {
+      const existing = activeRuns.get(p.runId);
+      if (existing && p.data.authProfileId && existing.authProfileId !== p.data.authProfileId) {
+        existing.authProfileId = p.data.authProfileId as string;
+        saveActiveRuns();
+        updateBudgetPanel();
+      }
       if (
         p.data.sessionKey &&
         p.data.sessionKey !== sessionKey &&
@@ -1552,7 +1559,25 @@ function onEvent(evt: any) {
         // Clear errors only for the specific profile/model that succeeded.
         // Don't wipe sibling profiles — cli-sv can stay errored while cli-gm works.
         const startModel = p.data.model as string;
-        const startProfileId = p.data.authProfileId as string | undefined;
+        // Infer authProfileId from auth order if not provided by the runner.
+        // Prefer profiles that have fresh budget data (token works) and no errors.
+        // A profile with usage data is confirmed working; one without may have a
+        // broken token that fails silently during resolution.
+        let startProfileId = p.data.authProfileId as string | undefined;
+        if (!startProfileId && startProvider && modelConfigData?.authOrder?.[startProvider]) {
+          const candidates = modelConfigData.authOrder[startProvider] as string[];
+          const profiles = budgetUsageData?.claudeProfiles || {};
+          const disabled = modelConfigData?.authProfiles || {};
+          startProfileId =
+            // First: profile with fresh usage data and no errors (confirmed working)
+            candidates.find((k) => {
+              const label = k.split(":").slice(1).join(":");
+              return profiles[label] && !providerErrors.has(k) && !disabled[k]?.disabled;
+            }) ||
+            // Second: any profile without errors or disabled state
+            candidates.find((k) => !providerErrors.has(k) && !disabled[k]?.disabled) ||
+            candidates[0];
+        }
         if (startProfileId) {
           providerErrors.delete(startProfileId);
         }
@@ -1561,7 +1586,7 @@ function onEvent(evt: any) {
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: startProvider,
-          authProfileId: p.data.authProfileId,
+          authProfileId: startProfileId,
           startedAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
         });
@@ -1929,6 +1954,42 @@ async function loadBudget() {
     modelConfigData = mc;
   }
   budgetUsageData = bu;
+
+  // Clear stale providerErrors for profiles that now have fresh usage data.
+  // After a gateway restart + oauth fix, old "auth error" entries in localStorage
+  // would otherwise persist forever since no new fallback-profile-error is emitted.
+  if (bu?.claudeProfiles) {
+    let cleared = false;
+    for (const [label, data] of Object.entries(bu.claudeProfiles)) {
+      if (!data) continue;
+      // label is e.g. "cli-gm" → keyId is "anthropic:cli-gm"
+      const keyId = `anthropic:${label}`;
+      if (providerErrors.has(keyId)) {
+        providerErrors.delete(keyId);
+        cleared = true;
+      }
+    }
+    if (cleared) persistProviderErrors();
+  }
+
+  // Seed billing cap errors for API key profiles from auth profile state.
+  // The api profile won't generate fallback-profile-error events if the auth chain
+  // never reaches it (e.g. cli-gm succeeds first), but the cap info is in the config.
+  if (mc?.authProfiles) {
+    let seeded = false;
+    for (const [keyId, prof] of Object.entries(mc.authProfiles) as [string, any][]) {
+      if (prof?.disabled && prof.disabledReason && !providerErrors.has(keyId)) {
+        providerErrors.set(keyId, {
+          error: `${prof.disabledReason}`,
+          reason: prof.disabledReason === "billing" ? "billing" : "cooldown",
+          ts: Date.now(),
+        });
+        seeded = true;
+      }
+    }
+    if (seeded) persistProviderErrors();
+  }
+
   updateBudgetPanel();
 }
 
@@ -2521,16 +2582,24 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     const profileKey = keyId?.split(":").slice(1).join(":") || "";
     const profiles = budgetUsageData.claudeProfiles || {};
     const matched = profileKey ? profiles[profileKey] : null;
-    const c = matched || budgetUsageData.claude;
+    // Don't fall back to shared data when a specific profile is requested —
+    // each profile row should show its OWN data or a disconnected state.
+    // Only fall back to shared data when no specific keyId is provided.
+    const c = matched || (keyId ? null : budgetUsageData.claude);
     if (!c?.limits) {
-      // Profile exists but no usage data — show disconnected state
-      if (profileKey)
+      // Profile exists but no usage data — check for known errors first
+      if (profileKey || keyId) {
+        const label = profileKey || keyId || "unknown";
+        const err = keyId ? providerErrors.get(keyId) : null;
+        const isApiKey = prof?.type === "api_key" || profileKey === "api";
+        const reason = err?.reason || (isApiKey ? "api key (no usage)" : "disconnected");
         return {
-          topPct: 0,
-          bottomPct: 0,
-          tooltip: `${profileKey}: disconnected`,
+          topPct: err?.reason === "billing" ? 100 : 0,
+          bottomPct: err?.reason === "billing" ? 100 : 0,
+          tooltip: `${label}: ${reason}`,
           disconnected: true,
         };
+      }
       return null;
     }
     const src = matched ? profileKey : "shared";
@@ -2587,9 +2656,9 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   if (!usage) return '<span class="usage-bars-col"></span>';
   if (usage.disconnected) {
-    // Red-tinted dashes for billing/cooldown, gray for plain disconnected
+    // Red-tinted dashes for billing/cooldown, amber for plain disconnected
     const isCapped = usage.topPct >= 100;
-    const color = isCapped ? "#ef444450" : "#6b728033";
+    const color = isCapped ? "#ef444480" : "#f59e0b40";
     let h = '<span class="usage-bars-col">';
     h += `<span class="usage-bars-wrap usage-disconnected" data-hint="${esc(usage.tooltip)}">`;
     h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,${color} 0,${color} 3px,transparent 3px,transparent 6px)"></span></span>`;
@@ -3264,14 +3333,16 @@ function updateBudgetPanel() {
         keyId,
       );
     } else {
-      // Multiple keys — one compact row per key with model name inline
-      // Lifecycle events may lack authProfileId, so count is stored under modelId.
-      // Fall back to model-level count so all rows glow when the model is active.
+      // Multiple keys — one compact row per key with model name inline.
+      // Only fall back to model-level count (glow all rows) if NO per-key counts exist.
+      // Once round-start updates authProfileId, only the active profile glows.
       const modelCount = counts.get(modelId) || 0;
+      const hasAnyKeyCount = keys.some((k) => (counts.get(k) || 0) > 0);
       for (let ki = 0; ki < keys.length; ki++) {
         const keyId = keys[ki];
         const prof = authProfiles?.[keyId] || {};
         const keyLabel = prof.label || keyId.split(":")[1] || keyId;
+        const keyCount = counts.get(keyId) || 0;
         html += renderAuthKeyRow(
           keyId,
           keyLabel,
@@ -3279,7 +3350,7 @@ function updateBudgetPanel() {
           modelId,
           name,
           badge,
-          counts.get(keyId) || modelCount,
+          keyCount > 0 ? keyCount : hasAnyKeyCount ? 0 : modelCount,
           providerErrors.get(keyId) || providerErrors.get(modelId),
         );
       }
