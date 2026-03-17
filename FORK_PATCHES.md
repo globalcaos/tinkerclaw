@@ -184,6 +184,17 @@ For build errors, see `scripts/post-merge-build-playbook.md`.
 
 Manually verify these patterns (most are now auto-checked by guardian):
 
+### restart-health.ts + lifecycle.ts — Fast restart (2026-03-17)
+
+**Files:** `src/cli/daemon-cli/restart-health.ts`, `src/cli/daemon-cli/lifecycle.ts`
+**What:** Health check timeout 60s→10s; non-fatal timeout when process is running.
+**Why:** Gateway cold boot takes ~120s (57MB ESM). With SIGUSR1 in-process restart (1s), 10s is plenty. Non-fatal prevents false failure reports.
+**Grep:** `DEFAULT_RESTART_HEALTH_TIMEOUT_MS` (should be 10_000), `FORK: Don't fail on health timeout`
+**Guardian:** `check_systemd_service` checks OPENCLAW_NO_RESPAWN=1 + TimeoutStartSec=300
+**Postmortem:** `memory/knowledge/2026-03-17-restart-performance.md`
+
+---
+
 ### oauth.ts — try-catch around getOAuthApiKey (2026-03-17)
 
 **File:** `src/agents/auth-profiles/oauth.ts`
