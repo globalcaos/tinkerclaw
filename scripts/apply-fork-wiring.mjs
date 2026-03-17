@@ -52,7 +52,7 @@ function patchAttempt() {
   let src = readFile(file);
 
   const FORK_IMPORT =
-    'import * as forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point';
+    'import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point';
   const RETRIEVAL_IMPORT =
     'import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack';
 
@@ -760,6 +760,50 @@ function patchMessageHandlerScopes() {
 }
 
 // ---------------------------------------------------------------------------
+// 14. session.ts — fix live-capture import (default→named) for tsdown bundling
+// ---------------------------------------------------------------------------
+function patchWhatsAppSession() {
+  const file = "extensions/whatsapp/src/session.ts";
+  let src = readFile(file);
+
+  // Guard: already using named import
+  if (src.includes('import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js"')) {
+    console.log(`  ✅ ${file} — already patched`);
+    return;
+  }
+
+  // Replace default import + fallback chain with direct named import
+  // Upstream pattern: import _liveCapture from "..." + const bindHistoryCapture = _liveCapture?.bindHistoryCapture ?? ...
+  const defaultImportPattern =
+    /\/\/.*(?:FORK|live.?capture|jiti|SQLite).*\n\s*import\s+_liveCapture\s+from\s+["']\.\.\/\.\.\/\.\.\/src\/whatsapp-history\/live-capture\.js["'];?\s*\nconst\s+bindHistoryCapture[^;]+;/;
+
+  if (defaultImportPattern.test(src)) {
+    src = src.replace(
+      defaultImportPattern,
+      '// FORK: SQLite history capture\nimport { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js";',
+    );
+    writeFile(file, src);
+    return;
+  }
+
+  // Fallback: try without preceding comment
+  const barePattern =
+    /import\s+_liveCapture\s+from\s+["']\.\.\/\.\.\/\.\.\/src\/whatsapp-history\/live-capture\.js["'];?\s*\nconst\s+bindHistoryCapture[^;]+;/;
+
+  if (barePattern.test(src)) {
+    src = src.replace(
+      barePattern,
+      '// FORK: SQLite history capture\nimport { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js";',
+    );
+    writeFile(file, src);
+    return;
+  }
+
+  // If neither pattern found, the file might not have the import at all (new upstream version)
+  console.warn(`    ⚠️  ${file}: Could not find _liveCapture import pattern to patch`);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 console.log("🔌 Applying fork hook wiring...\n");
@@ -828,6 +872,11 @@ try {
   patchMessageHandlerScopes();
 } catch (err) {
   console.warn(`  ⚠️  message-handler.ts scopes: ${err.message}`);
+}
+try {
+  patchWhatsAppSession();
+} catch (err) {
+  console.warn(`  ⚠️  whatsapp session.ts: ${err.message}`);
 }
 
 console.log("\n✅ Fork wiring applied. Run: pnpm build");

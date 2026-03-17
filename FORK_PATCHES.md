@@ -184,6 +184,17 @@ For build errors, see `scripts/post-merge-build-playbook.md`.
 
 Manually verify these patterns (most are now auto-checked by guardian):
 
+### oauth.ts — try-catch around getOAuthApiKey (2026-03-17)
+
+**File:** `src/agents/auth-profiles/oauth.ts`
+**Lines:** ~221 (GM block), ~271 (SV block)
+**What:** Wrap `getOAuthApiKey()` calls in try-catch so stale refresh tokens fall through to Claude Code credential fallback instead of throwing.
+**Why:** Without this, expired refresh tokens (Anthropic strict rotation) cause an uncaught exception that skips the `.credentials.json` fallback path. 20-minute outage on 2026-03-17.
+**Guardian:** `check_oauth_trycatch` in merge-guardian.sh
+**Postmortem:** `memory/knowledge/2026-03-17-oauth-trycatch-postmortem.md`
+
+---
+
 ```bash
 # Auto-checked by merge-guardian.sh Phase 2:
 grep "getPersonaBlock"              src/agents/pi-embedded-runner/run/attempt.ts

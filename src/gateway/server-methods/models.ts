@@ -31,6 +31,15 @@ export const modelsHandlers: GatewayRequestHandlers = {
         defaultProvider: DEFAULT_PROVIDER,
       });
       const models = allowedCatalog.length > 0 ? allowedCatalog : catalog;
+      // Sort by rank (if present), then alphabetically by provider/name.
+      models.sort((a, b) => {
+        const aRank = a.rank ?? Infinity;
+        const bRank = b.rank ?? Infinity;
+        if (aRank !== bRank) return aRank - bRank;
+        const p = a.provider.localeCompare(b.provider);
+        if (p !== 0) return p;
+        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
+      });
       respond(true, { models }, undefined);
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));

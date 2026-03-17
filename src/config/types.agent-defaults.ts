@@ -14,6 +14,8 @@ export type AgentModelEntryConfig = {
   params?: Record<string, unknown>;
   /** Enable streaming for this model (default: true, false for Ollama to avoid SDK issue #1205). */
   streaming?: boolean;
+  /** Display rank for UI ordering (lower = higher position). */
+  rank?: number;
 };
 
 export type AgentModelListConfig = {

@@ -15,6 +15,7 @@ export type ModelCatalogEntry = {
   contextWindow?: number;
   reasoning?: boolean;
   input?: ModelInputType[];
+  rank?: number;
 };
 
 type DiscoveredModel = {
@@ -24,6 +25,7 @@ type DiscoveredModel = {
   contextWindow?: number;
   reasoning?: boolean;
   input?: ModelInputType[];
+  rank?: number;
 };
 
 type PiSdkModule = typeof import("./pi-model-discovery.js");
@@ -206,6 +208,13 @@ export async function loadModelCatalog(params?: {
     const models: ModelCatalogEntry[] = [];
     const sortModels = (entries: ModelCatalogEntry[]) =>
       entries.sort((a, b) => {
+        // Ranked models come first, sorted by rank ascending.
+        // Unranked models sort alphabetically after ranked ones.
+        const aRank = a.rank ?? Infinity;
+        const bRank = b.rank ?? Infinity;
+        if (aRank !== bRank) {
+          return aRank - bRank;
+        }
         const p = a.provider.localeCompare(b.provider);
         if (p !== 0) {
           return p;
