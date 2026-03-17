@@ -297,6 +297,25 @@ check_systemd_service() {
   fi
 }
 
+check_oauth_trycatch() {
+  log "--- Phase 5c: OAuth try-catch around getOAuthApiKey ---"
+  local oauth_file="$ROOT/src/agents/auth-profiles/oauth.ts"
+  if [[ ! -f "$oauth_file" ]]; then
+    warn "oauth.ts not found at expected path"
+    return
+  fi
+
+  # Check that getOAuthApiKey calls (GM + SV refresh blocks) are wrapped in try-catch
+  # Context: without try-catch, stale refresh tokens throw instead of falling through to Claude Code fallback
+  local trycatch_count
+  trycatch_count=$(grep -B5 "getOAuthApiKey" "$oauth_file" | grep -c "try" || true)
+  if [[ "$trycatch_count" -lt 2 ]]; then
+    warn "oauth.ts: getOAuthApiKey missing try-catch wrapper (found $trycatch_count, need ≥2). Stale refresh tokens will throw instead of falling through. See 2026-03-17 postmortem."
+  else
+    ok "oauth.ts: getOAuthApiKey calls wrapped in try-catch ($trycatch_count found)"
+  fi
+}
+
 run_build_check() {
   if [[ "$no_build" == true ]]; then
     log "--- Phase 6: Build (skipped — --no-build) ---"
@@ -442,6 +461,7 @@ check_config_schemas
 check_ui_integrity
 check_debug_artifacts
 check_systemd_service
+check_oauth_trycatch
 
 build_failed=false
 run_build_check || build_failed=true

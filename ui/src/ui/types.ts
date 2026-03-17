@@ -630,6 +630,7 @@ export type ModelCatalogEntry = {
   contextWindow?: number;
   reasoning?: boolean;
   input?: Array<"text" | "image">;
+  rank?: number;
 };
 
 export type ToolCatalogProfile =
