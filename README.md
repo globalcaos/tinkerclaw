@@ -12,7 +12,7 @@
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
   <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-21+-green?style=for-the-badge" alt="21+ skills"></a>
-  <a href="#-memory-research"><img src="https://img.shields.io/badge/papers-8-blueviolet?style=for-the-badge" alt="7 papers"></a>
+  <a href="#-memory-research"><img src="https://img.shields.io/badge/papers-10-blueviolet?style=for-the-badge" alt="10 papers"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
 </p>
 
@@ -180,10 +180,12 @@ This isn't academic research — it's cost engineering. Every paper translates d
 | 6   | 📄 [**Round Table**](docs/papers/round-table/round-table.md)                            | Multi-model adversarial debate — cognitive diversity as computational resource    | **8pp accuracy gain** on GPQA Diamond; cheaper models collaborating beat one expensive model guessing |     **~72%**      |
 | 7   | 📄 [**Humor Embeddings**](docs/papers/humor-embeddings/humor-embeddings.md)             | Humor from embedding geometry — communication that's natural, not robotic         | Fewer clarification round-trips, more efficient human-agent interaction                               |     **~74%**      |
 | 8   | 📄 [**Curiosity Motivation**](docs/papers/curiosity-motivation/curiosity-motivation.md) | Intrinsic motivation — the agent explores gaps before they become costly failures | Proactive knowledge acquisition reduces future retrieval failures                                     |     **~76%**      |
+| 9   | 📄 [**Agent Security**](docs/papers/agent-security/agent-security.md)                   | Multi-layered security for autonomous agents — trust tiers, credential isolation  | Defense-in-depth prevents lateral movement; zero credential leaks in 8+ weeks                         |     **~78%**      |
+| 10  | 📄 [**Corporate Swarm**](docs/papers/corporate-swarm/corporate-swarm.md)                | Multi-agent coordination — sub-agent orchestration for enterprise workflows       | Parallel task execution with oversight; deterministic completion tracking                             |     **~80%**      |
 
-**Reading order:** Top to bottom — from storing memories (1) to finding them instantly (2) to scaling them fractally (3) to maintaining identity (4) to improving overnight (5) to multi-model debate (6) to natural communication (7) to self-directed learning (8).
+**Reading order:** Top to bottom — from storing memories (1) to finding them instantly (2) to scaling them fractally (3) to maintaining identity (4) to improving overnight (5) to multi-model debate (6) to natural communication (7) to self-directed learning (8) to securing the system (9) to scaling across agents (10).
 
-**Combined effect:** An agent that consumes roughly **¾ fewer tokens** than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste at every layer.
+**Combined effect:** An agent that consumes roughly **⅘ fewer tokens** than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste at every layer.
 
 ---
 
