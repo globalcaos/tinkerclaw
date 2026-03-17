@@ -295,6 +295,32 @@ check_systemd_service() {
   else
     ok "KillMode=control-group present"
   fi
+
+  # OPENCLAW_NO_RESPAWN=1 — forces in-process restart via SIGUSR1 (1s vs 120s+)
+  if ! grep -q 'OPENCLAW_NO_RESPAWN=1' "$svc"; then
+    warn "Missing OPENCLAW_NO_RESPAWN=1 in systemd service (restart will be slow)"
+    if [[ "$fix_mode" == true ]]; then
+      sed -i '/^\[Service\]/a Environment=OPENCLAW_NO_RESPAWN=1' "$svc"
+      ok "Added OPENCLAW_NO_RESPAWN=1 to systemd service"
+    fi
+  else
+    ok "OPENCLAW_NO_RESPAWN=1 present"
+  fi
+
+  # TimeoutStartSec=300 — don't kill during cold boot (57MB ESM parse takes ~120s)
+  if ! grep -q 'TimeoutStartSec=300' "$svc"; then
+    warn "TimeoutStartSec is not 300 in systemd service (cold boot may be killed)"
+    if [[ "$fix_mode" == true ]]; then
+      if grep -q 'TimeoutStartSec=' "$svc"; then
+        sed -i 's/TimeoutStartSec=.*/TimeoutStartSec=300/' "$svc"
+      else
+        sed -i '/^\[Service\]/a TimeoutStartSec=300' "$svc"
+      fi
+      ok "Set TimeoutStartSec=300 in systemd service"
+    fi
+  else
+    ok "TimeoutStartSec=300 present"
+  fi
 }
 
 check_oauth_trycatch() {
