@@ -11,6 +11,7 @@ import { refreshQwenPortalCredentials } from "../../providers/qwen-portal-oauth.
 import { resolveSecretRefString, type SecretRefResolveCache } from "../../secrets/resolve.js";
 import { refreshChutesTokens } from "../chutes-oauth.js";
 import {
+  readClaudeCliCredentialsCached,
   readClaudeCliGmCredentials,
   readClaudeCliSvCredentials,
   writeClaudeCliGmCredentials,
@@ -206,21 +207,36 @@ async function refreshOAuthTokenWithLock(params: {
           newCredentials: { ...cred, ...fresh },
         };
       }
-      // GM file token also expired — do the refresh, then write back
+      // GM file token expired — try refresh using the file's refresh token
+      // (not from auth-profiles.json which may have empty tokens).
+      // If that fails (stale refresh token due to Anthropic strict rotation),
+      // fall back to Claude Code's ~/.claude/.credentials.json which is always fresh.
       const oauthProvider = resolveOAuthProvider(cred.provider);
       if (oauthProvider) {
-        const gmCreds: Record<string, OAuthCredentials> = { [cred.provider]: cred };
-        const refreshed = await getOAuthApiKey(oauthProvider, gmCreds);
-        if (refreshed) {
-          store.profiles[params.profileId] = {
-            ...cred,
-            ...refreshed.newCredentials,
-            type: "oauth",
-          };
+        // First try: refresh using the dedicated GM file's own refresh token
+        if (fresh && fresh.type === "oauth" && fresh.refresh) {
+          try {
+            const gmFileCred: OAuthCredentials = { ...cred, access: fresh.access, refresh: fresh.refresh, expires: fresh.expires, type: "oauth" };
+            const gmCreds: Record<string, OAuthCredentials> = { [cred.provider]: gmFileCred };
+            const refreshed = await getOAuthApiKey(oauthProvider, gmCreds);
+            if (refreshed) {
+              store.profiles[params.profileId] = { ...cred, ...refreshed.newCredentials, type: "oauth" };
+              saveAuthProfileStore(store, params.agentDir);
+              writeClaudeCliGmCredentials(refreshed.newCredentials);
+              return refreshed;
+            }
+          } catch {
+            // Refresh token likely rotated — fall through to Claude Code fallback
+          }
+        }
+        // Second try: fall back to Claude Code's main credential file
+        // (Claude Code auto-refreshes it, so it's always fresh)
+        const ccFresh = readClaudeCliCredentialsCached();
+        if (ccFresh && ccFresh.type === "oauth" && Date.now() < ccFresh.expires) {
+          store.profiles[params.profileId] = { ...cred, access: ccFresh.access, refresh: ccFresh.refresh, expires: ccFresh.expires, type: "oauth" };
           saveAuthProfileStore(store, params.agentDir);
-          // Write back to dedicated GM file (single writer)
-          writeClaudeCliGmCredentials(refreshed.newCredentials);
-          return refreshed;
+          writeClaudeCliGmCredentials({ ...cred, access: ccFresh.access, refresh: ccFresh.refresh, expires: ccFresh.expires });
+          return { apiKey: ccFresh.access, newCredentials: { ...cred, access: ccFresh.access, refresh: ccFresh.refresh, expires: ccFresh.expires } };
         }
       }
       return null;
@@ -245,21 +261,22 @@ async function refreshOAuthTokenWithLock(params: {
           newCredentials: { ...cred, ...fresh },
         };
       }
-      // SV file token also expired — do the refresh, then write back
-      const oauthProvider = resolveOAuthProvider(cred.provider);
-      if (oauthProvider) {
-        const svCreds: Record<string, OAuthCredentials> = { [cred.provider]: cred };
-        const refreshed = await getOAuthApiKey(oauthProvider, svCreds);
-        if (refreshed) {
-          store.profiles[params.profileId] = {
-            ...cred,
-            ...refreshed.newCredentials,
-            type: "oauth",
-          };
-          saveAuthProfileStore(store, params.agentDir);
-          // Write back to dedicated SV file (single writer)
-          writeClaudeCliSvCredentials(refreshed.newCredentials);
-          return refreshed;
+      // SV file token expired — refresh using the file's own refresh token
+      // (not from auth-profiles.json which may have empty tokens)
+      const svOauthProvider = resolveOAuthProvider(cred.provider);
+      if (svOauthProvider && fresh && fresh.type === "oauth" && fresh.refresh) {
+        try {
+          const svFileCred: OAuthCredentials = { ...cred, access: fresh.access, refresh: fresh.refresh, expires: fresh.expires, type: "oauth" };
+          const svCreds: Record<string, OAuthCredentials> = { [cred.provider]: svFileCred };
+          const refreshed = await getOAuthApiKey(svOauthProvider, svCreds);
+          if (refreshed) {
+            store.profiles[params.profileId] = { ...cred, ...refreshed.newCredentials, type: "oauth" };
+            saveAuthProfileStore(store, params.agentDir);
+            writeClaudeCliSvCredentials(refreshed.newCredentials);
+            return refreshed;
+          }
+        } catch {
+          // Refresh token likely rotated — fall through to re-login hint
         }
       }
       return null;
