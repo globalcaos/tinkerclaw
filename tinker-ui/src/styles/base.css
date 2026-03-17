@@ -61,7 +61,7 @@ html,body{height:100%;background:var(--bg);color:var(--text)}
 .messages{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:4px}
 .msg{max-width:85%;padding:6px 10px;border-radius:8px;line-height:1.45;word-wrap:break-word}
 .msg.user{align-self:flex-end;background:url("./moss-input.jpg") repeat;background-blend-mode:multiply;background-color:#4B5338;color:#dce8cc;border:1px solid rgba(107,142,35,0.5);border-bottom-right-radius:2px}
-.msg.assistant{align-self:flex-start;background:url("./marble-assistant.jpg") repeat #5a4a3a;background-blend-mode:multiply;border:1px solid rgba(139,115,85,0.15);border-bottom-left-radius:2px;color:#e8dcc8}
+.msg.assistant{align-self:flex-start;background:url("./marble-assistant.jpg") repeat #5a4a3a;background-blend-mode:multiply;border:1px solid rgba(139,115,85,0.15);border-bottom-left-radius:2px;color:#f0c878}
 .msg.system{align-self:flex-start;color:var(--muted);font-size:11px;background:transparent;padding:2px 8px;cursor:pointer;max-width:100%}
 .msg.system:hover{color:var(--text)}
 .sys-file-link{color:var(--accent);text-decoration:none;font-family:"SF Mono",monospace;font-size:10px;cursor:pointer}
