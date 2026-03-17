@@ -316,6 +316,14 @@ export const configHandlers: GatewayRequestHandlers = {
             const disabledUntil =
               typeof stats?.disabledUntil === "number" ? (stats.disabledUntil as number) : 0;
             const isDisabled = disabledUntil > now;
+            // FORK: Also report billing failures even after cooldown expires —
+            // a billing cap is permanent until the billing period resets, not transient.
+            const failureCounts = stats?.failureCounts as Record<string, unknown> | undefined;
+            const hasBillingFailure =
+              !isDisabled &&
+              failureCounts != null &&
+              typeof failureCounts.billing === "number" &&
+              (failureCounts.billing as number) > 0;
             authProfiles[profileId] = {
               label: (cred as Record<string, unknown>)?.label as string | undefined,
               mode: cred?.type,
@@ -324,7 +332,12 @@ export const configHandlers: GatewayRequestHandlers = {
                     disabled: true,
                     disabledReason: (stats?.disabledReason as string) || "cooldown",
                   }
-                : {}),
+                : hasBillingFailure
+                  ? {
+                      disabled: true,
+                      disabledReason: "billing",
+                    }
+                  : {}),
             };
           }
         }
