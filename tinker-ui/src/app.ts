@@ -1536,14 +1536,19 @@ function onEvent(evt: any) {
       }
     }
     if (p?.stream === "lifecycle" && p.data?.model) {
-      // FORK: Ignore lifecycle events that don't belong to the current session.
-      // Events without a sessionKey (cron, heartbeat) are also ignored — they would
+      // FORK: Filter lifecycle events by session.
+      // Events without a sessionKey (cron, heartbeat) are ignored — they would
       // set sending=true and disrupt the active tab's UI.
-      // Allow subagent sessions through — they're child runs the user cares about.
+      // "end"/"error" events ALWAYS proceed so runs from other tabs get cleaned up
+      // from activeRuns (the rendering filter handles per-tab visibility).
+      // "start" events only proceed for the current session or subagent children.
       const evtSessionKey = p.data.sessionKey as string | undefined;
+      if (!evtSessionKey) return;
+      const isEndOrError = p.data.phase === "end" || p.data.phase === "error";
       if (
-        !evtSessionKey ||
-        (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
+        !isEndOrError &&
+        !sessionKeyMatches(evtSessionKey) &&
+        !evtSessionKey.includes(":subagent:")
       )
         return;
       // Any lifecycle event for a restored run confirms it's still active
@@ -1650,8 +1655,11 @@ function onEvent(evt: any) {
           pendingRunDeletes.delete(endRunId);
           activeRuns.delete(endRunId);
           saveActiveRuns();
-          // Clear sending once all runs are done
-          if (activeRuns.size === 0) {
+          // Clear sending once no runs remain for the current session
+          const hasCurrentSessionRuns = [...activeRuns.values()].some(
+            (info) => info.sessionKey && sessionKeyMatches(info.sessionKey),
+          );
+          if (!hasCurrentSessionRuns) {
             sending = false;
           }
           updateBudgetPanel();
@@ -2785,14 +2793,17 @@ function updateChat(skipScroll = false) {
         const m = messages[j];
         if ((m.role ?? "").toLowerCase() !== "assistant") continue;
         const c = Array.isArray(m.content) ? m.content : [];
-        // Messages with type:"thinking" blocks are always thinking
+        // Messages with ONLY thinking blocks (no text) are marked as thinking.
+        // Messages with both thinking + text blocks are treated as text messages —
+        // renderMsg renders thinking blocks with their own styling unconditionally,
+        // so the text block gets normal assistant styling (not duplicate "Thinking:").
         const hasThinkingBlock = c.some((b: any) => b.type === "thinking");
-        if (hasThinkingBlock) {
+        const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+        const plainText = typeof m.content === "string" && (m.content as string).trim();
+        if (hasThinkingBlock && !hasText && !plainText) {
           thinkingSet.add(j);
           continue;
         }
-        const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
-        const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasText || plainText) assistantTextIndices.push(j);
       }
       // FORK: During streaming, frozen text temps (all except the actively
@@ -3794,6 +3805,7 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
+        <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
@@ -3955,6 +3967,30 @@ function init() {
     if (labels[1]) labels[1].classList.toggle("ct-switch-label--active", budgetScope === "all");
     track?.classList.toggle("ct-switch-track--on", budgetScope === "all");
     updateBudgetPanel();
+  });
+
+  // ─── Voice mute toggle ───
+  const voiceBtn = $("tb-voice")!;
+  const muteApiBase = import.meta.env.DEV ? "/tinker-api" : "/tinker/api";
+  const muteApi = `${muteApiBase}/jarvis-mute`;
+  fetch(muteApi)
+    .then((r) => r.json())
+    .then((d) => {
+      voiceBtn.classList.toggle("tb-active", !d.muted);
+    })
+    .catch(() => {});
+  voiceBtn.addEventListener("click", () => {
+    const willMute = voiceBtn.classList.contains("tb-active");
+    fetch(muteApi, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ muted: willMute }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        voiceBtn.classList.toggle("tb-active", !d.muted);
+      })
+      .catch(() => {});
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
