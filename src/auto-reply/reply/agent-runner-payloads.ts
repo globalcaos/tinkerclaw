@@ -7,6 +7,7 @@ import type { ReplyPayload } from "../types.js";
 import { formatBunFetchSocketError, isBunFetchSocketError } from "./agent-runner-utils.js";
 import { createBlockReplyContentKey, type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { applyJarvisVoiceMarkup } from "./jarvis-voice-markup.js";
+import { triggerJarvisAutoTts } from "./jarvis-auto-tts.js";
 import {
   resolveOriginAccountId,
   resolveOriginMessageProvider,
@@ -223,6 +224,15 @@ export async function buildReplyPayloads(params: {
           )
         : mediaFilteredPayloads;
   const replyPayloads = suppressMessagingToolReplies ? [] : filteredPayloads;
+
+  // Jarvis Auto-TTS: trigger voice from **Jarvis:** lines before delivery.
+  // Fire once across all payloads (first match wins).
+  for (const payload of replyPayloads) {
+    if (payload.text) {
+      triggerJarvisAutoTts(payload.text);
+      break; // One voice trigger per reply batch
+    }
+  }
 
   return {
     replyPayloads,
