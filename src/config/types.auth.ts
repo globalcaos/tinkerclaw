@@ -8,6 +8,12 @@ export type AuthProfileConfig = {
    */
   mode: "api_key" | "oauth" | "token";
   email?: string;
+  /**
+   * FORK: Path to an external JSON file containing credentials for this profile.
+   * Supports `~` expansion. When set, credentials are read from this file instead
+   * of the default auth-profiles.json store (used for Claude Code credential sync).
+   */
+  credentialFile?: string;
 };
 
 export type AuthConfig = {
