@@ -163,6 +163,9 @@ check_extended_wirings() {
   check_wiring "tinker-ui/src/app.ts" "isThinkingMsg" "Thinking temps preserved in finalization"
   check_wiring "tinker-ui/src/app.ts" "hasRunTemps" "Stable isCurrentRun check (no style flicker)"
 
+  # Session resume bypass (2026-03-18) — must use agentCommand, NOT heartbeat
+  check_wiring "src/gateway/server-startup.ts" "agentCommand" "FORK: session resume via agentCommand (not heartbeat)"
+
   if [[ -f "$ROOT/src/web/auto-reply/monitor.ts" ]]; then
     if grep -q "unknown as.*ActiveWebListener\|unknown as import" "$ROOT/src/web/auto-reply/monitor.ts" 2>/dev/null; then
       ok "ActiveWebListener cast in monitor.ts"

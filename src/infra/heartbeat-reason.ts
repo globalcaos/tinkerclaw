@@ -31,7 +31,7 @@ export function resolveHeartbeatReasonKind(reason?: string): HeartbeatReasonKind
   if (trimmed === "exec-event") {
     return "exec-event";
   }
-  if (trimmed === "wake") {
+  if (trimmed === "wake" || trimmed === "session-resume") {
     return "wake";
   }
   if (trimmed.startsWith("acp:spawn:")) {

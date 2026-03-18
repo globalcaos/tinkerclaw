@@ -20,9 +20,8 @@ import {
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
-import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { consumeSessionResume } from "../infra/session-resume.js";
-import { enqueueSystemEvent } from "../infra/system-events.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
 import { startBrowserControlServerIfEnabled } from "./server-browser.js";
@@ -33,6 +32,7 @@ import {
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
 
 const SESSION_LOCK_STALE_MS = 30 * 60 * 1000;
+const logResume = createSubsystemLogger("gateway/session-resume");
 
 export async function startGatewaySidecars(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -189,22 +189,43 @@ export async function startGatewaySidecars(params: {
       void scheduleRestartSentinelWake({ deps: params.deps });
     }, 750);
 
-    // Resume interrupted session if gateway restarted within TTL
+    // Resume interrupted session if gateway restarted within TTL.
+    // Uses agentCommand directly instead of the heartbeat system, because
+    // heartbeat gates (quiet hours, HEARTBEAT.md content, disabled config)
+    // can silently block the resume. agentCommand runs the user's message
+    // through the normal reply pipeline in the original session.
     setTimeout(() => {
       void consumeSessionResume(300)
-        .then((resume) => {
+        .then(async (resume) => {
           if (!resume) {
             return;
           }
-          const { sessionKey, userMessage } = resume.payload;
+          const { sessionKey, userMessage, deliveryContext } = resume.payload;
           const resumeMessage = `⚠️ Gateway restarted while processing your message. Resuming your request:\n\n${userMessage}`;
-          enqueueSystemEvent(resumeMessage, { sessionKey });
-          // Trigger an actual LLM run so the resumed prompt is processed
-          // automatically, instead of waiting for the user to send a new message.
-          requestHeartbeatNow({ reason: "session-resume", sessionKey });
+          logResume.info("resuming interrupted session", { sessionKey });
+          const { agentCommand } = await import("../commands/agent.js");
+          await agentCommand(
+            {
+              message: resumeMessage,
+              sessionKey,
+              senderIsOwner: true,
+              ...(deliveryContext?.channel && { replyChannel: deliveryContext.channel }),
+              ...(deliveryContext?.to && { replyTo: deliveryContext.to }),
+              ...(deliveryContext?.accountId && { replyAccountId: deliveryContext.accountId }),
+            },
+            {
+              log: () => {},
+              error: (msg) => logResume.error(String(msg)),
+              exit: () => {},
+            },
+            params.deps,
+          );
+          logResume.info("session resume completed", { sessionKey });
         })
-        .catch(() => {});
-    }, 1500);
+        .catch((err) => {
+          logResume.error(`session resume failed: ${String(err)}`);
+        });
+    }, 2500);
   }
 
   return { browserControl, pluginServices };
