@@ -14,6 +14,7 @@ import { normalizeProviderId } from "../model-selection.js";
 import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
 import {
   readCredentialFile,
+  refreshAnthropicOAuthToken,
   resolveCredentialFilePath,
   writeCredentialFile,
 } from "./credential-file.js";
@@ -210,19 +211,27 @@ async function refreshOAuthTokenWithLock(params: {
       }
 
       // Credential file token also expired — try refreshing
-      const oauthProvider = resolveOAuthProvider(cred.provider);
       const refreshSource = fresh ?? cred;
-      if (oauthProvider && refreshSource.refresh) {
+      if (refreshSource.refresh) {
         try {
-          const refreshCred: OAuthCredentials = {
-            ...cred,
-            access: refreshSource.access,
-            refresh: refreshSource.refresh,
-            expires: refreshSource.expires,
-            type: "oauth",
-          };
-          const creds: Record<string, OAuthCredentials> = { [cred.provider]: refreshCred };
-          const refreshed = await getOAuthApiKey(oauthProvider, creds);
+          // FORK: Use our own refresh for Anthropic (pi-ai's lacks User-Agent → Cloudflare blocks it).
+          // For other providers, fall through to the standard getOAuthApiKey path below.
+          const refreshed =
+            cred.provider === "anthropic"
+              ? await (async () => {
+                  const result = await refreshAnthropicOAuthToken(refreshSource.refresh);
+                  if (!result) return null;
+                  return {
+                    apiKey: result.access,
+                    newCredentials: { ...cred, access: result.access, refresh: result.refresh, expires: result.expires, type: "oauth" as const },
+                  };
+                })()
+              : await (async () => {
+                  const oauthProvider = resolveOAuthProvider(cred.provider);
+                  if (!oauthProvider) return null;
+                  const refreshCred: OAuthCredentials = { ...cred, access: refreshSource.access, refresh: refreshSource.refresh, expires: refreshSource.expires, type: "oauth" };
+                  return await getOAuthApiKey(oauthProvider, { [cred.provider]: refreshCred });
+                })();
           if (refreshed) {
             store.profiles[params.profileId] = {
               ...cred,

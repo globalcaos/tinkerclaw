@@ -204,6 +204,79 @@ export function writeCredentialFile(
   }
 }
 
+/**
+ * FORK: Refresh an Anthropic OAuth token directly.
+ *
+ * pi-ai's `refreshAnthropicToken` uses `fetch` without a User-Agent header,
+ * which Cloudflare blocks (error 1010). This function does the same refresh
+ * but with proper headers, matching what Claude Code sends.
+ */
+const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
+const ANTHROPIC_SCOPES = "user:inference";
+
+export async function refreshAnthropicOAuthToken(refreshToken: string): Promise<{
+  access: string;
+  refresh: string;
+  expires: number;
+} | null> {
+  try {
+    const body = JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: ANTHROPIC_CLIENT_ID,
+      refresh_token: refreshToken,
+      scope: ANTHROPIC_SCOPES,
+    });
+
+    const response = await fetch(ANTHROPIC_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": "openclaw-gateway/1.0",
+      },
+      body,
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      log.warn("Anthropic OAuth refresh failed", {
+        status: response.status,
+        body: text.slice(0, 200),
+      });
+      return null;
+    }
+
+    const data = (await response.json()) as Record<string, unknown>;
+    const accessToken = data.access_token;
+    const newRefreshToken = data.refresh_token;
+    const expiresIn = data.expires_in;
+
+    if (
+      typeof accessToken !== "string" ||
+      typeof newRefreshToken !== "string" ||
+      typeof expiresIn !== "number"
+    ) {
+      log.warn("Anthropic OAuth refresh returned unexpected format", {
+        keys: Object.keys(data),
+      });
+      return null;
+    }
+
+    return {
+      access: accessToken,
+      refresh: newRefreshToken,
+      expires: Date.now() + expiresIn * 1000,
+    };
+  } catch (err) {
+    log.warn("Anthropic OAuth refresh request failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 /** Reset all credential file caches (for testing). */
 export function resetCredentialFileCacheForTest(): void {
   fileCache.clear();
