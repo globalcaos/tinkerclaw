@@ -10,20 +10,13 @@ import { withFileLock } from "../../infra/file-lock.js";
 import { refreshQwenPortalCredentials } from "../../providers/qwen-portal-oauth.js";
 import { resolveSecretRefString, type SecretRefResolveCache } from "../../secrets/resolve.js";
 import { refreshChutesTokens } from "../chutes-oauth.js";
-import {
-  readClaudeCliCredentialsCached,
-  readClaudeCliGmCredentials,
-  readClaudeCliSvCredentials,
-  writeClaudeCliGmCredentials,
-  writeClaudeCliSvCredentials,
-} from "../cli-credentials.js";
 import { normalizeProviderId } from "../model-selection.js";
+import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
 import {
-  AUTH_STORE_LOCK_OPTIONS,
-  CLAUDE_CLI_PROFILE_ID,
-  CLAUDE_CLI_SV_PROFILE_ID,
-  log,
-} from "./constants.js";
+  readCredentialFile,
+  resolveCredentialFilePath,
+  writeCredentialFile,
+} from "./credential-file.js";
 import { resolveTokenExpiryState } from "./credential-state.js";
 import { formatAuthDoctorHint } from "./doctor.js";
 import { ensureAuthStoreFile, resolveAuthStorePath } from "./paths.js";
@@ -188,12 +181,15 @@ async function refreshOAuthTokenWithLock(params: {
       };
     }
 
-    // FORK: For Claude CLI GM profile, re-read from dedicated GM file first.
-    // If expired, do the refresh ourselves (OpenClaw is sole writer) and
-    // write back to ~/.claude/.credentials-gm.json.
-    if (params.profileId === CLAUDE_CLI_PROFILE_ID && cred.provider === "anthropic") {
-      const fresh = readClaudeCliGmCredentials();
-      if (fresh && fresh.type === "oauth" && Date.now() < fresh.expires) {
+    // FORK: Generic credential file refresh for all OAuth profiles.
+    // Replaces hardcoded SV/GM branches with config-driven credential file resolution.
+    const cfg = loadConfig();
+    const credFilePath = resolveCredentialFilePath(params.profileId, cfg);
+
+    if (credFilePath) {
+      // Read from credential file — it may have a fresher token
+      const fresh = readCredentialFile(credFilePath, cred.provider);
+      if (fresh && Date.now() < fresh.expires) {
         store.profiles[params.profileId] = {
           ...cred,
           access: fresh.access,
@@ -203,84 +199,64 @@ async function refreshOAuthTokenWithLock(params: {
         };
         saveAuthProfileStore(store, params.agentDir);
         return {
-          apiKey: fresh.access,
-          newCredentials: { ...cred, ...fresh },
+          apiKey: buildOAuthApiKey(cred.provider, { ...cred, access: fresh.access }),
+          newCredentials: {
+            ...cred,
+            access: fresh.access,
+            refresh: fresh.refresh,
+            expires: fresh.expires,
+          },
         };
       }
-      // GM file token expired — try refresh using the file's refresh token
-      // (not from auth-profiles.json which may have empty tokens).
-      // If that fails (stale refresh token due to Anthropic strict rotation),
-      // fall back to Claude Code's ~/.claude/.credentials.json which is always fresh.
+
+      // Credential file token also expired — try refreshing
       const oauthProvider = resolveOAuthProvider(cred.provider);
-      if (oauthProvider) {
-        // First try: refresh using the dedicated GM file's own refresh token
-        if (fresh && fresh.type === "oauth" && fresh.refresh) {
-          try {
-            const gmFileCred: OAuthCredentials = { ...cred, access: fresh.access, refresh: fresh.refresh, expires: fresh.expires, type: "oauth" };
-            const gmCreds: Record<string, OAuthCredentials> = { [cred.provider]: gmFileCred };
-            const refreshed = await getOAuthApiKey(oauthProvider, gmCreds);
-            if (refreshed) {
-              store.profiles[params.profileId] = { ...cred, ...refreshed.newCredentials, type: "oauth" };
-              saveAuthProfileStore(store, params.agentDir);
-              writeClaudeCliGmCredentials(refreshed.newCredentials);
-              return refreshed;
-            }
-          } catch {
-            // Refresh token likely rotated — fall through to Claude Code fallback
+      const refreshSource = fresh ?? cred;
+      if (oauthProvider && refreshSource.refresh) {
+        try {
+          const refreshCred: OAuthCredentials = {
+            ...cred,
+            access: refreshSource.access,
+            refresh: refreshSource.refresh,
+            expires: refreshSource.expires,
+            type: "oauth",
+          };
+          const creds: Record<string, OAuthCredentials> = { [cred.provider]: refreshCred };
+          const refreshed = await getOAuthApiKey(oauthProvider, creds);
+          if (refreshed) {
+            store.profiles[params.profileId] = {
+              ...cred,
+              ...refreshed.newCredentials,
+              type: "oauth",
+            };
+            saveAuthProfileStore(store, params.agentDir);
+            writeCredentialFile(credFilePath, cred.provider, refreshed.newCredentials);
+            return refreshed;
           }
+        } catch (err) {
+          log.warn("credential file refresh failed", {
+            profileId: params.profileId,
+            credentialFile: credFilePath,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
-        // Second try: fall back to Claude Code's main credential file
-        // (Claude Code auto-refreshes it, so it's always fresh)
-        const ccFresh = readClaudeCliCredentialsCached();
-        if (ccFresh && ccFresh.type === "oauth" && Date.now() < ccFresh.expires) {
-          store.profiles[params.profileId] = { ...cred, access: ccFresh.access, refresh: ccFresh.refresh, expires: ccFresh.expires, type: "oauth" };
-          saveAuthProfileStore(store, params.agentDir);
-          writeClaudeCliGmCredentials({ ...cred, access: ccFresh.access, refresh: ccFresh.refresh, expires: ccFresh.expires });
-          return { apiKey: ccFresh.access, newCredentials: { ...cred, access: ccFresh.access, refresh: ccFresh.refresh, expires: ccFresh.expires } };
-        }
+      } else if (!oauthProvider) {
+        log.warn("no OAuth provider registered for credential refresh", {
+          profileId: params.profileId,
+          provider: cred.provider,
+        });
+      } else {
+        log.warn("credential file missing or has no refresh token", {
+          profileId: params.profileId,
+          credentialFile: credFilePath,
+          hasFresh: !!fresh,
+        });
       }
       return null;
     }
 
-    // FORK: For Claude CLI SV profile, re-read from dedicated SV file first.
-    // If expired, do the refresh ourselves (OpenClaw is sole writer) and
-    // write back to ~/.claude/.credentials-sv.json.
-    if (params.profileId === CLAUDE_CLI_SV_PROFILE_ID && cred.provider === "anthropic") {
-      const fresh = readClaudeCliSvCredentials();
-      if (fresh && fresh.type === "oauth" && Date.now() < fresh.expires) {
-        store.profiles[params.profileId] = {
-          ...cred,
-          access: fresh.access,
-          refresh: fresh.refresh,
-          expires: fresh.expires,
-          type: "oauth",
-        };
-        saveAuthProfileStore(store, params.agentDir);
-        return {
-          apiKey: fresh.access,
-          newCredentials: { ...cred, ...fresh },
-        };
-      }
-      // SV file token expired — refresh using the file's own refresh token
-      // (not from auth-profiles.json which may have empty tokens)
-      const svOauthProvider = resolveOAuthProvider(cred.provider);
-      if (svOauthProvider && fresh && fresh.type === "oauth" && fresh.refresh) {
-        try {
-          const svFileCred: OAuthCredentials = { ...cred, access: fresh.access, refresh: fresh.refresh, expires: fresh.expires, type: "oauth" };
-          const svCreds: Record<string, OAuthCredentials> = { [cred.provider]: svFileCred };
-          const refreshed = await getOAuthApiKey(svOauthProvider, svCreds);
-          if (refreshed) {
-            store.profiles[params.profileId] = { ...cred, ...refreshed.newCredentials, type: "oauth" };
-            saveAuthProfileStore(store, params.agentDir);
-            writeClaudeCliSvCredentials(refreshed.newCredentials);
-            return refreshed;
-          }
-        } catch {
-          // Refresh token likely rotated — fall through to re-login hint
-        }
-      }
-      return null;
-    }
+    // No credential file — fall through to provider-specific refresh below
+    // (chutes, qwen-portal, standard OAuth via getOAuthApiKey)
 
     const oauthCreds: Record<string, OAuthCredentials> = {
       [cred.provider]: cred,
