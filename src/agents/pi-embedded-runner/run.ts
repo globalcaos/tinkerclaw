@@ -1351,6 +1351,7 @@ export async function runEmbeddedPiAgent(
             if (
               promptFailoverFailure &&
               promptFailoverReason !== "timeout" &&
+              promptFailoverReason !== "overloaded" &&
               (await advanceAuthProfile())
             ) {
               logPromptFailoverDecision("rotate_profile");
@@ -1374,7 +1375,11 @@ export async function runEmbeddedPiAgent(
             if (fallbackConfigured && promptFailoverFailure) {
               const status = resolveFailoverStatus(promptFailoverReason ?? "unknown");
               logPromptFailoverDecision("fallback_model", { status });
-              await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
+              // Skip backoff for overloaded: we're already leaving the provider,
+              // adding delay only slows the fallback to qwen3/next model.
+              if (promptFailoverReason !== "overloaded") {
+                await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
+              }
               throw (
                 normalizedPromptFailover ??
                 new FailoverError(errorText, {
@@ -1483,7 +1488,11 @@ export async function runEmbeddedPiAgent(
               }
             }
 
-            const rotated = await advanceAuthProfile();
+            // Overloaded means the provider is under stress — rotating to another
+            // key on the same provider won't help and makes the situation worse.
+            // Skip directly to model fallback (e.g. qwen3) instead of retrying profiles.
+            const rotated =
+              assistantFailoverReason !== "overloaded" && (await advanceAuthProfile());
             if (rotated) {
               logAssistantFailoverDecision("rotate_profile");
               await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
@@ -1491,7 +1500,11 @@ export async function runEmbeddedPiAgent(
             }
 
             if (fallbackConfigured) {
-              await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
+              // Skip backoff for overloaded: we're already leaving the provider,
+              // adding delay only slows the fallback to qwen3/next model.
+              if (assistantFailoverReason !== "overloaded") {
+                await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
+              }
               // Prefer formatted error message (user-friendly) over raw errorMessage
               const message =
                 (lastAssistant
