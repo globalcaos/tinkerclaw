@@ -109,10 +109,16 @@ check_hook_wiring() {
   check_wiring "src/agents/pi-embedded-helpers/failover-matches.ts" "regain access" "Anthropic billing pattern in failover-matches.ts"
   check_wiring "src/agents/pi-embedded-helpers/errors.ts" "regain access" "Early billing check in errors.ts"
   check_wiring "src/agents/auth-profiles/store.ts" "diskCred.expires > memCred.expires" "OAuth refresh token preservation in saveAuthProfileStore"
-  check_wiring "src/agents/auth-profiles/oauth.ts" "readClaudeCliGmCredentials" "GM credential read in oauth.ts"
-  check_wiring "src/agents/auth-profiles/oauth.ts" "readClaudeCliSvCredentials" "SV credential read in oauth.ts"
-  check_wiring "src/agents/auth-profiles/oauth.ts" "CLAUDE_CLI_PROFILE_ID" "Claude CLI GM refresh guard in oauth.ts"
-  check_wiring "src/agents/auth-profiles/oauth.ts" "CLAUDE_CLI_SV_PROFILE_ID" "Claude CLI SV refresh guard in oauth.ts"
+  check_wiring "src/agents/auth-profiles/credential-file.ts" "resolveCredentialFilePath" "Generic credential path resolver in credential-file.ts"
+  check_wiring "src/agents/auth-profiles/credential-file.ts" "readCredentialFile" "Generic credential reader in credential-file.ts"
+  check_wiring "src/agents/auth-profiles/credential-file.ts" "writeCredentialFile" "Generic credential writer in credential-file.ts"
+  # Negative checks — these SV/GM-specific constants must NOT exist in oauth.ts after refactor
+  if grep -q "CLAUDE_CLI_PROFILE_ID\|CLAUDE_CLI_SV_PROFILE_ID" "$ROOT/src/agents/auth-profiles/oauth.ts" 2>/dev/null; then
+    warn "oauth.ts still contains removed CLAUDE_CLI_PROFILE_ID / CLAUDE_CLI_SV_PROFILE_ID constants"
+  else
+    ok "oauth.ts: removed SV/GM-specific profile ID constants (expected absent)"
+  fi
+  check_wiring "src/agents/auth-profiles/proactive-refresh.ts" "credential-file" "proactive-refresh imports from credential-file (not cli-credentials)"
   check_wiring "extensions/whatsapp/src/auto-reply/monitor/process-message.ts" "process-message-hooks" "Fork hooks import in process-message.ts"
   check_wiring "extensions/whatsapp/src/auto-reply/monitor/process-message.ts" "_annotateOfflineRecovery" "Offline recovery annotation CALL in process-message.ts"
   check_wiring "extensions/whatsapp/src/auto-reply/monitor/process-message.ts" "_createThinkingReaction" "Thinking reaction CALL in process-message.ts"
@@ -198,7 +204,7 @@ check_bundler_deps() {
 
   check_wiring "extensions/budget-panel/index.ts" "resolveApiKeyForProfile" "Budget-panel live OAuth token resolution"
   check_wiring "extensions/budget-panel/index.ts" "ensureAuthProfileStore" "Budget-panel auth store access"
-  check_wiring "extensions/budget-panel/index.ts" "writeClaudeCliGmCredentials" "Budget-panel GM token write-back"
+  check_wiring "extensions/budget-panel/index.ts" "writeCredentialFile" "Budget-panel generic credential write-back"
 
   # live-capture must be a named import (not default) for tsdown bundling
   if grep -q 'import _liveCapture from' "$ROOT/extensions/whatsapp/src/session.ts" 2>/dev/null; then
