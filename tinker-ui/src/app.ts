@@ -1265,6 +1265,28 @@ function onEvent(evt: any) {
           messages.push(p.message);
         }
       } else {
+        // FORK: Preserve partial streamed content before clearing temporary messages.
+        // When an error (e.g. Anthropic 529 overloaded) occurs mid-stream, the
+        // partial thinking/text already rendered must not be wiped. Convert any
+        // _temporary message with actual content to a permanent _partial message
+        // before the filter runs, so the user sees what was streamed + the error.
+        if (p.state === "error") {
+          messages = messages.map((m: any) => {
+            if (m._temporary && m.content && m.content.length > 0) {
+              const hasContent = m.content.some(
+                (c: any) =>
+                  (c.type === "text" && c.text?.trim()) ||
+                  (c.type === "thinking" && c.thinking?.trim()),
+              );
+              if (hasContent) {
+                const { _temporary, ...preserved } = m;
+                preserved._partial = true; // Mark as partial for optional styling
+                return preserved;
+              }
+            }
+            return m;
+          });
+        }
         messages = messages.filter((m: any) => !m._temporary);
         if (p.message) {
           messages.push(p.message);
