@@ -3971,8 +3971,8 @@ function init() {
 
   // ─── Voice mute toggle ───
   const voiceBtn = $("tb-voice")!;
-  const muteApiBase = import.meta.env.DEV ? "/tinker-api" : "/tinker/api";
-  const muteApi = `${muteApiBase}/jarvis-mute`;
+  const muteBase = import.meta.env.DEV ? "http://localhost:18789" : "";
+  const muteApi = `${muteBase}/tinker/api/jarvis-mute`;
   fetch(muteApi)
     .then((r) => r.json())
     .then((d) => {
