@@ -14,9 +14,9 @@ import {
   saveAuthProfileStore,
 } from "../../src/agents/auth-profiles.js";
 import {
-  writeClaudeCliSvCredentials,
-  writeClaudeCliGmCredentials,
-} from "../../src/agents/cli-credentials.js";
+  resolveCredentialFilePath,
+  writeCredentialFile,
+} from "../../src/agents/auth-profiles/credential-file.js";
 
 /** Anthropic OAuth profile IDs to poll for usage. */
 const USAGE_PROFILES: Record<string, string> = {
@@ -98,8 +98,8 @@ async function forceRefreshToken(
       refresh: newRefresh ?? freshCred?.refresh,
       expires: freshCred?.expires ?? Date.now() + 3600_000,
     };
-    if (profileId === "anthropic:cli-sv") writeClaudeCliSvCredentials(writeback as any);
-    if (profileId === "anthropic:cli-gm") writeClaudeCliGmCredentials(writeback as any);
+    const credFilePath = resolveCredentialFilePath(profileId);
+    if (credFilePath) writeCredentialFile(credFilePath, "anthropic", writeback as any);
 
     log(`[budget-panel] ${profileId}: token rotated for fresh rate limit window`);
     return newAccess;
