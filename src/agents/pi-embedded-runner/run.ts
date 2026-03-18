@@ -1348,6 +1348,28 @@ export async function runEmbeddedPiAgent(
               fallbackConfigured,
               aborted,
             });
+            // FORK: emit per-profile fallback error before rotating to next profile
+            if (
+              promptFailoverFailure &&
+              promptFailoverReason !== "timeout" &&
+              promptFailoverReason !== "overloaded"
+            ) {
+              emitAgentEvent({
+                runId: params.runId,
+                sessionKey: params.sessionKey,
+                stream: "lifecycle",
+                data: {
+                  phase: "fallback-profile-error",
+                  profileId: profileCandidates[profileIndex],
+                  profileIndex,
+                  totalProfiles: profileCandidates.length,
+                  provider,
+                  model: modelId,
+                  reason: promptFailoverReason,
+                  error: errorText,
+                },
+              });
+            }
             if (
               promptFailoverFailure &&
               promptFailoverReason !== "timeout" &&
@@ -1375,6 +1397,25 @@ export async function runEmbeddedPiAgent(
             if (fallbackConfigured && promptFailoverFailure) {
               const status = resolveFailoverStatus(promptFailoverReason ?? "unknown");
               logPromptFailoverDecision("fallback_model", { status });
+              // FORK: emit per-profile fallback error for overloaded — skips profile rotation
+              // so the rotation-block emit above never fires. Other reasons already emitted there.
+              if (promptFailoverReason === "overloaded") {
+                emitAgentEvent({
+                  runId: params.runId,
+                  sessionKey: params.sessionKey,
+                  stream: "lifecycle",
+                  data: {
+                    phase: "fallback-profile-error",
+                    profileId: profileCandidates[profileIndex],
+                    profileIndex,
+                    totalProfiles: profileCandidates.length,
+                    provider,
+                    model: modelId,
+                    reason: promptFailoverReason,
+                    error: errorText,
+                  },
+                });
+              }
               // Skip backoff for overloaded: we're already leaving the provider,
               // adding delay only slows the fallback to qwen3/next model.
               if (promptFailoverReason !== "overloaded") {
@@ -1487,6 +1528,24 @@ export async function runEmbeddedPiAgent(
                 );
               }
             }
+
+            // FORK: emit per-profile fallback error for all shouldRotate cases
+            // (overloaded skips rotation but still needs a visible red bubble in Tinker UI)
+            emitAgentEvent({
+              runId: params.runId,
+              sessionKey: params.sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-profile-error",
+                profileId: profileCandidates[profileIndex],
+                profileIndex,
+                totalProfiles: profileCandidates.length,
+                provider,
+                model: modelId,
+                reason: timedOut ? "timeout" : (assistantFailoverReason ?? "unknown"),
+                error: lastAssistant?.errorMessage?.trim() ?? "",
+              },
+            });
 
             // Overloaded means the provider is under stress — rotating to another
             // key on the same provider won't help and makes the situation worse.
