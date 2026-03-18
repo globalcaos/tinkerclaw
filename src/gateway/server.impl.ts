@@ -33,6 +33,7 @@ import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
+import { startProactiveOAuthRefresh, type ProactiveRefreshHandle } from "../agents/auth-profiles/proactive-refresh.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { setGatewaySigusr1RestartPolicy, setPreRestartDeferralCheck } from "../infra/restart.js";
@@ -755,6 +756,12 @@ export async function startGatewayServer(
       }
     : startHeartbeatRunner({ cfg: cfgAtStart });
 
+  // FORK: Proactive OAuth refresh — keeps Claude subscription tokens fresh
+  // so the gateway never hits request-time refresh failures after sleep/reboot.
+  const proactiveRefresh: ProactiveRefreshHandle | null = minimalTestGateway
+    ? null
+    : startProactiveOAuthRefresh();
+
   const healthCheckMinutes = cfgAtStart.gateway?.channelHealthCheckMinutes;
   const healthCheckDisabled = healthCheckMinutes === 0;
   const staleEventThresholdMinutes = cfgAtStart.gateway?.channelStaleEventThresholdMinutes;
@@ -1082,6 +1089,7 @@ export async function startGatewayServer(
       authRateLimiter?.dispose();
       browserAuthRateLimiter.dispose();
       channelHealthMonitor?.stop();
+      proactiveRefresh?.stop();
       clearSecretsRuntimeSnapshot();
       await close(opts);
     },
