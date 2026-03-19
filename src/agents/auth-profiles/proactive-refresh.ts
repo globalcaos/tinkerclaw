@@ -70,6 +70,7 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
     if (credFilePath) {
       const fresh = readCredentialFile(credFilePath, cred.provider);
       if (fresh && now < fresh.expires && fresh.expires - now > EXTERNAL_CLI_NEAR_EXPIRY_MS) {
+        // Credential file has a valid token — sync it into the store
         store.profiles[profileId] = {
           ...cred,
           access: fresh.access,
@@ -85,6 +86,20 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
         return true;
       }
 
+      // Log when credential file exists but has expired/near-expiry tokens
+      if (fresh && (fresh.expires <= now || fresh.expires - now <= EXTERNAL_CLI_NEAR_EXPIRY_MS)) {
+        log.info("proactive refresh: credential file token also expired, attempting refresh", {
+          profileId,
+          credentialFile: credFilePath,
+          credFileExpiredMinAgo: Math.round((now - fresh.expires) / 60_000),
+        });
+      } else if (!fresh) {
+        log.info("proactive refresh: credential file unreadable or empty", {
+          profileId,
+          credentialFile: credFilePath,
+        });
+      }
+
       // Try refreshing using the credential file's (or store's) refresh token
       const refreshSource = fresh ?? cred;
       if (refreshSource.refresh) {
@@ -94,16 +109,32 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
             cred.provider === "anthropic"
               ? await (async () => {
                   const result = await refreshAnthropicOAuthToken(refreshSource.refresh);
-                  if (!result) return null;
+                  if (!result) {
+                    return null;
+                  }
                   return {
                     apiKey: result.access,
-                    newCredentials: { ...cred, access: result.access, refresh: result.refresh, expires: result.expires, type: "oauth" as const },
+                    newCredentials: {
+                      ...cred,
+                      access: result.access,
+                      refresh: result.refresh,
+                      expires: result.expires,
+                      type: "oauth" as const,
+                    },
                   };
                 })()
               : await (async () => {
                   const oauthProvider = resolveOAuthProvider(cred.provider);
-                  if (!oauthProvider) return null;
-                  const refreshCred: OAuthCredentials = { ...cred, access: refreshSource.access, refresh: refreshSource.refresh, expires: refreshSource.expires, type: "oauth" };
+                  if (!oauthProvider) {
+                    return null;
+                  }
+                  const refreshCred: OAuthCredentials = {
+                    ...cred,
+                    access: refreshSource.access,
+                    refresh: refreshSource.refresh,
+                    expires: refreshSource.expires,
+                    type: "oauth",
+                  };
                   return await getOAuthApiKey(oauthProvider, { [cred.provider]: refreshCred });
                 })();
           if (refreshed) {
@@ -120,6 +151,13 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
             });
             return true;
           }
+          // Refresh returned null — stale refresh token or API error
+          log.warn("proactive refresh: refresh returned null (likely stale refresh token)", {
+            profileId,
+            credentialFile: credFilePath,
+            credFileExpired: fresh ? fresh.expires < now : "no file",
+            action: "re-run anthropic-oauth-login.mjs --profile <id> to obtain fresh tokens",
+          });
         } catch (err) {
           log.warn("proactive refresh: refresh failed", {
             profileId,
