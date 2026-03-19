@@ -75,6 +75,94 @@ const plugin = {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
         let pathname = url.pathname;
 
+        // --- Jarvis Voice Mute API ---
+        const MUTE_FILE = path.join(
+          process.env.HOME ?? "/home/globalcaos",
+          ".openclaw/data/jarvis-muted.json",
+        );
+        if (pathname === `${PREFIX}/api/jarvis-mute`) {
+          const jsonHeaders = {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          };
+          if (req.method === "OPTIONS") {
+            res.writeHead(204, jsonHeaders);
+            res.end();
+            return true;
+          }
+          if (req.method === "GET") {
+            let muted = false;
+            try {
+              muted = JSON.parse(fs.readFileSync(MUTE_FILE, "utf-8")).muted === true;
+            } catch {
+              fs.mkdirSync(path.dirname(MUTE_FILE), { recursive: true });
+              fs.writeFileSync(MUTE_FILE, JSON.stringify({ muted: false }));
+            }
+            res.writeHead(200, jsonHeaders);
+            res.end(JSON.stringify({ muted }));
+            return true;
+          }
+          if (req.method === "POST") {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) chunks.push(chunk as Buffer);
+            const body = JSON.parse(Buffer.concat(chunks).toString());
+            const muted = body.muted === true;
+            fs.mkdirSync(path.dirname(MUTE_FILE), { recursive: true });
+            fs.writeFileSync(MUTE_FILE, JSON.stringify({ muted }));
+            res.writeHead(200, jsonHeaders);
+            res.end(JSON.stringify({ muted }));
+            return true;
+          }
+        }
+
+        // --- Context Anatomy API (proxied through /tinker/api/context-anatomy/) ---
+        if (pathname.startsWith(`${PREFIX}/api/context-anatomy/`)) {
+          const anatomyDb = (globalThis as any).__anatomyDb;
+          const jsonHeaders = {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          };
+          if (!anatomyDb) {
+            res.writeHead(200, jsonHeaders);
+            res.end(JSON.stringify({ count: 0, events: [] }));
+            return true;
+          }
+          try {
+            const subPath = pathname.slice(`${PREFIX}/api/context-anatomy/`.length);
+            // /tinker/api/context-anatomy/recent?hours=24
+            if (subPath === "recent") {
+              const hoursParam = url.searchParams.get("hours");
+              const hours = Math.min(Math.max(parseInt(hoursParam ?? "24", 10) || 24, 1), 24);
+              const events = anatomyDb.queryRecentEvents(hours);
+              res.writeHead(200, jsonHeaders);
+              res.end(JSON.stringify({ count: events.length, events }));
+              return true;
+            }
+            // /tinker/api/context-anatomy/:sessionKey[/latest]
+            const isLatest = subPath.endsWith("/latest");
+            const sessionKey = decodeURIComponent(isLatest ? subPath.slice(0, -7) : subPath);
+            const limitParam = url.searchParams.get("limit");
+            const limit = Math.min(Math.max(parseInt(limitParam ?? "50", 10) || 50, 1), 500);
+            if (isLatest) {
+              const events = anatomyDb.querySessionEvents(sessionKey, 1);
+              res.writeHead(events.length > 0 ? 200 : 404, jsonHeaders);
+              res.end(JSON.stringify(events[0] ?? { error: "No events" }));
+              return true;
+            }
+            const events = anatomyDb.querySessionEvents(sessionKey, limit);
+            res.writeHead(200, jsonHeaders);
+            res.end(JSON.stringify({ sessionKey, count: events.length, events }));
+            return true;
+          } catch (err: any) {
+            api.logger.warn(`context-anatomy HTTP error: ${err.message}`);
+            res.writeHead(500, jsonHeaders);
+            res.end(JSON.stringify({ error: "Internal error" }));
+            return true;
+          }
+        }
+
         // Redirect /tinker to /tinker/ for consistent relative URLs
         if (pathname === PREFIX) {
           res.statusCode = 301;
@@ -218,7 +306,7 @@ const plugin = {
       },
     });
 
-    api.logger.info(`Tinker Command Center registered at ${PREFIX}/`);
+    api.logger.info(`Tinker Command Center registered at ${PREFIX}/ (with context-anatomy API)`);
   },
 };
 
