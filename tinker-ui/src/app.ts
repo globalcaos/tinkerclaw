@@ -1648,6 +1648,25 @@ function onEvent(evt: any) {
           }, 800);
         }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
+        // FORK: On successful completion, clear provider errors for the profile that handled it.
+        // This ensures "overloaded" labels don't persist after the provider recovers.
+        if (p.data.phase === "end") {
+          const endRun = activeRuns.get(p.runId);
+          if (endRun) {
+            let errCleared = false;
+            if (endRun.authProfileId && providerErrors.has(endRun.authProfileId)) {
+              providerErrors.delete(endRun.authProfileId);
+              errCleared = true;
+            }
+            const endModel =
+              endRun.provider && endRun.model ? `${endRun.provider}/${endRun.model}` : null;
+            if (endModel && providerErrors.has(endModel)) {
+              providerErrors.delete(endModel);
+              errCleared = true;
+            }
+            if (errCleared) persistProviderErrors();
+          }
+        }
         // FORK: Regenerate tab title after assistant responds — works for any tab via TabState
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
@@ -1988,13 +2007,17 @@ async function loadBudget() {
   // Clear stale providerErrors for profiles that now have fresh usage data.
   // After a gateway restart + oauth fix, old "auth error" entries in localStorage
   // would otherwise persist forever since no new fallback-profile-error is emitted.
+  // Also clear for profiles with null data — the profile existing in the response
+  // means the gateway is running and the error may be stale (e.g. usage API 403
+  // doesn't mean the profile can't do inference).
   if (bu?.claudeProfiles) {
     let cleared = false;
-    for (const [label, data] of Object.entries(bu.claudeProfiles)) {
-      if (!data) continue;
+    for (const [label] of Object.entries(bu.claudeProfiles)) {
       // label is e.g. "cli-gm" → keyId is "anthropic:cli-gm"
       const keyId = `anthropic:${label}`;
-      if (providerErrors.has(keyId)) {
+      const err = providerErrors.get(keyId);
+      // Don't clear billing/auth_permanent errors — those are real and persistent
+      if (err && err.reason !== "billing" && err.reason !== "auth_permanent") {
         providerErrors.delete(keyId);
         cleared = true;
       }
