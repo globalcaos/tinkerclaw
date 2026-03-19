@@ -37,6 +37,11 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:18789",
       },
+      // Proxy tinker API calls to gateway with auth (context-anatomy, mute, etc.)
+      "/tinker/api": {
+        target: "http://localhost:18789",
+        headers: { Authorization: `Bearer ${readGatewayToken()}` },
+      },
       // Proxy tinker file-read API — rewrite to gateway tinker route
       "/tinker-api": {
         target: "http://localhost:18789",
