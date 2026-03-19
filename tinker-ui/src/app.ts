@@ -967,7 +967,7 @@ function onFrame(f: any) {
           refreshTreemap();
           // Load 24h cross-session feed instead of per-session
           {
-            const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+            const base = "";
             fetch(`${base}/tinker/api/context-anatomy/recent?hours=24`)
               .then((r) => r.json())
               .then((data) => {
@@ -1632,7 +1632,7 @@ function onEvent(evt: any) {
           const tn = currentTurnNumber;
           setTimeout(() => {
             if (sk && timelineCtrl) {
-              const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+              const base = "";
               fetch(`${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
@@ -1694,7 +1694,7 @@ function onEvent(evt: any) {
         const turnNum = currentTurnNumber;
         setTimeout(() => {
           if (sk && timelineCtrl) {
-            const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+            const base = "";
             fetch(`${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
@@ -3993,7 +3993,7 @@ function init() {
 
   // ─── Voice mute toggle ───
   const voiceBtn = $("tb-voice")!;
-  const muteBase = import.meta.env.DEV ? "http://localhost:18789" : "";
+  const muteBase = "";
   const muteApi = `${muteBase}/tinker/api/jarvis-mute`;
   fetch(muteApi)
     .then((r) => r.json())
@@ -4005,7 +4005,6 @@ function init() {
     const willMute = voiceBtn.classList.contains("tb-active");
     fetch(muteApi, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ muted: willMute }),
     })
       .then((r) => r.json())
@@ -6041,7 +6040,7 @@ function init() {
       updateBackButtons();
     },
     () => sessionKey,
-    () => (import.meta.env.DEV ? "http://localhost:18789" : ""),
+    () => "",
     PROVIDER_ICONS,
     (groupIndex, firstEvent) => {
       // Show the prompt's context anatomy in the treemap
@@ -6080,8 +6079,7 @@ function init() {
     (mode) => {
       if (mode === "all") {
         // Use the /recent endpoint for cross-session 24h feed
-        const b = import.meta.env.DEV ? "http://localhost:18789" : "";
-        fetch(`${b}/tinker/api/context-anatomy/recent?hours=24`)
+        fetch(`/tinker/api/context-anatomy/recent?hours=24`)
           .then((r) => r.json())
           .then((data) => {
             if (data?.events && timelineCtrl) {
