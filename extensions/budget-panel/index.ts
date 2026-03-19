@@ -29,6 +29,8 @@ const usageCache: Record<string, { data: Record<string, any> | null; ts: number 
 // Anthropic /api/oauth/usage has a per-ACCESS-TOKEN rate limit of ~5 requests.
 // With 30min cache we use ~2 requests/hr, safely under the limit.
 const CACHE_TTL_MS = 30 * 60_000;
+// Shorter TTL for failed fetches — allows quick recovery after boot-time token races.
+const CACHE_TTL_FAILED_MS = 2 * 60_000;
 
 /** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
 async function resolveToken(
@@ -115,7 +117,8 @@ async function fetchProfileUsage(
   log: (...args: any[]) => void = console.log,
 ): Promise<Record<string, any> | null> {
   const cached = usageCache[label];
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
+  const ttl = cached?.data ? CACHE_TTL_MS : CACHE_TTL_FAILED_MS;
+  if (cached && Date.now() - cached.ts < ttl) return cached.data;
   const profileId = USAGE_PROFILES[label];
   if (!profileId) return cached?.data ?? null;
 
