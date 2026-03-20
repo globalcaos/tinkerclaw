@@ -213,19 +213,19 @@ export function writeCredentialFile(
  */
 const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const ANTHROPIC_SCOPES = "user:inference";
-
 export async function refreshAnthropicOAuthToken(refreshToken: string): Promise<{
   access: string;
   refresh: string;
   expires: number;
 } | null> {
   try {
+    // Don't pass `scope` — omitting it preserves the original grant's scopes.
+    // Passing scope: "user:inference" was downscoping the token, losing user:profile
+    // which the /api/oauth/usage endpoint requires (→ 403 on budget panel).
     const body = JSON.stringify({
       grant_type: "refresh_token",
       client_id: ANTHROPIC_CLIENT_ID,
       refresh_token: refreshToken,
-      scope: ANTHROPIC_SCOPES,
     });
 
     const response = await fetch(ANTHROPIC_TOKEN_URL, {
