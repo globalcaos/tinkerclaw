@@ -12,6 +12,7 @@ import {
   resolveProfilesUnavailableReason,
   resolveAuthProfileOrder,
 } from "./auth-profiles.js";
+import { isCandidateAllowed } from "./billing-gate.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
   coerceToFailoverError,
@@ -536,6 +537,18 @@ export async function runWithModelFallback<T>(params: {
 
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i];
+    // FORK: billing gate — skip metered models that are over budget or when primary has headroom
+    const _bKey = `${candidate.provider}/${candidate.model}`;
+    const _bPrimary = `${params.provider}/${params.model}`;
+    const _bResult = isCandidateAllowed(
+      _bKey,
+      _bPrimary,
+      (params.cfg?.agents?.defaults?.models ?? {}) as Record<string, never>,
+    );
+    if (!_bResult.allowed) {
+      log.info(`[billing-gate] skipped ${_bKey}: ${_bResult.reason}`);
+      continue;
+    }
     const isPrimary = i === 0;
     const requestedModel =
       params.provider === candidate.provider && params.model === candidate.model;
