@@ -3914,22 +3914,24 @@ function init() {
   const muteBase = "";
   const muteApi = `${muteBase}/tinker/api/jarvis-mute`;
   fetch(muteApi)
-    .then((r) => r.json())
-    .then((d) => {
-      voiceBtn.classList.toggle("tb-active", !d.muted);
-    })
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
     .catch(() => {});
   voiceBtn.addEventListener("click", () => {
     const willMute = voiceBtn.classList.contains("tb-active");
+    voiceBtn.classList.toggle("tb-active", !willMute);
     fetch(muteApi, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ muted: willMute }),
     })
-      .then((r) => r.json())
-      .then((d) => {
-        voiceBtn.classList.toggle("tb-active", !d.muted);
-      })
-      .catch(() => {});
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
+      .catch(() => {
+        voiceBtn.classList.toggle("tb-active", !willMute);
+        voiceBtn.classList.add("tb-error");
+        setTimeout(() => voiceBtn.classList.remove("tb-error"), 5000);
+      });
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
@@ -4410,12 +4412,54 @@ function init() {
         if (action === "qr" || action === "relink") {
           if (qrArea)
             qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
+          // Clear any previous QR refresh interval
+          if ((window as any).__waQrInterval) {
+            clearInterval((window as any).__waQrInterval);
+            (window as any).__waQrInterval = null;
+          }
           const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
             message: (err as Error).message,
           }))) as any;
           if (qrArea) {
             if (r?.qrDataUrl) {
-              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
+              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img id="wa-qr-img" src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:260px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div><div id="wa-qr-countdown" style="font-size:9px;color:var(--accent);margin-top:2px">Auto-refreshing QR…</div></div>`;
+              // Poll for fresh QR every 15s (QR rotates every ~30s on server)
+              let refreshCount = 0;
+              const maxRefreshes = 12; // 3 minutes total
+              (window as any).__waQrInterval = setInterval(async () => {
+                refreshCount++;
+                if (refreshCount > maxRefreshes) {
+                  clearInterval((window as any).__waQrInterval);
+                  (window as any).__waQrInterval = null;
+                  const cd = document.getElementById("wa-qr-countdown");
+                  if (cd) cd.textContent = "QR expired — click Relink again";
+                  return;
+                }
+                const fresh = (await req("web.login.start", { force: false }).catch(
+                  () => null,
+                )) as any;
+                const img = document.getElementById("wa-qr-img") as HTMLImageElement | null;
+                if (fresh?.qrDataUrl && img) {
+                  img.src = fresh.qrDataUrl;
+                }
+              }, 15000);
+              // Also start waiting for successful pairing
+              req("web.login.wait", { timeoutMs: 180000 })
+                .then((waitR: any) => {
+                  if ((window as any).__waQrInterval) {
+                    clearInterval((window as any).__waQrInterval);
+                    (window as any).__waQrInterval = null;
+                  }
+                  if (qrArea) {
+                    if (waitR?.connected) {
+                      qrArea.innerHTML = `<div style="padding:20px;font-size:12px;color:var(--green)">✅ WhatsApp linked!</div>`;
+                    } else {
+                      qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(waitR?.message ?? "Pairing ended")}</div>`;
+                    }
+                  }
+                  renderAltView("channels");
+                })
+                .catch(() => {});
             } else {
               qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
             }
