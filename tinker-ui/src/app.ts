@@ -819,7 +819,7 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-const collapsedModelSections = new Set<string>();
+const collapsedModelSections = new Set<string>(["configured"]);
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
