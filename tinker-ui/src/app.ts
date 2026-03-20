@@ -1156,6 +1156,8 @@ function onEvent(evt: any) {
       for (const m of messages) {
         if (m._queued) delete m._queued;
       }
+      // Guard: if thinking was active, implicitly end it (thinking_end may have been dropped)
+      if (thinkingMsgIdx >= 0) thinkingMsgIdx = -1;
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
         lastDeltaLen = deltaText.length;
@@ -1181,6 +1183,8 @@ function onEvent(evt: any) {
       updateChat();
     } else if (p.state === "thinking_delta") {
       streamRunId = p.runId;
+      // Guard: if text was streaming, freeze it (this text segment is done)
+      if (streamMsgIdx >= 0) streamMsgIdx = -1;
       const thinkingText = p.message?.content?.[0]?.text ?? "";
       if (thinkingText) {
         if (thinkingMsgIdx >= 0 && messages[thinkingMsgIdx]?._temporary) {
