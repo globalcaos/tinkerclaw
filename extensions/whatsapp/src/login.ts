@@ -5,7 +5,13 @@ import { danger, info, success } from "../../../src/globals.js";
 import { logInfo } from "../../../src/logger.js";
 import { defaultRuntime, type RuntimeEnv } from "../../../src/runtime.js";
 import { resolveWhatsAppAccount } from "./accounts.js";
-import { createWaSocket, formatError, logoutWeb, waitForWaConnection } from "./session.js";
+import {
+  createWaSocket,
+  formatError,
+  logoutWeb,
+  waitForCredsSaveQueueWithTimeout,
+  waitForWaConnection,
+} from "./session.js";
 
 export async function loginWeb(
   verbose: boolean,
@@ -30,15 +36,16 @@ export async function loginWeb(
       (err as { output?: { statusCode?: number } })?.output?.statusCode;
     if (code === 515) {
       console.log(
-        info(
-          "WhatsApp asked for a restart after pairing (code 515); creds are saved. Restarting connection once…",
-        ),
+        info("WhatsApp asked for a restart after pairing (code 515); waiting for creds to save…"),
       );
       try {
         sock.ws?.close();
       } catch {
         // ignore
       }
+      await waitForCredsSaveQueueWithTimeout(account.authDir);
+      // Give WhatsApp servers time to finalize device registration before reconnecting
+      await new Promise((resolve) => setTimeout(resolve, 3000));
       const retry = await createWaSocket(false, verbose, {
         authDir: account.authDir,
         syncFullHistory: true,
