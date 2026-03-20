@@ -2837,44 +2837,18 @@ function updateChat(skipScroll = false) {
     for (let i = 0; i <= messages.length; i++) {
       const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
       if (!isUserOrEnd) continue;
-      const assistantTextIndices: number[] = [];
       for (let j = runStart; j < i; j++) {
         const m = messages[j];
         if ((m.role ?? "").toLowerCase() !== "assistant") continue;
         const c = Array.isArray(m.content) ? m.content : [];
-        // Messages with ONLY thinking blocks (no text) are marked as thinking.
-        // Messages with both thinking + text blocks are treated as text messages —
-        // renderMsg renders thinking blocks with their own styling unconditionally,
-        // so the text block gets normal assistant styling (not duplicate "Thinking:").
+        // Messages with ONLY thinking blocks (no text) get thinking styling.
+        // Messages with text blocks are NEVER classified as thinking —
+        // the model already separates thinking from answer via content block types.
         const hasThinkingBlock = c.some((b: any) => b.type === "thinking");
         const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasThinkingBlock && !hasText && !plainText) {
           thinkingSet.add(j);
-          continue;
-        }
-        if (hasText || plainText) assistantTextIndices.push(j);
-      }
-      // FORK: During streaming, frozen text temps (all except the actively
-      // streaming one at streamMsgIdx) are intermediates → thinking style.
-      // Only the active streaming text renders as normal assistant.
-      // After finalization, all except the last become thinking → reasoning group.
-      const hasRunTemps = (() => {
-        for (let k = runStart; k < i; k++) {
-          if (messages[k]._temporary) return true;
-        }
-        return false;
-      })();
-      const isCurrentRun =
-        i === messages.length && (streamMsgIdx >= 0 || thinkingMsgIdx >= 0 || hasRunTemps);
-      if (!isCurrentRun) {
-        // Finalized: all text except last are intermediates
-        const intermediates = assistantTextIndices.slice(0, -1);
-        for (const idx of intermediates) thinkingSet.add(idx);
-      } else {
-        // Streaming: ALL text temps are thinking — final answer only on finalization
-        for (const idx of assistantTextIndices) {
-          thinkingSet.add(idx);
         }
       }
       runStart = i + 1;
