@@ -1215,55 +1215,64 @@ function onEvent(evt: any) {
         if (m._queued) delete m._queued;
       }
       if (p.state !== "error") {
-        // ─── Continuation merge ───
-        // Before promoting, merge sentence fragments: if an assistant text
-        // bubble starts with lowercase (mid-sentence continuation after a
-        // tool call), move text up to the first '.' into the previous
-        // assistant text bubble and keep the remainder in the current one.
-        mergeSentenceContinuations(messages);
-
-        // Promote temp messages to permanent.
-        // When tool calls split the streaming text (frozenTextEnd slicing),
-        // the final server message has the complete un-sliced text. Replace
-        // ALL temp text segments with the server's authoritative version so
-        // markdown elements (tables, lists) that span tool-call boundaries
-        // render correctly as a single block.
+        // Promote temp messages to permanent, then merge text segments.
+        // The model separates thinking (thinking blocks) from answer (text blocks).
+        // During streaming, frozenTextEnd splits text at tool-call boundaries into
+        // multiple temps. On finalization, merge them back into one answer message
+        // using the server's authoritative complete text.
         const hadTemps = messages.some((m: any) => m._temporary);
-        const tempCount = messages.filter((m: any) => m._temporary).length;
-        console.warn(
-          "[final-debug] hadTemps:",
-          hadTemps,
-          "tempCount:",
-          tempCount,
-          "p.message?",
-          !!p.message,
-          "p.message.content?",
-          p.message?.content?.length,
-        );
-        if (p.message) {
-          const fc = Array.isArray(p.message.content) ? p.message.content : [];
-          const ft = fc
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => (b.text ?? "").length);
-          console.warn(
-            "[final-debug] finalText lengths:",
-            ft,
-            "first 200 chars:",
-            fc.find((b: any) => b.type === "text")?.text?.substring(0, 200),
-          );
-        }
         if (hadTemps) {
-          // FORK: Promote all temporary messages to permanent instead of
-          // replacing with the server's full text. Each text temp already has
-          // correctly-segmented text (via frozenTextEnd slicing during streaming).
-          // The thinkingSet logic in updateChat() handles which text segments
-          // are intermediates (thinking style) and which is the final answer
-          // (the last one in the run). This prevents intermediate preamble
-          // ("Let me check...") from leaking into the final answer bubble.
+          // Promote all temps to permanent
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
           }
-          console.warn("[final-debug] PROMOTED temps, count:", messages.length);
+
+          // Merge text segments: replace fragmented text temps with one answer
+          const serverText = p.message?.content?.find((b: any) => b.type === "text")?.text;
+          if (serverText) {
+            // Find the current run boundary (walk backwards to last real user message).
+            // NOTE: isRunBoundary is scoped inside updateChat(), so inline the check here.
+            let runStart = 0;
+            for (let ri = messages.length - 1; ri >= 0; ri--) {
+              const rm = messages[ri];
+              if ((rm.role ?? "").toLowerCase() !== "user") continue;
+              const rc = Array.isArray(rm.content) ? rm.content : [];
+              const isPureToolResult =
+                rc.length > 0 && !rc.some((b: any) => b.type !== "tool_result");
+              if (!isPureToolResult) {
+                runStart = ri + 1;
+                break;
+              }
+            }
+
+            // Collect text-only assistant message indices in this run
+            const textOnlyIndices: number[] = [];
+            for (let ri = runStart; ri < messages.length; ri++) {
+              const m = messages[ri];
+              if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+              const c = Array.isArray(m.content) ? m.content : [];
+              const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+              const hasThinking = c.some((b: any) => b.type === "thinking");
+              const hasTool = c.some((b: any) => b.type === "tool_use");
+              // Only target messages that are purely text (no thinking, no tool_use)
+              if (hasText && !hasThinking && !hasTool) {
+                textOnlyIndices.push(ri);
+              }
+            }
+
+            if (textOnlyIndices.length >= 1) {
+              // Set the last text message to the server's complete text
+              const lastIdx = textOnlyIndices[textOnlyIndices.length - 1];
+              const lastContent = messages[lastIdx].content;
+              const lastTextBlock = lastContent.find((b: any) => b.type === "text");
+              if (lastTextBlock) lastTextBlock.text = serverText;
+
+              // Remove all other text-only messages (iterate backwards)
+              for (let ri = textOnlyIndices.length - 2; ri >= 0; ri--) {
+                messages.splice(textOnlyIndices[ri], 1);
+              }
+            }
+          }
         }
         if (!hadTemps && p.message) {
           messages.push(p.message);
