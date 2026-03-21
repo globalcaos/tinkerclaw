@@ -378,7 +378,9 @@ log "  Guardian result: $guardian_issues issue(s)"
 
 log "Phase 3: Building in tinkerclaw..."
 cd "$FORK_DIR"
-rm -rf dist/.cache node_modules/.cache
+
+# Clean build: remove stale dist entirely to avoid phantom chunks
+rm -rf dist dist/.cache node_modules/.cache
 
 build_passed=false
 
@@ -407,6 +409,22 @@ else
   if pnpm build > "$BUILD_LOG" 2>&1; then
     build_passed=true
     log_ok "Build passed (second attempt, after self-heal)"
+  fi
+fi
+
+# Post-build: runtime-postbuild + smoke test
+if $build_passed; then
+  log "  Running runtime-postbuild.mjs..."
+  if [ -f "$FORK_DIR/scripts/runtime-postbuild.mjs" ]; then
+    node "$FORK_DIR/scripts/runtime-postbuild.mjs" >> "$BUILD_LOG" 2>&1 || log_warn "runtime-postbuild had warnings"
+  fi
+
+  log "  Smoke testing CLI..."
+  if ! node "$FORK_DIR/openclaw.mjs" --version >> "$BUILD_LOG" 2>&1; then
+    build_passed=false
+    log_warn "CLI smoke test failed after successful build!"
+  else
+    log_ok "CLI smoke test passed"
   fi
 fi
 
@@ -444,9 +462,15 @@ if [ -f "$RUNTIME_DIR/scripts/sync-from-tinkerclaw.sh" ]; then
 else
   log_warn "sync-from-tinkerclaw.sh not found — running inline fallback..."
 
-  sync_dirs=(src/ extensions/ vendor/ docs/ git-hooks/)
+  # NOTE: extensions/ and dist/ are NOT synced to workspace.
+  # The workspace is config/memory/skills only.
+  # The global npm symlink (/usr/local/lib/node_modules/openclaw -> ~/src/tinkerclaw)
+  # means the gateway loads code from tinkerclaw directly.
+  # Syncing extensions/ created stale shadow copies (2026-03-21 incident).
+  # Syncing dist/ is unnecessary since the gateway resolves via the symlink.
+  sync_dirs=(src/ vendor/ docs/ git-hooks/)
   sync_files=(package.json pnpm-lock.yaml tsconfig.json tsconfig.plugin-sdk.dts.json
-              tsdown.config.ts openclaw.mjs CHANGELOG.md FORK_PATCHES.md)
+              tsdown.config.ts CHANGELOG.md FORK_PATCHES.md)
 
   for dir in "${sync_dirs[@]}"; do
     [ -d "$FORK_DIR/$dir" ] && rsync -a --delete "$FORK_DIR/$dir" "$RUNTIME_DIR/$dir"
@@ -454,7 +478,7 @@ else
   for f in "${sync_files[@]}"; do
     [ -f "$FORK_DIR/$f" ] && rsync -a "$FORK_DIR/$f" "$RUNTIME_DIR/$f"
   done
-  [ -d "$FORK_DIR/dist" ] && rsync -a --delete "$FORK_DIR/dist/" "$RUNTIME_DIR/dist/"
+  # Do NOT sync dist/ or extensions/ — gateway loads directly from tinkerclaw
 
   cd "$RUNTIME_DIR"
   pnpm install --frozen-lockfile 2>&1 | tail -3 || true
