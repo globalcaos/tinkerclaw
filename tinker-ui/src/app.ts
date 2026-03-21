@@ -1411,9 +1411,19 @@ function onEvent(evt: any) {
       const modelLabel = fm || "unknown";
       const profileLabel = profileId ? ` (${profileId})` : "";
       const reasonLabel = describeError(reason, errMsg);
-      // (placeholder removed — real bars inserted on data arrival)
-      const nextLabel =
-        attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
+      // Resolve next fallback target from model config
+      let nextLabel: string;
+      if (attempt && total && attempt < total) {
+        const chain = [modelConfigData?.primary, ...(modelConfigData?.fallbacks || [])].filter(
+          Boolean,
+        ) as string[];
+        const nextModel = fm ? chain[chain.indexOf(fm) + 1] : undefined;
+        nextLabel = nextModel
+          ? ` → trying ${modelName(nextModel)} (${providerOf(nextModel)})`
+          : " → trying next backup";
+      } else {
+        nextLabel = " — all backups exhausted";
+      }
       const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
       const fallbackMsg: any = {
         role: "assistant",
@@ -1440,8 +1450,27 @@ function onEvent(evt: any) {
       const pIdx = p.data.profileIndex as number | undefined;
       const pTotal = (p.data.totalProfiles ?? p.data.profileTotal) as number | undefined;
       const reasonLabel = describeError(reason, errMsg);
-      const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
-      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
+      const profileStep = pIdx != null && pTotal ? ` [profile ${pIdx + 1}/${pTotal}]` : "";
+      // Resolve what comes next: next profile in auth order, or next model in fallback chain
+      let nextHint = "";
+      if (pIdx != null && pTotal) {
+        const authKeys = modelConfigData?.authOrder?.[prov] as string[] | undefined;
+        const nextPid = authKeys?.[pIdx + 1];
+        if (nextPid) {
+          const nextLabel = nextPid.split(":").slice(1).join(":") || nextPid;
+          nextHint = ` → trying ${nextLabel}`;
+        } else {
+          // All profiles exhausted for this provider — show next model in fallback chain
+          const chain = [modelConfigData?.primary, ...(modelConfigData?.fallbacks || [])].filter(
+            Boolean,
+          ) as string[];
+          const nextModel = model ? chain[chain.indexOf(model) + 1] : undefined;
+          nextHint = nextModel
+            ? ` → falling back to ${modelName(nextModel)} (${providerOf(nextModel)})`
+            : " — all profiles exhausted";
+        }
+      }
+      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}${nextHint}`;
       // Track per-profile error for model panel red labels
       if (pid) {
         providerErrors.set(pid, {
@@ -1663,20 +1692,34 @@ function onEvent(evt: any) {
   if (evt.event === "auth.profiles.updated") {
     // Notify any active popup flow listeners
     for (const listener of authProfileListeners) {
-      try { listener(evt); } catch {}
+      try {
+        listener(evt);
+      } catch {}
     }
     const d = evt.data ?? evt.payload ?? {};
     const profiles = (d.profiles ?? []) as string[];
     const profileId = d.profileId as string | undefined;
-    // Clear errors for reloaded profiles (or all if source is file-watcher)
+    // Clear errors for reloaded profiles (or all if source is file-watcher).
+    // Preserve billing/auth_permanent errors — these are persistent and should
+    // only be cleared by successful LLM calls or explicit user action.
+    const shouldKeep = (key: string) => {
+      const err = providerErrors.get(key);
+      return err && (err.reason === "billing" || err.reason === "auth_permanent");
+    };
     if (d.clearAll) {
-      providerErrors.clear();
+      for (const [key] of providerErrors) {
+        if (!shouldKeep(key)) providerErrors.delete(key);
+      }
     } else {
-      if (profileId) providerErrors.delete(profileId);
-      for (const pid of profiles) providerErrors.delete(pid);
+      if (profileId && !shouldKeep(profileId)) providerErrors.delete(profileId);
+      for (const pid of profiles) {
+        if (!shouldKeep(pid)) providerErrors.delete(pid);
+      }
     }
     persistProviderErrors();
-    loadBudget();
+    // Force-refresh usage cache so the budget panel fetches with the new token
+    // instead of serving stale null data that would re-seed the auth error.
+    loadBudget({ forceRefresh: true });
     return;
   }
 }
@@ -1934,12 +1977,12 @@ async function abort() {
   updateBtn();
 }
 
-async function loadBudget() {
+async function loadBudget(opts?: { forceRefresh?: boolean }) {
   const [b, s, mc, bu] = await Promise.all([
     req("usage.budget", {}).catch(() => null),
     req("budget.status", {}).catch(() => null),
     req("config.models", {}).catch(() => null),
-    req("budget.usage", {}).catch(() => null),
+    req("budget.usage", opts?.forceRefresh ? { forceRefresh: true } : {}).catch(() => null),
   ]);
   budgetData = { budget: b, status: s };
   if (mc) {
@@ -1978,6 +2021,29 @@ async function loadBudget() {
         providerErrors.set(keyId, {
           error: `${prof.disabledReason}`,
           reason: prof.disabledReason === "billing" ? "billing" : "cooldown",
+          ts: Date.now(),
+        });
+        seeded = true;
+      }
+    }
+    if (seeded) persistProviderErrors();
+  }
+
+  // Seed auth errors for OAuth profiles missing from usage data.
+  // When a token is dead (expired + refresh revoked), the budget-panel backend
+  // returns null → profile omitted from claudeProfiles → no error badge → user
+  // can't click to re-auth. Detect this and surface a clickable error badge.
+  if (mc?.authProfiles && mc?.authOrder?.anthropic) {
+    const liveProfiles = bu?.claudeProfiles || {};
+    let seeded = false;
+    for (const keyId of mc.authOrder.anthropic as string[]) {
+      if (!keyId.startsWith("anthropic:cli-")) continue;
+      const label = keyId.split(":").slice(1).join(":");
+      const hasUsageData = label in liveProfiles;
+      if (!hasUsageData && !providerErrors.has(keyId)) {
+        providerErrors.set(keyId, {
+          error: "Token expired — click to re-authenticate",
+          reason: "auth",
           ts: Date.now(),
         });
         seeded = true;
@@ -3431,8 +3497,10 @@ function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
       try {
         await req("auth.reload", { profileId });
         showToast(`Credentials reloaded for ${profileId.replace("anthropic:", "")}`);
-      } catch (err) {
-        showToast(`Reload failed: ${err}`, true);
+      } catch (err: any) {
+        const msg =
+          typeof err === "string" ? err : err?.message || err?.error || JSON.stringify(err);
+        showToast(`Reload failed: ${msg}`, true);
       }
     } else if (action === "reauth") {
       startOAuthReauthFlow(profileId);
@@ -3454,9 +3522,14 @@ function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
 async function startOAuthReauthFlow(profileId: string): Promise<void> {
   let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
   try {
-    startResult = await req("auth.reauth.start", { profileId }) as { sessionId: string; authUrl: string; fallbackAuthUrl: string };
-  } catch (err) {
-    showToast(`Re-auth failed: ${err}`, true);
+    startResult = (await req("auth.reauth.start", { profileId })) as {
+      sessionId: string;
+      authUrl: string;
+      fallbackAuthUrl: string;
+    };
+  } catch (err: any) {
+    const msg = typeof err === "string" ? err : err?.message || err?.error || JSON.stringify(err);
+    showToast(`Re-auth failed: ${msg}`, true);
     return;
   }
 
@@ -3466,12 +3539,15 @@ async function startOAuthReauthFlow(profileId: string): Promise<void> {
   let resolved = false;
 
   const onAuthEvent = (evt: unknown) => {
-    const d = (evt as Record<string, unknown>).data ?? (evt as Record<string, unknown>).payload ?? {};
+    const d =
+      (evt as Record<string, unknown>).data ?? (evt as Record<string, unknown>).payload ?? {};
     const dd = d as Record<string, unknown>;
     if (dd.profileId === profileId || dd.source === "oauth-reauth") {
       resolved = true;
       cleanup();
-      try { popup?.close(); } catch {}
+      try {
+        popup?.close();
+      } catch {}
       showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
     }
   };
@@ -3487,7 +3563,9 @@ async function startOAuthReauthFlow(profileId: string): Promise<void> {
   const fallbackTimer = setTimeout(() => {
     if (!resolved) {
       cleanup();
-      try { popup?.close(); } catch {}
+      try {
+        popup?.close();
+      } catch {}
       showPasteModal(sessionId, fallbackAuthUrl, profileId);
     }
   }, 15_000);
@@ -3538,17 +3616,22 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
       await req("auth.reauth.exchange", { sessionId, code });
       overlay.remove();
       showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    } catch (err) {
-      status.textContent = `Failed: ${err}`;
+    } catch (err: any) {
+      const msg = typeof err === "string" ? err : err?.message || err?.error || JSON.stringify(err);
+      status.textContent = `Failed: ${msg}`;
       status.style.color = "#f38ba8";
       submitBtn.disabled = false;
     }
   };
 
   submitBtn.addEventListener("click", submit);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
   cancelBtn.addEventListener("click", () => overlay.remove());
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
 }
 
 function shortErrorLabel(reason: string): string {
