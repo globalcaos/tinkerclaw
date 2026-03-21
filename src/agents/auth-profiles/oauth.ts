@@ -189,7 +189,7 @@ async function refreshOAuthTokenWithLock(params: {
         };
         saveAuthProfileStore(store, params.agentDir);
         return {
-          apiKey: buildOAuthApiKey(cred.provider, { ...cred, access: fresh.access }),
+          apiKey: await buildOAuthApiKey(cred.provider, { ...cred, access: fresh.access }),
           newCredentials: {
             ...cred,
             access: fresh.access,
@@ -254,11 +254,6 @@ async function refreshOAuthTokenWithLock(params: {
             error: err instanceof Error ? err.message : String(err),
           });
         }
-      } else if (!oauthProvider) {
-        log.warn("no OAuth provider registered for credential refresh", {
-          profileId: params.profileId,
-          provider: cred.provider,
-        });
       } else {
         log.warn("credential file missing or has no refresh token", {
           profileId: params.profileId,
