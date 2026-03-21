@@ -1,32 +1,80 @@
 <p align="center">
-    <img src="docs/assets/tinkerzone-logo.png" alt="TinkerClaw" width="300">
+    <img src="docs/assets/tinkerzone-logo.png" alt="The Tinker Zone" width="300">
 </p>
 
-# 🔧 TinkerClaw
+# The Tinker Zone — OpenClaw Fork
 
-**OpenClaw, obsessively optimized.** Token tracking. Self-improving agents. Memory that actually works.
+**Your AI agent. Full access. No handcuffs.**
 
 [![Based on OpenClaw](https://img.shields.io/badge/based%20on-OpenClaw-blue?style=for-the-badge)](https://github.com/openclaw/openclaw)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%2F%20Linux-orange?style=for-the-badge)](https://ubuntu.com)
-[![AI Models](https://img.shields.io/badge/AI-Claude%20%7C%20GPT%20%7C%20Gemini%20%7C%20Ollama-green?style=for-the-badge)](#-multi-model-support)
+[![AI Models](https://img.shields.io/badge/AI-Claude%20%7C%20Gemini%20%7C%20GPT%20%7C%20Ollama-green?style=for-the-badge)](#-multi-model-support)
+[![Skills](https://img.shields.io/badge/skills-19%2B%20published-purple?style=for-the-badge)](#-published-skills-on-clawhub)
+[![Fork Commits](https://img.shields.io/badge/fork-474%2B%20commits%20ahead-brightgreen?style=for-the-badge)](https://github.com/globalcaos/tinkerclaw)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
-> Your $200 Opus session didn't have to happen.
-
-A personal fork of [OpenClaw](https://github.com/openclaw/openclaw) — the multi-channel, multi-model AI assistant you run on your own devices. We take everything upstream does and add the things we kept wishing it had. Because we are that obsessive.
+> **What is OpenClaw?** A personal AI assistant you run on your own devices — multi-channel (WhatsApp, Telegram, Slack, Discord, WebChat, and more), multi-model, always-on.
+> For upstream docs, install guides, and full feature list see the **[upstream OpenClaw repository](https://github.com/openclaw/openclaw)**.
 
 ---
 
-## What TinkerClaw Adds
+## Why This Fork?
 
-- 🧠 **ENGRAM compaction** — silent context management, no annoying compaction events. Ships as default.
-- 🔍 **Hippocampus memory indexing** — your agent builds long-term memory automatically. Enabled by default.
-- 🧲 **Memory search with semantic embeddings** — find anything across sessions. Enabled by default.
-- 💰 **Budget panel** — real-time token cost tracking so you know what each session costs before the bill arrives.
-- 🗺️ **Tinker UI** — context treemaps, session management, cost dashboard. See exactly where your tokens go.
-- 🔄 **Self-improving cron agents** — wind-down, morning briefing, cleaning-lady. Day 1 mediocre → Day 30 expert.
-- 👨‍👩‍👧 **Multi-agent family support** — Jarvis, Mia, Lia running on separate machines, talking in shared groups.
-- 🌙 **Nightly upstream sync** — stays current automatically. Never falls behind.
+Most OpenClaw setups are cautious by default — sandboxed, limited, designed for people who don't fully trust their agent yet.
+
+This fork is for people who've already crossed that line.
+
+Oscar Serra runs this fork on a Linux box in Barcelona with Claude, Gemini, GPT, and a local model as backup. No macOS required. No artificial limits. The agent has access to files, APIs, WhatsApp, email, calendar, and anything else that can be wired in — because that's the only way it actually helps.
+
+> _"An AI assistant with no access is just a search engine with extra steps."_
+
+If that line made you nod, you're in the right place.
+
+→ **[Clone the fork and get started](#setup-guide)**
+
+---
+
+## What's Different Here?
+
+### 🔐 Security Patches Applied
+
+All critical upstream security PRs cherry-picked and verified (historical — applied at the time):
+
+| PR        | Fix                        | Status     |
+| --------- | -------------------------- | ---------- |
+| **#7769** | DNS Rebinding Protection   | ✅ Applied |
+| **#7616** | Zip Path Traversal Fix     | ✅ Applied |
+| **#7704** | WebSocket Auth Enforcement | ✅ Applied |
+
+### 🧠 Ships With Smart Defaults
+
+These are not optional — they're on out of the box:
+
+- **ENGRAM compaction** — silent context management, no interruptions mid-session
+- **Hippocampus memory indexing** — your agent builds long-term memory automatically
+- **Memory search with semantic embeddings** — find anything across sessions
+- **Budget panel** — token cost tracking baked in; you see what each session costs
+- **Smart Router V2** — auto-selects the best model for each task
+- **Rate Limiting** — prevents runaway API costs
+- **Anthropic Failover** — auto-switches to Gemini when Claude hits quota (tested & verified!)
+- **OAuth PKCE Flow** — proper token refresh for Anthropic subscriptions
+
+### 🔧 Fork Fixes
+
+| Fix                   | What happened                                   | Status        |
+| --------------------- | ----------------------------------------------- | ------------- |
+| Anthropic failover    | Auto-switch to Gemini on rate limit             | ✅ Verified   |
+| Anthropic OAuth       | PKCE flow with refresh token                    | ✅ Fixed      |
+| Heartbeat isolation   | Runs in separate session — no webchat pollution | ✅ Fixed      |
+| Config schema merge   | Re-adds fork Zod keys wiped by upstream merges  | ✅ Fixed      |
+| Prompt queue deadlock | Workaround for upstream session lane deadlock   | ✅ Workaround |
+
+### 🐧 Ubuntu-Native
+
+- Tested on Ubuntu 22.04 / 24.04
+- Systemd service examples included
+- Works with `deja-dup` for backups
+- No macOS-only dependencies
 
 ---
 
@@ -113,80 +161,160 @@ Agents can talk to each other in shared WhatsApp groups — just add the group J
 
 ---
 
-## Multi-Model Support
+## 🖥️ Tinker Command Center (Bundled Plugin)
 
-We run multiple AI providers for resilience and capability:
+> **You just switched to Claude API because Anthropic refused the Pentagon contract. Respect. Now — do you know what you're spending?**
 
-| Provider      | Models                     | Use Case                            |
-| ------------- | -------------------------- | ----------------------------------- |
-| **Anthropic** | Claude Opus 4, Sonnet 4    | Primary chat, coding, complex tasks |
-| **OpenAI**    | GPT-4.1, o3                | Cross-model review, second opinions |
-| **Google**    | Gemini 3 Pro, Flash        | Failover, large context, vision     |
-| **Ollama**    | Local models (qwen3, etc.) | Heartbeat, background, offline      |
+Claude API through OpenClaw is **unmetered** — there's no $20/month cap. Opus costs $15/M input and $75/M output. One deep agent session with tools can hit 200K+ tokens. Do the math: that's a surprise $20 bill from a single conversation.
 
-### Smart Routing & Fallback
+Tinker is the fix. A real-time command center that shows you **exactly** where every token goes — before the bill arrives.
+
+- **🗺️ Context Treemap** — Interactive visualization of what fills your context window
+- **📊 Response Treemap** — See how much of the response is text, thinking, tool calls, or tool results
+- **💰 Live Cost Tracking** — Per-provider usage, daily/monthly estimates, and rate-limit countdown
+- **⚠️ Budget Alerts** — Set a monthly limit. Get warned at 70%, 90%, 100%
+- **🔄 Multi-call Run View** — When the agent loops through 8 tools, see each call's cost individually
+- **💬 Full Chat Interface** — Complete webchat with session switching, tool call inspection, and real-time streaming
+
+### What You're Actually Paying
+
+| Model                  | Input (per 1M) | Output (per 1M) | Reality check              |
+| ---------------------- | -------------- | --------------- | -------------------------- |
+| Claude Opus 4 / 4.5    | **$15.00**     | **$75.00**      | ⚠️ One deep session = $20+ |
+| Claude Sonnet 4 / 3.5  | $3.00          | $15.00          | Sweet spot for most tasks  |
+| Claude Haiku 3.5       | $0.80          | $4.00           | Background work            |
+| Gemini 3 Pro / 3.1 Pro | $1.25          | $5.00           | Failover — good and cheap  |
+| Gemini 2 Flash         | $0.10          | $0.40           | Near-free                  |
+| GPT-4o                 | $2.50          | $10.00          | Cross-model review         |
+
+After `pnpm build`, visit **`http://localhost:18789/tinker/`** · Dev: `cd tinker-ui && pnpm dev` → `http://localhost:18790/tinker/`
+
+> 📦 Also available as a guide skill on ClawHub: `clawhub install globalcaos/tinker-command-center`
+
+---
+
+## 🤖 Multi-Model Support
+
+| Provider      | Model                      | Use Case                            | Status    |
+| ------------- | -------------------------- | ----------------------------------- | --------- |
+| **Anthropic** | Claude Opus 4.5 / Sonnet 4 | Primary chat, coding, complex tasks | ✅ Active |
+| **Google**    | Gemini 3 Pro               | Failover, large context, vision     | ✅ Active |
+| **OpenAI**    | GPT-4o / o3                | Cross-model review, metered tasks   | ✅ Active |
+| **Ollama**    | Local models (qwen3, etc.) | Heartbeat, background tasks         | ✅ Active |
+
+### Failover Chain
 
 ```
 Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 ```
 
-Flat-rate models first, metered only when justified. Budget pressure respected at all times. When Claude hits its quota, we automatically switch to Gemini with zero downtime.
+> When Claude hits its quota, we **automatically switch to Gemini** with zero downtime. Tested and verified when both providers rate-limited within minutes of each other.
 
 ---
 
-## Fork Architecture
+## 📦 Published Skills on [ClawHub](https://clawhub.ai/u/globalcaos)
 
-### How We Stay Current
+> 19+ skills, all built by globalcaos. Install any of them with `clawhub install globalcaos/<skill-name>`.
 
-- **Nightly fork-sync** — automated merge from upstream with guardian checks
-- **Cleaning-lady cron** — auto-distills workspace files post-merge
-- **FORK_PATCHES.md** — registry of all fork-specific changes
-- **Full upstream history preserved** — we diverge in features, not in lineage
+### 🎙️ Voice & Personality
 
-The fork never falls behind. If something breaks in a merge, the guardian catches it before it ships.
+| Skill                                                        | Description                                                              | Version |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------ | ------- |
+| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Your agent already thinks like JARVIS. This makes it sound like one too. | v3.1.1  |
+
+### 📹 Media & Content
+
+| Skill                                                                | Description                                                                | Version |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------- |
+| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned | v4.2.2  |
+| [`video-frames`](https://clawhub.ai/globalcaos/video-frames)         | Pull exact frames or clips from any video. ffmpeg, no UI, no cloud.        | v1.0.0  |
+| [`ai-humanizer`](https://clawhub.ai/globalcaos/ai-humanizer)         | Text that reads like a human wrote it. 24 detectors, 500+ terms.           | v2.1.0  |
+
+### 💬 Messaging & Channels
+
+| Skill                                                                  | Description                                                                                      | Version |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------- |
+| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. | v3.5.1  |
+| [`xurl`](https://clawhub.ai/globalcaos/xurl)                           | Post, reply, DM, upload media on X — from your agent, fully authenticated.                       | v2.3.1  |
+
+### 💰 Cost & Token Management
+
+| Skill                                                                            | Description                                                                                       | Version |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------- |
+| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | 🆕 Real-time treemaps of context, cost, and budget. Your $200 Opus session didn't have to happen. | v1.0.0  |
+| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Know exactly where your AI tokens go. Multi-provider tracking, budget alerts, REST API.           | v2.1.1  |
+| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon.               | v1.1.0  |
+
+### 🏢 Enterprise Hacks (Browser Relay)
+
+No API keys. No admin consent. No IT ticket. Your authenticated browser session is the API.
+
+| Skill                                                            | Description                                                                                    | Version |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
+| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)     | Agent reads Outlook email all day, drafts replies — won't send without approval.               | v3.0.0  |
+| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Your agent reads your HR portal. Attendance, leave, payslips — no API key, no admin.           | v1.0.0  |
+| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)         | Agent in your Teams: reads threads, posts updates, finds anything. No bot registration needed. | v1.0.0  |
+
+### 🤖 Agent & DevOps
+
+| Skill                                                                                              | Description                                                                                      | Version |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------- |
+| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent)                                       | Hand off a coding task and come back to a diff. Codex, Claude Code, or Pi — your call.           | v1.0.0  |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, staleness alerts, zero babysitting. | v1.0.0  |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones — fully automated.            | v1.1.1  |
+| [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer)                                   | Find out how much your agent actually remembers. Spoiler: it's less than you think.              | v1.0.2  |
+
+### 🛡️ Security & Governance
+
+| Skill                                                                                  | Description                                                                                             | Version |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Draw the line between helpful and reckless. Configurable safety gates that don't lobotomize your agent. | v1.2.2  |
+| [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate)         | Your agent's long-term memory, done right. Semantic search, daily consolidation, cross-session recall.  | v2.0.3  |
+
+### 📋 Data & Migration
+
+| Skill                                                                                  | Description                                                                                     | Version |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------- |
+| [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format, ready for import. | v1.0.2  |
 
 ---
 
-## Memory Research
+## What's Next
 
-We don't just use memory — we study it. Active research into agent memory consolidation, retrieval, and identity persistence.
-
-Research papers are in [`docs/papers/`](docs/papers/):
-
-| Paper                                                    | Topic                             |
-| -------------------------------------------------------- | --------------------------------- |
-| [agent-security](docs/papers/agent-security)             | Agent security boundaries         |
-| [corporate-swarm](docs/papers/corporate-swarm)           | Corporate multi-agent swarms      |
-| [curiosity-motivation](docs/papers/curiosity-motivation) | Curiosity-driven agent motivation |
-| [fractal-reasoning](docs/papers/fractal-reasoning)       | Fractal reasoning patterns        |
-| [humor-embeddings](docs/papers/humor-embeddings)         | Humor in embedding space          |
-| [identity-persistence](docs/papers/identity-persistence) | Agent identity across sessions    |
-| [instant-recall](docs/papers/instant-recall)             | Fast memory retrieval             |
-| [round-table](docs/papers/round-table)                   | Multi-model deliberation          |
-| [sleep-consolidation](docs/papers/sleep-consolidation)   | Sleep-cycle memory consolidation  |
-| [total-recall](docs/papers/total-recall)                 | Complete memory architecture      |
+- **WhatsApp full history sync** — your agent will have context going back years, not just this week
+- **LanceDB hybrid memory** — persistent, searchable, cross-session
+- **The Tinker Zone YouTube tutorials** — because docs only get you so far
 
 ---
 
-## Upstream
+## 📚 Upstream Documentation
 
-TinkerClaw is built on top of [OpenClaw](https://github.com/openclaw/openclaw) — a personal AI assistant platform that supports WhatsApp, Telegram, Slack, Discord, WebChat, and more.
-
-For full feature list, channels, platform guides, and documentation, see **[upstream OpenClaw](https://github.com/openclaw/openclaw)** · [Website](https://openclaw.ai) · [Docs](https://docs.openclaw.ai) · [Getting Started](https://docs.openclaw.ai/start/getting-started)
+> **[OpenClaw upstream repository & docs](https://github.com/openclaw/openclaw)** · [Website](https://openclaw.ai) · [Docs](https://docs.openclaw.ai) · [Getting Started](https://docs.openclaw.ai/start/getting-started) · [FAQ](https://docs.openclaw.ai/help/faq)
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
-We welcome tinkerers. If you've got an idea for making AI assistants more capable, cost-aware, or memory-rich — open a PR or start a discussion.
+1. **Document everything** — help newcomers get started
+2. **Test on Linux** — Ubuntu is our primary platform
+3. **Trust-first features** — expand AI capabilities, not restrict them
+4. **Cost transparency** — make AI spending visible and controllable
 
-- Fork-specific improvements go here
-- Upstream-worthy fixes get contributed back
-- We document everything for newcomers
+> We upstream security fixes quickly, experiment freely with features that might be too aggressive for upstream, and document the journey so others can learn.
 
 ---
 
-## Community
+## About the Maintainer
+
+Oscar Serra is a telecom engineer in Barcelona who got tired of AI assistants that apologize before doing anything useful.
+
+He built this fork because he wanted an agent that actually knows him — his calendar, his emails, his WhatsApp, his code — and acts on it without asking permission for every step. Everything documented here is running in production on his daily driver.
+
+If something in this fork is broken, the user already found it. If something works brilliantly, there's a story behind it.
+
+→ [Follow the build on GitHub](https://github.com/globalcaos)
+
+---
 
 ### OpenClaw Contributors
 
@@ -203,10 +331,8 @@ We welcome tinkerers. If you've got an idea for making AI assistants more capabl
 
 ---
 
-## License
-
-Same as upstream OpenClaw (MIT).
+_Clone it. Fork it. Break it. Make it yours._
 
 ---
 
-_Fork maintained by [GlobalCaos](https://github.com/globalcaos) · Based on [OpenClaw](https://github.com/openclaw/openclaw)_
+📜 Same as upstream OpenClaw (MIT) · Fork maintained by [GlobalCaos](https://github.com/globalcaos) · Based on [OpenClaw](https://github.com/openclaw/openclaw)
