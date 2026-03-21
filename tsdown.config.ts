@@ -77,8 +77,6 @@ function nodeBuildConfig(config: UserConfig): UserConfig {
     fixedExtension: false,
     platform: "node",
     inputOptions: buildInputOptions,
-    // FORK: native addons must stay external (better-sqlite3 uses node-gyp bindings)
-    external: ["better-sqlite3", "bindings"],
   };
 }
 
@@ -208,7 +206,7 @@ export default defineConfig([
     // and bundled hooks in one graph so runtime singletons are emitted once.
     entry: buildUnifiedDistEntries(),
     deps: {
-      neverBundle: ["@lancedb/lancedb"],
+      neverBundle: ["@lancedb/lancedb", "better-sqlite3", "bindings", "@anthropic-ai/vertex-sdk"],
     },
   }),
 ]);
