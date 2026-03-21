@@ -1,3 +1,4 @@
+import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import type { ReplyToMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
@@ -21,15 +22,11 @@ import {
   shouldSuppressMessagingToolReplies,
 } from "./reply-payloads.js";
 
-function hasPayloadMedia(payload: ReplyPayload): boolean {
-  return Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
-}
-
 async function normalizeReplyPayloadMedia(params: {
   payload: ReplyPayload;
   normalizeMediaPaths?: (payload: ReplyPayload) => Promise<ReplyPayload>;
 }): Promise<ReplyPayload> {
-  if (!params.normalizeMediaPaths || !hasPayloadMedia(params.payload)) {
+  if (!params.normalizeMediaPaths || !resolveSendableOutboundReplyParts(params.payload).hasMedia) {
     return params.payload;
   }
 
@@ -70,11 +67,7 @@ async function normalizeSentMediaUrlsForDedupe(params: {
         mediaUrl: trimmed,
         mediaUrls: [trimmed],
       });
-      const normalizedMediaUrls = normalized.mediaUrls?.length
-        ? normalized.mediaUrls
-        : normalized.mediaUrl
-          ? [normalized.mediaUrl]
-          : [];
+      const normalizedMediaUrls = resolveSendableOutboundReplyParts(normalized).mediaUrls;
       for (const mediaUrl of normalizedMediaUrls) {
         const candidate = mediaUrl.trim();
         if (!candidate || seen.has(candidate)) {
@@ -131,7 +124,7 @@ export async function buildReplyPayloads(params: {
           didLogHeartbeatStrip = true;
           logVerbose("Stripped stray HEARTBEAT_OK token from reply");
         }
-        const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
+        const hasMedia = resolveSendableOutboundReplyParts(payload).hasMedia;
         if (stripped.shouldSkip && !hasMedia) {
           return [];
         }

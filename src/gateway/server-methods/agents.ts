@@ -17,7 +17,7 @@ import {
   DEFAULT_USER_FILENAME,
   DEFAULT_VOICE_FILENAME,
   ensureAgentWorkspace,
-  isWorkspaceOnboardingCompleted,
+  isWorkspaceSetupCompleted,
 } from "../../agents/workspace.js";
 import { movePathToTrash } from "../../browser/trash.js";
 import {
@@ -655,7 +655,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     let hideBootstrap = false;
     try {
-      hideBootstrap = await isWorkspaceOnboardingCompleted(workspaceDir);
+      hideBootstrap = await isWorkspaceSetupCompleted(workspaceDir);
     } catch {
       // Fall back to showing BOOTSTRAP if workspace state cannot be read.
     }
