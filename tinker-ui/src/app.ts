@@ -880,8 +880,14 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const info of activeRuns.values()) {
     if (forModel && info.model !== forModel) continue;
-    // FORK: Filter by scope toggle — "session" only counts runs for the active session
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+    // FORK: Filter by scope toggle — "session" only counts runs for the active session.
+    // Subagent runs (spawned from current session) always count — they use this session's models.
+    if (
+      budgetScope === "session" &&
+      info.sessionKey &&
+      !sessionKeyMatches(info.sessionKey) &&
+      !info.sessionKey.includes(":subagent:")
+    )
       continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
