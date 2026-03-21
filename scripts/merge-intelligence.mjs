@@ -45,17 +45,15 @@ const FORK_INTEREST_AREAS = {
   compaction: {
     label: "Compaction system",
     collision: "MODERATE",
-    forkModules: [
-      "src/agents/pi-extensions/compaction-engram.ts",
-      "src/memory/engram/",
-    ],
+    forkModules: ["src/agents/pi-extensions/compaction-engram.ts", "src/memory/engram/"],
     strategy: "Converge: our compaction strategy is better but should plug into their lifecycle",
   },
   "tts|speech": {
     label: "TTS / Speech",
     collision: "LOW",
     forkModules: ["src/tts/sherpa-onnx.test.ts"],
-    strategy: "Adopt: use upstream in-memory TTS as backend, apply our pitch-shifting as post-process",
+    strategy:
+      "Adopt: use upstream in-memory TTS as backend, apply our pitch-shifting as post-process",
   },
   "openshell|sandbox": {
     label: "Sandbox / Security (AEGIS relevance)",
@@ -96,7 +94,10 @@ const FORK_INTEREST_AREAS = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function git(cmd) {
-  return execSync(`git -C "${ROOT}" ${cmd}`, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }).trim();
+  return execSync(`git -C "${ROOT}" ${cmd}`, {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  }).trim();
 }
 
 function findMergeBase() {
@@ -107,7 +108,9 @@ function findMergeBase() {
       // The parent before the merge
       return git(`rev-parse ${mergeCommit}^`);
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return "HEAD~1";
 }
 
@@ -138,9 +141,13 @@ function categorizeFeatureCommits(commits) {
 
   for (const line of commits) {
     const msg = line.replace(/^[a-f0-9]+ /, "");
-    if (msg.startsWith("feat")) features.push(msg);
-    else if (msg.startsWith("refactor")) refactors.push(msg);
-    else if (msg.startsWith("fix")) fixes.push(msg);
+    if (msg.startsWith("feat")) {
+      features.push(msg);
+    } else if (msg.startsWith("refactor")) {
+      refactors.push(msg);
+    } else if (msg.startsWith("fix")) {
+      fixes.push(msg);
+    }
   }
   return { features, refactors, fixes };
 }
@@ -172,7 +179,9 @@ function detectPluginSdkImportBreaks(changedFiles) {
   const sdkFiles = changedFiles.filter(
     (f) => f.startsWith("src/plugin-sdk/") || f.includes("plugin-sdk"),
   );
-  if (sdkFiles.length === 0) return null;
+  if (sdkFiles.length === 0) {
+    return null;
+  }
 
   // Check if our fork extensions import from changed paths
   const breaks = [];
@@ -186,7 +195,9 @@ function detectPluginSdkImportBreaks(changedFiles) {
 
   for (const ext of forkExtensions) {
     const fullPath = path.join(ROOT, ext);
-    if (!fs.existsSync(fullPath)) continue;
+    if (!fs.existsSync(fullPath)) {
+      continue;
+    }
 
     const content = fs.readFileSync(fullPath, "utf8");
     const imports = content.match(/from\s+["']openclaw\/plugin-sdk(?:\/[^"']+)?["']/g) || [];
@@ -237,7 +248,9 @@ function generateReport(since) {
   const lines = [];
   lines.push(`# Merge Intelligence Report — ${new Date().toISOString().slice(0, 10)}`);
   lines.push("");
-  lines.push(`**Commits merged:** ${commits.length} (${features.length} features, ${refactors.length} refactors, ${fixes.length} fixes)`);
+  lines.push(
+    `**Commits merged:** ${commits.length} (${features.length} features, ${refactors.length} refactors, ${fixes.length} fixes)`,
+  );
   lines.push(`**Files changed:** ${changedFiles.length}`);
   lines.push("");
 
@@ -265,12 +278,16 @@ function generateReport(since) {
   if (sdkAnalysis && sdkAnalysis.sdkFiles.length > 0) {
     lines.push("## ⚡ Plugin SDK Changes (Import Break Risk)");
     lines.push("");
-    lines.push(`**${sdkAnalysis.sdkFiles.length} SDK files changed.** Check fork extension imports.`);
+    lines.push(
+      `**${sdkAnalysis.sdkFiles.length} SDK files changed.** Check fork extension imports.`,
+    );
     if (sdkAnalysis.breaks.length > 0) {
       lines.push("");
       lines.push("**Potential breaks detected:**");
       for (const b of sdkAnalysis.breaks) {
-        lines.push(`- \`${b.extension}\` imports \`${b.importPath}\` — SDK file changed: \`${b.changedSdkFile}\``);
+        lines.push(
+          `- \`${b.extension}\` imports \`${b.importPath}\` — SDK file changed: \`${b.changedSdkFile}\``,
+        );
       }
     }
     lines.push("");
@@ -339,7 +356,9 @@ function generateReport(since) {
     lines.push("- [ ] Check Context Engine API changes against ENGRAM integration plan");
   }
   if (interestHits.some((h) => h.label.includes("WhatsApp"))) {
-    lines.push("- [ ] Verify Protocol v2 changes still apply cleanly to upstream's WhatsApp structure");
+    lines.push(
+      "- [ ] Verify Protocol v2 changes still apply cleanly to upstream's WhatsApp structure",
+    );
   }
   lines.push("- [ ] Run merge guardian: `bash scripts/merge-guardian.sh --fix`");
   lines.push("- [ ] Build and smoke test: `pnpm build && node openclaw.mjs --version`");
@@ -351,9 +370,8 @@ function generateReport(since) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 const sinceArg = process.argv.indexOf("--since");
-const since = sinceArg >= 0 && process.argv[sinceArg + 1]
-  ? process.argv[sinceArg + 1]
-  : findMergeBase();
+const since =
+  sinceArg >= 0 && process.argv[sinceArg + 1] ? process.argv[sinceArg + 1] : findMergeBase();
 
 console.log(`📊 Analyzing changes since ${since.slice(0, 12)}...`);
 

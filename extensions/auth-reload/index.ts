@@ -7,15 +7,14 @@
  * 4. /auth/oauth/callback HTTP — auto-capture OAuth redirect.
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
 } from "../../src/agents/auth-profiles/store.js";
 import { clearAuthProfileCooldown } from "../../src/agents/auth-profiles/usage.js";
-import { startAuthProfileWatcher, stopAuthProfileWatcher, setBroadcast } from "./watcher.js";
 import {
   startReauth,
   getSession,
@@ -24,6 +23,7 @@ import {
   exchangeCodeForTokens,
   completeTokenExchange,
 } from "./reauth.js";
+import { startAuthProfileWatcher, stopAuthProfileWatcher, setBroadcast } from "./watcher.js";
 
 export default function register(api: OpenClawPluginApi) {
   startAuthProfileWatcher();
@@ -97,11 +97,27 @@ export default function register(api: OpenClawPluginApi) {
       return;
     }
 
-    const code = rawCode.split("#")[0];
+    // Parse pasted input: "code#state", bare code, or full callback URL
+    let code: string;
+    let state: string | undefined;
+    if (rawCode.includes("?code=")) {
+      // Full URL pasted: extract code and state from query params
+      const url = new URL(rawCode, "https://placeholder");
+      code = url.searchParams.get("code") || rawCode;
+      state = url.searchParams.get("state") || undefined;
+    } else if (rawCode.includes("#")) {
+      // code#state format
+      const parts = rawCode.split("#");
+      code = parts[0];
+      state = parts[1] || undefined;
+    } else {
+      code = rawCode;
+    }
 
     try {
       const tokenData = await exchangeCodeForTokens({
         code,
+        state,
         redirectUri: session.fallbackRedirectUri,
         verifier: session.verifier,
       });
@@ -150,6 +166,7 @@ export default function register(api: OpenClawPluginApi) {
       try {
         const tokenData = await exchangeCodeForTokens({
           code,
+          state: state || undefined,
           redirectUri: session.primaryRedirectUri,
           verifier: session.verifier,
         });
@@ -161,7 +178,7 @@ export default function register(api: OpenClawPluginApi) {
             "<html><body>",
             "<h2>Authentication successful</h2>",
             "<p>You can close this window.</p>",
-            '<script>setTimeout(() => window.close(), 1500)</script>',
+            "<script>setTimeout(() => window.close(), 1500)</script>",
             "</body></html>",
           ].join(""),
         );
