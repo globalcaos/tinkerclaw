@@ -34,6 +34,35 @@ If that line made you nod, you're in the right place.
 
 ---
 
+## What It Looks Like
+
+<p align="center">
+    <img src="docs/assets/screenshot-4.png" alt="The Tinker Zone — Chat Interface" width="700">
+</p>
+
+<p align="center"><em>The Tinker Zone — wooden-themed chat interface with live model glow and context tracking</em></p>
+
+<p align="center">
+    <img src="docs/assets/screenshot-2.png" alt="Context Treemap" width="400">
+    <img src="docs/assets/screenshot-5.png" alt="Token Detail" width="400">
+</p>
+
+<p align="center"><em>Left: Context treemap — see exactly what fills your 200K window. Right: Token-level detail per message.</em></p>
+
+<p align="center">
+    <img src="docs/assets/screenshot-3.png" alt="Timeline" width="700">
+</p>
+
+<p align="center"><em>Daily token timeline — stacked bars showing usage by category across the day</em></p>
+
+<p align="center">
+    <img src="docs/assets/screenshot-1.png" alt="Models Dashboard" width="350">
+</p>
+
+<p align="center"><em>Models dashboard — live status, pricing, fallback chain, active sessions</em></p>
+
+---
+
 ## What's Different Here?
 
 ### 🔐 Security Patches Applied
