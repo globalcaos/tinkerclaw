@@ -374,7 +374,6 @@ async function fetchGeminiUsage(
   }
 }
 
-import { registerPluginHttpRoute } from "openclaw/plugin-sdk";
 import { BudgetTracker } from "./src/tracker.js";
 
 export default function register(api: OpenClawPluginApi) {
@@ -443,7 +442,14 @@ export default function register(api: OpenClawPluginApi) {
   }
 
   // Register gateway method: budget.usage (live API + JSON fallback)
-  api.registerGatewayMethod("budget.usage", async ({ respond }) => {
+  api.registerGatewayMethod("budget.usage", async ({ params, respond }) => {
+    // Allow callers to bust the usage cache (e.g. after re-auth)
+    const p = (params ?? {}) as Record<string, unknown>;
+    if (p.forceRefresh) {
+      for (const label of Object.keys(USAGE_PROFILES)) {
+        delete usageCache[label];
+      }
+    }
     const claudeFileData = readUsageFile(usageFiles.claude) as any;
     const geminiData = readUsageFile(usageFiles.gemini) as any;
     const manusData = readUsageFile(usageFiles.manus) as any;
@@ -679,16 +685,16 @@ export default function register(api: OpenClawPluginApi) {
   });
 
   // Register HTTP route for dashboard
-  registerPluginHttpRoute({
+  api.registerHttpRoute({
     path: "/budget",
-    pluginId: "budget-panel",
+    auth: "plugin",
+    match: "exact",
     handler: async (req, res) => {
       const status = tracker.getStatus();
       const html = generateDashboardHtml(status);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
     },
-    log: (msg) => log(msg),
   });
 
   // Register tool for agents (optional)

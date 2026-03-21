@@ -7,8 +7,8 @@
  */
 
 import chokidar, { type FSWatcher } from "chokidar";
-import { clearRuntimeAuthProfileStoreSnapshots } from "../../src/agents/auth-profiles/store.js";
 import { resolveAuthStorePath } from "../../src/agents/auth-profiles/paths.js";
+import { clearRuntimeAuthProfileStoreSnapshots } from "../../src/agents/auth-profiles/store.js";
 import type { GatewayBroadcastFn } from "../../src/gateway/server-broadcast.js";
 
 /** Module-level broadcast ref, captured from gateway method context. */

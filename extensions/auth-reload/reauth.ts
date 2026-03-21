@@ -8,16 +8,16 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import {
-  ensureAuthProfileStore,
-  updateAuthProfileStoreWithLock,
-} from "../../src/agents/auth-profiles/store.js";
-import { clearAuthProfileCooldown } from "../../src/agents/auth-profiles/usage.js";
-import {
   resolveCredentialFilePath,
   writeCredentialFile,
 } from "../../src/agents/auth-profiles/credential-file.js";
-import { loadConfig } from "../../src/config/config.js";
+import {
+  ensureAuthProfileStore,
+  updateAuthProfileStoreWithLock,
+} from "../../src/agents/auth-profiles/store.js";
 import type { AuthProfileStore } from "../../src/agents/auth-profiles/types.js";
+import { clearAuthProfileCooldown } from "../../src/agents/auth-profiles/usage.js";
+import { loadConfig } from "../../src/config/config.js";
 import { getBroadcast } from "./watcher.js";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -147,6 +147,7 @@ export function startReauth(profileId: string): {
 
 export async function exchangeCodeForTokens(params: {
   code: string;
+  state?: string;
   redirectUri: string;
   verifier: string;
 }): Promise<{
@@ -154,10 +155,11 @@ export async function exchangeCodeForTokens(params: {
   refreshToken: string;
   expiresIn: number;
 }> {
-  const body = JSON.stringify({
+  const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: CLIENT_ID,
     code: params.code,
+    ...(params.state ? { state: params.state } : {}),
     redirect_uri: params.redirectUri,
     code_verifier: params.verifier,
   });
@@ -165,11 +167,11 @@ export async function exchangeCodeForTokens(params: {
   const response = await fetch(TOKEN_URL, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
       "User-Agent": "openclaw-gateway/1.0",
     },
-    body,
+    body: body.toString(),
     signal: AbortSignal.timeout(15_000),
   });
 
