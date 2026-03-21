@@ -466,6 +466,95 @@ Use these when you’re past the onboarding flow and want the deeper reference.
 - [Templates: TOOLS](https://docs.openclaw.ai/reference/templates/TOOLS)
 - [Templates: USER](https://docs.openclaw.ai/reference/templates/USER)
 
+## TinkerClaw Setup Guide
+
+Everything you need to go from `git clone` to a working personal AI assistant.
+
+### Quick Start
+
+```bash
+git clone https://github.com/globalcaos/tinkerclaw.git
+cd tinkerclaw
+pnpm install
+pnpm build
+openclaw doctor       # generates config + links WhatsApp
+openclaw gateway start
+```
+
+### What You Get Out of the Box
+
+- **ENGRAM compaction** — silent context management, no annoying compaction events
+- **Hippocampus memory indexing** — your agent builds long-term memory automatically
+- **Memory search with semantic embeddings** — find anything across sessions
+- **Context pruning** — cache-ttl prevents unbounded session growth
+- **Budget panel** — token cost tracking so you know what each session costs
+- **Tinker UI** — real-time context treemaps, session management, cost dashboard
+
+### Required Setup (you must do these)
+
+1. **API Key** — At minimum, set up one provider (Anthropic recommended). `openclaw doctor` walks you through this.
+2. **WhatsApp** (optional) — `openclaw channels login --channel whatsapp` to link your phone
+3. **Give your agent a name** — Edit `~/.openclaw/workspace/SOUL.md` to define who your agent is
+
+### Recommended Config Tweaks
+
+After first run, edit `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "channels": {
+    "whatsapp": {
+      "responsePrefix": "🤖",
+      "triggerPrefix": "your-agent-name",
+      "dmPolicy": "allowlist",
+      "allowFrom": ["+your-phone-number"]
+    }
+  }
+}
+```
+
+### Setting Up WhatsApp Profile
+
+```bash
+# The agent uses your WhatsApp account's profile
+# Change name/pic through WhatsApp settings on your phone
+# Or use responsePrefix in config to prefix all messages with an icon
+```
+
+### Cron Jobs (Recommended Starter Set)
+
+TinkerClaw doesn't ship cron jobs by default — they're personal. Here's a minimal starter set:
+
+```bash
+# Morning briefing (daily at 8:30)
+openclaw cron add --name morning-briefing --cron "30 8 * * *" --tz "Your/Timezone" \
+  --session isolated --model "anthropic/claude-sonnet-4" \
+  --message "Build a morning briefing: check calendar, pending tasks, and recent messages."
+
+# Nightly reflection (daily at midnight)
+openclaw cron add --name wind-down --cron "0 0 * * *" --tz "Your/Timezone" \
+  --session isolated --model "anthropic/claude-sonnet-4" \
+  --message "Review today's sessions. What worked? What failed? Write lessons to memory."
+
+# Workspace cleanup (daily at 5am)
+openclaw cron add --name cleaning-lady --cron "0 5 * * *" --tz "Your/Timezone" \
+  --session isolated --model "anthropic/claude-haiku-4-5" \
+  --message "Clean old sessions (>7 days), check bootstrap file sizes, prune daily logs."
+```
+
+### Multi-Agent Family Setup
+
+TinkerClaw supports multiple agents on separate machines. Each family member can have their own AI with its own personality:
+
+1. Clone tinkerclaw on their machine
+2. Run `openclaw doctor` to generate their config
+3. Edit `SOUL.md` to define the agent's personality
+4. Set `ui.assistant.name` in config for the webchat UI name
+5. Set `channels.whatsapp.responsePrefix` to a unique emoji (e.g., 🔮, 🌟, 🦊)
+6. Set `channels.whatsapp.triggerPrefix` to the agent's name
+
+Agents can talk to each other in shared WhatsApp groups — just add the group JID to both configs.
+
 ## Platform internals
 
 - [macOS dev setup](https://docs.openclaw.ai/platforms/mac/dev-setup)
