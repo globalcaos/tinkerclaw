@@ -232,7 +232,7 @@ function patchSystemPrompt() {
 // 3. process-message.ts — add thinking reaction + offline recovery
 // ---------------------------------------------------------------------------
 function patchProcessMessage() {
-  const file = "src/web/auto-reply/monitor/process-message.ts";
+  const file = "extensions/whatsapp/src/auto-reply/monitor/process-message.ts";
   let src = readFile(file);
 
   const FORK_IMPORT =
@@ -366,7 +366,7 @@ function patchTsdownConfig() {
 // 6. outbound.ts — WhatsApp group/edit/delete/reply/sticker wrappers
 // ---------------------------------------------------------------------------
 function patchOutbound() {
-  const file = "src/web/outbound.ts";
+  const file = "extensions/whatsapp/src/send.ts";
   let src = readFile(file);
 
   // Guard: check if group wrappers already exist
@@ -564,7 +564,7 @@ function patchSubscribeTypes() {
 // 8. monitor.ts — syncFullHistory spread + ActiveWebListener cast
 // ---------------------------------------------------------------------------
 function patchMonitor() {
-  const file = "src/web/auto-reply/monitor.ts";
+  const file = "extensions/whatsapp/src/auto-reply/monitor.ts";
   let src = readFile(file);
   let changed = false;
 
