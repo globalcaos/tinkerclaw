@@ -39,7 +39,9 @@ export async function dispatchInboundMessage(params: {
   replyOptions?: Omit<GetReplyOptions, "onToolResult" | "onBlockReply">;
   replyResolver?: typeof import("./reply.js").getReplyFromConfig;
 }): Promise<DispatchInboundResult> {
-  console.log(`[DISPATCH-ENTRY] dispatchInboundMessage called sessionKey=${(params.ctx as Record<string,unknown>).SessionKey}`);
+  console.log(
+    `[DISPATCH-ENTRY] dispatchInboundMessage called sessionKey=${(params.ctx as Record<string, unknown>).SessionKey}`,
+  );
   const finalized = finalizeInboundContext(params.ctx);
   console.log(`[DISPATCH-ENTRY] finalized ok, calling withReplyDispatcher`);
   return await withReplyDispatcher({

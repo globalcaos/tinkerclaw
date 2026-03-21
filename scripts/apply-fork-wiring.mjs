@@ -753,7 +753,7 @@ function patchMessageHandlerScopes() {
   // Also update the comment block above if the old upstream comment exists
   src = src.replace(
     /\/\/ device-less backend clients must not self-declare scopes\.\s*Only\s*control[\s\S]*?(?=\n\s*(?:\/\/ FORK|if \(!device))/,
-    "// device-less backend clients must not self-declare scopes. Any operator\n          // that passed auth checks (decision === \"allow\") keeps its declared scopes;\n          ",
+    '// device-less backend clients must not self-declare scopes. Any operator\n          // that passed auth checks (decision === "allow") keeps its declared scopes;\n          ',
   );
 
   writeFile(file, src);
@@ -767,7 +767,11 @@ function patchWhatsAppSession() {
   let src = readFile(file);
 
   // Guard: already using named import
-  if (src.includes('import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js"')) {
+  if (
+    src.includes(
+      'import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js"',
+    )
+  ) {
     console.log(`  ✅ ${file} — already patched`);
     return;
   }

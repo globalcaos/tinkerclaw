@@ -52,7 +52,7 @@ export function loadAllowlist(): string[] {
     }
   }
 
-  return Array.from(domains).sort();
+  return Array.from(domains).toSorted();
 }
 
 export function saveAllowlist(userDomains: string[]): void {
@@ -72,18 +72,16 @@ export function isDomainAllowed(url: string, allowedDomains: string[]): boolean 
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
-    return allowedDomains.some(
-      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
-    );
+    return allowedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
   } catch {
     return false;
   }
 }
 
 export function addToAllowlist(domain: string): void {
-  const current = loadAllowlist();
+  loadAllowlist();
   const normalized = domain.trim().toLowerCase();
-  
+
   // We only save user domains to the file, not the defaults
   // So we need to figure out which ones are user domains
   const userDomains = getUserDomains();
