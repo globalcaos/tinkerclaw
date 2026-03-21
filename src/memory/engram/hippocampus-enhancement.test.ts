@@ -3,10 +3,10 @@
  * Run: pnpm test -- src/memory/engram --reporter=dot
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   jaccard,
   cosineSimText,
@@ -89,7 +89,7 @@ describe("weightedScore()", () => {
 
   it("applies formula: base * (1 + 0.15 * (imp - 5) / 5)", () => {
     const imp = 8;
-    const expected = 0.6 * (1 + 0.15 * (imp - 5) / 5);
+    const expected = 0.6 * (1 + (0.15 * (imp - 5)) / 5);
     expect(weightedScore(0.6, imp)).toBeCloseTo(expected, 10);
   });
 });
@@ -99,7 +99,9 @@ describe("weightedScore()", () => {
 // ---------------------------------------------------------------------------
 
 describe("enhanceIndex()", () => {
-  beforeEach(() => { tmpDir = makeTmpDir(); });
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
 
   it("preserves existing anchors and chunks", () => {
     const idx: HippocampusIndex = {
@@ -128,13 +130,10 @@ describe("enhanceIndex()", () => {
 
   it("merges chunks with Jaccard similarity > 0.9 (keeps richer)", () => {
     // long has 11 words ≥3 chars, short has 10 of the same → Jaccard ≈ 0.909 (>0.9)
-    const long  = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo";
+    const long = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo";
     const short = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
     const idx: HippocampusIndex = {
-      "alpha bravo": [
-        makeChunk(long, 0.5),
-        makeChunk(short, 0.5),
-      ],
+      "alpha bravo": [makeChunk(long, 0.5), makeChunk(short, 0.5)],
     };
     const path = writeIndex(tmpDir, idx);
     const result = enhanceIndex(path, { mergeThreshold: 0.9 });
@@ -251,7 +250,14 @@ describe("cosineSimText()", () => {
 
 describe("computeImportance()", () => {
   function chunk(overrides: Partial<IndexChunk> = {}): IndexChunk {
-    return { path: "test.md", line: 1, score: 0.5, source: "memory", preview: "test", ...overrides };
+    return {
+      path: "test.md",
+      line: 1,
+      score: 0.5,
+      source: "memory",
+      preview: "test",
+      ...overrides,
+    };
   }
 
   it("returns base importance (5) when no metadata present", () => {
@@ -267,9 +273,7 @@ describe("computeImportance()", () => {
     const recent = new Date(now.getTime() - 1000 * 60 * 60 * 2).toISOString(); // 2 h ago
     const noTime = chunk({ importance: 5 });
     const withRecent = chunk({ importance: 5, timestamp: recent });
-    expect(computeImportance(withRecent, { now })).toBe(
-      computeImportance(noTime, { now }) + 2,
-    );
+    expect(computeImportance(withRecent, { now })).toBe(computeImportance(noTime, { now }) + 2);
   });
 
   it("applies recency bonus +1 for chunks 1–7 days old", () => {
@@ -295,10 +299,14 @@ describe("computeImportance()", () => {
 
   it("applies connection count bonus (+1 per 3 related links, max +1)", () => {
     const noLinks = computeImportance(chunk({ importance: 5 }));
-    const threeLinks = computeImportance(chunk({ importance: 5, related: ["a.md", "b.md", "c.md"] }));
+    const threeLinks = computeImportance(
+      chunk({ importance: 5, related: ["a.md", "b.md", "c.md"] }),
+    );
     expect(threeLinks).toBe(noLinks + 1);
     // 6 links still gives +1 (capped)
-    const sixLinks = computeImportance(chunk({ importance: 5, related: Array.from({ length: 6 }, (_, i) => `${i}.md`) }));
+    const sixLinks = computeImportance(
+      chunk({ importance: 5, related: Array.from({ length: 6 }, (_, i) => `${i}.md`) }),
+    );
     expect(sixLinks).toBe(noLinks + 1);
   });
 
@@ -306,12 +314,15 @@ describe("computeImportance()", () => {
     const now = new Date();
     const recent = new Date(now.getTime() - 100).toISOString();
     // High base + all bonuses should not exceed 10
-    const high = computeImportance(chunk({
-      importance: 9,
-      timestamp: recent,
-      accessCount: 1000,
-      related: ["a.md", "b.md", "c.md"],
-    }), { now });
+    const high = computeImportance(
+      chunk({
+        importance: 9,
+        timestamp: recent,
+        accessCount: 1000,
+        related: ["a.md", "b.md", "c.md"],
+      }),
+      { now },
+    );
     expect(high).toBeLessThanOrEqual(10);
 
     // Low base clamped to 1
@@ -322,10 +333,21 @@ describe("computeImportance()", () => {
   it("importance is monotonically non-decreasing as metadata richness increases", () => {
     const now = new Date();
     const recent = new Date(now.getTime() - 1000 * 60).toISOString();
-    const base   = computeImportance(chunk({ importance: 5 }), { now });
+    const base = computeImportance(chunk({ importance: 5 }), { now });
     const withTs = computeImportance(chunk({ importance: 5, timestamp: recent }), { now });
-    const withAcc = computeImportance(chunk({ importance: 5, timestamp: recent, accessCount: 10 }), { now });
-    const full   = computeImportance(chunk({ importance: 5, timestamp: recent, accessCount: 10, related: ["x.md", "y.md", "z.md"] }), { now });
+    const withAcc = computeImportance(
+      chunk({ importance: 5, timestamp: recent, accessCount: 10 }),
+      { now },
+    );
+    const full = computeImportance(
+      chunk({
+        importance: 5,
+        timestamp: recent,
+        accessCount: 10,
+        related: ["x.md", "y.md", "z.md"],
+      }),
+      { now },
+    );
     expect(withTs).toBeGreaterThanOrEqual(base);
     expect(withAcc).toBeGreaterThanOrEqual(withTs);
     expect(full).toBeGreaterThanOrEqual(withAcc);
@@ -337,11 +359,13 @@ describe("computeImportance()", () => {
 // ---------------------------------------------------------------------------
 
 describe("enhanceIndex() with cosine similarity", () => {
-  beforeEach(() => { tmpDir = makeTmpDir(); });
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
 
   it("merges near-duplicate chunks (cosine > 0.9) — reduces index size", () => {
     // Two chunks that differ by one word out of 11: cosine ≈ 0.953 → merge
-    const full   = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo";
+    const full = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo";
     const subset = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
     const idx: HippocampusIndex = {
       "alpha cluster": [makeChunk(full), makeChunk(subset), makeChunk(subset)],
@@ -358,7 +382,7 @@ describe("enhanceIndex() with cosine similarity", () => {
     // sparse: 5 words; rich: same 5 + 1 extra.
     // cosine = 5 / sqrt(5 * 6) ≈ 0.913 → above default mergeThreshold 0.9.
     const sparse = "alpha bravo charlie delta echo";
-    const rich   = "alpha bravo charlie delta echo foxtrot";
+    const rich = "alpha bravo charlie delta echo foxtrot";
     const idx: HippocampusIndex = {
       anchor: [makeChunk(sparse), makeChunk(rich)],
     };
@@ -399,15 +423,29 @@ describe("enhanceIndex() with cosine similarity", () => {
     const idx: HippocampusIndex = {
       anchor: [
         // Recent chunk (importance 5 + recency +2 = 7)
-        { path: "a.md", line: 1, score: 0.5, source: "memory", preview: "some content here", importance: 5, timestamp: recentTs },
+        {
+          path: "a.md",
+          line: 1,
+          score: 0.5,
+          source: "memory",
+          preview: "some content here",
+          importance: 5,
+          timestamp: recentTs,
+        },
         // Old chunk (importance 5, no bonus)
-        { path: "b.md", line: 1, score: 0.5, source: "memory", preview: "different topic about other things" },
+        {
+          path: "b.md",
+          line: 1,
+          score: 0.5,
+          source: "memory",
+          preview: "different topic about other things",
+        },
       ],
     };
     const path = writeIndex(tmpDir, idx);
     const result = enhanceIndex(path);
     const recent = result["anchor"].find((c) => c.path === "a.md")!;
-    const old    = result["anchor"].find((c) => c.path === "b.md")!;
+    const old = result["anchor"].find((c) => c.path === "b.md")!;
     // Recent chunk should have higher effective importance → higher weighted score
     expect(recent.importance).toBeGreaterThan(old.importance ?? 5);
     expect(recent.score).toBeGreaterThan(old.score);
@@ -416,13 +454,29 @@ describe("enhanceIndex() with cosine similarity", () => {
   it("highly accessed chunks receive higher importance scores", () => {
     const idx: HippocampusIndex = {
       accessed: [
-        { path: "hot.md", line: 1, score: 0.5, source: "memory", preview: "frequently accessed topic", importance: 5, accessCount: 50 },
-        { path: "cold.md", line: 1, score: 0.5, source: "memory", preview: "rarely accessed topic ever", importance: 5, accessCount: 0 },
+        {
+          path: "hot.md",
+          line: 1,
+          score: 0.5,
+          source: "memory",
+          preview: "frequently accessed topic",
+          importance: 5,
+          accessCount: 50,
+        },
+        {
+          path: "cold.md",
+          line: 1,
+          score: 0.5,
+          source: "memory",
+          preview: "rarely accessed topic ever",
+          importance: 5,
+          accessCount: 0,
+        },
       ],
     };
     const path = writeIndex(tmpDir, idx);
     const result = enhanceIndex(path);
-    const hot  = result["accessed"].find((c) => c.path === "hot.md")!;
+    const hot = result["accessed"].find((c) => c.path === "hot.md")!;
     const cold = result["accessed"].find((c) => c.path === "cold.md")!;
     expect(hot.importance!).toBeGreaterThan(cold.importance!);
     expect(hot.score).toBeGreaterThan(cold.score);
@@ -474,11 +528,21 @@ describe("EpisodicBuffer", () => {
 
   it("applies importance weighting to episodic search scores", () => {
     const baseContent = "hippocampus memory index query";
-    buf.add({ id: "low", timestamp: new Date().toISOString(), content: baseContent, importance: 1 });
-    buf.add({ id: "high", timestamp: new Date().toISOString(), content: baseContent, importance: 10 });
+    buf.add({
+      id: "low",
+      timestamp: new Date().toISOString(),
+      content: baseContent,
+      importance: 1,
+    });
+    buf.add({
+      id: "high",
+      timestamp: new Date().toISOString(),
+      content: baseContent,
+      importance: 10,
+    });
 
     const results = buf.search("hippocampus memory");
-    const lowResult  = results.find((r) => r.event.id === "low")!;
+    const lowResult = results.find((r) => r.event.id === "low")!;
     const highResult = results.find((r) => r.event.id === "high")!;
     expect(highResult.score).toBeGreaterThan(lowResult.score);
   });
@@ -497,8 +561,9 @@ describe("EpisodicBuffer", () => {
     const combined = buf.combinedQuery("memory engram", semantic);
     expect(combined.length).toBeGreaterThan(0);
     // Episodic item must appear before semantic item
-    const firstId = (combined[0] as { event?: { id: string }; id?: string })?.event?.id
-      ?? (combined[0] as { id: string }).id;
+    const firstId =
+      (combined[0] as { event?: { id: string }; id?: string })?.event?.id ??
+      (combined[0] as { id: string }).id;
     expect(firstId).toBe("ep1");
   });
 
@@ -510,9 +575,7 @@ describe("EpisodicBuffer", () => {
 
     const combined = buf.combinedQuery("overlap term", semantic);
     const ids = combined.map(
-      (c) =>
-        (c as { event?: { id: string }; id?: string })?.event?.id ??
-        (c as { id: string }).id,
+      (c) => (c as { event?: { id: string }; id?: string })?.event?.id ?? (c as { id: string }).id,
     );
     const uniqueIds = new Set(ids);
     expect(uniqueIds.size).toBe(ids.length);
@@ -537,7 +600,9 @@ describe("EpisodicBuffer", () => {
 // ---------------------------------------------------------------------------
 
 describe("scheduleNightlyRebuild()", () => {
-  beforeEach(() => { tmpDir = makeTmpDir(); });
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
 
   it("creates an index file when none exists", async () => {
     const indexPath = join(tmpDir, "hippocampus-index.json");
@@ -546,7 +611,11 @@ describe("scheduleNightlyRebuild()", () => {
 
     const result = await scheduleNightlyRebuild(indexPath, wsDir);
     expect(existsSync(indexPath)).toBe(true);
-    expect(result).toMatchObject({ pruned: expect.any(Number), reindexed: expect.any(Number), anchors: expect.any(Number) });
+    expect(result).toMatchObject({
+      pruned: expect.any(Number),
+      reindexed: expect.any(Number),
+      anchors: expect.any(Number),
+    });
   });
 
   it("is idempotent — second call with unchanged files reports 0 re-indexed", async () => {
@@ -557,7 +626,7 @@ describe("scheduleNightlyRebuild()", () => {
     // Create a file
     writeFileSync(join(wsDir, "notes.md"), "# Notes\n\nSome content here.");
 
-    const first  = await scheduleNightlyRebuild(indexPath, wsDir);
+    const first = await scheduleNightlyRebuild(indexPath, wsDir);
     expect(first.reindexed).toBeGreaterThan(0);
 
     // Second run with no changes

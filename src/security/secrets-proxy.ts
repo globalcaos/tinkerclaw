@@ -1,7 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { request } from "undici";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-
 import { loadAllowlist, isDomainAllowed } from "./secrets-proxy-allowlist.js";
 
 const logger = createSubsystemLogger("security/secrets-proxy");
@@ -26,20 +25,20 @@ const BODYLESS_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 function replacePlaceholders(text: string): string {
   let count = 0;
   const startTime = Date.now();
-  
+
   return text.replace(/\{\{(\w+)\}\}/g, (match, name) => {
     // Check timeout
     if (Date.now() - startTime > PLACEHOLDER_LIMITS.timeoutMs) {
       logger.warn(`Placeholder replacement timeout reached`);
       return match; // Return original on timeout
     }
-    
+
     // Check replacement limit
     if (count++ >= PLACEHOLDER_LIMITS.maxReplacements) {
       logger.warn(`Placeholder replacement limit reached (${PLACEHOLDER_LIMITS.maxReplacements})`);
       return `{{LIMIT_REACHED:${name}}}`;
     }
-    
+
     return process.env[name] ?? "";
   });
 }
@@ -104,7 +103,7 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
           }
           chunks.push(chunk);
         }
-        
+
         if (chunks.length > 0) {
           const rawBody = Buffer.concat(chunks).toString("utf8");
           modifiedBody = replacePlaceholders(rawBody);
@@ -133,7 +132,7 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
           headers[key] = replacePlaceholders(value);
         } else if (Array.isArray(value)) {
           // P1 Fix: Handle string[] headers by joining
-          headers[key] = value.map(v => replacePlaceholders(v)).join(", ");
+          headers[key] = value.map((v) => replacePlaceholders(v)).join(", ");
         }
       }
 
@@ -141,25 +140,25 @@ export async function startSecretsProxy(opts: SecretsProxyOptions): Promise<http
 
       // P0 Fix: Only pass body for methods that should have one
       const response = await request(targetUrl, {
-        method: method as any,
+        method: method as string,
         headers,
         body: hasBody ? modifiedBody : undefined,
       });
 
       res.statusCode = response.statusCode;
-      
+
       // P1 Fix: Properly handle response headers (string | string[] | undefined)
       for (const [key, value] of Object.entries(response.headers)) {
         if (value === undefined || value === null) {
           continue;
         }
-        
+
         // Skip hop-by-hop headers
         const lowerKey = key.toLowerCase();
         if (lowerKey === "transfer-encoding" || lowerKey === "connection") {
           continue;
         }
-        
+
         if (typeof value === "string") {
           res.setHeader(key, value);
         } else if (Array.isArray(value)) {
