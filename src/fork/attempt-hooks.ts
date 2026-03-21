@@ -586,7 +586,8 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
  * Feature flag: set ENGRAM_POINTER_COMPACTION=1 to enable.
  */
 function isPointerCompactionEnabled(): boolean {
-  return process.env["ENGRAM_POINTER_COMPACTION"] === "1";
+  // Default to enabled in tinkerclaw fork; set ENGRAM_POINTER_COMPACTION=0 to disable.
+  return process.env["ENGRAM_POINTER_COMPACTION"] !== "0";
 }
 
 /**
