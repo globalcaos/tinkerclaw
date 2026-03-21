@@ -14,8 +14,13 @@ import {
 import { updateAuthProfileStoreWithLock } from "../agents/auth-profiles/store.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolvePluginProviders } from "../plugins/providers.js";
 import { note } from "../terminal/note.js";
 import type { DoctorPrompter } from "./doctor-prompter.js";
+import {
+  buildProviderAuthRecoveryHint,
+  resolveProviderAuthLoginCommand,
+} from "./provider-auth-guidance.js";
 
 export async function maybeRepairAnthropicOAuthProfileId(
   cfg: OpenClawConfig,
@@ -114,22 +119,36 @@ export async function maybeRemoveDeprecatedCliAuthProfiles(
   prompter: DoctorPrompter,
 ): Promise<OpenClawConfig> {
   const store = ensureAuthProfileStore(undefined, { allowKeychainPrompt: false });
-  const deprecated = new Set<string>();
-  if (store.profiles[CODEX_CLI_PROFILE_ID] || cfg.auth?.profiles?.[CODEX_CLI_PROFILE_ID]) {
-    deprecated.add(CODEX_CLI_PROFILE_ID);
-  }
+  const providers = resolvePluginProviders({
+    config: cfg,
+    env: process.env,
+    bundledProviderAllowlistCompat: true,
+    bundledProviderVitestCompat: true,
+  });
+  const deprecatedEntries = providers.flatMap((provider) =>
+    (provider.deprecatedProfileIds ?? [])
+      .filter((profileId) => store.profiles[profileId] || cfg.auth?.profiles?.[profileId])
+      .map((profileId) => ({
+        profileId,
+        providerId: provider.id,
+        providerLabel: provider.label,
+      })),
+  );
+  const deprecated = new Set(deprecatedEntries.map((entry) => entry.profileId));
 
   if (deprecated.size === 0) {
     return cfg;
   }
 
   const lines = ["Deprecated external CLI auth profiles detected (no longer supported):"];
-  if (deprecated.has(CODEX_CLI_PROFILE_ID)) {
-    lines.push(
-      `- ${CODEX_CLI_PROFILE_ID} (OpenAI Codex): use OAuth → ${formatCliCommand(
-        "openclaw models auth login --provider openai-codex",
-      )}`,
-    );
+  for (const entry of deprecatedEntries) {
+    const authCommand =
+      resolveProviderAuthLoginCommand({
+        provider: entry.providerId,
+        config: cfg,
+        env: process.env,
+      }) ?? formatCliCommand("openclaw configure");
+    lines.push(`- ${entry.profileId} (${entry.providerLabel}): use ${authCommand}`);
   }
   note(lines.join("\n"), "Auth profiles");
 
@@ -218,12 +237,19 @@ function formatAuthIssueHint(issue: AuthIssue): string | null {
   if (issue.reasonCode === "invalid_expires") {
     return "Invalid token expires metadata. Set a future Unix ms timestamp or remove expires.";
   }
-  if (issue.provider === "openai-codex" && issue.profileId === CODEX_CLI_PROFILE_ID) {
-    return `Deprecated profile. Use ${formatCliCommand(
-      "openclaw models auth login --provider openai-codex",
-    )} or ${formatCliCommand("openclaw configure")}.`;
+  if (issue.provider === "anthropic" && issue.profileId === CLAUDE_CLI_PROFILE_ID) {
+    return `Deprecated profile. ${buildProviderAuthRecoveryHint({
+      provider: "anthropic",
+    })}`;
   }
-  return `Re-auth via \`${formatCliCommand("openclaw configure")}\` or \`${formatCliCommand("openclaw onboard")}\`.`;
+  if (issue.provider === "openai-codex" && issue.profileId === CODEX_CLI_PROFILE_ID) {
+    return `Deprecated profile. ${buildProviderAuthRecoveryHint({
+      provider: "openai-codex",
+    })}`;
+  }
+  return buildProviderAuthRecoveryHint({
+    provider: issue.provider,
+  }).replace(/^Run /, "Re-auth via ");
 }
 
 function formatAuthIssueLine(issue: AuthIssue): string {
