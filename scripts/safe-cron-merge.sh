@@ -373,6 +373,36 @@ fi
 log "  Guardian result: $guardian_issues issue(s)"
 
 # ══════════════════════════════════════════════════════════════
+# Phase 2b — Strategic merge intelligence
+# ══════════════════════════════════════════════════════════════
+
+log "Phase 2b: Running merge intelligence analysis..."
+cd "$FORK_DIR"
+
+INTEL_REPORT="/tmp/merge-intelligence-report.md"
+if [ -f "$FORK_DIR/scripts/merge-intelligence.mjs" ]; then
+  # Use the pre-merge commit as the base for diffing
+  MERGE_BASE=$(git merge-base HEAD~1 upstream/main 2>/dev/null || echo "HEAD~1")
+  node "$FORK_DIR/scripts/merge-intelligence.mjs" --since "$MERGE_BASE" > /dev/null 2>&1 || log_warn "Intelligence report had warnings"
+
+  if [ -f "$INTEL_REPORT" ]; then
+    # Count interest area hits and suggestions
+    interest_hits=$(grep -c "^### " "$INTEL_REPORT" 2>/dev/null || true)
+    log_ok "Intelligence report: $interest_hits areas of interest (see $INTEL_REPORT)"
+
+    # Copy to persistent location for the briefing cron to pick up
+    cp "$INTEL_REPORT" "$FORK_DIR/tmp/merge-intelligence-latest.md" 2>/dev/null || true
+
+    # If there are HIGH collision items, include in the merge commit message
+    if grep -q "🔴" "$INTEL_REPORT" 2>/dev/null; then
+      log_warn "HIGH collision areas detected — review merge-intelligence-report.md"
+    fi
+  fi
+else
+  log "  merge-intelligence.mjs not found — skipping"
+fi
+
+# ══════════════════════════════════════════════════════════════
 # Phase 3 — Build in FORK (with self-healing retry)
 # ══════════════════════════════════════════════════════════════
 
