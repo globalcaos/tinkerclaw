@@ -791,6 +791,8 @@ type ActiveRunInfo = {
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
+// FORK: Listeners notified when auth.profiles.updated event arrives (used by OAuth popup flow)
+const authProfileListeners = new Set<(evt: unknown) => void>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
 
 function persistProviderErrors() {
@@ -1656,6 +1658,26 @@ function onEvent(evt: any) {
         }, 500);
       }
     }
+  }
+  // FORK: Auth profile reload event — refresh models panel
+  if (evt.event === "auth.profiles.updated") {
+    // Notify any active popup flow listeners
+    for (const listener of authProfileListeners) {
+      try { listener(evt); } catch {}
+    }
+    const d = evt.data ?? evt.payload ?? {};
+    const profiles = (d.profiles ?? []) as string[];
+    const profileId = d.profileId as string | undefined;
+    // Clear errors for reloaded profiles (or all if source is file-watcher)
+    if (d.clearAll) {
+      providerErrors.clear();
+    } else {
+      if (profileId) providerErrors.delete(profileId);
+      for (const pid of profiles) providerErrors.delete(pid);
+    }
+    persistProviderErrors();
+    loadBudget();
+    return;
   }
 }
 
@@ -3359,8 +3381,174 @@ function updateBudgetPanel() {
     });
   });
 
+  // FORK: Auth error badge click — show reload/re-auth popover
+  el.addEventListener("click", (e) => {
+    const badge = (e.target as HTMLElement).closest<HTMLElement>(".auth-clickable");
+    if (!badge) return;
+    e.stopPropagation();
+    const profileId = badge.dataset.authProfile;
+    if (!profileId) return;
+    showAuthActionPopover(badge, profileId);
+  });
+
   // Sync overseer pills with the same data
   updateOverseerPanel();
+}
+
+// FORK: Toast notification helper
+function showToast(msg: string, isError = false): void {
+  const t = document.createElement("div");
+  t.className = `toast${isError ? " toast-error" : ""}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// FORK: Auth action popover — reload credentials or start re-auth flow
+function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
+  document.querySelector(".auth-action-popover")?.remove();
+
+  const pop = document.createElement("div");
+  pop.className = "auth-action-popover";
+  pop.innerHTML = `
+    <button class="auth-action-btn" data-action="reload">\u21bb Reload from disk</button>
+    <button class="auth-action-btn" data-action="reauth">\ud83d\udd11 Re-authenticate</button>
+  `;
+
+  const rect = anchor.getBoundingClientRect();
+  pop.style.position = "fixed";
+  pop.style.left = `${rect.left}px`;
+  pop.style.top = `${rect.bottom + 4}px`;
+  pop.style.zIndex = "9999";
+
+  pop.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>(".auth-action-btn");
+    if (!btn) return;
+    pop.remove();
+
+    const action = btn.dataset.action;
+    if (action === "reload") {
+      try {
+        await req("auth.reload", { profileId });
+        showToast(`Credentials reloaded for ${profileId.replace("anthropic:", "")}`);
+      } catch (err) {
+        showToast(`Reload failed: ${err}`, true);
+      }
+    } else if (action === "reauth") {
+      startOAuthReauthFlow(profileId);
+    }
+  });
+
+  document.body.appendChild(pop);
+
+  const close = (e: MouseEvent) => {
+    if (!pop.contains(e.target as Node)) {
+      pop.remove();
+      document.removeEventListener("click", close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener("click", close, true), 0);
+}
+
+// FORK: OAuth re-auth popup flow — opens browser popup, falls back to paste modal
+async function startOAuthReauthFlow(profileId: string): Promise<void> {
+  let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
+  try {
+    startResult = await req("auth.reauth.start", { profileId }) as { sessionId: string; authUrl: string; fallbackAuthUrl: string };
+  } catch (err) {
+    showToast(`Re-auth failed: ${err}`, true);
+    return;
+  }
+
+  const { sessionId, authUrl, fallbackAuthUrl } = startResult;
+  const popup = window.open(authUrl, "openclaw-reauth", "width=500,height=700");
+
+  let resolved = false;
+
+  const onAuthEvent = (evt: unknown) => {
+    const d = (evt as Record<string, unknown>).data ?? (evt as Record<string, unknown>).payload ?? {};
+    const dd = d as Record<string, unknown>;
+    if (dd.profileId === profileId || dd.source === "oauth-reauth") {
+      resolved = true;
+      cleanup();
+      try { popup?.close(); } catch {}
+      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
+    }
+  };
+
+  authProfileListeners.add(onAuthEvent);
+
+  const cleanup = () => {
+    authProfileListeners.delete(onAuthEvent);
+    clearTimeout(fallbackTimer);
+    clearInterval(popupPoll);
+  };
+
+  const fallbackTimer = setTimeout(() => {
+    if (!resolved) {
+      cleanup();
+      try { popup?.close(); } catch {}
+      showPasteModal(sessionId, fallbackAuthUrl, profileId);
+    }
+  }, 15_000);
+
+  const popupPoll = setInterval(() => {
+    if (popup?.closed && !resolved) {
+      cleanup();
+      showPasteModal(sessionId, fallbackAuthUrl, profileId);
+    }
+  }, 500);
+}
+
+// FORK: Paste modal for manual OAuth code exchange (fallback when popup fails)
+function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: string): void {
+  document.querySelector(".auth-paste-modal-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "auth-paste-modal-overlay";
+  overlay.innerHTML = `
+    <div class="auth-paste-modal">
+      <h3>Re-authenticate ${profileId.replace("anthropic:", "")}</h3>
+      <p>Auto-capture didn't work. Complete manually:</p>
+      <p>1. <a href="${fallbackAuthUrl}" target="_blank" rel="noopener">Click here to authorize</a></p>
+      <p>2. Copy the code from the callback page</p>
+      <p>3. Paste it below:</p>
+      <input type="text" class="auth-paste-input" placeholder="Paste code here (format: code#state)" autofocus />
+      <div class="auth-paste-actions">
+        <button class="auth-paste-cancel">Cancel</button>
+        <button class="auth-paste-submit">Submit</button>
+      </div>
+      <div class="auth-paste-status"></div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector<HTMLInputElement>(".auth-paste-input")!;
+  const status = overlay.querySelector<HTMLElement>(".auth-paste-status")!;
+  const submitBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-submit")!;
+  const cancelBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-cancel")!;
+
+  const submit = async () => {
+    const code = input.value.trim();
+    if (!code) return;
+    submitBtn.disabled = true;
+    status.textContent = "Exchanging code...";
+    try {
+      await req("auth.reauth.exchange", { sessionId, code });
+      overlay.remove();
+      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
+    } catch (err) {
+      status.textContent = `Failed: ${err}`;
+      status.style.color = "#f38ba8";
+      submitBtn.disabled = false;
+    }
+  };
+
+  submitBtn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  cancelBtn.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
 function shortErrorLabel(reason: string): string {
@@ -3399,8 +3587,10 @@ function renderModelRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  // FORK: Make error badge clickable for Anthropic OAuth profiles (reload/re-auth popover)
+  const isClickable = errorInfo && keyId?.startsWith("anthropic:cli-");
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge${isClickable ? " auth-clickable" : ""}"${isClickable ? ` data-auth-profile="${esc(keyId!)}"` : ""} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, id, keyId);
   const costLabel = getModelCost(id, keyId);
@@ -3435,8 +3625,10 @@ function renderAuthKeyRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  // FORK: Make error badge clickable for Anthropic OAuth profiles (reload/re-auth popover)
+  const isClickable = errorInfo && keyId?.startsWith("anthropic:cli-");
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge${isClickable ? " auth-clickable" : ""}"${isClickable ? ` data-auth-profile="${esc(keyId)}"` : ""} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, modelId, keyId);
   const costLabel = getModelCost(modelId, keyId);
