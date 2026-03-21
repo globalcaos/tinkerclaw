@@ -1,6 +1,6 @@
 ---
 name: whatsapp-ultimate
-version: 3.4.0
+version: 3.7.0
 description: "WhatsApp skill with a 3-rule security gate. Your agent speaks only when spoken to — in the right chat, by the right person."
 metadata:
   openclaw:
@@ -31,6 +31,7 @@ This skill documents all WhatsApp capabilities available through OpenClaw's nati
 | **Messaging** | Text, media, polls, stickers, voice notes, GIFs |
 | **Interactions** | Reactions, replies/quotes, edit, unsend |
 | **Groups** | Create, rename, icon, description, participants, admin, invite links |
+| **History** | Full-text search, vCard contact extraction with phone numbers |
 
 **Total: 22 distinct actions**
 
@@ -232,6 +233,13 @@ To react/edit/unsend, you need the message ID. Incoming messages include this in
 | External deps | None | Go binary | Docker + WAHA | ffmpeg |
 
 ---
+
+### 3.7.0
+
+- **Added:** vCard phone number extraction — contact messages now return structured `vcard` field with names and phone numbers
+- **Added:** `contactsArrayMessage` support — multi-contact shares are now parsed
+- **Improved:** New contact messages store phone numbers in `text_content` for full-text search (e.g. search by phone number)
+- **Improved:** `raw_json` now included in search results for contact-type messages, enabling vCard extraction from historical data
 
 ### 3.4.0
 
