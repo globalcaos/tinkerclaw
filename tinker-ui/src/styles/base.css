@@ -2786,8 +2786,12 @@ body {
 }
 
 /* FORK: Auth reload popover + paste modal */
-.auth-clickable { cursor: pointer; }
-.auth-clickable:hover { opacity: 0.8; }
+.auth-clickable {
+  cursor: pointer;
+}
+.auth-clickable:hover {
+  opacity: 0.8;
+}
 .auth-action-popover {
   background: var(--bg-secondary, #1e1e2e);
   border: 1px solid var(--border, #333);
@@ -2796,7 +2800,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .auth-action-btn {
   background: transparent;
@@ -2813,38 +2817,98 @@ body {
   background: var(--bg-hover, #313244);
 }
 .toast {
-  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  background: var(--bg-secondary, #1e1e2e); color: var(--text, #cdd6f4);
-  border: 1px solid var(--border, #333); border-radius: 6px;
-  padding: 8px 16px; font-size: 13px; z-index: 10000;
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary, #1e1e2e);
+  color: var(--text, #cdd6f4);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  z-index: 10000;
   animation: toastIn 0.2s ease-out;
 }
-.toast-error { border-color: #f38ba8; color: #f38ba8; }
-@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+.toast-error {
+  border-color: #f38ba8;
+  color: #f38ba8;
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+}
 .auth-paste-modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-  display: flex; align-items: center; justify-content: center; z-index: 10000;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
 }
 .auth-paste-modal {
-  background: var(--bg-secondary, #1e1e2e); border: 1px solid var(--border, #333);
-  border-radius: 8px; padding: 20px; width: 400px; max-width: 90vw;
+  background: var(--bg-secondary, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 20px;
+  width: 400px;
+  max-width: 90vw;
 }
-.auth-paste-modal h3 { margin: 0 0 12px; font-size: 15px; }
-.auth-paste-modal p { margin: 4px 0; font-size: 13px; }
-.auth-paste-modal a { color: #89b4fa; }
+.auth-paste-modal h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+.auth-paste-modal p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+.auth-paste-modal a {
+  color: #89b4fa;
+}
 .auth-paste-input {
-  width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;
-  background: var(--bg-primary, #11111b); color: var(--text, #cdd6f4);
-  border: 1px solid var(--border, #333); border-radius: 4px; font-size: 13px;
+  width: 100%;
+  padding: 8px;
+  margin: 8px 0;
+  box-sizing: border-box;
+  background: var(--bg-primary, #11111b);
+  color: var(--text, #cdd6f4);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  font-size: 13px;
 }
-.auth-paste-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.auth-paste-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
 .auth-paste-actions button {
-  padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
   border: 1px solid var(--border, #333);
 }
-.auth-paste-cancel { background: transparent; color: var(--text, #cdd6f4); }
-.auth-paste-submit { background: #89b4fa; color: #11111b; border-color: #89b4fa; }
-.auth-paste-submit:disabled { opacity: 0.5; cursor: not-allowed; }
-.auth-paste-status { font-size: 12px; margin-top: 8px; min-height: 16px; }
+.auth-paste-cancel {
+  background: transparent;
+  color: var(--text, #cdd6f4);
+}
+.auth-paste-submit {
+  background: #89b4fa;
+  color: #11111b;
+  border-color: #89b4fa;
+}
+.auth-paste-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.auth-paste-status {
+  font-size: 12px;
+  margin-top: 8px;
+  min-height: 16px;
+}
 
 /* FORK: Session/All scope toggle — reuses .ct-switch classes from context-timeline */
