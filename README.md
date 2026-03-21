@@ -314,19 +314,19 @@ No API keys. No admin consent. No IT ticket. Your authenticated browser session 
 
 We don't just use memory — we study it. 11 research papers on agent cognition, all in [`docs/papers/`](docs/papers/):
 
-| # | Paper | Topic |
-|---|-------|-------|
-| J1 | [total-recall](docs/papers/total-recall) | Complete memory architecture for persistent agents |
-| J2 | [instant-recall](docs/papers/instant-recall) | Fast retrieval from large memory stores |
-| J3 | [fractal-reasoning](docs/papers/fractal-reasoning) | Recursive reasoning patterns across abstraction levels |
-| J4 | [identity-persistence](docs/papers/identity-persistence) | How agents maintain identity across session boundaries |
-| J5 | [sleep-consolidation](docs/papers/sleep-consolidation) | Nightly memory consolidation (inspired by neuroscience) |
-| J6 | [round-table](docs/papers/round-table) | Multi-model deliberation protocols |
-| J7 | [humor-embeddings](docs/papers/humor-embeddings) | Humor detection and generation in embedding space |
-| J8 | [curiosity-motivation](docs/papers/curiosity-motivation) | Intrinsic curiosity as agent motivation |
-| J9 | [agent-security](docs/papers/agent-security) | Security boundaries for trusted agents |
-| J10 | [corporate-swarm](docs/papers/corporate-swarm) | Multi-agent coordination in enterprise settings |
-| J11 | learned-intuition | When pattern matching becomes faster than reasoning |
+| #   | Paper                                                    | Topic                                                   |
+| --- | -------------------------------------------------------- | ------------------------------------------------------- |
+| J1  | [total-recall](docs/papers/total-recall)                 | Complete memory architecture for persistent agents      |
+| J2  | [instant-recall](docs/papers/instant-recall)             | Fast retrieval from large memory stores                 |
+| J3  | [fractal-reasoning](docs/papers/fractal-reasoning)       | Recursive reasoning patterns across abstraction levels  |
+| J4  | [identity-persistence](docs/papers/identity-persistence) | How agents maintain identity across session boundaries  |
+| J5  | [sleep-consolidation](docs/papers/sleep-consolidation)   | Nightly memory consolidation (inspired by neuroscience) |
+| J6  | [round-table](docs/papers/round-table)                   | Multi-model deliberation protocols                      |
+| J7  | [humor-embeddings](docs/papers/humor-embeddings)         | Humor detection and generation in embedding space       |
+| J8  | [curiosity-motivation](docs/papers/curiosity-motivation) | Intrinsic curiosity as agent motivation                 |
+| J9  | [agent-security](docs/papers/agent-security)             | Security boundaries for trusted agents                  |
+| J10 | [corporate-swarm](docs/papers/corporate-swarm)           | Multi-agent coordination in enterprise settings         |
+| J11 | learned-intuition                                        | When pattern matching becomes faster than reasoning     |
 
 ---
 
