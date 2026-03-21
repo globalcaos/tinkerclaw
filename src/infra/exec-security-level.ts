@@ -317,7 +317,9 @@ export function validateCommandSecurityLevel(
  * Normalize a security level string, returning null if invalid.
  */
 export function normalizeSecurityLevel(value?: string | null): ExecSecurityLevel | null {
-  if (!value) return null;
+  if (!value) {
+    return null;
+  }
   const normalized = value.trim().toLowerCase();
   if (SECURITY_LEVEL_ORDER.includes(normalized as ExecSecurityLevel)) {
     return normalized as ExecSecurityLevel;

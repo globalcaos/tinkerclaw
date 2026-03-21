@@ -19,10 +19,10 @@ import { cosineDistance, cosineSimilarity, vectorMean } from "./vector-math.js";
 // ---------------------------------------------------------------------------
 
 export interface AnnIndex {
-	/** Return the k nearest neighbor IDs for a query vector. */
-	query(vector: number[], k: number): Array<{ id: string; vector: number[] }>;
-	/** Get the stored ID for a given vector (exact match). */
-	getId(vector: number[]): string | undefined;
+  /** Return the k nearest neighbor IDs for a query vector. */
+  query(vector: number[], k: number): Array<{ id: string; vector: number[] }>;
+  /** Get the stored ID for a given vector (exact match). */
+  getId(vector: number[]): string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -35,22 +35,22 @@ export interface AnnIndex {
  * If β is not found in top-k, returns 1.0 (maximally surprising).
  */
 export function bridgeSurprise(
-	bridge: number[],
-	A: number[],
-	B: number[],
-	index: AnnIndex,
-	k: number = LIMBIC_CONFIG.bridge.surpriseK,
+  bridge: number[],
+  A: number[],
+  B: number[],
+  index: AnnIndex,
+  k: number = LIMBIC_CONFIG.bridge.surpriseK,
 ): number {
-	const midpoint = vectorMean(A, B);
-	const neighbors = index.query(midpoint, k);
-	const bridgeId = index.getId(bridge);
+  const midpoint = vectorMean(A, B);
+  const neighbors = index.query(midpoint, k);
+  const bridgeId = index.getId(bridge);
 
-	for (let rank = 0; rank < neighbors.length; rank++) {
-		if (neighbors[rank].id === bridgeId) {
-			return rank / k;
-		}
-	}
-	return 1.0; // not in top-k → maximally surprising
+  for (let rank = 0; rank < neighbors.length; rank++) {
+    if (neighbors[rank].id === bridgeId) {
+      return rank / k;
+    }
+  }
+  return 1.0; // not in top-k → maximally surprising
 }
 
 // ---------------------------------------------------------------------------
@@ -63,15 +63,15 @@ export function bridgeSurprise(
  * h_v2 = d(A,B) × v(β,A,B) × σ(β|A,B)
  */
 export function humorPotentialV2(
-	A: number[],
-	B: number[],
-	bridge: number[],
-	index: AnnIndex,
+  A: number[],
+  B: number[],
+  bridge: number[],
+  index: AnnIndex,
 ): number {
-	const dist = cosineDistance(A, B);
-	const validity = bridgeValidity(bridge, A, B);
-	const surprise = bridgeSurprise(bridge, A, B, index);
-	return dist * validity * surprise;
+  const dist = cosineDistance(A, B);
+  const validity = bridgeValidity(bridge, A, B);
+  const surprise = bridgeSurprise(bridge, A, B, index);
+  return dist * validity * surprise;
 }
 
 /**
@@ -79,15 +79,19 @@ export function humorPotentialV2(
  * Measures how well the bridge connects to both concepts.
  */
 export function bridgeValidity(bridge: number[], A: number[], B: number[]): number {
-	return Math.min(cosineSimilarity(bridge, A), cosineSimilarity(bridge, B));
+  return Math.min(cosineSimilarity(bridge, A), cosineSimilarity(bridge, B));
 }
 
 /**
  * Check whether a triplet falls within the humor zone.
  */
 export function isInHumorZone(dist: number, validity: number, surprise: number): boolean {
-	const { distanceMin, distanceMax, validityThreshold, surpriseThreshold } = LIMBIC_CONFIG.humorZone;
-	return (
-		dist >= distanceMin && dist <= distanceMax && validity >= validityThreshold && surprise >= surpriseThreshold
-	);
+  const { distanceMin, distanceMax, validityThreshold, surpriseThreshold } =
+    LIMBIC_CONFIG.humorZone;
+  return (
+    dist >= distanceMin &&
+    dist <= distanceMax &&
+    validity >= validityThreshold &&
+    surprise >= surpriseThreshold
+  );
 }

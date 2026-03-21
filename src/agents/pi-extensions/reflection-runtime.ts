@@ -12,8 +12,8 @@
  */
 
 import {
-	createCompactionReflector,
-	type CompactionReflector,
+  createCompactionReflector,
+  type CompactionReflector,
 } from "../../memory/engram/compaction-reflection.js";
 import type { EventStore } from "../../memory/engram/event-store.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
@@ -48,10 +48,10 @@ export const getReflectionRuntime = registry.get;
  * ```
  */
 export function initReflectionRuntime(
-	sessionManager: unknown,
-	eventStore: EventStore,
+  sessionManager: unknown,
+  eventStore: EventStore,
 ): CompactionReflector {
-	const reflector = createCompactionReflector(eventStore);
-	setReflectionRuntime(sessionManager, reflector);
-	return reflector;
+  const reflector = createCompactionReflector(eventStore);
+  setReflectionRuntime(sessionManager, reflector);
+  return reflector;
 }

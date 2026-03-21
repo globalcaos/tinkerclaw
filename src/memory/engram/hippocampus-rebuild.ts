@@ -13,22 +13,16 @@
  * (tracked in a lightweight state file next to the index).
  */
 
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  statSync,
-  readdirSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { MemoryEvent } from "./event-types.js";
 import {
   enhanceIndex,
   type HippocampusIndex,
   type IndexChunk,
   type EnhanceOptions,
 } from "./hippocampus-enhancement.js";
-import type { MemoryEvent } from "./event-types.js";
 
 const log = createSubsystemLogger("hippocampus-rebuild");
 
@@ -72,15 +66,13 @@ function saveState(statePath: string, state: MtimeState): void {
 }
 
 /** Collect all matching files under `dir` (non-recursive depth-first, capped). */
-function collectFiles(
-  dir: string,
-  extensions: Set<string>,
-  maxFiles: number,
-): string[] {
+function collectFiles(dir: string, extensions: Set<string>, maxFiles: number): string[] {
   const results: string[] = [];
 
   function walk(current: string): void {
-    if (results.length >= maxFiles) return;
+    if (results.length >= maxFiles) {
+      return;
+    }
     let entries: string[];
     try {
       entries = readdirSync(current);
@@ -88,7 +80,9 @@ function collectFiles(
       return;
     }
     for (const entry of entries) {
-      if (results.length >= maxFiles) break;
+      if (results.length >= maxFiles) {
+        break;
+      }
       const full = join(current, entry);
       try {
         const st = statSync(full);
@@ -105,7 +99,9 @@ function collectFiles(
     }
   }
 
-  if (existsSync(dir)) walk(dir);
+  if (existsSync(dir)) {
+    walk(dir);
+  }
   return results;
 }
 
@@ -122,7 +118,9 @@ function reflectPhase(index: HippocampusIndex): {
 
   for (const [anchor, chunks] of Object.entries(index)) {
     const live = chunks.filter((c) => {
-      if (!c.path) return false;
+      if (!c.path) {
+        return false;
+      }
       // Keep workspace-relative paths that still exist (best-effort)
       // Absolute paths are checked directly; relative paths skip check.
       if (c.path.startsWith("/") && !existsSync(c.path)) {
@@ -151,7 +149,10 @@ function reflectPhase(index: HippocampusIndex): {
 function buildAnchorFromFile(filePath: string): string {
   // Derive a simple anchor from the file name (without extension, lower-cased).
   const base = filePath.split(/[\\/]/).pop() ?? filePath;
-  return base.replace(/\.[^.]+$/, "").toLowerCase().replace(/[-_]/g, " ");
+  return base
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[-_]/g, " ");
 }
 
 function previewFromContent(content: string): string {
@@ -317,9 +318,34 @@ export interface RebuildFromEventsConfig {
 
 /** Stopwords excluded from anchor extraction. */
 const STOPWORDS = new Set([
-  "the", "and", "for", "are", "was", "has", "had", "its", "not", "but",
-  "with", "from", "this", "that", "have", "will", "been", "they", "them",
-  "were", "our", "can", "you", "she", "his", "her", "him", "who",
+  "the",
+  "and",
+  "for",
+  "are",
+  "was",
+  "has",
+  "had",
+  "its",
+  "not",
+  "but",
+  "with",
+  "from",
+  "this",
+  "that",
+  "have",
+  "will",
+  "been",
+  "they",
+  "them",
+  "were",
+  "our",
+  "can",
+  "you",
+  "she",
+  "his",
+  "her",
+  "him",
+  "who",
 ]);
 
 /**
@@ -332,12 +358,16 @@ function extractAnchor(text: string, maxTerms = 3): string {
   const freq = new Map<string, number>();
   for (const raw of text.toLowerCase().split(/\W+/)) {
     const w = raw.trim();
-    if (w.length < 3 || STOPWORDS.has(w)) continue;
+    if (w.length < 3 || STOPWORDS.has(w)) {
+      continue;
+    }
     freq.set(w, (freq.get(w) ?? 0) + 1);
   }
-  if (freq.size === 0) return "general";
+  if (freq.size === 0) {
+    return "general";
+  }
   return [...freq.entries()]
-    .sort((a, b) => b[1] - a[1])
+    .toSorted((a, b) => b[1] - a[1])
     .slice(0, maxTerms)
     .map(([w]) => w)
     .join(" ");
@@ -345,7 +375,9 @@ function extractAnchor(text: string, maxTerms = 3): string {
 
 /** Load events from a JSONL file, one JSON object per line. */
 function loadEventsFromFile(filePath: string): MemoryEvent[] {
-  if (!existsSync(filePath)) return [];
+  if (!existsSync(filePath)) {
+    return [];
+  }
   try {
     return readFileSync(filePath, "utf-8")
       .trim()
@@ -387,11 +419,7 @@ function eventToChunk(event: MemoryEvent): IndexChunk {
 export async function runHippocampusRebuild(
   config: RebuildFromEventsConfig,
 ): Promise<{ anchors: number; indexed: number }> {
-  const {
-    indexPath,
-    maxAgeMs = 24 * 60 * 60 * 1000,
-    enhanceOptions,
-  } = config;
+  const { indexPath, maxAgeMs = 24 * 60 * 60 * 1000, enhanceOptions } = config;
 
   log.info(`HIPPOCAMPUS event-rebuild start — index: ${indexPath}`);
 
@@ -403,9 +431,7 @@ export async function runHippocampusRebuild(
 
   // Filter to the requested time window.
   const cutoff = Date.now() - maxAgeMs;
-  const recentEvents = allEvents.filter(
-    (e) => new Date(e.timestamp).getTime() >= cutoff,
-  );
+  const recentEvents = allEvents.filter((e) => new Date(e.timestamp).getTime() >= cutoff);
 
   log.debug(
     `Event rebuild: ${recentEvents.length} events within last ${Math.round(maxAgeMs / 3_600_000)}h`,
@@ -442,9 +468,7 @@ export async function runHippocampusRebuild(
   const enhanced = enhanceIndex(indexPath, enhanceOptions);
 
   const anchors = Object.keys(enhanced).length;
-  log.info(
-    `HIPPOCAMPUS event-rebuild complete — indexed=${indexed} anchors=${anchors}`,
-  );
+  log.info(`HIPPOCAMPUS event-rebuild complete — indexed=${indexed} anchors=${anchors}`);
 
   return { anchors, indexed };
 }

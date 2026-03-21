@@ -603,7 +603,7 @@ We design a five-condition ablation to isolate component contributions. Each con
 
 - H_abl1 (Drift Detection): A1 > A3 on drift recovery rate.
 - H_abl2 (Probe Necessity): A1 > A4 on drift detection latency (passive users provide sparse signals).
-- H_abl3 (User Primacy): A1 > A5 on target persona accuracy (probes stabilize to _a_ persona, but user signals correct _which_ persona).
+- H*abl3 (User Primacy): A1 > A5 on target persona accuracy (probes stabilize to \_a* persona, but user signals correct _which_ persona).
 - H_abl4 (IPC): A1 > A2 on long-term style consistency (standard compaction erodes voice).
 - H_abl5 (False Positives): A5 has higher False Positive Rate than A1 (without user grounding, probes over-correct benign style variations).
 

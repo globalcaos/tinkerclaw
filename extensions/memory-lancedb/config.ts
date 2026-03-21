@@ -231,6 +231,7 @@ export const memoryConfigSchema = {
       placeholder: "0.3",
       help: "Weight for BM25 keyword search (0-1, only used with 'linear' reranker)",
       advanced: true,
+    },
     captureMaxChars: {
       label: "Capture Max Chars",
       help: "Maximum message length eligible for auto-capture",

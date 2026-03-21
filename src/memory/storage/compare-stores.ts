@@ -127,8 +127,8 @@ async function run() {
       sqliteResults.forEach((r, i) =>
         console.log(`  ${i + 1}. [${r.score.toFixed(4)}] ${r.text.substring(0, 50)}...`),
       );
-    } catch (e: any) {
-      console.log(`  SQLite Error: ${e.message}`);
+    } catch (e: unknown) {
+      console.log(`  SQLite Error: ${(e as Error).message}`);
     }
 
     try {
@@ -137,8 +137,8 @@ async function run() {
       lanceResults.forEach((r, i) =>
         console.log(`  ${i + 1}. [${r.score.toFixed(4)}] ${r.text.substring(0, 50)}...`),
       );
-    } catch (e: any) {
-      console.log(`  LanceDB Error: ${e.message}`);
+    } catch (e: unknown) {
+      console.log(`  LanceDB Error: ${(e as Error).message}`);
     }
   }
 

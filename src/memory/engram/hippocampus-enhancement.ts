@@ -80,12 +80,18 @@ function wordSet(text: string): Set<string> {
 
 /** Jaccard similarity between two word-sets. */
 export function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 1;
-  if (a.size === 0 || b.size === 0) return 0;
+  if (a.size === 0 && b.size === 0) {
+    return 1;
+  }
+  if (a.size === 0 || b.size === 0) {
+    return 0;
+  }
 
   let intersection = 0;
   for (const w of a) {
-    if (b.has(w)) intersection++;
+    if (b.has(w)) {
+      intersection++;
+    }
   }
   return intersection / (a.size + b.size - intersection);
 }
@@ -109,14 +115,22 @@ export function cosineSimText(a: string, b: string): number {
   const tokA = tokens(a);
   const tokB = tokens(b);
 
-  if (tokA.length === 0 && tokB.length === 0) return 1;
-  if (tokA.length === 0 || tokB.length === 0) return 0;
+  if (tokA.length === 0 && tokB.length === 0) {
+    return 1;
+  }
+  if (tokA.length === 0 || tokB.length === 0) {
+    return 0;
+  }
 
   // Build term-frequency maps
   const tfA = new Map<string, number>();
   const tfB = new Map<string, number>();
-  for (const t of tokA) tfA.set(t, (tfA.get(t) ?? 0) + 1);
-  for (const t of tokB) tfB.set(t, (tfB.get(t) ?? 0) + 1);
+  for (const t of tokA) {
+    tfA.set(t, (tfA.get(t) ?? 0) + 1);
+  }
+  for (const t of tokB) {
+    tfB.set(t, (tfB.get(t) ?? 0) + 1);
+  }
 
   // Dot product
   let dot = 0;
@@ -132,7 +146,9 @@ export function cosineSimText(a: string, b: string): number {
     normB += vb * vb;
   }
 
-  if (normA === 0 || normB === 0) return 0;
+  if (normA === 0 || normB === 0) {
+    return 0;
+  }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
@@ -169,8 +185,11 @@ export function computeImportance(
   if (chunk.timestamp) {
     const ageMs = now.getTime() - new Date(chunk.timestamp).getTime();
     const ageDays = ageMs / (1000 * 60 * 60 * 24);
-    if (ageDays < 1) recencyBonus = 2;
-    else if (ageDays < 7) recencyBonus = 1;
+    if (ageDays < 1) {
+      recencyBonus = 2;
+    } else if (ageDays < 7) {
+      recencyBonus = 1;
+    }
   }
 
   // Access frequency bonus: log1p scaled to [0, 2]
@@ -204,14 +223,13 @@ function chunkSimilarity(
   setA: Set<string>,
   setB: Set<string>,
 ): number {
-  if (method === "cosine") return cosineSimText(a, b);
+  if (method === "cosine") {
+    return cosineSimText(a, b);
+  }
   return jaccard(setA, setB);
 }
 
-function deduplicateCluster(
-  chunks: IndexChunk[],
-  opts: Required<EnhanceOptions>,
-): IndexChunk[] {
+function deduplicateCluster(chunks: IndexChunk[], opts: Required<EnhanceOptions>): IndexChunk[] {
   const { mergeThreshold, relatedThreshold, similarityMethod } = opts;
   const result: IndexChunk[] = [];
   const previews = chunks.map((c) => c.preview ?? "");
@@ -220,12 +238,16 @@ function deduplicateCluster(
   const merged = new Set<number>(); // indices already consumed by a merge
 
   for (let i = 0; i < chunks.length; i++) {
-    if (merged.has(i)) continue;
+    if (merged.has(i)) {
+      continue;
+    }
 
     let current = chunks[i];
 
     for (let j = i + 1; j < chunks.length; j++) {
-      if (merged.has(j)) continue;
+      if (merged.has(j)) {
+        continue;
+      }
 
       const sim = chunkSimilarity(previews[i], previews[j], similarityMethod, sets[i], sets[j]);
 
@@ -264,10 +286,7 @@ function deduplicateCluster(
  *
  * Returns the enhanced index for inspection / testing.
  */
-export function enhanceIndex(
-  indexPath: string,
-  options: EnhanceOptions = {},
-): HippocampusIndex {
+export function enhanceIndex(indexPath: string, options: EnhanceOptions = {}): HippocampusIndex {
   const opts: Required<EnhanceOptions> = {
     defaultImportance: options.defaultImportance ?? 5,
     mergeThreshold: options.mergeThreshold ?? 0.9,
@@ -349,9 +368,7 @@ export class EpisodicBuffer {
   expire(now = Date.now()): void {
     const cutoff = now - this.ttlMs;
     // Find first index whose timestamp is within the TTL window.
-    const firstValid = this.events.findIndex(
-      (e) => new Date(e.timestamp).getTime() >= cutoff,
-    );
+    const firstValid = this.events.findIndex((e) => new Date(e.timestamp).getTime() >= cutoff);
     if (firstValid === -1) {
       // All events have expired.
       this.events.length = 0;
@@ -387,7 +404,9 @@ export class EpisodicBuffer {
    */
   search(query: string, topN = 10, now = Date.now()): EpisodicSearchResult[] {
     const qSet = wordSet(query);
-    if (qSet.size === 0) return [];
+    if (qSet.size === 0) {
+      return [];
+    }
 
     this.expire(now);
     const cutoff = now - this.ttlMs;
@@ -414,11 +433,7 @@ export class EpisodicBuffer {
    * Combined query: episodic results first, then semantic results from a
    * caller-supplied function, deduped by event id / path.
    */
-  combinedQuery(
-    query: string,
-    semanticFn: (q: string) => unknown[],
-    topN = 10,
-  ): unknown[] {
+  combinedQuery(query: string, semanticFn: (q: string) => unknown[], topN = 10): unknown[] {
     const episodic = this.search(query, topN);
     const semantic = semanticFn(query);
 
@@ -427,9 +442,7 @@ export class EpisodicBuffer {
     const combined: unknown[] = [...episodic];
     for (const item of semantic) {
       const id =
-        (item as { id?: string; path?: string }).id ??
-        (item as { path?: string }).path ??
-        "";
+        (item as { id?: string; path?: string }).id ?? (item as { path?: string }).path ?? "";
       if (!seen.has(id)) {
         combined.push(item);
         seen.add(id);

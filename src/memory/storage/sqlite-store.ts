@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
-import { truncateUtf16Safe } from "../../utils.js";
 import { buildFtsQuery, bm25RankToScore, mergeHybridResults } from "../hybrid.js";
-import { searchVector, searchKeyword, listChunks } from "../manager-search.js";
+import { searchVector, searchKeyword } from "../manager-search.js";
 import { ensureMemoryIndexSchema } from "../memory-schema.js";
 import { loadSqliteVecExtension } from "../sqlite-vec.js";
 import { requireNodeSqlite } from "../sqlite.js";
@@ -71,11 +70,13 @@ export class SQLiteMemoryStore implements MemoryStore {
     this.db.close();
   }
 
-  async getMeta(key: string): Promise<any | null> {
+  async getMeta(key: string): Promise<unknown> {
     const row = this.db.prepare(`SELECT value FROM meta WHERE key = ?`).get(key) as
       | { value: string }
       | undefined;
-    if (!row?.value) return null;
+    if (!row?.value) {
+      return null;
+    }
     try {
       return JSON.parse(row.value);
     } catch {
@@ -83,7 +84,7 @@ export class SQLiteMemoryStore implements MemoryStore {
     }
   }
 
-  async setMeta(key: string, value: any): Promise<void> {
+  async setMeta(key: string, value: unknown): Promise<void> {
     const str = JSON.stringify(value);
     this.db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`).run(key, str);
   }
@@ -143,7 +144,9 @@ export class SQLiteMemoryStore implements MemoryStore {
   }
 
   async insertChunks(chunks: StoredChunk[]): Promise<void> {
-    if (chunks.length === 0) return;
+    if (chunks.length === 0) {
+      return;
+    }
 
     const insertChunk = this.db.prepare(
       `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at) ` +
@@ -211,8 +214,8 @@ export class SQLiteMemoryStore implements MemoryStore {
     // Build source filters
     const sourceFilter = this.buildSourceFilter(sources);
 
-    let vectorResults: any[] = [];
-    let keywordResults: any[] = [];
+    let vectorResults: unknown[] = [];
+    let keywordResults: unknown[] = [];
 
     // 1. Vector Search
     if (queryVec && queryVec.length > 0) {
@@ -258,8 +261,12 @@ export class SQLiteMemoryStore implements MemoryStore {
       })) as SearchResult[];
     }
 
-    if (vectorResults.length > 0) return vectorResults;
-    if (keywordResults.length > 0) return keywordResults.map((r) => ({ ...r, score: r.textScore }));
+    if (vectorResults.length > 0) {
+      return vectorResults;
+    }
+    if (keywordResults.length > 0) {
+      return keywordResults.map((r) => ({ ...r, score: r.textScore }));
+    }
 
     return [];
   }
@@ -272,7 +279,9 @@ export class SQLiteMemoryStore implements MemoryStore {
       )
       .get(key.provider, key.model, key.hash) as { embedding: string } | undefined;
 
-    if (!row) return null;
+    if (!row) {
+      return null;
+    }
     try {
       return JSON.parse(row.embedding);
     } catch {
@@ -360,7 +369,9 @@ export class SQLiteMemoryStore implements MemoryStore {
   }
 
   private buildSourceFilter(sources: string[]) {
-    if (sources.length === 0) return { sql: "", params: [] };
+    if (sources.length === 0) {
+      return { sql: "", params: [] };
+    }
     const placeholders = sources.map(() => "?").join(",");
     return {
       sql: ` AND source IN (${placeholders})`,

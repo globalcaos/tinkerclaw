@@ -10,8 +10,8 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { ensureMemoryIndexSchema } from "../src/memory/memory-schema.js";
 import { detectGranularity, detectTopicCluster } from "../src/memory/internal.js";
+import { ensureMemoryIndexSchema } from "../src/memory/memory-schema.js";
 
 let passed = 0;
 let failed = 0;
@@ -37,9 +37,9 @@ ensureMemoryIndexSchema({
   ftsEnabled: false,
 });
 
-const cols = new Set((db.prepare("PRAGMA table_info(chunks)").all() as Array<{ name: string }>).map(
-  (r) => r.name,
-));
+const cols = new Set(
+  (db.prepare("PRAGMA table_info(chunks)").all() as Array<{ name: string }>).map((r) => r.name),
+);
 
 assert(cols.has("granularity"), "granularity column exists");
 assert(cols.has("topic_cluster"), "topic_cluster column exists");
@@ -75,10 +75,7 @@ assert(
   detectTopicCluster("memory/projects/openclaw/features.md") === "project_openclaw",
   "memory/projects/openclaw/… → project_openclaw",
 );
-assert(
-  detectTopicCluster("bank/opinions.md") === "opinions",
-  "bank/opinions.md → opinions",
-);
+assert(detectTopicCluster("bank/opinions.md") === "opinions", "bank/opinions.md → opinions");
 assert(detectTopicCluster("memory/2024-01-01.md") === "", "daily log → ''");
 
 // ─── 4. access_count increments after insert + manual tracking ──────────────
@@ -92,21 +89,33 @@ db.exec(`
 
 // Simulate access tracking (the same code path as trackAccess in manager-search.ts)
 const now = Date.now();
-db.prepare("UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?").run(now, "test-id-1");
+db.prepare("UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?").run(
+  now,
+  "test-id-1",
+);
 
-const row = db.prepare("SELECT access_count, last_accessed FROM chunks WHERE id = ?").get("test-id-1") as { access_count: number; last_accessed: number };
+const row = db
+  .prepare("SELECT access_count, last_accessed FROM chunks WHERE id = ?")
+  .get("test-id-1") as { access_count: number; last_accessed: number };
 assert(row.access_count === 1, "access_count incremented to 1");
 assert(row.last_accessed >= now, "last_accessed updated to current time");
 
 // Do it again
-db.prepare("UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?").run(Date.now(), "test-id-1");
-const row2 = db.prepare("SELECT access_count FROM chunks WHERE id = ?").get("test-id-1") as { access_count: number };
+db.prepare("UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?").run(
+  Date.now(),
+  "test-id-1",
+);
+const row2 = db.prepare("SELECT access_count FROM chunks WHERE id = ?").get("test-id-1") as {
+  access_count: number;
+};
 assert(row2.access_count === 2, "access_count incremented to 2 on second access");
 
 // ─── 5. granularity/topic_cluster written on insert ─────────────────────────
 console.log("\n5. Checking granularity/topic_cluster stored correctly…");
 
-const stored = db.prepare("SELECT granularity, topic_cluster FROM chunks WHERE id = ?").get("test-id-1") as { granularity: string; topic_cluster: string };
+const stored = db
+  .prepare("SELECT granularity, topic_cluster FROM chunks WHERE id = ?")
+  .get("test-id-1") as { granularity: string; topic_cluster: string };
 assert(stored.granularity === "detail", "stored granularity = 'detail'");
 assert(stored.topic_cluster === "", "stored topic_cluster = ''");
 
