@@ -4,6 +4,7 @@ export const AUTH_STORE_VERSION = 1;
 export const AUTH_PROFILE_FILENAME = "auth-profiles.json";
 export const LEGACY_AUTH_FILENAME = "auth.json";
 
+export const CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli";
 export const CODEX_CLI_PROFILE_ID = "openai-codex:codex-cli";
 export const QWEN_CLI_PROFILE_ID = "qwen-portal:qwen-cli";
 export const MINIMAX_CLI_PROFILE_ID = "minimax-portal:minimax-cli";

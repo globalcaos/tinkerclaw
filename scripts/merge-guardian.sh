@@ -332,6 +332,72 @@ check_systemd_service() {
   fi
 }
 
+check_workspace_extension_shadowing() {
+  log "--- Phase 5e: Workspace extension shadowing ---"
+
+  local ws_ext="$HOME/.openclaw/workspace/extensions"
+  local bundled_ext="$ROOT/extensions"
+  if [[ ! -d "$ws_ext" ]] || [[ ! -d "$bundled_ext" ]]; then
+    ok "No workspace or bundled extensions dir — nothing to check"
+    return
+  fi
+
+  local shadow_count=0
+  for ext_dir in "$ws_ext"/*/; do
+    local ext_name
+    ext_name=$(basename "$ext_dir")
+    if [[ -d "$bundled_ext/$ext_name" ]]; then
+      shadow_count=$(( shadow_count + 1 ))
+      warn "Workspace extension '$ext_name' shadows bundled copy — stale workspace copies break upstream refactors"
+      if [[ "$fix_mode" == true ]]; then
+        rm -rf "$ext_dir"
+        ok "Removed stale workspace extension: $ext_name"
+        shadow_count=$(( shadow_count - 1 ))
+        issues=$(( issues - 1 ))
+      fi
+    fi
+  done
+
+  if [[ "$shadow_count" -eq 0 ]]; then
+    ok "No workspace extensions shadowing bundled plugins"
+  fi
+}
+
+check_bundled_plugins_env() {
+  log "--- Phase 5f: OPENCLAW_BUNDLED_PLUGINS_DIR in systemd service ---"
+
+  local svc="$HOME/.config/systemd/user/openclaw-gateway.service"
+  if [[ ! -f "$svc" ]]; then
+    ok "No systemd service file — skipping BUNDLED_PLUGINS_DIR check"
+    return
+  fi
+
+  if ! grep -q "OPENCLAW_BUNDLED_PLUGINS_DIR=" "$svc"; then
+    warn "Missing OPENCLAW_BUNDLED_PLUGINS_DIR in systemd service — boundary discovery won't find all plugins"
+    if [[ "$fix_mode" == true ]]; then
+      sed -i "/^\[Service\]/a Environment=OPENCLAW_BUNDLED_PLUGINS_DIR=$ROOT/extensions" "$svc"
+      ok "Added OPENCLAW_BUNDLED_PLUGINS_DIR=$ROOT/extensions to systemd service"
+    fi
+  else
+    ok "OPENCLAW_BUNDLED_PLUGINS_DIR present in systemd service"
+  fi
+}
+
+check_single_binary() {
+  log "--- Phase 5g: Single openclaw binary ---"
+
+  local bin_count
+  bin_count=$(which -a openclaw 2>/dev/null | wc -l)
+  if [[ "$bin_count" -gt 1 ]]; then
+    warn "Multiple openclaw binaries found ($bin_count) — causes PATH confusion between gateway and CLI"
+    which -a openclaw 2>/dev/null | while read -r p; do log "  $p -> $(readlink -f "$p" 2>/dev/null || echo '(not a symlink)')"; done
+  elif [[ "$bin_count" -eq 0 ]]; then
+    warn "No openclaw binary found in PATH"
+  else
+    ok "Single openclaw binary: $(which openclaw)"
+  fi
+}
+
 check_oauth_trycatch() {
   log "--- Phase 5c: OAuth try-catch around getOAuthApiKey ---"
   local oauth_file="$ROOT/src/agents/auth-profiles/oauth.ts"
@@ -513,6 +579,9 @@ check_config_schemas
 check_ui_integrity
 check_debug_artifacts
 check_systemd_service
+check_workspace_extension_shadowing
+check_bundled_plugins_env
+check_single_binary
 check_oauth_trycatch
 check_credential_refresh_scope
 
