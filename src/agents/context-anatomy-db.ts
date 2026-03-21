@@ -493,7 +493,7 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
     responseToolCallTokens: row.response_tool_call_tokens ?? undefined,
     cacheReadTokens: row.cache_read_tokens ?? undefined,
     cacheCreationTokens: row.cache_creation_tokens ?? undefined,
-    responseContent: row.response_content ?? undefined,
+    responseContent: safeJsonParse(row.response_content) ?? undefined,
   };
 }
 
