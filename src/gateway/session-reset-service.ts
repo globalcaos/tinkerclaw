@@ -329,13 +329,17 @@ export async function performGatewaySessionReset(params: {
     return nextEntry;
   });
 
-  archiveSessionTranscriptsForSession({
-    sessionId: oldSessionId,
-    storePath,
-    sessionFile: oldSessionFile,
-    agentId: target.agentId,
-    reason: "reset",
-  });
+  // FORK: Do NOT archive (rename) transcripts on /new or /reset.
+  // Keep them as plain .jsonl so the new session can read them (SESSION.md step 0)
+  // and the nightly memory-consolidation cron can process them.
+  // The consolidation cron or cleaning-lady will archive them after processing.
+  // archiveSessionTranscriptsForSession({
+  //   sessionId: oldSessionId,
+  //   storePath,
+  //   sessionFile: oldSessionFile,
+  //   agentId: target.agentId,
+  //   reason: "reset",
+  // });
   if (hadExistingEntry) {
     await emitSessionUnboundLifecycleEvent({
       targetSessionKey: target.canonicalKey ?? params.key,

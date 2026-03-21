@@ -351,6 +351,23 @@ check_oauth_trycatch() {
   fi
 }
 
+check_credential_refresh_scope() {
+  log "--- Phase 5d: credential-file.ts — no scope in OAuth refresh ---"
+  local cred_file="$ROOT/src/agents/auth-profiles/credential-file.ts"
+  if [[ ! -f "$cred_file" ]]; then
+    warn "credential-file.ts not found at expected path"
+    return
+  fi
+
+  # The refresh body must NOT include scope: "user:inference" — it downscopes tokens, breaking usage API
+  # Match actual code assignment, not comments
+  if grep -vE '^\s*//' "$cred_file" | grep -qE 'scope.*user:inference'; then
+    warn "credential-file.ts: found 'scope.*user:inference' in refresh body. This downscopes tokens and breaks /api/oauth/usage (403). See 2026-03-20 incident."
+  else
+    ok "credential-file.ts: no scope restriction in OAuth refresh body"
+  fi
+}
+
 run_build_check() {
   if [[ "$no_build" == true ]]; then
     log "--- Phase 6: Build (skipped — --no-build) ---"
@@ -497,6 +514,7 @@ check_ui_integrity
 check_debug_artifacts
 check_systemd_service
 check_oauth_trycatch
+check_credential_refresh_scope
 
 build_failed=false
 run_build_check || build_failed=true
