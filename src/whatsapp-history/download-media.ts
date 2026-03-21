@@ -8,10 +8,10 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
-import Database from "better-sqlite3";
+import path from "node:path";
 import { downloadContentFromMessage } from "@whiskeysockets/baileys";
+import Database from "better-sqlite3";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -58,7 +58,9 @@ function extFromMimetype(mimetype: string | null | undefined, mediaType: string)
     // e.g. "image/jpeg" → "jpeg", "audio/ogg; codecs=opus" → "ogg"
     const base = mimetype.split(";")[0]?.trim() ?? "";
     const ext = base.split("/")[1];
-    if (ext) return ext;
+    if (ext) {
+      return ext;
+    }
   }
   return EXT_FALLBACK[mediaType] ?? "bin";
 }

@@ -1,10 +1,10 @@
 import type { Command } from "commander";
-import { 
-  loadAllowlist, 
-  addToAllowlist, 
-  removeFromAllowlist 
-} from "../../security/secrets-proxy-allowlist.js";
 import { defaultRuntime } from "../../runtime.js";
+import {
+  loadAllowlist,
+  addToAllowlist,
+  removeFromAllowlist,
+} from "../../security/secrets-proxy-allowlist.js";
 
 export function addGatewayAllowlistCommands(cmd: Command): Command {
   const allowlist = cmd

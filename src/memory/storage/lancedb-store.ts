@@ -1,7 +1,5 @@
-import * as lancedb from "@lancedb/lancedb";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
+import * as lancedb from "@lancedb/lancedb";
 import {
   MemoryStore,
   SearchParams,
@@ -84,7 +82,7 @@ export class LanceDBMemoryStore implements MemoryStore {
     // LanceDB connection doesn't strictly need closing in Node SDK
   }
 
-  async getMeta(key: string): Promise<any | null> {
+  async getMeta(key: string): Promise<unknown> {
     try {
       const metaTable = await this.db.openTable("meta");
       const res = await metaTable.query().where(`key = '${key}'`).limit(1).toArray();
@@ -97,7 +95,7 @@ export class LanceDBMemoryStore implements MemoryStore {
     return null;
   }
 
-  async setMeta(key: string, value: any): Promise<void> {
+  async setMeta(key: string, value: unknown): Promise<void> {
     let metaTable: lancedb.Table;
     try {
       metaTable = await this.db.openTable("meta");
@@ -162,7 +160,9 @@ export class LanceDBMemoryStore implements MemoryStore {
   }
 
   async insertChunks(chunks: StoredChunk[]): Promise<void> {
-    if (chunks.length === 0) return;
+    if (chunks.length === 0) {
+      return;
+    }
 
     if (!this.table) {
       try {
@@ -218,7 +218,9 @@ export class LanceDBMemoryStore implements MemoryStore {
         .toArray();
       if (res.length > 0) {
         const raw = res[0].embedding;
-        if (Array.isArray(raw)) return raw as number[];
+        if (Array.isArray(raw)) {
+          return raw as number[];
+        }
         if (raw && typeof raw === "object") {
           // Handle Arrow Vector or Float32Array
           return Array.from(raw as Iterable<number>);

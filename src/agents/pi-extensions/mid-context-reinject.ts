@@ -16,12 +16,12 @@ import { SYNC_SCORE_DRIFT_THRESHOLD, type CortexRuntime } from "./cortex-runtime
 // ---------------------------------------------------------------------------
 
 export interface ReinjectionResult {
-	/** Whether re-injection was triggered this turn. */
-	reinjected: boolean;
-	/** Updated system prompt text (persona block prepended when reinjected). */
-	systemPrompt: string;
-	/** EWMA SyncScore that triggered (or declined) re-injection. */
-	ewmaScore: number;
+  /** Whether re-injection was triggered this turn. */
+  reinjected: boolean;
+  /** Updated system prompt text (persona block prepended when reinjected). */
+  systemPrompt: string;
+  /** EWMA SyncScore that triggered (or declined) re-injection. */
+  ewmaScore: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,33 +41,33 @@ export interface ReinjectionResult {
  * @returns Updated system prompt and metadata about whether re-injection fired.
  */
 export function applyMidContextReinject(
-	cortexRuntime: CortexRuntime | null | undefined,
-	systemPrompt: string,
+  cortexRuntime: CortexRuntime | null | undefined,
+  systemPrompt: string,
 ): ReinjectionResult {
-	if (!cortexRuntime) {
-		return { reinjected: false, systemPrompt, ewmaScore: 1.0 };
-	}
+  if (!cortexRuntime) {
+    return { reinjected: false, systemPrompt, ewmaScore: 1.0 };
+  }
 
-	const ewmaScore = cortexRuntime.ewmaSyncScore;
+  const ewmaScore = cortexRuntime.ewmaSyncScore;
 
-	// No re-injection needed — persona consistency is healthy.
-	if (ewmaScore >= SYNC_SCORE_DRIFT_THRESHOLD) {
-		return { reinjected: false, systemPrompt, ewmaScore };
-	}
+  // No re-injection needed — persona consistency is healthy.
+  if (ewmaScore >= SYNC_SCORE_DRIFT_THRESHOLD) {
+    return { reinjected: false, systemPrompt, ewmaScore };
+  }
 
-	const personaBlock = cortexRuntime.getPersonaBlock();
-	if (!personaBlock) {
-		// Persona block unavailable (edge case: empty persona state).
-		return { reinjected: false, systemPrompt, ewmaScore };
-	}
+  const personaBlock = cortexRuntime.getPersonaBlock();
+  if (!personaBlock) {
+    // Persona block unavailable (edge case: empty persona state).
+    return { reinjected: false, systemPrompt, ewmaScore };
+  }
 
-	// Prepend persona block so it appears before all other system instructions,
-	// maximising the chance the model applies persona constraints on this turn.
-	return {
-		reinjected: true,
-		systemPrompt: `${personaBlock}\n\n${systemPrompt}`,
-		ewmaScore,
-	};
+  // Prepend persona block so it appears before all other system instructions,
+  // maximising the chance the model applies persona constraints on this turn.
+  return {
+    reinjected: true,
+    systemPrompt: `${personaBlock}\n\n${systemPrompt}`,
+    ewmaScore,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -86,19 +86,21 @@ export function applyMidContextReinject(
  * @param logFn - Logger function for re-injection events (accepts a string).
  */
 export function evaluateTurnSyncScore(
-	cortexRuntime: CortexRuntime | null | undefined,
-	assistantTexts: string[],
-	turnNumber: number,
-	logFn?: (msg: string) => void,
+  cortexRuntime: CortexRuntime | null | undefined,
+  assistantTexts: string[],
+  turnNumber: number,
+  logFn?: (msg: string) => void,
 ): void {
-	if (!cortexRuntime || assistantTexts.length === 0) return;
+  if (!cortexRuntime || assistantTexts.length === 0) {
+    return;
+  }
 
-	const result = cortexRuntime.evaluateSyncScore(assistantTexts, turnNumber);
+  const result = cortexRuntime.evaluateSyncScore(assistantTexts, turnNumber);
 
-	if (result.needsReinjection && logFn) {
-		logFn(
-			`cortex: SyncScore drift detected — ewma=${result.ewmaScore.toFixed(3)} < ${SYNC_SCORE_DRIFT_THRESHOLD} ` +
-				`(raw=${result.rawScore.toFixed(3)}, turn=${turnNumber})`,
-		);
-	}
+  if (result.needsReinjection && logFn) {
+    logFn(
+      `cortex: SyncScore drift detected — ewma=${result.ewmaScore.toFixed(3)} < ${SYNC_SCORE_DRIFT_THRESHOLD} ` +
+        `(raw=${result.rawScore.toFixed(3)}, turn=${turnNumber})`,
+    );
+  }
 }

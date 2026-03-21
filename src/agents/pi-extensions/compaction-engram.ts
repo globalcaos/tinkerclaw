@@ -12,21 +12,21 @@
  * FORK-ISOLATED: This file is unique to our fork.
  */
 
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
-import { createTimeRangeMarker, renderMarker } from "../../memory/engram/time-range-marker.js";
 import type { EventKind, MemoryEvent } from "../../memory/engram/event-types.js";
 import { createMetricsCollector } from "../../memory/engram/metrics.js";
+import { createTimeRangeMarker, renderMarker } from "../../memory/engram/time-range-marker.js";
 import {
   getPointerCompactionRuntime,
   buildManifest,
   renderManifest,
 } from "./pointer-compaction-runtime.js";
 import { getReflectionRuntime } from "./reflection-runtime.js";
-import { join } from "node:path";
-import { mkdirSync } from "node:fs";
 
 /** Map Pi agent message roles to ENGRAM event kinds. */
 function roleToEventKind(role: string, isError?: boolean): EventKind {
@@ -49,14 +49,14 @@ function roleToEventKind(role: string, isError?: boolean): EventKind {
 /** Extract text content from a Pi agent message. */
 function extractMessageText(msg: AgentMessage): string {
   const content = (msg as unknown as Record<string, unknown>).content;
-  if (typeof content === "string") return content;
+  if (typeof content === "string") {
+    return content;
+  }
   if (Array.isArray(content)) {
     return content
       .filter(
         (block: unknown) =>
-          block &&
-          typeof block === "object" &&
-          (block as Record<string, unknown>).type === "text",
+          block && typeof block === "object" && (block as Record<string, unknown>).type === "text",
       )
       .map((block: unknown) => String((block as Record<string, unknown>).text ?? ""))
       .join("\n");
@@ -73,7 +73,9 @@ function estimateTokens(text: string): number {
  * Create the compaction engram extension factory.
  * Accepts the OpenClaw config to resolve feature flags at registration time.
  */
-export default function compactionEngramExtension(cfg?: OpenClawConfig): (api: ExtensionAPI) => void {
+export default function compactionEngramExtension(
+  cfg?: OpenClawConfig,
+): (api: ExtensionAPI) => void {
   return (api: ExtensionAPI): void => {
     api.on("session_before_compact", async (event, ctx) => {
       const { preparation } = event;
@@ -123,7 +125,9 @@ export default function compactionEngramExtension(cfg?: OpenClawConfig): (api: E
         // Extract topic hints from user messages and tool names
         if (role === "user" && text.length > 0) {
           const words = text.split(/\s+/).slice(0, 5).join(" ");
-          if (words.length > 3) topicHints.push(words);
+          if (words.length > 3) {
+            topicHints.push(words);
+          }
         }
         if (role === "toolResult" && msg.toolName) {
           topicHints.push(String(msg.toolName));
@@ -131,7 +135,9 @@ export default function compactionEngramExtension(cfg?: OpenClawConfig): (api: E
       }
 
       // 2. Choose compaction summary strategy based on feature flag
-      const pointerMode = (cfg?.agents?.defaults?.compaction as Record<string, unknown> | undefined)?.pointerMode === true;
+      const pointerMode =
+        (cfg?.agents?.defaults?.compaction as Record<string, unknown> | undefined)?.pointerMode ===
+        true;
       const ptrHandler = pointerMode ? getPointerCompactionRuntime(ctx.sessionManager) : null;
 
       let rendered: string;
@@ -197,9 +203,7 @@ export default function compactionEngramExtension(cfg?: OpenClawConfig): (api: E
                 `[ENGRAM][reflection] HIGH severity: ${record.diagnosis} — ${record.suggestions.join(" | ")}`,
               );
             } else if (record.severity === "medium") {
-              console.warn(
-                `[ENGRAM][reflection] medium: ${record.diagnosis}`,
-              );
+              console.warn(`[ENGRAM][reflection] medium: ${record.diagnosis}`);
             }
             // low: auto-fix applied silently
           })

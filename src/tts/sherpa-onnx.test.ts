@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   DEFAULT_SHERPA_EFFECTS_CHAIN,
   DEFAULT_SHERPA_OUTPUT_CODEC,
@@ -63,7 +63,9 @@ describe("sherpaOnnxTTS", () => {
   it("throws when binary does not exist", async () => {
     const fs = await import("node:fs");
     vi.mocked(fs.existsSync).mockImplementation((p) => {
-      if (String(p) === "/nonexistent/bin") {return false;}
+      if (String(p) === "/nonexistent/bin") {
+        return false;
+      }
       return true;
     });
 
@@ -87,7 +89,9 @@ describe("sherpaOnnxTTS", () => {
     const fs = await import("node:fs");
     vi.mocked(fs.existsSync).mockImplementation((p) => {
       const s = String(p);
-      if (s.includes("model-missing")) {return false;}
+      if (s.includes("model-missing")) {
+        return false;
+      }
       return true;
     });
 

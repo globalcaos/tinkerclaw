@@ -242,7 +242,7 @@ where $v$ is bridge validity and $\sigma$ is bridge surprise (both formally defi
         h_v2 = 0.21 × 0.56 × 0.03 = 0.004 ← not funny
 ```
 
-_Figure 1: Humor potential in embedding space. Under the naive $h_{\text{v1}}$, the unfunny example (cat–kitten) scores higher than the funny one (meeting–hostage). The revised $h_{\text{v2}}$ corrects this: the surprise component penalizes obvious bridges and rewards unexpected ones, producing a 40:1 ratio favoring the funny triplet._
+_Figure 1: Humor potential in embedding space. Under the naive $h_{\text{v1}}$, the unfunny example (cat–kitten) scores higher than the funny one (meeting–hostage). The revised $h_{\text{v2}}$ corrects this: the surprise component penalizes obvious bridges and rewards unexpected ones, producing a 40:1 ratio favoring the funny triplet.\_
 
 # 4. A Taxonomy of Humor-Generating Semantic Patterns
 
@@ -501,7 +501,7 @@ We conducted a small-scale computational pilot to test whether $h(A, B, \beta)$ 
 | Random              | 5   | 0.033           | 0.160           | 0.178           |
 | Funny/Unfunny ratio | —   | 0.22×           | 0.54×           | 0.76×           |
 
-_Table 2: Pilot results across formula variants. Unfunny pairs outscore funny pairs across all tested variants, indicating that cosine similarity conflates semantic proximity with comedic validity. $h_{\text{v2}}$ was formulated in response to these results and was not evaluated in this pilot._
+_Table 2: Pilot results across formula variants. Unfunny pairs outscore funny pairs across all tested variants, indicating that cosine similarity conflates semantic proximity with comedic validity. $h_{\text{v2}}$ was formulated in response to these results and was not evaluated in this pilot.\_
 
 **Key finding: The tested formulas do not predict humor.** Unfunny pairs consistently outscore funny pairs because $c(\beta, A) \cdot c(\beta, B)$ rewards _obvious_ connections—high similarity between bridge and concepts—whereas humor depends on connections that are _surprising yet valid_.
 

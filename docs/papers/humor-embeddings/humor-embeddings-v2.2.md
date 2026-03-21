@@ -251,7 +251,7 @@ where $v$ is bridge validity and $\sigma$ is bridge surprise (both formally defi
         => humor potential is negligible
 ```
 
-_Figure 1: Humor potential in embedding space. Despite the bottom example scoring higher on the naive formula $h_{\text{v1}}$ (due to high coherence), it is not funny because the bridge is obvious. The revised $h_{\text{v2}}$ corrects this by weighting bridge quality by surprise._
+_Figure 1: Humor potential in embedding space. Despite the bottom example scoring higher on the naive formula $h_{\text{v1}}$ (due to high coherence), it is not funny because the bridge is obvious. The revised $h_{\text{v2}}$ corrects this by weighting bridge quality by surprise.\_
 
 # 4. A Taxonomy of Humor-Generating Semantic Patterns
 
@@ -503,7 +503,7 @@ We conducted a small-scale computational pilot to test whether $h(A, B, \beta)$ 
 | Random              | 5   | 0.033                      | 0.160                      | 0.178                        |
 | Funny/Unfunny ratio | —   | 0.22x                      | 0.54x                      | 0.76x                        |
 
-_Table 2: Pilot study results across formula variants. Across all variants tested, unfunny pairs score higher than funny pairs, indicating that naive coherence (cosine similarity) conflates semantic proximity with comedic validity. $h_{\text{v2}}$ was not evaluated in this pilot (it was formulated in response to these results)._
+_Table 2: Pilot study results across formula variants. Across all variants tested, unfunny pairs score higher than funny pairs, indicating that naive coherence (cosine similarity) conflates semantic proximity with comedic validity. $h_{\text{v2}}$ was not evaluated in this pilot (it was formulated in response to these results).\_
 
 **Key finding: The tested formulas do not predict humor.** Unfunny pairs consistently outscore funny pairs because $c(\beta, A) \cdot c(\beta, B)$ rewards _obvious_ connections — high similarity between bridge and both concepts — while humor requires connections that are _surprising yet valid_.
 

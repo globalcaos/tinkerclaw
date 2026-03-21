@@ -7,9 +7,9 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = join(__dirname, "..");
@@ -36,7 +36,9 @@ try {
 
 const { createEventStore } = jiti(join(repoRoot, "src/memory/engram/event-store.ts"));
 const { createArtifactStore } = jiti(join(repoRoot, "src/memory/engram/artifact-store.ts"));
-const { createInitialConsolidationState } = jiti(join(repoRoot, "src/memory/engram/episode-detection.ts"));
+const { createInitialConsolidationState } = jiti(
+  join(repoRoot, "src/memory/engram/episode-detection.ts"),
+);
 const { runSleepConsolidation } = jiti(join(repoRoot, "src/memory/engram/sleep-consolidation.ts"));
 
 // Ensure dirs exist

@@ -19,7 +19,9 @@ export function annotateOfflineRecovery(
   isOfflineRecovery: boolean | undefined,
   timestamp: number | undefined,
 ): string {
-  if (!isOfflineRecovery) {return body;}
+  if (!isOfflineRecovery) {
+    return body;
+  }
   const ageMs = timestamp ? Date.now() - timestamp : undefined;
   const ageLabel = ageMs != null ? `${Math.round(ageMs / 60_000)} minutes` : "unknown time";
   return (

@@ -1,9 +1,9 @@
 /**
  * Secure Fetch Wrapper
- * 
+ *
  * Intercepts all fetch() calls and routes them through the secrets injection proxy.
  * This must be loaded BEFORE any other modules that make HTTP requests.
- * 
+ *
  * P0 Fix: Properly handles Request objects by extracting method, headers, and body.
  */
 import process from "node:process";
@@ -27,14 +27,11 @@ function shouldBypassProxy(url: string): boolean {
 /**
  * Wraps fetch to route all requests through the secrets proxy.
  * Adds X-Target-URL header with the original destination.
- * 
+ *
  * Properly handles both Request objects and string URLs, preserving
  * method, headers, and body from the original request.
  */
-async function secureFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit
-): Promise<Response> {
+async function secureFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   // Only intercept if we're in secure mode
   if (process.env.OPENCLAW_SECURE_MODE !== "1") {
     return originalFetch(input, init);
@@ -61,7 +58,7 @@ async function secureFetch(
     targetUrl = input.url;
     // init overrides Request properties if provided
     method = init?.method || input.method;
-    
+
     // Merge headers: Request headers first, then init headers override
     headers = new Headers(input.headers);
     if (init?.headers) {
@@ -70,7 +67,7 @@ async function secureFetch(
         headers.set(key, value);
       });
     }
-    
+
     // Body: init.body overrides, otherwise clone from Request if it has one
     if (init?.body !== undefined) {
       body = init.body;

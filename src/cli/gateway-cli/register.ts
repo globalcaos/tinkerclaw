@@ -15,6 +15,7 @@ import { inheritOptionFromParent } from "../command-options.js";
 import { addGatewayServiceCommands } from "../daemon-cli.js";
 import { formatHelpExamples } from "../help-format.js";
 import { withProgress } from "../progress.js";
+import { addGatewayAllowlistCommands } from "./allowlist-cli.js";
 import { callGatewayCli, gatewayCallOpts } from "./call.js";
 import type { GatewayDiscoverOpts } from "./discover.js";
 import {
@@ -25,7 +26,6 @@ import {
   renderBeaconLines,
 } from "./discover.js";
 import { addGatewayRunCommand } from "./run.js";
-import { addGatewayAllowlistCommands } from "./allowlist-cli.js";
 
 function runGatewayCommand(action: () => Promise<void>, label?: string) {
   return runCommandWithRuntime(defaultRuntime, action, (err) => {

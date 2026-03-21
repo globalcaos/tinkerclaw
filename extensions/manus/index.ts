@@ -5,8 +5,8 @@
  * Tracks credit usage, provides budget awareness, and auto-notification.
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { Type } from "@sinclair/typebox";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ManusTracker } from "./src/tracker.js";
 
 export default function register(api: OpenClawPluginApi) {

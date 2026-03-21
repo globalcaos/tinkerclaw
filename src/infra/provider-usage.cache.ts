@@ -19,7 +19,9 @@ function getCachePath(): string {
 export function loadUsageCache(): UsageCache | null {
   try {
     const cachePath = getCachePath();
-    if (!fs.existsSync(cachePath)) return null;
+    if (!fs.existsSync(cachePath)) {
+      return null;
+    }
     const raw = fs.readFileSync(cachePath, "utf-8");
     const cache = JSON.parse(raw) as UsageCache;
     // Check if cache is still valid
@@ -52,6 +54,8 @@ export function saveUsageCache(provider: string, snapshot: ProviderUsageSnapshot
 
 export function getCachedUsage(provider: string): ProviderUsageSnapshot | null {
   const cache = loadUsageCache();
-  if (!cache) return null;
+  if (!cache) {
+    return null;
+  }
   return cache.providers[provider] ?? null;
 }

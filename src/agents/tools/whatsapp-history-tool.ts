@@ -4,7 +4,6 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { AnyAgentTool } from "./common.js";
 import {
   searchMessages,
   getStats,
@@ -12,6 +11,7 @@ import {
   importDirectory,
   formatImportResults,
 } from "../../whatsapp-history/index.js";
+import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam, readNumberParam, readBooleanParam } from "./common.js";
 
 const WhatsAppHistorySchema = Type.Object({
@@ -32,9 +32,13 @@ const WhatsAppHistorySchema = Type.Object({
 });
 
 function parseDate(dateStr: string | undefined): number | undefined {
-  if (!dateStr) return undefined;
+  if (!dateStr) {
+    return undefined;
+  }
   const ts = Date.parse(dateStr);
-  if (isNaN(ts)) return undefined;
+  if (isNaN(ts)) {
+    return undefined;
+  }
   return Math.floor(ts / 1000);
 }
 
@@ -104,16 +108,16 @@ Examples:
                   }
                   if (raw.message?.contactsArrayMessage?.contacts) {
                     for (const c of raw.message.contactsArrayMessage.contacts) {
-                      if (c.vcard) vcards.push(c.vcard);
+                      if (c.vcard) {
+                        vcards.push(c.vcard);
+                      }
                     }
                   }
                   if (vcards.length > 0) {
                     const contacts = vcards.map((vc) => {
                       const nameMatch = vc.match(/FN[;:]([^\r\n]+)/i);
                       const phoneMatches = vc.match(/TEL[^:]*:([+\d\s-]+)/gi) || [];
-                      const phones = phoneMatches.map((t) =>
-                        t.replace(/TEL[^:]*:/i, "").trim()
-                      );
+                      const phones = phoneMatches.map((t) => t.replace(/TEL[^:]*:/i, "").trim());
                       return {
                         name: nameMatch?.[1]?.trim() || "unknown",
                         phones,

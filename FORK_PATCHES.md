@@ -255,9 +255,10 @@ grep "shouldHideHeartbeatChatOutput" src/gateway/server-chat.ts
 
 **Files:** `extensions/whatsapp/src/session.ts`, `extensions/whatsapp/src/login-qr.ts`, `extensions/whatsapp/src/login.ts`
 **What:** Three fixes for QR pairing failure:
+
 1. `getStatusCode()` — added `err.error?.output?.statusCode` fallback (upstream PR #27910 port). Without this, all 515 restart handling is dead code.
 2. Restored per-authDir `credsSaveQueues` Map + `waitForCredsSaveQueue()`/`waitForCredsSaveQueueWithTimeout()` exports. Ensures Signal protocol keys persist before restart socket reads them.
 3. Added 3-second delay before creating restart socket after 515 (WhatsApp servers need time to finalize device registration).
-**Guard strings:** `err.error?.output?.statusCode` (in session.ts getStatusCode), `credsSaveQueues` (Map in session.ts), `waitForCredsSaveQueueWithTimeout` (import in login-qr.ts + login.ts)
-**Risk:** MEDIUM — fork inlines session-errors.ts functions; upstream keeps them in a separate file. Consider adding session-errors.ts sync to apply-fork-wiring.mjs.
-**Added:** 2026-03-20
+   **Guard strings:** `err.error?.output?.statusCode` (in session.ts getStatusCode), `credsSaveQueues` (Map in session.ts), `waitForCredsSaveQueueWithTimeout` (import in login-qr.ts + login.ts)
+   **Risk:** MEDIUM — fork inlines session-errors.ts functions; upstream keeps them in a separate file. Consider adding session-errors.ts sync to apply-fork-wiring.mjs.
+   **Added:** 2026-03-20

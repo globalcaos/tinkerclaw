@@ -227,7 +227,7 @@ export async function acquireGatewayLock(
       let ownerStatus: LockOwnerStatus;
       if (ownerPid) {
         ownerStatus = await resolveGatewayOwnerStatus(ownerPid, lastPayload, platform, port);
-      } else if (port != null && await checkPortFree(port)) {
+      } else if (port != null && (await checkPortFree(port))) {
         ownerStatus = "dead";
       } else {
         ownerStatus = "unknown";

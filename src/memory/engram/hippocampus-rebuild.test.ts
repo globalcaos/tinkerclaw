@@ -3,18 +3,17 @@
  * Run: pnpm test -- src/memory/engram/hippocampus
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
-import { tmpdir } from "node:os";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, it, expect, beforeEach } from "vitest";
+import type { MemoryEvent } from "./event-types.js";
 import {
   EpisodicBuffer,
   EPISODIC_TTL_MS,
   sharedEpisodicBuffer,
-  type EpisodicEvent,
 } from "./hippocampus-enhancement.js";
 import { runHippocampusRebuild } from "./hippocampus-rebuild.js";
-import type { MemoryEvent } from "./event-types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -331,9 +330,7 @@ describe("runHippocampusRebuild()", () => {
 
     expect(result.indexed).toBe(1);
     const index = JSON.parse(readFileSync(indexPath, "utf-8"));
-    const allPaths = (Object.values(index).flat() as Array<{ path: string }>).map(
-      (c) => c.path,
-    );
+    const allPaths = (Object.values(index).flat() as Array<{ path: string }>).map((c) => c.path);
     expect(allPaths.some((p) => p.includes("file-evt"))).toBe(true);
   });
 

@@ -35,6 +35,7 @@ tinker-ui/           ← our project, upstream never touches
 ## Panel Descriptions
 
 ### Chat Panel
+
 - Conversation view with messages
 - Tool calls render as compact rows (status icon + tool name + one-liner)
 - Clicking a tool row expands INLINE with useful detail:
@@ -46,6 +47,7 @@ tinker-ui/           ← our project, upstream never touches
 - Jarvis voice lines: purple italic styling
 
 ### Token Tracker Panel
+
 - Real-time token usage per provider (Anthropic, OpenAI, Ollama)
 - 5-hour window progress bar (Claude rate limit)
 - Daily/monthly cost tracking
@@ -53,12 +55,14 @@ tinker-ui/           ← our project, upstream never touches
 - Session cost breakdown
 
 ### Context Graph Panel
+
 - Visual representation of the context window
 - System prompt size vs user messages vs tool results
 - Compaction events marked on timeline
 - Memory retrieval hits highlighted
 
 ### Security Panel (Code-Enforced Execution Layer)
+
 - Every exec/tool call classified: SAFE / LOW / MEDIUM / HIGH / CRITICAL
 - Visual execution log with security badges
 - Configurable max security level (blocks above threshold)
@@ -66,12 +70,14 @@ tinker-ui/           ← our project, upstream never touches
 - "Sleep good at night" mode: shows only HIGH/CRITICAL executions
 
 ### Mission Control Panel
+
 - Sub-agent status (running, completed, failed)
 - Cron job schedule + last run status
 - Gateway health (WhatsApp connected, uptime, reconnects)
 - Memory system status (engram, cortex, limbic health)
 
 ### Metrics Panel (Clawmetry)
+
 - Token usage over time
 - Response latency distribution
 - Tool usage frequency
@@ -82,6 +88,7 @@ tinker-ui/           ← our project, upstream never touches
 
 Copy the connection protocol from `ui/src/ui/gateway.ts`. The gateway speaks JSON-RPC over WebSocket.
 Key methods:
+
 - `chat.send` — send a message
 - `chat.subscribe` — subscribe to chat events (messages, stream, tool calls)
 - `sessions.list` — list sessions

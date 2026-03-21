@@ -35,9 +35,13 @@ export const modelsHandlers: GatewayRequestHandlers = {
       models.sort((a, b) => {
         const aRank = a.rank ?? Infinity;
         const bRank = b.rank ?? Infinity;
-        if (aRank !== bRank) return aRank - bRank;
+        if (aRank !== bRank) {
+          return aRank - bRank;
+        }
         const p = a.provider.localeCompare(b.provider);
-        if (p !== 0) return p;
+        if (p !== 0) {
+          return p;
+        }
         return (a.name ?? a.id).localeCompare(b.name ?? b.id);
       });
       respond(true, { models }, undefined);

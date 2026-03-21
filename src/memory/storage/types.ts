@@ -48,8 +48,8 @@ export interface MemoryStore {
   close(): Promise<void>;
 
   // Metadata
-  getMeta(key: string): Promise<any | null>;
-  setMeta(key: string, value: any): Promise<void>;
+  getMeta(key: string): Promise<unknown>;
+  setMeta(key: string, value: unknown): Promise<void>;
 
   // File Tracking
   getFileHash(path: string, source: string): Promise<string | null>;

@@ -23,69 +23,76 @@ const CONSTRAINT_FLOOR = 3.0;
  * From the ENGRAM paper.
  */
 const PHASE_SALIENCE: Record<TaskPhase, Partial<Record<EventKind, number>>> = {
-	planning: {
-		user_message: 1.0,
-		agent_message: 1.0,
-		tool_call: 0.5,
-		tool_result: 0.5,
-		system_event: 1.0,
-		compaction_marker: 1.0,
-		artifact_reference: 0.8,
-	},
-	debugging: {
-		user_message: 1.0,
-		agent_message: 1.0,
-		tool_call: 1.5,
-		tool_result: 2.0,
-		system_event: 1.0,
-		compaction_marker: 1.0,
-		artifact_reference: 1.2,
-	},
-	executing: {
-		user_message: 1.0,
-		agent_message: 1.0,
-		tool_call: 1.5,
-		tool_result: 1.5,
-		system_event: 1.0,
-		compaction_marker: 1.0,
-		artifact_reference: 1.0,
-	},
-	reviewing: {
-		user_message: 1.5,
-		agent_message: 1.5,
-		tool_call: 0.3,
-		tool_result: 0.5,
-		system_event: 1.0,
-		compaction_marker: 1.0,
-		artifact_reference: 1.0,
-	},
-	idle: {
-		user_message: 1.0,
-		agent_message: 1.0,
-		tool_call: 0.5,
-		tool_result: 0.5,
-		system_event: 1.0,
-		compaction_marker: 1.0,
-		artifact_reference: 0.8,
-	},
+  planning: {
+    user_message: 1.0,
+    agent_message: 1.0,
+    tool_call: 0.5,
+    tool_result: 0.5,
+    system_event: 1.0,
+    compaction_marker: 1.0,
+    artifact_reference: 0.8,
+  },
+  debugging: {
+    user_message: 1.0,
+    agent_message: 1.0,
+    tool_call: 1.5,
+    tool_result: 2.0,
+    system_event: 1.0,
+    compaction_marker: 1.0,
+    artifact_reference: 1.2,
+  },
+  executing: {
+    user_message: 1.0,
+    agent_message: 1.0,
+    tool_call: 1.5,
+    tool_result: 1.5,
+    system_event: 1.0,
+    compaction_marker: 1.0,
+    artifact_reference: 1.0,
+  },
+  reviewing: {
+    user_message: 1.5,
+    agent_message: 1.5,
+    tool_call: 0.3,
+    tool_result: 0.5,
+    system_event: 1.0,
+    compaction_marker: 1.0,
+    artifact_reference: 1.0,
+  },
+  idle: {
+    user_message: 1.0,
+    agent_message: 1.0,
+    tool_call: 0.5,
+    tool_result: 0.5,
+    system_event: 1.0,
+    compaction_marker: 1.0,
+    artifact_reference: 0.8,
+  },
 };
 
 /**
  * Compute premise compatibility between an event's premise ref and the current task state.
  * Returns 1.0 for matching premises, 0.5 for missing premise info, lower for mismatched.
  */
-export function premiseCompatibility(eventPremiseRef: string | undefined, currentPremiseVersion: string): number {
-	if (!eventPremiseRef) return 0.5; // No premise info → neutral
-	if (eventPremiseRef === currentPremiseVersion) return 1.0; // Exact match
-	// Different premise — partial decay
-	return 0.4;
+export function premiseCompatibility(
+  eventPremiseRef: string | undefined,
+  currentPremiseVersion: string,
+): number {
+  if (!eventPremiseRef) {
+    return 0.5;
+  } // No premise info → neutral
+  if (eventPremiseRef === currentPremiseVersion) {
+    return 1.0;
+  } // Exact match
+  // Different premise — partial decay
+  return 0.4;
 }
 
 /**
  * Get phase salience multiplier for an event kind in the current task phase.
  */
 export function phaseSalience(phase: TaskPhase, kind: EventKind): number {
-	return PHASE_SALIENCE[phase]?.[kind] ?? 1.0;
+  return PHASE_SALIENCE[phase]?.[kind] ?? 1.0;
 }
 
 /**
@@ -93,39 +100,39 @@ export function phaseSalience(phase: TaskPhase, kind: EventKind): number {
  * This multiplies the base retrieval score.
  */
 export function taskConditionedModifier(event: MemoryEvent, taskState: TaskState): number {
-	// Cross-task decay
-	if (event.metadata.taskId && event.metadata.taskId !== taskState.taskId) {
-		return CROSS_TASK_DECAY;
-	}
+  // Cross-task decay
+  if (event.metadata.taskId && event.metadata.taskId !== taskState.taskId) {
+    return CROSS_TASK_DECAY;
+  }
 
-	let m = 1.0;
+  let m = 1.0;
 
-	// Supersession discount
-	if (event.metadata.supersededBy) {
-		m *= SUPERSESSION_DISCOUNT;
-	}
+  // Supersession discount
+  if (event.metadata.supersededBy) {
+    m *= SUPERSESSION_DISCOUNT;
+  }
 
-	// Premise compatibility
-	m *= premiseCompatibility(event.metadata.premiseRef, taskState.premiseVersion);
+  // Premise compatibility
+  m *= premiseCompatibility(event.metadata.premiseRef, taskState.premiseVersion);
 
-	// Phase salience
-	m *= phaseSalience(taskState.phase, event.kind);
+  // Phase salience
+  m *= phaseSalience(taskState.phase, event.kind);
 
-	// Constraint protection — floor at CONSTRAINT_FLOOR
-	if (event.metadata.tags?.includes("constraint")) {
-		m = Math.max(m, CONSTRAINT_FLOOR);
-	}
+  // Constraint protection — floor at CONSTRAINT_FLOOR
+  if (event.metadata.tags?.includes("constraint")) {
+    m = Math.max(m, CONSTRAINT_FLOOR);
+  }
 
-	return Math.min(m, M_MAX);
+  return Math.min(m, M_MAX);
 }
 
 /**
  * Full task-conditioned score: base similarity score × task modifier.
  */
 export function taskConditionedScore(
-	event: MemoryEvent,
-	baseScore: number,
-	taskState: TaskState,
+  event: MemoryEvent,
+  baseScore: number,
+  taskState: TaskState,
 ): number {
-	return baseScore * taskConditionedModifier(event, taskState);
+  return baseScore * taskConditionedModifier(event, taskState);
 }

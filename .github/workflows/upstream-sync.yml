@@ -2,11 +2,11 @@ name: Upstream Sync
 
 on:
   schedule:
-    - cron: '0 6 * * 1,4'  # Monday and Thursday at 06:00 UTC
+    - cron: "0 6 * * 1,4" # Monday and Thursday at 06:00 UTC
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run (no PR created)'
+        description: "Dry run (no PR created)"
         type: boolean
         default: false
 
