@@ -54,6 +54,11 @@ const plugin = {
     const authToken =
       (api.config as any).gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
 
+    // If dangerouslyDisableDeviceAuth is enabled, serve Tinker without gateway auth
+    // (same security posture as the Control UI — safe for loopback-only setups)
+    const disableAuth =
+      (api.config as any).gateway?.controlUi?.dangerouslyDisableDeviceAuth === true;
+
     let indexHtmlCache: string | null = null;
 
     function getIndexHtml(): string {
@@ -69,7 +74,7 @@ const plugin = {
     // Use registerHttpRoute (the correct plugin API) with prefix matching
     api.registerHttpRoute({
       path: PREFIX,
-      auth: "gateway",
+      auth: disableAuth ? "none" : "gateway",
       match: "prefix",
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
