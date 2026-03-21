@@ -195,6 +195,19 @@ Manually verify these patterns (most are now auto-checked by guardian):
 
 ---
 
+### credential-file.ts — No scope in OAuth refresh body (2026-03-20)
+
+**File:** `src/agents/auth-profiles/credential-file.ts`
+**Line:** ~216 (inside `refreshAnthropicOAuthToken()`)
+**What:** Removed `scope: "user:inference"` from the OAuth token refresh request body.
+**Why:** Including `scope` in the refresh request downscopes the new token to ONLY `user:inference`, stripping `user:profile` (and all other scopes). The `/api/oauth/usage` endpoint requires `user:profile` → 403 on every budget fetch → dashed lines in Tinker UI model panel. Omitting `scope` preserves the original grant's full scope set per OAuth 2.0 spec.
+**Cascade:** Downscoped tokens were written back to auth-profiles.json AND credential files, corrupting the source of truth. Inference kept working (only needs `user:inference`), hiding the bug.
+**Grep:** `refreshAnthropicOAuthToken` — verify no `scope` key in the refresh POST body
+**Guardian:** Add `check_credential_refresh_scope` — grep for `scope.*user:inference` in credential-file.ts (should NOT match)
+**Postmortem:** This incident report (Tinker UI session 2026-03-20)
+
+---
+
 ### oauth.ts — try-catch around getOAuthApiKey (2026-03-17)
 
 **File:** `src/agents/auth-profiles/oauth.ts`
@@ -226,3 +239,25 @@ grep "shouldHideHeartbeatChatOutput" src/gateway/server-chat.ts
 ```
 
 **Key improvement (2026-03-04):** `apply-fork-wiring.mjs` now restores BOTH imports AND call sites for attempt.ts, system-prompt.ts, process-message.ts, run.ts, failover-matches.ts, and errors.ts. Future `--theirs` merges are self-healing via `node scripts/apply-fork-wiring.mjs`.
+
+### 16. `src/agents/model-fallback.ts` — Billing gate integration (2026-03-20)
+
+**File:** `src/agents/model-fallback.ts`
+**What:** 4 lines added: import `isCandidateAllowed` from `billing-gate.ts` + pre-flight check in candidate loop. Metered models blocked when: (a) no usage data, (b) provider over spend cap, (c) primary provider has headroom (<70% utilization).
+**New files:** `src/infra/usage-snapshot-store.ts` (shared singleton), `src/agents/billing-gate.ts` (gate logic), `src/agents/billing-gate.test.ts` (15 tests)
+**Budget-panel hook:** `extensions/budget-panel/index.ts` writes `UsageSnapshot` after each fetch
+**Guard strings:** `isCandidateAllowed` (import in model-fallback.ts), `billing-gate` (module reference)
+**Auto-applied by:** `apply-fork-wiring.mjs` → `patchBillingGate()`
+**Risk:** MEDIUM — upstream evolves model-fallback.ts candidate loop
+**Added:** 2026-03-20
+
+### 17. `extensions/whatsapp/src/session.ts` — Baileys 515 error handling + creds flush (2026-03-20)
+
+**Files:** `extensions/whatsapp/src/session.ts`, `extensions/whatsapp/src/login-qr.ts`, `extensions/whatsapp/src/login.ts`
+**What:** Three fixes for QR pairing failure:
+1. `getStatusCode()` — added `err.error?.output?.statusCode` fallback (upstream PR #27910 port). Without this, all 515 restart handling is dead code.
+2. Restored per-authDir `credsSaveQueues` Map + `waitForCredsSaveQueue()`/`waitForCredsSaveQueueWithTimeout()` exports. Ensures Signal protocol keys persist before restart socket reads them.
+3. Added 3-second delay before creating restart socket after 515 (WhatsApp servers need time to finalize device registration).
+**Guard strings:** `err.error?.output?.statusCode` (in session.ts getStatusCode), `credsSaveQueues` (Map in session.ts), `waitForCredsSaveQueueWithTimeout` (import in login-qr.ts + login.ts)
+**Risk:** MEDIUM — fork inlines session-errors.ts functions; upstream keeps them in a separate file. Consider adding session-errors.ts sync to apply-fork-wiring.mjs.
+**Added:** 2026-03-20

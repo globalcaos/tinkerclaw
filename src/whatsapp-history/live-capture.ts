@@ -51,7 +51,30 @@ function extractTextContent(msg: WAMessage): { text: string | null; type: string
     return { text: null, type: "sticker" };
   }
   if (m.contactMessage) {
-    return { text: m.contactMessage.displayName || null, type: "contact" };
+    // Store displayName + vCard so contact details (phone numbers) are searchable
+    const displayName = m.contactMessage.displayName || "";
+    const vcard = m.contactMessage.vcard || "";
+    const phoneMatch = vcard.match(/TEL[^:]*:([+\d\s-]+)/gi);
+    const phones = phoneMatch
+      ? phoneMatch.map((t) => t.replace(/TEL[^:]*:/i, "").trim()).join(", ")
+      : "";
+    const text = phones ? `${displayName} — ${phones}` : displayName || null;
+    return { text, type: "contact" };
+  }
+  if (m.contactsArrayMessage) {
+    // Multi-contact share
+    const names = (m.contactsArrayMessage.contacts || [])
+      .map((c) => {
+        const name = c.displayName || "";
+        const vcard = c.vcard || "";
+        const phoneMatch = vcard.match(/TEL[^:]*:([+\d\s-]+)/gi);
+        const phone = phoneMatch
+          ? phoneMatch.map((t) => t.replace(/TEL[^:]*:/i, "").trim()).join(", ")
+          : "";
+        return phone ? `${name} — ${phone}` : name;
+      })
+      .filter(Boolean);
+    return { text: names.join("; ") || null, type: "contact" };
   }
   if (m.locationMessage) {
     return {

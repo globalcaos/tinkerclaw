@@ -210,6 +210,7 @@ export interface SearchResult {
   text_content: string | null;
   caption: string | null;
   message_type: string | null;
+  raw_json: string | null;
 }
 
 /**
@@ -361,7 +362,7 @@ export function searchMessages(opts: SearchOptions): SearchResult[] {
 
   const sql = `
     SELECT id, chat_jid, chat_name, sender_jid, sender_name, from_me, 
-           timestamp, text_content, caption, message_type
+           timestamp, text_content, caption, message_type, raw_json
     FROM messages m
     ${where}
     ORDER BY timestamp DESC

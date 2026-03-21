@@ -84,15 +84,49 @@ Examples:
               limit,
             });
 
-            // Format results for readability
-            const formatted = results.map((r) => ({
-              id: r.id,
-              chat: r.chat_name || r.chat_jid,
-              sender: r.from_me ? "me" : r.sender_name || r.sender_jid || "unknown",
-              time: formatTimestamp(r.timestamp),
-              type: r.message_type,
-              text: r.text_content || r.caption || "(no text)",
-            }));
+            // Format results for readability, extracting vCard details for contact messages
+            const formatted = results.map((r) => {
+              const base: Record<string, unknown> = {
+                id: r.id,
+                chat: r.chat_name || r.chat_jid,
+                sender: r.from_me ? "me" : r.sender_name || r.sender_jid || "unknown",
+                time: formatTimestamp(r.timestamp),
+                type: r.message_type,
+                text: r.text_content || r.caption || "(no text)",
+              };
+              // Extract vCard phone numbers from raw_json for contact messages
+              if (r.message_type === "contact" && r.raw_json) {
+                try {
+                  const raw = JSON.parse(r.raw_json);
+                  const vcards: string[] = [];
+                  if (raw.message?.contactMessage?.vcard) {
+                    vcards.push(raw.message.contactMessage.vcard);
+                  }
+                  if (raw.message?.contactsArrayMessage?.contacts) {
+                    for (const c of raw.message.contactsArrayMessage.contacts) {
+                      if (c.vcard) vcards.push(c.vcard);
+                    }
+                  }
+                  if (vcards.length > 0) {
+                    const contacts = vcards.map((vc) => {
+                      const nameMatch = vc.match(/FN[;:]([^\r\n]+)/i);
+                      const phoneMatches = vc.match(/TEL[^:]*:([+\d\s-]+)/gi) || [];
+                      const phones = phoneMatches.map((t) =>
+                        t.replace(/TEL[^:]*:/i, "").trim()
+                      );
+                      return {
+                        name: nameMatch?.[1]?.trim() || "unknown",
+                        phones,
+                      };
+                    });
+                    base.vcard = contacts;
+                  }
+                } catch {
+                  // raw_json parse failed — skip vCard extraction
+                }
+              }
+              return base;
+            });
 
             return jsonResult({
               count: formatted.length,
