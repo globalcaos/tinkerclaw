@@ -524,9 +524,95 @@ export function applyCompactionDefaults(cfg: OpenClawConfig): OpenClawConfig {
         ...defaults,
         compaction: {
           ...compaction,
-          mode: "safeguard",
+          mode: "engram",
         },
       },
+    },
+  };
+}
+
+export function applyForkAgentDefaults(cfg: OpenClawConfig): OpenClawConfig {
+  const defaults = cfg.agents?.defaults;
+  if (!defaults) {
+    return cfg;
+  }
+
+  let mutated = false;
+  const nextDefaults = { ...defaults };
+
+  // Default memorySearch.enabled to true
+  if (defaults.memorySearch === undefined || defaults.memorySearch?.enabled === undefined) {
+    nextDefaults.memorySearch = {
+      ...defaults.memorySearch,
+      enabled: true,
+    };
+    mutated = true;
+  }
+
+  // Default thinkingDefault to "low"
+  if (defaults.thinkingDefault === undefined) {
+    nextDefaults.thinkingDefault = "low";
+    mutated = true;
+  }
+
+  if (!mutated) {
+    return cfg;
+  }
+
+  return {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      defaults: nextDefaults,
+    },
+  };
+}
+
+export function applyForkPluginDefaults(cfg: OpenClawConfig): OpenClawConfig {
+  // If plugins.allow is set, ensure fork plugins are in the list
+  const FORK_DEFAULT_PLUGINS = ["hippocampus", "budget-panel", "memory-core", "auth-reload"];
+  const allow = cfg.plugins?.allow;
+
+  // Only modify if allow list is set (don't add allow list if not present; that would be too restrictive)
+  // But do ensure entries have enabled: true for hippocampus and budget-panel
+  let next = cfg;
+
+  if (Array.isArray(allow)) {
+    const missing = FORK_DEFAULT_PLUGINS.filter((id) => !allow.includes(id));
+    if (missing.length > 0) {
+      next = {
+        ...next,
+        plugins: {
+          ...next.plugins,
+          allow: [...allow, ...missing],
+        },
+      };
+    }
+  }
+
+  // Ensure hippocampus and budget-panel are enabled by default in entries
+  const FORK_ENABLED_PLUGINS = ["hippocampus", "budget-panel"];
+  const entries = next.plugins?.entries ?? {};
+  const nextEntries = { ...entries };
+  let entriesMutated = false;
+
+  for (const pluginId of FORK_ENABLED_PLUGINS) {
+    const existing = nextEntries[pluginId];
+    if (existing?.enabled === undefined) {
+      nextEntries[pluginId] = { ...existing, enabled: true };
+      entriesMutated = true;
+    }
+  }
+
+  if (!entriesMutated) {
+    return next;
+  }
+
+  return {
+    ...next,
+    plugins: {
+      ...next.plugins,
+      entries: nextEntries,
     },
   };
 }

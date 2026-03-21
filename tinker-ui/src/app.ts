@@ -34,6 +34,10 @@ let lastDeltaLen = 0;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
+/** Tracks runIds whose final/error/aborted events have already been processed (prevents duplicate push). */
+const finalizedRunIds = new Set<string>();
+/** Tracks toolCallIds already injected as messages (prevents duplicate tool bubbles). */
+const seenToolCallIds = new Set<string>();
 let initialized = false;
 let budgetData: any = null;
 let budgetUsageData: any = null;
@@ -1120,6 +1124,12 @@ function onEvent(evt: any) {
       thinkingMsgIdx = -1;
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+      // FORK: Dedup — skip if we already processed a final/error/aborted for this runId
+      if (p.runId && finalizedRunIds.has(p.runId)) {
+        updateChat();
+        return;
+      }
+      if (p.runId) finalizedRunIds.add(p.runId);
       // FORK: Un-queue any queued user messages on final/error
       for (const m of messages) {
         if (m._queued) delete m._queued;
@@ -1253,6 +1263,9 @@ function onEvent(evt: any) {
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
+        // FORK: Dedup — skip if this toolCallId was already injected
+        if (seenToolCallIds.has(d.toolCallId)) return;
+        seenToolCallIds.add(d.toolCallId);
         // Freeze current streaming text — it becomes its own thinking bubble
         frozenTextEnd = lastDeltaLen;
         streamMsgIdx = -1;
@@ -1271,6 +1284,10 @@ function onEvent(evt: any) {
         });
         updateChat();
       } else if (d.phase === "result" && d.toolCallId) {
+        // FORK: Dedup — skip duplicate tool results (toolCallId already tracked from start)
+        const resultKey = d.toolCallId + ":result";
+        if (seenToolCallIds.has(resultKey)) return;
+        seenToolCallIds.add(resultKey);
         // Push tool_result as a temporary message so renderMsg can pair it
         messages.push({
           role: "user",
@@ -1784,6 +1801,8 @@ async function loadChat() {
   thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  finalizedRunIds.clear();
+  seenToolCallIds.clear();
   messages = res.messages ?? [];
   // Sync turn counter from loaded history
   const userMsgCount = messages.filter((m: any) => m.role === "user").length;
