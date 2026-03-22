@@ -9,7 +9,7 @@ import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 const PREFIX = "/tinker";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,7 +22,11 @@ let directDb: any = null;
 
 function safeJsonParse(val: string | null) {
   if (!val) return undefined;
-  try { return JSON.parse(val); } catch { return undefined; }
+  try {
+    return JSON.parse(val);
+  } catch {
+    return undefined;
+  }
 }
 
 function parseRow(row: any) {
@@ -65,7 +69,10 @@ function getAnatomyDb() {
     try {
       const Database = require("better-sqlite3");
       const dbPath = path.join(
-        process.env.HOME ?? "/tmp", ".openclaw", "data", "anatomy-timeline.db",
+        process.env.HOME ?? "/tmp",
+        ".openclaw",
+        "data",
+        "anatomy-timeline.db",
       );
       if (!fs.existsSync(dbPath)) return null;
       const db = new Database(dbPath, { readonly: true });
@@ -74,13 +81,17 @@ function getAnatomyDb() {
         queryRecentEvents(hours: number) {
           const cutoff = Date.now() - hours * 3600000;
           return db
-            .prepare("SELECT * FROM anatomy_events WHERE timestamp_ms > ? ORDER BY timestamp_ms ASC")
+            .prepare(
+              "SELECT * FROM anatomy_events WHERE timestamp_ms > ? ORDER BY timestamp_ms ASC",
+            )
             .all(cutoff)
             .map(parseRow);
         },
         querySessionEvents(key: string, limit: number) {
           return db
-            .prepare("SELECT * FROM anatomy_events WHERE session_key = ? ORDER BY timestamp_ms DESC LIMIT ?")
+            .prepare(
+              "SELECT * FROM anatomy_events WHERE session_key = ? ORDER BY timestamp_ms DESC LIMIT ?",
+            )
             .all(key, limit)
             .map(parseRow);
         },
