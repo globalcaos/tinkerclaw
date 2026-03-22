@@ -419,7 +419,8 @@ export function mountContextTimeline(
       render();
     });
     legend.appendChild(switchWrap);
-    // Wrap legend in an absolutely-positioned anchor so it stays at top-right of the viewport
+    // Sticky anchor: left:0 keeps it pinned to the viewport edge on horizontal scroll,
+    // then the inner legend is pushed right via absolute positioning.
     const legendAnchor = document.createElement("div");
     legendAnchor.className = "ct-legend-anchor";
     legendAnchor.appendChild(legend);
@@ -641,6 +642,13 @@ export function mountContextTimeline(
         const barRect = firstBarArea.getBoundingClientRect();
         capLine.style.top = `${barRect.top - containerRect.top + container.scrollTop}px`;
         capLine.style.width = `${container.scrollWidth}px`;
+      }
+      // Position legend at right edge of the visible viewport
+      const legendEl = container.querySelector(".ct-legend") as HTMLElement | null;
+      if (legendEl) {
+        const legendW = legendEl.offsetWidth;
+        const visibleW = container.clientWidth;
+        legendEl.style.setProperty("--ct-legend-left", `${visibleW - legendW - 8}px`);
       }
     });
 
