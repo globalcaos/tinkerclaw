@@ -7,7 +7,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   resolveApiKeyForProfile,
   ensureAuthProfileStore,
