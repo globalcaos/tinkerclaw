@@ -4,6 +4,16 @@ import { collectFilesSync, isCodeFile, relativeToCwd } from "./check-file-utils.
 
 const FORBIDDEN_REPO_SRC_IMPORT = /["'](?:\.\.\/)+(?:src\/)[^"']+["']/;
 
+// FORK: Extensions that legitimately import from src/ (fork-specific features).
+// These can't use plugin-sdk subpaths because they access fork-internal APIs.
+const FORK_EXTENSION_ALLOWLIST = new Set([
+  "auth-reload",
+  "budget-panel",
+  "overseer",
+  "tinker",
+  "whatsapp", // FORK: process-message-hooks + live-capture imports
+]);
+
 function isProductionExtensionFile(filePath: string): boolean {
   return !(
     filePath.endsWith("/runtime-api.ts") ||
@@ -21,6 +31,12 @@ function isProductionExtensionFile(filePath: string): boolean {
   );
 }
 
+function isForkAllowlisted(filePath: string): boolean {
+  const rel = path.relative(path.join(process.cwd(), "extensions"), filePath);
+  const extName = rel.split(path.sep)[0];
+  return FORK_EXTENSION_ALLOWLIST.has(extName ?? "");
+}
+
 function collectExtensionSourceFiles(rootDir: string): string[] {
   return collectFilesSync(rootDir, {
     includeFile: (filePath) => isCodeFile(filePath) && isProductionExtensionFile(filePath),
@@ -33,6 +49,9 @@ function main() {
   const offenders: string[] = [];
 
   for (const file of files) {
+    if (isForkAllowlisted(file)) {
+      continue;
+    }
     const content = fs.readFileSync(file, "utf8");
     if (FORBIDDEN_REPO_SRC_IMPORT.test(content)) {
       offenders.push(file);

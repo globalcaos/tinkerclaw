@@ -1,0 +1,138 @@
+[
+  {
+    "file": "extensions/auth-reload/index.ts",
+    "line": 16,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/store.js",
+    "resolvedPath": "src/agents/auth-profiles/store.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/index.ts",
+    "line": 17,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/usage.js",
+    "resolvedPath": "src/agents/auth-profiles/usage.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/reauth.ts",
+    "line": 13,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/credential-file.js",
+    "resolvedPath": "src/agents/auth-profiles/credential-file.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/reauth.ts",
+    "line": 17,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/store.js",
+    "resolvedPath": "src/agents/auth-profiles/store.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/reauth.ts",
+    "line": 18,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/types.js",
+    "resolvedPath": "src/agents/auth-profiles/types.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/reauth.ts",
+    "line": 19,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/usage.js",
+    "resolvedPath": "src/agents/auth-profiles/usage.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/reauth.ts",
+    "line": 20,
+    "kind": "import",
+    "specifier": "../../src/config/config.js",
+    "resolvedPath": "src/config/config.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/watcher.ts",
+    "line": 10,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/paths.js",
+    "resolvedPath": "src/agents/auth-profiles/paths.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/watcher.ts",
+    "line": 11,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/store.js",
+    "resolvedPath": "src/agents/auth-profiles/store.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/auth-reload/watcher.ts",
+    "line": 12,
+    "kind": "import",
+    "specifier": "../../src/gateway/server-broadcast.js",
+    "resolvedPath": "src/gateway/server-broadcast.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/budget-panel/index.ts",
+    "line": 15,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles.js",
+    "resolvedPath": "src/agents/auth-profiles.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/budget-panel/index.ts",
+    "line": 19,
+    "kind": "import",
+    "specifier": "../../src/agents/auth-profiles/credential-file.js",
+    "resolvedPath": "src/agents/auth-profiles/credential-file.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/overseer/index.ts",
+    "line": 17,
+    "kind": "import",
+    "specifier": "../../src/gateway/session-utils.js",
+    "resolvedPath": "src/gateway/session-utils.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/overseer/index.ts",
+    "line": 32,
+    "kind": "import",
+    "specifier": "../../src/plugins/types.js",
+    "resolvedPath": "src/plugins/types.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/overseer/topology.ts",
+    "line": 19,
+    "kind": "import",
+    "specifier": "../../src/plugins/types.js",
+    "resolvedPath": "src/plugins/types.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp/src/auto-reply/monitor/process-message.ts",
+    "line": 38,
+    "kind": "import",
+    "specifier": "../../../../../src/fork/process-message-hooks.js",
+    "resolvedPath": "src/fork/process-message-hooks.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp/src/session.ts",
+    "line": 17,
+    "kind": "import",
+    "specifier": "../../../src/whatsapp-history/live-capture.js",
+    "resolvedPath": "src/whatsapp-history/live-capture.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  }
+]
