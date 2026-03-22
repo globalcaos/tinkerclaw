@@ -335,6 +335,8 @@ export function mountContextTimeline(
   // ─── Render ───
   function render() {
     container.innerHTML = "";
+    // Remove previous legend (lives outside the scroll container)
+    container.parentElement?.querySelector(".ct-legend-anchor")?.remove();
 
     if (buffer.length === 0) {
       const empty = document.createElement("div");
@@ -419,12 +421,15 @@ export function mountContextTimeline(
       render();
     });
     legend.appendChild(switchWrap);
-    // Sticky anchor: left:0 keeps it pinned to the viewport edge on horizontal scroll,
-    // then the inner legend is pushed right via absolute positioning.
+    // Legend lives OUTSIDE the scroll container (on its parent) so it never scrolls
     const legendAnchor = document.createElement("div");
     legendAnchor.className = "ct-legend-anchor";
     legendAnchor.appendChild(legend);
-    container.appendChild(legendAnchor);
+    if (container.parentElement) {
+      container.parentElement.appendChild(legendAnchor);
+    } else {
+      container.appendChild(legendAnchor);
+    }
 
     // Spacer pushes bars right when content doesn't overflow; shrinks to 0 when it does
     const spacer = document.createElement("div");
@@ -642,13 +647,6 @@ export function mountContextTimeline(
         const barRect = firstBarArea.getBoundingClientRect();
         capLine.style.top = `${barRect.top - containerRect.top + container.scrollTop}px`;
         capLine.style.width = `${container.scrollWidth}px`;
-      }
-      // Position legend at right edge of the visible viewport
-      const legendEl = container.querySelector(".ct-legend") as HTMLElement | null;
-      if (legendEl) {
-        const legendW = legendEl.offsetWidth;
-        const visibleW = container.clientWidth;
-        legendEl.style.setProperty("--ct-legend-left", `${visibleW - legendW - 8}px`);
       }
     });
 
