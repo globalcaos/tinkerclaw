@@ -190,7 +190,7 @@ The mutation was filed as bug B010, with root cause: "Ambiguous action verb ('sy
 
 **Day 7 (Mar 10) -- Second-order failure.** The same cron later encountered a merge conflict. It reported the conflict and stopped -- exactly as mutation #8 required. But the restriction was too broad. The agent was in fact _capable_ of resolving the conflict intelligently by reading fork documentation, understanding both sides' intent, and verifying with a build. The blanket prohibition prevented useful work. The merge was blocked for 24 hours.
 
-_Prompt after (mutation #14):_ "Run the safe merge script. If conflicts remain, read FORK_PATCHES.md to understand intent, attempt resolution, verify with build. If genuinely uncertain, escalate."
+_Prompt after (mutation #14):_ "Run the safe merge script. If conflicts remain, read the fork patches registry to understand intent, attempt resolution, verify with build. If genuinely uncertain, escalate."
 
 **Meta-lesson encoded (Level 2):** "When encoding a safety lesson, separate the failure mode from the restriction. The restriction should be proportional to the risk, not a blanket prohibition."
 
@@ -269,7 +269,7 @@ Over 30 days, we documented 14 prompt mutations -- changes to cron prompts or op
 | 2   | Feb 14 | Cron sent message to wrong chat               | Added explicit JID-based targeting, banned name-based lookup | All WA crons     |
 | 3   | Feb 16 | Memory files growing unbounded                | Created size budgets, cleaning-lady cron                     | System-wide      |
 | 4   | Feb 19 | Agent didn't read SOUL.md                     | Added mandatory boot sequence to AGENTS.md                   | All sessions     |
-| 5   | Feb 22 | Heartbeat renamed function broke calls        | Created FORK_PATCHES.md registry                             | Fork sync        |
+| 5   | Feb 22 | Heartbeat renamed function broke calls        | Created the fork patches registry registry                             | Fork sync        |
 | 6   | Feb 24 | Cron report was 40KB (unreadable)             | Added budget fuses, formatting rules                         | All report crons |
 | 7   | Mar 01 | Agent included PII in reply                   | Added privacy guardrail to TOOLS.md                          | All sessions     |
 | 8   | Mar 03 | Fork sync cron edited production code (B010)  | Added HARD CONSTRAINTS to cron prompt                        | Fork sync        |
@@ -534,7 +534,7 @@ HARD CONSTRAINTS:
 - NEVER modify source code directly
 - NEVER run pnpm build
 - NEVER pkill or restart the gateway
-- If safe-cron-merge.sh exits non-zero, report and STOP
+- If the fork merge script exits non-zero, report and STOP
 ```
 
 ### Mutation #14 -- Over-correction Fix (2026-03-10)
@@ -550,7 +550,7 @@ SAFETY CONSTRAINTS (replaces HARD CONSTRAINTS):
 - NEVER git checkout upstream/main -- . (blanket overwrite)
 - You MAY edit source files to resolve conflicts in ~/src/tinkerclaw
 - You MAY run pnpm build to verify your resolution
-- ALWAYS preserve fork guard strings from FORK_PATCHES.md
+- ALWAYS preserve fork guard strings from the fork patches registry
 - When in doubt: keep ours and escalate
 ```
 
