@@ -542,10 +542,8 @@ When one human goes on leave, their AI can brief the other AI about pending work
 | **Cleaning-lady cron**    | Auto-distills workspace files after upstream merge         | Check manually after `git pull` |
 | **Fork-scanner**          | Analyzes other forks for ideas to cherry-pick              | Browse GitHub manually          |
 | **Fork-sync**             | Safe nightly merge from upstream with guardian checks      | Manual `git merge`              |
-| **FORK_PATCHES.md**       | Registry of fork-specific changes to protect during merges | Hope and prayer                 |
 | **Token panel (Tinker)**  | Real-time per-session cost tracking, context treemap       | Check provider dashboard        |
 | **Subagent overseer**     | Pull-based daemon for sub-agent health monitoring          | Manual polling                  |
-| **apply-fork-wiring.mjs** | Auto-restores fork-specific code after merge conflicts     | Manual conflict resolution      |
 
 ## What's the same on both:
 
