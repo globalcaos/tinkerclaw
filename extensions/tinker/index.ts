@@ -14,6 +14,84 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 const PREFIX = "/tinker";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// ---------------------------------------------------------------------------
+// Direct SQLite fallback for anatomy queries — used when the gateway's
+// __anatomyDb global bridge isn't available yet (before first LLM call).
+// ---------------------------------------------------------------------------
+let directDb: any = null;
+
+function safeJsonParse(val: string | null) {
+  if (!val) return undefined;
+  try { return JSON.parse(val); } catch { return undefined; }
+}
+
+function parseRow(row: any) {
+  return {
+    turn: row.turn,
+    roundNumber: row.round_number ?? undefined,
+    compactionCycle: row.compaction_cycle ?? 0,
+    timestamp: new Date(row.timestamp_ms).toISOString(),
+    timestampMs: row.timestamp_ms,
+    model: row.model ?? "",
+    provider: row.provider ?? "",
+    sessionKey: row.session_key || undefined,
+    topics: safeJsonParse(row.topics) ?? [],
+    topicTransition: safeJsonParse(row.topic_transition),
+    contextSent: safeJsonParse(row.context_sent) ?? { totalTokens: 0 },
+    contextWindow: safeJsonParse(row.context_window) ?? { maxTokens: 0, usedTokens: 0 },
+    authProfileId: row.auth_profile_id ?? undefined,
+    responseTokens: row.response_tokens ?? undefined,
+    memoriesInjected: safeJsonParse(row.memories_injected) ?? { autoRecall: [], searched: [] },
+    runId: row.run_id ?? undefined,
+    durationMs: row.duration_ms ?? undefined,
+    stopReason: row.stop_reason ?? undefined,
+    toolsTriggered: safeJsonParse(row.tools_triggered),
+    responseThinkingTokens: row.response_thinking_tokens ?? undefined,
+    responseTextTokens: row.response_text_tokens ?? undefined,
+    responseToolCallTokens: row.response_tool_call_tokens ?? undefined,
+    cacheReadTokens: row.cache_read_tokens ?? undefined,
+    cacheCreationTokens: row.cache_creation_tokens ?? undefined,
+    responseContent: safeJsonParse(row.response_content) ?? undefined,
+  };
+}
+
+function getAnatomyDb() {
+  // Prefer the gateway's bridge (shares DB handle + prepared statements)
+  const bridge = (globalThis as any).__anatomyDb;
+  if (bridge) return bridge;
+
+  // Fallback: open DB directly via better-sqlite3 (already in the process)
+  if (!directDb) {
+    try {
+      const Database = require("better-sqlite3");
+      const dbPath = path.join(
+        process.env.HOME ?? "/tmp", ".openclaw", "data", "anatomy-timeline.db",
+      );
+      if (!fs.existsSync(dbPath)) return null;
+      const db = new Database(dbPath, { readonly: true });
+      db.pragma("journal_mode = WAL");
+      directDb = {
+        queryRecentEvents(hours: number) {
+          const cutoff = Date.now() - hours * 3600000;
+          return db
+            .prepare("SELECT * FROM anatomy_events WHERE timestamp_ms > ? ORDER BY timestamp_ms ASC")
+            .all(cutoff)
+            .map(parseRow);
+        },
+        querySessionEvents(key: string, limit: number) {
+          return db
+            .prepare("SELECT * FROM anatomy_events WHERE session_key = ? ORDER BY timestamp_ms DESC LIMIT ?")
+            .all(key, limit)
+            .map(parseRow);
+        },
+      };
+    } catch {
+      return null;
+    }
+  }
+  return directDb;
+}
+
 // tinker-ui/dist is at the repo root, two levels up from extensions/tinker/
 const TINKER_DIST = path.resolve(__dirname, "../../tinker-ui/dist");
 
@@ -82,7 +160,7 @@ const plugin = {
 
         // --- Jarvis Voice Mute API ---
         const MUTE_FILE = path.join(
-          process.env.HOME ?? "/home/<user>",
+          process.env.HOME ?? "/home/user",
           ".openclaw/data/jarvis-muted.json",
         );
         if (pathname === `${PREFIX}/api/jarvis-mute`) {
@@ -124,7 +202,7 @@ const plugin = {
 
         // --- Context Anatomy API (proxied through /tinker/api/context-anatomy/) ---
         if (pathname.startsWith(`${PREFIX}/api/context-anatomy/`)) {
-          const anatomyDb = (globalThis as any).__anatomyDb;
+          const anatomyDb = getAnatomyDb();
           const jsonHeaders = {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
@@ -186,7 +264,7 @@ const plugin = {
             return true;
           }
           // Try the exact path first, then common workspace prefixes
-          const HOME = process.env.HOME ?? "/home/<user>";
+          const HOME = process.env.HOME ?? "/home/user";
           const candidates = [
             rawPath,
             path.join(HOME, ".openclaw/workspace/memory", rawPath),
