@@ -269,7 +269,7 @@ Over 30 days, we documented 14 prompt mutations -- changes to cron prompts or op
 | 2   | Feb 14 | Cron sent message to wrong chat               | Added explicit JID-based targeting, banned name-based lookup | All WA crons     |
 | 3   | Feb 16 | Memory files growing unbounded                | Created size budgets, cleaning-lady cron                     | System-wide      |
 | 4   | Feb 19 | Agent didn't read SOUL.md                     | Added mandatory boot sequence to AGENTS.md                   | All sessions     |
-| 5   | Feb 22 | Heartbeat renamed function broke calls        | Created the fork patches registry registry                             | Fork sync        |
+| 5   | Feb 22 | Heartbeat renamed function broke calls        | Created the fork patches registry registry                   | Fork sync        |
 | 6   | Feb 24 | Cron report was 40KB (unreadable)             | Added budget fuses, formatting rules                         | All report crons |
 | 7   | Mar 01 | Agent included PII in reply                   | Added privacy guardrail to TOOLS.md                          | All sessions     |
 | 8   | Mar 03 | Fork sync cron edited production code (B010)  | Added HARD CONSTRAINTS to cron prompt                        | Fork sync        |
