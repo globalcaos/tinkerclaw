@@ -46,7 +46,42 @@ fi
 
 echo "⚠️  Conflicts detected. Resolving known patterns..."
 
-# TIER 1: Files where we accept upstream + re-wire fork hooks
+# ── Significant-work guard ─────────────────────────────────────────────────────
+# Before overwriting ANY conflicted file with --theirs, check if it has recent
+# fork-specific work. If so, flag it for manual review instead of auto-resolving.
+# This prevents the "README debacle" class of bugs where automation silently
+# destroys hours of intentional fork customization.
+#
+# A file is "protected by recent work" if:
+#   - It has ≥3 fork-only commits in the last 30 days, OR
+#   - It has ≥100 lines of fork-only diff in the last 30 days
+# These files get resolved as --ours and flagged for review.
+
+PROTECTED_FILES=()
+MERGE_BASE=$(git merge-base HEAD upstream/main 2>/dev/null || echo "HEAD~50")
+
+check_significant_work() {
+  local file="$1"
+  # Count fork-only commits touching this file in last 30 days
+  local fork_commits
+  fork_commits=$(git log --oneline --since="30 days ago" "$MERGE_BASE..HEAD" -- "$file" 2>/dev/null | wc -l)
+
+  # Count fork-only diff lines
+  local fork_diff_lines=0
+  if [ "$fork_commits" -gt 0 ]; then
+    fork_diff_lines=$(git diff "$MERGE_BASE" HEAD -- "$file" 2>/dev/null | grep -c "^[+-]" || true)
+  fi
+
+  if [ "$fork_commits" -ge 3 ] || [ "$fork_diff_lines" -ge 100 ]; then
+    echo "  🛡️  PROTECTED: $file — $fork_commits fork commits, $fork_diff_lines diff lines in 30d"
+    echo "      → Keeping ours. Review diff manually if upstream changes matter."
+    PROTECTED_FILES+=("$file")
+    return 0  # true = protected
+  fi
+  return 1  # false = not protected
+}
+
+# ── TIER 1: Files where we accept upstream + re-wire fork hooks
 TIER1_ACCEPT_UPSTREAM=(
   "src/agents/pi-embedded-runner/run/attempt.ts"
   "src/agents/system-prompt.ts"
@@ -66,14 +101,23 @@ TIER1_ACCEPT_UPSTREAM=(
 RESOLVED=0
 for f in "${TIER1_ACCEPT_UPSTREAM[@]}"; do
   if git diff --name-only --diff-filter=U 2>/dev/null | grep -qF "$f"; then
-    echo "  ⚡ Resolving $f → accept upstream"
-    git checkout --theirs "$f"
-    git add "$f"
-    ((RESOLVED++))
+    # TIER 1 files get fork wiring re-applied after --theirs, so significant
+    # fork work is preserved by apply-fork-wiring.mjs. But if the file has
+    # heavy fork changes beyond what wiring covers, flag it.
+    if check_significant_work "$f"; then
+      git checkout --ours "$f"
+      git add "$f"
+      ((RESOLVED++))
+    else
+      echo "  ⚡ Resolving $f → accept upstream (will re-wire)"
+      git checkout --theirs "$f"
+      git add "$f"
+      ((RESOLVED++))
+    fi
   fi
 done
 
-# Package files: accept upstream versions
+# Package files: accept upstream versions (always safe — fork deps restored below)
 for f in package.json pnpm-lock.yaml; do
   if git diff --name-only --diff-filter=U 2>/dev/null | grep -qF "$f"; then
     echo "  📦 Resolving $f → accept upstream"
@@ -123,6 +167,23 @@ if [ -f package.json ] && ! grep -q '"better-sqlite3"' package.json; then
     require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
   "
   git add package.json
+fi
+
+# Check remaining unresolved conflicts for significant fork work
+for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do
+  if check_significant_work "$f"; then
+    git checkout --ours "$f"
+    git add "$f"
+    ((RESOLVED++))
+  fi
+done
+
+# Report protected files summary
+if [ ${#PROTECTED_FILES[@]} -gt 0 ]; then
+  echo ""
+  echo "🛡️  ${#PROTECTED_FILES[@]} file(s) protected by significant fork work (kept ours):"
+  printf '    %s\n' "${PROTECTED_FILES[@]}"
+  echo "  Review these manually: git diff upstream/main -- <file>"
 fi
 
 # Report remaining conflicts
