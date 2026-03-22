@@ -83,10 +83,10 @@ for f in package.json pnpm-lock.yaml; do
   fi
 done
 
-# README: accept upstream
+# README: keep ours (fork README is maintained independently)
 if git diff --name-only --diff-filter=U 2>/dev/null | grep -qF "README.md"; then
-  echo "  📝 Resolving README.md → accept upstream"
-  git checkout --theirs README.md
+  echo "  📝 Resolving README.md → keep ours (fork README)"
+  git checkout --ours README.md
   git add README.md
   ((RESOLVED++))
 fi

@@ -383,6 +383,63 @@ check_bundled_plugins_env() {
   fi
 }
 
+check_readme_integrity() {
+  log "--- Phase 5h: README fork integrity ---"
+
+  local readme="$ROOT/README.md"
+  if [[ ! -f "$readme" ]]; then
+    warn "README.md does not exist"
+    return
+  fi
+
+  # README reference commit: df7e1de73c (2026-03-21, all 11 papers, screenshots, fork branding)
+  # Update this after intentional README changes.
+  local README_REFERENCE="df7e1de73c"
+
+  # Required sections — if any are missing, upstream likely overwrote our fork README
+  local -a required_patterns=(
+    "TinkerClaw\|Tinker Zone"
+    "What.*Different\|Why This Fork\|What It Looks Like"
+    "Published Skills\|ClawHub"
+    "Memory Research\|Research Papers"
+    "Setup Guide\|Quick Start"
+    "Tinker.*Command\|Tinker UI"
+    "Multi-Model\|Failover"
+  )
+
+  local missing=0
+  for pattern in "${required_patterns[@]}"; do
+    if ! grep -qi "$pattern" "$readme" 2>/dev/null; then
+      warn "README missing required section matching: $pattern"
+      missing=$(( missing + 1 ))
+    fi
+  done
+
+  # Check it's not the upstream README (OpenClaw branding without fork identity)
+  if head -20 "$readme" | grep -q "EXFOLIATE" && ! head -20 "$readme" | grep -qi "TinkerClaw\|Tinker Zone\|fork"; then
+    warn "README appears to be upstream OpenClaw README (no fork branding in header)"
+    if [[ "$fix_mode" == true ]]; then
+      log "  🔧 Restoring README from reference commit $README_REFERENCE"
+      git show "$README_REFERENCE:README.md" > "$readme" 2>/dev/null && git add "$readme" \
+        && ok "Restored README from $README_REFERENCE" \
+        || warn "Failed to restore README from $README_REFERENCE — commit may not exist locally"
+    fi
+  fi
+
+  # Paper count check — we have 11+ papers, upstream has 0
+  local paper_count
+  paper_count=$(grep -c "papers/" "$readme" 2>/dev/null || echo 0)
+  if [[ "$paper_count" -lt 5 ]]; then
+    warn "README has only $paper_count paper references (expected 11+). Papers table may have been lost."
+  else
+    ok "README has $paper_count paper references"
+  fi
+
+  if [[ "$missing" -eq 0 ]]; then
+    ok "README contains all required fork sections"
+  fi
+}
+
 check_single_binary() {
   log "--- Phase 5g: Single openclaw binary ---"
 
@@ -582,6 +639,7 @@ check_systemd_service
 check_workspace_extension_shadowing
 check_bundled_plugins_env
 check_single_binary
+check_readme_integrity
 check_oauth_trycatch
 check_credential_refresh_scope
 
