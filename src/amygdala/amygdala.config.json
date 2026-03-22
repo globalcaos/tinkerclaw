@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "alpha_max": 0.15,
+  "alpha_current": 0.0,
+  "phase": "shadow",
+  "models_dir": "../../models/amygdala",
+  "onnx_dir": "../../models/amygdala/onnx",
+  "training_db": "../../data/amygdala/training.sqlite",
+  "encoder_path": "../../models/amygdala/encoder.onnx",
+  "projection_path": "../../models/amygdala/projection.onnx",
+  "thresholds": {
+    "hard_block": 0.25,
+    "soft_block": 0.50,
+    "proceed": 0.85
+  },
+  "temporal_window_size": 32,
+  "excluded_architectures": ["d"],
+  "conformal_epsilon": 0.05,
+  "novelty_grace_period_hours": 48,
+  "notes": "Shadow mode activated 2026-03-22. Arch D excluded (ONNX export failed). Alpha starts at 0 and ramps via nightly training."
+}
