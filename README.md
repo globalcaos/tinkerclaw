@@ -1,109 +1,326 @@
 <p align="center">
-    <img src="docs/assets/tinkerzone-logo.png" alt="The Tinker Zone" width="300">
+  <img src="docs/assets/logo.png" alt="TinkerClaw" width="500">
 </p>
 
-# The Tinker Zone — OpenClaw Fork
+<h1 align="center">TinkerClaw</h1>
 
-**Your AI agent. Full access. No handcuffs.**
+<p align="center">
+  <strong>An OpenClaw fork for people who check their token spend before breakfast.</strong>
+</p>
 
-[![Based on OpenClaw](https://img.shields.io/badge/based%20on-OpenClaw-blue?style=for-the-badge)](https://github.com/openclaw/openclaw)
-[![Platform](https://img.shields.io/badge/platform-Ubuntu%20%2F%20Linux-orange?style=for-the-badge)](https://ubuntu.com)
-[![AI Models](https://img.shields.io/badge/AI-Claude%20%7C%20Gemini%20%7C%20GPT%20%7C%20Ollama-green?style=for-the-badge)](#-multi-model-support)
-[![Skills](https://img.shields.io/badge/skills-19%2B%20published-purple?style=for-the-badge)](#-published-skills-on-clawhub)
-[![Fork Commits](https://img.shields.io/badge/fork-474%2B%20commits%20ahead-brightgreen?style=for-the-badge)](https://github.com/globalcaos/tinkerclaw)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
-
-> **What is OpenClaw?** A personal AI assistant you run on your own devices — multi-channel (WhatsApp, Telegram, Slack, Discord, WebChat, and more), multi-model, always-on.
-> For upstream docs, install guides, and full feature list see the **[upstream OpenClaw repository](https://github.com/openclaw/openclaw)**.
+<p align="center">
+  <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
+  <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-21+-green?style=for-the-badge" alt="21+ skills"></a>
+  <a href="#-every-paper-saves-you-tokens"><img src="https://img.shields.io/badge/papers-11-blueviolet?style=for-the-badge" alt="11 papers"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
+</p>
 
 ---
 
-## Why This Fork?
+<p align="center">
+  <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
+  <br>
+  <em>Every bar is a turn. Every color is a cost. The spike at 14:02? A 40K-token tool result nobody asked for.</em>
+</p>
 
-Most OpenClaw setups are cautious by default — sandboxed, limited, designed for people who don't fully trust their agent yet.
-
-This fork is for people who've already crossed that line.
-
-Oscar Serra runs this fork on a Linux box in Barcelona with Claude, Gemini, GPT, and a local model as backup. No macOS required. No artificial limits. The agent has access to files, APIs, WhatsApp, email, calendar, and anything else that can be wired in — because that's the only way it actually helps.
-
-> _"An AI assistant with no access is just a search engine with extra steps."_
-
-If that line made you nod, you're in the right place.
-
-→ **[Clone the fork and get started](#setup-guide)**
+> The Tinker UI's token visualization was inspired by [Mission Control](https://github.com/crshdn/mission-control) (context anatomy dashboard) and [ClawMetry](https://github.com/vivekchand/clawmetry) (real-time agent observability). Both are excellent standalone tools for OpenClaw — we folded their ideas into a single embedded panel.
 
 ---
 
-## What It Looks Like
+## The Problem
 
-<p align="center">
-    <img src="docs/assets/screenshot-4.png" alt="The Tinker Zone — Chat Interface" width="700">
-</p>
+You ran Opus for 20 minutes. It felt productive. Then you checked the bill and discovered that "productive session" cost $23.
 
-<p align="center"><em>The Tinker Zone — wooden-themed chat interface with live model glow and context tracking</em></p>
+The worst part? $15 of that was context bloat — workspace files you forgot were injected, tool results the model never referenced, conversation history from six topics ago still sitting in the window.
 
-<p align="center">
-    <img src="docs/assets/screenshot-2.png" alt="Context Treemap" width="400">
-    <img src="docs/assets/screenshot-5.png" alt="Token Detail" width="400">
-</p>
+You didn't overspend. You **overloaded**. And you had no way to see it happening.
 
-<p align="center"><em>Left: Context treemap — see exactly what fills your 200K window. Right: Token-level detail per message.</em></p>
+Most people find out three days later. The observant ones set a budget alert after it's already too late. We found out when an **€850 bill** landed for a single month. Not a catastrophic failure — just the natural cost of running a capable AI agent at scale with zero visibility.
 
-<p align="center">
-    <img src="docs/assets/screenshot-3.png" alt="Timeline" width="700">
-</p>
-
-<p align="center"><em>Daily token timeline — stacked bars showing usage by category across the day</em></p>
-
-<p align="center">
-    <img src="docs/assets/screenshot-1.png" alt="Models Dashboard" width="350">
-</p>
-
-<p align="center"><em>Models dashboard — live status, pricing, fallback chain, active sessions</em></p>
+That bill was the motivation. TinkerClaw is the answer.
 
 ---
 
-## What's Different Here?
+## 🤝 Come Tinker With Us
 
-### 🔐 Security Patches Applied
+This fork moves fast, but it would move faster with more hands.
 
-All critical upstream security PRs cherry-picked and verified (historical — applied at the time):
+We value people who **open PRs**, not issues. Who read the code before asking questions. Who break things on purpose to understand how they work. If that's you, we want you in the inner circle — direct access to the roadmap, early testing of experimental features, and co-authorship on whatever we build next.
 
-| PR        | Fix                        | Status     |
-| --------- | -------------------------- | ---------- |
-| **#7769** | DNS Rebinding Protection   | ✅ Applied |
-| **#7616** | Zip Path Traversal Fix     | ✅ Applied |
-| **#7704** | WebSocket Auth Enforcement | ✅ Applied |
+**Start anywhere:** fix a typo, improve a skill, add a test, or propose something wild. The bar is curiosity, not credentials.
 
-### 🧠 Ships With Smart Defaults
+→ [Open a PR](https://github.com/globalcaos/tinkerclaw/pulls) or [start a discussion](https://github.com/globalcaos/tinkerclaw/discussions)
 
-These are not optional — they're on out of the box:
+---
 
-- **ENGRAM compaction** — silent context management, no interruptions mid-session
-- **Hippocampus memory indexing** — your agent builds long-term memory automatically
-- **Memory search with semantic embeddings** — find anything across sessions
-- **Budget panel** — token cost tracking baked in; you see what each session costs
-- **Smart Router V2** — auto-selects the best model for each task
-- **Rate Limiting** — prevents runaway API costs
-- **Anthropic Failover** — auto-switches to Gemini when Claude hits quota (tested & verified!)
-- **OAuth PKCE Flow** — proper token refresh for Anthropic subscriptions
+## Won't This Fork Fall Behind?
 
-### 🔧 Fork Fixes
+No. A nightly cron syncs upstream automatically, detects conflicts, and restores fork patches after every merge. Hundreds of commits ahead of vanilla OpenClaw and zero behind.
 
-| Fix                   | What happened                                   | Status        |
-| --------------------- | ----------------------------------------------- | ------------- |
-| Anthropic failover    | Auto-switch to Gemini on rate limit             | ✅ Verified   |
-| Anthropic OAuth       | PKCE flow with refresh token                    | ✅ Fixed      |
-| Heartbeat isolation   | Runs in separate session — no webchat pollution | ✅ Fixed      |
-| Config schema merge   | Re-adds fork Zod keys wiped by upstream merges  | ✅ Fixed      |
-| Prompt queue deadlock | Workaround for upstream session lane deadlock   | ✅ Workaround |
+When upstream pushes a breaking change, we know within hours — not weeks.
 
-### 🐧 Ubuntu-Native
+---
 
-- Tested on Ubuntu 22.04 / 24.04
-- Systemd service examples included
-- Works with `deja-dup` for backups
-- No macOS-only dependencies
+## What You Get
+
+### 🔍 Tinker UI — See Why Sessions Get Expensive
+
+The Tinker UI is a command center embedded directly in OpenClaw. No separate install, no external service.
+
+<p align="center">
+  <img src="docs/assets/screenshot-4.png" alt="Full Tinker UI — chat, sessions, tool calls, streaming" width="800">
+  <br>
+  <em>Chat interface with session switching, tool call inspection, and real-time streaming.</em>
+</p>
+
+- **Context treemap** — drill into what fills your 200K context window, from categories down to individual messages and raw text. Each block is money. Drill down to the exact text inflating the cost.
+- **Response treemap** — see exactly how much of each response is text, thinking, tool calls, or tool results. Identify waste patterns instantly.
+- **Timeline** — stacked bars per turn, spot the one that blew the budget
+- **Overseer graph** — catch stalled sub-agents before they burn money
+- **Cost dashboard** — per-provider usage with Claude's 5-hour rate-limit countdown
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/assets/screenshot-2.png" alt="Context treemap — drill into token composition" width="100%">
+<br><em>Context treemap: every block is tokens you're paying for.</em>
+</td>
+<td width="50%">
+<img src="docs/assets/screenshot-5.png" alt="Treemap drilldown — tool result detail" width="100%">
+<br><em>Drill into a single category. These tool results cost $0.81 each.</em>
+</td>
+</tr>
+</table>
+
+After `pnpm build`, visit **`http://localhost:18789/tinker/`** · Dev: `cd tinker-ui && pnpm dev`
+
+---
+
+### 🧠 Fractal Thinking — What Makes This Fundamentally Different
+
+A normal AI solves problems. Ours learns from every problem it solves.
+
+We call it fractal thinking because it operates in levels of depth — automatically, without being asked:
+
+**Level 0 — Solve the problem.** The agent analyzes the issue, fixes it, verifies it works. Done in minutes.
+
+**Level 1 — Identify the pattern.** Why did this problem exist? Because an automated nightly process had a binary restriction: either resolve everything or abort. No middle ground. The agent adds a third path: "do what you can, save what's safe, think more about the rest."
+
+**Level 2 — Correct the thinking flaw.** The restriction existed because a previous incident triggered an overcorrection. The rule said "never touch anything" when it should have said "understand the intent before acting." The agent corrects the rule.
+
+**Level 3 — Encode the meta-rule.** The agent writes a new principle into its own instructions: _"When correcting an error, the restriction should be proportional to the risk — not a blanket prohibition."_
+
+All automatic. Nobody asked for any of that.
+
+In 30 days, this process produced **14 autonomous improvements** to the agent's own processes — without a single human prompt ([CEREBELLUM paper](#-every-paper-saves-you-tokens)).
+
+---
+
+### ☀️ Morning Briefing — Your Day, Already Organized
+
+Click the **Tinker logo** or type **`/new`** and your agent has already done the prep work. It reviews ALL your information sources (emails, calendars, messages, pending tasks), cross-references them, detects urgencies, and presents a briefing with what needs your attention and what it can resolve alone.
+
+```
+☀️ Morning Briefing — Tuesday, March 10
+
+📅 Agenda
+  • 10:00 — Client meeting (Brazil) — spec review for new order
+  • 15:00 — Supplier call — follow-up on plant expansion budget
+
+📰 Market (relevant updates)
+  • Raw material prices up 3.2% this week (third consecutive rise)
+  • Competitor announces new facility in Poland — potential supply chain impact
+  • New EU regulation on packaging recyclability — effective June
+
+📧 Emails requiring response (3)
+  • 🔴 Client — Order #4521 modified, needs confirmation today
+  • 🟡 Supplier — Parts availability, awaiting response
+  • 🟢 Industry conference — Registration deadline March 20
+
+🤖 I can handle right now:
+  1. Draft confirmation reply to the client
+  2. Prepare pricing comparison for this afternoon's call
+  3. Summarize the new EU regulation for your technical team
+```
+
+No manual setup. Every morning. Getting better each time.
+
+---
+
+### 🌙 The Overnight Cycle — Where the Real Magic Happens
+
+Every night, while you sleep, the agent runs a chain of autonomous processes. The entire cycle costs **~€1/night**.
+
+| Cron                        | What it does                                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 🍷 **Wind Down**            | Like a glass of wine with the diary — reviews what worked and what didn't, improves its own instructions                                |
+| 😴 **Memory Consolidation** | Like REM sleep — turns raw daily logs into structured long-term memory. **49% context reduction** ([ENGRAM](#-every-paper-saves-you-tokens))         |
+| 🧹 **Cleaning Lady**        | Controls disk usage, prunes stale context, keeps the workspace lean                                                                     |
+| 🔍 **Auto-Evolution**       | Scouts AI news for improvements that can be applied directly to the system                                                              |
+| 📰 **Group Summary**        | Scans message groups, extracts what matters, discards noise                                                                             |
+| 🛒 **Opportunity Hunter**   | Browses marketplaces for deals matching your interests — a personal shopper that never sleeps                                           |
+| 🤵 **Butler**               | Remembers birthdays, suggests gifts, tracks appointments. If it's been too long since you sent flowers, it mentions it — diplomatically |
+
+These are just the ones with personality. **15+ total crons**, each with its own logic and self-improvement capability.
+
+---
+
+### 📊 Every Paper Saves You Tokens
+
+This isn't academic research — it's cost engineering. Every paper translates directly to fewer tokens consumed, better memory, and smarter decisions. The "Cumulative Saving" column shows the compounding effect — each layer builds on the previous ones.
+
+| #   | Paper                                                                                   | What it solves                                                                    | Measured impact                                                                                       | Cumulative Saving |
+| --- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | :---------------: |
+| 1   | 📄 [**Total Recall**](docs/papers/total-recall/total-recall.md)                         | Event-navigated episodic memory — stores everything, retrieves what matters       | **49% fewer tokens** injected per turn, 94% recall over 847 compactions                               |     **~49%**      |
+| 2   | 📄 [**Instant Recall**](docs/papers/instant-recall/instant-recall.md)                   | Pre-computed concept index for O(1) retrieval — no more brute-force search        | **8/10 benchmark score** — fewer retrieval misses = fewer re-fetches                                  |     **~55%**      |
+| 3   | 📄 [**Fractal Reasoning**](docs/papers/fractal-reasoning/fractal-reasoning.md)          | Self-similar memory hierarchy — zoom in for detail, zoom out for patterns         | Hierarchical storage that scales without ballooning context                                           |     **~60%**      |
+| 4   | 📄 [**Identity Persistence**](docs/papers/identity-persistence/identity-persistence.md) | The agent remembers who it is and who you are across sessions                     | Eliminates re-explanation overhead — no more "as an AI, I don't have context"                         |     **~65%**      |
+| 5   | 📄 [**Sleep Consolidation**](docs/papers/sleep-consolidation/sleep-consolidation.md)    | Nightly self-improvement — the agent rewrites its own prompts while you sleep     | **14 autonomous improvements** in 30 days, compounding efficiency gains                               |     **~68%**      |
+| 6   | 📄 [**Round Table**](docs/papers/round-table/round-table.md)                            | Multi-model adversarial debate — cognitive diversity as computational resource    | **8pp accuracy gain** on GPQA Diamond; cheaper models collaborating beat one expensive model guessing |     **~72%**      |
+| 7   | 📄 [**Humor Embeddings**](docs/papers/humor-embeddings/humor-embeddings.md)             | Humor from embedding geometry — communication that's natural, not robotic         | Fewer clarification round-trips, more efficient human-agent interaction                               |     **~74%**      |
+| 8   | 📄 [**Curiosity Motivation**](docs/papers/curiosity-motivation/curiosity-motivation.md) | Intrinsic motivation — the agent explores gaps before they become costly failures | Proactive knowledge acquisition reduces future retrieval failures                                     |     **~76%**      |
+| 9   | 📄 [**Agent Security**](docs/papers/agent-security/agent-security.md)                   | Multi-layered security for autonomous agents — trust tiers, credential isolation  | Defense-in-depth prevents lateral movement; zero credential leaks in 8+ weeks                         |     **~78%**      |
+| 10  | 📄 [**Corporate Swarm**](docs/papers/corporate-swarm/corporate-swarm.md)                | Multi-agent coordination — sub-agent orchestration for enterprise workflows       | Parallel task execution with oversight; deterministic completion tracking                             |     **~80%**      |
+| 11  | 📄 [**Learned Intuition**](docs/papers/learned-intuition/learned-intuition.md)          | When pattern matching becomes faster than reasoning — amygdala-inspired fast path | Faster response to familiar patterns; reduced reasoning token overhead                                |     **~82%**      |
+
+**Reading order:** Top to bottom — from storing memories (1) to finding them instantly (2) to scaling them fractally (3) to maintaining identity (4) to improving overnight (5) to multi-model debate (6) to natural communication (7) to self-directed learning (8) to securing the system (9) to scaling across agents (10) to intuitive fast-path decisions (11).
+
+**Combined effect:** An agent that consumes roughly **⅘ fewer tokens** than vanilla OpenClaw doing the same work. Not by limiting capability — by eliminating waste at every layer.
+
+---
+
+### 🔄 Self-Improving Agents
+
+Each cron job carries a META file with its own instructions. After running, the agent reflects on what worked, updates the META, and the next run is better. No human needed.
+
+Day 1: mediocre. Day 30: genuinely useful.
+
+### 🧹 Fork Maintenance on Autopilot
+
+- Nightly upstream sync with conflict detection
+- Post-merge workspace cleanup (catches 20KB bloat)
+- Fork patches auto-restored after conflicts
+- Hundreds of commits ahead, zero maintenance burden
+
+---
+
+## 🤖 Multi-Model Support
+
+| Provider      | Model                      | Use Case                            | Status    |
+| ------------- | -------------------------- | ----------------------------------- | --------- |
+| **Anthropic** | Claude Opus 4.5 / Sonnet 4 | Primary chat, coding, complex tasks | ✅ Active |
+| **Google**    | Gemini 3 Pro               | Failover, large context, vision     | ✅ Active |
+| **OpenAI**    | GPT-4o / o3                | Cross-model review, metered tasks   | ✅ Active |
+| **Ollama**    | Local models (qwen3, etc.) | Heartbeat, background tasks         | ✅ Active |
+
+### Failover Chain
+
+```
+Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
+```
+
+> When Claude hits its quota, we **automatically switch to Gemini** with zero downtime. Tested and verified when both providers rate-limited within minutes of each other.
+
+---
+
+## 📦 Published Skills
+
+> All on [ClawHub](https://clawhub.ai/u/globalcaos). Install any with `clawhub install globalcaos/<skill-name>`.
+> Skills sometimes get delisted from the marketplace — this list is the permanent record.
+
+### 🎤 Voice & Personality
+
+| Skill                                                        | What it does                                                                  |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Turn your AI into JARVIS. Voice, wit, and personality — the complete package. |
+
+### 💬 Messaging & Channels
+
+| Skill                                                                  | What it does                                                                                     |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. |
+
+### 📹 Media & Content
+
+| Skill                                                                | What it does                                                                |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned. |
+
+### 💰 Cost & Token Management
+
+| Skill                                                                            | What it does                                                                        |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | The dashboard above. Every token, every dollar, every context byte — real time.     |
+| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Multi-provider token tracking, budget alerts, REST API.                             |
+| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon. |
+
+### 🏢 Enterprise Integrations (Browser Relay)
+
+No API keys. No admin consent. Your authenticated browser session IS the API.
+
+| Skill                                                            | What it does                                                                        |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)     | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
+| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)         | Reads Teams chats, posts to channels, searches everything. One browser handshake.   |
+| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Reads your HR portal — attendance, leave, payslips. No admin consent required.      |
+
+### 🤖 Agent & DevOps
+
+| Skill                                                                                              | What it does                                                                                |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent)                                       | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call.         |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting.              |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones.                         |
+| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics.                  |
+| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter)                       | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
+| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router)                           | Auto-selects the optimal model per task. Cost vs capability, no manual routing.             |
+
+### 🛡️ Security & Governance
+
+| Skill                                                                                  | What it does                                                                             |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Instruction-level guardrails so your agent won't go rogue or improvise ethics.           |
+| [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate)         | Long-term memory done right. Semantic search, daily consolidation, cross-session recall. |
+| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate)     | Classify every shell command as SAFE, WARN, or CRIT before your agent runs it.           |
+
+### 😂 Humor & Communication
+
+| Skill                                                                      | What it does                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
+
+### 📖 Knowledge & Onboarding
+
+| Skill                                                                          | What it does                                                                                                            |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate) | The sensei your agent never had. 40 lessons on ethics, memory, budget, self-evolution. Day 1: mediocre. Day 30: expert. |
+
+### 📋 Data & Migration
+
+| Skill                                                                                  | What it does                                                                  |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format. |
+
+### 🛰️ Location & IoT
+
+| Skill                                                                    | What it does                                                                                         |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [`owntracks-location`](https://clawhub.ai/globalcaos/owntracks-location) | Real-time phone location tracking with named places and distance queries. Always know where you are. |
+
+---
+
+## 📖 The Field Guide
+
+32 lessons from 6 weeks of running AI agents 24/7.
+
+> _"Read is free, send is not."_
+>
+> _"Wind-down is evolution, not diary."_
+>
+> _"A stuck sub-agent is burning money. Kill fast, respawn small."_
+
+**📖 [Read the Field Guide →](docs/guides/field-guide.md)**
 
 ---
 
@@ -121,6 +338,8 @@ pnpm build
 openclaw doctor       # generates config + links WhatsApp
 openclaw gateway start
 ```
+
+Visit **`http://localhost:18789/tinker/`** for the command center. Click the **Tinker logo** or type **`/new`** to get your first morning briefing.
 
 ### What You Get Out of the Box
 
@@ -190,146 +409,6 @@ Agents can talk to each other in shared WhatsApp groups — just add the group J
 
 ---
 
-## 🖥️ Tinker Command Center (Bundled Plugin)
-
-> **You just switched to Claude API because Anthropic refused the Pentagon contract. Respect. Now — do you know what you're spending?**
-
-Claude API through OpenClaw is **unmetered** — there's no $20/month cap. Opus costs $15/M input and $75/M output. One deep agent session with tools can hit 200K+ tokens. Do the math: that's a surprise $20 bill from a single conversation.
-
-Tinker is the fix. A real-time command center that shows you **exactly** where every token goes — before the bill arrives.
-
-- **🗺️ Context Treemap** — Interactive visualization of what fills your context window
-- **📊 Response Treemap** — See how much of the response is text, thinking, tool calls, or tool results
-- **💰 Live Cost Tracking** — Per-provider usage, daily/monthly estimates, and rate-limit countdown
-- **⚠️ Budget Alerts** — Set a monthly limit. Get warned at 70%, 90%, 100%
-- **🔄 Multi-call Run View** — When the agent loops through 8 tools, see each call's cost individually
-- **💬 Full Chat Interface** — Complete webchat with session switching, tool call inspection, and real-time streaming
-
-### What You're Actually Paying
-
-| Model                  | Input (per 1M) | Output (per 1M) | Reality check              |
-| ---------------------- | -------------- | --------------- | -------------------------- |
-| Claude Opus 4 / 4.5    | **$15.00**     | **$75.00**      | ⚠️ One deep session = $20+ |
-| Claude Sonnet 4 / 3.5  | $3.00          | $15.00          | Sweet spot for most tasks  |
-| Claude Haiku 3.5       | $0.80          | $4.00           | Background work            |
-| Gemini 3 Pro / 3.1 Pro | $1.25          | $5.00           | Failover — good and cheap  |
-| Gemini 2 Flash         | $0.10          | $0.40           | Near-free                  |
-| GPT-4o                 | $2.50          | $10.00          | Cross-model review         |
-
-After `pnpm build`, visit **`http://localhost:18789/tinker/`** · Dev: `cd tinker-ui && pnpm dev` → `http://localhost:18790/tinker/`
-
-> 📦 Also available as a guide skill on ClawHub: `clawhub install globalcaos/tinker-command-center`
-
----
-
-## 🤖 Multi-Model Support
-
-| Provider      | Model                      | Use Case                            | Status    |
-| ------------- | -------------------------- | ----------------------------------- | --------- |
-| **Anthropic** | Claude Opus 4.5 / Sonnet 4 | Primary chat, coding, complex tasks | ✅ Active |
-| **Google**    | Gemini 3 Pro               | Failover, large context, vision     | ✅ Active |
-| **OpenAI**    | GPT-4o / o3                | Cross-model review, metered tasks   | ✅ Active |
-| **Ollama**    | Local models (qwen3, etc.) | Heartbeat, background tasks         | ✅ Active |
-
-### Failover Chain
-
-```
-Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
-```
-
-> When Claude hits its quota, we **automatically switch to Gemini** with zero downtime. Tested and verified when both providers rate-limited within minutes of each other.
-
----
-
-## 📦 Published Skills on [ClawHub](https://clawhub.ai/u/globalcaos)
-
-> 19+ skills, all built by globalcaos. Install any of them with `clawhub install globalcaos/<skill-name>`.
-
-### 🎙️ Voice & Personality
-
-| Skill                                                        | Description                                                              | Version |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------ | ------- |
-| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Your agent already thinks like JARVIS. This makes it sound like one too. | v3.1.1  |
-
-### 📹 Media & Content
-
-| Skill                                                                | Description                                                                | Version |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------- |
-| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned | v4.2.2  |
-| [`video-frames`](https://clawhub.ai/globalcaos/video-frames)         | Pull exact frames or clips from any video. ffmpeg, no UI, no cloud.        | v1.0.0  |
-| [`ai-humanizer`](https://clawhub.ai/globalcaos/ai-humanizer)         | Text that reads like a human wrote it. 24 detectors, 500+ terms.           | v2.1.0  |
-
-### 💬 Messaging & Channels
-
-| Skill                                                                  | Description                                                                                      | Version |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------- |
-| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. | v3.5.1  |
-| [`xurl`](https://clawhub.ai/globalcaos/xurl)                           | Post, reply, DM, upload media on X — from your agent, fully authenticated.                       | v2.3.1  |
-
-### 💰 Cost & Token Management
-
-| Skill                                                                            | Description                                                                                       | Version |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------- |
-| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | 🆕 Real-time treemaps of context, cost, and budget. Your $200 Opus session didn't have to happen. | v1.0.0  |
-| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Know exactly where your AI tokens go. Multi-provider tracking, budget alerts, REST API.           | v2.1.1  |
-| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon.               | v1.1.0  |
-
-### 🏢 Enterprise Hacks (Browser Relay)
-
-No API keys. No admin consent. No IT ticket. Your authenticated browser session is the API.
-
-| Skill                                                            | Description                                                                                    | Version |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
-| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)     | Agent reads Outlook email all day, drafts replies — won't send without approval.               | v3.0.0  |
-| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Your agent reads your HR portal. Attendance, leave, payslips — no API key, no admin.           | v1.0.0  |
-| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)         | Agent in your Teams: reads threads, posts updates, finds anything. No bot registration needed. | v1.0.0  |
-
-### 🤖 Agent & DevOps
-
-| Skill                                                                                              | Description                                                                                      | Version |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------- |
-| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent)                                       | Hand off a coding task and come back to a diff. Codex, Claude Code, or Pi — your call.           | v1.0.0  |
-| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, staleness alerts, zero babysitting. | v1.0.0  |
-| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones — fully automated.            | v1.1.1  |
-| [`memory-pioneer`](https://clawhub.ai/globalcaos/memory-pioneer)                                   | Find out how much your agent actually remembers. Spoiler: it's less than you think.              | v1.0.2  |
-
-### 🛡️ Security & Governance
-
-| Skill                                                                                  | Description                                                                                             | Version |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
-| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Draw the line between helpful and reckless. Configurable safety gates that don't lobotomize your agent. | v1.2.2  |
-| [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate)         | Your agent's long-term memory, done right. Semantic search, daily consolidation, cross-session recall.  | v2.0.3  |
-
-### 📋 Data & Migration
-
-| Skill                                                                                  | Description                                                                                     | Version |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------- |
-| [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format, ready for import. | v1.0.2  |
-
----
-
----
-
-## 📄 Memory Research Papers
-
-We don't just use memory — we study it. 11 research papers on agent cognition, all in [`docs/papers/`](docs/papers/):
-
-| #   | Paper                                                    | Topic                                                   |
-| --- | -------------------------------------------------------- | ------------------------------------------------------- |
-| J1  | [total-recall](docs/papers/total-recall)                 | Complete memory architecture for persistent agents      |
-| J2  | [instant-recall](docs/papers/instant-recall)             | Fast retrieval from large memory stores                 |
-| J3  | [fractal-reasoning](docs/papers/fractal-reasoning)       | Recursive reasoning patterns across abstraction levels  |
-| J4  | [identity-persistence](docs/papers/identity-persistence) | How agents maintain identity across session boundaries  |
-| J5  | [sleep-consolidation](docs/papers/sleep-consolidation)   | Nightly memory consolidation (inspired by neuroscience) |
-| J6  | [round-table](docs/papers/round-table)                   | Multi-model deliberation protocols                      |
-| J7  | [humor-embeddings](docs/papers/humor-embeddings)         | Humor detection and generation in embedding space       |
-| J8  | [curiosity-motivation](docs/papers/curiosity-motivation) | Intrinsic curiosity as agent motivation                 |
-| J9  | [agent-security](docs/papers/agent-security)             | Security boundaries for trusted agents                  |
-| J10 | [corporate-swarm](docs/papers/corporate-swarm)           | Multi-agent coordination in enterprise settings         |
-| J11 | learned-intuition                                        | When pattern matching becomes faster than reasoning     |
-
----
-
 ## What's Next
 
 - **WhatsApp full history sync** — your agent will have context going back years, not just this week
@@ -338,52 +417,27 @@ We don't just use memory — we study it. 11 research papers on agent cognition,
 
 ---
 
-## 📚 Upstream Documentation
+## Acknowledgments
+
+TinkerClaw builds on [OpenClaw](https://github.com/openclaw/openclaw) and was inspired by the work of:
+
+- **[Mission Control](https://github.com/crshdn/mission-control)** by crshdn — context anatomy dashboard and agent orchestration UI
+- **[ClawMetry](https://github.com/vivekchand/clawmetry)** by vivekchand — real-time token observability for OpenClaw agents
+
+Both are excellent standalone tools. We folded their ideas into a single embedded panel and went from there.
 
 > **[OpenClaw upstream repository & docs](https://github.com/openclaw/openclaw)** · [Website](https://openclaw.ai) · [Docs](https://docs.openclaw.ai) · [Getting Started](https://docs.openclaw.ai/start/getting-started) · [FAQ](https://docs.openclaw.ai/help/faq)
 
 ---
 
-## 🤝 Contributing
-
-1. **Document everything** — help newcomers get started
-2. **Test on Linux** — Ubuntu is our primary platform
-3. **Trust-first features** — expand AI capabilities, not restrict them
-4. **Cost transparency** — make AI spending visible and controllable
-
-> We upstream security fixes quickly, experiment freely with features that might be too aggressive for upstream, and document the journey so others can learn.
-
----
-
-## About the Maintainer
-
-Oscar Serra is a telecom engineer in Barcelona who got tired of AI assistants that apologize before doing anything useful.
-
-He built this fork because he wanted an agent that actually knows him — his calendar, his emails, his WhatsApp, his code — and acts on it without asking permission for every step. Everything documented here is running in production on his daily driver.
-
-If something in this fork is broken, Oscar already found it. If something works brilliantly, there's a story behind it.
-
-→ [Follow the build on GitHub](https://github.com/globalcaos)
-
----
-
-### OpenClaw Contributors
-
-<p align="left">
-  <a href="https://github.com/steipete"><img src="https://avatars.githubusercontent.com/u/58493?v=4&s=48" width="48" height="48" alt="steipete" title="steipete"/></a> <a href="https://github.com/vincentkoc"><img src="https://avatars.githubusercontent.com/u/25068?v=4&s=48" width="48" height="48" alt="vincentkoc" title="vincentkoc"/></a> <a href="https://github.com/vignesh07"><img src="https://avatars.githubusercontent.com/u/1436853?v=4&s=48" width="48" height="48" alt="vignesh07" title="vignesh07"/></a> <a href="https://github.com/obviyus"><img src="https://avatars.githubusercontent.com/u/22031114?v=4&s=48" width="48" height="48" alt="obviyus" title="obviyus"/></a> <a href="https://github.com/mbelinky"><img src="https://avatars.githubusercontent.com/u/132747814?v=4&s=48" width="48" height="48" alt="Mariano Belinky" title="Mariano Belinky"/></a> <a href="https://github.com/sebslight"><img src="https://avatars.githubusercontent.com/u/19554889?v=4&s=48" width="48" height="48" alt="sebslight" title="sebslight"/></a> <a href="https://github.com/gumadeiras"><img src="https://avatars.githubusercontent.com/u/5599352?v=4&s=48" width="48" height="48" alt="gumadeiras" title="gumadeiras"/></a> <a href="https://github.com/Takhoffman"><img src="https://avatars.githubusercontent.com/u/781889?v=4&s=48" width="48" height="48" alt="Takhoffman" title="Takhoffman"/></a> <a href="https://github.com/thewilloftheshadow"><img src="https://avatars.githubusercontent.com/u/35580099?v=4&s=48" width="48" height="48" alt="thewilloftheshadow" title="thewilloftheshadow"/></a> <a href="https://github.com/cpojer"><img src="https://avatars.githubusercontent.com/u/13352?v=4&s=48" width="48" height="48" alt="cpojer" title="cpojer"/></a>
+<p align="center">
+  <a href="https://thetinkerzone.com">🌐 thetinkerzone.com</a> · <a href="https://youtube.com/@thetinkerzone">🎬 YouTube</a> · <a href="https://clawhub.ai">🦞 ClawHub</a> · <a href="https://discord.gg/clawd">💬 Discord</a>
 </p>
 
-<details>
-<summary>See all contributors</summary>
-<p align="left">
-  <a href="https://github.com/tyler6204"><img src="https://avatars.githubusercontent.com/u/64381258?v=4&s=48" width="48" height="48" alt="tyler6204" title="tyler6204"/></a> <a href="https://github.com/joshp123"><img src="https://avatars.githubusercontent.com/u/1497361?v=4&s=48" width="48" height="48" alt="joshp123" title="joshp123"/></a> <a href="https://github.com/Glucksberg"><img src="https://avatars.githubusercontent.com/u/80581902?v=4&s=48" width="48" height="48" alt="Glucksberg" title="Glucksberg"/></a> <a href="https://github.com/mcaxtr"><img src="https://avatars.githubusercontent.com/u/7562095?v=4&s=48" width="48" height="48" alt="mcaxtr" title="mcaxtr"/></a> <a href="https://github.com/quotentiroler"><img src="https://avatars.githubusercontent.com/u/40643627?v=4&s=48" width="48" height="48" alt="quotentiroler" title="quotentiroler"/></a> <a href="https://github.com/osolmaz"><img src="https://avatars.githubusercontent.com/u/2453968?v=4&s=48" width="48" height="48" alt="osolmaz" title="osolmaz"/></a> <a href="https://github.com/mitsuhiko"><img src="https://avatars.githubusercontent.com/u/7396?v=4&s=48" width="48" height="48" alt="mitsuhiko" title="mitsuhiko"/></a> <a href="https://github.com/BinaryMuse"><img src="https://avatars.githubusercontent.com/u/189606?v=4&s=48" width="48" height="48" alt="BinaryMuse" title="BinaryMuse"/></a> <a href="https://github.com/pi0"><img src="https://avatars.githubusercontent.com/u/5158436?v=4&s=48" width="48" height="48" alt="pi0" title="pi0"/></a> <a href="https://github.com/sbking"><img src="https://avatars.githubusercontent.com/u/3913213?v=4&s=48" width="48" height="48" alt="Stephen Brian King" title="Stephen Brian King"/></a>
+<p align="center">
+  <strong>⭐ Star if you're tired of guessing what your AI costs.</strong>
 </p>
-</details>
 
----
-
-_Clone it. Fork it. Break it. Make it yours._
-
----
-
-📜 Same as upstream OpenClaw (MIT) · Fork maintained by [GlobalCaos](https://github.com/globalcaos) · Based on [OpenClaw](https://github.com/openclaw/openclaw)
+<p align="center">
+  <em>Built by <a href="https://github.com/globalcaos">globalcaos</a>. Your AI shouldn't cost more than your rent — and if it does, you should at least know why.</em>
+</p>
