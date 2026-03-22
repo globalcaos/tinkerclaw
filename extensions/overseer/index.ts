@@ -13,7 +13,7 @@
  * Wired in by: OpenClaw plugin system via `plugins.entries.overseer` in openclaw.json
  */
 import { join } from "node:path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { loadCombinedSessionStoreForGateway } from "../../src/gateway/session-utils.js";
 import type {
   PluginHookSubagentSpawnedEvent,
