@@ -1398,16 +1398,18 @@ body {
   border: 1px solid #333;
 }
 .ct-legend-anchor {
-  position: absolute;
-  right: 0;
-  top: 4px;
+  position: sticky;
+  left: 0;
+  flex-shrink: 0;
   width: 0;
   overflow: visible;
+  order: 9999;
+  align-self: flex-start;
   z-index: 20;
 }
 .ct-legend {
   position: absolute;
-  right: 4px;
+  left: var(--ct-legend-left, 0);
   top: 0;
   display: flex;
   align-items: center;

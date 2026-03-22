@@ -152,7 +152,7 @@ const plugin = {
     // Use registerHttpRoute (the correct plugin API) with prefix matching
     api.registerHttpRoute({
       path: PREFIX,
-      auth: disableAuth ? "none" : "gateway",
+      auth: "gateway",
       match: "prefix",
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
