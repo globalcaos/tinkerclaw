@@ -433,6 +433,13 @@ export function emitToolExec(params: {
       isError: params.isError,
     });
     pendingToolExecs.set(params.runId, list);
+
+    // AMYGDALA shadow logging (async, fire-and-forget, never blocks)
+    amygdalaShadowLog({
+      toolName: params.toolName,
+      toolCallId: params.toolCallId,
+      isError: params.isError,
+    }).catch(() => {});
   }
 }
 
@@ -740,5 +747,62 @@ export function tryPointerCompaction(
   } catch (err) {
     log.warn(`engram: pointer compaction failed: ${String(err)}`);
     return { compacted: false, messages: null, eventsEvicted: 0, tokensFreed: 0 };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hook: AMYGDALA shadow logging (Phase 1)
+// Evaluates every tool execution through AMYGDALA and logs predictions.
+// Does NOT block actions — shadow mode only (alpha = 0).
+// ---------------------------------------------------------------------------
+let amygdalaInitialized = false;
+let amygdalaEnabled = false;
+
+async function maybeInitAmygdala(): Promise<void> {
+  if (amygdalaInitialized) return;
+  amygdalaInitialized = true;
+  try {
+    const configPath = join(__dirname, "../amygdala/amygdala.config.json");
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(configPath, "utf-8");
+    const config = JSON.parse(raw);
+    amygdalaEnabled = config.enabled === true;
+    if (amygdalaEnabled) {
+      console.log("[amygdala] Shadow mode active — logging predictions");
+    }
+  } catch {
+    // Config not found or invalid — AMYGDALA stays disabled
+    amygdalaEnabled = false;
+  }
+}
+
+export async function amygdalaShadowLog(params: {
+  toolName: string;
+  toolCallId: string;
+  inputSummary?: string;
+  isError?: boolean;
+}): Promise<void> {
+  await maybeInitAmygdala();
+  if (!amygdalaEnabled) return;
+
+  try {
+    // For now, log the tool execution as a situation template stub.
+    // Full embedding + network evaluation will be wired once onnxruntime-node is verified.
+    const { appendFile } = await import("node:fs/promises");
+    const logLine = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      tool: params.toolName,
+      toolCallId: params.toolCallId,
+      inputChars: params.inputSummary?.length ?? 0,
+      isError: params.isError ?? false,
+      phase: "shadow",
+      note: "AMYGDALA shadow log — prediction eval pending ONNX runtime setup",
+    }) + "\n";
+    await appendFile(
+      join(__dirname, "../../data/amygdala/shadow-log.jsonl"),
+      logLine,
+    );
+  } catch {
+    // Shadow logging should never crash the agent
   }
 }
