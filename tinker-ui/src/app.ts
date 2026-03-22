@@ -1601,7 +1601,11 @@ function onEvent(evt: any) {
       // "end"/"error" events ALWAYS proceed so runs from other tabs get cleaned up
       // from activeRuns (the rendering filter handles per-tab visibility).
       // "start" events only proceed for the current session or subagent children.
-      const evtSessionKey = p.data.sessionKey as string | undefined;
+      // FORK: Upstream lifecycle events (start/end/error) carry sessionKey at
+      // top level (enriched by server-chat.ts) but NOT in data. Fork events
+      // (round-start, fallback-error, etc.) set it in data explicitly.
+      // Fall back to top-level so upstream start/end events aren't silently dropped.
+      const evtSessionKey = (p.data.sessionKey ?? p.sessionKey) as string | undefined;
       if (!evtSessionKey) return;
       // All lifecycle events populate activeRuns regardless of session.
       // Session-scoped filtering is applied at render time (overseer, models panel).
