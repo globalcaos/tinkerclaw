@@ -535,15 +535,15 @@ When one human goes on leave, their AI can brief the other AI about pending work
 
 ## What our fork adds (things you can't get from vanilla):
 
-| Feature                   | What it does                                               | Vanilla alternative             |
-| ------------------------- | ---------------------------------------------------------- | ------------------------------- |
-| **ENGRAM**                | Nightly memory consolidation script                        | Write your own bash scripts     |
-| **HIPPOCAMPUS**           | Semantic index rebuild for fast retrieval                  | Manual memory_search tuning     |
-| **Cleaning-lady cron**    | Auto-distills workspace files after upstream merge         | Check manually after `git pull` |
-| **Fork-scanner**          | Analyzes other forks for ideas to cherry-pick              | Browse GitHub manually          |
-| **Fork-sync**             | Safe nightly merge from upstream with guardian checks      | Manual `git merge`              |
-| **Token panel (Tinker)**  | Real-time per-session cost tracking, context treemap       | Check provider dashboard        |
-| **Subagent overseer**     | Pull-based daemon for sub-agent health monitoring          | Manual polling                  |
+| Feature                  | What it does                                          | Vanilla alternative             |
+| ------------------------ | ----------------------------------------------------- | ------------------------------- |
+| **ENGRAM**               | Nightly memory consolidation script                   | Write your own bash scripts     |
+| **HIPPOCAMPUS**          | Semantic index rebuild for fast retrieval             | Manual memory_search tuning     |
+| **Cleaning-lady cron**   | Auto-distills workspace files after upstream merge    | Check manually after `git pull` |
+| **Fork-scanner**         | Analyzes other forks for ideas to cherry-pick         | Browse GitHub manually          |
+| **Fork-sync**            | Safe nightly merge from upstream with guardian checks | Manual `git merge`              |
+| **Token panel (Tinker)** | Real-time per-session cost tracking, context treemap  | Check provider dashboard        |
+| **Subagent overseer**    | Pull-based daemon for sub-agent health monitoring     | Manual polling                  |
 
 ## What's the same on both:
 

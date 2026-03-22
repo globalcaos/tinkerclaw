@@ -152,15 +152,15 @@ No manual setup. Every morning. Getting better each time.
 
 Every night, while you sleep, the agent runs a chain of autonomous processes. The entire cycle costs **~€1/night**.
 
-| Cron                        | What it does                                                                                                                            |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 🍷 **Wind Down**            | Like a glass of wine with the diary — reviews what worked and what didn't, improves its own instructions                                |
-| 😴 **Memory Consolidation** | Like REM sleep — turns raw daily logs into structured long-term memory. **49% context reduction** ([ENGRAM](#-every-paper-saves-you-tokens))         |
-| 🧹 **Cleaning Lady**        | Controls disk usage, prunes stale context, keeps the workspace lean                                                                     |
-| 🔍 **Auto-Evolution**       | Scouts AI news for improvements that can be applied directly to the system                                                              |
-| 📰 **Group Summary**        | Scans message groups, extracts what matters, discards noise                                                                             |
-| 🛒 **Opportunity Hunter**   | Browses marketplaces for deals matching your interests — a personal shopper that never sleeps                                           |
-| 🤵 **Butler**               | Remembers birthdays, suggests gifts, tracks appointments. If it's been too long since you sent flowers, it mentions it — diplomatically |
+| Cron                        | What it does                                                                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🍷 **Wind Down**            | Like a glass of wine with the diary — reviews what worked and what didn't, improves its own instructions                                     |
+| 😴 **Memory Consolidation** | Like REM sleep — turns raw daily logs into structured long-term memory. **49% context reduction** ([ENGRAM](#-every-paper-saves-you-tokens)) |
+| 🧹 **Cleaning Lady**        | Controls disk usage, prunes stale context, keeps the workspace lean                                                                          |
+| 🔍 **Auto-Evolution**       | Scouts AI news for improvements that can be applied directly to the system                                                                   |
+| 📰 **Group Summary**        | Scans message groups, extracts what matters, discards noise                                                                                  |
+| 🛒 **Opportunity Hunter**   | Browses marketplaces for deals matching your interests — a personal shopper that never sleeps                                                |
+| 🤵 **Butler**               | Remembers birthdays, suggests gifts, tracks appointments. If it's been too long since you sent flowers, it mentions it — diplomatically      |
 
 These are just the ones with personality. **15+ total crons**, each with its own logic and self-improvement capability.
 
