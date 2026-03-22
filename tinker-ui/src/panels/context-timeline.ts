@@ -419,11 +419,17 @@ export function mountContextTimeline(
       render();
     });
     legend.appendChild(switchWrap);
-    // Wrap legend in a zero-width sticky anchor so it stays visible without inflating scroll width
+    // Wrap legend in an absolutely-positioned anchor so it stays at top-right of the viewport
     const legendAnchor = document.createElement("div");
     legendAnchor.className = "ct-legend-anchor";
     legendAnchor.appendChild(legend);
     container.appendChild(legendAnchor);
+
+    // Spacer pushes bars right when content doesn't overflow; shrinks to 0 when it does
+    const spacer = document.createElement("div");
+    spacer.style.flex = "1 1 auto";
+    spacer.style.minWidth = "0";
+    container.appendChild(spacer);
 
     // Group entries and render
     let currentGroupId: string | null = null;
@@ -763,12 +769,15 @@ export function mountContextTimeline(
           return;
         }
         const body = await resp.json();
-        // API returns { sessionKey, count, events: [...] }
+        // API returns { sessionKey, count, events: [...] } — DESC order from DB
         const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
         if (events.length === 0) {
           render();
           return;
         }
+
+        // API returns newest-first (DESC); reverse to chronological for display
+        events.reverse();
 
         // Backfill with turn-based grouping
         for (const ev of events) {
