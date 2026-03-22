@@ -11,6 +11,7 @@ export interface OverseerItem {
   badge: string; // fallback chain badge (crown, ②, etc.)
   count: number; // number of active agents using this
   error?: { reason: string; error: string };
+  sessionTag?: string;
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -85,6 +86,9 @@ export function mountOverseerGraph(
       }
       if (item.error) {
         html += `<span class="overseer-pill-error">${esc(shortErr(item.error.reason))}</span>`;
+      }
+      if (item.sessionTag) {
+        html += `<span class="overseer-pill-tag">${esc(item.sessionTag)}</span>`;
       }
       html += "</div>";
     }
