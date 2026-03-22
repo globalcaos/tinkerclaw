@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-21+-green?style=for-the-badge" alt="21+ skills"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-22+-green?style=for-the-badge" alt="21+ skills"></a>
   <a href="#-every-paper-saves-you-tokens"><img src="https://img.shields.io/badge/papers-11-blueviolet?style=for-the-badge" alt="11 papers"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
 </p>
@@ -307,6 +307,12 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 | Skill                                                                    | What it does                                                                                         |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | [`owntracks-location`](https://clawhub.ai/globalcaos/owntracks-location) | Real-time phone location tracking with named places and distance queries. Always know where you are. |
+
+### 🌐 Web & CMS
+
+| Skill                                                                    | What it does                                                                                            |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| [`wordpress-ultimate`](https://clawhub.ai/globalcaos/wordpress-ultimate) | Three env vars, one script — your agent manages your entire WordPress site. Draft-only safety included. |
 
 ---
 
