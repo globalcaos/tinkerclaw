@@ -1398,13 +1398,11 @@ body {
   border: 1px solid #333;
 }
 .ct-legend-anchor {
-  position: sticky;
+  position: absolute;
   right: 0;
-  flex-shrink: 0;
+  top: 4px;
   width: 0;
   overflow: visible;
-  order: 9999;
-  align-self: flex-start;
   z-index: 20;
 }
 .ct-legend {
