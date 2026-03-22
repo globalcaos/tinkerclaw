@@ -31,6 +31,12 @@ let streamRunId: string | null = null;
 let frozenTextEnd = 0;
 /** Length of the last full delta text received (used to set frozenTextEnd on tool freeze). */
 let lastDeltaLen = 0;
+/** Timestamp of the last thinking_delta event (used to split thinking into separate bubbles on pauses). */
+let lastThinkingDeltaTime = 0;
+/** How many chars of the server's accumulated thinking text are already frozen in previous bubbles. */
+let frozenThinkingLen = 0;
+/** Pause threshold (ms) — if gap between thinking deltas exceeds this, start a new bubble. */
+const THINKING_SPLIT_MS = 2000;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
@@ -592,6 +598,8 @@ interface TabState {
   streamRunId: string | null;
   frozenTextEnd: number;
   lastDeltaLen: number;
+  lastThinkingDeltaTime: number;
+  frozenThinkingLen: number;
   sending: boolean;
   currentTurnNumber: number;
   expandedTools: Set<string>;
@@ -608,6 +616,8 @@ function freshTabState(): TabState {
     streamRunId: null,
     frozenTextEnd: 0,
     lastDeltaLen: 0,
+    lastThinkingDeltaTime: 0,
+    frozenThinkingLen: 0,
     sending: false,
     currentTurnNumber: 0,
     expandedTools: new Set(),
@@ -625,6 +635,8 @@ function saveCurrentTabState() {
   s.streamRunId = streamRunId;
   s.frozenTextEnd = frozenTextEnd;
   s.lastDeltaLen = lastDeltaLen;
+  s.lastThinkingDeltaTime = lastThinkingDeltaTime;
+  s.frozenThinkingLen = frozenThinkingLen;
   s.sending = sending;
   s.currentTurnNumber = currentTurnNumber;
   s.expandedTools = expandedTools;
@@ -642,6 +654,8 @@ function loadTabState(tabId: string) {
   streamRunId = s.streamRunId;
   frozenTextEnd = s.frozenTextEnd;
   lastDeltaLen = s.lastDeltaLen;
+  lastThinkingDeltaTime = s.lastThinkingDeltaTime;
+  frozenThinkingLen = s.frozenThinkingLen;
   sending = s.sending;
   currentTurnNumber = s.currentTurnNumber;
   expandedTools = s.expandedTools;
@@ -912,6 +926,8 @@ function gwConnect() {
     thinkingMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
+    frozenThinkingLen = 0;
+    lastThinkingDeltaTime = 0;
     streamRunId = null;
     activeRuns.clear();
     saveActiveRuns();
@@ -1107,27 +1123,60 @@ function onEvent(evt: any) {
       if (streamMsgIdx >= 0) streamMsgIdx = -1;
       const thinkingText = p.message?.content?.[0]?.text ?? "";
       if (thinkingText) {
-        if (thinkingMsgIdx >= 0 && messages[thinkingMsgIdx]?._temporary) {
-          // Update existing thinking temporary message
-          const content = messages[thinkingMsgIdx].content;
-          const block = content.find((b: any) => b.type === "thinking");
-          if (block) {
-            block.text = thinkingText;
+        const now = Date.now();
+        // FORK: Split thinking into separate bubbles on pauses at sentence boundaries.
+        // When there's a >2s gap AND the previous text ended at a sentence boundary,
+        // freeze the current bubble and start a new one.
+        if (
+          thinkingMsgIdx >= 0 &&
+          messages[thinkingMsgIdx]?._temporary &&
+          lastThinkingDeltaTime > 0 &&
+          now - lastThinkingDeltaTime > THINKING_SPLIT_MS
+        ) {
+          // Check if accumulated text ends at a sentence boundary
+          const currentBlock = messages[thinkingMsgIdx].content.find(
+            (b: any) => b.type === "thinking",
+          );
+          const currentText = (currentBlock?.text ?? "").trimEnd();
+          if (/[.!?:;)\]}"'\u2019\u201D]$/.test(currentText)) {
+            // Sentence boundary — freeze current bubble, start new one.
+            // Advance frozenThinkingLen past the current bubble's text so the
+            // next bubble starts from where this one left off.
+            frozenThinkingLen += currentBlock?.text?.length ?? 0;
+            thinkingMsgIdx = -1;
           }
-        } else {
-          // Create a new thinking temporary message
-          messages.push({
-            role: "assistant",
-            content: [{ type: "thinking", text: thinkingText }],
-            _temporary: true,
-          });
-          thinkingMsgIdx = messages.length - 1;
+        }
+        lastThinkingDeltaTime = now;
+
+        // Slice to get only the portion for the current bubble
+        const segmentText =
+          frozenThinkingLen > 0 ? thinkingText.slice(frozenThinkingLen) : thinkingText;
+
+        if (segmentText) {
+          if (thinkingMsgIdx >= 0 && messages[thinkingMsgIdx]?._temporary) {
+            // Update existing thinking temporary message
+            const content = messages[thinkingMsgIdx].content;
+            const block = content.find((b: any) => b.type === "thinking");
+            if (block) {
+              block.text = segmentText;
+            }
+          } else {
+            // Create a new thinking temporary message
+            messages.push({
+              role: "assistant",
+              content: [{ type: "thinking", text: segmentText }],
+              _temporary: true,
+            });
+            thinkingMsgIdx = messages.length - 1;
+          }
         }
       }
       updateChat();
     } else if (p.state === "thinking_end") {
       // Freeze the thinking message — next delta (text or thinking) starts a new bubble
       thinkingMsgIdx = -1;
+      frozenThinkingLen = 0;
+      lastThinkingDeltaTime = 0;
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
       // FORK: Dedup — skip if we already processed a final/error/aborted for this runId
@@ -1181,7 +1230,8 @@ function onEvent(evt: any) {
               const hasThinking = c.some((b: any) => b.type === "thinking");
               const hasTool = c.some((b: any) => b.type === "tool_use");
               // Only target messages that are purely text (no thinking, no tool_use)
-              if (hasText && !hasThinking && !hasTool) {
+              // Exclude _isError messages — they're fallback error bubbles, not LLM output
+              if (hasText && !hasThinking && !hasTool && !m._isError) {
                 textOnlyIndices.push(ri);
               }
             }
@@ -1242,12 +1292,24 @@ function onEvent(evt: any) {
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
+        // Remove fallback error bubbles from the messages array — they're transient
+        // UI artifacts that should not persist after a successful response.
+        // Without this, error bubbles from failed profiles accumulate across rounds
+        // and only disappear on hard refresh (when localStorage is already cleared).
+        const beforeLen = messages.length;
+        messages = messages.filter((m: any) => !m._isError);
+        if (messages.length !== beforeLen) {
+          // streamMsgIdx may have shifted — recalculate if still active
+          if (streamMsgIdx >= 0) streamMsgIdx = -1;
+        }
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
       thinkingMsgIdx = -1;
       frozenTextEnd = 0;
       lastDeltaLen = 0;
+      frozenThinkingLen = 0;
+      lastThinkingDeltaTime = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
       if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
         sending = false;
@@ -1541,13 +1603,8 @@ function onEvent(evt: any) {
       // "start" events only proceed for the current session or subagent children.
       const evtSessionKey = p.data.sessionKey as string | undefined;
       if (!evtSessionKey) return;
-      const isEndOrError = p.data.phase === "end" || p.data.phase === "error";
-      if (
-        !isEndOrError &&
-        !sessionKeyMatches(evtSessionKey) &&
-        !evtSessionKey.includes(":subagent:")
-      )
-        return;
+      // All lifecycle events populate activeRuns regardless of session.
+      // Session-scoped filtering is applied at render time (overseer, models panel).
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
@@ -1723,11 +1780,12 @@ function onEvent(evt: any) {
     const profiles = (d.profiles ?? []) as string[];
     const profileId = d.profileId as string | undefined;
     // Clear errors for reloaded profiles (or all if source is file-watcher).
-    // Preserve billing/auth_permanent errors — these are persistent and should
+    // Preserve billing errors — these are persistent and should
     // only be cleared by successful LLM calls or explicit user action.
+    // Auth errors clear on reload since re-auth may have happened externally.
     const shouldKeep = (key: string) => {
       const err = providerErrors.get(key);
-      return err && (err.reason === "billing" || err.reason === "auth_permanent");
+      return err && err.reason === "billing";
     };
     if (d.clearAll) {
       for (const [key] of providerErrors) {
@@ -1807,6 +1865,8 @@ async function loadChat() {
   thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  frozenThinkingLen = 0;
+  lastThinkingDeltaTime = 0;
   finalizedRunIds.clear();
   seenToolCallIds.clear();
   messages = res.messages ?? [];
@@ -1963,6 +2023,8 @@ function retryProvider(provider: string) {
   thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  frozenThinkingLen = 0;
+  lastThinkingDeltaTime = 0;
   messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
   clearPersistedErrors(sessionKey);
   // Find last user message and resend
@@ -1996,6 +2058,8 @@ async function abort() {
   thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  frozenThinkingLen = 0;
+  lastThinkingDeltaTime = 0;
   streamRunId = null;
   activeRuns.clear();
   updateChat();
@@ -2027,8 +2091,9 @@ async function loadBudget(opts?: { forceRefresh?: boolean }) {
       // label is e.g. "cli-gm" → keyId is "anthropic:cli-gm"
       const keyId = `anthropic:${label}`;
       const err = providerErrors.get(keyId);
-      // Don't clear billing/auth_permanent errors — those are real and persistent
-      if (err && err.reason !== "billing" && err.reason !== "auth_permanent") {
+      // Don't clear billing errors — those are real and persistent.
+      // DO clear auth/auth_permanent: if usage data exists, the token works.
+      if (err && err.reason !== "billing") {
         providerErrors.delete(keyId);
         cleared = true;
       }
@@ -4018,6 +4083,7 @@ function init() {
   }
   initialized = true;
   restoreProviderErrors();
+  if (providerErrors.size > 0) startHealthPoll();
   app.innerHTML = `
     <nav class="sidebar">
       <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#6b8e23"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
@@ -4091,8 +4157,8 @@ function init() {
           <div id="response-canvas" style="position:absolute;inset:0;overflow:hidden"></div>
           <button class="brp-back-btn" id="brp-back-response" data-hint="Back" style="display:none">\u25C0</button>
         </div>
+        <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
       </div>
-      <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
     </div>
   `;
 
@@ -4207,6 +4273,7 @@ function init() {
     if (labels[1]) labels[1].classList.toggle("ct-switch-label--active", budgetScope === "all");
     track?.classList.toggle("ct-switch-track--on", budgetScope === "all");
     updateBudgetPanel();
+    updateOverseerPanel();
   });
 
   // ─── Voice mute toggle ───
@@ -6062,6 +6129,8 @@ function init() {
     thinkingMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
+    frozenThinkingLen = 0;
+    lastThinkingDeltaTime = 0;
     streamRunId = null;
     sending = false;
     if (sessionKey) clearPersistedErrors(sessionKey);
@@ -6372,11 +6441,29 @@ function updateOverseerPanel(): void {
   const items: OverseerItem[] = [];
 
   for (const [runId, info] of activeRuns) {
+    // Apply budget scope filter (same logic as getAuthKeyCounts)
+    if (
+      budgetScope === "session" &&
+      info.sessionKey &&
+      !sessionKeyMatches(info.sessionKey) &&
+      !info.sessionKey.includes(":subagent:")
+    )
+      continue;
     const authLabel = info.authProfileId
       ? authProfiles[info.authProfileId]?.label ||
         info.authProfileId.split(":")[1] ||
         info.authProfileId
       : "";
+    // Derive session tag for "all" mode
+    let sessionTag: string | undefined;
+    if (budgetScope === "all" && info.sessionKey) {
+      const sk = info.sessionKey;
+      if (sk.includes(":cron:")) sessionTag = "cron";
+      else if (sk.includes(":subagent:")) sessionTag = "sub";
+      else if (sk.includes(":whatsapp:")) sessionTag = "wa";
+      else if (sk.includes(":main")) sessionTag = "main";
+      else sessionTag = "other";
+    }
     items.push({
       id: runId,
       provider: info.provider,
@@ -6384,6 +6471,7 @@ function updateOverseerPanel(): void {
       authLabel,
       badge: "",
       count: 1,
+      sessionTag,
     });
   }
 
