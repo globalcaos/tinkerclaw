@@ -8,7 +8,7 @@ import {
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 
-const AUTH_DIR = "/home/<user>/.openclaw/credentials/whatsapp/default";
+const AUTH_DIR = process.env.HOME + "/.openclaw/credentials/whatsapp/default";
 const logger = pino({ level: "warn" });
 
 await mkdir(AUTH_DIR, { recursive: true });
