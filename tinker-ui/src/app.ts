@@ -3799,6 +3799,7 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
+        <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
@@ -3969,6 +3970,30 @@ function init() {
         b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
       });
     updateBudgetPanel();
+  });
+
+  // ─── Voice mute toggle ───
+  const voiceBtn = $("tb-voice")!;
+  const muteApi = "/tinker/api/jarvis-mute";
+  fetch(muteApi)
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
+    .catch(() => {});
+  voiceBtn.addEventListener("click", () => {
+    const willMute = voiceBtn.classList.contains("tb-active");
+    voiceBtn.classList.toggle("tb-active", !willMute);
+    fetch(muteApi, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ muted: willMute }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
+      .catch(() => {
+        voiceBtn.classList.toggle("tb-active", !willMute);
+        voiceBtn.classList.add("tb-error");
+        setTimeout(() => voiceBtn.classList.remove("tb-error"), 5000);
+      });
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
