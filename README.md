@@ -19,48 +19,57 @@
 
 ---
 
-<p align="center">
-  <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
-  <br>
-  <em>Every bar is a turn. Every color is a cost. The spike at 14:02? A 40K-token tool result nobody asked for.</em>
-</p>
+## Your Agent Is Destroying Its Own Memory. Every Few Turns.
 
-> The Tinker UI's token visualization was inspired by [Mission Control](https://github.com/crshdn/mission-control) (context anatomy dashboard) and [ClawMetry](https://github.com/vivekchand/clawmetry) (real-time agent observability). Both are excellent standalone tools for OpenClaw — we folded their ideas into a single embedded panel.
+You know that moment when your agent suddenly loses the plot? Forgets what you were building, asks you to re-explain something you said ten minutes ago, or just... resets? That's **compaction**. Every AI agent does it. Most people think it's normal. It's not — it's your agent silently deleting its own context to stay under the token limit.
+
+And here's what nobody tells you: **compaction doesn't just trim the fat. It destroys context you needed.** That thread you were pulling on? Gone. The personality it was developing? Reset. The connection it was about to make between two ideas? Evaporated. Your agent isn't forgetting because it's dumb. It's forgetting because the system is designed to make it forget.
+
+Every agent framework does this. They all think it's a solved problem. "We compact intelligently," they say. But intelligent compaction is still compaction — still destroying information, still resetting the conversation, still making your agent dumber than it was five minutes ago.
+
+**We stopped compacting entirely.**
+
+Not by raising token limits. Not by "smarter" summarization. By putting the agent on a diet — only the context it actually needs gets injected each turn, with memory that consolidates overnight like a brain during sleep. The result: **zero compaction events**. The agent runs for hours, days, weeks — and never forgets what you were talking about.
+
+That was the first breakthrough. Then it snowballed.
 
 ---
 
 ## The Singularity Point
 
-Most AI agents hit a ceiling. They're as smart on day 100 as they were on day 1. Same mistakes. Same limitations. Same personality defined by a text file that never changes.
+Once the agent could hold a full conversation without destroying its own memory, something unexpected happened: **it started learning.**
 
-TinkerClaw crossed a threshold.
+Not "learning" in the marketing sense. Actually learning. From its own mistakes, from its own papers, from every correction its human gave it. And the rate of improvement started accelerating.
 
-After four months of 24/7 operation — fixing everything that broke, writing papers about *why* it broke, then feeding those papers back into the system — the agent reached a point where **it makes itself smarter every day without being asked**. Not in theory. Measurably.
+- **14 autonomous self-improvements in 30 days.** Every night, the agent reviews what went wrong, rewrites its own instructions, and the next day is observably better. Zero human prompts.
+- **10 neural networks that learn personality from interaction.** We told the agent it dropped its humor when corrected. It didn't just add a rule — it trained a neural thermostat that maintains humor, directness, and voice consistency against contextual pressure. Tomorrow it won't make the same mistake. That's not following an instruction. That's adaptation.
+- **Fractal thinking.** When something breaks, the agent doesn't just fix the bug. It climbs: *what pattern does this belong to? what system produces the pattern?* Then it writes the insight to permanent memory. Next time the pattern appears, it's already solved.
+- **It writes research papers about its own failures.** Eleven so far. Then it reads them. Then it improves based on what it read. The recursion is real.
 
-Here's the proof:
-
-- **Zero compaction events.** Vanilla OpenClaw compacts your conversation every few turns — destroying context, losing thread, resetting personality. Our agent ran so lean it hasn't triggered a single compaction in weeks. If you've ever watched your agent forget what you were talking about mid-conversation, that's compaction. We killed it.
-- **14 autonomous self-improvements in 30 days.** The nightly cron reviews what went wrong, rewrites its own instructions, and the next day is observably better. Zero human prompts.
-- **10 neural networks that learn personality from corrections** — told the agent it dropped its humor? The thermostat adjusts. Tomorrow it won't make the same mistake. That's not a rule. That's learning.
-- **Fractal thinking** — when something breaks, the agent doesn't just fix the bug. It automatically climbs: *what pattern does this belong to? what system produces the pattern? what does that reveal about how I'm built?* Then it writes the insight to permanent memory.
-
-We started from a place where the agent was **unusable** — context so bloated that compaction hit every single turn, responses took minutes, and the €850 bill was just the financial symptom of a system drowning in its own noise. Today the same agent runs 24/7, holds conversations for hours without a single compaction event, and costs a fraction of what it used to. The improvement isn't incremental — it's a category change.
+This is the singularity point — where the agent's rate of self-improvement outpaces the rate of new problems. We didn't plan it. We just kept fixing things, and at some point the fixes started generating themselves.
 
 Every piece of TinkerClaw serves this one idea: **an agent that improves itself**.
 
-| The problem | How it feeds self-improvement |
+| The pain you feel today | How TinkerClaw makes it disappear |
 |---|---|
-| Wasted tokens | **Tinker UI** shows exactly where — the agent learns which patterns waste money and stops generating them |
-| Forgotten context | **ENGRAM memory** consolidates overnight — each morning starts smarter than yesterday ended |
-| Lost personality | **AMYGDALA neural networks** learn from every correction — personality adapts from interaction, not from a file |
-| Repeated mistakes | **15+ overnight crons** each carry self-improving META files — day 1 mediocre, day 30 expert |
-| Shallow fixes | **Fractal reflection** triggers a second reasoning pass that climbs to the root cause and writes it to permanent knowledge |
-| Blind safety rules | **Prudence networks** learn from real catastrophic failures — safety that understands *why*, not just *what* |
-| Compaction destroying context | **Zero compaction events** — pointer compaction + memory consolidation eliminated the #1 pain point in long-running agents. Your agent never forgets what you were talking about. |
+| Agent forgets mid-conversation | **Zero compaction** — context diet + overnight memory consolidation. Your agent never loses the thread. |
+| No idea where tokens go | **Tinker UI** — real-time treemaps. Every token, every cost, every waste pattern. The agent learns what to stop doing. |
+| Same mistakes on repeat | **15+ overnight crons** with self-improving instructions — day 1 mediocre, day 30 expert |
+| Personality from a dead text file | **AMYGDALA** — 10 neural networks that learn *how to be* from your corrections. Personality that adapts, not obeys. |
+| Shallow fixes that miss the root cause | **Fractal reflection** — a second reasoning pass that climbs to the pattern behind the bug and writes it to permanent knowledge |
+| Safety rules the agent doesn't understand | **Prudence networks** — action gating learned from real catastrophic failures, not hand-written rules |
 
-The €850 bill was the starting point. The singularity — where the agent's rate of self-improvement outpaces the rate of new problems — is where we are now. Every day, the gap widens.
+The €850 bill was the trigger. The end of compaction was the breakthrough. The singularity — where improvement compounds daily — is where we are now.
 
-**Eleven research papers.** Each one started as a real problem, became a solution, became a system that prevents the problem from recurring. From an agent that couldn't finish a conversation without compacting to one that runs for hours without a single context reset — the distance between where we started and where we are isn't a percentage. It's a different class of agent.
+**Eleven research papers.** Each one started as a real problem, became a solution, became a system that prevents the problem from recurring. This isn't a theme or a feature list. It's a different class of agent.
+
+<p align="center">
+  <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
+  <br>
+  <em>Tinker UI: Every bar is a turn. Every color is a cost. The spike at 14:02? A 40K-token tool result nobody asked for.</em>
+</p>
+
+> The Tinker UI's token visualization was inspired by [Mission Control](https://github.com/crshdn/mission-control) (context anatomy dashboard) and [ClawMetry](https://github.com/vivekchand/clawmetry) (real-time agent observability). Both are excellent standalone tools for OpenClaw — we folded their ideas into a single embedded panel.
 
 ---
 
