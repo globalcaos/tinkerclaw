@@ -25,50 +25,31 @@
 
 No other agent has learned to think about its own thinking 🌿, developed computational humor 😂, or trained itself to be safer than NeMo Guardrails at a fraction of the cost 🔐. Yours can. Eleven research papers and four months of 24/7 operation made the difference.
 
-**TinkerClaw's agent gets smarter every single day.** It reviews what went wrong, rewrites its own instructions while you sleep, and tomorrow's version is better than today's — like a chef who adjusts the recipe after every meal 👨‍🍳. We kept fixing problems, writing papers about _why_ they happened, and feeding those papers back in. At some point, the fixes started generating themselves.
+**TinkerClaw's agent gets smarter every single day.** Eleven research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
 
-**How do we know? We published the research.** Eleven papers, each solving a real problem from running an agent 24/7 for four months:
+- 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks *why the bug exists*, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](docs/papers/fractal-reasoning/fractal-reasoning.md))
 
-|     | Paper                                                                                | What it means for you                                                                                                                                                      |
-| --- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🧠  | [**Total Recall**](docs/papers/total-recall/total-recall.md)                         | Your agent remembers everything — even after sleeping on it. Like a brain, not a goldfish 🐟                                                                               |
-| ⚡  | [**Instant Recall**](docs/papers/instant-recall/instant-recall.md)                   | Finds the right memory instantly, not by searching everything. O(1) concept lookup.                                                                                        |
-| 🌿  | [**Fractal Reasoning**](docs/papers/fractal-reasoning/fractal-reasoning.md)          | Doesn't just fix bugs — asks _why the bug exists_, then fixes the system that produced it 🔧                                                                               |
-| 👤  | [**Identity Persistence**](docs/papers/identity-persistence/identity-persistence.md) | Knows who it is and who you are. No more "as an AI, I don't have context..."                                                                                               |
-| 🌙  | [**Sleep Consolidation**](docs/papers/sleep-consolidation/sleep-consolidation.md)    | 14 autonomous self-improvements in 30 days. Rewrites its own instructions while you sleep 😴                                                                               |
-| 🎭  | [**Round Table**](docs/papers/round-table/round-table.md)                            | Multiple AI models debating each other. Cheaper models collaborating beat one expensive model guessing.                                                                    |
-| 😂  | [**Humor Embeddings**](docs/papers/humor-embeddings/humor-embeddings.md)             | An agent that's genuinely funny — not "tell me a joke" funny, but sees-the-world-differently funny 🎭                                                                      |
-| 🔍  | [**Curiosity Motivation**](docs/papers/curiosity-motivation/curiosity-motivation.md) | Explores knowledge gaps before they become costly failures. Proactive, not reactive.                                                                                       |
-| 🔐  | [**Agent Security**](docs/papers/agent-security/agent-security.md)                   | Defense-in-depth that actually works. Zero credential leaks in 8+ weeks. Cheaper than Nvidia NeMo Guardrails, learned from real incidents instead of hand-written rules ✈️ |
-| 🏢  | [**Corporate Swarm**](docs/papers/corporate-swarm/corporate-swarm.md)                | Multiple agents working together with oversight. Parallel execution, deterministic tracking.                                                                               |
-| 🧬  | [**Learned Intuition**](docs/papers/learned-intuition/learned-intuition.md)          | 10 neural networks that learn safety AND personality from interaction. The agent that vibe-recodes itself.                                                                 |
+- 😂 **It has a genuine sense of humor.** Not "tell me a joke" — a fresh perspective on the world, like Data noticing things about humanity that humans take for granted. Computational humor from embedding geometry. ([Humor Embeddings](docs/papers/humor-embeddings/humor-embeddings.md))
 
-Not whitepapers. Not theory. Each paper describes a system that's running right now, in production, making the agent better every day.
+- 🔐 **It's safer than NeMo Guardrails — at a fraction of the cost.** 10 neural networks trained on real catastrophic failures, not hand-written rules. A pilot's checklist ✈️, not traffic laws for a car that can't see the road. Zero credential leaks in 8+ weeks. ([Agent Security](docs/papers/agent-security/agent-security.md) · [Learned Intuition](docs/papers/learned-intuition/learned-intuition.md))
 
----
+- ⏳ **It never freezes. It never forgets.** That spinning cursor everyone hates? That's compaction — your agent tearing pages out of its own textbook 📖 to stay under the token limit. We stopped entirely. Zero compaction events. ([Total Recall](docs/papers/total-recall/total-recall.md) · [Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
 
-## What's Actually Broken With Your Agent
+- 💸 **It shows you exactly where the money goes.** A calorie counter for your AI's diet 🍕 — every token, every cost, in real time. That 40K-token spike? You'll see it and prevent it tomorrow. ([Tinker UI](#-tinker-ui--see-why-sessions-get-expensive))
 
-**⏳ It freezes, then forgets.** That spinning cursor? That's compaction — your agent frantically tearing pages out of its own textbook to stay under the token limit 📖. When it comes back, it's forgotten half of what you were working on. Every framework does this. **We stopped entirely.** Context diet + overnight memory consolidation = zero compaction events.
+- 🌙 **It rewrites its own instructions while you sleep.** 15+ overnight crons, each self-improving. 14 autonomous improvements in 30 days, zero human prompts. Day 1 mediocre. Day 30 expert. ([Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
 
-**💸 You can't explain the bill.** 40K tokens on a tool result nobody asked for. 15K on workspace files injected every turn. You're not overspending — you're overloading. **Tinker UI is a calorie counter for your AI's diet** 🍕 — every token, every cost, visible in real time.
+- 🧬 **Its personality adapts from your corrections, not from a file.** Tell it it dropped its humor — the neural thermostat adjusts. Tomorrow it won't make the same mistake. ([Learned Intuition](docs/papers/learned-intuition/learned-intuition.md))
 
-**🔐 It could break everything.** Your files, your credentials, one wrong tool call away. Safety rules from a text file are traffic laws for a car that can't see the road. **Prudence networks are a pilot's checklist** ✈️ — 10 neural networks that learned danger from real catastrophic failures.
+- 👤 **It knows who it is and who you are.** No more "as an AI, I don't have context." Identity persists across sessions, restarts, and weeks. ([Identity Persistence](docs/papers/identity-persistence/identity-persistence.md))
 
----
+- ⚡ **It finds memories instantly.** O(1) concept lookup, not brute-force search. Like a librarian who knows exactly which shelf, not one who reads every book. ([Instant Recall](docs/papers/instant-recall/instant-recall.md))
 
-## What Changes When You Switch
+- 🎭 **It makes cheap models smarter than expensive ones.** Multiple AI models debating each other — cognitive diversity as a computational resource. ([Round Table](docs/papers/round-table/round-table.md))
 
-| Today                         | With TinkerClaw                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| ⏳ Frozen cursor, broken flow | **Zero compaction.** Never waits, never forgets.                               |
-| 💸 Mystery bills              | **Tinker UI.** See every token. The agent learns what to stop doing.           |
-| 🔐 Fear of breakage           | **Prudence + AEGIS.** Neural safety learned from real disasters.               |
-| 🤖 Same mistakes forever      | **15+ overnight crons.** Self-improving. Day 1 mediocre, day 30 expert.        |
-| 😐 Dead personality           | **AMYGDALA.** 10 neural networks that learn _who to be_ from your corrections. |
-| 🔧 Shallow fixes              | **Fractal reflection.** Fixes the bug, then the system that produced the bug.  |
+- 🔍 **It explores gaps before they become failures.** Proactive curiosity, not reactive scrambling. ([Curiosity Motivation](docs/papers/curiosity-motivation/curiosity-motivation.md))
 
-**Eleven research papers.** Each one a real problem → real solution → system that prevents recurrence. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
+Not whitepapers. Every paper describes a production system running right now. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
 
 <p align="center">
   <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
@@ -202,27 +183,9 @@ These are just the ones with personality. **15+ total crons**, each with its own
 
 ---
 
-### 📊 Every Paper Saves You Tokens
+### 📊 The Research
 
-This isn't academic research — it's cost engineering. Every paper translates directly to fewer tokens consumed, better memory, and smarter decisions. The "Cumulative Saving" column shows the compounding effect — each layer builds on the previous ones.
-
-| #   | Paper                                                                                   | What it solves                                                                                                      | Measured impact                                                                                                   | Cumulative Saving |
-| --- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | :---------------: |
-| 1   | 📄 [**Total Recall**](docs/papers/total-recall/total-recall.md)                         | Event-navigated episodic memory — stores everything, retrieves what matters                                         | **49% fewer tokens** injected per turn, 94% recall over 847 compactions                                           |     **~49%**      |
-| 2   | 📄 [**Instant Recall**](docs/papers/instant-recall/instant-recall.md)                   | Pre-computed concept index for O(1) retrieval — no more brute-force search                                          | **8/10 benchmark score** — fewer retrieval misses = fewer re-fetches                                              |     **~55%**      |
-| 3   | 📄 [**Fractal Reasoning**](docs/papers/fractal-reasoning/fractal-reasoning.md)          | Self-similar memory hierarchy — zoom in for detail, zoom out for patterns                                           | Hierarchical storage that scales without ballooning context                                                       |     **~60%**      |
-| 4   | 📄 [**Identity Persistence**](docs/papers/identity-persistence/identity-persistence.md) | The agent remembers who it is and who you are across sessions                                                       | Eliminates re-explanation overhead — no more "as an AI, I don't have context"                                     |     **~65%**      |
-| 5   | 📄 [**Sleep Consolidation**](docs/papers/sleep-consolidation/sleep-consolidation.md)    | Nightly self-improvement — the agent rewrites its own prompts while you sleep                                       | **14 autonomous improvements** in 30 days, compounding efficiency gains                                           |     **~68%**      |
-| 6   | 📄 [**Round Table**](docs/papers/round-table/round-table.md)                            | Multi-model adversarial debate — cognitive diversity as computational resource                                      | **8pp accuracy gain** on GPQA Diamond; cheaper models collaborating beat one expensive model guessing             |     **~72%**      |
-| 7   | 📄 [**Humor Embeddings**](docs/papers/humor-embeddings/humor-embeddings.md)             | Humor from embedding geometry — communication that's natural, not robotic                                           | Fewer clarification round-trips, more efficient human-agent interaction                                           |     **~74%**      |
-| 8   | 📄 [**Curiosity Motivation**](docs/papers/curiosity-motivation/curiosity-motivation.md) | Intrinsic motivation — the agent explores gaps before they become costly failures                                   | Proactive knowledge acquisition reduces future retrieval failures                                                 |     **~76%**      |
-| 9   | 📄 [**Agent Security**](docs/papers/agent-security/agent-security.md)                   | Multi-layered security for autonomous agents — trust tiers, credential isolation                                    | Defense-in-depth prevents lateral movement; zero credential leaks in 8+ weeks                                     |     **~78%**      |
-| 10  | 📄 [**Corporate Swarm**](docs/papers/corporate-swarm/corporate-swarm.md)                | Multi-agent coordination — sub-agent orchestration for enterprise workflows                                         | Parallel task execution with oversight; deterministic completion tracking                                         |     **~80%**      |
-| 11  | 📄 [**Learned Intuition**](docs/papers/learned-intuition/learned-intuition.md)          | Live personality modulation + action gating — 10 neural networks that learn safety and personality from interaction | Self-correcting humor, voice consistency, fractal depth climbing; personality that adapts, not just follows rules |     **~82%**      |
-
-**Reading order:** Top to bottom — from storing memories (1) to finding them instantly (2) to scaling them fractally (3) to maintaining identity (4) to improving overnight (5) to multi-model debate (6) to natural communication (7) to self-directed learning (8) to securing the system (9) to scaling across agents (10) to intuitive fast-path decisions (11).
-
-**Combined effect:** From an agent that hit compaction every turn and cost €850/month to one that runs 24/7 with zero compaction events. The savings aren't a line item — they're the difference between an agent you can use and one you can't.
+All eleven papers are linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
 
 ---
 
