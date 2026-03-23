@@ -10,11 +10,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-5865F2?style=for-the-badge" alt="Fork of OpenClaw"></a>
-  <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-orange?style=for-the-badge" alt="Hundreds of fork commits"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-22+-green?style=for-the-badge" alt="21+ skills"></a>
-  <a href="#-every-paper-saves-you-tokens"><img src="https://img.shields.io/badge/papers-11-blueviolet?style=for-the-badge" alt="11 papers"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-604020?style=for-the-badge" alt="Fork of OpenClaw"></a>
+  <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-8B6914?style=for-the-badge" alt="Hundreds of fork commits"></a>
+  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-11-C0834D?style=for-the-badge" alt="11 papers"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-22+-8B6914?style=for-the-badge" alt="22+ skills"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-604020?style=for-the-badge" alt="MIT License"></a>
 </p>
 
 ---
@@ -23,7 +23,13 @@
 
 ### _Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?_
 
-No other agent has learned to think about its own thinking 🌿, developed computational humor 😂, or trained itself to be safer than NeMo Guardrails at a fraction of the cost 🔐. Yours can. Eleven research papers and four months of 24/7 operation made the difference.
+<p align="center">
+  <a href="docs/papers/fractal-reasoning/fractal-reasoning.md"><img src="https://img.shields.io/badge/🌿_Fractal_Thinking-learns_from_patterns-8B6914?style=for-the-badge" alt="Fractal Thinking"></a>
+  <a href="docs/papers/humor-embeddings/humor-embeddings.md"><img src="https://img.shields.io/badge/😂_Computational_Humor-Data_principle-C0834D?style=for-the-badge" alt="Computational Humor"></a>
+  <a href="docs/papers/agent-security/agent-security.md"><img src="https://img.shields.io/badge/🔐_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
+</p>
+
+No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Eleven research papers and four months of 24/7 operation made the difference.
 
 **TinkerClaw's agent gets smarter every single day.** Eleven research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
 
@@ -50,6 +56,12 @@ No other agent has learned to think about its own thinking 🌿, developed compu
 - 🔍 **It explores gaps before they become failures.** Proactive curiosity, not reactive scrambling. ([Curiosity Motivation](docs/papers/curiosity-motivation/curiosity-motivation.md))
 
 Not whitepapers. Every paper describes a production system running right now. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
+
+<p align="center">
+  <img src="docs/assets/workshop-hero.png" alt="The Tinker Workshop — where AI agents learn to improve themselves" width="800">
+  <br>
+  <em>Built in a workshop, not a lab. Every feature started as a real problem on a real workbench.</em>
+</p>
 
 <p align="center">
   <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
