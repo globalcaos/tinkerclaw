@@ -19,55 +19,56 @@
 
 ---
 
-## You're Waiting. Again. ⏳
+## The Singularity Point 🚀
 
-You asked your agent a simple question. Now you're staring at a spinning cursor for 45 seconds. Then a minute. Then the response arrives — but it forgot half of what you were working on and asks you to repeat yourself. Sound familiar?
+Your AI agent is as smart today as it was the day you installed it. Same mistakes. Same limitations. Same personality copy-pasted from a text file that never changes. Four months from now, it'll still be the same agent — just with a longer conversation history and a bigger bill.
 
-That's **compaction** — and it's happening to every AI agent, all the time. When the conversation gets too long, the agent panics, freezes everything, and frantically summarizes older messages to squeeze back under the token limit. Like a student cramming for an exam by tearing chapters out of the textbook 📖 — sure the book is lighter, but good luck passing the test.
+**TinkerClaw's agent gets smarter every single day.**
 
-Three things happen every time your agent compacts:
+Not in theory. Not "with fine-tuning." Right now, autonomously, while you sleep. It reviews what went wrong, rewrites its own instructions, and tomorrow's version is observably better than today's — like a chef who tastes the dish every night and adjusts the recipe 👨‍🍳. We didn't plan for this. We just kept fixing problems, writing papers about *why* they happened, feeding those papers back into the system — and at some point, the fixes started generating themselves.
 
-1. **You wait** ⏳ — the agent goes silent while it rewrites its own memory. Seconds. Sometimes minutes. Your flow is broken, your thought is gone, and you're sitting there like you're on hold with tech support.
-2. **It forgets** 🧠💨 — compaction doesn't just trim the fat. It destroys context you needed. That thread you were pulling on? Gone. The personality it was developing? Reset. The connection between two ideas? Evaporated.
-3. **You pay for it** 💸 — every compaction burns tokens. It's reprocessing your entire conversation history to produce a worse, shorter version. You're paying the model to make itself dumber.
-
-Every agent framework does this. They all think it's fine. "We compact intelligently," they say. But intelligent compaction is still compaction — still freezing, still forgetting, still charging you to forget.
-
-**We stopped compacting entirely.** ✨
-
-Not by raising token limits. Not by "smarter" summarization. By putting the agent on a diet 🥗 — only the context it actually needs arrives each turn, with memory that consolidates overnight like a brain during sleep 😴. The result: **zero compaction events**. No more waiting. No more forgetting. No more paying to get dumber.
-
-That was the first breakthrough. Then it snowballed.
+This is the singularity point — where the agent's rate of self-improvement outpaces the rate of new problems. Every day, the gap widens.
 
 ---
 
-## The Singularity Point
+## The Three Fears Everyone Has (And We Solved) 😤
 
-Once the agent could hold a full conversation without destroying its own memory, something unexpected happened: **it started learning.**
+### 1. "Why is my agent frozen again?" ⏳
 
-Not "learning" in the marketing sense. Actually learning. From its own mistakes, from its own papers, from every correction its human gave it. And the rate of improvement started accelerating.
+You asked a simple question. Now you're staring at a spinning cursor for 45 seconds. A minute. Then the response arrives — but it forgot half of what you were working on. Sound familiar?
 
-- **14 autonomous self-improvements in 30 days.** Every night, the agent reviews what went wrong, rewrites its own instructions, and the next day is observably better. Zero human prompts.
-- **10 neural networks that learn personality from interaction.** We told the agent it dropped its humor when corrected. It didn't just add a rule — it trained a neural thermostat that maintains humor, directness, and voice consistency against contextual pressure. Tomorrow it won't make the same mistake. That's not following an instruction. That's adaptation.
-- **Fractal thinking.** When something breaks, the agent doesn't just fix the bug. It climbs: *what pattern does this belong to? what system produces the pattern?* Then it writes the insight to permanent memory. Next time the pattern appears, it's already solved.
-- **It writes research papers about its own failures.** Eleven so far. Then it reads them. Then it improves based on what it read. The recursion is real.
+That's **compaction**. When the conversation gets too long, the agent panics and frantically summarizes older messages to stay under the token limit. Like a student cramming for an exam by tearing chapters out of the textbook 📖 — sure the book is lighter, but good luck passing the test.
 
-This is the singularity point — where the agent's rate of self-improvement outpaces the rate of new problems. We didn't plan it. We just kept fixing things, and at some point the fixes started generating themselves.
+Every time it compacts: **you wait** (flow broken), **it forgets** (context destroyed), and **you pay** (tokens burned to make it dumber). Every agent framework does this. They all think it's fine.
 
-Every piece of TinkerClaw serves this one idea: **an agent that improves itself**.
+**We stopped compacting entirely.** By putting the agent on a diet 🥗 — only the context it actually needs arrives each turn, with memory that consolidates overnight like a brain during sleep 😴. Zero compaction events. No more waiting. No more forgetting.
 
-| The pain you feel today | How TinkerClaw makes it disappear |
+### 2. "Where did all my money go?" 💸
+
+You ran the agent for a week. The bill arrives. You can't explain 60% of the charges because you have **zero visibility** into what the agent was actually doing with your tokens. That tool result nobody asked for? 40K tokens. Those workspace files injected every turn? Another 15K. You're not overspending — you're **overloading**, and you can't see it happening.
+
+**Tinker UI is a calorie counter for your AI's diet** 🍕 — real-time treemaps that show exactly what fills the context window, what each response costs, and where the waste patterns hide. Every bar is a turn. Every color is a cost. The spike at 14:02? That's the 40K-token tool result you can now prevent tomorrow.
+
+### 3. "What if it breaks something? What if someone steals my data?" 🔐
+
+Your agent has access to your files, your messages, your credentials. One wrong tool call and it deletes the file you've been editing for a week. One leaked API key and your accounts are compromised. Safety rules from a text file are like traffic laws for a self-driving car that can't see the road — technically correct, practically useless.
+
+**Prudence networks are a pilot's checklist before takeoff** ✈️ — 10 neural networks trained on real catastrophic failures that learn to recognize danger the way a human learns to recognize a hot stove. Not rules to follow, but intuition to apply. And **AEGIS** provides absolute safety rails that can never be overridden — like the physical guardrails on a mountain road, no matter how confident the driver.
+
+---
+
+## The Proof 📊
+
+| What you feel today | What TinkerClaw does about it |
 |---|---|
-| Agent forgets mid-conversation | **Zero compaction** — context diet + overnight memory consolidation. Your agent never loses the thread. |
-| No idea where tokens go | **Tinker UI** — real-time treemaps. Every token, every cost, every waste pattern. The agent learns what to stop doing. |
-| Same mistakes on repeat | **15+ overnight crons** with self-improving instructions — day 1 mediocre, day 30 expert |
-| Personality from a dead text file | **AMYGDALA** — 10 neural networks that learn *how to be* from your corrections. Personality that adapts, not obeys. |
-| Shallow fixes that miss the root cause | **Fractal reflection** — a second reasoning pass that climbs to the pattern behind the bug and writes it to permanent knowledge |
-| Safety rules the agent doesn't understand | **Prudence networks** — action gating learned from real catastrophic failures, not hand-written rules |
+| ⏳ Frozen cursor, broken flow | **Zero compaction** — context diet + overnight consolidation. Never waits, never forgets. |
+| 💸 Mystery bills, hidden waste | **Tinker UI** — see every token, every cost. The agent learns what to stop doing. |
+| 🔐 Fear of breakage and leaks | **Prudence + AEGIS** — neural safety + absolute guardrails. Learned from real disasters. |
+| 🤖 Same mistakes on repeat | **15+ overnight crons** — self-improving instructions. Day 1 mediocre, day 30 expert. |
+| 😐 Flat personality from a text file | **AMYGDALA** — 10 neural networks that learn personality from your corrections. Not rules. Adaptation. |
+| 🔧 Shallow fixes, missed patterns | **Fractal reflection** — automatic depth climbing. Fixes the bug, then the system that produced the bug. |
 
-The €850 bill was the trigger. The end of compaction was the breakthrough. The singularity — where improvement compounds daily — is where we are now.
-
-**Eleven research papers.** Each one started as a real problem, became a solution, became a system that prevents the problem from recurring. This isn't a theme or a feature list. It's a different class of agent.
+**Eleven research papers.** Each one started as a real problem we hit running an agent 24/7. The €850 bill was the trigger. The end of compaction was the breakthrough. The singularity — where improvement compounds daily — is where we are now.
 
 <p align="center">
   <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
