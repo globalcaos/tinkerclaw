@@ -668,6 +668,14 @@ const FRACTAL_TRIGGERS = [
   /\bfixed\b/i,
   /\bpatched\b/i,
   /\bresolved\b/i,
+  // Success signals (trigger blueprint updates)
+  /\bdone\b.*\bpushed\b/i,
+  /\bshipped\b/i,
+  /\bcompleted\b/i,
+  /\bmerged\b/i,
+  /all.*tests.*pass/i,
+  /\bdeployed\b/i,
+  /✅/,
 ];
 
 const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (auto-triggered)
