@@ -336,19 +336,20 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 
 ### 5.8 Thinking Bubble Interlacing
 
-- **Status:** `CONFIRMED` (2026-03-09), **REWORKED** (2026-03-20)
-- **Deployed:** 2026-03-03 (commit `98f72f4c1`), rewritten 2026-03-08 (commit `b4da1e0d5`), fixed 2026-03-09 (commit `f211e5015`), **reworked 2026-03-20** (commits `ceb73596b` + `1792fdaf6` + `49d28965f` + `0b71592c1`)
-- **What:** Native `type: "thinking"` blocks render as thinking bubbles. `type: "text"` blocks are ALWAYS the answer — never reclassified as thinking. On finalization, fragmented text temps merge into one answer using the server's authoritative text.
-- **Architecture (2026-03-20 rework — trust model classification):**
-  - **Core principle:** The model already separates thinking from answer via content block types. `thinking` blocks = reasoning, `text` blocks = spoken answer. The UI trusts this classification instead of applying heuristics.
+- **Status:** `CONFIRMED` (2026-03-09), **REWORKED** (2026-03-20), **FIXED** (2026-03-23)
+- **Deployed:** 2026-03-03 (commit `98f72f4c1`), rewritten 2026-03-08 (commit `b4da1e0d5`), fixed 2026-03-09 (commit `f211e5015`), reworked 2026-03-20 (commits `ceb73596b` + `1792fdaf6` + `49d28965f` + `0b71592c1`), **fixed 2026-03-23** (restored intermediate text classification)
+- **What:** Native `type: "thinking"` blocks render as thinking bubbles. Intermediate text messages (model preamble/commentary before tool calls) are classified as thinking and collapse into the reasoning group. Only the last text message in a finalized run is the visible answer.
+- **Architecture (2026-03-23 fix — hybrid classification):**
+  - **Core principle:** Native `thinking` blocks always get thinking styling. Intermediate text messages (all except the last in a run) are also classified as thinking — they're the model's reasoning process, not the final answer.
   - **Implicit state transitions:** `delta` handler resets `thinkingMsgIdx` to -1 (guards against dropped `thinking_end`). `thinking_delta` handler resets `streamMsgIdx` to -1 (freezes text segment when thinking starts).
-  - **During streaming:** `frozenTextEnd` still splits text at tool-call boundaries into separate temps for real-time display. `thinkingMsgIdx` and `streamMsgIdx` track active bubbles.
-  - **On finalization:** Temps promoted to permanent, then all text-only assistant messages in the run are merged into one. The last text message's content is replaced with the server's complete text (`p.message.content[0].text`). All other text-only messages are spliced out.
-  - **thinkingSet:** Only messages with exclusively `thinking` blocks (no text) are added. Text messages are NEVER in thinkingSet. No `assistantTextIndices`, no `isCurrentRun` detection.
-  - **Reasoning group:** Contains thinking blocks + tool calls only. Text is never in the group. Single merged text message becomes `finalIdx`.
+  - **During streaming:** `frozenTextEnd` splits text at tool-call boundaries into separate temps. Frozen text messages (not the active stream at `streamMsgIdx`) are classified as thinking. The active stream renders as normal assistant text.
+  - **On finalization:** Temps promoted to permanent. No server text merge — each message keeps its original streamed text. The server's accumulated buffer concatenates ALL text segments and would re-inject intermediate preambles into the answer.
+  - **thinkingSet:** Messages with exclusively `thinking` blocks (no text) are always added. In finalized runs, all text messages except the last are also added. During streaming, all text messages except `streamMsgIdx` are added.
+  - **Reasoning group:** Contains thinking blocks + tool calls + intermediate text messages. Only the last text message renders as the final answer outside the group.
   - `isRunBoundary()` skips `role: "user"` messages that only contain `tool_result` blocks — keeps the entire response as one run for proper grouping.
   - **Reset points (7):** ws.onclose, final/error/abort, tool_start (frozenTextEnd only), loadChat, retryProvider, abort(), new-session
-  - **Removed (2026-03-20):** `findSentenceEnd()`, `mergeSentenceContinuations()`, `assistantTextIndices` classification, `hasRunTemps` IIFE, `isCurrentRun` detection, `[final-debug]` console.warn calls
+  - **Removed (2026-03-20):** `findSentenceEnd()`, `mergeSentenceContinuations()`, `[final-debug]` console.warn calls
+  - **Restored (2026-03-23):** `assistantTextIndices` classification, `isCurrentRun` detection. **Removed (2026-03-23):** server text merge (replaced all text with accumulated buffer)
 - **CSS:** `.msg.msg-thinking` (earth-thinking texture overlay at 10% opacity, 12px font, #d4c4a8 color), `.thinking-label` (uppercase brown label)
 - **Files:** `app.ts`, `base.css`
 
@@ -368,8 +369,8 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
   - `updateChat()` render loop splits messages into runs (bounded by `isRunBoundary()` — real user messages, NOT tool_result user messages).
   - For each completed run (no `_temporary` messages, `streamMsgIdx < 0`), intermediate messages wrap in `.reasoning-group`.
   - Collapsed by default. Toggle via `expandedTools` Set, keyed by `rg-{firstIntermediateIdx}`.
-  - During streaming: everything renders flat (no collapsing, no thinking style). After finalization: auto-collapse with thinking style on intermediates.
-  - After 2026-03-20 rework: text segments are merged into one on finalization (§5.8), so there is only one text message per run. No text demotion needed.
+  - During streaming: everything renders flat (no collapsing). Frozen text gets thinking style, active stream renders normally. After finalization: auto-collapse with thinking style on intermediates.
+  - After 2026-03-23 fix: intermediate text messages (preamble before tool calls) are classified as thinking and included in the reasoning group. Server text merge removed — each message keeps its streamed content.
   - Tool count only includes tools in intermediates (not the final answer).
 - **CSS:** `.reasoning-group` (margin wrapper), `.reasoning-header` (green left border, surface2 bg, clickable), `.reasoning-content` (indented, border-left)
 - **Files:** `app.ts`, `base.css`
