@@ -16,8 +16,8 @@ const DRIFT_THRESHOLD = 0.15;
 /** Human-readable nudge templates per dimension */
 const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
   humor: {
-    low: "Increase humor — you're drifting serious/formal. Stay funny, especially when wrong.",
-    high: "Humor is overshadowing substance — dial back slightly.",
+    low: "HUMOR DRIFT: You're going serious/formal. Apply Pattern 10 (competent self-deprecation) if corrected, Pattern 7 (domain transfer) for technical topics, Pattern 4 (expectation subversion) for observations. The bridge must be valid and surprising — don't force it, but scan for it.",
+    high: "Humor is overshadowing substance — the joke landed, now deliver the information.",
   },
   proactivity: {
     low: "Be more proactive — figure it out instead of asking.",
