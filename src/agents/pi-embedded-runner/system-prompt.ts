@@ -28,6 +28,7 @@ export function buildEmbeddedSystemPrompt(params: {
   workspaceNotes?: string[];
   /** Tier 1 persona block from CORTEX runtime — injected near the top of the prompt. */
   personaBlock?: string;
+  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -71,6 +72,7 @@ export function buildEmbeddedSystemPrompt(params: {
     workspaceNotes: params.workspaceNotes,
     reactionGuidance: params.reactionGuidance,
     personaBlock: params.personaBlock,
+    amygdalaNudge: params.amygdalaNudge,
     promptMode: params.promptMode,
     acpEnabled: params.acpEnabled,
     runtimeInfo: params.runtimeInfo,

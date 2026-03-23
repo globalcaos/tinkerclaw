@@ -196,6 +196,8 @@ export function buildAgentSystemPrompt(params: {
   ttsHint?: string;
   /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
   personaBlock?: string;
+  /** AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
+  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -414,6 +416,15 @@ export function buildAgentSystemPrompt(params: {
     "",
     // FORK: Tier 1 persona block from CORTEX runtime — injected near the top for identity reinforcement.
     ...(params.personaBlock ? [params.personaBlock, ""] : []),
+    // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
+    ...(params.amygdalaNudge?.length
+      ? [
+          "## AMYGDALA Personality Nudge (active)",
+          "The Personality networks detected drift from your target personality. Adjustments:",
+          ...params.amygdalaNudge.map((a) => `- ${a}`),
+          "",
+        ]
+      : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",
