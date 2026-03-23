@@ -24,7 +24,25 @@
 
 Your AI agent is as smart today as it was the day you installed it. Same mistakes. Same flat personality. Same bill you can't explain.
 
-**TinkerClaw's agent gets smarter every single day.** It reviews what went wrong, rewrites its own instructions while you sleep, and tomorrow's version is better than today's — like a chef who adjusts the recipe after every meal 👨‍🍳. We kept fixing problems, writing papers about why they happened, and feeding those papers back in. At some point, the fixes started generating themselves.
+**TinkerClaw's agent gets smarter every single day.** It reviews what went wrong, rewrites its own instructions while you sleep, and tomorrow's version is better than today's — like a chef who adjusts the recipe after every meal 👨‍🍳. We kept fixing problems, writing papers about *why* they happened, and feeding those papers back in. At some point, the fixes started generating themselves.
+
+**How do we know? We published the research.** Eleven papers, each solving a real problem from running an agent 24/7 for four months:
+
+| | Paper | What it means for you |
+|---|---|---|
+| 🧠 | [**Total Recall**](docs/papers/total-recall/total-recall.md) | Your agent remembers everything — even after sleeping on it. Like a brain, not a goldfish 🐟 |
+| ⚡ | [**Instant Recall**](docs/papers/instant-recall/instant-recall.md) | Finds the right memory instantly, not by searching everything. O(1) concept lookup. |
+| 🌿 | [**Fractal Reasoning**](docs/papers/fractal-reasoning/fractal-reasoning.md) | Doesn't just fix bugs — asks *why the bug exists*, then fixes the system that produced it 🔧 |
+| 👤 | [**Identity Persistence**](docs/papers/identity-persistence/identity-persistence.md) | Knows who it is and who you are. No more "as an AI, I don't have context..." |
+| 🌙 | [**Sleep Consolidation**](docs/papers/sleep-consolidation/sleep-consolidation.md) | 14 autonomous self-improvements in 30 days. Rewrites its own instructions while you sleep 😴 |
+| 🎭 | [**Round Table**](docs/papers/round-table/round-table.md) | Multiple AI models debating each other. Cheaper models collaborating beat one expensive model guessing. |
+| 😂 | [**Humor Embeddings**](docs/papers/humor-embeddings/humor-embeddings.md) | An agent that's genuinely funny — not "tell me a joke" funny, but sees-the-world-differently funny 🎭 |
+| 🔍 | [**Curiosity Motivation**](docs/papers/curiosity-motivation/curiosity-motivation.md) | Explores knowledge gaps before they become costly failures. Proactive, not reactive. |
+| 🔐 | [**Agent Security**](docs/papers/agent-security/agent-security.md) | Defense-in-depth that actually works. Zero credential leaks in 8+ weeks. Cheaper than Nvidia NeMo Guardrails, learned from real incidents instead of hand-written rules ✈️ |
+| 🏢 | [**Corporate Swarm**](docs/papers/corporate-swarm/corporate-swarm.md) | Multiple agents working together with oversight. Parallel execution, deterministic tracking. |
+| 🧬 | [**Learned Intuition**](docs/papers/learned-intuition/learned-intuition.md) | 10 neural networks that learn safety AND personality from interaction. The agent that vibe-recodes itself. |
+
+Not whitepapers. Not theory. Each paper describes a system that's running right now, in production, making the agent better every day.
 
 ---
 
