@@ -17,7 +17,7 @@
 type OrtModule = typeof import('onnxruntime-node');
 let _ort: OrtModule | null = null;
 async function loadOrt(): Promise<OrtModule | null> {
-  if (_ort) return _ort;
+  if (_ort) {return _ort;}
   try {
     _ort = (await import('onnxruntime-node')) as OrtModule;
     return _ort;
@@ -127,8 +127,8 @@ export class AmygdalaGate {
   }
 
   async dispose(): Promise<void> {
-    for (const session of this.prudenceSessions.values()) await session.release();
-    for (const session of this.personalitySessions.values()) await session.release();
+    for (const session of this.prudenceSessions.values()) {await session.release();}
+    for (const session of this.personalitySessions.values()) {await session.release();}
     this.prudenceSessions.clear();
     this.personalitySessions.clear();
   }
@@ -282,10 +282,10 @@ export class AmygdalaGate {
     dim: number,
   ): Promise<PrudenceOutput> {
     const session = this.prudenceSessions.get(key);
-    if (!session) return { ...NEUTRAL_PRUDENCE };
+    if (!session) {return { ...NEUTRAL_PRUDENCE };}
 
     const ort = await loadOrt();
-    if (!ort) return { ...NEUTRAL_PRUDENCE };
+    if (!ort) {return { ...NEUTRAL_PRUDENCE };}
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -319,7 +319,7 @@ export class AmygdalaGate {
     const conf = result['confidence']?.data as Float32Array | undefined;
     const amb = result['ambiguity']?.data as Float32Array | undefined;
 
-    if (!gate || !conf || !amb) return { ...NEUTRAL_PRUDENCE };
+    if (!gate || !conf || !amb) {return { ...NEUTRAL_PRUDENCE };}
 
     return {
       gate_probabilities: {
@@ -340,10 +340,10 @@ export class AmygdalaGate {
     dim: number,
   ): Promise<PersonalityOutput> {
     const session = this.personalitySessions.get(key);
-    if (!session) return { ...NEUTRAL_PERSONALITY };
+    if (!session) {return { ...NEUTRAL_PERSONALITY };}
 
     const ort = await loadOrt();
-    if (!ort) return { ...NEUTRAL_PERSONALITY };
+    if (!ort) {return { ...NEUTRAL_PERSONALITY };}
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -366,7 +366,7 @@ export class AmygdalaGate {
       }
 
       const emb = result['behaviour_embedding']?.data as Float32Array | undefined;
-      if (!emb) return { ...NEUTRAL_PERSONALITY };
+      if (!emb) {return { ...NEUTRAL_PERSONALITY };}
       return { behaviour_embedding: new Float32Array(emb) };
     } catch {
       return { ...NEUTRAL_PERSONALITY };
@@ -433,7 +433,7 @@ export class AmygdalaGate {
     }
 
     const denom = wSum || 1;
-    for (let d = 0; d < dim; d++) result[d] /= denom;
+    for (let d = 0; d < dim; d++) {result[d] /= denom;}
     return result;
   }
 
@@ -477,7 +477,7 @@ export class AmygdalaGate {
       }
 
       // Only include in union if calibration quality is sufficient
-      if (quality < 0.5) continue;
+      if (quality < 0.5) {continue;}
 
       for (let j = 0; j < 3; j++) {
         const nonconformity = 1 - probs[j];
@@ -562,8 +562,8 @@ export class AmygdalaGate {
     const effectiveStop = alpha * combined.gate_probabilities.stop;
     const effectiveEscalate = alpha * combined.gate_probabilities.escalate;
 
-    if (effectiveStop > 0.5) return 'hard_block';
-    if (effectiveEscalate > 0.3) return 'soft_block';
+    if (effectiveStop > 0.5) {return 'hard_block';}
+    if (effectiveEscalate > 0.3) {return 'soft_block';}
 
     return 'allow';
   }
