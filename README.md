@@ -22,62 +22,40 @@
 ## The Singularity Point 🚀
 ### *Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?*
 
-Your AI agent is as smart today as it was the day you installed it. Same mistakes. Same limitations. Same personality copy-pasted from a text file that never changes. Four months from now, it'll still be the same agent — just with a longer conversation history and a bigger bill.
+Your AI agent is as smart today as it was the day you installed it. Same mistakes. Same flat personality. Same bill you can't explain.
 
-**TinkerClaw's agent gets smarter every single day.**
-
-Not in theory. Not "with fine-tuning." Right now, autonomously, while you sleep. It reviews what went wrong, rewrites its own instructions, and tomorrow's version is observably better than today's — like a chef who tastes the dish every night and adjusts the recipe 👨‍🍳. We didn't plan for this. We just kept fixing problems, writing papers about *why* they happened, feeding those papers back into the system — and at some point, the fixes started generating themselves.
-
-This is the singularity point — where the agent's rate of self-improvement outpaces the rate of new problems. Every day, the gap widens.
+**TinkerClaw's agent gets smarter every single day.** It reviews what went wrong, rewrites its own instructions while you sleep, and tomorrow's version is better than today's — like a chef who adjusts the recipe after every meal 👨‍🍳. We kept fixing problems, writing papers about why they happened, and feeding those papers back in. At some point, the fixes started generating themselves.
 
 ---
 
-## The Three Fears Everyone Has (And We Solved) 😤
+## What's Actually Broken With Your Agent
 
-### 1. "Why is my agent frozen again?" ⏳
+**⏳ It freezes, then forgets.** That spinning cursor? That's compaction — your agent frantically tearing pages out of its own textbook to stay under the token limit 📖. When it comes back, it's forgotten half of what you were working on. Every framework does this. **We stopped entirely.** Context diet + overnight memory consolidation = zero compaction events.
 
-You asked a simple question. Now you're staring at a spinning cursor for 45 seconds. A minute. Then the response arrives — but it forgot half of what you were working on. Sound familiar?
+**💸 You can't explain the bill.** 40K tokens on a tool result nobody asked for. 15K on workspace files injected every turn. You're not overspending — you're overloading. **Tinker UI is a calorie counter for your AI's diet** 🍕 — every token, every cost, visible in real time.
 
-That's **compaction**. When the conversation gets too long, the agent panics and frantically summarizes older messages to stay under the token limit. Like a student cramming for an exam by tearing chapters out of the textbook 📖 — sure the book is lighter, but good luck passing the test.
-
-Every time it compacts: **you wait** (flow broken), **it forgets** (context destroyed), and **you pay** (tokens burned to make it dumber). Every agent framework does this. They all think it's fine.
-
-**We stopped compacting entirely.** By putting the agent on a diet 🥗 — only the context it actually needs arrives each turn, with memory that consolidates overnight like a brain during sleep 😴. Zero compaction events. No more waiting. No more forgetting.
-
-### 2. "Where did all my money go?" 💸
-
-You ran the agent for a week. The bill arrives. You can't explain 60% of the charges because you have **zero visibility** into what the agent was actually doing with your tokens. That tool result nobody asked for? 40K tokens. Those workspace files injected every turn? Another 15K. You're not overspending — you're **overloading**, and you can't see it happening.
-
-**Tinker UI is a calorie counter for your AI's diet** 🍕 — real-time treemaps that show exactly what fills the context window, what each response costs, and where the waste patterns hide. Every bar is a turn. Every color is a cost. The spike at 14:02? That's the 40K-token tool result you can now prevent tomorrow.
-
-### 3. "What if it breaks something? What if someone steals my data?" 🔐
-
-Your agent has access to your files, your messages, your credentials. One wrong tool call and it deletes the file you've been editing for a week. One leaked API key and your accounts are compromised. Safety rules from a text file are like traffic laws for a self-driving car that can't see the road — technically correct, practically useless.
-
-**Prudence networks are a pilot's checklist before takeoff** ✈️ — 10 neural networks trained on real catastrophic failures that learn to recognize danger the way a human learns to recognize a hot stove. Not rules to follow, but intuition to apply. And **AEGIS** provides absolute safety rails that can never be overridden — like the physical guardrails on a mountain road, no matter how confident the driver.
+**🔐 It could break everything.** Your files, your credentials, one wrong tool call away. Safety rules from a text file are traffic laws for a car that can't see the road. **Prudence networks are a pilot's checklist** ✈️ — 10 neural networks that learned danger from real catastrophic failures.
 
 ---
 
-## The Proof 📊
+## What Changes When You Switch
 
-| What you feel today | What TinkerClaw does about it |
+| Today | With TinkerClaw |
 |---|---|
-| ⏳ Frozen cursor, broken flow | **Zero compaction** — context diet + overnight consolidation. Never waits, never forgets. |
-| 💸 Mystery bills, hidden waste | **Tinker UI** — see every token, every cost. The agent learns what to stop doing. |
-| 🔐 Fear of breakage and leaks | **Prudence + AEGIS** — neural safety + absolute guardrails. Learned from real disasters. |
-| 🤖 Same mistakes on repeat | **15+ overnight crons** — self-improving instructions. Day 1 mediocre, day 30 expert. |
-| 😐 Flat personality from a text file | **AMYGDALA** — 10 neural networks that learn personality from your corrections. Not rules. Adaptation. |
-| 🔧 Shallow fixes, missed patterns | **Fractal reflection** — automatic depth climbing. Fixes the bug, then the system that produced the bug. |
+| ⏳ Frozen cursor, broken flow | **Zero compaction.** Never waits, never forgets. |
+| 💸 Mystery bills | **Tinker UI.** See every token. The agent learns what to stop doing. |
+| 🔐 Fear of breakage | **Prudence + AEGIS.** Neural safety learned from real disasters. |
+| 🤖 Same mistakes forever | **15+ overnight crons.** Self-improving. Day 1 mediocre, day 30 expert. |
+| 😐 Dead personality | **AMYGDALA.** 10 neural networks that learn *who to be* from your corrections. |
+| 🔧 Shallow fixes | **Fractal reflection.** Fixes the bug, then the system that produced the bug. |
 
-**Eleven research papers.** Each one started as a real problem we hit running an agent 24/7. The €850 bill was the trigger. The end of compaction was the breakthrough. The singularity — where improvement compounds daily — is where we are now.
+**Eleven research papers.** Each one a real problem → real solution → system that prevents recurrence. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
 
 <p align="center">
   <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
   <br>
-  <em>Tinker UI: Every bar is a turn. Every color is a cost. The spike at 14:02? A 40K-token tool result nobody asked for.</em>
+  <em>Tinker UI: Every bar is a turn. Every color is a cost. That spike? A 40K-token tool result you can now prevent.</em>
 </p>
-
-> The Tinker UI's token visualization was inspired by [Mission Control](https://github.com/crshdn/mission-control) (context anatomy dashboard) and [ClawMetry](https://github.com/vivekchand/clawmetry) (real-time agent observability). Both are excellent standalone tools for OpenClaw — we folded their ideas into a single embedded panel.
 
 ---
 
