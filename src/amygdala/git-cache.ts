@@ -4,10 +4,10 @@
 // ALL git operations are async — never execSync, never statSync.
 // ============================================================
 
-import * as path from 'path';
-import { exec as execCb } from 'child_process';
-import { promisify } from 'util';
-import chokidar, { type FSWatcher } from 'chokidar';
+import { exec as execCb } from "child_process";
+import * as path from "path";
+import { promisify } from "util";
+import chokidar, { type FSWatcher } from "chokidar";
 
 const execAsync = promisify(execCb);
 
@@ -58,8 +58,12 @@ export class GitCache {
    * Safe to call multiple times — guards against double-start.
    */
   async start(): Promise<void> {
-    if (!this.config.enabled) {return;}
-    if (this.watchers.length > 0) {return;} // Already started
+    if (!this.config.enabled) {
+      return;
+    }
+    if (this.watchers.length > 0) {
+      return;
+    } // Already started
 
     for (const watchPath of this.config.watch_paths) {
       try {
@@ -74,11 +78,11 @@ export class GitCache {
           awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
         });
 
-        watcher.on('all', (_event: string, filePath: string) => {
+        watcher.on("all", (_event: string, filePath: string) => {
           this.staleKeys.add(filePath);
         });
 
-        watcher.on('error', (err: unknown) => {
+        watcher.on("error", (err: unknown) => {
           // Non-fatal: log and continue. TTL fallback will handle staleness.
           console.warn(`[GitCache] Watcher error on ${watchPath}:`, err);
         });
@@ -176,11 +180,11 @@ export class GitCache {
       const [commitResult, authorResult] = await Promise.all([
         execAsync(
           `git -C "${escapedDir}" log --since="${hours} hours ago" --oneline -- "${escapedFile}" 2>/dev/null | wc -l`,
-          { encoding: 'utf-8', timeout: 5000 },
+          { encoding: "utf-8", timeout: 5000 },
         ),
         execAsync(
           `git -C "${escapedDir}" log --since="${hours} hours ago" --format="%an" -- "${escapedFile}" 2>/dev/null | sort -u | wc -l`,
-          { encoding: 'utf-8', timeout: 5000 },
+          { encoding: "utf-8", timeout: 5000 },
         ),
       ]);
 

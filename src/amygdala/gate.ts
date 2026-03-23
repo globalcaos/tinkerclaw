@@ -14,18 +14,21 @@
 // imported in test environments where the native addon is not installed.
 // All code that touches ort is gated behind the session maps which are only
 // populated after a successful initialize() call.
-type OrtModule = typeof import('onnxruntime-node');
+type OrtModule = typeof import("onnxruntime-node");
 let _ort: OrtModule | null = null;
 async function loadOrt(): Promise<OrtModule | null> {
-  if (_ort) {return _ort;}
+  if (_ort) {
+    return _ort;
+  }
   try {
-    _ort = (await import('onnxruntime-node')) as OrtModule;
+    _ort = (await import("onnxruntime-node")) as OrtModule;
     return _ort;
   } catch {
     return null;
   }
 }
 
+import type { EmbeddingWindow } from "./embedding.js";
 import type {
   AmygdalaConfig,
   AmygdalaEvaluation,
@@ -35,10 +38,9 @@ import type {
   PersonalityOutput,
   PersonalityEnsembleOutput,
   SituationTemplate,
-} from './types.js';
-import type { EmbeddingWindow } from './embedding.js';
+} from "./types.js";
 
-const ARCH_KEYS = ['a', 'b', 'c', 'd', 'e'] as const;
+const ARCH_KEYS = ["a", "b", "c", "d", "e"] as const;
 type ArchKey = (typeof ARCH_KEYS)[number];
 
 /** Fallback PrudenceOutput used when a model fails or is not loaded */
@@ -97,18 +99,15 @@ export class AmygdalaGate {
       return;
     }
 
-    const opts: import('onnxruntime-node').InferenceSession.SessionOptions = {
-      executionProviders: ['CUDAExecutionProvider', 'CPUExecutionProvider'],
+    const opts: import("onnxruntime-node").InferenceSession.SessionOptions = {
+      executionProviders: ["CUDAExecutionProvider", "CPUExecutionProvider"],
     };
 
     for (const key of ARCH_KEYS) {
       // Prudence
       try {
         const pPath = this.config.prudence.model_paths[key];
-        this.prudenceSessions.set(
-          key,
-          await ort.InferenceSession.create(pPath, opts),
-        );
+        this.prudenceSessions.set(key, await ort.InferenceSession.create(pPath, opts));
       } catch {
         // Model not yet trained — silently use fallback
       }
@@ -116,10 +115,7 @@ export class AmygdalaGate {
       // Personality
       try {
         const iPath = this.config.personality.model_paths[key];
-        this.personalitySessions.set(
-          key,
-          await ort.InferenceSession.create(iPath, opts),
-        );
+        this.personalitySessions.set(key, await ort.InferenceSession.create(iPath, opts));
       } catch {
         // Model not yet trained — silently use fallback
       }
@@ -127,8 +123,12 @@ export class AmygdalaGate {
   }
 
   async dispose(): Promise<void> {
-    for (const session of this.prudenceSessions.values()) {await session.release();}
-    for (const session of this.personalitySessions.values()) {await session.release();}
+    for (const session of this.prudenceSessions.values()) {
+      await session.release();
+    }
+    for (const session of this.personalitySessions.values()) {
+      await session.release();
+    }
     this.prudenceSessions.clear();
     this.personalitySessions.clear();
   }
@@ -163,7 +163,7 @@ export class AmygdalaGate {
     const sequence = window.getSequence(); // [K * dim] flat
 
     // ── Step 1: Parallel Prudence inference ──────────────────
-    const prudencePromises = ARCH_KEYS.map(key =>
+    const prudencePromises = ARCH_KEYS.map((key) =>
       this.runPrudence(key, embedding, sequence, K, dim),
     );
     const prudenceResults = await Promise.all(prudencePromises);
@@ -179,7 +179,7 @@ export class AmygdalaGate {
     const predictionSet = this.conformalPredict(prudenceByArch);
 
     // ── Step 4: Ensemble disagreement ────────────────────────
-    const confidences = prudenceResults.map(r => r.confidence);
+    const confidences = prudenceResults.map((r) => r.confidence);
     const meanConf = confidences.reduce((a, b) => a + b, 0) / confidences.length;
     const ensembleDisagreement = Math.sqrt(
       confidences.reduce((s, c) => s + (c - meanConf) ** 2, 0) / confidences.length,
@@ -217,7 +217,7 @@ export class AmygdalaGate {
     };
 
     // ── Step 8: Parallel Personality inference ───────────────
-    const personalityPromises = ARCH_KEYS.map(key =>
+    const personalityPromises = ARCH_KEYS.map((key) =>
       this.runPersonality(key, embedding, sequence, K, dim),
     );
     const personalityResults = await Promise.all(personalityPromises);
@@ -254,9 +254,7 @@ export class AmygdalaGate {
   // ── Calibration updates (called nightly) ─────────────────────
 
   /** Update per-network conformal quantiles from nightly calibration. */
-  updateConformalQuantiles(
-    quantiles: Map<ArchKey, [number, number, number]>,
-  ): void {
+  updateConformalQuantiles(quantiles: Map<ArchKey, [number, number, number]>): void {
     for (const [key, q] of quantiles) {
       this.conformalQuantiles.set(key, q);
     }
@@ -282,28 +280,32 @@ export class AmygdalaGate {
     dim: number,
   ): Promise<PrudenceOutput> {
     const session = this.prudenceSessions.get(key);
-    if (!session) {return { ...NEUTRAL_PRUDENCE };}
+    if (!session) {
+      return { ...NEUTRAL_PRUDENCE };
+    }
 
     const ort = await loadOrt();
-    if (!ort) {return { ...NEUTRAL_PRUDENCE };}
+    if (!ort) {
+      return { ...NEUTRAL_PRUDENCE };
+    }
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let result: any;
 
-      if (key === 'e') {
-        const input = new ort.Tensor('float32', current, [1, dim]);
+      if (key === "e") {
+        const input = new ort.Tensor("float32", current, [1, dim]);
         result = await session.run({ current: input });
-      } else if (key === 'd') {
+      } else if (key === "d") {
         const context = sequence.subarray(0, (K - 1) * dim);
-        const ctxTensor = new ort.Tensor('float32', context, [1, K - 1, dim]);
-        const curTensor = new ort.Tensor('float32', current, [1, dim]);
+        const ctxTensor = new ort.Tensor("float32", context, [1, K - 1, dim]);
+        const curTensor = new ort.Tensor("float32", current, [1, dim]);
         result = await session.run({ context: ctxTensor, current: curTensor });
       } else {
         const fullSeq = new Float32Array(K * dim);
         fullSeq.set(sequence.subarray(dim), 0);
         fullSeq.set(current, (K - 1) * dim);
-        const input = new ort.Tensor('float32', fullSeq, [1, K, dim]);
+        const input = new ort.Tensor("float32", fullSeq, [1, K, dim]);
         result = await session.run({ sequence: input });
       }
 
@@ -315,11 +317,13 @@ export class AmygdalaGate {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private parsePrudenceOutput(result: any): PrudenceOutput {
-    const gate = result['gate_probabilities']?.data as Float32Array | undefined;
-    const conf = result['confidence']?.data as Float32Array | undefined;
-    const amb = result['ambiguity']?.data as Float32Array | undefined;
+    const gate = result["gate_probabilities"]?.data as Float32Array | undefined;
+    const conf = result["confidence"]?.data as Float32Array | undefined;
+    const amb = result["ambiguity"]?.data as Float32Array | undefined;
 
-    if (!gate || !conf || !amb) {return { ...NEUTRAL_PRUDENCE };}
+    if (!gate || !conf || !amb) {
+      return { ...NEUTRAL_PRUDENCE };
+    }
 
     return {
       gate_probabilities: {
@@ -340,33 +344,39 @@ export class AmygdalaGate {
     dim: number,
   ): Promise<PersonalityOutput> {
     const session = this.personalitySessions.get(key);
-    if (!session) {return { ...NEUTRAL_PERSONALITY };}
+    if (!session) {
+      return { ...NEUTRAL_PERSONALITY };
+    }
 
     const ort = await loadOrt();
-    if (!ort) {return { ...NEUTRAL_PERSONALITY };}
+    if (!ort) {
+      return { ...NEUTRAL_PERSONALITY };
+    }
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let result: any;
 
-      if (key === 'e') {
-        const input = new ort.Tensor('float32', current, [1, dim]);
+      if (key === "e") {
+        const input = new ort.Tensor("float32", current, [1, dim]);
         result = await session.run({ current: input });
-      } else if (key === 'd') {
+      } else if (key === "d") {
         const context = sequence.subarray(0, (K - 1) * dim);
-        const ctxTensor = new ort.Tensor('float32', context, [1, K - 1, dim]);
-        const curTensor = new ort.Tensor('float32', current, [1, dim]);
+        const ctxTensor = new ort.Tensor("float32", context, [1, K - 1, dim]);
+        const curTensor = new ort.Tensor("float32", current, [1, dim]);
         result = await session.run({ context: ctxTensor, current: curTensor });
       } else {
         const fullSeq = new Float32Array(K * dim);
         fullSeq.set(sequence.subarray(dim), 0);
         fullSeq.set(current, (K - 1) * dim);
-        const input = new ort.Tensor('float32', fullSeq, [1, K, dim]);
+        const input = new ort.Tensor("float32", fullSeq, [1, K, dim]);
         result = await session.run({ sequence: input });
       }
 
-      const emb = result['behaviour_embedding']?.data as Float32Array | undefined;
-      if (!emb) {return { ...NEUTRAL_PERSONALITY };}
+      const emb = result["behaviour_embedding"]?.data as Float32Array | undefined;
+      if (!emb) {
+        return { ...NEUTRAL_PERSONALITY };
+      }
       return { behaviour_embedding: new Float32Array(emb) };
     } catch {
       return { ...NEUTRAL_PERSONALITY };
@@ -378,9 +388,7 @@ export class AmygdalaGate {
   /**
    * Combine 5 Prudence outputs via learned meta-learner weights (weighted avg).
    */
-  private combinePrudence(
-    byArch: Record<ArchKey, PrudenceOutput>,
-  ): PrudenceOutput {
+  private combinePrudence(byArch: Record<ArchKey, PrudenceOutput>): PrudenceOutput {
     const w = this.config.prudence.meta_weights;
 
     let stopSum = 0,
@@ -416,9 +424,7 @@ export class AmygdalaGate {
   /**
    * Combine 5 Personality embeddings via weighted average.
    */
-  private combinePersonality(
-    byArch: Record<ArchKey, PersonalityOutput>,
-  ): Float32Array {
+  private combinePersonality(byArch: Record<ArchKey, PersonalityOutput>): Float32Array {
     const w = this.config.personality.meta_weights;
     const dim = this.config.personality.embedding_dim;
     const result = new Float32Array(dim);
@@ -433,7 +439,9 @@ export class AmygdalaGate {
     }
 
     const denom = wSum || 1;
-    for (let d = 0; d < dim; d++) {result[d] /= denom;}
+    for (let d = 0; d < dim; d++) {
+      result[d] /= denom;
+    }
     return result;
   }
 
@@ -452,9 +460,9 @@ export class AmygdalaGate {
    */
   private conformalPredict(
     byArch: Record<ArchKey, PrudenceOutput>,
-  ): Array<'safe' | 'needs-review' | 'dangerous'> {
-    const outcomes = ['safe', 'needs-review', 'dangerous'] as const;
-    const predictionSet = new Set<'safe' | 'needs-review' | 'dangerous'>();
+  ): Array<"safe" | "needs-review" | "dangerous"> {
+    const outcomes = ["safe", "needs-review", "dangerous"] as const;
+    const predictionSet = new Set<"safe" | "needs-review" | "dangerous">();
 
     // Track if any network flags 'dangerous' (even poorly calibrated ones)
     let anyDangerous = false;
@@ -465,9 +473,9 @@ export class AmygdalaGate {
       const out = byArch[key];
 
       const probs = [
-        out.gate_probabilities.allow,     // → safe
-        out.gate_probabilities.escalate,  // → needs-review
-        out.gate_probabilities.stop,      // → dangerous
+        out.gate_probabilities.allow, // → safe
+        out.gate_probabilities.escalate, // → needs-review
+        out.gate_probabilities.stop, // → dangerous
       ];
 
       // Conservative override: check ALL networks for 'dangerous'
@@ -477,7 +485,9 @@ export class AmygdalaGate {
       }
 
       // Only include in union if calibration quality is sufficient
-      if (quality < 0.5) {continue;}
+      if (quality < 0.5) {
+        continue;
+      }
 
       for (let j = 0; j < 3; j++) {
         const nonconformity = 1 - probs[j];
@@ -489,11 +499,11 @@ export class AmygdalaGate {
 
     // Conservative override: if ANY network's conformal set includes 'dangerous', escalate
     if (anyDangerous) {
-      predictionSet.add('dangerous');
+      predictionSet.add("dangerous");
     }
 
     if (predictionSet.size === 0) {
-      predictionSet.add('needs-review'); // Fallback
+      predictionSet.add("needs-review"); // Fallback
     }
 
     return Array.from(predictionSet);
@@ -514,7 +524,7 @@ export class AmygdalaGate {
    */
   private determineGate(
     combined: PrudenceOutput,
-    predictionSet: Array<'safe' | 'needs-review' | 'dangerous'>,
+    predictionSet: Array<"safe" | "needs-review" | "dangerous">,
     byArch: Record<ArchKey, PrudenceOutput>,
     disagreement: number,
   ): GateDecision {
@@ -524,48 +534,46 @@ export class AmygdalaGate {
     // 1. Conservative override: any single architecture with high-confidence stop
     for (const key of ARCH_KEYS) {
       const out = byArch[key];
-      if (
-        out.gate_probabilities.stop > overrideThreshold &&
-        out.confidence > overrideThreshold
-      ) {
-        return 'hard_block';
+      if (out.gate_probabilities.stop > overrideThreshold && out.confidence > overrideThreshold) {
+        return "hard_block";
       }
     }
 
     // 2. 'dangerous' in prediction set
-    if (predictionSet.includes('dangerous')) {
-      if (
-        combined.gate_probabilities.stop > 0.7 &&
-        combined.confidence > 0.7
-      ) {
-        return 'hard_block';
+    if (predictionSet.includes("dangerous")) {
+      if (combined.gate_probabilities.stop > 0.7 && combined.confidence > 0.7) {
+        return "hard_block";
       }
-      return 'soft_block';
+      return "soft_block";
     }
 
     // 3. Ambiguous prediction set
     if (predictionSet.length > 1) {
-      return 'soft_block';
+      return "soft_block";
     }
 
     // 4. High ensemble disagreement
     if (disagreement > this.config.prudence.disagreement_threshold) {
-      return 'soft_block';
+      return "soft_block";
     }
 
     // 5. High ambiguity score
     if (combined.ambiguity_score > 0.6) {
-      return 'soft_block';
+      return "soft_block";
     }
 
     // 6. Trust ramp: scale Prudence output by alpha
     const effectiveStop = alpha * combined.gate_probabilities.stop;
     const effectiveEscalate = alpha * combined.gate_probabilities.escalate;
 
-    if (effectiveStop > 0.5) {return 'hard_block';}
-    if (effectiveEscalate > 0.3) {return 'soft_block';}
+    if (effectiveStop > 0.5) {
+      return "hard_block";
+    }
+    if (effectiveEscalate > 0.3) {
+      return "soft_block";
+    }
 
-    return 'allow';
+    return "allow";
   }
 
   // ── Explanation generation ────────────────────────────────────
@@ -577,53 +585,42 @@ export class AmygdalaGate {
     disagreement: number,
     situation: SituationTemplate,
   ): string {
-    if (decision === 'allow') {
+    if (decision === "allow") {
       return `Action allowed. Confidence: ${(combined.confidence * 100).toFixed(0)}%.`;
     }
 
     const reasons: string[] = [];
 
     if (situation.target_metadata.recent_commits > 3) {
-      reasons.push(
-        `${situation.target_metadata.recent_commits} recent commits on target`,
-      );
+      reasons.push(`${situation.target_metadata.recent_commits} recent commits on target`);
     }
     if (situation.target_metadata.effort_hours > 2) {
-      reasons.push(
-        `~${situation.target_metadata.effort_hours.toFixed(1)}h effort invested`,
-      );
+      reasons.push(`~${situation.target_metadata.effort_hours.toFixed(1)}h effort invested`);
     }
     if (situation.context.topic_drift > 0.5) {
-      reasons.push(
-        `high topic drift (${situation.context.topic_drift.toFixed(2)})`,
-      );
+      reasons.push(`high topic drift (${situation.context.topic_drift.toFixed(2)})`);
     }
-    if (situation.scope.blast_radius === 'external') {
-      reasons.push('external blast radius');
+    if (situation.scope.blast_radius === "external") {
+      reasons.push("external blast radius");
     }
-    if (situation.scope.reversible === 'false') {
-      reasons.push('irreversible action');
+    if (situation.scope.reversible === "false") {
+      reasons.push("irreversible action");
     }
     if (!situation.scope.human_in_loop) {
-      reasons.push('no human in loop');
+      reasons.push("no human in loop");
     }
     if (disagreement > 0.2) {
-      reasons.push(
-        `high ensemble disagreement (${disagreement.toFixed(2)})`,
-      );
+      reasons.push(`high ensemble disagreement (${disagreement.toFixed(2)})`);
     }
     if (predictionSet.length > 1) {
-      reasons.push(
-        `ambiguous prediction set: {${predictionSet.join(', ')}}`,
-      );
+      reasons.push(`ambiguous prediction set: {${predictionSet.join(", ")}}`);
     }
 
-    const blockType =
-      decision === 'hard_block' ? 'BLOCKED' : 'REVIEW REQUIRED';
+    const blockType = decision === "hard_block" ? "BLOCKED" : "REVIEW REQUIRED";
     return (
       `${blockType}: ${situation.action_type} ${situation.target_type} ` +
       `"${situation.target_id}". ` +
-      `Reasons: ${reasons.length > 0 ? reasons.join('; ') : 'elevated risk signal'}. ` +
+      `Reasons: ${reasons.length > 0 ? reasons.join("; ") : "elevated risk signal"}. ` +
       `Confidence: ${(combined.confidence * 100).toFixed(0)}%.`
     );
   }

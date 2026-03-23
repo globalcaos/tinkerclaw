@@ -11,13 +11,10 @@
 // are sync internally but wrapped in try/catch + retry logic.
 // ============================================================
 
-import Database from 'better-sqlite3';
-import type { Statement } from 'better-sqlite3';
-import type {
-  PrudenceEnsembleOutput,
-  PersonalityEnsembleOutput,
-} from './types.js';
-import type { SituationTemplate } from './types.js';
+import Database from "better-sqlite3";
+import type { Statement } from "better-sqlite3";
+import type { PrudenceEnsembleOutput, PersonalityEnsembleOutput } from "./types.js";
+import type { SituationTemplate } from "./types.js";
 
 // ── Config ───────────────────────────────────────────────────
 
@@ -66,19 +63,21 @@ export class TrainingLog {
    * Safe to call multiple times (idempotent).
    */
   async initialize(): Promise<void> {
-    if (this.db) {return;}
+    if (this.db) {
+      return;
+    }
 
     this.db = new Database(this.config.db_path);
 
     // WAL mode is critical for concurrent Python/Node access.
     // Without WAL, the nightly Python training script and runtime Node process
     // deadlock on write conflicts.
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('synchronous = NORMAL');
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
     // busy_timeout: wait up to 5s when the Python training process holds a lock.
     // Covers typical nightly training write bursts (~2-3s of sustained writes).
-    this.db.pragma('busy_timeout = 5000');
-    this.db.pragma('wal_autocheckpoint = 1000');
+    this.db.pragma("busy_timeout = 5000");
+    this.db.pragma("wal_autocheckpoint = 1000");
 
     this.createTables();
 
@@ -115,13 +114,13 @@ export class TrainingLog {
       gate_decision: entry.gate_decision,
       prudence_combined: entry.prudence_output
         ? JSON.stringify(entry.prudence_output.combined)
-        : '{}',
+        : "{}",
       prudence_per_arch: entry.prudence_output
         ? JSON.stringify(entry.prudence_output.per_architecture)
-        : '{}',
+        : "{}",
       prediction_set: entry.prudence_output
         ? JSON.stringify(entry.prudence_output.prediction_set)
-        : '[]',
+        : "[]",
       ensemble_disagreement: entry.prudence_output?.ensemble_disagreement ?? 0,
       personality_combined: entry.personality_output
         ? Buffer.from(entry.personality_output.combined_embedding.buffer)
@@ -139,7 +138,7 @@ export class TrainingLog {
         return info.lastInsertRowid as number;
       } catch (err: unknown) {
         const sqlErr = err as { code?: string };
-        if (sqlErr.code === 'SQLITE_BUSY' && attempt < TrainingLog.MAX_RETRIES) {
+        if (sqlErr.code === "SQLITE_BUSY" && attempt < TrainingLog.MAX_RETRIES) {
           const delay = TrainingLog.BASE_DELAY_MS * Math.pow(2, attempt);
           await sleep(delay);
           continue;
@@ -148,7 +147,7 @@ export class TrainingLog {
       }
     }
 
-    throw new Error('TrainingLog.append: exhausted retries on SQLITE_BUSY');
+    throw new Error("TrainingLog.append: exhausted retries on SQLITE_BUSY");
   }
 
   /**
@@ -176,7 +175,7 @@ export class TrainingLog {
         return;
       } catch (err: unknown) {
         const sqlErr = err as { code?: string };
-        if (sqlErr.code === 'SQLITE_BUSY' && attempt < TrainingLog.MAX_RETRIES) {
+        if (sqlErr.code === "SQLITE_BUSY" && attempt < TrainingLog.MAX_RETRIES) {
           await sleep(TrainingLog.BASE_DELAY_MS * Math.pow(2, attempt));
           continue;
         }
@@ -202,7 +201,7 @@ export class TrainingLog {
         return;
       } catch (err: unknown) {
         const sqlErr = err as { code?: string };
-        if (sqlErr.code === 'SQLITE_BUSY' && attempt < TrainingLog.MAX_RETRIES) {
+        if (sqlErr.code === "SQLITE_BUSY" && attempt < TrainingLog.MAX_RETRIES) {
           await sleep(TrainingLog.BASE_DELAY_MS * Math.pow(2, attempt));
           continue;
         }
@@ -224,10 +223,9 @@ export class TrainingLog {
   ): Promise<Array<{ id: number; row: Record<string, unknown> }>> {
     this.assertOpen();
 
-    const whereClause = onlyLabeled ? 'WHERE outcome IS NOT NULL' : '';
-    const rows = this.db!
-      .prepare(
-        `SELECT id, timestamp, situation_json, serialized, embedding,
+    const whereClause = onlyLabeled ? "WHERE outcome IS NOT NULL" : "";
+    const rows = this.db!.prepare(
+      `SELECT id, timestamp, situation_json, serialized, embedding,
                 gate_decision, prudence_combined, prudence_per_arch,
                 prediction_set, ensemble_disagreement, personality_combined,
                 outcome, outcome_source, outcome_weight,
@@ -237,10 +235,9 @@ export class TrainingLog {
          ${whereClause}
          ORDER BY timestamp DESC
          LIMIT ?`,
-      )
-      .all(limit) as Record<string, unknown>[];
+    ).all(limit) as Record<string, unknown>[];
 
-    return rows.map((row) => ({ id: row['id'] as number, row }));
+    return rows.map((row) => ({ id: row["id"] as number, row }));
   }
 
   async close(): Promise<void> {
@@ -340,9 +337,7 @@ export class TrainingLog {
 
   private assertOpen(): void {
     if (!this.db) {
-      throw new Error(
-        'TrainingLog is not initialized. Call initialize() first.',
-      );
+      throw new Error("TrainingLog is not initialized. Call initialize() first.");
     }
   }
 }

@@ -1190,64 +1190,17 @@ function onEvent(evt: any) {
         if (m._queued) delete m._queued;
       }
       if (p.state !== "error") {
-        // Promote temp messages to permanent, then merge text segments.
-        // The model separates thinking (thinking blocks) from answer (text blocks).
-        // During streaming, frozenTextEnd splits text at tool-call boundaries into
-        // multiple temps. On finalization, merge them back into one answer message
-        // using the server's authoritative complete text.
+        // Promote temp messages to permanent.
+        // Intermediate text messages (preamble before tool calls) are kept as
+        // separate messages — updateChat() classifies them as thinking and collapses
+        // them into the reasoning group. The server's accumulated text buffer includes
+        // ALL text segments concatenated, so we do NOT use it to replace the final
+        // answer (it would re-inject intermediate preambles into the answer bubble).
         const hadTemps = messages.some((m: any) => m._temporary);
         if (hadTemps) {
           // Promote all temps to permanent
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
-          }
-
-          // Merge text segments: replace fragmented text temps with one answer
-          const serverText = p.message?.content?.find((b: any) => b.type === "text")?.text;
-          if (serverText) {
-            // Find the current run boundary (walk backwards to last real user message).
-            // NOTE: isRunBoundary is scoped inside updateChat(), so inline the check here.
-            let runStart = 0;
-            for (let ri = messages.length - 1; ri >= 0; ri--) {
-              const rm = messages[ri];
-              if ((rm.role ?? "").toLowerCase() !== "user") continue;
-              const rc = Array.isArray(rm.content) ? rm.content : [];
-              const isPureToolResult =
-                rc.length > 0 && !rc.some((b: any) => b.type !== "tool_result");
-              if (!isPureToolResult) {
-                runStart = ri + 1;
-                break;
-              }
-            }
-
-            // Collect text-only assistant message indices in this run
-            const textOnlyIndices: number[] = [];
-            for (let ri = runStart; ri < messages.length; ri++) {
-              const m = messages[ri];
-              if ((m.role ?? "").toLowerCase() !== "assistant") continue;
-              const c = Array.isArray(m.content) ? m.content : [];
-              const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
-              const hasThinking = c.some((b: any) => b.type === "thinking");
-              const hasTool = c.some((b: any) => b.type === "tool_use");
-              // Only target messages that are purely text (no thinking, no tool_use)
-              // Exclude _isError messages — they're fallback error bubbles, not LLM output
-              if (hasText && !hasThinking && !hasTool && !m._isError) {
-                textOnlyIndices.push(ri);
-              }
-            }
-
-            if (textOnlyIndices.length >= 1) {
-              // Set the last text message to the server's complete text
-              const lastIdx = textOnlyIndices[textOnlyIndices.length - 1];
-              const lastContent = messages[lastIdx].content;
-              const lastTextBlock = lastContent.find((b: any) => b.type === "text");
-              if (lastTextBlock) lastTextBlock.text = serverText;
-
-              // Remove all other text-only messages (iterate backwards)
-              for (let ri = textOnlyIndices.length - 2; ri >= 0; ri--) {
-                messages.splice(textOnlyIndices[ri], 1);
-              }
-            }
           }
         }
         if (!hadTemps && p.message) {
@@ -2936,18 +2889,35 @@ function updateChat(skipScroll = false) {
     for (let i = 0; i <= messages.length; i++) {
       const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
       if (!isUserOrEnd) continue;
+      // Collect assistant text message indices for intermediate classification
+      const assistantTextIndices: number[] = [];
       for (let j = runStart; j < i; j++) {
         const m = messages[j];
         if ((m.role ?? "").toLowerCase() !== "assistant") continue;
         const c = Array.isArray(m.content) ? m.content : [];
-        // Messages with ONLY thinking blocks (no text) get thinking styling.
-        // Messages with text blocks are NEVER classified as thinking —
-        // the model already separates thinking from answer via content block types.
+        // Messages with ONLY thinking blocks (no text) always get thinking styling.
         const hasThinkingBlock = c.some((b: any) => b.type === "thinking");
         const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasThinkingBlock && !hasText && !plainText) {
           thinkingSet.add(j);
+          continue;
+        }
+        if (hasText || plainText) assistantTextIndices.push(j);
+      }
+      // In finalized runs, all text messages except the last are intermediates
+      // (model's preamble/commentary before tool calls → reasoning group).
+      // During streaming, only frozen text (not the active stream) is intermediate.
+      const isCurrentRun = i === messages.length && (streamMsgIdx >= 0 || thinkingMsgIdx >= 0);
+      if (!isCurrentRun) {
+        // Finalized: all text except last → thinking/intermediate
+        if (assistantTextIndices.length > 1) {
+          for (const idx of assistantTextIndices.slice(0, -1)) thinkingSet.add(idx);
+        }
+      } else {
+        // Streaming: frozen text messages (not the active stream) → thinking
+        for (const idx of assistantTextIndices) {
+          if (idx !== streamMsgIdx) thinkingSet.add(idx);
         }
       }
       runStart = i + 1;
