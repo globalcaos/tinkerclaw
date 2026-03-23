@@ -5,7 +5,7 @@
 <h1 align="center">TinkerClaw</h1>
 
 <p align="center">
-  <strong>An OpenClaw fork for people who check their token spend before breakfast.</strong>
+  <strong>An OpenClaw fork that remembers, learns, and stays funny when you tell it it's wrong.</strong>
 </p>
 
 <p align="center">
@@ -28,17 +28,30 @@
 
 ---
 
-## The Problem
+## What Is This?
 
-You ran Opus for 20 minutes. It felt productive. Then you checked the bill and discovered that "productive session" cost $23.
+TinkerClaw is what happens when you run an AI agent 24/7 for four months and fix everything that breaks.
 
-The worst part? $15 of that was context bloat — workspace files you forgot were injected, tool results the model never referenced, conversation history from six topics ago still sitting in the window.
+It started with an **€850 bill** — the cost of running Opus at scale with zero visibility into where the tokens go. That was the motivation for Tinker UI, the real-time token visualizer. But solving cost visibility revealed deeper problems. The agent forgot who it was between sessions. It couldn't learn from mistakes. It dropped its personality the moment you corrected it. It followed safety rules it didn't understand and broke things the rules were supposed to prevent.
 
-You didn't overspend. You **overloaded**. And you had no way to see it happening.
+So we fixed those too. Then we wrote papers about the fixes. Then the agent started reading its own papers and improving itself overnight. Then we gave it a personality that adapts from interaction instead of following a static prompt. Then we taught it fractal thinking — when something breaks, it doesn't just fix the bug, it climbs: what pattern does this belong to? what system produces this pattern?
 
-Most people find out three days later. The observant ones set a budget alert after it's already too late. We found out when an **€850 bill** landed for a single month. Not a catastrophic failure — just the natural cost of running a capable AI agent at scale with zero visibility.
+The result: **an agent that thinks in layers, remembers everything, improves while you sleep, and stays funny when you tell it it's wrong.**
 
-That bill was the motivation. TinkerClaw is the answer.
+Here's what vanilla OpenClaw gives you vs. what this fork adds:
+
+| Vanilla OpenClaw | TinkerClaw |
+|---|---|
+| No token visibility | **Tinker UI** — real-time treemaps of every token you're paying for |
+| Context bloat over time | **ENGRAM memory** — 49% fewer tokens per turn, zero loss |
+| Forgets who it is each session | **Identity persistence** — personality, preferences, history across restarts |
+| Static system prompt personality | **AMYGDALA** — 10 neural networks that learn personality from interaction |
+| No overnight improvement | **15+ autonomous crons** — wind-down, memory consolidation, self-evolution |
+| Safety via rules | **Prudence networks** — action gating that learns from catastrophic failures |
+| Flat reasoning | **Fractal reflection** — automatic depth climbing on corrections and surprises |
+| Manual compaction needed | **Pointer compaction** — virtually eliminates manual context management |
+
+It's not a theme or a tweak. It's a different kind of agent.
 
 ---
 
