@@ -423,6 +423,8 @@ export function buildAgentSystemPrompt(params: {
           "The Personality networks detected drift from your target personality. Adjustments:",
           ...params.amygdalaNudge.map((a) => `- ${a}`),
           "",
+          "**Visibility rule:** When any nudge above influences your response, append a brief `[🧠 AMYGDALA: <which nudge fired>]` tag at the end of your reply so Oscar can observe what the system is doing.",
+          "",
         ]
       : []),
     "## Tooling",
