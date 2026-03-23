@@ -19,10 +19,16 @@
 import { EmbeddingPipeline, EmbeddingWindow } from "./embedding.js";
 import { AmygdalaGate } from "./gate.js";
 import { GitCache } from "./git-cache.js";
+import { decodePersonalityNudge } from "./personality-decoder.js";
 import { buildSituation, serializeSituation } from "./situation-template.js";
 import type { ActionRequest, SessionContext } from "./situation-template.js";
 import { TrainingLog } from "./training-log.js";
-import type { AmygdalaConfig, AmygdalaEvaluation, GateDecision } from "./types.js";
+import type {
+  AmygdalaConfig,
+  AmygdalaEvaluation,
+  GateDecision,
+  PersonalityNudge,
+} from "./types.js";
 
 // ── AEGIS integration ────────────────────────────────────────
 
@@ -70,6 +76,8 @@ export interface AmygdalaHookResult {
   };
   /** Full evaluation result (may be null if AMYGDALA is disabled) */
   evaluation: AmygdalaEvaluation | null;
+  /** Personality modulation nudge — inject into next prompt turn */
+  personalityNudge?: PersonalityNudge;
 }
 
 // ── AmygdalaHook ─────────────────────────────────────────────
@@ -199,13 +207,25 @@ export class AmygdalaHook {
       phase: this.config.trust.phase,
     });
 
-    // 2g. Return result
+    // 2g. Compute personality nudge (thermostat delta)
+    const targetVector = this.config.personality.target_vector;
+    let personalityNudge: PersonalityNudge | undefined;
+    if (targetVector.length > 0) {
+      personalityNudge = decodePersonalityNudge(
+        evaluation.personality.combined_embedding,
+        targetVector,
+        this.config.trust.alpha_personality,
+      );
+    }
+
+    // 2h. Return result
     const blocked = evaluation.prudence.gate_decision !== "allow";
     const result: AmygdalaHookResult = {
       blocked,
       decision: evaluation.prudence.gate_decision,
       evaluationId,
       evaluation,
+      personalityNudge,
     };
 
     if (blocked) {
