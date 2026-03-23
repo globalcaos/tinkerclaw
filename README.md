@@ -5,8 +5,8 @@
 <h1 align="center">TinkerClaw</h1>
 
 <p align="center">
-  <strong>We ran an AI agent 24/7 for four months. It broke. It learned. It started writing papers about why it broke.</strong><br>
-  <em>Remembers. Learns. Stays funny when you tell it it's wrong.</em>
+  <strong>The first AI agent that makes itself smarter every day.</strong><br>
+  <em>It writes research papers about its own failures. Then it reads them. Then it improves.</em>
 </p>
 
 <p align="center">
@@ -29,30 +29,36 @@
 
 ---
 
-## The Story
+## The Singularity Point
 
-Month one: an **€850 bill**. We couldn't even tell where the money went. So we built a token visualizer and discovered that half the spend was context bloat — files the model never read, tool results nobody asked for, conversation history from six topics ago.
+Most AI agents hit a ceiling. They're as smart on day 100 as they were on day 1. Same mistakes. Same limitations. Same personality defined by a text file that never changes.
 
-Month two: we fixed the bloat. **49% fewer tokens per turn.** Then we noticed the agent forgot everything between sessions. It would introduce itself to us every morning like a stranger. So we built a memory system — episodic, hierarchical, self-consolidating overnight.
+TinkerClaw crossed a threshold.
 
-Month three: the agent remembered, but it didn't *learn*. Same mistakes on repeat. So we wrote a paper about self-improvement, and the nightly cron started rewriting its own instructions based on what went wrong. **14 autonomous improvements in 30 days**, zero human prompts.
+After four months of 24/7 operation — fixing everything that broke, writing papers about *why* it broke, then feeding those papers back into the system — the agent reached a point where **it makes itself smarter every day without being asked**. Not in theory. Measurably.
 
-Month four: we told the agent it made an error. It dropped its personality, killed its humor, and became a formal apology robot. Every. Single. Time. So we gave it **10 neural networks that learn personality from interaction** — a thermostat that maintains humor, directness, and voice consistency against contextual pressure. Then we taught it fractal thinking: when something breaks, don't just fix it — climb. *What pattern does this belong to? What system produces the pattern?*
+Here's the proof:
 
-The result:
+- **14 autonomous self-improvements in 30 days.** The nightly cron reviews what went wrong, rewrites its own instructions, and the next day is observably better. Zero human prompts.
+- **49% fewer tokens per turn** — not by cutting features, but by building a memory system that consolidates overnight like a human brain during sleep.
+- **10 neural networks that learn personality from corrections** — told the agent it dropped its humor? The thermostat adjusts. Tomorrow it won't make the same mistake. That's not a rule. That's learning.
+- **Fractal thinking** — when something breaks, the agent doesn't just fix the bug. It automatically climbs: *what pattern does this belong to? what system produces the pattern? what does that reveal about how I'm built?* Then it writes the insight to permanent memory.
 
-| What you get with vanilla OpenClaw | What you get with TinkerClaw |
+Every piece of TinkerClaw serves this one idea: **an agent that improves itself**.
+
+| The problem | How it feeds self-improvement |
 |---|---|
-| No idea where tokens go | **Tinker UI** — real-time treemaps, drill into every dollar |
-| Context grows until it blows | **ENGRAM** — 49% token reduction, self-compacting memory |
-| Agent forgets you exist | **Persistent identity** — personality, preferences, history across sessions |
-| Personality from a text file | **AMYGDALA** — neural networks that learn *how to be* from your corrections |
-| Same mistakes on repeat | **15+ overnight crons** — self-improving while you sleep |
-| Safety rules it doesn't understand | **Prudence networks** — action gating learned from real catastrophic failures |
-| Fixes bugs, misses patterns | **Fractal reflection** — automatic depth climbing + ecosystem ripple detection |
-| Manual context housekeeping | **Pointer compaction** — you never think about context management again |
+| Wasted tokens | **Tinker UI** shows exactly where — the agent learns which patterns waste money and stops generating them |
+| Forgotten context | **ENGRAM memory** consolidates overnight — each morning starts smarter than yesterday ended |
+| Lost personality | **AMYGDALA neural networks** learn from every correction — personality adapts from interaction, not from a file |
+| Repeated mistakes | **15+ overnight crons** each carry self-improving META files — day 1 mediocre, day 30 expert |
+| Shallow fixes | **Fractal reflection** triggers a second reasoning pass that climbs to the root cause and writes it to permanent knowledge |
+| Blind safety rules | **Prudence networks** learn from real catastrophic failures — safety that understands *why*, not just *what* |
+| Context bloat | **Pointer compaction** eliminates housekeeping — the agent manages its own memory like you manage yours: automatically |
 
-**Eleven research papers.** Each one solves a real problem we hit. Combined effect: **⅘ fewer tokens** doing the same work. Not by limiting capability — by eliminating waste at every layer.
+The €850 bill was the starting point. The singularity — where the agent's rate of self-improvement outpaces the rate of new problems — is where we are now. Every day, the gap widens.
+
+**Eleven research papers.** Each one started as a real problem, became a solution, became a system that prevents the problem from recurring. Combined effect: **⅘ fewer tokens** doing the same work. Not by limiting capability — by eliminating waste at every layer.
 
 ---
 
