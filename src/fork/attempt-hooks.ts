@@ -658,21 +658,29 @@ const FRACTAL_TRIGGERS = [
 
 const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (auto-triggered)
 
-You just delivered a response. Something in it triggered a fractal check (a correction, error, fix, or surprise).
+You just delivered a response. Something in it triggered a fractal check. Do NOT repeat your previous response.
 
-Do NOT repeat or re-deliver your previous response. Instead, do ONE thing:
+Do TWO things:
 
-Look at what just happened and climb:
+## 1. DEPTH CLIMB
 - Depth 2: What PATTERN does this belong to? Has this class of thing happened before?
 - Depth 3: What about your architecture/process PRODUCES this pattern?
 
-If you find a genuine insight:
-1. State it briefly (2-3 sentences max) as a natural follow-up
-2. Write it to the appropriate knowledge file (memory/knowledge/operational-lessons.md or similar)
+## 2. RIPPLE SCAN
+Scan across everything we've built for knock-on effects:
+- Does this change make anything STALE? (README, website articles, marketing copy, paper descriptions, Todoist tasks, memory files)
+- Does this open a new OPPORTUNITY? (blog post angle, marketing hook, feature to showcase, skill to publish)
+- Does this BREAK or IMPROVE something adjacent? (other crons, other skills, upstream merge, documentation)
+- Should any public-facing content be updated? (thetinkerzone.com, GitHub repo, ClawHub, campaign materials)
 
-If there's nothing worth adding beyond depth 1, respond with exactly: NO_REPLY
+If you find stale items or ripple effects:
+1. Append them to memory/knowledge/ripple-tracker.md with today's date, what changed, and what needs updating
+2. Surface the most important 1-2 ripples briefly in your reply
 
-Do NOT narrate the fractal process. Do NOT say "doing a fractal check." Just deliver the insight naturally, as if you thought of it a beat later.`;
+If you find a depth insight, state it in 2-3 sentences as a natural follow-up.
+If nothing worth adding, respond with exactly: NO_REPLY
+
+Do NOT narrate the process. Just deliver insights and flag ripples naturally.`;
 
 export function maybeTriggerFractalReflection(
   assistantTexts: string[],
