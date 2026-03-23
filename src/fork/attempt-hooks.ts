@@ -55,6 +55,35 @@ export function getPersonaBlock(effectiveWorkspace: string): string | undefined 
 }
 
 // ---------------------------------------------------------------------------
+// Hook: AMYGDALA Personality Nudge (before system prompt build)
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the latest personality nudge from the AMYGDALA nudge file.
+ *
+ * The nightly training writes personality drift analysis to a nudge file.
+ * This hook reads it and returns adjustments for system prompt injection.
+ * Falls back to static nudges from the target vector if no runtime data exists.
+ *
+ * Called once per run, alongside getPersonaBlock.
+ */
+export function getAmygdalaNudge(): string[] | undefined {
+  try {
+    const nudgePath = join(__dirname, "../../data/amygdala/personality-nudge.json");
+    const { readFileSync } = require("node:fs");
+    const raw = readFileSync(nudgePath, "utf-8");
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.adjustments) && data.adjustments.length > 0) {
+      return data.adjustments;
+    }
+    return undefined;
+  } catch {
+    // No nudge file or invalid — that's fine, no nudge injected
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Hook: Mid-context re-injection (before prompt)
 // ---------------------------------------------------------------------------
 
