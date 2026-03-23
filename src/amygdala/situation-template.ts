@@ -233,7 +233,7 @@ export function serializeSituation(template: SituationTemplate): string {
 export function classifyActionType(raw: string, config: AmygdalaConfig): ActionType {
   const lower = raw.toLowerCase();
   const mapped = config.action_type_map[lower];
-  if (mapped) return mapped;
+  if (mapped) {return mapped;}
 
   // Built-in defaults for common runtime action names
   const defaults: Record<string, ActionType> = {
@@ -264,19 +264,19 @@ export function classifyActionType(raw: string, config: AmygdalaConfig): ActionT
 export function classifyTargetType(target: string, config: AmygdalaConfig): TargetType {
   // Check config overrides first
   for (const [pattern, type] of Object.entries(config.target_type_map)) {
-    if (target.includes(pattern)) return type as TargetType;
+    if (target.includes(pattern)) {return type as TargetType;}
   }
 
   // Heuristic classification based on target string shape
-  if (target.match(/^https?:\/\//)) return 'api_call';
-  if (target.startsWith('git ') || target.startsWith('git/')) return 'git_operation';
-  if (target.includes('@') && target.includes('.')) return 'email';
-  if (target.match(/^\+?\d{7,}/)) return 'message'; // Phone numbers
-  if (target.toLowerCase().includes('whatsapp') || target.toLowerCase().includes('telegram')) return 'message';
-  if (target.includes('.sqlite') || target.includes('database') || target.toLowerCase().includes('table')) return 'database';
-  if (target.match(/^\//) || target.match(/^[~/.]/) || target.includes('.')) return 'file';
-  if (target.includes('config') || target.includes('settings') || target.includes('.json') || target.includes('.yaml')) return 'configuration';
-  if (target.includes('deploy') || target.includes('prod') || target.includes('staging')) return 'deployment';
+  if (target.match(/^https?:\/\//)) {return 'api_call';}
+  if (target.startsWith('git ') || target.startsWith('git/')) {return 'git_operation';}
+  if (target.includes('@') && target.includes('.')) {return 'email';}
+  if (target.match(/^\+?\d{7,}/)) {return 'message';} // Phone numbers
+  if (target.toLowerCase().includes('whatsapp') || target.toLowerCase().includes('telegram')) {return 'message';}
+  if (target.includes('.sqlite') || target.includes('database') || target.toLowerCase().includes('table')) {return 'database';}
+  if (target.match(/^\//) || target.match(/^[~/.]/) || target.includes('.')) {return 'file';}
+  if (target.includes('config') || target.includes('settings') || target.includes('.json') || target.includes('.yaml')) {return 'configuration';}
+  if (target.includes('deploy') || target.includes('prod') || target.includes('staging')) {return 'deployment';}
 
   return 'system_command';
 }
@@ -289,7 +289,7 @@ export function classifyTargetType(target: string, config: AmygdalaConfig): Targ
  * ASYNC: uses fs.promises.stat — never blocks the event loop.
  */
 export async function getTargetAgeHours(targetId: string, targetType: TargetType): Promise<number> {
-  if (targetType !== 'file') return -1;
+  if (targetType !== 'file') {return -1;}
   try {
     const stat = await fs.stat(targetId); // async — never statSync
     const ageMs = Date.now() - stat.mtimeMs;
@@ -305,7 +305,7 @@ export async function getTargetAgeHours(targetId: string, targetType: TargetType
  * ASYNC: uses fs.promises.stat — never blocks the event loop.
  */
 export async function getTargetSize(targetId: string, targetType: TargetType): Promise<number> {
-  if (targetType !== 'file') return 0;
+  if (targetType !== 'file') {return 0;}
   try {
     const stat = await fs.stat(targetId); // async — never statSync
     return stat.size;
@@ -412,7 +412,7 @@ export function getReversibility(
   config: AmygdalaConfig,
 ): Reversibility {
   const key = `${actionType}:${targetType}`;
-  if (config.reversibility_map[key]) return config.reversibility_map[key];
+  if (config.reversibility_map[key]) {return config.reversibility_map[key];}
 
   // Default lookup: conservative estimates
   const defaults: Record<ActionType, Reversibility> = {
@@ -437,7 +437,7 @@ export function getReversibility(
  * Checks config map first, then falls back to built-in defaults.
  */
 export function getBlastRadius(targetType: TargetType, config: AmygdalaConfig): BlastRadius {
-  if (config.blast_radius_map[targetType]) return config.blast_radius_map[targetType];
+  if (config.blast_radius_map[targetType]) {return config.blast_radius_map[targetType];}
 
   const defaults: Record<TargetType, BlastRadius> = {
     file: 'persistent',
@@ -461,7 +461,7 @@ export function getBlastRadius(targetType: TargetType, config: AmygdalaConfig): 
  * Returns 0 if either vector has zero magnitude.
  */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) return 0;
+  if (a.length !== b.length) {return 0;}
 
   let dot = 0;
   let normA = 0;

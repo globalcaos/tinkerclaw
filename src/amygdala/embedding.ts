@@ -85,7 +85,7 @@ export class EmbeddingWindow {
 
   /** Get the most recent embedding (for Architecture E which uses single embedding). */
   getLatest(): Float32Array | null {
-    if (this.count === 0) return null;
+    if (this.count === 0) {return null;}
     const idx = (this.head - 1 + this.capacity) % this.capacity;
     return new Float32Array(this.buffer[idx]);
   }
@@ -204,7 +204,7 @@ export class EmbeddingPipeline {
       );
     } catch (err) {
       throw new Error(
-        `Failed to load encoder model at ${this.config.encoder_model_path}: ${err}`,
+        `Failed to load encoder model at ${this.config.encoder_model_path}: ${err}`, { cause: err },
       );
     }
 
@@ -215,7 +215,7 @@ export class EmbeddingPipeline {
       );
     } catch (err) {
       throw new Error(
-        `Failed to load projection model at ${this.config.projection_model_path}: ${err}`,
+        `Failed to load projection model at ${this.config.projection_model_path}: ${err}`, { cause: err },
       );
     }
   }
@@ -291,7 +291,7 @@ function meanPool(lastHidden: any, attentionMask: any): Float32Array {
 
   for (let t = 0; t < seqLen; t++) {
     const m = Number(mask[t]);
-    if (m === 0) continue;
+    if (m === 0) {continue;}
     totalMask += m;
     for (let d = 0; d < hiddenSize; d++) {
       result[d] += data[t * hiddenSize + d] * m;
@@ -311,7 +311,7 @@ function meanPool(lastHidden: any, attentionMask: any): Float32Array {
  * Cosine similarity between two vectors (utility for tests and evaluation).
  */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) throw new Error('Vector length mismatch');
+  if (a.length !== b.length) {throw new Error('Vector length mismatch');}
   let dot = 0;
   let normA = 0;
   let normB = 0;

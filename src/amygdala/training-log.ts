@@ -66,7 +66,7 @@ export class TrainingLog {
    * Safe to call multiple times (idempotent).
    */
   async initialize(): Promise<void> {
-    if (this.db) return;
+    if (this.db) {return;}
 
     this.db = new Database(this.config.db_path);
 
