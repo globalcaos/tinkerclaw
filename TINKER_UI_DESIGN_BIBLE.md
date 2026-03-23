@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-03-22 (Auth store cleanup — purged ghost oauth-gm profile, cleared stale billing cooldown)
+> Last updated: 2026-03-23 (Re-auth UI wired — clickable error badges, OAuth popup flow, paste fallback modal; purged recurring oauth-gm ghost)
 
 ---
 
@@ -790,7 +790,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 
 ### 5.38 Auth Reload & In-UI Re-Authentication (2026-03-21)
 
-- **Status:** `DEPLOYED`
+- **Status:** `DEPLOYED` (backend 2026-03-21, UI wired 2026-03-23)
 - **What:** File watcher detects credential changes on disk and auto-refreshes the models panel. Clickable error badges on Anthropic OAuth profiles offer "Reload from disk" (force cache invalidate + cooldown clear) and "Re-authenticate" (full OAuth PKCE flow with popup auto-capture + paste fallback).
 - **Extension:** `extensions/auth-reload/` (fork-only, zero merge friction)
   - `watcher.ts` — chokidar on `auth-profiles.json`, 500ms debounce, broadcasts `auth.profiles.updated`

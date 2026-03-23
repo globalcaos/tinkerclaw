@@ -776,10 +776,19 @@ function clearPersistedErrors(sk: string) {
 }
 
 // ─── Active Model Tracking ───
-type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number; sessionKey?: string };
+type ActiveRunInfo = {
+  model: string;
+  provider: string;
+  authProfileId?: string;
+  startedAt: number;
+  sessionKey?: string;
+};
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
+
+// FORK: Listener set for auth profile update events (supports concurrent re-auth flows)
+const authProfileListeners = new Set<(evt: any) => void>();
 
 function persistProviderErrors() {
   try {
@@ -863,7 +872,8 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
   for (const info of activeRuns.values()) {
     if (forModel && info.model !== forModel) continue;
     // FORK: Filter by scope toggle — "session" only counts runs for the active session
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) continue;
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+      continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -1480,7 +1490,10 @@ function onEvent(evt: any) {
       // set sending=true and disrupt the active tab's UI.
       // Allow subagent sessions through — they're child runs the user cares about.
       const evtSessionKey = p.data.sessionKey as string | undefined;
-      if (!evtSessionKey || (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:")))
+      if (
+        !evtSessionKey ||
+        (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
+      )
         return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
@@ -1541,14 +1554,22 @@ function onEvent(evt: any) {
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
           const targetTab = evtKey
-            ? tabs.find((t) => t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey))
+            ? tabs.find(
+                (t) =>
+                  t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey),
+              )
             : tabs.find((t) => t.id === activeTabId && t.id !== "tab-main");
           if (targetTab) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
             const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
             if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
-              console.log("[tabs] triggering title generation for turn", tabTurns, "tab", targetTab.id);
+              console.log(
+                "[tabs] triggering title generation for turn",
+                tabTurns,
+                "tab",
+                targetTab.id,
+              );
               generateTabTitle(targetTab);
             }
           }
@@ -1594,6 +1615,30 @@ function onEvent(evt: any) {
         }, 500);
       }
     }
+  }
+
+  // FORK: Auth profile reload event — refresh models panel
+  if (evt.event === "auth.profiles.updated") {
+    for (const listener of authProfileListeners) {
+      try {
+        listener(evt);
+      } catch {}
+    }
+    const d = evt.data ?? evt.payload ?? {};
+    const profiles = (d.profiles ?? []) as string[];
+    const profileId = d.profileId as string | undefined;
+    if (d.clearAll) {
+      // File watcher: clear all non-permanent errors
+      for (const [k, v] of providerErrors) {
+        if (v.reason !== "billing" && v.reason !== "auth_permanent") providerErrors.delete(k);
+      }
+    } else {
+      if (profileId) providerErrors.delete(profileId);
+      for (const pid of profiles) providerErrors.delete(pid);
+    }
+    persistProviderErrors();
+    loadBudget();
+    return;
   }
 }
 
@@ -1684,8 +1729,8 @@ async function generateTabTitle(tab: Tab) {
   if (!tab.sessionKey || tab.id === "tab-main") return;
 
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
-  const tabMessages = tab.sessionKey === sessionKey ? messages
-    : (tabStates.get(tab.id)?.messages ?? []);
+  const tabMessages =
+    tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
   // Collect last N Q&A pairs from messages
   const pairs: string[] = [];
   let count = 0;
@@ -1775,7 +1820,11 @@ async function send(text: string) {
     sending = true;
   }
   currentTurnNumber++;
-  messages.push({ role: "user", content: [{ type: "text", text }], ...(isQueued ? { _queued: true } : {}) });
+  messages.push({
+    role: "user",
+    content: [{ type: "text", text }],
+    ...(isQueued ? { _queued: true } : {}),
+  });
   updateChat();
   if (!isQueued) updateBtn();
   scrollChat();
@@ -3217,6 +3266,171 @@ function shortErrorLabel(reason: string): string {
   }
 }
 
+// ─── Auth Re-Auth UI ───
+
+/** Show a toast notification at the bottom of the screen. */
+function showToast(msg: string, isError = false): void {
+  const t = document.createElement("div");
+  t.className = `toast${isError ? " toast-error" : ""}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+/** Show a popover with auth actions for an Anthropic OAuth profile. */
+function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
+  document.querySelector(".auth-action-popover")?.remove();
+
+  const pop = document.createElement("div");
+  pop.className = "auth-action-popover";
+  pop.innerHTML = `
+    <button class="auth-action-btn" data-action="reload">\u21bb Reload from disk</button>
+    <button class="auth-action-btn" data-action="reauth">\ud83d\udd11 Re-authenticate</button>
+  `;
+
+  const rect = anchor.getBoundingClientRect();
+  pop.style.position = "fixed";
+  pop.style.left = `${rect.left}px`;
+  pop.style.top = `${rect.bottom + 4}px`;
+  pop.style.zIndex = "9999";
+
+  pop.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>(".auth-action-btn");
+    if (!btn) return;
+    pop.remove();
+
+    const action = btn.dataset.action;
+    if (action === "reload") {
+      try {
+        await req("auth.reload", { profileId });
+        showToast(`Credentials reloaded for ${profileId.replace("anthropic:", "")}`);
+      } catch (err: any) {
+        showToast(`Reload failed: ${err?.message || err}`, true);
+      }
+    } else if (action === "reauth") {
+      startOAuthReauthFlow(profileId);
+    }
+  });
+
+  document.body.appendChild(pop);
+
+  const close = (e: MouseEvent) => {
+    if (!pop.contains(e.target as Node)) {
+      pop.remove();
+      document.removeEventListener("click", close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener("click", close, true), 0);
+}
+
+/** Start the OAuth re-auth popup flow for an Anthropic profile. */
+async function startOAuthReauthFlow(profileId: string): Promise<void> {
+  let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
+  try {
+    startResult = (await req("auth.reauth.start", { profileId })) as any;
+  } catch (err: any) {
+    showToast(`Re-auth failed: ${err?.message || err}`, true);
+    return;
+  }
+
+  const { sessionId, authUrl, fallbackAuthUrl } = startResult;
+  const popup = window.open(authUrl, "openclaw-reauth", "width=500,height=700");
+
+  let resolved = false;
+
+  const onAuthEvent = (evt: any) => {
+    const d = evt.data ?? evt.payload ?? {};
+    if (d.profileId === profileId || d.source === "oauth-reauth") {
+      resolved = true;
+      cleanup();
+      try {
+        popup?.close();
+      } catch {}
+      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
+    }
+  };
+
+  authProfileListeners.add(onAuthEvent);
+
+  const cleanup = () => {
+    authProfileListeners.delete(onAuthEvent);
+    clearTimeout(fallbackTimer);
+    clearInterval(popupPoll);
+  };
+
+  const fallbackTimer = setTimeout(() => {
+    if (!resolved) {
+      cleanup();
+      try {
+        popup?.close();
+      } catch {}
+      showPasteModal(sessionId, fallbackAuthUrl, profileId);
+    }
+  }, 15_000);
+
+  const popupPoll = setInterval(() => {
+    if (popup?.closed && !resolved) {
+      cleanup();
+      showPasteModal(sessionId, fallbackAuthUrl, profileId);
+    }
+  }, 500);
+}
+
+/** Show paste modal for fallback OAuth code entry. */
+function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: string): void {
+  document.querySelector(".auth-paste-modal-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "auth-paste-modal-overlay";
+  overlay.innerHTML = `
+    <div class="auth-paste-modal">
+      <h3>Re-authenticate ${esc(profileId.replace("anthropic:", ""))}</h3>
+      <p>Auto-capture didn't work. Complete manually:</p>
+      <p>1. <a href="${fallbackAuthUrl}" target="_blank" rel="noopener">Click here to authorize</a></p>
+      <p>2. Copy the code from the callback page</p>
+      <p>3. Paste it below:</p>
+      <input type="text" class="auth-paste-input" placeholder="Paste code here (format: code#state)" autofocus />
+      <div class="auth-paste-actions">
+        <button class="auth-paste-cancel">Cancel</button>
+        <button class="auth-paste-submit">Submit</button>
+      </div>
+      <div class="auth-paste-status"></div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector<HTMLInputElement>(".auth-paste-input")!;
+  const status = overlay.querySelector<HTMLElement>(".auth-paste-status")!;
+  const submitBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-submit")!;
+  const cancelBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-cancel")!;
+
+  const submit = async () => {
+    const code = input.value.trim();
+    if (!code) return;
+    submitBtn.disabled = true;
+    status.textContent = "Exchanging code...";
+    try {
+      await req("auth.reauth.exchange", { sessionId, code });
+      overlay.remove();
+      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
+    } catch (err: any) {
+      status.textContent = `Failed: ${err?.message || err}`;
+      status.style.color = "#f38ba8";
+      submitBtn.disabled = false;
+    }
+  };
+
+  submitBtn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  cancelBtn.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+}
+
 function renderModelRow(
   id: string,
   provider: string,
@@ -3235,8 +3449,10 @@ function renderModelRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  const isAnthropicOAuth = keyId?.startsWith("anthropic:cli-") || false;
+  const actionAttr = isAnthropicOAuth && errorInfo ? ` data-auth-profile="${esc(keyId!)}"` : "";
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge${isAnthropicOAuth ? " auth-clickable" : ""}"${actionAttr} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, id, keyId);
   const costLabel = getModelCost(id, keyId);
@@ -3271,8 +3487,10 @@ function renderAuthKeyRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
+  const isAnthropicOAuth = keyId.startsWith("anthropic:cli-");
+  const actionAttr = isAnthropicOAuth && errorInfo ? ` data-auth-profile="${esc(keyId)}"` : "";
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge${isAnthropicOAuth ? " auth-clickable" : ""}"${actionAttr} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, modelId, keyId);
   const costLabel = getModelCost(modelId, keyId);
@@ -3392,7 +3610,8 @@ function updateSessionsPanel() {
   for (const tab of tabs) {
     if (tab.id === "tab-main" || !tab.sessionKey) continue;
     const serverKeys = sessions.map((s: any) => s.key);
-    const hasServer = serverKeys.includes(tab.sessionKey) ||
+    const hasServer =
+      serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
     if (!hasServer) {
       const fakeSession = { key: tab.sessionKey, label: tab.title };
@@ -3519,8 +3738,9 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
   const isMainSession = /:main$/.test(s.key);
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
-  const label = isMainSession ? (mainTab?.title || "🏠 Main")
-    : (tinkerTab?.title) || s.label || s.displayName || shortLabel;
+  const label = isMainSession
+    ? mainTab?.title || "🏠 Main"
+    : tinkerTab?.title || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
@@ -3729,14 +3949,25 @@ function init() {
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
+  // FORK: Auth error badge click — show reload/re-auth popover
+  $("budget-panel")?.addEventListener("click", (e) => {
+    const badge = (e.target as HTMLElement).closest<HTMLElement>(".auth-clickable");
+    if (!badge) return;
+    e.stopPropagation();
+    const profileId = badge.dataset.authProfile;
+    if (!profileId) return;
+    showAuthActionPopover(badge, profileId);
+  });
   // FORK: Session/All scope toggle for Models panel
   $("budget-scope-toggle")?.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
     if (!btn) return;
     budgetScope = btn.dataset.scope as "session" | "all";
-    $("budget-scope-toggle")!.querySelectorAll(".scope-btn").forEach((b) => {
-      b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
-    });
+    $("budget-scope-toggle")!
+      .querySelectorAll(".scope-btn")
+      .forEach((b) => {
+        b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
+      });
     updateBudgetPanel();
   });
 
