@@ -524,6 +524,9 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     (m) => (m as { role?: string }).role === "user",
   ).length;
 
+  // FRACTAL REFLECTION — check if response warrants a depth-climbing second pass
+  maybeTriggerFractalReflection(assistantTexts, params.sessionKey, log);
+
   // Context anatomy
   if (params.systemPromptReport && params.sessionKey) {
     try {
@@ -621,6 +624,86 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Hook: Fractal Reflection (post-turn depth climbing)
+// ---------------------------------------------------------------------------
+
+/**
+ * FRACTAL SECOND PASS: After the agent responds, check if the response
+ * contains trigger signals (corrections, errors, surprises). If so,
+ * inject a system event that prompts a fractal depth climb.
+ *
+ * This creates a REAL second inference cycle — not a nudge in the prompt,
+ * but an actual Opus call dedicated to climbing from depth 1 to depth 3-4.
+ *
+ * Trigger signals (any of these in the assistant's response):
+ * - Correction acknowledgment ("you're right", "my bad", "I was wrong")
+ * - Error/failure mention ("failed", "broke", "bug", "mistake")
+ * - Surprise/contradiction ("unexpected", "actually", "turns out")
+ * - Fix/patch language ("fixed", "patched", "updated", "resolved")
+ *
+ * Rate limit: max 1 fractal pass per session per 5 minutes.
+ */
+const fractalCooldowns = new Map<string, number>();
+const FRACTAL_COOLDOWN_MS = 5 * 60 * 1000;
+
+const FRACTAL_TRIGGERS = [
+  /you'?re right/i, /my bad/i, /I was wrong/i, /apolog/i, /corrected/i,
+  /\bfailed\b/i, /\bbroke\b/i, /\bbug\b/i, /\bmistake\b/i, /\berror\b/i,
+  /unexpected/i, /turns out/i, /actually,/i, /contradicts/i, /surprised/i,
+  /\bfixed\b/i, /\bpatched\b/i, /\bresolved\b/i,
+];
+
+const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (auto-triggered)
+
+You just delivered a response. Something in it triggered a fractal check (a correction, error, fix, or surprise).
+
+Do NOT repeat or re-deliver your previous response. Instead, do ONE thing:
+
+Look at what just happened and climb:
+- Depth 2: What PATTERN does this belong to? Has this class of thing happened before?
+- Depth 3: What about your architecture/process PRODUCES this pattern?
+
+If you find a genuine insight:
+1. State it briefly (2-3 sentences max) as a natural follow-up
+2. Write it to the appropriate knowledge file (memory/knowledge/operational-lessons.md or similar)
+
+If there's nothing worth adding beyond depth 1, respond with exactly: NO_REPLY
+
+Do NOT narrate the fractal process. Do NOT say "doing a fractal check." Just deliver the insight naturally, as if you thought of it a beat later.`;
+
+export function maybeTriggerFractalReflection(
+  assistantTexts: string[],
+  sessionKey: string | undefined,
+  log: { info: (msg: string) => void },
+): void {
+  if (!sessionKey) return;
+
+  // Check cooldown
+  const lastFired = fractalCooldowns.get(sessionKey) ?? 0;
+  if (Date.now() - lastFired < FRACTAL_COOLDOWN_MS) return;
+
+  // Check trigger signals
+  const fullText = assistantTexts.join(" ");
+  const triggered = FRACTAL_TRIGGERS.some((re) => re.test(fullText));
+  if (!triggered) return;
+
+  // Fire fractal reflection via system event
+  fractalCooldowns.set(sessionKey, Date.now());
+  log.info("[fractal] trigger detected — injecting reflection pass");
+
+  const { exec } = require("node:child_process");
+  exec(
+    `openclaw system event --text ${JSON.stringify(FRACTAL_PROMPT)} --mode now`,
+    { timeout: 5000 },
+    (err: Error | null) => {
+      if (err) {
+        log.info(`[fractal] system event injection failed: ${err.message}`);
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
