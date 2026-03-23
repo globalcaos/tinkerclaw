@@ -1,0 +1,36 @@
+{
+  "started_at": "2026-03-23T05:53:45.895289",
+  "steps": {
+    "reward_labeling": {
+      "labeled": 0,
+      "total": 0
+    },
+    "ppo": {},
+    "finetune": {
+      "prudence_a": 0.21127360147588392,
+      "personality_a": 0.007267987065236358,
+      "prudence_b": 0.16561314638923197,
+      "personality_b": 0.0019652199109687525,
+      "prudence_c": 0.16890127097859103,
+      "personality_c": 0.001500465751022977,
+      "prudence_d": 0.2045801332768272,
+      "personality_d": 0.0010121179484378765,
+      "prudence_e": 0.1802869612679762,
+      "personality_e": 7.747017456602086e-5
+    },
+    "conformal": {
+      "error": "Unknown format code 'f' for object of type 'str'"
+    },
+    "onnx": {
+      "error": "invalid syntax. Maybe you meant '==' or ':=' instead of '='? (export_onnx.py, line 120)"
+    },
+    "meta_learner": "ok",
+    "trust_ramp": {
+      "phase": 1,
+      "alpha": 0.15,
+      "avg_set_size": 3.0
+    }
+  },
+  "elapsed_secs": 12.5,
+  "completed_at": "2026-03-23T05:53:58.438258"
+}
