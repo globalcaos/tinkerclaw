@@ -2915,7 +2915,9 @@ function updateChat(skipScroll = false) {
           for (const idx of assistantTextIndices.slice(0, -1)) thinkingSet.add(idx);
         }
       } else {
-        // Streaming: frozen text messages (not the active stream) → thinking
+        // Streaming: frozen text messages (not the active stream) are intermediate.
+        // The active stream at streamMsgIdx is the real answer (Anthropic's API
+        // already separates thinking via thinking_delta vs text delta events).
         for (const idx of assistantTextIndices) {
           if (idx !== streamMsgIdx) thinkingSet.add(idx);
         }
