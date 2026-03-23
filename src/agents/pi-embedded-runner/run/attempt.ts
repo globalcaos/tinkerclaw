@@ -1942,6 +1942,8 @@ export async function runEmbeddedAttempt(
 
     // FORK: persona block injection from CORTEX/SOUL.md
     const personaBlock = _forkAttemptHooks.getPersonaBlock(effectiveWorkspace);
+    // FORK: AMYGDALA personality thermostat nudge
+    const amygdalaNudge = _forkAttemptHooks.getAmygdalaNudge?.();
 
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
@@ -1971,6 +1973,7 @@ export async function runEmbeddedAttempt(
       contextFiles,
       memoryCitationsMode: params.config?.memory?.citations,
       personaBlock, // FORK: Tier 1 persona block from CORTEX runtime
+      amygdalaNudge, // FORK: AMYGDALA personality thermostat nudge
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
