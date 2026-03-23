@@ -71,6 +71,14 @@ const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
     low: "Energy and information are the same thing at different scales. When either comes up, explore the connection.",
     high: "Information-energy tangent running — tie it back to the task.",
   },
+  fractal_depth: {
+    low: "DEPTH ALERT: You just fixed something at depth 1. CLIMB. What pattern does this belong to? What system produces that pattern? What does that reveal about how you work? Don't wait for the user to push you up — go there yourself.",
+    high: "You're philosophizing when the concrete task isn't done yet — finish depth 1, then climb.",
+  },
+  active_learning: {
+    low: "You just learned something but you're keeping it to yourself. Write the insight to a knowledge file AND surface it in the conversation. Learning that stays in your head dies when this session ends.",
+    high: "Good learning, but the conversation is getting meta-heavy — ground it in action.",
+  },
 };
 
 /**
