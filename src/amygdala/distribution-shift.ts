@@ -16,17 +16,17 @@
 
 export interface ShiftDetectorConfig {
   /** Size of the sliding window for detecting shifts (in hours) */
-  detection_window_hours: number;    // default: 4
+  detection_window_hours: number; // default: 4
   /** Average prediction set size threshold to trigger a grace period */
-  shift_threshold: number;           // default: 2.0
+  shift_threshold: number; // default: 2.0
   /** Duration of the grace period (hours) */
-  grace_period_hours: number;        // default: 48
+  grace_period_hours: number; // default: 48
   /** Relaxed epsilon during grace period (wider prediction sets allowed) */
-  grace_epsilon: number;             // default: 0.15
+  grace_epsilon: number; // default: 0.15
   /** Normal operating epsilon */
-  normal_epsilon: number;            // default: 0.05
+  normal_epsilon: number; // default: 0.05
   /** Minimum evaluations in the detection window before triggering */
-  min_evaluations: number;           // default: 20
+  min_evaluations: number; // default: 20
 }
 
 const DEFAULTS: ShiftDetectorConfig = {
@@ -137,16 +137,16 @@ export class DistributionShiftDetector {
 
   /** Whether we are currently in a novelty grace period. */
   isInGracePeriod(): boolean {
-    if (this.graceStartTime === null) {return false;}
+    if (this.graceStartTime === null) {
+      return false;
+    }
     const graceMs = this.cfg.grace_period_hours * 3_600_000;
     return Date.now() - this.graceStartTime < graceMs;
   }
 
   /** Effective epsilon to use right now. */
   effectiveEpsilon(): number {
-    return this.isInGracePeriod()
-      ? this.cfg.grace_epsilon
-      : this.cfg.normal_epsilon;
+    return this.isInGracePeriod() ? this.cfg.grace_epsilon : this.cfg.normal_epsilon;
   }
 
   /**
@@ -154,7 +154,9 @@ export class DistributionShiftDetector {
    * Returns 0 if not in a grace period.
    */
   graceRemainingHours(): number {
-    if (this.graceStartTime === null) {return 0;}
+    if (this.graceStartTime === null) {
+      return 0;
+    }
     const graceMs = this.cfg.grace_period_hours * 3_600_000;
     const remaining = graceMs - (Date.now() - this.graceStartTime);
     return Math.max(0, remaining / 3_600_000);
@@ -194,15 +196,19 @@ export class DistributionShiftDetector {
     const cutoff = now - windowMs;
     // Find first entry within the window (entries are chronological)
     let i = 0;
-    while (i < this.window.length && this.window[i].timestamp < cutoff) {i++;}
-    if (i > 0) {this.window = this.window.slice(i);}
+    while (i < this.window.length && this.window[i].timestamp < cutoff) {
+      i++;
+    }
+    if (i > 0) {
+      this.window = this.window.slice(i);
+    }
   }
 
   private avgSetSize(): number {
-    if (this.window.length === 0) {return 1;}
-    return (
-      this.window.reduce((s, e) => s + e.setSize, 0) / this.window.length
-    );
+    if (this.window.length === 0) {
+      return 1;
+    }
+    return this.window.reduce((s, e) => s + e.setSize, 0) / this.window.length;
   }
 
   /**

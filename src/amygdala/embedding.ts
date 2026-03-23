@@ -15,8 +15,8 @@
 // EmbeddingWindow and cosineSimilarity can be used (and tested) without the
 // native binary being installed.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OrtModule = typeof import('onnxruntime-node');
-import type { AmygdalaConfig } from './types';
+type OrtModule = typeof import("onnxruntime-node");
+import type { AmygdalaConfig } from "./types";
 
 // ---------------------------------------------------------------------------
 // Ring buffer for temporal window of K=32 situation embeddings
@@ -36,7 +36,7 @@ export class EmbeddingWindow {
   constructor(capacity: number = 32, dim: number = 512) {
     this.capacity = capacity;
     this.dim = dim;
-    this.buffer = new Array(capacity).fill(null).map(() => new Float32Array(dim));
+    this.buffer = Array.from({ length: capacity }, () => new Float32Array(dim));
   }
 
   /** Add a new embedding to the window (oldest evicted on overflow). */
@@ -85,7 +85,9 @@ export class EmbeddingWindow {
 
   /** Get the most recent embedding (for Architecture E which uses single embedding). */
   getLatest(): Float32Array | null {
-    if (this.count === 0) {return null;}
+    if (this.count === 0) {
+      return null;
+    }
     const idx = (this.head - 1 + this.capacity) % this.capacity;
     return new Float32Array(this.buffer[idx]);
   }
@@ -143,9 +145,9 @@ function naiveTokenize(text: string, maxLength: number, ort: OrtModule): Tokeniz
   mask[chars.length + 1] = 1n;
 
   return {
-    input_ids: new ort.Tensor('int64', ids, [1, maxLength]),
-    attention_mask: new ort.Tensor('int64', mask, [1, maxLength]),
-    token_type_ids: new ort.Tensor('int64', typeIds, [1, maxLength]),
+    input_ids: new ort.Tensor("int64", ids, [1, maxLength]),
+    attention_mask: new ort.Tensor("int64", mask, [1, maxLength]),
+    token_type_ids: new ort.Tensor("int64", typeIds, [1, maxLength]),
   };
 }
 
@@ -167,12 +169,12 @@ export class EmbeddingPipeline {
   private projectionSession: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private ort: OrtModule | null = null;
-  private readonly config: AmygdalaConfig['embedding'];
+  private readonly config: AmygdalaConfig["embedding"];
 
   /** Temporal window of last K embeddings (K = config.window_size, default 32). */
   readonly window: EmbeddingWindow;
 
-  constructor(config: AmygdalaConfig['embedding']) {
+  constructor(config: AmygdalaConfig["embedding"]) {
     this.config = config;
     this.window = new EmbeddingWindow(config.window_size ?? 32, config.internal_dim ?? 512);
   }
@@ -185,15 +187,12 @@ export class EmbeddingPipeline {
    */
   async initialize(): Promise<void> {
     // Lazy import so EmbeddingWindow/cosineSimilarity work without the native package.
-    this.ort = (await import('onnxruntime-node')) as OrtModule;
+    this.ort = (await import("onnxruntime-node")) as OrtModule;
     const ort = this.ort;
 
     const options = {
-      executionProviders: [
-        { name: 'cuda' },
-        { name: 'cpu' },
-      ],
-      graphOptimizationLevel: 'all' as const,
+      executionProviders: [{ name: "cuda" }, { name: "cpu" }],
+      graphOptimizationLevel: "all" as const,
       enableCpuMemArena: true,
     };
 
@@ -203,9 +202,9 @@ export class EmbeddingPipeline {
         options,
       );
     } catch (err) {
-      throw new Error(
-        `Failed to load encoder model at ${this.config.encoder_model_path}: ${err}`, { cause: err },
-      );
+      throw new Error(`Failed to load encoder model at ${this.config.encoder_model_path}: ${err}`, {
+        cause: err,
+      });
     }
 
     try {
@@ -215,7 +214,8 @@ export class EmbeddingPipeline {
       );
     } catch (err) {
       throw new Error(
-        `Failed to load projection model at ${this.config.projection_model_path}: ${err}`, { cause: err },
+        `Failed to load projection model at ${this.config.projection_model_path}: ${err}`,
+        { cause: err },
       );
     }
   }
@@ -232,7 +232,7 @@ export class EmbeddingPipeline {
    */
   async embed(situationString: string): Promise<Float32Array> {
     if (!this.encoderSession || !this.projectionSession) {
-      throw new Error('EmbeddingPipeline not initialized. Call initialize() first.');
+      throw new Error("EmbeddingPipeline not initialized. Call initialize() first.");
     }
 
     const ort = this.ort!;
@@ -246,13 +246,13 @@ export class EmbeddingPipeline {
     });
 
     // Mean-pool last_hidden_state → 384d sentence embedding
-    const lastHidden = encoderResult['last_hidden_state'];
+    const lastHidden = encoderResult["last_hidden_state"];
     const sentenceEmbedding = meanPool(lastHidden, encoded.attention_mask);
 
     // Step 3: Projection layer (384 → 512) + LayerNorm
-    const projInput = new ort.Tensor('float32', sentenceEmbedding, [1, this.config.input_dim]);
+    const projInput = new ort.Tensor("float32", sentenceEmbedding, [1, this.config.input_dim]);
     const projResult = await this.projectionSession.run({ input: projInput });
-    const projected = projResult['output'];
+    const projected = projResult["output"];
 
     const result = new Float32Array(projected.data as Float32Array);
 
@@ -291,7 +291,9 @@ function meanPool(lastHidden: any, attentionMask: any): Float32Array {
 
   for (let t = 0; t < seqLen; t++) {
     const m = Number(mask[t]);
-    if (m === 0) {continue;}
+    if (m === 0) {
+      continue;
+    }
     totalMask += m;
     for (let d = 0; d < hiddenSize; d++) {
       result[d] += data[t * hiddenSize + d] * m;
@@ -311,7 +313,9 @@ function meanPool(lastHidden: any, attentionMask: any): Float32Array {
  * Cosine similarity between two vectors (utility for tests and evaluation).
  */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) {throw new Error('Vector length mismatch');}
+  if (a.length !== b.length) {
+    throw new Error("Vector length mismatch");
+  }
   let dot = 0;
   let normA = 0;
   let normB = 0;

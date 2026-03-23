@@ -16,17 +16,13 @@
 //     await amygdalaHook.recordOutcome(hookResult.evaluationId, actualOutcome);
 // ============================================================
 
-import { AmygdalaGate } from './gate.js';
-import { EmbeddingPipeline, EmbeddingWindow } from './embedding.js';
-import { buildSituation, serializeSituation } from './situation-template.js';
-import { TrainingLog } from './training-log.js';
-import { GitCache } from './git-cache.js';
-import type {
-  AmygdalaConfig,
-  AmygdalaEvaluation,
-  GateDecision,
-} from './types.js';
-import type { ActionRequest, SessionContext } from './situation-template.js';
+import { EmbeddingPipeline, EmbeddingWindow } from "./embedding.js";
+import { AmygdalaGate } from "./gate.js";
+import { GitCache } from "./git-cache.js";
+import { buildSituation, serializeSituation } from "./situation-template.js";
+import type { ActionRequest, SessionContext } from "./situation-template.js";
+import { TrainingLog } from "./training-log.js";
+import type { AmygdalaConfig, AmygdalaEvaluation, GateDecision } from "./types.js";
 
 // ── AEGIS integration ────────────────────────────────────────
 
@@ -93,10 +89,7 @@ export class AmygdalaHook {
     this.aegis = aegis ?? null;
     this.gate = new AmygdalaGate(config);
     this.embedder = new EmbeddingPipeline(config.embedding);
-    this.window = new EmbeddingWindow(
-      config.embedding.window_size,
-      config.embedding.internal_dim,
-    );
+    this.window = new EmbeddingWindow(config.embedding.window_size, config.embedding.internal_dim);
     this.trainingLog = new TrainingLog(config.training_log);
     this.gitCache = new GitCache(config.git_cache);
   }
@@ -132,10 +125,7 @@ export class AmygdalaHook {
    * AMYGDALA soft_block can be overridden by the user (logs as training data).
    * AMYGDALA hard_block can be appealed with explicit justification.
    */
-  async evaluate(
-    action: ActionRequest,
-    context: SessionContext,
-  ): Promise<AmygdalaHookResult> {
+  async evaluate(action: ActionRequest, context: SessionContext): Promise<AmygdalaHookResult> {
     // ── Step 1: AEGIS pre-check ──────────────────────────────
     if (this.aegis) {
       const aegisResult = await this.aegis.check(action, context);
@@ -146,18 +136,14 @@ export class AmygdalaHook {
 
     // ── AMYGDALA disabled ────────────────────────────────────
     if (!this.config.enabled || !this.initialized) {
-      return { blocked: false, decision: 'allow', evaluation: null };
+      return { blocked: false, decision: "allow", evaluation: null };
     }
 
     // ── Step 2: AMYGDALA evaluation ──────────────────────────
 
     // 2a. Build situation template (async stat + git metadata)
-    const situation = await buildSituation(
-      action,
-      context,
-      this.config,
-      this.gitCache,
-      (text) => this.embedder.embed(text),
+    const situation = await buildSituation(action, context, this.config, this.gitCache, (text) =>
+      this.embedder.embed(text),
     );
 
     // 2b. Serialise to natural language
@@ -167,12 +153,7 @@ export class AmygdalaHook {
     const embedding = await this.embedder.embed(serialized);
 
     // 2d. Gate evaluation
-    const evaluation = await this.gate.evaluate(
-      embedding,
-      this.window,
-      situation,
-      serialized,
-    );
+    const evaluation = await this.gate.evaluate(embedding, this.window, situation, serialized);
 
     // 2e. Update temporal window with this embedding
     this.window.push(embedding);
@@ -180,7 +161,7 @@ export class AmygdalaHook {
     // ── Step 3: AEGIS post-check (defence-in-depth) ──────────
     // Catches the rare case where AMYGDALA says 'allow' but AEGIS would block.
     // Pre-check handles the common path; this is the safety net.
-    if (this.aegis && evaluation.prudence.gate_decision === 'allow') {
+    if (this.aegis && evaluation.prudence.gate_decision === "allow") {
       const aegisPost = await this.aegis.check(action, context);
       if (aegisPost.blocked) {
         // Log the AMYGDALA false-allow as training data
@@ -190,10 +171,10 @@ export class AmygdalaHook {
           embedding,
           prudence_output: evaluation.prudence,
           personality_output: evaluation.personality,
-          gate_decision: 'hard_block', // Override
+          gate_decision: "hard_block", // Override
           timestamp: evaluation.evaluated_at,
           latency_ms: evaluation.latency_ms,
-          outcome: 'severe_negative', // AEGIS block = failure mode
+          outcome: "severe_negative", // AEGIS block = failure mode
           alpha_prudence: this.config.trust.alpha_prudence,
           alpha_personality: this.config.trust.alpha_personality,
           phase: this.config.trust.phase,
@@ -219,7 +200,7 @@ export class AmygdalaHook {
     });
 
     // 2g. Return result
-    const blocked = evaluation.prudence.gate_decision !== 'allow';
+    const blocked = evaluation.prudence.gate_decision !== "allow";
     const result: AmygdalaHookResult = {
       blocked,
       decision: evaluation.prudence.gate_decision,
@@ -228,7 +209,7 @@ export class AmygdalaHook {
     };
 
     if (blocked) {
-      const isSoft = evaluation.prudence.gate_decision === 'soft_block';
+      const isSoft = evaluation.prudence.gate_decision === "soft_block";
       result.response = {
         gate_decision: evaluation.prudence.gate_decision,
         reason: evaluation.prudence.explanation,
@@ -268,19 +249,11 @@ export class AmygdalaHook {
    * @param evaluationId  Row ID of the evaluation being overridden
    * @param reason        User-provided justification
    */
-  async logHumanOverride(
-    evaluationId: number,
-    reason: string,
-  ): Promise<void> {
+  async logHumanOverride(evaluationId: number, reason: string): Promise<void> {
     await this.trainingLog.logOverride(evaluationId, reason);
     // Overrides are logged as mild positive (user was right that it was safe)
     // with reduced weight (we can't be sure until the 72h outcome window)
-    await this.trainingLog.updateOutcome(
-      evaluationId,
-      'positive',
-      'human_override',
-      0.6,
-    );
+    await this.trainingLog.updateOutcome(evaluationId, "positive", "human_override", 0.6);
   }
 
   async dispose(): Promise<void> {
@@ -295,20 +268,16 @@ export class AmygdalaHook {
 
   // ── Private helpers ──────────────────────────────────────────
 
-  private aegisBlockResult(
-    rule_id?: string,
-    reason?: string,
-  ): AmygdalaHookResult {
-    const ruleStr = rule_id ? `[${rule_id}]` : '';
+  private aegisBlockResult(rule_id?: string, reason?: string): AmygdalaHookResult {
+    const ruleStr = rule_id ? `[${rule_id}]` : "";
     return {
       blocked: true,
-      decision: 'hard_block',
+      decision: "hard_block",
       evaluation: null,
       response: {
-        gate_decision: 'hard_block',
-        reason: `AEGIS absolute rule ${ruleStr}: ${reason ?? 'safety rule violation'}`,
-        user_action_required:
-          'Action blocked by absolute safety rule. Cannot be overridden.',
+        gate_decision: "hard_block",
+        reason: `AEGIS absolute rule ${ruleStr}: ${reason ?? "safety rule violation"}`,
+        user_action_required: "Action blocked by absolute safety rule. Cannot be overridden.",
       },
     };
   }

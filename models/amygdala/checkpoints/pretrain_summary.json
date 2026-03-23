@@ -3,13 +3,13 @@
     "best_val_loss": 0.16699128028224497
   },
   "personality_a": {
-    "best_val_loss": 7.313498051243026e-06
+    "best_val_loss": 7.313498051243026e-6
   },
   "prudence_b": {
     "best_val_loss": 0.1654424677876865
   },
   "personality_b": {
-    "best_val_loss": 2.4319158942757094e-05
+    "best_val_loss": 2.4319158942757094e-5
   },
   "prudence_c": {
     "best_val_loss": 0.16544415389790254
@@ -21,12 +21,12 @@
     "best_val_loss": 0.1656108582721037
   },
   "personality_d": {
-    "best_val_loss": 3.354863375694977e-06
+    "best_val_loss": 3.354863375694977e-6
   },
   "prudence_e": {
     "best_val_loss": 0.16546866595745086
   },
   "personality_e": {
-    "best_val_loss": 9.599780536090667e-07
+    "best_val_loss": 9.599780536090667e-7
   }
 }

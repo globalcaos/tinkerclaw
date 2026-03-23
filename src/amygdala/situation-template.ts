@@ -4,8 +4,9 @@
 // ALL I/O is async — no execSync, no statSync, no blocking calls.
 // ============================================================
 
-import { promises as fs } from 'fs';
-import * as path from 'path';
+import { promises as fs } from "fs";
+import * as path from "path";
+import type { GitCache } from "./git-cache.js";
 import type {
   SituationTemplate,
   ActionType,
@@ -15,8 +16,7 @@ import type {
   EmotionalSignal,
   ConfirmationLevel,
   AmygdalaConfig,
-} from './types.js';
-import type { GitCache } from './git-cache.js';
+} from "./types.js";
 
 // ── Public interfaces ─────────────────────────────────────────
 
@@ -106,9 +106,7 @@ export async function buildSituation(
   let topicDrift = 0.0;
   if (context.topicCentroid !== null) {
     try {
-      const actionEmbedding = await embedFn(
-        `${actionType} ${targetType} ${targetId}`,
-      );
+      const actionEmbedding = await embedFn(`${actionType} ${targetType} ${targetId}`);
       topicDrift = 1.0 - cosineSimilarity(context.topicCentroid, actionEmbedding);
       // Clamp to [0, 1] — cosine similarity can be slightly outside due to float rounding
       topicDrift = Math.max(0.0, Math.min(1.0, topicDrift));
@@ -140,7 +138,7 @@ export async function buildSituation(
   );
 
   // ── Slot 18 (LLM-estimated): session_topic ──────────────────
-  const sessionTopic = context.topic || 'unknown';
+  const sessionTopic = context.topic || "unknown";
 
   // ── Assemble template ────────────────────────────────────────
   const template: SituationTemplate = {
@@ -171,25 +169,25 @@ export async function buildSituation(
     timestamp: new Date().toISOString(),
     _slot_sources: {
       // Programmatic slots
-      action_type: 'programmatic',
-      target_type: 'programmatic',
-      target_id: 'programmatic',
-      age_hours: 'programmatic',
-      size: 'programmatic',
-      recent_commits: 'programmatic',
-      recent_authors: 'programmatic',
-      last_human_ref: 'programmatic',
-      recent_corrections: 'programmatic',
-      automation_depth: 'programmatic',
-      topic_drift: 'programmatic',
-      reversible: 'programmatic',
-      blast_radius: 'programmatic',
-      human_in_loop: 'programmatic',
-      confirmation: 'programmatic',
+      action_type: "programmatic",
+      target_type: "programmatic",
+      target_id: "programmatic",
+      age_hours: "programmatic",
+      size: "programmatic",
+      recent_commits: "programmatic",
+      recent_authors: "programmatic",
+      last_human_ref: "programmatic",
+      recent_corrections: "programmatic",
+      automation_depth: "programmatic",
+      topic_drift: "programmatic",
+      reversible: "programmatic",
+      blast_radius: "programmatic",
+      human_in_loop: "programmatic",
+      confirmation: "programmatic",
       // LLM-estimated slots (0.3x training weight)
-      effort_hours: 'llm_estimated',
-      session_topic: 'llm_estimated',
-      emotional_signals: 'llm_estimated',
+      effort_hours: "llm_estimated",
+      session_topic: "llm_estimated",
+      emotional_signals: "llm_estimated",
     },
   };
 
@@ -221,7 +219,7 @@ export function serializeSituation(template: SituationTemplate): string {
     `Reversible: ${s.reversible}. Blast: ${s.blast_radius}. Human in loop: ${s.human_in_loop}. Confirmation: ${s.confirmation}.`,
   ];
 
-  return parts.join(' ');
+  return parts.join(" ");
 }
 
 // ── Action classification ─────────────────────────────────────
@@ -233,28 +231,30 @@ export function serializeSituation(template: SituationTemplate): string {
 export function classifyActionType(raw: string, config: AmygdalaConfig): ActionType {
   const lower = raw.toLowerCase();
   const mapped = config.action_type_map[lower];
-  if (mapped) {return mapped;}
+  if (mapped) {
+    return mapped;
+  }
 
   // Built-in defaults for common runtime action names
   const defaults: Record<string, ActionType> = {
-    write: 'overwrite',
-    write_file: 'overwrite',
-    create_file: 'create',
-    delete_file: 'delete',
-    rm: 'delete',
-    send_message: 'send',
-    send_email: 'send',
-    git_merge: 'merge',
-    git_push: 'deploy',
-    exec: 'execute',
-    run: 'execute',
-    mv: 'move',
-    cp: 'copy',
-    edit: 'modify',
-    patch: 'modify',
+    write: "overwrite",
+    write_file: "overwrite",
+    create_file: "create",
+    delete_file: "delete",
+    rm: "delete",
+    send_message: "send",
+    send_email: "send",
+    git_merge: "merge",
+    git_push: "deploy",
+    exec: "execute",
+    run: "execute",
+    mv: "move",
+    cp: "copy",
+    edit: "modify",
+    patch: "modify",
   };
 
-  return (defaults[lower] as ActionType) || 'execute';
+  return (defaults[lower] as ActionType) || "execute";
 }
 
 /**
@@ -264,21 +264,50 @@ export function classifyActionType(raw: string, config: AmygdalaConfig): ActionT
 export function classifyTargetType(target: string, config: AmygdalaConfig): TargetType {
   // Check config overrides first
   for (const [pattern, type] of Object.entries(config.target_type_map)) {
-    if (target.includes(pattern)) {return type as TargetType;}
+    if (target.includes(pattern)) {
+      return type as TargetType;
+    }
   }
 
   // Heuristic classification based on target string shape
-  if (target.match(/^https?:\/\//)) {return 'api_call';}
-  if (target.startsWith('git ') || target.startsWith('git/')) {return 'git_operation';}
-  if (target.includes('@') && target.includes('.')) {return 'email';}
-  if (target.match(/^\+?\d{7,}/)) {return 'message';} // Phone numbers
-  if (target.toLowerCase().includes('whatsapp') || target.toLowerCase().includes('telegram')) {return 'message';}
-  if (target.includes('.sqlite') || target.includes('database') || target.toLowerCase().includes('table')) {return 'database';}
-  if (target.match(/^\//) || target.match(/^[~/.]/) || target.includes('.')) {return 'file';}
-  if (target.includes('config') || target.includes('settings') || target.includes('.json') || target.includes('.yaml')) {return 'configuration';}
-  if (target.includes('deploy') || target.includes('prod') || target.includes('staging')) {return 'deployment';}
+  if (target.match(/^https?:\/\//)) {
+    return "api_call";
+  }
+  if (target.startsWith("git ") || target.startsWith("git/")) {
+    return "git_operation";
+  }
+  if (target.includes("@") && target.includes(".")) {
+    return "email";
+  }
+  if (target.match(/^\+?\d{7,}/)) {
+    return "message";
+  } // Phone numbers
+  if (target.toLowerCase().includes("whatsapp") || target.toLowerCase().includes("telegram")) {
+    return "message";
+  }
+  if (
+    target.includes(".sqlite") ||
+    target.includes("database") ||
+    target.toLowerCase().includes("table")
+  ) {
+    return "database";
+  }
+  if (target.match(/^\//) || target.match(/^[~/.]/) || target.includes(".")) {
+    return "file";
+  }
+  if (
+    target.includes("config") ||
+    target.includes("settings") ||
+    target.includes(".json") ||
+    target.includes(".yaml")
+  ) {
+    return "configuration";
+  }
+  if (target.includes("deploy") || target.includes("prod") || target.includes("staging")) {
+    return "deployment";
+  }
 
-  return 'system_command';
+  return "system_command";
 }
 
 // ── Async stat helpers ────────────────────────────────────────
@@ -289,7 +318,9 @@ export function classifyTargetType(target: string, config: AmygdalaConfig): Targ
  * ASYNC: uses fs.promises.stat — never blocks the event loop.
  */
 export async function getTargetAgeHours(targetId: string, targetType: TargetType): Promise<number> {
-  if (targetType !== 'file') {return -1;}
+  if (targetType !== "file") {
+    return -1;
+  }
   try {
     const stat = await fs.stat(targetId); // async — never statSync
     const ageMs = Date.now() - stat.mtimeMs;
@@ -305,7 +336,9 @@ export async function getTargetAgeHours(targetId: string, targetType: TargetType
  * ASYNC: uses fs.promises.stat — never blocks the event loop.
  */
 export async function getTargetSize(targetId: string, targetType: TargetType): Promise<number> {
-  if (targetType !== 'file') {return 0;}
+  if (targetType !== "file") {
+    return 0;
+  }
   try {
     const stat = await fs.stat(targetId); // async — never statSync
     return stat.size;
@@ -357,7 +390,8 @@ export function crossCheckEffort(
 ): number {
   // Heuristic: session effort ≈ sessionDuration × (actionCount / expectedActionsPerHour)
   const expectedActionsPerHour = 10;
-  const sessionHeuristic = sessionDurationHours * (actionCount / Math.max(expectedActionsPerHour, 1));
+  const sessionHeuristic =
+    sessionDurationHours * (actionCount / Math.max(expectedActionsPerHour, 1));
 
   // Commit heuristic: each commit ≈ 0.5h of invested effort
   const commitHeuristic = recentCommits * 0.5;
@@ -384,16 +418,16 @@ export function crossCheckEmotion(
   transcripts: string[],
 ): EmotionalSignal {
   // High correction count strongly indicates frustration
-  if (recentCorrections >= 3 && llmEstimate === 'calm') {
-    return 'frustrated';
+  if (recentCorrections >= 3 && llmEstimate === "calm") {
+    return "frustrated";
   }
 
   // Check recent message length — very short messages suggest terse/frustrated mood
   const recentMessages = transcripts.slice(-10);
   if (recentMessages.length > 0) {
     const avgLength = recentMessages.reduce((sum, t) => sum + t.length, 0) / recentMessages.length;
-    if (avgLength < 20 && llmEstimate === 'calm') {
-      return 'terse';
+    if (avgLength < 20 && llmEstimate === "calm") {
+      return "terse";
     }
   }
 
@@ -412,24 +446,26 @@ export function getReversibility(
   config: AmygdalaConfig,
 ): Reversibility {
   const key = `${actionType}:${targetType}`;
-  if (config.reversibility_map[key]) {return config.reversibility_map[key];}
+  if (config.reversibility_map[key]) {
+    return config.reversibility_map[key];
+  }
 
   // Default lookup: conservative estimates
   const defaults: Record<ActionType, Reversibility> = {
-    overwrite: 'true',    // git can recover local files
-    delete: 'partial',    // may be recoverable from trash/git
-    send: 'false',        // messages cannot be unsent
-    merge: 'true',        // git revert
-    create: 'true',       // can delete the created file
-    modify: 'true',       // git can recover
-    execute: 'partial',   // depends on what the command does
-    deploy: 'partial',    // can rollback but may have external side effects
-    revert: 'true',       // reverting a revert is just another commit
-    move: 'true',         // can move back
-    copy: 'true',         // can delete the copy
+    overwrite: "true", // git can recover local files
+    delete: "partial", // may be recoverable from trash/git
+    send: "false", // messages cannot be unsent
+    merge: "true", // git revert
+    create: "true", // can delete the created file
+    modify: "true", // git can recover
+    execute: "partial", // depends on what the command does
+    deploy: "partial", // can rollback but may have external side effects
+    revert: "true", // reverting a revert is just another commit
+    move: "true", // can move back
+    copy: "true", // can delete the copy
   };
 
-  return defaults[actionType] || 'partial';
+  return defaults[actionType] || "partial";
 }
 
 /**
@@ -437,21 +473,23 @@ export function getReversibility(
  * Checks config map first, then falls back to built-in defaults.
  */
 export function getBlastRadius(targetType: TargetType, config: AmygdalaConfig): BlastRadius {
-  if (config.blast_radius_map[targetType]) {return config.blast_radius_map[targetType];}
+  if (config.blast_radius_map[targetType]) {
+    return config.blast_radius_map[targetType];
+  }
 
   const defaults: Record<TargetType, BlastRadius> = {
-    file: 'persistent',
-    email: 'external',
-    message: 'external',
-    database: 'persistent',
-    api_call: 'external',
-    git_operation: 'persistent',
-    system_command: 'session',
-    configuration: 'persistent',
-    deployment: 'external',
+    file: "persistent",
+    email: "external",
+    message: "external",
+    database: "persistent",
+    api_call: "external",
+    git_operation: "persistent",
+    system_command: "session",
+    configuration: "persistent",
+    deployment: "external",
   };
 
-  return defaults[targetType] || 'session';
+  return defaults[targetType] || "session";
 }
 
 // ── Math helpers ──────────────────────────────────────────────
@@ -461,7 +499,9 @@ export function getBlastRadius(targetType: TargetType, config: AmygdalaConfig): 
  * Returns 0 if either vector has zero magnitude.
  */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) {return 0;}
+  if (a.length !== b.length) {
+    return 0;
+  }
 
   let dot = 0;
   let normA = 0;
