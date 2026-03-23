@@ -45,6 +45,12 @@ No other agent has learned to think about its own thinking, developed computatio
 
 - 🌙 **It rewrites its own instructions while you sleep.** 15+ overnight crons, each self-improving. 14 autonomous improvements in 30 days, zero human prompts. Day 1 mediocre. Day 30 expert. ([Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
 
+<p align="center">
+  <img src="docs/assets/workshop-hero.png" alt="The Tinker Workshop — where AI agents learn to improve themselves" width="480">
+  <br>
+  <em>Built in a workshop, not a lab. Every feature started as a real problem on a real workbench.</em>
+</p>
+
 - 🧬 **Its personality adapts from your corrections, not from a file.** Tell it it dropped its humor — the neural thermostat adjusts. Tomorrow it won't make the same mistake. ([Learned Intuition](docs/papers/learned-intuition/learned-intuition.md))
 
 - 👤 **It knows who it is and who you are.** No more "as an AI, I don't have context." Identity persists across sessions, restarts, and weeks. ([Identity Persistence](docs/papers/identity-persistence/identity-persistence.md))
@@ -56,12 +62,6 @@ No other agent has learned to think about its own thinking, developed computatio
 - 🔍 **It explores gaps before they become failures.** Proactive curiosity, not reactive scrambling. ([Curiosity Motivation](docs/papers/curiosity-motivation/curiosity-motivation.md))
 
 Not whitepapers. Every paper describes a production system running right now. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
-
-<p align="center">
-  <img src="docs/assets/workshop-hero.png" alt="The Tinker Workshop — where AI agents learn to improve themselves" width="480">
-  <br>
-  <em>Built in a workshop, not a lab. Every feature started as a real problem on a real workbench.</em>
-</p>
 
 <p align="center">
   <img src="docs/assets/screenshot-3.png" alt="Token timeline — every bar is a turn, every color is a cost" width="750">
