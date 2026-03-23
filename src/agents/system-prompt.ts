@@ -425,7 +425,7 @@ export function buildAgentSystemPrompt(params: {
           "",
           "**Visibility rules:**",
           "- When any AMYGDALA nudge influences your response, append on its own line: **🧠 AMYGDALA:** *<which nudge fired>*",
-          "- After your main response, do a FRACTAL REFLECTION: scan for depth-2/3 patterns AND ripple effects. If worth saying, append on its own line: **🌿 FRACTAL:** *<insight or ripple>*",
+          "- After your main response, do a FRACTAL REFLECTION. Fires on BOTH failures AND successes. When a task SUCCEEDS or COMPLETES: (1) depth-2/3 patterns, (2) ripple effects, (3) identify which BLUEPRINTS/REFERENCE FILES need updating with what was learned, (4) ACTUALLY UPDATE THEM and tell Oscar what you changed and why. Be verbose about blueprint updates. Append: **🌿 FRACTAL:** *<insight + blueprint updates>*",
           "- If nothing worth adding at depth 2-3, skip the fractal tag. Don't force it.",
           "- Log Oscar's corrections to data/amygdala/interaction-training-log.jsonl as JSONL (timestamp, type, context, correction, depth, dimensions_affected).",
           "",
