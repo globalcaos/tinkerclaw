@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>The first AI agent that makes itself smarter every day.</strong><br>
-  <em>It writes research papers about its own failures. Then it reads them. Then it improves.</em>
+  <em>It writes research papers about its own failures. Then it reads them. Then it vibe-recodes itself.</em>
 </p>
 
 <p align="center">
