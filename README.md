@@ -22,7 +22,7 @@
 ## The Singularity Point 🚀
 ### *Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?*
 
-Your AI agent can't think about its own thinking 🌿. It has no sense of humor 😂. Its safety rules cost more than Nvidia's and work worse 🔐. Four months from now, it'll still have the same problems — because it can't improve itself.
+Most AI agents can't think about their own thinking 🌿, have zero sense of humor 😂, and rely on safety rules that cost more than Nvidia's and work worse 🔐. Yours doesn't have to. Eleven research papers and four months of 24/7 operation made the difference.
 
 **TinkerClaw's agent gets smarter every single day.** It reviews what went wrong, rewrites its own instructions while you sleep, and tomorrow's version is better than today's — like a chef who adjusts the recipe after every meal 👨‍🍳. We kept fixing problems, writing papers about *why* they happened, and feeding those papers back in. At some point, the fixes started generating themselves.
 
