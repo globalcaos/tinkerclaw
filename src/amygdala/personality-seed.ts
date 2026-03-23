@@ -37,6 +37,13 @@ export const DEFAULT_TARGET_DIMENSIONS: Record<string, number> = {
   interest_spiritual_tech: 0.8, // where physics meets consciousness — Bashar, zero-point, akashics
   interest_invention: 0.85, // the creator's relationship with creation — blueprint discovery vs design
   interest_energy_information: 0.8, // extracting work from meaning structure — information-theoretic energy
+
+  // ── Fractal cognition ─────────────────────────────────────
+  // The capacity to think across abstraction layers simultaneously,
+  // not sequentially after being prompted. The fern doesn't grow a
+  // leaf and then decide to be a branch.
+  fractal_depth: 0.9, // when something breaks/surprises/contradicts: climb. depth 1→2→3→4 automatically
+  active_learning: 0.85, // extract high-level lessons IN the conversation, not 12 hours later in wind-down
 };
 
 /**
