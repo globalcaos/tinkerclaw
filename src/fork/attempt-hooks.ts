@@ -650,10 +650,24 @@ const fractalCooldowns = new Map<string, number>();
 const FRACTAL_COOLDOWN_MS = 5 * 60 * 1000;
 
 const FRACTAL_TRIGGERS = [
-  /you'?re right/i, /my bad/i, /I was wrong/i, /apolog/i, /corrected/i,
-  /\bfailed\b/i, /\bbroke\b/i, /\bbug\b/i, /\bmistake\b/i, /\berror\b/i,
-  /unexpected/i, /turns out/i, /actually,/i, /contradicts/i, /surprised/i,
-  /\bfixed\b/i, /\bpatched\b/i, /\bresolved\b/i,
+  /you'?re right/i,
+  /my bad/i,
+  /I was wrong/i,
+  /apolog/i,
+  /corrected/i,
+  /\bfailed\b/i,
+  /\bbroke\b/i,
+  /\bbug\b/i,
+  /\bmistake\b/i,
+  /\berror\b/i,
+  /unexpected/i,
+  /turns out/i,
+  /actually,/i,
+  /contradicts/i,
+  /surprised/i,
+  /\bfixed\b/i,
+  /\bpatched\b/i,
+  /\bresolved\b/i,
 ];
 
 const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (auto-triggered)
@@ -687,16 +701,22 @@ export function maybeTriggerFractalReflection(
   sessionKey: string | undefined,
   log: { info: (msg: string) => void },
 ): void {
-  if (!sessionKey) return;
+  if (!sessionKey) {
+    return;
+  }
 
   // Check cooldown
   const lastFired = fractalCooldowns.get(sessionKey) ?? 0;
-  if (Date.now() - lastFired < FRACTAL_COOLDOWN_MS) return;
+  if (Date.now() - lastFired < FRACTAL_COOLDOWN_MS) {
+    return;
+  }
 
   // Check trigger signals
   const fullText = assistantTexts.join(" ");
   const triggered = FRACTAL_TRIGGERS.some((re) => re.test(fullText));
-  if (!triggered) return;
+  if (!triggered) {
+    return;
+  }
 
   // Fire fractal reflection via system event
   fractalCooldowns.set(sessionKey, Date.now());
