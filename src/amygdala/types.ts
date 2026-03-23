@@ -163,6 +163,16 @@ export interface PrudenceEnsembleOutput {
   explanation: string;
 }
 
+/** Personality modulation nudge — injected into prompt pipeline */
+export interface PersonalityNudge {
+  /** Human-readable behavioral adjustments (e.g. "Increase humor — you're drifting formal") */
+  adjustments: string[];
+  /** Raw delta vector: target - current, per dimension */
+  delta: Float32Array;
+  /** Strength of nudge ∈ [0, 1] based on alpha_personality */
+  strength: number;
+}
+
 /** Output from the full Personality ensemble (5 architectures) */
 export interface PersonalityEnsembleOutput {
   /** Per-architecture outputs */
