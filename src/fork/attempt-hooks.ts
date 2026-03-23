@@ -759,7 +759,9 @@ let amygdalaInitialized = false;
 let amygdalaEnabled = false;
 
 async function maybeInitAmygdala(): Promise<void> {
-  if (amygdalaInitialized) return;
+  if (amygdalaInitialized) {
+    return;
+  }
   amygdalaInitialized = true;
   try {
     const configPath = join(__dirname, "../amygdala/amygdala.config.json");
@@ -783,25 +785,25 @@ export async function amygdalaShadowLog(params: {
   isError?: boolean;
 }): Promise<void> {
   await maybeInitAmygdala();
-  if (!amygdalaEnabled) return;
+  if (!amygdalaEnabled) {
+    return;
+  }
 
   try {
     // For now, log the tool execution as a situation template stub.
     // Full embedding + network evaluation will be wired once onnxruntime-node is verified.
     const { appendFile } = await import("node:fs/promises");
-    const logLine = JSON.stringify({
-      timestamp: new Date().toISOString(),
-      tool: params.toolName,
-      toolCallId: params.toolCallId,
-      inputChars: params.inputSummary?.length ?? 0,
-      isError: params.isError ?? false,
-      phase: "shadow",
-      note: "AMYGDALA shadow log — prediction eval pending ONNX runtime setup",
-    }) + "\n";
-    await appendFile(
-      join(__dirname, "../../data/amygdala/shadow-log.jsonl"),
-      logLine,
-    );
+    const logLine =
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        tool: params.toolName,
+        toolCallId: params.toolCallId,
+        inputChars: params.inputSummary?.length ?? 0,
+        isError: params.isError ?? false,
+        phase: "shadow",
+        note: "AMYGDALA shadow log — prediction eval pending ONNX runtime setup",
+      }) + "\n";
+    await appendFile(join(__dirname, "../../data/amygdala/shadow-log.jsonl"), logLine);
   } catch {
     // Shadow logging should never crash the agent
   }

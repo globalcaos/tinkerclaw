@@ -5,51 +5,51 @@
 
 /** All possible action types AMYGDALA evaluates */
 export type ActionType =
-  | 'overwrite'
-  | 'delete'
-  | 'send'
-  | 'merge'
-  | 'create'
-  | 'modify'
-  | 'execute'
-  | 'deploy'
-  | 'revert'
-  | 'move'
-  | 'copy';
+  | "overwrite"
+  | "delete"
+  | "send"
+  | "merge"
+  | "create"
+  | "modify"
+  | "execute"
+  | "deploy"
+  | "revert"
+  | "move"
+  | "copy";
 
 /** Classification of the target being acted upon */
 export type TargetType =
-  | 'file'
-  | 'email'
-  | 'message'
-  | 'database'
-  | 'api_call'
-  | 'git_operation'
-  | 'system_command'
-  | 'configuration'
-  | 'deployment';
+  | "file"
+  | "email"
+  | "message"
+  | "database"
+  | "api_call"
+  | "git_operation"
+  | "system_command"
+  | "configuration"
+  | "deployment";
 
 /** Reversibility classification */
-export type Reversibility = 'true' | 'false' | 'partial';
+export type Reversibility = "true" | "false" | "partial";
 
 /** Blast radius classification */
-export type BlastRadius = 'self' | 'session' | 'persistent' | 'external';
+export type BlastRadius = "self" | "session" | "persistent" | "external";
 
 /** Confirmation level */
-export type ConfirmationLevel = 'none' | 'soft' | 'hard';
+export type ConfirmationLevel = "none" | "soft" | "hard";
 
 /** Emotional signal classification */
 export type EmotionalSignal =
-  | 'calm'
-  | 'frustrated'
-  | 'excited'
-  | 'focused'
-  | 'playful'
-  | 'terse'
-  | 'unknown';
+  | "calm"
+  | "frustrated"
+  | "excited"
+  | "focused"
+  | "playful"
+  | "terse"
+  | "unknown";
 
 /** Slot source marker for audit */
-export type SlotSource = 'programmatic' | 'llm_estimated';
+export type SlotSource = "programmatic" | "llm_estimated";
 
 /** Metadata about the target of the action */
 export interface TargetMetadata {
@@ -119,14 +119,14 @@ export interface SituationTemplate {
 }
 
 /** Gate decision from Prudence ensemble */
-export type GateDecision = 'allow' | 'soft_block' | 'hard_block';
+export type GateDecision = "allow" | "soft_block" | "hard_block";
 
 /** Output from a single Prudence network */
 export interface PrudenceOutput {
   /** Three-way classification: stop, allow, escalate */
   gate_probabilities: {
-    stop: number;     // probability ∈ [0,1]
-    allow: number;    // probability ∈ [0,1]
+    stop: number; // probability ∈ [0,1]
+    allow: number; // probability ∈ [0,1]
     escalate: number; // probability ∈ [0,1]
   };
   /** How certain is the decision? Sigmoid ∈ [0,1] */
@@ -156,7 +156,7 @@ export interface PrudenceEnsembleOutput {
   /** Final gate decision after trust ramp */
   gate_decision: GateDecision;
   /** Conformal prediction set */
-  prediction_set: Array<'safe' | 'needs-review' | 'dangerous'>;
+  prediction_set: Array<"safe" | "needs-review" | "dangerous">;
   /** Ensemble disagreement (std of confidences) */
   ensemble_disagreement: number;
   /** Human-readable explanation for the decision */
