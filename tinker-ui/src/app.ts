@@ -24,26 +24,14 @@ let sessions: any[] = [];
 let messages: any[] = [];
 /** Index into messages[] of the current streaming temporary message, or -1 if none. */
 let streamMsgIdx = -1;
-/** Index into messages[] of the current streaming thinking message, or -1 if none. */
-let thinkingMsgIdx = -1;
 let streamRunId: string | null = null;
 /** Tracks how much of the server's accumulated text is already shown in frozen temp messages. */
 let frozenTextEnd = 0;
 /** Length of the last full delta text received (used to set frozenTextEnd on tool freeze). */
 let lastDeltaLen = 0;
-/** Timestamp of the last thinking_delta event (used to split thinking into separate bubbles on pauses). */
-let lastThinkingDeltaTime = 0;
-/** How many chars of the server's accumulated thinking text are already frozen in previous bubbles. */
-let frozenThinkingLen = 0;
-/** Pause threshold (ms) — if gap between thinking deltas exceeds this, start a new bubble. */
-const THINKING_SPLIT_MS = 2000;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
-/** Tracks runIds whose final/error/aborted events have already been processed (prevents duplicate push). */
-const finalizedRunIds = new Set<string>();
-/** Tracks toolCallIds already injected as messages (prevents duplicate tool bubbles). */
-const seenToolCallIds = new Set<string>();
 let initialized = false;
 let budgetData: any = null;
 let budgetUsageData: any = null;
@@ -594,12 +582,9 @@ function randomFortune(): string {
 interface TabState {
   messages: any[];
   streamMsgIdx: number;
-  thinkingMsgIdx: number;
   streamRunId: string | null;
   frozenTextEnd: number;
   lastDeltaLen: number;
-  lastThinkingDeltaTime: number;
-  frozenThinkingLen: number;
   sending: boolean;
   currentTurnNumber: number;
   expandedTools: Set<string>;
@@ -612,12 +597,9 @@ function freshTabState(): TabState {
   return {
     messages: [],
     streamMsgIdx: -1,
-    thinkingMsgIdx: -1,
     streamRunId: null,
     frozenTextEnd: 0,
     lastDeltaLen: 0,
-    lastThinkingDeltaTime: 0,
-    frozenThinkingLen: 0,
     sending: false,
     currentTurnNumber: 0,
     expandedTools: new Set(),
@@ -631,12 +613,9 @@ function saveCurrentTabState() {
   const s = tabStates.get(activeTabId) ?? freshTabState();
   s.messages = messages;
   s.streamMsgIdx = streamMsgIdx;
-  s.thinkingMsgIdx = thinkingMsgIdx;
   s.streamRunId = streamRunId;
   s.frozenTextEnd = frozenTextEnd;
   s.lastDeltaLen = lastDeltaLen;
-  s.lastThinkingDeltaTime = lastThinkingDeltaTime;
-  s.frozenThinkingLen = frozenThinkingLen;
   s.sending = sending;
   s.currentTurnNumber = currentTurnNumber;
   s.expandedTools = expandedTools;
@@ -650,12 +629,9 @@ function loadTabState(tabId: string) {
   const s = tabStates.get(tabId) ?? freshTabState();
   messages = s.messages;
   streamMsgIdx = s.streamMsgIdx;
-  thinkingMsgIdx = s.thinkingMsgIdx;
   streamRunId = s.streamRunId;
   frozenTextEnd = s.frozenTextEnd;
   lastDeltaLen = s.lastDeltaLen;
-  lastThinkingDeltaTime = s.lastThinkingDeltaTime;
-  frozenThinkingLen = s.frozenThinkingLen;
   sending = s.sending;
   currentTurnNumber = s.currentTurnNumber;
   expandedTools = s.expandedTools;
@@ -800,17 +776,9 @@ function clearPersistedErrors(sk: string) {
 }
 
 // ─── Active Model Tracking ───
-type ActiveRunInfo = {
-  model: string;
-  provider: string;
-  authProfileId?: string;
-  startedAt: number;
-  sessionKey?: string;
-};
+type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number; sessionKey?: string };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
-// FORK: Listeners notified when auth.profiles.updated event arrives (used by OAuth popup flow)
-const authProfileListeners = new Set<(evt: unknown) => void>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
 
 function persistProviderErrors() {
@@ -839,7 +807,7 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-const collapsedModelSections = new Set<string>(["configured"]);
+const collapsedModelSections = new Set<string>();
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
@@ -894,15 +862,8 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const info of activeRuns.values()) {
     if (forModel && info.model !== forModel) continue;
-    // FORK: Filter by scope toggle — "session" only counts runs for the active session.
-    // Subagent runs (spawned from current session) always count — they use this session's models.
-    if (
-      budgetScope === "session" &&
-      info.sessionKey &&
-      !sessionKeyMatches(info.sessionKey) &&
-      !info.sessionKey.includes(":subagent:")
-    )
-      continue;
+    // FORK: Filter by scope toggle — "session" only counts runs for the active session
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -923,11 +884,8 @@ function gwConnect() {
     connected = false;
     sending = false;
     streamMsgIdx = -1;
-    thinkingMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
-    frozenThinkingLen = 0;
-    lastThinkingDeltaTime = 0;
     streamRunId = null;
     activeRuns.clear();
     saveActiveRuns();
@@ -945,7 +903,7 @@ function onFrame(f: any) {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: "openclaw-control-ui",
+          id: "webchat-ui",
           displayName: "Tinker UI",
           version: "0.3",
           platform: "web",
@@ -993,18 +951,7 @@ function onFrame(f: any) {
           loadSessions({ loadChat: true });
           loadBudget();
           refreshTreemap();
-          // Load 24h cross-session feed instead of per-session
-          {
-            const base = "";
-            fetch(`${base}/tinker/api/context-anatomy/recent?hours=24`)
-              .then((r) => r.json())
-              .then((data) => {
-                if (data?.events && timelineCtrl) {
-                  timelineCtrl.loadEvents(data.events);
-                }
-              })
-              .catch((err) => console.warn("[timeline] failed to load recent events:", err));
-          }
+          timelineCtrl?.loadSession(sessionKey);
           scheduleUnconfirmedPrune();
           req("forensic.setMode", { enabled: true })
             .then((res: any) => {
@@ -1080,6 +1027,98 @@ function startHealthPoll() {
   }, 60_000);
 }
 
+/**
+ * Find the first sentence-ending position in `text` starting search from `from`.
+ * A sentence end is a '.' followed by whitespace, newline, or end-of-string.
+ * Returns the index of the '.', or -1 if none found.
+ */
+function findSentenceEnd(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === ".") {
+      const next = text[i + 1];
+      // '.' at end of string, or followed by space/newline = sentence boundary
+      if (next === undefined || next === " " || next === "\n" || next === "\r") {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * After streaming completes, merge sentence continuations back into
+ * their predecessor bubbles. If a text bubble starts with a lowercase
+ * letter (or mid-sentence punctuation), the text up to the first
+ * sentence-ending '.' is appended to the previous assistant text bubble.
+ * The remainder (after the '.') stays in the current bubble. If nothing
+ * remains, the bubble is removed entirely.
+ */
+function mergeSentenceContinuations(msgs: any[]): void {
+  // Only operate on _temporary messages from the current run.
+  // Find the range of temporary messages (they're always at the tail).
+  let tempStart = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i]._temporary) tempStart = i;
+    else if (tempStart >= 0) break; // walked past the temp block
+  }
+  if (tempStart < 0) return;
+
+  for (let i = tempStart + 1; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (!m._temporary) continue;
+    if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+    const content = Array.isArray(m.content) ? m.content : [];
+    const textBlock = content.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+    if (!textBlock) continue;
+
+    const text = textBlock.text as string;
+    const trimmed = text.trimStart();
+    const firstChar = trimmed.charAt(0);
+    // Detect mid-sentence start: lowercase letter or continuation punctuation
+    const isLower =
+      firstChar !== "" &&
+      firstChar === firstChar.toLowerCase() &&
+      firstChar !== firstChar.toUpperCase();
+    const isMidSentence = isLower || /^[\d,;:.!?)}\]"'…–—\-]/.test(trimmed);
+    if (!isMidSentence) continue;
+
+    // Find the previous temporary assistant text bubble
+    let prevTextBlock: any = null;
+    for (let k = i - 1; k >= tempStart; k--) {
+      const prev = msgs[k];
+      if (!prev._temporary) continue;
+      if ((prev.role ?? "").toLowerCase() !== "assistant") continue;
+      const pc = Array.isArray(prev.content) ? prev.content : [];
+      const pt = pc.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+      if (pt) {
+        prevTextBlock = pt;
+        break;
+      }
+    }
+    if (!prevTextBlock) continue;
+
+    // Find sentence boundary in the current text
+    const dotIdx = findSentenceEnd(text, 0);
+    if (dotIdx >= 0) {
+      // Merge up to and including the period
+      prevTextBlock.text += text.slice(0, dotIdx + 1);
+      const remainder = text.slice(dotIdx + 1);
+      if (remainder.trim()) {
+        textBlock.text = remainder;
+      } else {
+        // Nothing left — remove this message
+        msgs.splice(i, 1);
+        i--;
+      }
+    } else {
+      // No period found — merge the entire fragment
+      prevTextBlock.text += text;
+      msgs.splice(i, 1);
+      i--;
+    }
+  }
+}
+
 function onEvent(evt: any) {
   if (evt.event === "chat") {
     const p = evt.payload;
@@ -1092,8 +1131,6 @@ function onEvent(evt: any) {
       for (const m of messages) {
         if (m._queued) delete m._queued;
       }
-      // Guard: if thinking was active, implicitly end it (thinking_end may have been dropped)
-      if (thinkingMsgIdx >= 0) thinkingMsgIdx = -1;
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
         lastDeltaLen = deltaText.length;
@@ -1117,88 +1154,56 @@ function onEvent(evt: any) {
         }
       }
       updateChat();
-    } else if (p.state === "thinking_delta") {
-      streamRunId = p.runId;
-      // Guard: if text was streaming, freeze it (this text segment is done)
-      if (streamMsgIdx >= 0) streamMsgIdx = -1;
-      const thinkingText = p.message?.content?.[0]?.text ?? "";
-      if (thinkingText) {
-        const now = Date.now();
-        // FORK: Split thinking into separate bubbles on pauses at sentence boundaries.
-        // When there's a >2s gap AND the previous text ended at a sentence boundary,
-        // freeze the current bubble and start a new one.
-        if (
-          thinkingMsgIdx >= 0 &&
-          messages[thinkingMsgIdx]?._temporary &&
-          lastThinkingDeltaTime > 0 &&
-          now - lastThinkingDeltaTime > THINKING_SPLIT_MS
-        ) {
-          // Check if accumulated text ends at a sentence boundary
-          const currentBlock = messages[thinkingMsgIdx].content.find(
-            (b: any) => b.type === "thinking",
-          );
-          const currentText = (currentBlock?.text ?? "").trimEnd();
-          if (/[.!?:;)\]}"'\u2019\u201D]$/.test(currentText)) {
-            // Sentence boundary — freeze current bubble, start new one.
-            // Advance frozenThinkingLen past the current bubble's text so the
-            // next bubble starts from where this one left off.
-            frozenThinkingLen += currentBlock?.text?.length ?? 0;
-            thinkingMsgIdx = -1;
-          }
-        }
-        lastThinkingDeltaTime = now;
-
-        // Slice to get only the portion for the current bubble
-        const segmentText =
-          frozenThinkingLen > 0 ? thinkingText.slice(frozenThinkingLen) : thinkingText;
-
-        if (segmentText) {
-          if (thinkingMsgIdx >= 0 && messages[thinkingMsgIdx]?._temporary) {
-            // Update existing thinking temporary message
-            const content = messages[thinkingMsgIdx].content;
-            const block = content.find((b: any) => b.type === "thinking");
-            if (block) {
-              block.text = segmentText;
-            }
-          } else {
-            // Create a new thinking temporary message
-            messages.push({
-              role: "assistant",
-              content: [{ type: "thinking", text: segmentText }],
-              _temporary: true,
-            });
-            thinkingMsgIdx = messages.length - 1;
-          }
-        }
-      }
-      updateChat();
-    } else if (p.state === "thinking_end") {
-      // Freeze the thinking message — next delta (text or thinking) starts a new bubble
-      thinkingMsgIdx = -1;
-      frozenThinkingLen = 0;
-      lastThinkingDeltaTime = 0;
-      updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
-      // FORK: Dedup — skip if we already processed a final/error/aborted for this runId
-      if (p.runId && finalizedRunIds.has(p.runId)) {
-        updateChat();
-        return;
-      }
-      if (p.runId) finalizedRunIds.add(p.runId);
       // FORK: Un-queue any queued user messages on final/error
       for (const m of messages) {
         if (m._queued) delete m._queued;
       }
       if (p.state !== "error") {
+        // ─── Continuation merge ───
+        // Before promoting, merge sentence fragments: if an assistant text
+        // bubble starts with lowercase (mid-sentence continuation after a
+        // tool call), move text up to the first '.' into the previous
+        // assistant text bubble and keep the remainder in the current one.
+        mergeSentenceContinuations(messages);
+
         // Promote temp messages to permanent.
-        // Intermediate text messages (preamble before tool calls) are kept as
-        // separate messages — updateChat() classifies them as thinking and collapses
-        // them into the reasoning group. The server's accumulated text buffer includes
-        // ALL text segments concatenated, so we do NOT use it to replace the final
-        // answer (it would re-inject intermediate preambles into the answer bubble).
+        // When tool calls split the streaming text (frozenTextEnd slicing),
+        // the final server message has the complete un-sliced text. Replace
+        // ALL temp text segments with the server's authoritative version so
+        // markdown elements (tables, lists) that span tool-call boundaries
+        // render correctly as a single block.
         const hadTemps = messages.some((m: any) => m._temporary);
-        if (hadTemps) {
-          // Promote all temps to permanent
+        if (hadTemps && p.message) {
+          // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
+          const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
+          const finalText = finalContent
+            .filter((b: any) => b.type === "text")
+            .map((b: any) => b.text ?? "")
+            .join("");
+
+          // Remove temp text-only messages, keep temp tool messages
+          messages = messages.filter((m: any) => {
+            if (!m._temporary) return true;
+            const c = Array.isArray(m.content) ? m.content : [];
+            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+            return isToolMsg;
+          });
+
+          // Insert the complete text as a single non-temp message after the last tool row
+          if (finalText.trim()) {
+            messages.push({
+              role: "assistant",
+              content: [{ type: "text", text: finalText }],
+            });
+          }
+
+          // Clean up remaining temp flags
+          for (const m of messages) {
+            if (m._temporary) delete m._temporary;
+          }
+        } else if (hadTemps) {
+          // No server final message — promote temps as-is (fallback)
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
           }
@@ -1207,28 +1212,6 @@ function onEvent(evt: any) {
           messages.push(p.message);
         }
       } else {
-        // FORK: Preserve partial streamed content before clearing temporary messages.
-        // When an error (e.g. Anthropic 529 overloaded) occurs mid-stream, the
-        // partial thinking/text already rendered must not be wiped. Convert any
-        // _temporary message with actual content to a permanent _partial message
-        // before the filter runs, so the user sees what was streamed + the error.
-        if (p.state === "error") {
-          messages = messages.map((m: any) => {
-            if (m._temporary && m.content && m.content.length > 0) {
-              const hasContent = m.content.some(
-                (c: any) =>
-                  (c.type === "text" && c.text?.trim()) ||
-                  (c.type === "thinking" && c.text?.trim()),
-              );
-              if (hasContent) {
-                const { _temporary, ...preserved } = m;
-                preserved._partial = true; // Mark as partial for optional styling
-                return preserved;
-              }
-            }
-            return m;
-          });
-        }
         messages = messages.filter((m: any) => !m._temporary);
         if (p.message) {
           messages.push(p.message);
@@ -1245,24 +1228,11 @@ function onEvent(evt: any) {
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
-        // Remove fallback error bubbles from the messages array — they're transient
-        // UI artifacts that should not persist after a successful response.
-        // Without this, error bubbles from failed profiles accumulate across rounds
-        // and only disappear on hard refresh (when localStorage is already cleared).
-        const beforeLen = messages.length;
-        messages = messages.filter((m: any) => !m._isError);
-        if (messages.length !== beforeLen) {
-          // streamMsgIdx may have shifted — recalculate if still active
-          if (streamMsgIdx >= 0) streamMsgIdx = -1;
-        }
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
-      thinkingMsgIdx = -1;
       frozenTextEnd = 0;
       lastDeltaLen = 0;
-      frozenThinkingLen = 0;
-      lastThinkingDeltaTime = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
       if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
         sending = false;
@@ -1284,9 +1254,6 @@ function onEvent(evt: any) {
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
-        // FORK: Dedup — skip if this toolCallId was already injected
-        if (seenToolCallIds.has(d.toolCallId)) return;
-        seenToolCallIds.add(d.toolCallId);
         // Freeze current streaming text — it becomes its own thinking bubble
         frozenTextEnd = lastDeltaLen;
         streamMsgIdx = -1;
@@ -1305,10 +1272,6 @@ function onEvent(evt: any) {
         });
         updateChat();
       } else if (d.phase === "result" && d.toolCallId) {
-        // FORK: Dedup — skip duplicate tool results (toolCallId already tracked from start)
-        const resultKey = d.toolCallId + ":result";
-        if (seenToolCallIds.has(resultKey)) return;
-        seenToolCallIds.add(resultKey);
         // Push tool_result as a temporary message so renderMsg can pair it
         messages.push({
           role: "user",
@@ -1344,15 +1307,8 @@ function onEvent(evt: any) {
       }
     }
 
-    // Round-start: update activeRun with authProfileId (the "start" event lacks it,
-    // but round-start has the actual profile used). This narrows glow to the correct row.
+    // Round-start: push a new bar to the timeline immediately
     if (p?.stream === "lifecycle" && p.data?.phase === "round-start") {
-      const existing = activeRuns.get(p.runId);
-      if (existing && p.data.authProfileId && existing.authProfileId !== p.data.authProfileId) {
-        existing.authProfileId = p.data.authProfileId as string;
-        saveActiveRuns();
-        updateBudgetPanel();
-      }
       if (
         p.data.sessionKey &&
         p.data.sessionKey !== sessionKey &&
@@ -1449,19 +1405,9 @@ function onEvent(evt: any) {
       const modelLabel = fm || "unknown";
       const profileLabel = profileId ? ` (${profileId})` : "";
       const reasonLabel = describeError(reason, errMsg);
-      // Resolve next fallback target from model config
-      let nextLabel: string;
-      if (attempt && total && attempt < total) {
-        const chain = [modelConfigData?.primary, ...(modelConfigData?.fallbacks || [])].filter(
-          Boolean,
-        ) as string[];
-        const nextModel = fm ? chain[chain.indexOf(fm) + 1] : undefined;
-        nextLabel = nextModel
-          ? ` → trying ${modelName(nextModel)} (${providerOf(nextModel)})`
-          : " → trying next backup";
-      } else {
-        nextLabel = " — all backups exhausted";
-      }
+      // (placeholder removed — real bars inserted on data arrival)
+      const nextLabel =
+        attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
       const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
       const fallbackMsg: any = {
         role: "assistant",
@@ -1488,27 +1434,8 @@ function onEvent(evt: any) {
       const pIdx = p.data.profileIndex as number | undefined;
       const pTotal = (p.data.totalProfiles ?? p.data.profileTotal) as number | undefined;
       const reasonLabel = describeError(reason, errMsg);
-      const profileStep = pIdx != null && pTotal ? ` [profile ${pIdx + 1}/${pTotal}]` : "";
-      // Resolve what comes next: next profile in auth order, or next model in fallback chain
-      let nextHint = "";
-      if (pIdx != null && pTotal) {
-        const authKeys = modelConfigData?.authOrder?.[prov] as string[] | undefined;
-        const nextPid = authKeys?.[pIdx + 1];
-        if (nextPid) {
-          const nextLabel = nextPid.split(":").slice(1).join(":") || nextPid;
-          nextHint = ` → trying ${nextLabel}`;
-        } else {
-          // All profiles exhausted for this provider — show next model in fallback chain
-          const chain = [modelConfigData?.primary, ...(modelConfigData?.fallbacks || [])].filter(
-            Boolean,
-          ) as string[];
-          const nextModel = model ? chain[chain.indexOf(model) + 1] : undefined;
-          nextHint = nextModel
-            ? ` → falling back to ${modelName(nextModel)} (${providerOf(nextModel)})`
-            : " — all profiles exhausted";
-        }
-      }
-      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}${nextHint}`;
+      const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
+      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
       // Track per-profile error for model panel red labels
       if (pid) {
         providerErrors.set(pid, {
@@ -1548,20 +1475,13 @@ function onEvent(evt: any) {
       }
     }
     if (p?.stream === "lifecycle" && p.data?.model) {
-      // FORK: Filter lifecycle events by session.
-      // Events without a sessionKey (cron, heartbeat) are ignored — they would
+      // FORK: Ignore lifecycle events that don't belong to the current session.
+      // Events without a sessionKey (cron, heartbeat) are also ignored — they would
       // set sending=true and disrupt the active tab's UI.
-      // "end"/"error" events ALWAYS proceed so runs from other tabs get cleaned up
-      // from activeRuns (the rendering filter handles per-tab visibility).
-      // "start" events only proceed for the current session or subagent children.
-      // FORK: Upstream lifecycle events (start/end/error) carry sessionKey at
-      // top level (enriched by server-chat.ts) but NOT in data. Fork events
-      // (round-start, fallback-error, etc.) set it in data explicitly.
-      // Fall back to top-level so upstream start/end events aren't silently dropped.
-      const evtSessionKey = (p.data.sessionKey ?? p.sessionKey) as string | undefined;
-      if (!evtSessionKey) return;
-      // All lifecycle events populate activeRuns regardless of session.
-      // Session-scoped filtering is applied at render time (overseer, models panel).
+      // Allow subagent sessions through — they're child runs the user cares about.
+      const evtSessionKey = p.data.sessionKey as string | undefined;
+      if (!evtSessionKey || (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:")))
+        return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
@@ -1575,25 +1495,7 @@ function onEvent(evt: any) {
         // Clear errors only for the specific profile/model that succeeded.
         // Don't wipe sibling profiles — cli-sv can stay errored while cli-gm works.
         const startModel = p.data.model as string;
-        // Infer authProfileId from auth order if not provided by the runner.
-        // Prefer profiles that have fresh budget data (token works) and no errors.
-        // A profile with usage data is confirmed working; one without may have a
-        // broken token that fails silently during resolution.
-        let startProfileId = p.data.authProfileId as string | undefined;
-        if (!startProfileId && startProvider && modelConfigData?.authOrder?.[startProvider]) {
-          const candidates = modelConfigData.authOrder[startProvider] as string[];
-          const profiles = budgetUsageData?.claudeProfiles || {};
-          const disabled = modelConfigData?.authProfiles || {};
-          startProfileId =
-            // First: profile with fresh usage data and no errors (confirmed working)
-            candidates.find((k) => {
-              const label = k.split(":").slice(1).join(":");
-              return profiles[label] && !providerErrors.has(k) && !disabled[k]?.disabled;
-            }) ||
-            // Second: any profile without errors or disabled state
-            candidates.find((k) => !providerErrors.has(k) && !disabled[k]?.disabled) ||
-            candidates[0];
-        }
+        const startProfileId = p.data.authProfileId as string | undefined;
         if (startProfileId) {
           providerErrors.delete(startProfileId);
         }
@@ -1602,14 +1504,12 @@ function onEvent(evt: any) {
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: startProvider,
-          authProfileId: startProfileId,
+          authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
         });
-        // FORK: Only re-assert sending for the active session (not subagent pass-through)
-        if (sessionKeyMatches(p.data.sessionKey as string | undefined)) {
-          sending = true;
-        }
+        // Re-assert sending in case a chat error event cleared it during fallback
+        sending = true;
         saveActiveRuns();
         updateBudgetPanel();
         updateChat();
@@ -1621,8 +1521,8 @@ function onEvent(evt: any) {
           const tn = currentTurnNumber;
           setTimeout(() => {
             if (sk && timelineCtrl) {
-              const base = "";
-              fetch(`${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+              const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+              fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
                   const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
@@ -1637,45 +1537,18 @@ function onEvent(evt: any) {
           }, 800);
         }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
-        // FORK: On successful completion, clear provider errors for the profile that handled it.
-        // This ensures "overloaded" labels don't persist after the provider recovers.
-        if (p.data.phase === "end") {
-          const endRun = activeRuns.get(p.runId);
-          if (endRun) {
-            let errCleared = false;
-            if (endRun.authProfileId && providerErrors.has(endRun.authProfileId)) {
-              providerErrors.delete(endRun.authProfileId);
-              errCleared = true;
-            }
-            const endModel =
-              endRun.provider && endRun.model ? `${endRun.provider}/${endRun.model}` : null;
-            if (endModel && providerErrors.has(endModel)) {
-              providerErrors.delete(endModel);
-              errCleared = true;
-            }
-            if (errCleared) persistProviderErrors();
-          }
-        }
         // FORK: Regenerate tab title after assistant responds — works for any tab via TabState
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
           const targetTab = evtKey
-            ? tabs.find(
-                (t) =>
-                  t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey),
-              )
+            ? tabs.find((t) => t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey))
             : tabs.find((t) => t.id === activeTabId && t.id !== "tab-main");
           if (targetTab) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
             const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
             if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
-              console.log(
-                "[tabs] triggering title generation for turn",
-                tabTurns,
-                "tab",
-                targetTab.id,
-              );
+              console.log("[tabs] triggering title generation for turn", tabTurns, "tab", targetTab.id);
               generateTabTitle(targetTab);
             }
           }
@@ -1685,11 +1558,8 @@ function onEvent(evt: any) {
           pendingRunDeletes.delete(endRunId);
           activeRuns.delete(endRunId);
           saveActiveRuns();
-          // Clear sending once no runs remain for the current session
-          const hasCurrentSessionRuns = [...activeRuns.values()].some(
-            (info) => info.sessionKey && sessionKeyMatches(info.sessionKey),
-          );
-          if (!hasCurrentSessionRuns) {
+          // Clear sending once all runs are done
+          if (activeRuns.size === 0) {
             sending = false;
           }
           updateBudgetPanel();
@@ -1702,8 +1572,8 @@ function onEvent(evt: any) {
         const turnNum = currentTurnNumber;
         setTimeout(() => {
           if (sk && timelineCtrl) {
-            const base = "";
-            fetch(`${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+            const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+            fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
                 const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
@@ -1724,41 +1594,6 @@ function onEvent(evt: any) {
         }, 500);
       }
     }
-  }
-  // FORK: Auth profile reload event — refresh models panel
-  if (evt.event === "auth.profiles.updated") {
-    // Notify any active popup flow listeners
-    for (const listener of authProfileListeners) {
-      try {
-        listener(evt);
-      } catch {}
-    }
-    const d = evt.data ?? evt.payload ?? {};
-    const profiles = (d.profiles ?? []) as string[];
-    const profileId = d.profileId as string | undefined;
-    // Clear errors for reloaded profiles (or all if source is file-watcher).
-    // Preserve billing errors — these are persistent and should
-    // only be cleared by successful LLM calls or explicit user action.
-    // Auth errors clear on reload since re-auth may have happened externally.
-    const shouldKeep = (key: string) => {
-      const err = providerErrors.get(key);
-      return err && err.reason === "billing";
-    };
-    if (d.clearAll) {
-      for (const [key] of providerErrors) {
-        if (!shouldKeep(key)) providerErrors.delete(key);
-      }
-    } else {
-      if (profileId && !shouldKeep(profileId)) providerErrors.delete(profileId);
-      for (const pid of profiles) {
-        if (!shouldKeep(pid)) providerErrors.delete(pid);
-      }
-    }
-    persistProviderErrors();
-    // Force-refresh usage cache so the budget panel fetches with the new token
-    // instead of serving stale null data that would re-seed the auth error.
-    loadBudget({ forceRefresh: true });
-    return;
   }
 }
 
@@ -1819,13 +1654,8 @@ async function loadChat() {
     return;
   }
   streamMsgIdx = -1;
-  thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
-  frozenThinkingLen = 0;
-  lastThinkingDeltaTime = 0;
-  finalizedRunIds.clear();
-  seenToolCallIds.clear();
   messages = res.messages ?? [];
   // Sync turn counter from loaded history
   const userMsgCount = messages.filter((m: any) => m.role === "user").length;
@@ -1854,8 +1684,8 @@ async function generateTabTitle(tab: Tab) {
   if (!tab.sessionKey || tab.id === "tab-main") return;
 
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
-  const tabMessages =
-    tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
+  const tabMessages = tab.sessionKey === sessionKey ? messages
+    : (tabStates.get(tab.id)?.messages ?? []);
   // Collect last N Q&A pairs from messages
   const pairs: string[] = [];
   let count = 0;
@@ -1945,11 +1775,7 @@ async function send(text: string) {
     sending = true;
   }
   currentTurnNumber++;
-  messages.push({
-    role: "user",
-    content: [{ type: "text", text }],
-    ...(isQueued ? { _queued: true } : {}),
-  });
+  messages.push({ role: "user", content: [{ type: "text", text }], ...(isQueued ? { _queued: true } : {}) });
   updateChat();
   if (!isQueued) updateBtn();
   scrollChat();
@@ -1977,11 +1803,8 @@ function retryProvider(provider: string) {
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
   streamMsgIdx = -1;
-  thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
-  frozenThinkingLen = 0;
-  lastThinkingDeltaTime = 0;
   messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
   clearPersistedErrors(sessionKey);
   // Find last user message and resend
@@ -2012,93 +1835,26 @@ async function abort() {
   sending = false;
   messages = messages.filter((m: any) => !m._temporary);
   streamMsgIdx = -1;
-  thinkingMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
-  frozenThinkingLen = 0;
-  lastThinkingDeltaTime = 0;
   streamRunId = null;
   activeRuns.clear();
   updateChat();
   updateBtn();
 }
 
-async function loadBudget(opts?: { forceRefresh?: boolean }) {
+async function loadBudget() {
   const [b, s, mc, bu] = await Promise.all([
     req("usage.budget", {}).catch(() => null),
     req("budget.status", {}).catch(() => null),
     req("config.models", {}).catch(() => null),
-    req("budget.usage", opts?.forceRefresh ? { forceRefresh: true } : {}).catch(() => null),
+    req("budget.usage", {}).catch(() => null),
   ]);
   budgetData = { budget: b, status: s };
   if (mc) {
     modelConfigData = mc;
   }
   budgetUsageData = bu;
-
-  // Clear stale providerErrors for profiles that now have fresh usage data.
-  // After a gateway restart + oauth fix, old "auth error" entries in localStorage
-  // would otherwise persist forever since no new fallback-profile-error is emitted.
-  // Also clear for profiles with null data — the profile existing in the response
-  // means the gateway is running and the error may be stale (e.g. usage API 403
-  // doesn't mean the profile can't do inference).
-  if (bu?.claudeProfiles) {
-    let cleared = false;
-    for (const [label] of Object.entries(bu.claudeProfiles)) {
-      // label is e.g. "cli-gm" → keyId is "anthropic:cli-gm"
-      const keyId = `anthropic:${label}`;
-      const err = providerErrors.get(keyId);
-      // Don't clear billing errors — those are real and persistent.
-      // DO clear auth/auth_permanent: if usage data exists, the token works.
-      if (err && err.reason !== "billing") {
-        providerErrors.delete(keyId);
-        cleared = true;
-      }
-    }
-    if (cleared) persistProviderErrors();
-  }
-
-  // Seed billing cap errors for API key profiles from auth profile state.
-  // The api profile won't generate fallback-profile-error events if the auth chain
-  // never reaches it (e.g. cli-gm succeeds first), but the cap info is in the config.
-  if (mc?.authProfiles) {
-    let seeded = false;
-    for (const [keyId, prof] of Object.entries(mc.authProfiles) as [string, any][]) {
-      if (prof?.disabled && prof.disabledReason && !providerErrors.has(keyId)) {
-        providerErrors.set(keyId, {
-          error: `${prof.disabledReason}`,
-          reason: prof.disabledReason === "billing" ? "billing" : "cooldown",
-          ts: Date.now(),
-        });
-        seeded = true;
-      }
-    }
-    if (seeded) persistProviderErrors();
-  }
-
-  // Seed auth errors for OAuth profiles missing from usage data.
-  // When a token is dead (expired + refresh revoked), the budget-panel backend
-  // returns null → profile omitted from claudeProfiles → no error badge → user
-  // can't click to re-auth. Detect this and surface a clickable error badge.
-  if (mc?.authProfiles && mc?.authOrder?.anthropic) {
-    const liveProfiles = bu?.claudeProfiles || {};
-    let seeded = false;
-    for (const keyId of mc.authOrder.anthropic as string[]) {
-      if (!keyId.startsWith("anthropic:cli-")) continue;
-      const label = keyId.split(":").slice(1).join(":");
-      const hasUsageData = label in liveProfiles;
-      if (!hasUsageData && !providerErrors.has(keyId)) {
-        providerErrors.set(keyId, {
-          error: "Token expired — click to re-authenticate",
-          reason: "auth",
-          ts: Date.now(),
-        });
-        seeded = true;
-      }
-    }
-    if (seeded) persistProviderErrors();
-  }
-
   updateBudgetPanel();
 }
 
@@ -2110,30 +1866,23 @@ function esc(s: string) {
 function md(text: string): string {
   // Ensure a blank line before table-header rows so markdown-it parses them
   // as tables even when they follow a list or paragraph with no gap.
-  let fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
-
-  // Auto-repair table separator rows: if header has N columns but separator
-  // has fewer, pad separator to match. Handles LLM output like |---|---| → |---|
-  // which makes markdown-it reject the entire table.
-  fixed = fixed.replace(
-    /(\|[^\n]+\|\s*\n)(\|[\s:|-]+\|\s*\n)/g,
-    (_match: string, headerLine: string, sepLine: string) => {
-      const headerCols = (headerLine.match(/\|/g) || []).length - 1;
-      const sepCols = (sepLine.match(/\|/g) || []).length - 1;
-      if (headerCols > 1 && sepCols < headerCols) {
-        const pad = Array(headerCols).fill("---").join(" | ");
-        return headerLine + "| " + pad + " |\n";
-      }
-      return headerLine + sepLine;
-    },
-  );
-
+  const fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
   let h = mdParser.render(fixed);
 
   // Jarvis voice styling
   h = h.replace(
     /<strong>Jarvis:<\/strong>\s*<em>(.*?)<\/em>/gi,
     '<strong>Jarvis:</strong> <span class="jarvis-voice">$1</span>',
+  );
+  // AMYGDALA personality nudge styling (pink)
+  h = h.replace(
+    /<strong>🧠 AMYGDALA:<\/strong>\s*<em>(.*?)<\/em>/gi,
+    '<strong style="color:#FF69B4">🧠 AMYGDALA:</strong> <em style="color:#FF69B4">$1</em>',
+  );
+  // Fractal reflection styling (green)
+  h = h.replace(
+    /<strong>🌿 FRACTAL:<\/strong>\s*<em>(.*?)<\/em>/gi,
+    '<strong style="color:#2ECC71">🌿 FRACTAL:</strong> <em style="color:#2ECC71">$1</em>',
   );
   return h;
 }
@@ -2364,7 +2113,7 @@ function renderSystemMsg(text: string, idx: number): string {
     // Show file paths as links instead of dumping content
     const links = paths.map((p) => {
       const name = p.split("/").pop() || p;
-      const fullPath = p.startsWith("~") ? p.replace("~", "/home/user") : p;
+      const fullPath = p.startsWith("~") ? p.replace("~", "/home/<user>") : p;
       return `<span class="sys-file-link" data-path="${esc(fullPath)}">📄 ${esc(name)}</span>`;
     });
     preview = links.join(" ");
@@ -2400,10 +2149,10 @@ function renderMsg(
   let blockIdx = 0;
   let hasNonToolContent = false;
 
-  // Check if this message has any non-tool content (text, thinking blocks, or plain string)
+  // Check if this message has any non-tool content (text blocks or plain string)
   if (typeof msg.content === "string" && msg.content.trim()) hasNonToolContent = true;
   for (const b of content) {
-    if ((b.type === "text" || b.type === "thinking") && (b.text ?? "").trim()) {
+    if (b.type === "text" && (b.text ?? "").trim()) {
       hasNonToolContent = true;
       break;
     }
@@ -2453,29 +2202,8 @@ function renderMsg(
     return h;
   }
 
-  // ─── Pre-pass: merge all text blocks into one so markdown elements
-  // (tables, lists) that span tool-call boundaries render as a single block.
-  // Thinking blocks are kept separate — they render with their own styling. ───
-  const mergedContent: typeof content = [];
-  let pendingText = "";
-  for (const block of content) {
-    if (block.type === "text") {
-      const t = (block.text ?? "").trim();
-      if (t) pendingText += (pendingText ? "\n\n" : "") + t;
-    } else {
-      if (pendingText) {
-        mergedContent.push({ type: "text", text: pendingText });
-        pendingText = "";
-      }
-      mergedContent.push(block);
-    }
-  }
-  if (pendingText) {
-    mergedContent.push({ type: "text", text: pendingText });
-  }
-
   // Render content blocks in order — text, tool_use, tool_result interlaced
-  for (const block of mergedContent) {
+  for (const block of content) {
     if (block.type === "text") {
       const text = (block.text ?? "").trim();
       if (!text) continue;
@@ -2518,12 +2246,6 @@ function renderMsg(
         h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
       } else {
         h += renderSystemMsg(text, idx);
-      }
-    } else if (block.type === "thinking") {
-      // Thinking content blocks always render with thinking styling
-      const text = (block.text ?? "").trim();
-      if (text) {
-        h += `<div class="msg assistant msg-thinking"><span class="thinking-label">Thinking:</span> ${md(text)}</div>`;
       }
     } else if (block.type === "tool_use") {
       const a = block.input ?? {};
@@ -2573,13 +2295,9 @@ function renderMsg(
 let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
 
 function renderThinkingIndicator(): string {
-  // FORK: Filter active runs to only show those for the current session
-  const sessionRuns = [...activeRuns].filter(
-    ([, info]) => !info.sessionKey || sessionKeyMatches(info.sessionKey),
-  );
-  if (sessionRuns.length > 0) {
+  if (activeRuns.size > 0) {
     let rows = "";
-    for (const [runId, info] of sessionRuns) {
+    for (const [runId, info] of activeRuns) {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
@@ -2605,17 +2323,11 @@ function renderThinkingIndicator(): string {
 function startThinkingTick() {
   if (thinkingTickInterval) return;
   thinkingTickInterval = setInterval(() => {
-    // FORK: Stop ticking when no runs remain globally (not just per-session)
     if (activeRuns.size === 0) {
       clearInterval(thinkingTickInterval!);
       thinkingTickInterval = null;
       return;
     }
-    // Skip DOM updates if no runs for the active session
-    const hasSessionRuns = [...activeRuns.values()].some(
-      (info) => !info.sessionKey || sessionKeyMatches(info.sessionKey),
-    );
-    if (!hasSessionRuns) return;
     document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
       const runId = el.getAttribute("data-run-id");
       if (!runId) return;
@@ -2691,24 +2403,16 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     const profileKey = keyId?.split(":").slice(1).join(":") || "";
     const profiles = budgetUsageData.claudeProfiles || {};
     const matched = profileKey ? profiles[profileKey] : null;
-    // Don't fall back to shared data when a specific profile is requested —
-    // each profile row should show its OWN data or a disconnected state.
-    // Only fall back to shared data when no specific keyId is provided.
-    const c = matched || (keyId ? null : budgetUsageData.claude);
+    const c = matched || budgetUsageData.claude;
     if (!c?.limits) {
-      // Profile exists but no usage data — check for known errors first
-      if (profileKey || keyId) {
-        const label = profileKey || keyId || "unknown";
-        const err = keyId ? providerErrors.get(keyId) : null;
-        const isApiKey = prof?.type === "api_key" || profileKey === "api";
-        const reason = err?.reason || (isApiKey ? "api key (no usage)" : "disconnected");
+      // Profile exists but no usage data — show disconnected state
+      if (profileKey)
         return {
-          topPct: err?.reason === "billing" ? 100 : 0,
-          bottomPct: err?.reason === "billing" ? 100 : 0,
-          tooltip: `${label}: ${reason}`,
+          topPct: 0,
+          bottomPct: 0,
+          tooltip: `${profileKey}: disconnected`,
           disconnected: true,
         };
-      }
       return null;
     }
     const src = matched ? profileKey : "shared";
@@ -2765,9 +2469,9 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   if (!usage) return '<span class="usage-bars-col"></span>';
   if (usage.disconnected) {
-    // Red-tinted dashes for billing/cooldown, amber for plain disconnected
+    // Red-tinted dashes for billing/cooldown, gray for plain disconnected
     const isCapped = usage.topPct >= 100;
-    const color = isCapped ? "#ef444480" : "#f59e0b40";
+    const color = isCapped ? "#ef444450" : "#6b728033";
     let h = '<span class="usage-bars-col">';
     h += `<span class="usage-bars-wrap usage-disconnected" data-hint="${esc(usage.tooltip)}">`;
     h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:100%;background:repeating-linear-gradient(90deg,${color} 0,${color} 3px,transparent 3px,transparent 6px)"></span></span>`;
@@ -2867,7 +2571,6 @@ function updateChat(skipScroll = false) {
   if (!el) {
     return;
   }
-
   let h = "";
   // Identify intermediate "thinking" assistant messages: in each run
   // (bounded by user messages), all assistant text messages except the last
@@ -2889,39 +2592,20 @@ function updateChat(skipScroll = false) {
     for (let i = 0; i <= messages.length; i++) {
       const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
       if (!isUserOrEnd) continue;
-      // Collect assistant text message indices for intermediate classification
       const assistantTextIndices: number[] = [];
       for (let j = runStart; j < i; j++) {
         const m = messages[j];
         if ((m.role ?? "").toLowerCase() !== "assistant") continue;
         const c = Array.isArray(m.content) ? m.content : [];
-        // Messages with ONLY thinking blocks (no text) always get thinking styling.
-        const hasThinkingBlock = c.some((b: any) => b.type === "thinking");
         const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
-        if (hasThinkingBlock && !hasText && !plainText) {
-          thinkingSet.add(j);
-          continue;
-        }
         if (hasText || plainText) assistantTextIndices.push(j);
       }
-      // In finalized runs, all text messages except the last are intermediates
-      // (model's preamble/commentary before tool calls → reasoning group).
-      // During streaming, only frozen text (not the active stream) is intermediate.
-      const isCurrentRun = i === messages.length && (streamMsgIdx >= 0 || thinkingMsgIdx >= 0);
-      if (!isCurrentRun) {
-        // Finalized: all text except last → thinking/intermediate
-        if (assistantTextIndices.length > 1) {
-          for (const idx of assistantTextIndices.slice(0, -1)) thinkingSet.add(idx);
-        }
-      } else {
-        // Streaming: frozen text messages (not the active stream) are intermediate.
-        // The active stream at streamMsgIdx is the real answer (Anthropic's API
-        // already separates thinking via thinking_delta vs text delta events).
-        for (const idx of assistantTextIndices) {
-          if (idx !== streamMsgIdx) thinkingSet.add(idx);
-        }
-      }
+      // During streaming, render all bubbles as normal assistant (no thinking style).
+      // After finalization, all except the last become thinking → reasoning group.
+      const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
+      const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
+      for (const idx of intermediates) thinkingSet.add(idx);
       runStart = i + 1;
     }
   }
@@ -3438,16 +3122,14 @@ function updateBudgetPanel() {
         keyId,
       );
     } else {
-      // Multiple keys — one compact row per key with model name inline.
-      // Only fall back to model-level count (glow all rows) if NO per-key counts exist.
-      // Once round-start updates authProfileId, only the active profile glows.
+      // Multiple keys — one compact row per key with model name inline
+      // Lifecycle events may lack authProfileId, so count is stored under modelId.
+      // Fall back to model-level count so all rows glow when the model is active.
       const modelCount = counts.get(modelId) || 0;
-      const hasAnyKeyCount = keys.some((k) => (counts.get(k) || 0) > 0);
       for (let ki = 0; ki < keys.length; ki++) {
         const keyId = keys[ki];
         const prof = authProfiles?.[keyId] || {};
         const keyLabel = prof.label || keyId.split(":")[1] || keyId;
-        const keyCount = counts.get(keyId) || 0;
         html += renderAuthKeyRow(
           keyId,
           keyLabel,
@@ -3455,7 +3137,7 @@ function updateBudgetPanel() {
           modelId,
           name,
           badge,
-          keyCount > 0 ? keyCount : hasAnyKeyCount ? 0 : modelCount,
+          counts.get(keyId) || modelCount,
           providerErrors.get(keyId) || providerErrors.get(modelId),
         );
       }
@@ -3513,191 +3195,8 @@ function updateBudgetPanel() {
     });
   });
 
-  // FORK: Auth error badge click — show reload/re-auth popover
-  el.addEventListener("click", (e) => {
-    const badge = (e.target as HTMLElement).closest<HTMLElement>(".auth-clickable");
-    if (!badge) return;
-    e.stopPropagation();
-    const profileId = badge.dataset.authProfile;
-    if (!profileId) return;
-    showAuthActionPopover(badge, profileId);
-  });
-
   // Sync overseer pills with the same data
   updateOverseerPanel();
-}
-
-// FORK: Toast notification helper
-function showToast(msg: string, isError = false): void {
-  const t = document.createElement("div");
-  t.className = `toast${isError ? " toast-error" : ""}`;
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
-}
-
-// FORK: Auth action popover — reload credentials or start re-auth flow
-function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
-  document.querySelector(".auth-action-popover")?.remove();
-
-  const pop = document.createElement("div");
-  pop.className = "auth-action-popover";
-  pop.innerHTML = `
-    <button class="auth-action-btn" data-action="reload">\u21bb Reload from disk</button>
-    <button class="auth-action-btn" data-action="reauth">\ud83d\udd11 Re-authenticate</button>
-  `;
-
-  const rect = anchor.getBoundingClientRect();
-  pop.style.position = "fixed";
-  pop.style.left = `${rect.left}px`;
-  pop.style.top = `${rect.bottom + 4}px`;
-  pop.style.zIndex = "9999";
-
-  pop.addEventListener("click", async (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>(".auth-action-btn");
-    if (!btn) return;
-    pop.remove();
-
-    const action = btn.dataset.action;
-    if (action === "reload") {
-      try {
-        await req("auth.reload", { profileId });
-        showToast(`Credentials reloaded for ${profileId.replace("anthropic:", "")}`);
-      } catch (err: any) {
-        const msg =
-          typeof err === "string" ? err : err?.message || err?.error || JSON.stringify(err);
-        showToast(`Reload failed: ${msg}`, true);
-      }
-    } else if (action === "reauth") {
-      startOAuthReauthFlow(profileId);
-    }
-  });
-
-  document.body.appendChild(pop);
-
-  const close = (e: MouseEvent) => {
-    if (!pop.contains(e.target as Node)) {
-      pop.remove();
-      document.removeEventListener("click", close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener("click", close, true), 0);
-}
-
-// FORK: OAuth re-auth popup flow — opens browser popup, falls back to paste modal
-async function startOAuthReauthFlow(profileId: string): Promise<void> {
-  let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
-  try {
-    startResult = (await req("auth.reauth.start", { profileId })) as {
-      sessionId: string;
-      authUrl: string;
-      fallbackAuthUrl: string;
-    };
-  } catch (err: any) {
-    const msg = typeof err === "string" ? err : err?.message || err?.error || JSON.stringify(err);
-    showToast(`Re-auth failed: ${msg}`, true);
-    return;
-  }
-
-  const { sessionId, authUrl, fallbackAuthUrl } = startResult;
-  const popup = window.open(authUrl, "openclaw-reauth", "width=500,height=700");
-
-  let resolved = false;
-
-  const onAuthEvent = (evt: unknown) => {
-    const d =
-      (evt as Record<string, unknown>).data ?? (evt as Record<string, unknown>).payload ?? {};
-    const dd = d as Record<string, unknown>;
-    if (dd.profileId === profileId || dd.source === "oauth-reauth") {
-      resolved = true;
-      cleanup();
-      try {
-        popup?.close();
-      } catch {}
-      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    }
-  };
-
-  authProfileListeners.add(onAuthEvent);
-
-  const cleanup = () => {
-    authProfileListeners.delete(onAuthEvent);
-    clearTimeout(fallbackTimer);
-    clearInterval(popupPoll);
-  };
-
-  const fallbackTimer = setTimeout(() => {
-    if (!resolved) {
-      cleanup();
-      try {
-        popup?.close();
-      } catch {}
-      showPasteModal(sessionId, fallbackAuthUrl, profileId);
-    }
-  }, 15_000);
-
-  const popupPoll = setInterval(() => {
-    if (popup?.closed && !resolved) {
-      cleanup();
-      showPasteModal(sessionId, fallbackAuthUrl, profileId);
-    }
-  }, 500);
-}
-
-// FORK: Paste modal for manual OAuth code exchange (fallback when popup fails)
-function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: string): void {
-  document.querySelector(".auth-paste-modal-overlay")?.remove();
-
-  const overlay = document.createElement("div");
-  overlay.className = "auth-paste-modal-overlay";
-  overlay.innerHTML = `
-    <div class="auth-paste-modal">
-      <h3>Re-authenticate ${profileId.replace("anthropic:", "")}</h3>
-      <p>Auto-capture didn't work. Complete manually:</p>
-      <p>1. <a href="${fallbackAuthUrl}" target="_blank" rel="noopener">Click here to authorize</a></p>
-      <p>2. Copy the code from the callback page</p>
-      <p>3. Paste it below:</p>
-      <input type="text" class="auth-paste-input" placeholder="Paste code here (format: code#state)" autofocus />
-      <div class="auth-paste-actions">
-        <button class="auth-paste-cancel">Cancel</button>
-        <button class="auth-paste-submit">Submit</button>
-      </div>
-      <div class="auth-paste-status"></div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-
-  const input = overlay.querySelector<HTMLInputElement>(".auth-paste-input")!;
-  const status = overlay.querySelector<HTMLElement>(".auth-paste-status")!;
-  const submitBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-submit")!;
-  const cancelBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-cancel")!;
-
-  const submit = async () => {
-    const code = input.value.trim();
-    if (!code) return;
-    submitBtn.disabled = true;
-    status.textContent = "Exchanging code...";
-    try {
-      await req("auth.reauth.exchange", { sessionId, code });
-      overlay.remove();
-      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    } catch (err: any) {
-      const msg = typeof err === "string" ? err : err?.message || err?.error || JSON.stringify(err);
-      status.textContent = `Failed: ${msg}`;
-      status.style.color = "#f38ba8";
-      submitBtn.disabled = false;
-    }
-  };
-
-  submitBtn.addEventListener("click", submit);
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submit();
-  });
-  cancelBtn.addEventListener("click", () => overlay.remove());
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
 }
 
 function shortErrorLabel(reason: string): string {
@@ -3736,10 +3235,8 @@ function renderModelRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
-  // FORK: Make error badge clickable for Anthropic OAuth profiles (reload/re-auth popover)
-  const isClickable = errorInfo && keyId?.startsWith("anthropic:cli-");
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge${isClickable ? " auth-clickable" : ""}"${isClickable ? ` data-auth-profile="${esc(keyId!)}"` : ""} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, id, keyId);
   const costLabel = getModelCost(id, keyId);
@@ -3774,10 +3271,8 @@ function renderAuthKeyRow(
       ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
-  // FORK: Make error badge clickable for Anthropic OAuth profiles (reload/re-auth popover)
-  const isClickable = errorInfo && keyId?.startsWith("anthropic:cli-");
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge${isClickable ? " auth-clickable" : ""}"${isClickable ? ` data-auth-profile="${esc(keyId)}"` : ""} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, modelId, keyId);
   const costLabel = getModelCost(modelId, keyId);
@@ -3897,8 +3392,7 @@ function updateSessionsPanel() {
   for (const tab of tabs) {
     if (tab.id === "tab-main" || !tab.sessionKey) continue;
     const serverKeys = sessions.map((s: any) => s.key);
-    const hasServer =
-      serverKeys.includes(tab.sessionKey) ||
+    const hasServer = serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
     if (!hasServer) {
       const fakeSession = { key: tab.sessionKey, label: tab.title };
@@ -4025,9 +3519,8 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
   const isMainSession = /:main$/.test(s.key);
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
-  const label = isMainSession
-    ? mainTab?.title || "🏠 Main"
-    : tinkerTab?.title || s.label || s.displayName || shortLabel;
+  const label = isMainSession ? (mainTab?.title || "🏠 Main")
+    : (tinkerTab?.title) || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
@@ -4059,7 +3552,6 @@ function init() {
   }
   initialized = true;
   restoreProviderErrors();
-  if (providerErrors.size > 0) startHealthPoll();
   app.innerHTML = `
     <nav class="sidebar">
       <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#6b8e23"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
@@ -4087,7 +3579,6 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
-        <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
@@ -4102,23 +3593,22 @@ function init() {
       </div>
     </div>
     <div class="right-panels">
-      <div class="rpanel" id="sessions-panel" data-rpanel="sessions">
-        <div class="rpanel-header" data-rpanel-toggle="sessions"><span class="rpanel-arrow">▾</span> 📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
+      <div class="rpanel" id="sessions-panel">
+        <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel budget-panel-wrapper" data-rpanel="models">
-        <div class="rpanel-header" data-rpanel-toggle="models"><span class="rpanel-arrow">▾</span> 🧠 Models
-          <span class="ct-switch" id="budget-scope-toggle">
-            <span class="ct-switch-label ct-switch-label--active">Session</span>
-            <span class="ct-switch-track"><span class="ct-switch-thumb"></span></span>
-            <span class="ct-switch-label">All</span>
+      <div class="rpanel budget-panel-wrapper">
+        <div class="rpanel-header">🧠 Models
+          <span class="scope-toggle" id="budget-scope-toggle">
+            <button class="scope-btn scope-btn-active" data-scope="session">Session</button>
+            <button class="scope-btn" data-scope="all">All</button>
           </span>
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel" id="overseer-panel" data-rpanel="overseer">
-        <div class="rpanel-header" data-rpanel-toggle="overseer"><span class="rpanel-arrow">▾</span> 🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
+      <div class="rpanel" id="overseer-panel">
+        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
         <div id="overseer-graph" class="rpanel-body overseer-graph-container"></div>
       </div>
     </div>
@@ -4133,8 +3623,8 @@ function init() {
           <div id="response-canvas" style="position:absolute;inset:0;overflow:hidden"></div>
           <button class="brp-back-btn" id="brp-back-response" data-hint="Back" style="display:none">\u25C0</button>
         </div>
-        <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
       </div>
+      <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
     </div>
   `;
 
@@ -4239,42 +3729,15 @@ function init() {
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
-  // FORK: Session/All scope toggle for Models panel (same switch style as timeline)
-  $("budget-scope-toggle")?.addEventListener("click", () => {
-    budgetScope = budgetScope === "session" ? "all" : "session";
-    const toggle = $("budget-scope-toggle")!;
-    const labels = toggle.querySelectorAll(".ct-switch-label");
-    const track = toggle.querySelector(".ct-switch-track");
-    if (labels[0]) labels[0].classList.toggle("ct-switch-label--active", budgetScope === "session");
-    if (labels[1]) labels[1].classList.toggle("ct-switch-label--active", budgetScope === "all");
-    track?.classList.toggle("ct-switch-track--on", budgetScope === "all");
+  // FORK: Session/All scope toggle for Models panel
+  $("budget-scope-toggle")?.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
+    if (!btn) return;
+    budgetScope = btn.dataset.scope as "session" | "all";
+    $("budget-scope-toggle")!.querySelectorAll(".scope-btn").forEach((b) => {
+      b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
+    });
     updateBudgetPanel();
-    updateOverseerPanel();
-  });
-
-  // ─── Voice mute toggle ───
-  const voiceBtn = $("tb-voice")!;
-  const muteBase = "";
-  const muteApi = `${muteBase}/tinker/api/jarvis-mute`;
-  fetch(muteApi)
-    .then((r) => (r.ok ? r.json() : Promise.reject()))
-    .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
-    .catch(() => {});
-  voiceBtn.addEventListener("click", () => {
-    const willMute = voiceBtn.classList.contains("tb-active");
-    voiceBtn.classList.toggle("tb-active", !willMute);
-    fetch(muteApi, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ muted: willMute }),
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
-      .catch(() => {
-        voiceBtn.classList.toggle("tb-active", !willMute);
-        voiceBtn.classList.add("tb-error");
-        setTimeout(() => voiceBtn.classList.remove("tb-error"), 5000);
-      });
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
@@ -4289,39 +3752,6 @@ function init() {
   mdBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("right-collapsed");
     mdBtn.classList.toggle("tb-active", !collapsed);
-  });
-
-  // FORK: Right panel section collapse (Sessions / Models / Overseer)
-  const collapsedPanels = new Set<string>(
-    JSON.parse(localStorage.getItem("tinker-collapsed-panels") || "[]"),
-  );
-  // Apply saved collapsed state on init
-  document.querySelectorAll<HTMLElement>("[data-rpanel]").forEach((panel) => {
-    const key = panel.dataset.rpanel!;
-    if (collapsedPanels.has(key)) {
-      panel.classList.add("rpanel-collapsed");
-      const arrow = panel.querySelector(".rpanel-arrow");
-      if (arrow) arrow.textContent = "\u25B8";
-    }
-  });
-  document.querySelector(".right-panels")?.addEventListener("click", (e) => {
-    const header = (e.target as HTMLElement).closest("[data-rpanel-toggle]") as HTMLElement | null;
-    if (!header) return;
-    // Don't collapse when clicking interactive children (toggle switch, refresh button)
-    const target = e.target as HTMLElement;
-    if (target.closest(".ct-switch") || target.closest(".budget-refresh-btn")) return;
-    const key = header.dataset.rpanelToggle!;
-    const panel = document.querySelector(`[data-rpanel="${key}"]`) as HTMLElement | null;
-    if (!panel) return;
-    const isCollapsed = panel.classList.toggle("rpanel-collapsed");
-    const arrow = header.querySelector(".rpanel-arrow");
-    if (arrow) arrow.textContent = isCollapsed ? "\u25B8" : "\u25BE";
-    if (isCollapsed) {
-      collapsedPanels.add(key);
-    } else {
-      collapsedPanels.delete(key);
-    }
-    localStorage.setItem("tinker-collapsed-panels", JSON.stringify([...collapsedPanels]));
   });
 
   // ─── Sidebar tab switching ───
@@ -4755,54 +4185,12 @@ function init() {
         if (action === "qr" || action === "relink") {
           if (qrArea)
             qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
-          // Clear any previous QR refresh interval
-          if ((window as any).__waQrInterval) {
-            clearInterval((window as any).__waQrInterval);
-            (window as any).__waQrInterval = null;
-          }
           const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
             message: (err as Error).message,
           }))) as any;
           if (qrArea) {
             if (r?.qrDataUrl) {
-              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img id="wa-qr-img" src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:260px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div><div id="wa-qr-countdown" style="font-size:9px;color:var(--accent);margin-top:2px">Auto-refreshing QR…</div></div>`;
-              // Poll for fresh QR every 15s (QR rotates every ~30s on server)
-              let refreshCount = 0;
-              const maxRefreshes = 12; // 3 minutes total
-              (window as any).__waQrInterval = setInterval(async () => {
-                refreshCount++;
-                if (refreshCount > maxRefreshes) {
-                  clearInterval((window as any).__waQrInterval);
-                  (window as any).__waQrInterval = null;
-                  const cd = document.getElementById("wa-qr-countdown");
-                  if (cd) cd.textContent = "QR expired — click Relink again";
-                  return;
-                }
-                const fresh = (await req("web.login.start", { force: false }).catch(
-                  () => null,
-                )) as any;
-                const img = document.getElementById("wa-qr-img") as HTMLImageElement | null;
-                if (fresh?.qrDataUrl && img) {
-                  img.src = fresh.qrDataUrl;
-                }
-              }, 15000);
-              // Also start waiting for successful pairing
-              req("web.login.wait", { timeoutMs: 180000 })
-                .then((waitR: any) => {
-                  if ((window as any).__waQrInterval) {
-                    clearInterval((window as any).__waQrInterval);
-                    (window as any).__waQrInterval = null;
-                  }
-                  if (qrArea) {
-                    if (waitR?.connected) {
-                      qrArea.innerHTML = `<div style="padding:20px;font-size:12px;color:var(--green)">✅ WhatsApp linked!</div>`;
-                    } else {
-                      qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(waitR?.message ?? "Pairing ended")}</div>`;
-                    }
-                  }
-                  renderAltView("channels");
-                })
-                .catch(() => {});
+              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
             } else {
               qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
             }
@@ -6102,11 +5490,8 @@ function init() {
 
     messages.length = 0;
     streamMsgIdx = -1;
-    thinkingMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
-    frozenThinkingLen = 0;
-    lastThinkingDeltaTime = 0;
     streamRunId = null;
     sending = false;
     if (sessionKey) clearPersistedErrors(sessionKey);
@@ -6347,7 +5732,7 @@ function init() {
       updateBackButtons();
     },
     () => sessionKey,
-    () => "",
+    () => (import.meta.env.DEV ? "http://localhost:18789" : ""),
     PROVIDER_ICONS,
     (groupIndex, firstEvent) => {
       // Show the prompt's context anatomy in the treemap
@@ -6385,15 +5770,7 @@ function init() {
     },
     (mode) => {
       if (mode === "all") {
-        // Use the /recent endpoint for cross-session 24h feed
-        fetch(`/tinker/api/context-anatomy/recent?hours=24`)
-          .then((r) => r.json())
-          .then((data) => {
-            if (data?.events && timelineCtrl) {
-              timelineCtrl.loadEvents(data.events);
-            }
-          })
-          .catch((err) => console.warn("[timeline] failed to load recent events:", err));
+        timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
       } else {
         timelineCtrl?.loadSession(sessionKey);
       }
@@ -6417,29 +5794,11 @@ function updateOverseerPanel(): void {
   const items: OverseerItem[] = [];
 
   for (const [runId, info] of activeRuns) {
-    // Apply budget scope filter (same logic as getAuthKeyCounts)
-    if (
-      budgetScope === "session" &&
-      info.sessionKey &&
-      !sessionKeyMatches(info.sessionKey) &&
-      !info.sessionKey.includes(":subagent:")
-    )
-      continue;
     const authLabel = info.authProfileId
       ? authProfiles[info.authProfileId]?.label ||
         info.authProfileId.split(":")[1] ||
         info.authProfileId
       : "";
-    // Derive session tag for "all" mode
-    let sessionTag: string | undefined;
-    if (budgetScope === "all" && info.sessionKey) {
-      const sk = info.sessionKey;
-      if (sk.includes(":cron:")) sessionTag = "cron";
-      else if (sk.includes(":subagent:")) sessionTag = "sub";
-      else if (sk.includes(":whatsapp:")) sessionTag = "wa";
-      else if (sk.includes(":main")) sessionTag = "main";
-      else sessionTag = "other";
-    }
     items.push({
       id: runId,
       provider: info.provider,
@@ -6447,7 +5806,6 @@ function updateOverseerPanel(): void {
       authLabel,
       badge: "",
       count: 1,
-      sessionTag,
     });
   }
 
