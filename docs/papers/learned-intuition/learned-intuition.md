@@ -4,6 +4,8 @@
 ¹Independent Research
 _22 March 2026_
 
+**Implementation status:** Phase 1 (Shadow) — deployed 2026-03-22. Personality thermostat live with 15 dimensions, fractal reflection second pass active. See [modifications log](modifications-2026-03-23.md) for sprint details.
+
 ---
 
 ## Abstract
