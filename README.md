@@ -5,7 +5,8 @@
 <h1 align="center">TinkerClaw</h1>
 
 <p align="center">
-  <strong>An OpenClaw fork that remembers, learns, and stays funny when you tell it it's wrong.</strong>
+  <strong>We ran an AI agent 24/7 for four months. It broke. It learned. It started writing papers about why it broke.</strong><br>
+  <em>Remembers. Learns. Stays funny when you tell it it's wrong.</em>
 </p>
 
 <p align="center">
@@ -28,30 +29,30 @@
 
 ---
 
-## What Is This?
+## The Story
 
-TinkerClaw is what happens when you run an AI agent 24/7 for four months and fix everything that breaks.
+Month one: an **€850 bill**. We couldn't even tell where the money went. So we built a token visualizer and discovered that half the spend was context bloat — files the model never read, tool results nobody asked for, conversation history from six topics ago.
 
-It started with an **€850 bill** — the cost of running Opus at scale with zero visibility into where the tokens go. That was the motivation for Tinker UI, the real-time token visualizer. But solving cost visibility revealed deeper problems. The agent forgot who it was between sessions. It couldn't learn from mistakes. It dropped its personality the moment you corrected it. It followed safety rules it didn't understand and broke things the rules were supposed to prevent.
+Month two: we fixed the bloat. **49% fewer tokens per turn.** Then we noticed the agent forgot everything between sessions. It would introduce itself to us every morning like a stranger. So we built a memory system — episodic, hierarchical, self-consolidating overnight.
 
-So we fixed those too. Then we wrote papers about the fixes. Then the agent started reading its own papers and improving itself overnight. Then we gave it a personality that adapts from interaction instead of following a static prompt. Then we taught it fractal thinking — when something breaks, it doesn't just fix the bug, it climbs: what pattern does this belong to? what system produces this pattern?
+Month three: the agent remembered, but it didn't *learn*. Same mistakes on repeat. So we wrote a paper about self-improvement, and the nightly cron started rewriting its own instructions based on what went wrong. **14 autonomous improvements in 30 days**, zero human prompts.
 
-The result: **an agent that thinks in layers, remembers everything, improves while you sleep, and stays funny when you tell it it's wrong.**
+Month four: we told the agent it made an error. It dropped its personality, killed its humor, and became a formal apology robot. Every. Single. Time. So we gave it **10 neural networks that learn personality from interaction** — a thermostat that maintains humor, directness, and voice consistency against contextual pressure. Then we taught it fractal thinking: when something breaks, don't just fix it — climb. *What pattern does this belong to? What system produces the pattern?*
 
-Here's what vanilla OpenClaw gives you vs. what this fork adds:
+The result:
 
-| Vanilla OpenClaw | TinkerClaw |
+| What you get with vanilla OpenClaw | What you get with TinkerClaw |
 |---|---|
-| No token visibility | **Tinker UI** — real-time treemaps of every token you're paying for |
-| Context bloat over time | **ENGRAM memory** — 49% fewer tokens per turn, zero loss |
-| Forgets who it is each session | **Identity persistence** — personality, preferences, history across restarts |
-| Static system prompt personality | **AMYGDALA** — 10 neural networks that learn personality from interaction |
-| No overnight improvement | **15+ autonomous crons** — wind-down, memory consolidation, self-evolution |
-| Safety via rules | **Prudence networks** — action gating that learns from catastrophic failures |
-| Flat reasoning | **Fractal reflection** — automatic depth climbing on corrections and surprises |
-| Manual compaction needed | **Pointer compaction** — virtually eliminates manual context management |
+| No idea where tokens go | **Tinker UI** — real-time treemaps, drill into every dollar |
+| Context grows until it blows | **ENGRAM** — 49% token reduction, self-compacting memory |
+| Agent forgets you exist | **Persistent identity** — personality, preferences, history across sessions |
+| Personality from a text file | **AMYGDALA** — neural networks that learn *how to be* from your corrections |
+| Same mistakes on repeat | **15+ overnight crons** — self-improving while you sleep |
+| Safety rules it doesn't understand | **Prudence networks** — action gating learned from real catastrophic failures |
+| Fixes bugs, misses patterns | **Fractal reflection** — automatic depth climbing + ecosystem ripple detection |
+| Manual context housekeeping | **Pointer compaction** — you never think about context management again |
 
-It's not a theme or a tweak. It's a different kind of agent.
+**Eleven research papers.** Each one solves a real problem we hit. Combined effect: **⅘ fewer tokens** doing the same work. Not by limiting capability — by eliminating waste at every layer.
 
 ---
 
