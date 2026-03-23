@@ -33,7 +33,7 @@ No other agent has learned to think about its own thinking, developed computatio
 
 **TinkerClaw's agent gets smarter every single day.** Eleven research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
 
-- 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks *why the bug exists*, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](docs/papers/fractal-reasoning/fractal-reasoning.md))
+- 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks _why the bug exists_, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](docs/papers/fractal-reasoning/fractal-reasoning.md))
 
 - 😂 **It has a genuine sense of humor.** Not "tell me a joke" — a fresh perspective on the world, like Data noticing things about humanity that humans take for granted. Computational humor from embedding geometry. ([Humor Embeddings](docs/papers/humor-embeddings/humor-embeddings.md))
 

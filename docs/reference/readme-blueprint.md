@@ -22,11 +22,13 @@ Every iteration that failed did so because it made TinkerClaw the protagonist ("
 ### Step 1: Define the USP (Rosser Reeves)
 
 Before writing a single word, answer three questions:
+
 1. **What specific benefit does the reader get?** (Not a feature — a BENEFIT they feel)
 2. **What can we offer that NO ONE ELSE can?** (Must be genuinely unique)
 3. **Is it strong enough to make someone act?** (Would they clone the repo based on this alone?)
 
 **Current USP:** "The first AI agent that makes itself smarter every day."
+
 - Specific: self-improvement (not just "better")
 - Unique: no other agent framework does this
 - Strong: who wouldn't want an agent that stops repeating mistakes?
@@ -40,6 +42,7 @@ Before writing a single word, answer three questions:
 ### Step 3: Write the three hooks
 
 Immediately after the Big Idea, name three specific capabilities that NO OTHER agent has. These are the proof points for the USP. They must be:
+
 - Bold claims (not hedged)
 - Each linked to a published paper (credibility)
 - Each phrased as what the agent CAN do, not what others can't (invite, don't antagonize)
@@ -49,6 +52,7 @@ Immediately after the Big Idea, name three specific capabilities that NO OTHER a
 ### Step 4: Bullet-point proof (pain-gain fused)
 
 Each bullet follows this internal structure:
+
 1. **Bold claim** (what it does — emoticon first for visual scanning)
 2. **Simile** (makes it tangible — grandmother test: would she understand?)
 3. **Paper link** (credibility — the reader can verify)
@@ -60,6 +64,7 @@ Each bullet follows this internal structure:
 ### Step 5: Gold pass
 
 Read every sentence. Apply the quadruple test:
+
 - Does it **sell** (advance the USP)?
 - Does it **position** (distinguish from competition)?
 - Does it **prove** (provide evidence)?
@@ -70,6 +75,7 @@ If a sentence does none of these four things, **kill it**. No exceptions.
 ### Step 6: Triple-duty check
 
 Check every heading, subtitle, and key sentence for triple-duty:
+
 - Does it sell + position + invite simultaneously?
 - Example that passes: "Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?"
 - Example that fails: "We built a memory system." (only sells, doesn't position or invite)
@@ -116,14 +122,18 @@ Check every heading, subtitle, and key sentence for triple-duty:
 ## Copy Rules (Marketia Modules 1-5)
 
 ### Pain-Pain-Pain-Gain (Module 5)
+
 When describing a problem we solve:
+
 1. **Recognition** 😤 — name the frustration they feel but don't articulate
 2. **Diagnosis** 🔍 — give the pain a name and a cause
 3. **Universality** 😱 — show everyone has it and "solutions" don't work
 4. **Gain** ✨ — one sentence of relief after three of pain
 
 ### Similes (Module 5)
+
 Every technical concept needs a simile:
+
 - Compaction → "tearing pages out of a textbook you're still reading 📖"
 - Memory consolidation → "brain processing the day during sleep 😴"
 - Token visualization → "calorie counter for your AI's diet 🍕"
@@ -131,14 +141,17 @@ Every technical concept needs a simile:
 - Self-improvement → "chef adjusting the recipe after every meal 👨‍🍳"
 
 ### Emoticons (Module 5)
+
 - Signal tone BEFORE the reader processes words
 - 😤 before pain, ✨ before gain, 🔧 for solutions
 - Max 2 per paragraph. Human emojis, not corporate ones.
 
 ### The Grandmother Test (Module 5)
+
 If she can't understand WHAT it does (not HOW), rewrite it.
 
 ### The Triple-Duty Line (Module 5)
+
 Best copy sells + positions + invites in one sentence. If a heading only does one, rewrite it.
 
 ---
@@ -161,6 +174,7 @@ These are mistakes made during the 17-iteration process on 2026-03-23:
 ## Maintenance Triggers
 
 Update the README when:
+
 1. New paper published → add bullet to intro, update badge count
 2. New skill published → add to skills section
 3. Screenshot-worthy UI change → replace screenshot
@@ -174,6 +188,7 @@ The wind-down cron flags these; interactive sessions execute them.
 ## Self-Test: Would This Blueprint Reproduce the Final Version?
 
 Apply Steps 1-6 starting from a blank README. Expected result:
+
 - Step 1 (USP) → "first agent that improves itself" — ✅ would arrive here
 - Step 2 (Big Idea) → singularity point — ✅ would arrive here
 - Step 3 (Three hooks) → fractal/humor/safety — ✅ would arrive here with the paper list as input
@@ -187,4 +202,4 @@ Apply Steps 1-6 starting from a blank README. Expected result:
 
 ---
 
-*Created: 2026-03-08. Rewritten: 2026-03-23 (from 17 iterations). Reference: `385a3afc5a`*
+_Created: 2026-03-08. Rewritten: 2026-03-23 (from 17 iterations). Reference: `385a3afc5a`_
