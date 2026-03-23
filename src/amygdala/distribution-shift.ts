@@ -137,7 +137,7 @@ export class DistributionShiftDetector {
 
   /** Whether we are currently in a novelty grace period. */
   isInGracePeriod(): boolean {
-    if (this.graceStartTime === null) return false;
+    if (this.graceStartTime === null) {return false;}
     const graceMs = this.cfg.grace_period_hours * 3_600_000;
     return Date.now() - this.graceStartTime < graceMs;
   }
@@ -154,7 +154,7 @@ export class DistributionShiftDetector {
    * Returns 0 if not in a grace period.
    */
   graceRemainingHours(): number {
-    if (this.graceStartTime === null) return 0;
+    if (this.graceStartTime === null) {return 0;}
     const graceMs = this.cfg.grace_period_hours * 3_600_000;
     const remaining = graceMs - (Date.now() - this.graceStartTime);
     return Math.max(0, remaining / 3_600_000);
@@ -194,12 +194,12 @@ export class DistributionShiftDetector {
     const cutoff = now - windowMs;
     // Find first entry within the window (entries are chronological)
     let i = 0;
-    while (i < this.window.length && this.window[i].timestamp < cutoff) i++;
-    if (i > 0) this.window = this.window.slice(i);
+    while (i < this.window.length && this.window[i].timestamp < cutoff) {i++;}
+    if (i > 0) {this.window = this.window.slice(i);}
   }
 
   private avgSetSize(): number {
-    if (this.window.length === 0) return 1;
+    if (this.window.length === 0) {return 1;}
     return (
       this.window.reduce((s, e) => s + e.setSize, 0) / this.window.length
     );

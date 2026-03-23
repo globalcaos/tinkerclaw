@@ -58,8 +58,8 @@ export class GitCache {
    * Safe to call multiple times — guards against double-start.
    */
   async start(): Promise<void> {
-    if (!this.config.enabled) return;
-    if (this.watchers.length > 0) return; // Already started
+    if (!this.config.enabled) {return;}
+    if (this.watchers.length > 0) {return;} // Already started
 
     for (const watchPath of this.config.watch_paths) {
       try {
