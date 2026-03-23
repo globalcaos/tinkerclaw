@@ -69,16 +69,25 @@ export function getPersonaBlock(effectiveWorkspace: string): string | undefined 
  */
 export function getAmygdalaNudge(): string[] | undefined {
   try {
-    const nudgePath = join(__dirname, "../../data/amygdala/personality-nudge.json");
-    const { readFileSync } = require("node:fs");
-    const raw = readFileSync(nudgePath, "utf-8");
-    const data = JSON.parse(raw);
-    if (Array.isArray(data.adjustments) && data.adjustments.length > 0) {
-      return data.adjustments;
+    const { readFileSync, existsSync } = require("node:fs");
+    // Try multiple paths: relative to source, relative to build output, workspace data dir
+    const candidates = [
+      join(__dirname, "../../data/amygdala/personality-nudge.json"),
+      join(__dirname, "../../../data/amygdala/personality-nudge.json"),
+      join(process.env.HOME ?? "", ".openclaw/workspace/data/amygdala/personality-nudge.json"),
+    ];
+    for (const nudgePath of candidates) {
+      if (existsSync(nudgePath)) {
+        const raw = readFileSync(nudgePath, "utf-8");
+        const data = JSON.parse(raw);
+        if (Array.isArray(data.adjustments) && data.adjustments.length > 0) {
+          return data.adjustments;
+        }
+      }
     }
     return undefined;
   } catch {
-    // No nudge file or invalid — that's fine, no nudge injected
+    // Nudge loading should never crash the agent
     return undefined;
   }
 }
