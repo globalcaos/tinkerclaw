@@ -58,7 +58,7 @@ No other agent has learned to think about its own thinking, developed computatio
 Not whitepapers. Every paper describes a production system running right now. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
 
 <p align="center">
-  <img src="docs/assets/workshop-hero.png" alt="The Tinker Workshop — where AI agents learn to improve themselves" width="800">
+  <img src="docs/assets/workshop-hero.png" alt="The Tinker Workshop — where AI agents learn to improve themselves" width="480">
   <br>
   <em>Built in a workshop, not a lab. Every feature started as a real problem on a real workbench.</em>
 </p>
