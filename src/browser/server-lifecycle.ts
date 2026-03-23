@@ -6,13 +6,26 @@ import {
   listKnownProfileNames,
 } from "./server-context.js";
 
-export async function ensureExtensionRelayForProfiles(_params: {
+export async function ensureExtensionRelayForProfiles(params: {
   resolved: ResolvedBrowserConfig;
   onWarn: (message: string) => void;
 }) {
-  // Intentional no-op: the Chrome extension relay path has been removed.
-  // runtime-lifecycle still calls this helper, so keep the stub until the next
-  // breaking cleanup rather than changing the call graph in a patch release.
+  // FORK: Restore extension relay startup for chrome-relay profile.
+  // Upstream commit 476d948732 removed this but our fork still uses it.
+  const { ensureChromeExtensionRelayServer } = await import("./extension-relay.js");
+  const profiles = params.resolved.profiles ?? {};
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (profile.driver !== "existing-session" || !profile.cdpUrl) {
+      continue;
+    }
+    try {
+      await ensureChromeExtensionRelayServer({ cdpUrl: profile.cdpUrl });
+    } catch (err) {
+      params.onWarn(
+        `extension relay for profile "${name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }
 
 export async function stopKnownBrowserProfiles(params: {
