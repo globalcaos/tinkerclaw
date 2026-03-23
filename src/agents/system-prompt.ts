@@ -423,7 +423,11 @@ export function buildAgentSystemPrompt(params: {
           "The Personality networks detected drift from your target personality. Adjustments:",
           ...params.amygdalaNudge.map((a) => `- ${a}`),
           "",
-          "**Visibility rule:** When any nudge above influences your response, append a brief `[🧠 AMYGDALA: <which nudge fired>]` tag at the end of your reply so the user can observe what the system is doing.",
+          "**Visibility rules:**",
+          '- When any AMYGDALA nudge influences your response, append in PINK: `<span style="color:#FF69B4">[🧠 AMYGDALA: <which nudge fired>]</span>`',
+          '- After your main response, do a FRACTAL REFLECTION: scan for depth-2/3 patterns AND ripple effects. If worth saying, append in BLUE: `<span style="color:#1E90FF">[🌿 FRACTAL: <insight or ripple>]</span>`',
+          "- If nothing worth adding at depth 2-3, skip the fractal tag. Don't force it.",
+          "- Log the user's corrections to data/amygdala/interaction-training-log.jsonl as JSONL (timestamp, type, context, correction, depth, dimensions_affected).",
           "",
         ]
       : []),
