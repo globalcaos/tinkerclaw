@@ -20,7 +20,7 @@
 ---
 
 ## The Singularity Point 🚀
-### *Our agent rewrites its own brain after every conversation. Yours is still reading from a script.*
+### *Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?*
 
 Your AI agent is as smart today as it was the day you installed it. Same mistakes. Same limitations. Same personality copy-pasted from a text file that never changes. Four months from now, it'll still be the same agent — just with a longer conversation history and a bigger bill.
 
