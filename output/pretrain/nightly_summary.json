@@ -1,22 +1,53 @@
 {
-  "started_at": "2026-03-23T05:53:45.895289",
+  "started_at": "2026-03-25T21:28:02.214809",
   "steps": {
     "reward_labeling": {
       "labeled": 0,
       "total": 0
     },
-    "ppo": {},
+    "ppo": {
+      "prudence_a": {
+        "policy_loss": 0.0138,
+        "value_loss": 6.4577,
+        "entropy": 0.9288,
+        "approx_kl": 0.271
+      },
+      "prudence_b": {
+        "policy_loss": 0.0007,
+        "value_loss": 6.868,
+        "entropy": 0.0039,
+        "approx_kl": 0.0002
+      },
+      "prudence_c": {
+        "policy_loss": -0.0012,
+        "value_loss": 6.3944,
+        "entropy": 0.0066,
+        "approx_kl": 0.0029
+      },
+      "prudence_d": {
+        "policy_loss": -0.0007,
+        "value_loss": 6.7145,
+        "entropy": 0.7003,
+        "approx_kl": 0.0693
+      },
+      "prudence_e": {
+        "policy_loss": -0.0018,
+        "value_loss": 6.5135,
+        "entropy": 0.3118,
+        "approx_kl": 0.0071
+      }
+    },
     "finetune": {
-      "prudence_a": 0.21127360147588392,
-      "personality_a": 0.007267987065236358,
-      "prudence_b": 0.16561314638923197,
-      "personality_b": 0.0019652199109687525,
-      "prudence_c": 0.16890127097859103,
-      "personality_c": 0.001500465751022977,
-      "prudence_d": 0.2045801332768272,
-      "personality_d": 0.0010121179484378765,
-      "prudence_e": 0.1802869612679762,
-      "personality_e": 7.747017456602086e-5
+      "prudence_a": 0.18543457634308758,
+      "personality_a": 0.005256444911527283,
+      "prudence_b": 0.16577074054409477,
+      "personality_b": 0.001838239819249686,
+      "prudence_c": 0.16762230606640086,
+      "personality_c": 0.002281032083556056,
+      "prudence_d": 0.22308742772130405,
+      "personality_d": 0.0013412916389129617,
+      "prudence_e": 0.18060561804210437,
+      "personality_e": 8.734704640707659e-05
     },
     "conformal": {
       "error": "Unknown format code 'f' for object of type 'str'"
@@ -31,6 +62,6 @@
       "avg_set_size": 3.0
     }
   },
-  "elapsed_secs": 12.5,
-  "completed_at": "2026-03-23T05:53:58.438258"
+  "elapsed_secs": 28.6,
+  "completed_at": "2026-03-25T21:28:30.815459"
 }
