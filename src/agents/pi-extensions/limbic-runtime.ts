@@ -7,6 +7,7 @@
  * Registry pattern mirrors cortex-runtime.ts / ingestion-runtime.ts.
  */
 
+import type { EmbeddingProvider } from "../../memory/embeddings.js";
 import type { EventStore } from "../../memory/engram/event-store.js";
 import {
   discoverBridges as discoverBridgesCascade,
@@ -28,10 +29,12 @@ import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-r
 // ---------------------------------------------------------------------------
 
 export interface LimbicRuntimeOptions {
-  /** Embedding dimension for concept vectors (default 128). */
+  /** Embedding dimension for concept vectors (default 128, ignored when embeddingProvider is set). */
   embeddingDim?: number;
   /** High-affinity concept pairs to pre-compute on init. */
   highAffinityPairs?: Array<[string, string]>;
+  /** Real embedding provider (e.g. ollama/mxbai-embed-large). When set, replaces FNV-1a hashes with semantic vectors. */
+  embeddingProvider?: EmbeddingProvider;
 }
 
 export interface BridgeResult {
@@ -52,7 +55,7 @@ export interface LimbicRuntime {
   /** Find conceptual bridges between two distant concepts. */
   discoverBridges(conceptA: string, conceptB: string): Promise<BridgeResult[]>;
   /** Score humor potential for a triplet using h_v2 (surprise-weighted coherence). */
-  scoreHumor(conceptA: string, conceptB: string, bridge: string): number;
+  scoreHumor(conceptA: string, conceptB: string, bridge: string): Promise<number>;
   /** Run sensitivity gate for a topic and optional context string. */
   checkSensitivity(topic: string, context?: string): SensitivityResult;
   /**
@@ -65,33 +68,33 @@ export interface LimbicRuntime {
    * If found, automatically records a positive reaction for the given attempt ID.
    * Returns true when a positive reaction was detected and recorded.
    */
-  captureReaction(userMessage: string, humorAttemptId: string): boolean;
+  captureReaction(userMessage: string, humorAttemptId: string): Promise<boolean>;
   /** Persist audience reaction to a humor attempt in the event store. */
-  recordReaction(humorAttemptId: string, reaction: "positive" | "neutral" | "negative"): void;
+  recordReaction(
+    humorAttemptId: string,
+    reaction: "positive" | "neutral" | "negative",
+  ): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic concept → embedding (no external embedding service required)
+// Concept → embedding (semantic via provider, or deterministic FNV-1a fallback)
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a concept string into a deterministic unit-length vector.
- * Uses a multiplicative hash chain seeded from the string's characters.
- * Dimension is kept small (128) for fast tests and runtime use.
+ * FNV-1a hash fallback: deterministic unit-length vector from string.
+ * Used only when no embedding provider is configured.
  */
-function conceptToVector(concept: string, dim: number): number[] {
-  // Seed from the full string for uniqueness
-  let h = 2166136261; // FNV offset basis
+function conceptToVectorFallback(concept: string, dim: number): number[] {
+  let h = 2166136261;
   for (let i = 0; i < concept.length; i++) {
-    h = Math.imul(h ^ concept.charCodeAt(i), 16777619) >>> 0; // FNV-1a
+    h = Math.imul(h ^ concept.charCodeAt(i), 16777619) >>> 0;
   }
   const v: number[] = Array.from({ length: dim });
   let s = h;
   for (let i = 0; i < dim; i++) {
-    s = (Math.imul(s, 1103515245) + 12345) >>> 0; // LCG
+    s = (Math.imul(s, 1103515245) + 12345) >>> 0;
     v[i] = (s / 0x100000000) * 2 - 1;
   }
-  // L2 normalise
   const mag = Math.sqrt(v.reduce((acc, x) => acc + x * x, 0));
   return mag > 0 ? v.map((x) => x / mag) : v;
 }
@@ -176,16 +179,29 @@ export function createLimbicRuntime(
   cortexRuntime?: CortexRuntime,
 ): LimbicRuntime {
   const dim = options.embeddingDim ?? 128;
+  const embedProvider = options.embeddingProvider ?? null;
+
+  if (embedProvider) {
+    console.log(
+      `[limbic] Semantic embeddings active via ${embedProvider.id}/${embedProvider.model}`,
+    );
+  }
 
   // Concept vector cache — reuse vectors across calls for the same label.
   const vectorCache = new Map<string, number[]>();
 
-  function getVector(concept: string): number[] {
+  /** Embed a concept using the provider (semantic) or FNV-1a fallback (deterministic). */
+  async function getVector(concept: string): Promise<number[]> {
     let v = vectorCache.get(concept);
-    if (!v) {
-      v = conceptToVector(concept, dim);
-      vectorCache.set(concept, v);
+    if (v) {
+      return v;
     }
+    if (embedProvider) {
+      v = await embedProvider.embedQuery(concept);
+    } else {
+      v = conceptToVectorFallback(concept, dim);
+    }
+    vectorCache.set(concept, v);
     return v;
   }
 
@@ -201,10 +217,13 @@ export function createLimbicRuntime(
   // ---------- Pre-computation for high-affinity pairs ----------
   if (options.highAffinityPairs?.length) {
     // Eagerly populate vector cache so the index is richer from the start.
-    for (const [a, b] of options.highAffinityPairs) {
-      getVector(a);
-      getVector(b);
-    }
+    // Fire-and-forget: does not block construction.
+    void (async () => {
+      for (const [a, b] of options.highAffinityPairs!) {
+        await getVector(a);
+        await getVector(b);
+      }
+    })();
   }
 
   // ---------- Humor calibration from CORTEX (or defaults) ----------
@@ -221,8 +240,8 @@ export function createLimbicRuntime(
 
   return {
     async discoverBridges(conceptA: string, conceptB: string): Promise<BridgeResult[]> {
-      const A = getVector(conceptA);
-      const B = getVector(conceptB);
+      const A = await getVector(conceptA);
+      const B = await getVector(conceptB);
       const index = buildIndex();
 
       const candidates: BridgeCandidate[] = await discoverBridgesCascade(A, B, index, {
@@ -239,11 +258,10 @@ export function createLimbicRuntime(
       }));
     },
 
-    scoreHumor(conceptA: string, conceptB: string, bridge: string): number {
-      const A = getVector(conceptA);
-      const B = getVector(conceptB);
-      // Ensure the bridge vector is in the cache so getId() can resolve it.
-      const bridgeVec = getVector(bridge);
+    async scoreHumor(conceptA: string, conceptB: string, bridge: string): Promise<number> {
+      const A = await getVector(conceptA);
+      const B = await getVector(conceptB);
+      const bridgeVec = await getVector(bridge);
       const index = buildIndex();
       return humorPotentialV2(A, B, bridgeVec, index);
     },
@@ -285,29 +303,30 @@ export function createLimbicRuntime(
       });
     },
 
-    captureReaction(userMessage: string, humorAttemptId: string): boolean {
+    async captureReaction(userMessage: string, humorAttemptId: string): Promise<boolean> {
       if (!detectPositiveReaction(userMessage)) {
         return false;
       }
-      // A positive signal was detected — record it.
-      this.recordReaction(humorAttemptId, "positive");
+      await this.recordReaction(humorAttemptId, "positive");
       return true;
     },
 
-    recordReaction(humorAttemptId: string, reaction: "positive" | "neutral" | "negative"): void {
+    async recordReaction(
+      humorAttemptId: string,
+      reaction: "positive" | "neutral" | "negative",
+    ): Promise<void> {
       const pending = pendingAttempts.get(humorAttemptId);
       const conceptA = pending?.conceptA ?? "unknown";
       const conceptB = pending?.conceptB ?? "unknown";
       const bridge = pending?.bridge ?? "unknown";
       const audience = pending?.audience ?? eventStore.sessionKey;
 
-      // Build/update a HumorAssociation and persist it to the event store.
       const association = createAssociation({
         conceptA,
         conceptB,
         bridge,
         patternType: 1,
-        surpriseScore: pending ? this.scoreHumor(conceptA, conceptB, bridge) : 0,
+        surpriseScore: pending ? await this.scoreHumor(conceptA, conceptB, bridge) : 0,
         audience,
         discoveredVia: "conversation",
       });
