@@ -47,7 +47,7 @@
       "prudence_d": 0.22670505905852598,
       "personality_d": 0.0011628840680179351,
       "prudence_e": 0.18155538474812227,
-      "personality_e": 8.345680051955723e-05
+      "personality_e": 8.345680051955723e-5
     },
     "conformal": {
       "error": "Unknown format code 'f' for object of type 'str'"

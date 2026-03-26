@@ -3,7 +3,10 @@
  *
  * Stores per-turn/per-round LLM context anatomy events to
  * `~/.openclaw/data/anatomy-timeline.db` for real-time timeline UI queries
- * and 24-hour historical analysis.
+ * and full historical analysis (no pruning — data kept indefinitely).
+ *
+ * JSON columns (context_sent, memories_injected, etc.) are zlib-compressed
+ * before storage to reduce disk usage on highly repetitive data.
  *
  * Wired in: anatomy events are inserted by context-anatomy-collector.ts
  * (or equivalent) after each LLM round completes. Queried by the timeline
@@ -15,6 +18,7 @@
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { deflateSync, inflateSync } from "node:zlib";
 import Database from "better-sqlite3";
 import type { ContextAnatomyEvent } from "./context-anatomy.js";
 
@@ -27,8 +31,34 @@ const DB_PATH = (() => {
   return path.join(homeDir, ".openclaw", "data", "anatomy-timeline.db");
 })();
 
-/** Auto-prune every N inserts to avoid unbounded growth. */
-const PRUNE_INTERVAL = 50;
+// ---------------------------------------------------------------------------
+// Compression helpers — zlib for JSON columns
+// ---------------------------------------------------------------------------
+
+/** Compress a JSON-serializable value to a Buffer for BLOB storage. */
+function compressJson(value: unknown): Buffer {
+  return deflateSync(JSON.stringify(value));
+}
+
+/**
+ * Decompress a column value that may be either:
+ * - a Buffer (zlib-compressed BLOB, new rows)
+ * - a string (uncompressed TEXT, legacy rows)
+ * Returns the parsed JS value, or undefined on failure.
+ */
+function decompressJson<T>(value: Buffer | string | null): T | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  try {
+    if (Buffer.isBuffer(value)) {
+      return JSON.parse(inflateSync(value).toString("utf-8")) as T;
+    }
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Singleton state
@@ -36,7 +66,6 @@ const PRUNE_INTERVAL = 50;
 
 let db: Database.Database | null = null;
 let insertStmt: Database.Statement | null = null;
-let insertCount = 0;
 
 // ---------------------------------------------------------------------------
 // Open / close
@@ -188,7 +217,6 @@ export function closeAnatomyDb(): void {
     db.close();
     db = null;
     insertStmt = null;
-    insertCount = 0;
   }
 }
 
@@ -199,8 +227,8 @@ export function closeAnatomyDb(): void {
 /**
  * Insert a new anatomy event row.
  *
- * Uses a cached prepared statement for performance. Auto-prunes rows older
- * than 24h every {@link PRUNE_INTERVAL} inserts.
+ * Uses a cached prepared statement for performance. JSON columns are
+ * zlib-compressed before storage.
  */
 export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
   const database = openAnatomyDb();
@@ -227,39 +255,33 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
     `);
   }
 
+  const ext = event as unknown as Record<string, unknown>;
   insertStmt.run(
     event.sessionKey ?? null,
-    ((event as unknown as Record<string, unknown>)["runId"] as string) ?? null,
+    (ext["runId"] as string) ?? null,
     event.turn,
     event.roundNumber ?? null,
     event.timestampMs,
     event.model ?? null,
     event.provider ?? null,
     event.authProfileId ?? null,
-    ((event as unknown as Record<string, unknown>)["durationMs"] as number) ?? null,
-    ((event as unknown as Record<string, unknown>)["stopReason"] as string) ?? null,
+    (ext["durationMs"] as number) ?? null,
+    (ext["stopReason"] as string) ?? null,
     event.compactionCycle ?? null,
-    event.contextSent ? JSON.stringify(event.contextSent) : null,
-    event.contextWindow ? JSON.stringify(event.contextWindow) : null,
-    (event as unknown as Record<string, unknown>)["toolsTriggered"]
-      ? JSON.stringify((event as unknown as Record<string, unknown>)["toolsTriggered"])
-      : null,
-    event.topics ? JSON.stringify(event.topics) : null,
-    event.topicTransition ? JSON.stringify(event.topicTransition) : null,
-    event.memoriesInjected ? JSON.stringify(event.memoriesInjected) : null,
+    event.contextSent ? compressJson(event.contextSent) : null,
+    event.contextWindow ? compressJson(event.contextWindow) : null,
+    ext["toolsTriggered"] ? compressJson(ext["toolsTriggered"]) : null,
+    event.topics ? compressJson(event.topics) : null,
+    event.topicTransition ? compressJson(event.topicTransition) : null,
+    event.memoriesInjected ? compressJson(event.memoriesInjected) : null,
     event.responseTokens ?? null,
-    ((event as unknown as Record<string, unknown>)["responseThinkingTokens"] as number) ?? null,
-    ((event as unknown as Record<string, unknown>)["responseTextTokens"] as number) ?? null,
-    ((event as unknown as Record<string, unknown>)["responseToolCallTokens"] as number) ?? null,
-    ((event as unknown as Record<string, unknown>)["cacheReadTokens"] as number) ?? null,
-    ((event as unknown as Record<string, unknown>)["cacheCreationTokens"] as number) ?? null,
-    ((event as unknown as Record<string, unknown>)["responseContent"] as string) ?? null,
+    (ext["responseThinkingTokens"] as number) ?? null,
+    (ext["responseTextTokens"] as number) ?? null,
+    (ext["responseToolCallTokens"] as number) ?? null,
+    (ext["cacheReadTokens"] as number) ?? null,
+    (ext["cacheCreationTokens"] as number) ?? null,
+    (ext["responseContent"] as string) ?? null,
   );
-
-  insertCount++;
-  if (insertCount % PRUNE_INTERVAL === 0) {
-    pruneOldEvents();
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +313,7 @@ export function updateAnatomyResponse(
 ): void {
   const database = openAnatomyDb();
 
-  const result = database
+  database
     .prepare(
       `
       UPDATE anatomy_events SET
@@ -318,83 +340,20 @@ export function updateAnatomyResponse(
       data.cacheReadTokens ?? null,
       data.cacheCreationTokens ?? null,
       data.responseContent ?? null,
-      data.toolsTriggered != null ? JSON.stringify(data.toolsTriggered) : null,
+      data.toolsTriggered != null ? compressJson(data.toolsTriggered) : null,
       runId,
       roundNumber,
     );
 
-  if (result.changes === 0) {
-    // No matching row — insert a minimal fallback so the data is not lost
-    database
-      .prepare(
-        `
-        INSERT INTO anatomy_events (
-          session_key, run_id, turn, timestamp_ms,
-          round_number, duration_ms, stop_reason,
-          response_tokens, response_thinking_tokens, response_text_tokens,
-          response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
-          response_content, tools_triggered
-        ) VALUES (
-          '', ?, 0, ?,
-          ?, ?, ?,
-          ?, ?, ?,
-          ?, ?, ?,
-          ?, ?
-        )
-      `,
-      )
-      .run(
-        runId,
-        Date.now(),
-        roundNumber,
-        data.durationMs ?? null,
-        data.stopReason ?? null,
-        data.responseTokens ?? null,
-        data.responseThinkingTokens ?? null,
-        data.responseTextTokens ?? null,
-        data.responseToolCallTokens ?? null,
-        data.cacheReadTokens ?? null,
-        data.cacheCreationTokens ?? null,
-        data.responseContent ?? null,
-        data.toolsTriggered != null ? JSON.stringify(data.toolsTriggered) : null,
-      );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Prune
-// ---------------------------------------------------------------------------
-
-/**
- * Delete anatomy events older than 24 hours.
- * Called automatically every {@link PRUNE_INTERVAL} inserts.
- */
-export function pruneOldEvents(): void {
-  const database = openAnatomyDb();
-  const MIN_KEEP = 100;
-  const totalRows = (
-    database.prepare(`SELECT COUNT(*) as cnt FROM anatomy_events`).get() as { cnt: number }
-  ).cnt;
-  if (totalRows <= MIN_KEEP) {
-    return;
-  } // never prune below minimum
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  // Only delete rows older than 24h AND keep at least MIN_KEEP rows
-  const rowsToKeep = Math.max(MIN_KEEP, totalRows);
-  database
-    .prepare(
-      `DELETE FROM anatomy_events WHERE timestamp_ms < ? AND id NOT IN (
-        SELECT id FROM anatomy_events ORDER BY timestamp_ms DESC LIMIT ?
-      )`,
-    )
-    .run(cutoff, rowsToKeep > MIN_KEEP ? MIN_KEEP : rowsToKeep);
+  // If no matching row was found, skip — a response-only stub without session key,
+  // model, or context breakdown is not useful for the timeline.
 }
 
 // ---------------------------------------------------------------------------
 // Row parsing
 // ---------------------------------------------------------------------------
 
-/** Raw DB row shape (all JSON columns are still strings). */
+/** Raw DB row shape. JSON columns may be Buffer (compressed) or string (legacy). */
 interface AnatomyRow {
   id: number;
   session_key: string;
@@ -408,12 +367,12 @@ interface AnatomyRow {
   duration_ms: number | null;
   stop_reason: string | null;
   compaction_cycle: number | null;
-  context_sent: string | null;
-  context_window: string | null;
-  tools_triggered: string | null;
-  topics: string | null;
-  topic_transition: string | null;
-  memories_injected: string | null;
+  context_sent: Buffer | string | null;
+  context_window: Buffer | string | null;
+  tools_triggered: Buffer | string | null;
+  topics: Buffer | string | null;
+  topic_transition: Buffer | string | null;
+  memories_injected: Buffer | string | null;
   response_tokens: number | null;
   response_thinking_tokens: number | null;
   response_text_tokens: number | null;
@@ -423,20 +382,11 @@ interface AnatomyRow {
   response_content: string | null;
 }
 
-/** Safely parse a JSON string field; returns undefined on failure. */
-function safeJsonParse<T>(value: string | null): T | undefined {
-  if (!value) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Convert a raw DB row back to a {@link ContextAnatomyEvent}.
+ *
+ * Handles both zlib-compressed BLOBs (new rows) and plain-text JSON (legacy
+ * rows written before compression was added) transparently via decompressJson.
  *
  * Extended fields (runId, durationMs, etc.) that are not yet on the
  * canonical type are attached via object spread so callers can access them.
@@ -452,11 +402,11 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
     model: row.model ?? "",
     provider: row.provider ?? "",
     sessionKey: row.session_key || undefined,
-    topics: safeJsonParse<string[]>(row.topics) ?? [],
-    topicTransition: safeJsonParse<{ from: string[]; to: string[]; changed: boolean }>(
+    topics: decompressJson<string[]>(row.topics) ?? [],
+    topicTransition: decompressJson<{ from: string[]; to: string[]; changed: boolean }>(
       row.topic_transition,
     ),
-    contextSent: safeJsonParse(row.context_sent) ?? {
+    contextSent: decompressJson(row.context_sent) ?? {
       systemPromptChars: 0,
       systemPromptTokens: 0,
       injectedFiles: [],
@@ -475,25 +425,25 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
       totalChars: 0,
       totalTokens: 0,
     },
-    contextWindow: safeJsonParse(row.context_window) ?? {
+    contextWindow: decompressJson(row.context_window) ?? {
       maxTokens: 0,
       usedTokens: 0,
       utilizationPercent: 0,
     },
     authProfileId: row.auth_profile_id ?? undefined,
     responseTokens: row.response_tokens ?? undefined,
-    memoriesInjected: safeJsonParse(row.memories_injected) ?? { autoRecall: [], searched: [] },
+    memoriesInjected: decompressJson(row.memories_injected) ?? { autoRecall: [], searched: [] },
     // Extended fields not yet on the canonical type
     runId: row.run_id ?? undefined,
     durationMs: row.duration_ms ?? undefined,
     stopReason: row.stop_reason ?? undefined,
-    toolsTriggered: safeJsonParse(row.tools_triggered),
+    toolsTriggered: decompressJson(row.tools_triggered),
     responseThinkingTokens: row.response_thinking_tokens ?? undefined,
     responseTextTokens: row.response_text_tokens ?? undefined,
     responseToolCallTokens: row.response_tool_call_tokens ?? undefined,
     cacheReadTokens: row.cache_read_tokens ?? undefined,
     cacheCreationTokens: row.cache_creation_tokens ?? undefined,
-    responseContent: safeJsonParse(row.response_content) ?? undefined,
+    responseContent: decompressJson(row.response_content) ?? undefined,
   };
 }
 
@@ -502,17 +452,25 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
 // ---------------------------------------------------------------------------
 
 /**
- * Return all anatomy events from the last `hours` hours, oldest first.
- * Defaults to the last 24 hours.
+ * Return anatomy events from the last `hours` hours, oldest first.
+ * Defaults to 48 hours. Capped to `limit` rows (default 500) to keep
+ * response sizes manageable — returns the MOST RECENT rows within the window.
  */
 export function queryRecentEvents(
-  hours = 24,
+  hours = 48,
+  limit = 500,
 ): Array<ContextAnatomyEvent & Record<string, unknown>> {
   const database = openAnatomyDb();
   const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  // Sub-select the newest `limit` rows in the window, then re-sort ASC for display
   const rows = database
-    .prepare(`SELECT * FROM anatomy_events WHERE timestamp_ms > ? ORDER BY timestamp_ms ASC`)
-    .all(cutoff) as AnatomyRow[];
+    .prepare(
+      `SELECT * FROM (
+        SELECT * FROM anatomy_events WHERE timestamp_ms > ?
+        ORDER BY timestamp_ms DESC LIMIT ?
+      ) ORDER BY timestamp_ms ASC`,
+    )
+    .all(cutoff, limit) as AnatomyRow[];
   return rows.map(parseRow);
 }
 
