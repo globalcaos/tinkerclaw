@@ -3850,9 +3850,10 @@ function init() {
       </div>
       <div class="rpanel budget-panel-wrapper">
         <div class="rpanel-header">🧠 Models
-          <span class="scope-toggle" id="budget-scope-toggle">
-            <button class="scope-btn scope-btn-active" data-scope="session">Session</button>
-            <button class="scope-btn" data-scope="all">All</button>
+          <span class="ct-switch" id="budget-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
+            <span class="ct-switch-track"><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-scope="all">All</span>
           </span>
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
@@ -3990,15 +3991,13 @@ function init() {
     showAuthActionPopover(badge, profileId);
   });
   // FORK: Session/All scope toggle for Models panel
-  $("budget-scope-toggle")?.addEventListener("click", (e) => {
-    const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
-    if (!btn) return;
-    budgetScope = btn.dataset.scope as "session" | "all";
-    $("budget-scope-toggle")!
-      .querySelectorAll(".scope-btn")
-      .forEach((b) => {
-        b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
-      });
+  $("budget-scope-toggle")?.addEventListener("click", () => {
+    budgetScope = budgetScope === "session" ? "all" : "session";
+    const wrap = $("budget-scope-toggle")!;
+    wrap.querySelectorAll(".ct-switch-label").forEach((l) => {
+      l.classList.toggle("ct-switch-label--active", (l as HTMLElement).dataset.scope === budgetScope);
+    });
+    wrap.querySelector(".ct-switch-track")!.classList.toggle("ct-switch-track--on", budgetScope === "all");
     updateBudgetPanel();
   });
 
