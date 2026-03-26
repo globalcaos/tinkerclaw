@@ -864,6 +864,19 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Global hint:** `#global-hint` CSS changed from `white-space: pre` to `pre-wrap` so longer fortune text wraps within the 320px tooltip.
 - **Files:** `app.ts` (FORTUNE_COOKIES array, persistence functions, renderTabs, renderSessionRow, attachSessionToTab, createTab, classifySession), `base.css` (.tab-title, #global-hint)
 
+### 5.43 Colored Brain Systems — AMYGDALA & FRACTAL Tags (2026-03-23)
+
+- **Status:** `DEPLOYED`
+- **What:** System-generated messages from the AMYGDALA (personality thermostat) and FRACTAL (recursive reflection) cognitive subsystems render with distinct colored tags in the chat. AMYGDALA tags render in pink (`#ff69b4`), FRACTAL tags in fern green (`#2ECC71`). Tags use markdown bold+italic (`***TAG***`) instead of HTML spans for cross-channel compatibility (WhatsApp, Telegram).
+- **Detection:** Messages containing `AMYGDALA` or `FRACTAL` prefixes in system event text.
+- **Files:** `app.ts` (renderMsg detection), `base.css` (tag color classes)
+
+### 5.44 WhatsApp Thinking Reaction (2026-02-18)
+
+- **Status:** `DEPLOYED`
+- **What:** When processing a WhatsApp message, the bot adds a 🤔 reaction as a progress indicator. Reaction is removed on final delivery + a safety-net timeout after dispatch. Isolated in its own module for merge safety.
+- **Files:** `src/fork/thinking-reaction.ts` (extracted module), `attempt.ts` (hook point)
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
@@ -1226,3 +1239,116 @@ grep -r '__filename' ../dist/ --include='*.js' | grep -v node_modules  # should 
 | `extensions/tinker/openclaw.plugin.json`      | ~15   | Plugin manifest                                                     |
 | `extensions/hippocampus/index.ts`             | ~22   | Plugin stub (registers ID; code in src/memory/engram/)              |
 | `extensions/hippocampus/openclaw.plugin.json` | ~11   | Plugin manifest                                                     |
+
+---
+
+## 11. Fork Backend Systems (Non-UI)
+
+These are fork-exclusive backend systems that run server-side. They are not part of the Tinker UI but represent significant divergence from upstream and are visible through Tinker's treemap (prompt composition), timeline (token usage), and model panel (provider selection).
+
+### 11.1 WhatsApp whatsmeow Backend (2026-03-26)
+
+- **Status:** `DEPLOYED` (opt-in via env var)
+- **What:** Alternative WhatsApp backend using `whatsmeow-node` (Go-based, more reliable than Baileys for multi-device). Env var `OPENCLAW_WHATSAPP_BACKEND=whatsmeow` activates it; default remains `baileys` (zero behavior change).
+- **Architecture:**
+  - `baileys-adapter-wm.ts` — wraps whatsmeow-node client to expose the Baileys socket interface (`sendMessage`, `sendPresenceUpdate`, `readMessages`, `groupMetadata`, `ev` events) so the existing 400+ line `monitor.ts` pipeline works without rewrite
+  - `monitor-wm.ts` — creates whatsmeow client + adapter, passes to `monitorWebInbox`
+  - `backend-selector.ts` — reads `OPENCLAW_WHATSAPP_BACKEND` env var, exports `getWhatsappBackend()`
+  - `monitor.ts` — wired with static imports (dynamic imports were tree-shaken by tsdown bundler — 3 fix iterations)
+  - `channel.ts` — `loginWithQrStart`/`loginWithQrWait` route to whatsmeow versions when backend=whatsmeow
+  - `auth-store.ts` — `webAuthExists` checks `whatsmeow.db` (>8KB) instead of `creds.json` when backend=whatsmeow
+- **Login flow fixes:** Timeout increased to 180s for QR scan + pairing + 515 restart cycle. `defaultRuntime` dependency removed (undefined in dynamic import context). `force=true` only on first Relink call, not refresh polls (prevented active login from being killed).
+- **History backfill:** Per-chat backfill using each chat's own last message as anchor (not global latest). Uses `sendPeerMessage` (peer=true). No artificial limits — backfills ALL stale chats (DMs + groups) where last message >24h old, excluding `status@broadcast`.
+- **Files:** `extensions/whatsapp/src/baileys-adapter-wm.ts`, `monitor-wm.ts`, `backend-selector.ts`, `auth-store.ts`, `channel.ts`, `inbound/monitor.ts`, `login-qr-wm.ts`, `session-wm.ts`; `src/whatsapp-history/live-capture-wm.ts`
+
+### 11.2 AMYGDALA — Personality Thermostat (2026-03-23)
+
+- **Status:** `DEPLOYED`
+- **What:** Dual-network action gating system that dynamically adjusts the agent's personality traits. Injects personality nudges into the system prompt to steer behavior toward a target personality vector without rewriting the core persona.
+- **Components:**
+  - **Target vector + decoder:** Defines desired personality dimensions (curiosity, warmth, directness, humor, etc.) as numerical targets. Decoder translates vector into natural language nudges.
+  - **Nudge pipeline:** Wired into system prompt via `buildSystemPrompt()`. Nudges are context-aware templates that reference the current conversation state.
+  - **Humor-aware templates:** Nudges include humor potential detection and bridge discovery for contextually appropriate humor.
+  - **Curiosity decomposition:** Breaks curiosity into genuine interest attractors rather than generic "be curious" instructions.
+  - **Fractal cognition:** Recursive reflection that fires on success (not just failure). Second-pass depth climbing. Ripple scan for cross-domain effects.
+  - **Active learning dimensions:** Tracks which personality dimensions are being exercised and which are dormant.
+  - **Visible influence tags:** `***AMYGDALA***` and `***FRACTAL***` tags in system messages (rendered with color in Tinker UI — see §5.43).
+  - **Shadow logging:** All personality decisions logged to execution pipeline for observability.
+- **Files:** `src/fork/amygdala/`, `src/fork/fractal/`, wired in `attempt.ts`
+
+### 11.3 ENGRAM — Memory & Retrieval System (2026-02 → 2026-03)
+
+- **Status:** `DEPLOYED` (progressive rollout across 30+ commits)
+- **What:** Fork-exclusive memory infrastructure replacing upstream's basic session history with a multi-phase cognitive memory system. Visible in Tinker UI treemap as retrieval pack tokens injected into the system prompt.
+- **Phases:**
+  - **Phase 0+1A:** Metrics collection, event store (per-turn ingestion), artifact store, test harness
+  - **Phase 1B-1D:** Pointer compaction (reduces repeated context), push pack (proactive recall), recall tool (agent-initiated retrieval), contradiction gate (pre-action state conflict detection)
+  - **Phase 2:** Async embeddings with task-conditioned scoring (relevance depends on what the agent is doing)
+  - **Phase 3:** Sleep consolidation — cron-driven episode detection, overnight memory reorganization
+  - **Entity extraction:** Daily log cache, multilingual entity recognition, single DB connection pooling
+  - **Global FTS5 index:** Replaced per-session JSONL search with SQLite FTS5 full-text index for retrieval pack
+  - **Retrieval pack injection:** Wired into system prompt pre-prompt path behind `ENGRAM_POINTER_COMPACTION` flag
+- **Extension:** `extensions/hippocampus/` — plugin stub that registers the hippocampus ID; actual code lives in `src/memory/engram/`
+- **Files:** `src/memory/engram/`, `extensions/hippocampus/`, `src/fork/hooks/` (hippocampus-hook), wired in `attempt.ts`
+
+### 11.4 CORTEX / LIMBIC / SYNAPSE — Cognitive Subsystems (2026-02 → 2026-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Three fork-exclusive cognitive modules that enhance the agent's behavioral layer. All inject into the system prompt pipeline.
+- **CORTEX (Persona Stability):**
+  - `PersonaState` loaded from `SOUL.md` / `VOICE.md`, injected as priority context
+  - SyncScore automation with EWMA drift detection — measures how well the agent adheres to persona
+  - Behavioral probes, consistency metric, convergence monitor
+  - Mid-context re-injection and observational memory
+  - Files: `src/fork/cortex/`
+- **LIMBIC (Humor Pipeline):**
+  - Bridge discovery (finds conceptual connections between disparate topics for humor)
+  - Sensitivity gate (blocks humor in inappropriate contexts)
+  - Pattern taxonomy for humor types
+  - Files: `src/fork/limbic/`
+- **SYNAPSE (Multi-Model Debate):**
+  - CDI (Cognitive Diversity Index), RAAC protocol
+  - Debate architectures for multi-model deliberation
+  - Exposed as agent tool for on-demand use
+  - Files: `src/fork/synapse/`
+
+### 11.5 WhatsApp Feature Enhancements (2026-02 → 2026-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Fork-specific WhatsApp improvements beyond upstream's basic integration.
+- **SQLite History Storage:** `better-sqlite3` with FTS5 full-text search for WhatsApp message history. Replaces in-memory storage. Files: `src/whatsapp-history/`
+- **Offline Message Recovery:** On reconnect, recovers messages received during the offline window (6h). Messages annotated as `offline-recovered` for review-before-action.
+- **Audio Transcription Gate:** Audio messages are transcribed _before_ triggerPrefix check (not blanket bypass). Ensures voice notes go through the same routing as text.
+- **Sent Message ID Tracking:** Tracks outbound message IDs to prevent voice note echo re-ingestion (bot hearing its own TTS output).
+- **Group Typing Indicators:** `presenceSubscribe` for groups before composing, for both inbound monitor and outbound API.
+- **515 Stream Error Auto-Restart:** WhatsApp's 515 disconnect handled with automatic reconnection.
+- **Strict 3-Rule Group Gate:** No bypasses for media or owner messages — all group messages go through triggerPrefix + whitelist + rate limit.
+- **triggerPrefix for DMs:** DM conversations also require triggerPrefix (upstream doesn't enforce this).
+- **senderE164 Resolution:** Resolves sender phone number for `fromMe` group messages where Baileys lacks the `participant` field.
+- **Files:** `extensions/whatsapp/src/`, `src/whatsapp-history/`
+
+### 11.6 Fork Infrastructure (2026-02 → 2026-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Merge automation and hook architecture that allows the fork to absorb upstream changes without manual patching.
+- **Fork Hook Architecture (`src/fork/`):**
+  - `attempt.ts` refactored: 10 inline blocks → 2 hook imports
+  - All fork-specific logic extracted to `src/fork/hooks/` for merge independence
+  - Marked with `// FORK:` comments throughout codebase for visibility
+- **Merge Automation:**
+  - `merge-upstream.sh` — automated upstream merge with conflict resolution
+  - `apply-fork-wiring.mjs` — 12+ patch functions that re-apply fork hooks after merge (imports + call sites)
+  - `merge-guardian.sh` — checks 20+ wiring points, builds, learns from failures
+  - `safe-cron-merge.sh` — daily at 04:45 with self-healing retry
+  - 13 TIER1 files auto-resolved via `--theirs` + re-wiring
+  - Documented in §6 (Backend Fork Patches) and §9 (Post-Merge Checklist)
+- **Session Resume on Gateway Restart:**
+  - Multi-session resume with liveness watchdog and scope-isolated restart
+  - TTL bumped from 60s to 300s
+  - System event sent to main session after SIGUSR1 restart
+  - Files: `src/fork/session-resume.ts`, wired in `server-startup.ts`
+- **Proactive OAuth Refresh:**
+  - Generic refresh for all OAuth profiles (not just hardcoded SV/GM)
+  - `credentialFile` config option in auth profiles for external token files
+  - Generic credential file I/O module
+  - Files: `src/auth/proactive-refresh.ts`, `credential-file.ts`
