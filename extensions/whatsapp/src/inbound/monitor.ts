@@ -38,8 +38,9 @@ export async function monitorWebInbox(options: {
   const inboundConsoleLog = createSubsystemLogger("gateway/channels/whatsapp").child("inbound");
 
   // FORK: whatsmeow backend support — use Baileys adapter over whatsmeow-node
-  const useWhatsmeow = process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow"
-    || process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
+  const useWhatsmeow =
+    process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
+    process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
   let sock: Awaited<ReturnType<typeof createWaSocket>>;
   if (useWhatsmeow) {
     const { createWmMonitorSocket } = await import("./monitor-wm.js");
