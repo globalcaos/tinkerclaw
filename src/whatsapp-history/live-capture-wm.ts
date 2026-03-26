@@ -162,9 +162,8 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
               )
               .then((historyMsg) => {
                 if (historyMsg) {
-                  return client.sendMessage(
-                    jid,
-                    historyMsg as unknown as Parameters<typeof client.sendMessage>[1],
+                  return client.sendPeerMessage(
+                    historyMsg as Record<string, unknown>,
                   );
                 }
               })
