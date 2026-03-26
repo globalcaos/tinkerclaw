@@ -143,7 +143,7 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
                   (SELECT id FROM messages m2 WHERE m2.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastId,
                   (SELECT COALESCE(sender_jid, '') FROM messages m3 WHERE m3.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastSender
            FROM messages m
-           WHERE chat_jid NOT LIKE '%@g.us' AND chat_jid NOT LIKE '%@broadcast' AND chat_jid != 'status@broadcast'
+           WHERE chat_jid != 'status@broadcast'
            GROUP BY chat_jid
            HAVING MAX(timestamp) < ? 
            ORDER BY MAX(timestamp) DESC
