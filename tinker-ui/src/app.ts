@@ -3995,9 +3995,14 @@ function init() {
     budgetScope = budgetScope === "session" ? "all" : "session";
     const wrap = $("budget-scope-toggle")!;
     wrap.querySelectorAll(".ct-switch-label").forEach((l) => {
-      l.classList.toggle("ct-switch-label--active", (l as HTMLElement).dataset.scope === budgetScope);
+      l.classList.toggle(
+        "ct-switch-label--active",
+        (l as HTMLElement).dataset.scope === budgetScope,
+      );
     });
-    wrap.querySelector(".ct-switch-track")!.classList.toggle("ct-switch-track--on", budgetScope === "all");
+    wrap
+      .querySelector(".ct-switch-track")!
+      .classList.toggle("ct-switch-track--on", budgetScope === "all");
     updateBudgetPanel();
   });
 
