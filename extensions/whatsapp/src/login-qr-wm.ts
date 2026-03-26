@@ -76,9 +76,25 @@ export async function startWebLoginWithQr(
         message: "QR already active. Scan it in WhatsApp → Linked Devices.",
       };
     }
-    // Active login exists but QR hasn't arrived yet — don't recreate, just wait
+    // Active login exists but QR hasn't arrived yet — wait for it (up to 15s)
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const updated = activeLogins.get(account.accountId);
+      if (updated?.qr) {
+        if (!updated.qrDataUrl) {
+          const b64 = await renderQrPngBase64(updated.qr);
+          updated.qrDataUrl = `data:image/png;base64,${b64}`;
+        }
+        return {
+          qrDataUrl: updated.qrDataUrl,
+          qrCode: updated.qr,
+          message: "QR ready. Scan it in WhatsApp → Linked Devices.",
+        };
+      }
+      if (updated?.error) break;
+    }
     return {
-      message: "Generating QR code… please wait.",
+      message: "QR generation timed out. Click Relink to try again.",
     };
   }
 
