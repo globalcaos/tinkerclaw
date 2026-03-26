@@ -4257,7 +4257,11 @@ function init() {
                   force: isFirstCall && action === "relink",
                 })) as any;
                 isFirstCall = false;
-                if (qrArea && (r?.qrDataUrl || r?.qrCode) && (r.qrDataUrl || r.qrCode) !== lastQrUrl) {
+                if (
+                  qrArea &&
+                  (r?.qrDataUrl || r?.qrCode) &&
+                  (r.qrDataUrl || r.qrCode) !== lastQrUrl
+                ) {
                   lastQrUrl = r.qrDataUrl || r.qrCode;
                   // Render QR: try img first, but also include a link to open the QR image directly
                   const qrHtml = r.qrDataUrl
@@ -5690,9 +5694,8 @@ function init() {
 
   // Delegated stop-button handler on messages container — survives innerHTML wipes
   $("messages")!.addEventListener("click", (e) => {
-    const stop = (e.target as HTMLElement).closest(".thinking-stop");
     const run = (e.target as HTMLElement).closest(".thinking-run");
-    if (stop && run) abort();
+    if (run) abort();
   });
 
   // Mount context treemap into bottom-right panel
