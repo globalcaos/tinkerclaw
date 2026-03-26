@@ -1286,13 +1286,19 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Phases:**
   - **Phase 0+1A:** Metrics collection, event store (per-turn ingestion), artifact store, test harness
   - **Phase 1B-1D:** Pointer compaction (reduces repeated context), push pack (proactive recall), recall tool (agent-initiated retrieval), contradiction gate (pre-action state conflict detection)
-  - **Phase 2:** Async embeddings with task-conditioned scoring (relevance depends on what the agent is doing)
+  - **Phase 2:** Async embedding worker (`embedding-worker.ts`) and task-conditioned scoring exist in code. **Vector search path (`vectorSearch()` in `search-index.ts`) is implemented but NOT wired** — the retrieval runtime passes no `embedFn`/`embeddingCache`, so search falls through to FTS-only. Wiring ollama's `mxbai-embed-large` here would enable semantic search alongside FTS.
   - **Phase 3:** Sleep consolidation — cron-driven episode detection, overnight memory reorganization
-  - **Entity extraction:** Daily log cache, multilingual entity recognition, single DB connection pooling
-  - **Global FTS5 index:** Replaced per-session JSONL search with SQLite FTS5 full-text index for retrieval pack
-  - **Retrieval pack injection:** Wired into system prompt pre-prompt path behind `ENGRAM_POINTER_COMPACTION` flag
+- **Retrieval runtime** (`retrieval-runtime.ts`): Fully operational per-turn retrieval pipeline:
+  - Daily log hot cache from `~/.openclaw/workspace/` (counts against token budget)
+  - Contradiction gate — detects write-intent queries and checks for state conflicts
+  - Entity-aware multi-query retrieval via `extractEntities()` + `globalFtsMultiSearch()`
+  - Recency boost (exponential decay, ~1 day half-life)
+  - MMR re-ranking (λ=0.7) for relevance/diversity balance
+  - Token-budgeted packing into system prompt
+- **Global FTS5 index:** Replaced per-session JSONL search with SQLite FTS5 full-text index
+- **Entity extraction:** Daily log cache, multilingual entity recognition, single DB connection pooling
 - **Extension:** `extensions/hippocampus/` — plugin stub that registers the hippocampus ID; actual code lives in `src/memory/engram/`
-- **Files:** `src/memory/engram/`, `extensions/hippocampus/`, `src/fork/hooks/` (hippocampus-hook), wired in `attempt.ts`
+- **Files:** `src/memory/engram/`, `src/agents/pi-extensions/retrieval-runtime.ts`, `extensions/hippocampus/`, `src/fork/hooks/` (hippocampus-hook), wired in `attempt.ts`
 
 ### 11.4 CORTEX / LIMBIC / SYNAPSE — Cognitive Subsystems (2026-02 → 2026-03)
 
