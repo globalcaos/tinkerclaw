@@ -81,36 +81,40 @@ export async function startWebLoginWithQr(
       await resetActiveLogin(account.accountId);
       const storePath = `${account.authDir}/whatsmeow.db`;
       try {
-        const resolvedStore = (await import("openclaw/plugin-sdk/text-runtime")).resolveUserPath(storePath);
+        const resolvedStore = (await import("openclaw/plugin-sdk/text-runtime")).resolveUserPath(
+          storePath,
+        );
         const { unlinkSync, existsSync } = await import("node:fs");
         if (existsSync(resolvedStore)) {
           unlinkSync(resolvedStore);
           runtime.log(info("Cleared stale whatsmeow store after failed pairing."));
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       // Fall through to create a fresh login below
     } else {
-    // Active login exists but QR hasn't arrived yet — wait for it (up to 15s)
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      const updated = activeLogins.get(account.accountId);
-      if (updated?.qr) {
-        if (!updated.qrDataUrl) {
-          const b64 = await renderQrPngBase64(updated.qr);
-          updated.qrDataUrl = `data:image/png;base64,${b64}`;
+      // Active login exists but QR hasn't arrived yet — wait for it (up to 15s)
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const updated = activeLogins.get(account.accountId);
+        if (updated?.qr) {
+          if (!updated.qrDataUrl) {
+            const b64 = await renderQrPngBase64(updated.qr);
+            updated.qrDataUrl = `data:image/png;base64,${b64}`;
+          }
+          return {
+            qrDataUrl: updated.qrDataUrl,
+            qrCode: updated.qr,
+            message: "QR ready. Scan it in WhatsApp → Linked Devices.",
+          };
         }
-        return {
-          qrDataUrl: updated.qrDataUrl,
-          qrCode: updated.qr,
-          message: "QR ready. Scan it in WhatsApp → Linked Devices.",
-        };
+        if (updated?.error) break;
       }
-      if (updated?.error) break;
-    }
-    return {
-      message: "QR generation timed out. Click Relink to try again.",
-    };
-  } // end else (active login without error)
+      return {
+        message: "QR generation timed out. Click Relink to try again.",
+      };
+    } // end else (active login without error)
   } // end if (existing && isLoginFresh && !existing.error)
 
   await resetActiveLogin(account.accountId);
@@ -225,20 +229,33 @@ export async function startWebLoginWithQr(
 
   // Start connection (async — emits QR events, then waits for pairing + 515 restart)
   // Use a generous timeout: QR scan + pairing + 515 restart can take up to 3 minutes
-  login.connectionPromise = client
-    .connect()
-    .then(() => client.waitForConnection(300_000))
-    .then((connected) => {
-      const cur = activeLogins.get(account.accountId);
-      if (cur?.id === login.id) {
-        cur.connected = connected;
-        if (!connected) cur.error = "Connection timed out after pairing";
+  login.connectionPromise = (async () => {
+    try {
+      await client.connect();
+      // After QR scan, WhatsApp does a 515 restart. waitForConnection may return false.
+      // Retry connection up to 3 times with delays to handle the 515 cycle.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const connected = await client.waitForConnection(30_000);
+        if (connected) {
+          const cur = activeLogins.get(account.accountId);
+          if (cur?.id === login.id) cur.connected = true;
+          return;
+        }
+        // Not connected — likely 515 restart. Wait and reconnect.
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+          await client.connect();
+        } catch {
+          /* may already be connecting */
+        }
       }
-    })
-    .catch((err) => {
+      const cur = activeLogins.get(account.accountId);
+      if (cur?.id === login.id) cur.error = "Connection timed out after pairing";
+    } catch (err) {
       const cur = activeLogins.get(account.accountId);
       if (cur?.id === login.id) cur.error = String(err);
-    });
+    }
+  })();
 
   let qrCode: string;
   try {
