@@ -1272,7 +1272,7 @@ These are fork-exclusive backend systems that run server-side. They are not part
   - **Nudge pipeline:** Wired into system prompt via `buildSystemPrompt()`. Nudges are context-aware templates.
   - **Humor-aware templates:** Reference the [Humor Embeddings paper](docs/papers/humor-embeddings/humor-embeddings.md) for bridge discovery patterns.
   - **Curiosity decomposition:** 5 genuine interest attractors (supersedes the [Curiosity Motivation paper](docs/papers/curiosity-motivation/curiosity-motivation.md)'s CCA architecture, which is NOT implemented).
-  - **Fractal reflection:** Prompt-level recursive reflection hook in `attempt-hooks.ts` (`maybeTriggerFractalReflection`). Fires on success, not just failure. Second-pass depth climbing. Ripple scan. Note: the [Fractal Reasoning paper](docs/papers/fractal-reasoning/fractal-reasoning.md)'s data structures (Hilbert-curve index, IFS compression, Be-tree) are NOT implemented — they are a theoretical research agenda.
+  - **Fractal reflection:** 4-level metacognition in `attempt-hooks.ts` (`maybeTriggerFractalReflection`, lines 527-711). Fires on success, not just failure. FRACTAL_PROMPT template with 4 levels: (1) specific event, (2) pattern it belongs to, (3) system/architecture producing the pattern, (4) worldview assumptions. Original system-event approach disabled (race conditions with user messages) — now inline: model appends `🌿 FRACTAL Level X:` tags to its own response. Includes ripple scan for cross-domain effects. Note: the [Fractal Reasoning paper](docs/papers/fractal-reasoning/fractal-reasoning.md)'s FMI data structures (Hilbert-curve index, IFS compression, Be-tree) are NOT implemented — they remain a theoretical research agenda. The metacognition formalism (R_1, R_2, R_3 reasoning scales) IS deployed via the prompt-level implementation.
   - **Visible influence tags:** `***AMYGDALA***` and `***FRACTAL***` in system messages (see §5.43).
   - **Shadow logging:** All decisions logged for observability.
 - **Not yet implemented:** Prudence family (5 networks), neural network training (PPO), conformal prediction, ONNX inference, Catastrophic Failure Database, trust ramp Phases 2-4.
@@ -1305,13 +1305,16 @@ These are fork-exclusive backend systems that run server-side. They are not part
   - E_phi persona feature space (8 linguistic features + 128 dense embedding = 136-dim)
   - **Paper claims validated:** drift recovery 0.027→0.980, 442× separation, human eval alpha=0.81
   - Files: `src/memory/cortex/` (`persona-state.ts`, `drift-detection.ts`, `behavioral-probes.ts`, `priority-injection.ts`, `consistency-metric.ts`, `convergence-monitor.ts`, `voice-markers.ts`)
-- **LIMBIC (Humor Pipeline):** [Paper](docs/papers/humor-embeddings/humor-embeddings.md) — pilot study (n=15) falsified h_v1; h_v2 proposed
-  - Bridge discovery — 5 algorithms (embedding arithmetic, orthogonal search, frame injection, generate-then-score, pre-computed index)
-  - Sensitivity gate (blocks humor in inappropriate contexts)
-  - Pattern taxonomy — 12 humor patterns in 5 meta-categories
-  - Humor potential function h(A,B,β) with surprise weighting
-  - **Note:** Full validation protocol (N≥64 raters) has NOT been executed. h_v2 is proposed but unvalidated.
-  - Files: `src/memory/limbic/` (`bridge-discovery.ts`, `sensitivity-gate.ts`, `humor-potential.ts`, `humor-associations.ts`, `pattern-taxonomy.ts`, `vector-math.ts`)
+- **LIMBIC (Humor Pipeline):** [Paper](docs/papers/humor-embeddings/humor-embeddings.md) — 1,348 LOC core + 700 LOC runtime, fully implemented Phase 6
+  - **h_v2 scoring:** `humorPotentialV2(A, B, bridge, index)` = distance × validity × surprise. Configurable thresholds: δ*min=0.6, δ_max=0.95, τ_v=0.15, τ*σ=0.3
+  - **Bridge discovery cascade** — 5 methods in priority: (1) midpoint search, (2) analogy via vector arithmetic, (3) orthogonal blending, (4) graph traversal (placeholder for ConceptNet), (5) LLM-guided generate-then-score (fallback when quality < q_min)
+  - **12-pattern taxonomy** in 4 meta-categories: Semantic (antonymic inversion, hyperbolic extension, reductio), Pragmatic (expectation subversion, register shift, overload), Structural (domain transfer, similarity-in-dissimilarity, frame collision), Temporal (callback, escalation, bathos). All 12 fully implemented with vector math scoring.
+  - **Sensitivity gate:** 13 hard-block categories (death, grief, suicide, child_abuse, etc.). Audience modeling with familiarity function. Calibration from PersonaState (humorFrequency, sensitivityThreshold, preferredPatterns).
+  - **Humor associations:** Persistent memory with staleness model (λ=0.3/use, μ=0.001/hour), callback bonus with 3-month onset decay, running gag detection.
+  - **Runtime:** Session-scoped `LimbicRuntime` + `HumorTrigger` with rate limiting (1 attempt per 10 turns). Positive reaction detection (emoji/laugh patterns). All attempts/reactions logged to ENGRAM event store.
+  - **Embedding gap:** Currently uses deterministic FNV-1a hash embeddings (128-dim, not semantic). Bridge discovery is mathematically valid but not semantically meaningful. Connecting a real embedding service (OpenAI, local model) via the `AnnIndex` interface would activate the full semantic pipeline.
+  - **Validation gap:** h_v1 falsified in pilot (n=15). h_v2 proposed but full validation protocol (N≥64 raters) has NOT been executed.
+  - Files: `src/memory/limbic/` (8 files), `src/agents/pi-extensions/limbic-runtime.ts`, `humor-trigger.ts`. Tests: 3 test files + benchmarks.
 - **SYNAPSE (Multi-Model Debate):** [Paper](docs/papers/round-table/round-table.md) — reported 63.6% on GPQA Diamond (single run)
   - CDI (Cognitive Diversity Index), RAAC 5-phase protocol (Propose/Challenge/Defend/Synthesize/Ratify)
   - 5 parallelism patterns (Fan-Out, Moderated Tribunal, Full RT, Tournament, Editorial Swarm)
@@ -1324,21 +1327,21 @@ These are fork-exclusive backend systems that run server-side. They are not part
 
 11 papers in `docs/papers/`. Status of each relative to deployed code:
 
-| Paper                        | System      | Status        | Notes                                                                                                                      |
-| ---------------------------- | ----------- | ------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Fractal Reasoning            | AMYGDALA    | `PARTIAL`     | Prompt-level reflection hook deployed. FMI data structures (Hilbert-curve, IFS, Be-tree) are theoretical — not implemented |
-| Humor Embeddings             | LIMBIC      | `DEPLOYED`    | Core modules implemented. h_v1 falsified in pilot; h_v2 proposed but unvalidated (needs N≥64 rater study)                  |
-| Agent Security (AEGIS)       | —           | `DESIGN ONLY` | Conceptual security framework. No AEGIS-specific code — describes OS/network/process-level controls                        |
-| Learned Intuition (AMYGDALA) | AMYGDALA    | `PHASE 1`     | Text nudge injection deployed. 10-network ensemble, PPO training, Prudence gating NOT built                                |
-| Total Recall                 | ENGRAM      | `DEPLOYED`    | Best-implemented paper. Event store, pointer compaction, retrieval packs all match paper claims                            |
-| Sleep Consolidation          | ENGRAM      | `DEPLOYED`    | Documents actual operational behavior (30 days, 14 mutations). Post-hoc formalization of emergent behavior                 |
-| Identity Persistence         | CORTEX      | `DEPLOYED`    | Well-implemented. 4,974 LOC, 368 tests. Metrics match paper claims                                                         |
-| Instant Recall               | Hippocampus | `DEPLOYED`    | Pre-computed concept index, FTS5. 2,286 LOC, 158 tests                                                                     |
-| Round Table                  | SYNAPSE     | `DEPLOYED`    | CDI, RAAC protocol, debate architectures implemented. GPQA result needs multi-run validation                               |
-| Curiosity Motivation         | —           | `DESIGN ONLY` | CCA architecture NOT implemented. Curiosity handled via 5 personality attractors in AMYGDALA instead                       |
-| Corporate Swarm (HIVEMIND)   | —           | `DESIGN ONLY` | Enterprise swarm design paper. No implementation exists                                                                    |
+| Paper                        | System      | Status        | Notes                                                                                                                                                                                                                                                                                                            |
+| ---------------------------- | ----------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fractal Reasoning            | AMYGDALA    | `DEPLOYED`    | Metacognition deployed: 4-level FRACTAL_PROMPT in `attempt-hooks.ts`, inline depth climbing (🌿 tags). FMI data structures (Hilbert-curve, IFS, Be-tree) remain theoretical — paper is research agenda                                                                                                           |
+| Humor Embeddings             | LIMBIC      | `DEPLOYED`    | 1,348 LOC core + 700 LOC runtime. h_v2 scoring, 5-method bridge discovery, all 12 patterns, sensitivity gate, humor associations with staleness. Uses deterministic FNV-1a embeddings (not semantic) — connecting real embedding service would activate full pipeline. h_v2 unvalidated (needs N≥64 rater study) |
+| Agent Security (AEGIS)       | —           | `DESIGN ONLY` | Conceptual security framework. No AEGIS-specific code — describes OS/network/process-level controls                                                                                                                                                                                                              |
+| Learned Intuition (AMYGDALA) | AMYGDALA    | `PHASE 1`     | Text nudge injection deployed (15-dim target vector). 10-network ensemble, PPO training, Prudence gating NOT built                                                                                                                                                                                               |
+| Total Recall                 | ENGRAM      | `DEPLOYED`    | Best-implemented paper. Event store, pointer compaction, retrieval packs all match paper claims                                                                                                                                                                                                                  |
+| Sleep Consolidation          | ENGRAM      | `DEPLOYED`    | Documents actual operational behavior (30 days, 14 mutations). Post-hoc formalization of emergent behavior                                                                                                                                                                                                       |
+| Identity Persistence         | CORTEX      | `DEPLOYED`    | Well-implemented. 4,974 LOC, 368 tests. Metrics match paper claims                                                                                                                                                                                                                                               |
+| Instant Recall               | Hippocampus | `DEPLOYED`    | Pre-computed concept index, FTS5. 2,286 LOC, 158 tests                                                                                                                                                                                                                                                           |
+| Round Table                  | SYNAPSE     | `DEPLOYED`    | CDI, RAAC protocol, debate architectures implemented. GPQA result needs multi-run validation                                                                                                                                                                                                                     |
+| Curiosity Motivation         | —           | `DESIGN ONLY` | CCA/LoRA architecture NOT implemented. Curiosity handled via 5 personality attractors in AMYGDALA instead                                                                                                                                                                                                        |
+| Corporate Swarm (HIVEMIND)   | —           | `DESIGN ONLY` | Enterprise swarm design paper. No implementation exists                                                                                                                                                                                                                                                          |
 
-### 11.5 WhatsApp Feature Enhancements (2026-02 → 2026-03)
+### 11.6 WhatsApp Feature Enhancements (2026-02 → 2026-03)
 
 - **Status:** `DEPLOYED`
 - **What:** Fork-specific WhatsApp improvements beyond upstream's basic integration.
@@ -1353,7 +1356,7 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **senderE164 Resolution:** Resolves sender phone number for `fromMe` group messages where Baileys lacks the `participant` field.
 - **Files:** `extensions/whatsapp/src/`, `src/whatsapp-history/`
 
-### 11.6 Fork Infrastructure (2026-02 → 2026-03)
+### 11.7 Fork Infrastructure (2026-02 → 2026-03)
 
 - **Status:** `DEPLOYED`
 - **What:** Merge automation and hook architecture that allows the fork to absorb upstream changes without manual patching.
