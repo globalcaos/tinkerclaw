@@ -19,8 +19,10 @@ import {
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
+import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { consumeAllSessionResumes } from "../infra/session-resume.js";
+import { enqueueSystemEvent } from "../infra/system-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
@@ -198,6 +200,13 @@ export async function startGatewaySidecars(params: {
       void consumeAllSessionResumes(300)
         .then(async (resumes) => {
           if (resumes.length === 0) {
+            // Even without pending resumes, notify the main session so the agent
+            // proactively acknowledges the restart instead of going silent.
+            const mainSessionKey = resolveMainSessionKeyFromConfig();
+            logResume.info("no pending resumes; sending restart wake to main session");
+            enqueueSystemEvent("Gateway restarted. Resume where you left off.", {
+              sessionKey: mainSessionKey,
+            });
             return;
           }
           logResume.info(`resuming ${resumes.length} interrupted session(s)`);
