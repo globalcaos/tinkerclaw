@@ -4,6 +4,8 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createOllamaEmbeddingProvider } from "../../memory/embeddings-ollama.js";
+import { createEmbeddingCache } from "../../memory/engram/embedding-cache.js";
+import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
@@ -117,7 +119,8 @@ export function buildEmbeddedExtensionFactories(params: {
     // getRetrievalRuntime(sessionManager) will be called by retrieval-aware
     // turn hooks to inject the assembled pack into each turn's system prompt.
     const eventStore = createEventStore({ baseDir: engramBaseDir, sessionKey });
-    // Use global FTS5 database for retrieval (878K+ events) instead of per-session JSONL
+    // Use global FTS5 database for retrieval (878K+ events) instead of per-session JSONL.
+    // Starts FTS-only; upgraded to hybrid (FTS + vector) once ollama provider resolves.
     setRetrievalRuntime(params.sessionManager, { eventStore, searchIndex: globalFtsSearch });
 
     // Phase 1.3: register pointer compaction handler as a feature-flagged
@@ -149,6 +152,8 @@ export function buildEmbeddedExtensionFactories(params: {
     // Create runtime immediately (FNV-1a fallback), then upgrade once ollama resolves.
     const limbicRuntime = createLimbicRuntime(eventStore, {}, cortexRuntime);
     setLimbicRuntime(params.sessionManager, limbicRuntime);
+    // FORK: ollama mxbai-embed-large for semantic embeddings.
+    // Once resolved, upgrades both LIMBIC (humor) and ENGRAM (retrieval) to vector search.
     createOllamaEmbeddingProvider({
       config: params.cfg ?? ({} as import("../../config/config.js").OpenClawConfig),
       provider: "ollama",
@@ -156,16 +161,47 @@ export function buildEmbeddedExtensionFactories(params: {
       fallback: "none",
     })
       .then(({ provider }) => {
-        // Hot-swap: re-create runtime with real embeddings once provider is ready.
+        // LIMBIC: hot-swap to semantic embeddings for humor bridge discovery
         const semanticRuntime = createLimbicRuntime(
           eventStore,
           { embeddingProvider: provider },
           cortexRuntime,
         );
         setLimbicRuntime(params.sessionManager, semanticRuntime);
+
+        // ENGRAM: wire vector search into retrieval pipeline (hybrid FTS + vector)
+        const embCache = createEmbeddingCache(engramBaseDir, 1024); // mxbai = 1024-dim
+        const embedFn: import("../../memory/engram/embedding-worker.js").EmbedFn = async (
+          texts,
+        ) => {
+          const vectors = await provider.embedBatch(texts);
+          return vectors.map((v) => new Float32Array(v));
+        };
+        setRetrievalRuntime(params.sessionManager, {
+          eventStore,
+          searchIndex: globalFtsSearch,
+          embeddingCache: embCache,
+          embedFn,
+        });
+        // Background worker: embed new events as they're ingested
+        const worker = createEmbeddingWorker({
+          embedFn,
+          cache: embCache,
+          batchSize: 16,
+          batchTimeoutMs: 10000,
+          onError: (err) => console.warn(`[engram] Embedding worker error: ${err.message}`),
+        });
+        // Hook into the event store to auto-embed new events
+        const origAppend = eventStore.append.bind(eventStore);
+        eventStore.append = (event) => {
+          const result = origAppend(event);
+          worker.enqueue(event);
+          return result;
+        };
+        console.log("[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)");
       })
       .catch((err) => {
-        console.warn(`[limbic] Ollama embedding unavailable, keeping FNV-1a: ${err}`);
+        console.warn(`[fork] Ollama embedding unavailable, FTS-only retrieval: ${err}`);
       });
 
     factories.push(compactionEngramExtension(params.cfg));

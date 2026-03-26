@@ -13,12 +13,14 @@ import {
   formatContradictionWarnings,
 } from "../../memory/engram/contradiction-gate.js";
 import { loadTodayDailyLog } from "../../memory/engram/daily-log-cache.js";
+import type { EmbeddingCache } from "../../memory/engram/embedding-cache.js";
+import type { EmbedFn } from "../../memory/engram/embedding-worker.js";
 import { extractEntities, entitiesToQueries } from "../../memory/engram/entity-extraction.js";
 import type { EventStore } from "../../memory/engram/event-store.js";
 import { estimateTokens } from "../../memory/engram/event-store.js";
 import { globalFtsMultiSearch } from "../../memory/engram/global-fts-bridge.js";
 import type { SearchResult, SearchFilters } from "../../memory/engram/search-index.js";
-import { ftsSearch } from "../../memory/engram/search-index.js";
+import { ftsSearch, vectorSearch } from "../../memory/engram/search-index.js";
 import type { MMRItem } from "../../memory/mmr.js";
 import { mmrRerank } from "../../memory/mmr.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
@@ -51,9 +53,13 @@ export interface RetrievalRuntime {
   searchIndex?: SearchIndexFn;
   /** Optional pack assembly override; falls back to assembleRetrievalPack. */
   pushPack?: PushPackFn;
+  /** FORK: Embedding cache for vector search (Phase 2). */
+  embeddingCache?: EmbeddingCache;
+  /** FORK: Embedding function for vector search queries. */
+  embedFn?: EmbedFn;
   /**
    * Per-turn retrieval: assemble a bounded text pack of relevant past events.
-   * Uses FTS search + recency boost + MMR deduplication.
+   * Uses FTS search + vector search (when available) + recency boost + MMR deduplication.
    * Auto-injected by setRetrievalRuntime when not provided.
    */
   assemble?: (query: string, budgetTokens: number) => Promise<string | null>;
@@ -69,7 +75,7 @@ export interface RetrievalRuntime {
  *   4. Pack events into text until the token budget is reached.
  */
 function buildDefaultAssemble(
-  runtime: Pick<RetrievalRuntime, "eventStore" | "searchIndex">,
+  runtime: Pick<RetrievalRuntime, "eventStore" | "searchIndex" | "embeddingCache" | "embedFn">,
 ): (query: string, budgetTokens: number) => Promise<string | null> {
   return async (query: string, budgetTokens: number): Promise<string | null> => {
     let remainingBudget = budgetTokens;
@@ -100,18 +106,43 @@ function buildDefaultAssemble(
       }
     }
 
-    // Entity-aware multi-query retrieval
+    // Entity-aware multi-query retrieval (FTS)
     const entities = extractEntities(query);
     const entityQueries = entitiesToQueries(entities);
 
     let candidates: SearchResult[];
     if (entityQueries.length > 0) {
-      // Use multi-search with entity-derived queries
       candidates = globalFtsMultiSearch(runtime.eventStore, entityQueries, 20, 40);
     } else {
-      // Fall back to original single-query behavior
       const searchFn = runtime.searchIndex ?? ftsSearch;
       candidates = searchFn(runtime.eventStore, query, 40);
+    }
+
+    // FORK: Merge vector search results when embedding provider is available.
+    // Vector search catches semantically related events that FTS misses (synonyms,
+    // paraphrases, conceptual matches). Results are deduplicated by event ID.
+    if (runtime.embeddingCache && runtime.embedFn) {
+      try {
+        const vecResults = await vectorSearch(
+          runtime.eventStore,
+          query,
+          20,
+          undefined,
+          runtime.embeddingCache,
+          runtime.embedFn,
+        );
+        if (vecResults.length > 0) {
+          const seenIds = new Set(candidates.map((c) => c.event.id));
+          for (const vr of vecResults) {
+            if (!seenIds.has(vr.event.id)) {
+              candidates.push(vr);
+              seenIds.add(vr.event.id);
+            }
+          }
+        }
+      } catch {
+        // Vector search failure is non-fatal — FTS results are sufficient
+      }
     }
 
     if (candidates.length === 0 && sections.length === 0) {
