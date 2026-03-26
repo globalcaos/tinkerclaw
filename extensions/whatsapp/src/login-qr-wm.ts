@@ -61,7 +61,8 @@ export async function startWebLoginWithQr(
   const cfg = loadConfig();
   const account = resolveWhatsAppAccount({ cfg, accountId: opts.accountId });
 
-  // Re-use a fresh login if one exists
+  // Re-use a fresh login if one exists — NEVER kill an active login just because
+  // force=true was sent by the UI's refresh poll
   const existing = activeLogins.get(account.accountId);
   if (existing && isLoginFresh(existing) && !existing.error) {
     if (existing.qr && !existing.qrDataUrl) {
@@ -74,6 +75,10 @@ export async function startWebLoginWithQr(
         message: "QR already active. Scan it in WhatsApp → Linked Devices.",
       };
     }
+    // Active login exists but QR hasn't arrived yet — don't recreate, just wait
+    return {
+      message: "Generating QR code… please wait.",
+    };
   }
 
   await resetActiveLogin(account.accountId);
