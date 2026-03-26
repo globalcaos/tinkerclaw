@@ -415,6 +415,10 @@ function saveTabs() {
   try {
     const persistable = tabs.filter((t) => t.id !== "tab-main");
     localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(persistable));
+    // FORK: Also persist each tab's title into the fortune map so orphaned sessions keep their name
+    for (const t of persistable) {
+      if (t.sessionKey && t.title) saveFortuneTitle(t.sessionKey, t.title);
+    }
   } catch {}
 }
 
@@ -2696,7 +2700,7 @@ function renderTabs() {
       ? ""
       : `<span class="tab-close" data-tab-close="${tab.id}">&times;</span>`;
 
-    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}">
+    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" title="${escapeHtml(tab.title)}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
   }
@@ -2775,6 +2779,7 @@ function createTab(): Tab {
   };
   tabs.push(tab);
   tabStates.set(tab.id, freshTabState());
+  if (tab.sessionKey) saveFortuneTitle(tab.sessionKey, tab.title);
   saveTabs();
   return tab;
 }
@@ -3382,7 +3387,7 @@ function classifySession(key: string): { group: string; shortLabel: string } {
   if (/:tinker:/.test(key) || key.startsWith("tinker:")) {
     const tab = tabs.find((t) => t.sessionKey === key);
     const tinkerSuffix = key.includes(":tinker:") ? key.split(":tinker:")[1] : key.slice(7);
-    const label = tab?.title || tinkerSuffix?.slice(0, 8) || "tab";
+    const label = tab?.title || getFortuneTitle(key) || tinkerSuffix?.slice(0, 8) || "tab";
     return { group: "pinned", shortLabel: label };
   }
   return { group: "other", shortLabel: key.slice(0, 24) };
@@ -3547,14 +3552,20 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
   const isMainSession = /:main$/.test(s.key);
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
+  // FORK: Auto-assign a fortune to orphaned tinker sessions that would otherwise show "Tinker UI"
+  let resolvedFortune = tinkerTab?.title || getFortuneTitle(s.key);
+  if (!resolvedFortune && isTinkerSession) {
+    resolvedFortune = randomFortune();
+    saveFortuneTitle(s.key, resolvedFortune);
+  }
   const label = isMainSession
     ? mainTab?.title || "🏠 Main"
-    : tinkerTab?.title || s.label || s.displayName || shortLabel;
+    : resolvedFortune || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
   return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
-    <span class="session-label">${esc(label)} ${channel}</span>
+    <span class="session-label" title="${escapeHtml(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>

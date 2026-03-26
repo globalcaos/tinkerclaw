@@ -8,6 +8,9 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
 import { jidToE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
+// FORK: whatsmeow backend — static imports so bundler includes them
+import { createWmClient, connectWmClient } from "../session-wm.js";
+import { createBaileysAdapter } from "../baileys-adapter-wm.js";
 import { checkInboundAccessControl } from "./access-control.js";
 import { isRecentInboundMessage } from "./dedupe.js";
 import {
@@ -43,9 +46,6 @@ export async function monitorWebInbox(options: {
     process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
   let sock: Awaited<ReturnType<typeof createWaSocket>>;
   if (useWhatsmeow) {
-    // Static imports to ensure bundler includes whatsmeow modules
-    const { createWmClient, connectWmClient } = await import("../session-wm.js");
-    const { createBaileysAdapter } = await import("../baileys-adapter-wm.js");
     const { existsSync, statSync } = await import("node:fs");
     const { resolveUserPath } = await import("openclaw/plugin-sdk/text-runtime");
     const storePath = options.authDir ? `${options.authDir}/whatsmeow.db` : "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
