@@ -133,44 +133,54 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
   client.on("connected", ({ jid }) => {
     logger.info({ jid }, "Connected — history capture active (wm)");
 
-    // On reconnect, request missed messages since last captured timestamp
+    // On reconnect, find DM chats with gaps (last message >24h old) and request backfill for each
     try {
       const db = getDb();
       if (db) {
-        const row = db
-          .prepare(
-            "SELECT id, chat_jid as chat, sender_jid as sender, timestamp FROM messages ORDER BY timestamp DESC LIMIT 1",
-          )
-          .get() as { id: string; chat: string; sender: string; timestamp: number } | undefined;
-        if (row && row.timestamp) {
-          const ageHours = (Date.now() / 1000 - row.timestamp) / 3600;
-          logger.info(
-            { lastMsgId: row.id, lastChat: row.chat, ageHours: Math.round(ageHours * 10) / 10 },
-            "Requesting history backfill since last captured message",
-          );
-          void client
-            .buildHistorySyncRequest(
-              { chat: row.chat, sender: row.sender || jid, id: row.id, timestamp: row.timestamp },
-              500,
-            )
-            .then((historyMsg) => {
-              if (historyMsg) {
-                return client.sendMessage(
-                  jid,
-                  historyMsg as unknown as Parameters<typeof client.sendMessage>[1],
-                );
-              }
-            })
-            .then(() => {
-              logger.info("History backfill request sent");
-            })
-            .catch((err) => {
-              logger.warn({ error: String(err) }, "History backfill request failed");
-            });
+        const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h ago
+        const staleChats = db.prepare(
+          `SELECT chat_jid as chat, MAX(timestamp) as lastTs,
+                  (SELECT id FROM messages m2 WHERE m2.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastId,
+                  (SELECT COALESCE(sender_jid, '') FROM messages m3 WHERE m3.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastSender
+           FROM messages m
+           WHERE chat_jid NOT LIKE '%@g.us' AND chat_jid NOT LIKE '%@broadcast' AND chat_jid != 'status@broadcast'
+           GROUP BY chat_jid
+           HAVING MAX(timestamp) < ? AND MAX(timestamp) > ?
+           ORDER BY MAX(timestamp) DESC
+           LIMIT 20`,
+        ).all(cutoff, cutoff - 86400 * 30) as Array<{ chat: string; lastTs: number; lastId: string; lastSender: string }>;
+
+        if (staleChats.length > 0) {
+          logger.info({ count: staleChats.length }, "Found stale DM chats — requesting backfill");
+          for (const chat of staleChats) {
+            const ageHours = (Date.now() / 1000 - chat.lastTs) / 3600;
+            logger.info({ chat: chat.chat, ageHours: Math.round(ageHours) }, "Backfill request for chat");
+            void client
+              .buildHistorySyncRequest(
+                { chat: chat.chat, sender: chat.lastSender || jid, id: chat.lastId, timestamp: chat.lastTs },
+                50,
+              )
+              .then((historyMsg) => {
+                if (historyMsg) {
+                  return client.sendMessage(
+                    jid,
+                    historyMsg as unknown as Parameters<typeof client.sendMessage>[1],
+                  );
+                }
+              })
+              .then(() => {
+                logger.info({ chat: chat.chat }, "Backfill request sent");
+              })
+              .catch((err) => {
+                logger.warn({ chat: chat.chat, error: String(err) }, "Backfill request failed");
+              });
+          }
+        } else {
+          logger.info("No stale DM chats found for backfill");
         }
       }
     } catch (err) {
-      logger.warn({ error: String(err) }, "Failed to check last captured timestamp for backfill");
+      logger.warn({ error: String(err) }, "Failed to check stale chats for backfill");
     }
   });
 
