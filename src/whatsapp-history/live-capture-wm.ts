@@ -145,10 +145,10 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
            FROM messages m
            WHERE chat_jid NOT LIKE '%@g.us' AND chat_jid NOT LIKE '%@broadcast' AND chat_jid != 'status@broadcast'
            GROUP BY chat_jid
-           HAVING MAX(timestamp) < ? AND MAX(timestamp) > ?
+           HAVING MAX(timestamp) < ? 
            ORDER BY MAX(timestamp) DESC
-           LIMIT 50`,
-        ).all(cutoff, cutoff - 86400 * 30) as Array<{ chat: string; lastTs: number; lastId: string; lastSender: string }>;
+           `,
+        ).all(cutoff) as Array<{ chat: string; lastTs: number; lastId: string; lastSender: string }>;
 
         if (staleChats.length > 0) {
           logger.info({ count: staleChats.length }, "Found stale DM chats — requesting backfill");
