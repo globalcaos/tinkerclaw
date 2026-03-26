@@ -7,10 +7,10 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { createWmClient, connectWmClient, disconnectWmClient } from "../session-wm.js";
-import { createBaileysAdapter } from "../baileys-adapter-wm.js";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
+import { createBaileysAdapter } from "../baileys-adapter-wm.js";
+import { createWmClient, connectWmClient, disconnectWmClient } from "../session-wm.js";
 
 const logger = getChildLogger({ module: "wm-monitor" });
 

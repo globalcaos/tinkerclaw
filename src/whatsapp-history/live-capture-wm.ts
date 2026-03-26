@@ -5,12 +5,7 @@
 
 import type { WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { getChildLogger } from "../logging.js";
-import {
-  insertMessage,
-  upsertChat,
-  getDb,
-  type MessageRecord,
-} from "./db.js";
+import { insertMessage, upsertChat, getDb, type MessageRecord } from "./db.js";
 
 const logger = getChildLogger({ module: "wa-history-wm" });
 
@@ -18,10 +13,14 @@ const logger = getChildLogger({ module: "wa-history-wm" });
  * Extract text from a whatsmeow-node message payload.
  */
 function extractText(msg: Record<string, unknown>): { text: string | null; type: string } {
-  if (typeof msg.conversation === "string") return { text: msg.conversation, type: "text" };
+  if (typeof msg.conversation === "string") {
+    return { text: msg.conversation, type: "text" };
+  }
 
   const ext = msg.extendedTextMessage as Record<string, unknown> | undefined;
-  if (ext && typeof ext.text === "string") return { text: ext.text, type: "text" };
+  if (ext && typeof ext.text === "string") {
+    return { text: ext.text, type: "text" };
+  }
 
   if (msg.imageMessage) {
     const im = msg.imageMessage as Record<string, unknown>;
@@ -39,7 +38,9 @@ function extractText(msg: Record<string, unknown>): { text: string | null; type:
     const am = msg.audioMessage as Record<string, unknown>;
     return { text: null, type: am.ptt ? "voice" : "audio" };
   }
-  if (msg.stickerMessage) return { text: null, type: "sticker" };
+  if (msg.stickerMessage) {
+    return { text: null, type: "sticker" };
+  }
   if (msg.locationMessage) {
     const lm = msg.locationMessage as Record<string, unknown>;
     return {
@@ -55,7 +56,9 @@ function extractText(msg: Record<string, unknown>): { text: string | null; type:
     const cm = msg.contactMessage as Record<string, unknown>;
     return { text: (cm.displayName as string) || null, type: "contact" };
   }
-  if (msg.protocolMessage) return { text: null, type: "protocol" };
+  if (msg.protocolMessage) {
+    return { text: null, type: "protocol" };
+  }
 
   return { text: null, type: "unknown" };
 }
@@ -63,17 +66,24 @@ function extractText(msg: Record<string, unknown>): { text: string | null; type:
 /**
  * Extract quoted message info from contextInfo.
  */
-function extractQuotedInfo(msg: Record<string, unknown>): { quotedId: string | null; quotedText: string | null } {
+function extractQuotedInfo(msg: Record<string, unknown>): {
+  quotedId: string | null;
+  quotedText: string | null;
+} {
   const ext = msg.extendedTextMessage as Record<string, unknown> | undefined;
   const ctx = ext?.contextInfo as Record<string, unknown> | undefined;
-  if (!ctx?.quotedMessage) return { quotedId: null, quotedText: null };
+  if (!ctx?.quotedMessage) {
+    return { quotedId: null, quotedText: null };
+  }
 
   const quotedId = (ctx.stanzaId as string) || null;
   const qm = ctx.quotedMessage as Record<string, unknown>;
   let quotedText: string | null = null;
-  if (typeof qm.conversation === "string") quotedText = qm.conversation;
-  else if ((qm.extendedTextMessage as Record<string, unknown>)?.text)
+  if (typeof qm.conversation === "string") {
+    quotedText = qm.conversation;
+  } else if ((qm.extendedTextMessage as Record<string, unknown>)?.text) {
     quotedText = (qm.extendedTextMessage as Record<string, unknown>).text as string;
+  }
 
   return { quotedId, quotedText };
 }
@@ -127,9 +137,11 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
     try {
       const db = getDb();
       if (db) {
-        const row = db.prepare("SELECT id, chat_jid as chat, sender_jid as sender, timestamp FROM messages ORDER BY timestamp DESC LIMIT 1").get() as
-          | { id: string; chat: string; sender: string; timestamp: number }
-          | undefined;
+        const row = db
+          .prepare(
+            "SELECT id, chat_jid as chat, sender_jid as sender, timestamp FROM messages ORDER BY timestamp DESC LIMIT 1",
+          )
+          .get() as { id: string; chat: string; sender: string; timestamp: number } | undefined;
         if (row && row.timestamp) {
           const ageHours = (Date.now() / 1000 - row.timestamp) / 3600;
           logger.info(
@@ -143,7 +155,10 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
             )
             .then((historyMsg) => {
               if (historyMsg) {
-                return client.sendMessage(jid, historyMsg as any);
+                return client.sendMessage(
+                  jid,
+                  historyMsg as unknown as Parameters<typeof client.sendMessage>[1],
+                );
               }
             })
             .then(() => {

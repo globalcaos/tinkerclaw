@@ -660,18 +660,25 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
     },
     loginWithQrStart: async ({ accountId, force, timeoutMs, verbose }) => {
       // FORK: whatsmeow backend support
-      if (process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow"
-        || process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm") {
+      if (
+        process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
+        process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm"
+      ) {
         const { startWebLoginWithQr: startWm } = await import("./login-qr-wm.js");
         return startWm({ accountId, force, timeoutMs, verbose });
       }
       return (await loadWhatsAppChannelRuntime()).startWebLoginWithQr({
-        accountId, force, timeoutMs, verbose,
+        accountId,
+        force,
+        timeoutMs,
+        verbose,
       });
     },
     loginWithQrWait: async ({ accountId, timeoutMs }) => {
-      if (process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow"
-        || process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm") {
+      if (
+        process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
+        process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm"
+      ) {
         const { waitForWebLoginWm } = await import("./login-qr-wm.js");
         return waitForWebLoginWm({ accountId, timeoutMs });
       }

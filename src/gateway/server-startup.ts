@@ -12,6 +12,7 @@ import { cleanStaleLockFiles } from "../agents/session-write-lock.js";
 import type { CliDeps } from "../cli/deps.js";
 import type { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
+import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { startGmailWatcherWithLogs } from "../hooks/gmail-watcher-lifecycle.js";
 import {
   clearInternalHooks,
@@ -19,7 +20,6 @@ import {
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
-import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { consumeAllSessionResumes } from "../infra/session-resume.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
