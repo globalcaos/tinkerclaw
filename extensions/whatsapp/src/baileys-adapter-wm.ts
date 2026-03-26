@@ -6,8 +6,8 @@
  * backend without rewriting 400+ lines of message processing.
  */
 
-import type { WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { EventEmitter } from "node:events";
+import type { WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 
 const logger = getChildLogger({ module: "wm-adapter" });
@@ -133,7 +133,9 @@ export function createBaileysAdapter(opts: BaileysAdapterOptions) {
       }
     },
 
-    readMessages: async (keys: Array<{ remoteJid: string; id: string; participant?: string; fromMe?: boolean }>) => {
+    readMessages: async (
+      keys: Array<{ remoteJid: string; id: string; participant?: string; fromMe?: boolean }>,
+    ) => {
       // Group by chat for batching
       const byChat = new Map<string, { ids: string[]; sender?: string }>();
       for (const key of keys) {

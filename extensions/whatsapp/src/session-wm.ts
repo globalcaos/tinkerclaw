@@ -26,9 +26,7 @@ export interface CreateWmClientOptions {
  * Create and initialise a whatsmeow-node client.
  * Does NOT call connect() — caller decides when to connect.
  */
-export async function createWmClient(
-  opts: CreateWmClientOptions = {},
-): Promise<WhatsmeowClient> {
+export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<WhatsmeowClient> {
   const storePath = resolveUserPath(opts.storePath ?? DEFAULT_STORE_PATH);
   const storeDir = storePath.replace(/\/[^/]+$/, "");
   await ensureDir(storeDir);
@@ -86,10 +84,7 @@ export function getWmClient(): WhatsmeowClient | null {
 }
 
 /** Connect + wait for connection (with timeout). */
-export async function connectWmClient(
-  client: WhatsmeowClient,
-  timeoutMs = 60_000,
-): Promise<void> {
+export async function connectWmClient(client: WhatsmeowClient, timeoutMs = 60_000): Promise<void> {
   await client.connect();
   const connected = await client.waitForConnection(timeoutMs);
   if (!connected) {
