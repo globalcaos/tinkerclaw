@@ -118,6 +118,16 @@ export async function startWebLoginWithQr(
 
   let client: WhatsmeowClient;
   try {
+    // FORK: Import live-capture directly to ensure it's bound during bootstrap
+    // The import through session-wm.ts may get tree-shaken in the bundle
+    let bindCapture: ((c: WhatsmeowClient) => void) | null = null;
+    try {
+      const captureMod = await import("../../../src/whatsapp-history/live-capture-wm.js");
+      bindCapture = captureMod.bindWmHistoryCapture;
+    } catch {
+      // Will fall back to session-wm.ts binding
+    }
+
     client = await createWmClient({
       verbose: opts.verbose,
       onQr: (code) => {
@@ -144,6 +154,27 @@ export async function startWebLoginWithQr(
     clearTimeout(qrTimer);
     return { message: `Failed to start WhatsApp login (whatsmeow): ${String(err)}` };
   }
+
+  // Ensure history capture is bound BEFORE connecting (bootstrap fires on first connect)
+  if (bindCapture) {
+    try {
+      bindCapture(client);
+      runtime.log(info("History capture bound to login client."));
+    } catch {
+      /* session-wm.ts may have already bound it */
+    }
+  }
+
+  // Debug: log all messages received during bootstrap
+  client.on("message", ({ info: msgInfo }) => {
+    console.log(
+      `[wm-login-bootstrap] message from ${msgInfo.chat} type=${msgInfo.isFromMe ? "fromMe" : "incoming"}`,
+    );
+  });
+
+  client.on("history_sync", ({ type }) => {
+    console.log(`[wm-login-bootstrap] history_sync type=${type}`);
+  });
 
   // Request QR channel then connect (triggers QR emission)
   await client.getQRChannel();
