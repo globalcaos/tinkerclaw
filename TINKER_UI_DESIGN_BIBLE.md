@@ -695,7 +695,8 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Thinking indicator now only shows for runs belonging to the active session. Previously, `renderThinkingIndicator()` used the unfiltered global `activeRuns` map, so any run from any session showed thinking dots on the current tab.
 - **Fix:** `renderThinkingIndicator()` filters `activeRuns` by `sessionKeyMatches()`. `startThinkingTick()` skips DOM updates when no session runs are active. Lifecycle start only sets `sending = true` when event matches current session (not subagent pass-through).
 - **2026-03-17 cross-tab cleanup fix:** Lifecycle `end`/`error` events were gated by session filter — runs from inactive tabs never got removed from `activeRuns`, leaving stale thinking indicators when switching back. Fix: `end`/`error` events now bypass the session filter (rendering filter already handles per-tab visibility). `sending` flag clears based on current-session runs, not global `activeRuns.size`.
-- **Files:** `app.ts`
+- **2026-03-26 full-bubble click-to-stop:** Entire `.thinking-run` bubble is now clickable to abort, not just the "Stop" text. Click handler targets `.thinking-run` instead of `.thinking-stop`. Added `cursor: pointer` to `.thinking-run`.
+- **Files:** `app.ts`, `base.css`
 
 ### 5.29 Collapsible Right Panel Sections (2026-03-14)
 
