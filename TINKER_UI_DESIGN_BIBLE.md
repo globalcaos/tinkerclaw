@@ -704,10 +704,11 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Architecture:** `data-rpanel` / `data-rpanel-toggle` attributes on panel/header elements. Delegated click handler on `.right-panels`. Guards against collapsing when clicking interactive children (scope toggle, refresh button). CSS: `.rpanel-collapsed .rpanel-body{display:none}`, `.rpanel-arrow` for indicator.
 - **Files:** `app.ts`, `base.css`
 
-### 5.30 Session/All Scope Toggle — iOS Switch (2026-03-14)
+### 5.30 Session/All Scope Toggle — iOS Switch (2026-03-14, fixed 2026-03-26)
 
 - **Status:** `DEPLOYED`
 - **What:** Models panel Session/All toggle now uses the same iOS-style switch (`.ct-switch` track + thumb) as the timeline, instead of button-pair toggle. Labels render in proper case ("Session" / "All") — `text-transform:none` override on `.ct-switch-label` prevents `.rpanel-header`'s `uppercase` from affecting switch labels.
+- **2026-03-26 fix:** HTML still used old `.scope-btn` button-pair markup (no CSS backing it — looked like plain text). Replaced with `ct-switch` markup (`ct-switch-label` + `ct-switch-track` + `ct-switch-thumb`) matching the timeline toggle. JS handler updated to toggle `ct-switch-label--active` and `ct-switch-track--on` classes.
 - **Files:** `app.ts`, `base.css`
 
 ### 5.31 Timeline SQLite Persistence + Response Breakdown (2026-03-16, updated 2026-03-26)
