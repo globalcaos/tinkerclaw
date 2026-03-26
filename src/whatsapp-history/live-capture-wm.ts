@@ -147,7 +147,7 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
            GROUP BY chat_jid
            HAVING MAX(timestamp) < ? AND MAX(timestamp) > ?
            ORDER BY MAX(timestamp) DESC
-           LIMIT 20`,
+           LIMIT 50`,
         ).all(cutoff, cutoff - 86400 * 30) as Array<{ chat: string; lastTs: number; lastId: string; lastSender: string }>;
 
         if (staleChats.length > 0) {
