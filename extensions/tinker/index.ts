@@ -9,6 +9,7 @@ import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 const PREFIX = "/tinker";
@@ -20,9 +21,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 let directDb: any = null;
 
-function safeJsonParse(val: string | null) {
-  if (!val) return undefined;
+/** Decompress a column that may be zlib BLOB (new) or plain-text JSON (legacy). */
+function decompressJson(val: Buffer | string | null) {
+  if (val == null) return undefined;
   try {
+    if (Buffer.isBuffer(val)) {
+      return JSON.parse(inflateSync(val).toString("utf-8"));
+    }
     return JSON.parse(val);
   } catch {
     return undefined;
@@ -39,23 +44,23 @@ function parseRow(row: any) {
     model: row.model ?? "",
     provider: row.provider ?? "",
     sessionKey: row.session_key || undefined,
-    topics: safeJsonParse(row.topics) ?? [],
-    topicTransition: safeJsonParse(row.topic_transition),
-    contextSent: safeJsonParse(row.context_sent) ?? { totalTokens: 0 },
-    contextWindow: safeJsonParse(row.context_window) ?? { maxTokens: 0, usedTokens: 0 },
+    topics: decompressJson(row.topics) ?? [],
+    topicTransition: decompressJson(row.topic_transition),
+    contextSent: decompressJson(row.context_sent) ?? { totalTokens: 0 },
+    contextWindow: decompressJson(row.context_window) ?? { maxTokens: 0, usedTokens: 0 },
     authProfileId: row.auth_profile_id ?? undefined,
     responseTokens: row.response_tokens ?? undefined,
-    memoriesInjected: safeJsonParse(row.memories_injected) ?? { autoRecall: [], searched: [] },
+    memoriesInjected: decompressJson(row.memories_injected) ?? { autoRecall: [], searched: [] },
     runId: row.run_id ?? undefined,
     durationMs: row.duration_ms ?? undefined,
     stopReason: row.stop_reason ?? undefined,
-    toolsTriggered: safeJsonParse(row.tools_triggered),
+    toolsTriggered: decompressJson(row.tools_triggered),
     responseThinkingTokens: row.response_thinking_tokens ?? undefined,
     responseTextTokens: row.response_text_tokens ?? undefined,
     responseToolCallTokens: row.response_tool_call_tokens ?? undefined,
     cacheReadTokens: row.cache_read_tokens ?? undefined,
     cacheCreationTokens: row.cache_creation_tokens ?? undefined,
-    responseContent: safeJsonParse(row.response_content) ?? undefined,
+    responseContent: decompressJson(row.response_content) ?? undefined,
   };
 }
 
@@ -78,13 +83,16 @@ function getAnatomyDb() {
       const db = new Database(dbPath, { readonly: true });
       db.pragma("journal_mode = WAL");
       directDb = {
-        queryRecentEvents(hours: number) {
+        queryRecentEvents(hours: number, limit = 500) {
           const cutoff = Date.now() - hours * 3600000;
           return db
             .prepare(
-              "SELECT * FROM anatomy_events WHERE timestamp_ms > ? ORDER BY timestamp_ms ASC",
+              `SELECT * FROM (
+                SELECT * FROM anatomy_events WHERE timestamp_ms > ?
+                ORDER BY timestamp_ms DESC LIMIT ?
+              ) ORDER BY timestamp_ms ASC`,
             )
-            .all(cutoff)
+            .all(cutoff, limit)
             .map(parseRow);
         },
         querySessionEvents(key: string, limit: number) {
@@ -228,8 +236,12 @@ const plugin = {
             // /tinker/api/context-anatomy/recent?hours=24
             if (subPath === "recent") {
               const hoursParam = url.searchParams.get("hours");
-              const hours = Math.min(Math.max(parseInt(hoursParam ?? "24", 10) || 24, 1), 24);
-              const events = anatomyDb.queryRecentEvents(hours);
+              const hours = Math.min(Math.max(parseInt(hoursParam ?? "48", 10) || 48, 1), 8760);
+              const limitParam = url.searchParams.get("limit");
+              const limit = limitParam
+                ? Math.min(Math.max(1, parseInt(limitParam, 10) || 500), 2000)
+                : 500;
+              const events = anatomyDb.queryRecentEvents(hours, limit);
               res.writeHead(200, jsonHeaders);
               res.end(JSON.stringify({ count: events.length, events }));
               return true;
