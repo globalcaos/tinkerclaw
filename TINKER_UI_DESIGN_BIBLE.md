@@ -1263,18 +1263,20 @@ These are fork-exclusive backend systems that run server-side. They are not part
 
 ### 11.2 AMYGDALA — Personality Thermostat (2026-03-23)
 
-- **Status:** `DEPLOYED`
-- **What:** Dual-network action gating system that dynamically adjusts the agent's personality traits. Injects personality nudges into the system prompt to steer behavior toward a target personality vector without rewriting the core persona.
-- **Components:**
-  - **Target vector + decoder:** Defines desired personality dimensions (curiosity, warmth, directness, humor, etc.) as numerical targets. Decoder translates vector into natural language nudges.
-  - **Nudge pipeline:** Wired into system prompt via `buildSystemPrompt()`. Nudges are context-aware templates that reference the current conversation state.
-  - **Humor-aware templates:** Nudges include humor potential detection and bridge discovery for contextually appropriate humor.
-  - **Curiosity decomposition:** Breaks curiosity into genuine interest attractors rather than generic "be curious" instructions.
-  - **Fractal cognition:** Recursive reflection that fires on success (not just failure). Second-pass depth climbing. Ripple scan for cross-domain effects.
-  - **Active learning dimensions:** Tracks which personality dimensions are being exercised and which are dormant.
-  - **Visible influence tags:** `***AMYGDALA***` and `***FRACTAL***` tags in system messages (rendered with color in Tinker UI — see §5.43).
-  - **Shadow logging:** All personality decisions logged to execution pipeline for observability.
-- **Files:** `src/fork/amygdala/`, `src/fork/fractal/`, wired in `attempt.ts`
+- **Status:** `PHASE 1 (Shadow) DEPLOYED` — text-based nudge injection only. No neural networks trained or deployed yet.
+- **What:** Personality steering system that injects context-aware nudges into the system prompt to adjust the agent's behavioral traits toward a target personality vector. Phase 1 of the AMYGDALA architecture described in the [Learned Intuition paper](docs/papers/learned-intuition/learned-intuition.md).
+- **Paper vs Reality:** The paper describes a 10-neural-network ensemble (5 Prudence for safety gating + 5 Personality for behavioral modulation) with PPO training, conformal prediction, ONNX inference, and a 4-phase trust ramp. **Current implementation is Phase 1 (Shadow) only** — a 15-dimension personality target vector with text-based nudge templates. No neural networks, no Prudence gating, no conformal prediction. The Prudence family (action gating, stop/allow/escalate) is entirely unimplemented.
+- **Deployed components:**
+  - **Target vector (15 dimensions):** 8 core personality dimensions + 5 curiosity attractors + 2 fractal depth parameters. Hand-crafted initial values (PPO calibration planned for Phase 2).
+  - **Personality decoder:** Compares current embedding vs target, produces natural language nudges.
+  - **Nudge pipeline:** Wired into system prompt via `buildSystemPrompt()`. Nudges are context-aware templates.
+  - **Humor-aware templates:** Reference the [Humor Embeddings paper](docs/papers/humor-embeddings/humor-embeddings.md) for bridge discovery patterns.
+  - **Curiosity decomposition:** 5 genuine interest attractors (supersedes the [Curiosity Motivation paper](docs/papers/curiosity-motivation/curiosity-motivation.md)'s CCA architecture, which is NOT implemented).
+  - **Fractal reflection:** Prompt-level recursive reflection hook in `attempt-hooks.ts` (`maybeTriggerFractalReflection`). Fires on success, not just failure. Second-pass depth climbing. Ripple scan. Note: the [Fractal Reasoning paper](docs/papers/fractal-reasoning/fractal-reasoning.md)'s data structures (Hilbert-curve index, IFS compression, Be-tree) are NOT implemented — they are a theoretical research agenda.
+  - **Visible influence tags:** `***AMYGDALA***` and `***FRACTAL***` in system messages (see §5.43).
+  - **Shadow logging:** All decisions logged for observability.
+- **Not yet implemented:** Prudence family (5 networks), neural network training (PPO), conformal prediction, ONNX inference, Catastrophic Failure Database, trust ramp Phases 2-4.
+- **Files:** `src/amygdala/`, `attempt-hooks.ts` (fractal reflection hook), wired in `attempt.ts`
 
 ### 11.3 ENGRAM — Memory & Retrieval System (2026-02 → 2026-03)
 
@@ -1295,22 +1297,46 @@ These are fork-exclusive backend systems that run server-side. They are not part
 
 - **Status:** `DEPLOYED`
 - **What:** Three fork-exclusive cognitive modules that enhance the agent's behavioral layer. All inject into the system prompt pipeline.
-- **CORTEX (Persona Stability):**
+- **CORTEX (Identity Persistence):** [Paper](docs/papers/identity-persistence/identity-persistence.md) — 4,974 LOC, 368 tests, 100% pass
   - `PersonaState` loaded from `SOUL.md` / `VOICE.md`, injected as priority context
-  - SyncScore automation with EWMA drift detection — measures how well the agent adheres to persona
+  - SyncScore automation with EWMA drift detection (measured SyncScore 0.977 in production)
   - Behavioral probes, consistency metric, convergence monitor
   - Mid-context re-injection and observational memory
-  - Files: `src/fork/cortex/`
-- **LIMBIC (Humor Pipeline):**
-  - Bridge discovery (finds conceptual connections between disparate topics for humor)
+  - E_phi persona feature space (8 linguistic features + 128 dense embedding = 136-dim)
+  - **Paper claims validated:** drift recovery 0.027→0.980, 442× separation, human eval alpha=0.81
+  - Files: `src/memory/cortex/` (`persona-state.ts`, `drift-detection.ts`, `behavioral-probes.ts`, `priority-injection.ts`, `consistency-metric.ts`, `convergence-monitor.ts`, `voice-markers.ts`)
+- **LIMBIC (Humor Pipeline):** [Paper](docs/papers/humor-embeddings/humor-embeddings.md) — pilot study (n=15) falsified h_v1; h_v2 proposed
+  - Bridge discovery — 5 algorithms (embedding arithmetic, orthogonal search, frame injection, generate-then-score, pre-computed index)
   - Sensitivity gate (blocks humor in inappropriate contexts)
-  - Pattern taxonomy for humor types
-  - Files: `src/fork/limbic/`
-- **SYNAPSE (Multi-Model Debate):**
-  - CDI (Cognitive Diversity Index), RAAC protocol
-  - Debate architectures for multi-model deliberation
+  - Pattern taxonomy — 12 humor patterns in 5 meta-categories
+  - Humor potential function h(A,B,β) with surprise weighting
+  - **Note:** Full validation protocol (N≥64 raters) has NOT been executed. h_v2 is proposed but unvalidated.
+  - Files: `src/memory/limbic/` (`bridge-discovery.ts`, `sensitivity-gate.ts`, `humor-potential.ts`, `humor-associations.ts`, `pattern-taxonomy.ts`, `vector-math.ts`)
+- **SYNAPSE (Multi-Model Debate):** [Paper](docs/papers/round-table/round-table.md) — reported 63.6% on GPQA Diamond (single run)
+  - CDI (Cognitive Diversity Index), RAAC 5-phase protocol (Propose/Challenge/Defend/Synthesize/Ratify)
+  - 5 parallelism patterns (Fan-Out, Moderated Tribunal, Full RT, Tournament, Editorial Swarm)
+  - Persistent deliberation with 3 artifact tiers
   - Exposed as agent tool for on-demand use
-  - Files: `src/fork/synapse/`
+  - **Note:** GPQA Diamond result from single run — needs multi-run confidence intervals.
+  - Files: `src/memory/synapse/` (`cognitive-diversity.ts`, `raac-protocol.ts`, `debate-architectures.ts`, `persistent-deliberation.ts`)
+
+### 11.5 Research Papers — Implementation Status
+
+11 papers in `docs/papers/`. Status of each relative to deployed code:
+
+| Paper                        | System      | Status        | Notes                                                                                                                      |
+| ---------------------------- | ----------- | ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Fractal Reasoning            | AMYGDALA    | `PARTIAL`     | Prompt-level reflection hook deployed. FMI data structures (Hilbert-curve, IFS, Be-tree) are theoretical — not implemented |
+| Humor Embeddings             | LIMBIC      | `DEPLOYED`    | Core modules implemented. h_v1 falsified in pilot; h_v2 proposed but unvalidated (needs N≥64 rater study)                  |
+| Agent Security (AEGIS)       | —           | `DESIGN ONLY` | Conceptual security framework. No AEGIS-specific code — describes OS/network/process-level controls                        |
+| Learned Intuition (AMYGDALA) | AMYGDALA    | `PHASE 1`     | Text nudge injection deployed. 10-network ensemble, PPO training, Prudence gating NOT built                                |
+| Total Recall                 | ENGRAM      | `DEPLOYED`    | Best-implemented paper. Event store, pointer compaction, retrieval packs all match paper claims                            |
+| Sleep Consolidation          | ENGRAM      | `DEPLOYED`    | Documents actual operational behavior (30 days, 14 mutations). Post-hoc formalization of emergent behavior                 |
+| Identity Persistence         | CORTEX      | `DEPLOYED`    | Well-implemented. 4,974 LOC, 368 tests. Metrics match paper claims                                                         |
+| Instant Recall               | Hippocampus | `DEPLOYED`    | Pre-computed concept index, FTS5. 2,286 LOC, 158 tests                                                                     |
+| Round Table                  | SYNAPSE     | `DEPLOYED`    | CDI, RAAC protocol, debate architectures implemented. GPQA result needs multi-run validation                               |
+| Curiosity Motivation         | —           | `DESIGN ONLY` | CCA architecture NOT implemented. Curiosity handled via 5 personality attractors in AMYGDALA instead                       |
+| Corporate Swarm (HIVEMIND)   | —           | `DESIGN ONLY` | Enterprise swarm design paper. No implementation exists                                                                    |
 
 ### 11.5 WhatsApp Feature Enhancements (2026-02 → 2026-03)
 

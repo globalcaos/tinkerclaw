@@ -142,5 +142,13 @@
     "specifier": "../../../src/whatsapp-history/live-capture-wm.js",
     "resolvedPath": "src/whatsapp-history/live-capture-wm.js",
     "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp/src/login-qr-wm.ts",
+    "line": 125,
+    "kind": "dynamic-import",
+    "specifier": "../../../src/whatsapp-history/live-capture-wm.js",
+    "resolvedPath": "src/whatsapp-history/live-capture-wm.js",
+    "reason": "dynamically imports core src path outside plugin-sdk from an extension"
   }
 ]
