@@ -78,8 +78,9 @@ export async function createOllamaEmbeddingProvider(
 
   // FORK: Ollama embedding models have small context windows (typically 512 tokens).
   // Hard-truncate input text to prevent HTTP 500 "input length exceeds context length".
-  // 512 tokens ≈ ~1500 chars for English text. We use 1400 chars as safe margin.
-  const MAX_PROMPT_CHARS = 1400;
+  // Worst case: 1 char = 1 token (digits, punctuation, CJK). 500 chars guarantees
+  // we stay under 512 tokens regardless of content composition.
+  const MAX_PROMPT_CHARS = 500;
 
   const embedOne = async (text: string): Promise<number[]> => {
     const prompt = text.length > MAX_PROMPT_CHARS ? text.slice(0, MAX_PROMPT_CHARS) : text;
