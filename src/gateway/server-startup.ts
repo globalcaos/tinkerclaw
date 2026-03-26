@@ -20,7 +20,7 @@ import {
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
-import { consumeSessionResume } from "../infra/session-resume.js";
+import { consumeAllSessionResumes } from "../infra/session-resume.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
@@ -195,32 +195,39 @@ export async function startGatewaySidecars(params: {
     // can silently block the resume. agentCommand runs the user's message
     // through the normal reply pipeline in the original session.
     setTimeout(() => {
-      void consumeSessionResume(300)
-        .then(async (resume) => {
-          if (!resume) {
+      void consumeAllSessionResumes(300)
+        .then(async (resumes) => {
+          if (resumes.length === 0) {
             return;
           }
-          const { sessionKey, userMessage, deliveryContext } = resume.payload;
-          const resumeMessage = `⚠️ Gateway restarted while processing your message. Resuming your request:\n\n${userMessage}`;
-          logResume.info("resuming interrupted session", { sessionKey });
+          logResume.info(`resuming ${resumes.length} interrupted session(s)`);
           const { agentCommand } = await import("../commands/agent.js");
-          await agentCommand(
-            {
-              message: resumeMessage,
-              sessionKey,
-              senderIsOwner: true,
-              ...(deliveryContext?.channel && { replyChannel: deliveryContext.channel }),
-              ...(deliveryContext?.to && { replyTo: deliveryContext.to }),
-              ...(deliveryContext?.accountId && { replyAccountId: deliveryContext.accountId }),
-            },
-            {
-              log: () => {},
-              error: (msg) => logResume.error(String(msg)),
-              exit: () => {},
-            },
-            params.deps,
-          );
-          logResume.info("session resume completed", { sessionKey });
+          for (const resume of resumes) {
+            const { sessionKey, userMessage, deliveryContext } = resume.payload;
+            const resumeMessage = `⚠️ Gateway restarted while processing your message. Resuming your request:\n\n${userMessage}`;
+            logResume.info("resuming interrupted session", { sessionKey });
+            try {
+              await agentCommand(
+                {
+                  message: resumeMessage,
+                  sessionKey,
+                  senderIsOwner: true,
+                  ...(deliveryContext?.channel && { replyChannel: deliveryContext.channel }),
+                  ...(deliveryContext?.to && { replyTo: deliveryContext.to }),
+                  ...(deliveryContext?.accountId && { replyAccountId: deliveryContext.accountId }),
+                },
+                {
+                  log: () => {},
+                  error: (msg) => logResume.error(String(msg)),
+                  exit: () => {},
+                },
+                params.deps,
+              );
+              logResume.info("session resume completed", { sessionKey });
+            } catch (err) {
+              logResume.error(`session resume failed for ${sessionKey}: ${String(err)}`);
+            }
+          }
         })
         .catch((err) => {
           logResume.error(`session resume failed: ${String(err)}`);
