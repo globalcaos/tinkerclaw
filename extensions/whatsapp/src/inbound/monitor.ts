@@ -43,11 +43,19 @@ export async function monitorWebInbox(options: {
     process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
   let sock: Awaited<ReturnType<typeof createWaSocket>>;
   if (useWhatsmeow) {
-    const { createWmMonitorSocket } = await import("./monitor-wm.js");
-    const { adapter } = await createWmMonitorSocket({
-      verbose: options.verbose,
-      authDir: options.authDir,
-    });
+    // Static imports to ensure bundler includes whatsmeow modules
+    const { createWmClient, connectWmClient } = await import("../session-wm.js");
+    const { createBaileysAdapter } = await import("../baileys-adapter-wm.js");
+    const { existsSync, statSync } = await import("node:fs");
+    const { resolveUserPath } = await import("openclaw/plugin-sdk/text-runtime");
+    const storePath = options.authDir ? `${options.authDir}/whatsmeow.db` : "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
+    const resolved = resolveUserPath(storePath);
+    if (!existsSync(resolved) || statSync(resolved).size <= 8192) {
+      throw new Error("WhatsApp (whatsmeow) not linked. Use the Relink button in the channels tab to scan a QR code.");
+    }
+    const client = await createWmClient({ storePath, verbose: options.verbose });
+    await connectWmClient(client);
+    const adapter = createBaileysAdapter({ wmClient: client });
     sock = adapter as unknown as Awaited<ReturnType<typeof createWaSocket>>;
     inboundLogger.info("Using whatsmeow-node backend");
   } else {
