@@ -13,6 +13,12 @@ const KNOWN_EMBEDDING_MAX_INPUT_TOKENS: Record<string, number> = {
   "voyage:voyage-3": 32000,
   "voyage:voyage-3-lite": 16000,
   "voyage:voyage-code-3": 32000,
+  // FORK: Ollama embedding models — byte limits for 512-token context models.
+  // The limit check uses estimateUtf8Bytes, and some chunks contain multi-byte
+  // characters or dense text. 512 tokens ≈ ~1500 bytes worst case.
+  "ollama:mxbai-embed-large": 1400,
+  "ollama:nomic-embed-text": 1400,
+  "ollama:snowflake-arctic-embed": 1400,
 };
 
 export function resolveEmbeddingMaxInputTokens(provider: EmbeddingProvider): number {
@@ -32,6 +38,9 @@ export function resolveEmbeddingMaxInputTokens(provider: EmbeddingProvider): num
   // using the OpenAI default for providers with much smaller limits.
   if (provider.id.toLowerCase() === "gemini") {
     return 2048;
+  }
+  if (provider.id.toLowerCase() === "ollama") {
+    return 1400; // Most ollama embed models have 512-token context ≈ ~1400 bytes
   }
   if (provider.id.toLowerCase() === "local") {
     return DEFAULT_LOCAL_EMBEDDING_MAX_INPUT_TOKENS;
