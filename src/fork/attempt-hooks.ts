@@ -687,13 +687,13 @@ export function maybeTriggerFractalReflection(
     return;
   }
 
-  // Skip fractal reflection for disposable sessions (heartbeat, cron, subagent)
-  // These create infinite loops: heartbeat → HEARTBEAT_OK → fractal fires → triggers
-  // another heartbeat get-reply → HEARTBEAT_OK → fractal fires → ... (every ~4s, Opus)
-  const SKIP_FRACTAL_PATTERNS = ["heartbeat", ":cron:", "subagent"] as const;
-  if (SKIP_FRACTAL_PATTERNS.some((p) => sessionKey.includes(p))) {
-    return;
-  }
+  // Fractal reflection disabled as system event (2026-03-26).
+  // Reason: system events race with user messages — the user types before the model
+  // can respond to the fractal event, so it gets batched and swallowed. Every time.
+  // Additionally, it caused infinite loops in heartbeat/cron sessions.
+  // Fractal depth climbing is now an inline instruction in the system prompt.
+  // The model appends 🌿 FRACTAL levels to its own response when appropriate.
+  return;
 
   // Fire fractal reflection on every turn — no triggers, no cooldown
   log.info("[fractal] injecting reflection pass");
