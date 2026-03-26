@@ -7,12 +7,12 @@ import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
 import { jidToE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
-import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import * as _wmAdapter from "../baileys-adapter-wm.js";
 // FORK: whatsmeow backend — force bundler to include these modules
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import * as _wmSession from "../session-wm.js";
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import * as _wmAdapter from "../baileys-adapter-wm.js";
+import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 const createWmClient = _wmSession.createWmClient;
 const connectWmClient = _wmSession.connectWmClient;
 const createBaileysAdapter = _wmAdapter.createBaileysAdapter;
@@ -53,10 +53,14 @@ export async function monitorWebInbox(options: {
   if (useWhatsmeow) {
     const { existsSync, statSync } = await import("node:fs");
     const { resolveUserPath } = await import("openclaw/plugin-sdk/text-runtime");
-    const storePath = options.authDir ? `${options.authDir}/whatsmeow.db` : "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
+    const storePath = options.authDir
+      ? `${options.authDir}/whatsmeow.db`
+      : "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
     const resolved = resolveUserPath(storePath);
     if (!existsSync(resolved) || statSync(resolved).size <= 8192) {
-      throw new Error("WhatsApp (whatsmeow) not linked. Use the Relink button in the channels tab to scan a QR code.");
+      throw new Error(
+        "WhatsApp (whatsmeow) not linked. Use the Relink button in the channels tab to scan a QR code.",
+      );
     }
     const client = await createWmClient({ storePath, verbose: options.verbose });
     await connectWmClient(client);

@@ -87,8 +87,9 @@ export async function webAuthExists(authDir: string = resolveDefaultWebAuthDir()
   const resolvedAuthDir = resolveUserPath(authDir);
 
   // FORK: whatsmeow backend — check for whatsmeow.db instead of creds.json
-  const useWm = process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow"
-    || process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
+  const useWm =
+    process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
+    process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
   if (useWm) {
     const wmStorePath = resolvedAuthDir + "/whatsmeow.db";
     try {
