@@ -138,8 +138,9 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
       const db = getDb();
       if (db) {
         const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h ago
-        const staleChats = db.prepare(
-          `SELECT chat_jid as chat, MAX(timestamp) as lastTs,
+        const staleChats = db
+          .prepare(
+            `SELECT chat_jid as chat, MAX(timestamp) as lastTs,
                   (SELECT id FROM messages m2 WHERE m2.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastId,
                   (SELECT COALESCE(sender_jid, '') FROM messages m3 WHERE m3.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastSender
            FROM messages m
@@ -148,23 +149,35 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
            HAVING MAX(timestamp) < ? 
            ORDER BY MAX(timestamp) DESC
            `,
-        ).all(cutoff) as Array<{ chat: string; lastTs: number; lastId: string; lastSender: string }>;
+          )
+          .all(cutoff) as Array<{
+          chat: string;
+          lastTs: number;
+          lastId: string;
+          lastSender: string;
+        }>;
 
         if (staleChats.length > 0) {
           logger.info({ count: staleChats.length }, "Found stale DM chats — requesting backfill");
           for (const chat of staleChats) {
             const ageHours = (Date.now() / 1000 - chat.lastTs) / 3600;
-            logger.info({ chat: chat.chat, ageHours: Math.round(ageHours) }, "Backfill request for chat");
+            logger.info(
+              { chat: chat.chat, ageHours: Math.round(ageHours) },
+              "Backfill request for chat",
+            );
             void client
               .buildHistorySyncRequest(
-                { chat: chat.chat, sender: chat.lastSender || jid, id: chat.lastId, timestamp: chat.lastTs },
+                {
+                  chat: chat.chat,
+                  sender: chat.lastSender || jid,
+                  id: chat.lastId,
+                  timestamp: Math.floor(Date.now() / 1000),
+                },
                 50,
               )
               .then((historyMsg) => {
                 if (historyMsg) {
-                  return client.sendPeerMessage(
-                    historyMsg as Record<string, unknown>,
-                  );
+                  return client.sendPeerMessage(historyMsg as Record<string, unknown>);
                 }
               })
               .then(() => {
