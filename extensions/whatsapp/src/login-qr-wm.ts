@@ -72,6 +72,7 @@ export async function startWebLoginWithQr(
     if (existing.qrDataUrl) {
       return {
         qrDataUrl: existing.qrDataUrl,
+        qrCode: existing.qr,
         message: "QR already active. Scan it in WhatsApp → Linked Devices.",
       };
     }
@@ -216,7 +217,7 @@ export async function startWebLoginWithQr(
 
   const base64 = await renderQrPngBase64(qrCode);
   login.qrDataUrl = `data:image/png;base64,${base64}`;
-  return { qrDataUrl: login.qrDataUrl, message: "Scan this QR in WhatsApp → Linked Devices." };
+  return { qrDataUrl: login.qrDataUrl, qrCode: qrCode, message: "Scan this QR in WhatsApp → Linked Devices." };
 }
 
 /**

@@ -4257,10 +4257,20 @@ function init() {
                   force: isFirstCall && action === "relink",
                 })) as any;
                 isFirstCall = false;
-                if (qrArea && r?.qrDataUrl && r.qrDataUrl !== lastQrUrl) {
-                  lastQrUrl = r.qrDataUrl;
-                  qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">Scan with WhatsApp → Linked Devices</div><div style="font-size:9px;color:var(--muted);margin-top:2px">QR auto-refreshes</div></div>`;
-                  qrRetries = 0; // reset retry count on successful QR
+                if (qrArea && (r?.qrDataUrl || r?.qrCode) && (r.qrDataUrl || r.qrCode) !== lastQrUrl) {
+                  lastQrUrl = r.qrDataUrl || r.qrCode;
+                  // Render QR: try img first, but also include a link to open the QR image directly
+                  const qrHtml = r.qrDataUrl
+                    ? `<img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)" onerror="this.style.display='none'">`
+                    : "";
+                  const qrLink = r.qrDataUrl
+                    ? `<div style="margin-top:4px"><a href="${r.qrDataUrl}" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:underline">Open QR in new tab ↗</a></div>`
+                    : "";
+                  const qrText = r.qrCode
+                    ? `<div style="margin-top:4px;font-family:monospace;font-size:8px;word-break:break-all;max-width:300px;padding:4px;background:var(--surface2);border-radius:4px;color:var(--muted)">${altEsc(r.qrCode)}</div>`
+                    : "";
+                  qrArea.innerHTML = `<div style="margin-top:8px;text-align:center">${qrHtml}${qrLink}${qrText}<div style="font-size:10px;color:var(--muted);margin-top:4px">Scan with WhatsApp → Linked Devices</div><div style="font-size:9px;color:var(--muted);margin-top:2px">QR auto-refreshes</div></div>`;
+                  qrRetries = 0;
                 } else if (qrArea && !r?.qrDataUrl) {
                   qrRetries++;
                   if (!lastQrUrl) {
