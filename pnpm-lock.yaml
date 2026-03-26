@@ -71,6 +71,9 @@ importers:
       '@sinclair/typebox':
         specifier: 0.34.48
         version: 0.34.48
+      '@whatsmeow-node/whatsmeow-node':
+        specifier: ^0.5.3
+        version: 0.5.3
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
@@ -464,7 +467,7 @@ importers:
     dependencies:
       openclaw:
         specifier: '>=2026.3.11'
-        version: 2026.3.13(@discordjs/opus@0.10.0)(@napi-rs/canvas@0.1.95)(@types/express@5.0.6)(audio-decode@2.2.3)(jimp@1.6.0)(node-llama-cpp@3.16.2(typescript@5.9.3))
+        version: 2026.3.13(@napi-rs/canvas@0.1.95)(@types/express@5.0.6)(audio-decode@2.2.3)(jimp@1.6.0)(node-llama-cpp@3.16.2(typescript@5.9.3))
 
   extensions/memory-lancedb:
     dependencies:
@@ -3810,6 +3813,45 @@ packages:
 
   '@wasm-audio-decoders/opus-ml@0.0.2':
     resolution: {integrity: sha512-58rWEqDGg+CKCyEeKm2KoxxSwTWtHh/NLTW9ObR4K8CGF6VwuuGudEI1CtniS/oSRmL1nJq/eh8MKARiluw4DQ==}
+
+  '@whatsmeow-node/darwin-arm64@0.5.3':
+    resolution: {integrity: sha512-Ui0sAsRqvOvzHrg1KBTRx0FGplLnYlnix73s01iAmrvj5rWy0XcGNPe0iABeZN1tjpqGYu2pU0n34O6r9NqxYw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@whatsmeow-node/darwin-x64@0.5.3':
+    resolution: {integrity: sha512-Q95/ny0nWTVneGiOUh60Icb717yISHBgMMmV7OjxM55sGG7fdarXuibmL7s2GApwecDlqnwxMH+eJO2mSWUj1g==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@whatsmeow-node/linux-arm64@0.5.3':
+    resolution: {integrity: sha512-tMXmFotShuj536LB0FRp2A3oWkGeYAOrzhQtx02Gb+flleIJPhJaFWqe2jQW6sW3lGEhXRTcHsZ4rE0kgfu/hA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@whatsmeow-node/linux-x64-musl@0.5.3':
+    resolution: {integrity: sha512-YPacywbyllp623jsjoMuAx74RKdgxphwZ2zN/cxrjkOUAAtSLImBfoxo+z7XBHEVpiCoaKbVrxBTOOagFVGJIQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@whatsmeow-node/linux-x64@0.5.3':
+    resolution: {integrity: sha512-wYd02EwWKjZR0ckKVkqwKKvCyvXqBfhmEjS4uEePKbjrgcnJGNSmrhtsXuVlH5Ns3SPrvQgt+DcktTX9FNlFlA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@whatsmeow-node/whatsmeow-node@0.5.3':
+    resolution: {integrity: sha512-ecs34YA4TK4BQ38DY0/G6c1DKGaOlVA9++0kt20NCYkNYDjEv1EF9S4d6vvRk+Of77Pn3x3roFh6L1cWt7ZDcg==}
+    engines: {node: '>=18'}
+
+  '@whatsmeow-node/win32-arm64@0.5.3':
+    resolution: {integrity: sha512-QtgbHjfuGwiR3JBZv3DTDMofImsn4U0F+AMT60Xh1UwJyUQY/hBDRmCGavLqRKPzauDaywpcJ7rs2B5umtDJ0A==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@whatsmeow-node/win32-x64@0.5.3':
+    resolution: {integrity: sha512-7PdEViDyxj0DkgJtGXU0UuI/W1dyDMeGmEKn8DMe7SYkCSl9+P6TvcIiSoPGAyXtS/gQBSpNkXxUM40z6aaXqg==}
+    cpu: [x64]
+    os: [win32]
 
   '@whiskeysockets/baileys@7.0.0-rc.9':
     resolution: {integrity: sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==}
@@ -7745,7 +7787,7 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
-  '@buape/carbon@0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(hono@4.12.8)(opusscript@0.1.1)':
+  '@buape/carbon@0.0.0-beta-20260216184201(hono@4.12.8)(opusscript@0.1.1)':
     dependencies:
       '@types/node': 25.5.0
       discord-api-types: 0.38.37
@@ -10715,6 +10757,37 @@ snapshots:
       '@wasm-audio-decoders/common': 9.0.7
     optional: true
 
+  '@whatsmeow-node/darwin-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/darwin-x64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-x64-musl@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-x64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/whatsmeow-node@0.5.3':
+    optionalDependencies:
+      '@whatsmeow-node/darwin-arm64': 0.5.3
+      '@whatsmeow-node/darwin-x64': 0.5.3
+      '@whatsmeow-node/linux-arm64': 0.5.3
+      '@whatsmeow-node/linux-x64': 0.5.3
+      '@whatsmeow-node/linux-x64-musl': 0.5.3
+      '@whatsmeow-node/win32-arm64': 0.5.3
+      '@whatsmeow-node/win32-x64': 0.5.3
+
+  '@whatsmeow-node/win32-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/win32-x64@0.5.3':
+    optional: true
+
   '@whiskeysockets/baileys@7.0.0-rc.9(audio-decode@2.2.3)(jimp@1.6.0)(sharp@0.34.5)':
     dependencies:
       '@cacheable/node-cache': 1.7.6
@@ -12781,11 +12854,11 @@ snapshots:
       ws: 8.19.0
       zod: 4.3.6
 
-  openclaw@2026.3.13(@discordjs/opus@0.10.0)(@napi-rs/canvas@0.1.95)(@types/express@5.0.6)(audio-decode@2.2.3)(jimp@1.6.0)(node-llama-cpp@3.16.2(typescript@5.9.3)):
+  openclaw@2026.3.13(@napi-rs/canvas@0.1.95)(@types/express@5.0.6)(audio-decode@2.2.3)(jimp@1.6.0)(node-llama-cpp@3.16.2(typescript@5.9.3)):
     dependencies:
       '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
       '@aws-sdk/client-bedrock': 3.1011.0
-      '@buape/carbon': 0.0.0-beta-20260216184201(@discordjs/opus@0.10.0)(hono@4.12.8)(opusscript@0.1.1)
+      '@buape/carbon': 0.0.0-beta-20260216184201(hono@4.12.8)(opusscript@0.1.1)
       '@clack/prompts': 1.1.0
       '@discordjs/voice': 0.19.2(@discordjs/opus@0.10.0)(opusscript@0.1.1)
       '@grammyjs/runner': 2.0.3(grammy@1.41.1)
