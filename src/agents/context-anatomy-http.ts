@@ -66,8 +66,10 @@ export async function handleContextAnatomyRequest(
   const recentMatch = url.pathname.match(/\/api\/context-anatomy\/recent$/);
   if (recentMatch) {
     const hoursParam = url.searchParams.get("hours");
-    const hours = Math.min(Math.max(parseInt(hoursParam ?? "24", 10) || 24, 1), 24);
-    const events = queryRecentEvents(hours);
+    const hours = Math.min(Math.max(parseInt(hoursParam ?? "48", 10) || 48, 1), 8760);
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 500), 2000) : 500;
+    const events = queryRecentEvents(hours, limit);
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",

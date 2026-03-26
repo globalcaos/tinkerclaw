@@ -709,23 +709,31 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Models panel Session/All toggle now uses the same iOS-style switch (`.ct-switch` track + thumb) as the timeline, instead of button-pair toggle. Labels render in proper case ("Session" / "All") — `text-transform:none` override on `.ct-switch-label` prevents `.rpanel-header`'s `uppercase` from affecting switch labels.
 - **Files:** `app.ts`, `base.css`
 
-### 5.31 Timeline SQLite Persistence + Response Breakdown (2026-03-16)
+### 5.31 Timeline SQLite Persistence + Response Breakdown (2026-03-16, updated 2026-03-26)
 
 - **Status:** `DEPLOYED`
-- **What:** Timeline now persists all LLM calls to SQLite (`~/.openclaw/data/anatomy-timeline.db`) and survives reboots. On fresh boot, loads a flat 24h chronological feed across all sessions. Existing JSONL files were migrated on first open (user_version=2). JSONL storage fully replaced.
+- **What:** Timeline now persists all LLM calls to SQLite (`~/.openclaw/data/anatomy-timeline.db`) and survives reboots. Data kept indefinitely (no pruning). On fresh boot, loads chronological feed for the current session. "All" mode loads last 7 days across all sessions via `/recent` endpoint. Existing JSONL files were migrated on first open (user_version=2). JSONL storage fully replaced.
 - **Response segments:** Three new bar segments added to the timeline visualization alongside the 7 input segments:
   - `responseThinking` (cyan `#06b6d4`) — thinking/reasoning tokens
   - `responseText` (emerald `#10b981`) — text output tokens
   - `responseToolCalls` (amber `#f59e0b`) — tool call input tokens
 - **Data captured:** `responseThinkingTokens`, `responseTextTokens`, `responseToolCallTokens`, `cacheReadTokens`, `cacheCreationTokens` — estimated from char counts during streaming (chars / 3.5)
-- **REST API:** New `GET /api/context-anatomy/recent?hours=24` serves cross-session feed. Existing `/{sessionKey}` endpoint reads from SQLite.
-- **Auto-prune:** Every 50 writes, deletes rows older than 24h.
+- **REST API:** `GET /api/context-anatomy/recent?hours=48&limit=500` serves cross-session feed (hours max 8760, limit max 2000). Existing `/{sessionKey}` endpoint reads from SQLite.
+- **Zlib compression (2026-03-26):** JSON columns (`context_sent`, `context_window`, `tools_triggered`, `topics`, `topic_transition`, `memories_injected`) are zlib-compressed before storage (~60-70% size reduction). Read path handles both compressed BLOBs (new rows) and plain-text JSON (legacy rows) transparently via `decompressJson()`. At ~1-1.5 MB/day compressed, 45 GB free disk = ~80+ years.
+- **No pruning (2026-03-26):** Removed 24h auto-prune. Data kept indefinitely. `updateAnatomyResponse` fallback INSERT (which created orphan empty-key rows with `session_key=''`, `turn=0`) also removed — response-only stubs without context data are not useful for the timeline.
 - **Session dividers:** When `sessionKey` changes between consecutive events, a new group boundary is created in the timeline.
-- **Route registration (2026-03-22, FIXED):** Tinker extension must be in `plugins.entries` + `plugins.allow` in `openclaw.json` with `auth: "gateway"`. Gateway registry rejects `auth: "none"` — silently drops the route. Without this, the `/tinker/api/*` HTTP endpoints are unreachable and the 24h historical feed never loads (only live WebSocket events appear).
-- **SQLite fallback in extension (2026-03-22):** Extension's `getAnatomyDb()` opens the DB directly via `better-sqlite3` when `globalThis.__anatomyDb` bridge isn't set yet (before first LLM call). Includes `parseRow()` for snake_case→camelCase conversion.
+- **Session/All toggle (2026-03-26, FIXED):**
+  - Legend + toggle always rendered, even when buffer is empty (so user can switch to "All" on a new session)
+  - Toggle updates visual state immediately (no full re-render flash)
+  - "Session" mode: `loadSession(sessionKey)` fetches by session key from DB. Sessions persist across gateway restarts.
+  - "All" mode: `loadAllSessions()` fetches via `/recent?hours=168&limit=200` across all sessions (was per-session from gateway's live session list, which lost data across restarts)
+  - Buffer preserved on fetch failure (was cleared before fetch, causing data loss on 401/network error)
+- **Auth fix (2026-03-26):** Timeline `fetch()` calls now use `authedFetch()` with Bearer token headers. Vite dev server (port 18790) proxies `/tinker/api` to gateway with auth, but `getGatewayBase()` was returning `"http://localhost:18789"` in dev mode — bypassing the proxy and hitting the gateway directly without auth (401). Fixed: `getGatewayBase()` now always returns `""` (relative URLs), so Vite proxy handles auth in dev and gateway serves natively in prod.
+- **Route registration (2026-03-22, FIXED):** Tinker extension must be in `plugins.entries` + `plugins.allow` in `openclaw.json` with `auth: "gateway"`. Gateway registry rejects `auth: "none"` — silently drops the route. Without this, the `/tinker/api/*` HTTP endpoints are unreachable and the historical feed never loads (only live WebSocket events appear).
+- **SQLite fallback in extension (2026-03-22, updated 2026-03-26):** Extension's `getAnatomyDb()` opens the DB directly via `better-sqlite3` when `globalThis.__anatomyDb` bridge isn't set yet (before first LLM call). Includes `decompressJson()` for zlib BLOB + legacy TEXT handling, and `parseRow()` for snake_case→camelCase conversion. `queryRecentEvents` supports `limit` parameter.
 - **Right-justification (2026-03-22):** Flex spacer before first group pushes bars right when content doesn't overflow; shrinks to 0 when it does.
 - **Session events order fix (2026-03-22):** `loadSession()` now reverses DESC-ordered API results to chronological order before displaying.
-- **Files:** `context-anatomy-db.ts` (NEW), `context-anatomy.ts` (type extended, JSONL removed), `context-anatomy-http.ts` (new endpoint), `attempt-hooks.ts` (SQLite write path), `pi-embedded-subscribe.ts` + handlers (response breakdown capture), `context-timeline.ts` (loadEvents + response segments + legend overlay + spacer), `app.ts` (fetch /recent on connect), `extensions/tinker/index.ts` (route registration + DB fallback)
+- **Files:** `context-anatomy-db.ts` (compression + no prune), `context-anatomy.ts` (type extended, JSONL removed), `context-anatomy-http.ts` (limit param + raised caps), `attempt-hooks.ts` (SQLite write path), `pi-embedded-subscribe.ts` + handlers (response breakdown capture), `context-timeline.ts` (authedFetch + toggle fix + buffer safety + /recent for All mode), `app.ts` (relative URLs + auth headers), `extensions/tinker/index.ts` (decompressJson + limit support + raised hour caps)
 
 ### 5.32 Duplicate Thinking Bubble Fix (2026-03-17)
 

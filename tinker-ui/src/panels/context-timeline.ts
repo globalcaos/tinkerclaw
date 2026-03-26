@@ -137,7 +137,7 @@ interface TimelineController {
   getSelected(): AnatomyEvent | null;
   setFilterMode(mode: "session" | "all"): void;
   getFilterMode(): "session" | "all";
-  loadAllSessions(sessionKeys: string[]): void;
+  loadAllSessions(sessionKeys?: string[]): void;
 }
 
 const MAX_BUFFER = 200;
@@ -169,6 +169,7 @@ export function mountContextTimeline(
   providerIcons?: Record<string, string>,
   onGroupLineClick?: (groupIndex: number, firstEvent: AnatomyEvent) => void,
   onFilterModeChange?: (mode: "session" | "all") => void,
+  getAuthHeaders?: () => Record<string, string>,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
   let selectedIdx: number | null = null;
@@ -177,6 +178,12 @@ export function mountContextTimeline(
   let tooltipEl: HTMLElement | null = null;
   let filterMode: "session" | "all" = "session";
   let currentGlobalMax = 200_000;
+
+  /** Fetch with auth headers (needed when UI is served from Vite dev server). */
+  function authedFetch(url: string): Promise<Response> {
+    const headers = getAuthHeaders?.() ?? {};
+    return fetch(url, Object.keys(headers).length ? { headers } : undefined);
+  }
 
   // ─── Tooltip ───
   function showTooltip(x: number, y: number, entry: BufferEntry) {
@@ -338,46 +345,8 @@ export function mountContextTimeline(
     // Remove previous legend (lives outside the scroll container)
     container.parentElement?.querySelector(".ct-legend-anchor")?.remove();
 
-    if (buffer.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "ct-empty";
-      empty.textContent = "No LLM calls yet";
-      container.appendChild(empty);
-      return;
-    }
-
-    // Compute available bar height: clientHeight includes padding, so subtract it
-    const containerH = container.clientHeight || 200;
-    const cs = getComputedStyle(container);
-    const padTop = parseFloat(cs.paddingTop) || 0;
-    const padBot = parseFloat(cs.paddingBottom) || 0;
-    const contentH = containerH - padTop - padBot;
-    const maxBarHeight = Math.max(20, contentH - COLUMN_CHROME_PX);
-
-    // Find global max tokens across all bars for uniform scaling
-    let globalMax = 0;
-    for (const entry of buffer) {
-      const m = maxTokensFor(entry.event);
-      if (m > globalMax) globalMax = m;
-    }
-    if (globalMax <= 0) globalMax = 200_000;
-    currentGlobalMax = globalMax;
-
-    // Pre-compute response tokens for independent scaling
-    const respTokensArr: number[] = [];
-    for (const entry of buffer) {
-      const ev = entry.event;
-      const sent = ev.contextSent?.totalTokens ?? 0;
-      respTokensArr.push(ev.responseTokens ?? 0);
-    }
-    let maxRespTokens = 0;
-    for (const r of respTokensArr) {
-      if (r > maxRespTokens) maxRespTokens = r;
-    }
-    if (maxRespTokens <= 0) maxRespTokens = 1;
-
-    // Legend (sticky right) — only show input segments + toggle (response segments
-    // are self-explanatory from their distinct colors in the bar)
+    // Legend (sticky right) — always rendered so the Session/All toggle is accessible
+    // even when the buffer is empty (new session with no calls yet)
     const legend = document.createElement("div");
     legend.className = "ct-legend";
     const INPUT_LEGEND_KEYS = SEGMENT_ORDER.filter((k) => !k.startsWith("response"));
@@ -417,8 +386,13 @@ export function mountContextTimeline(
     switchWrap.addEventListener("click", () => {
       const newMode = filterMode === "session" ? "all" : "session";
       filterMode = newMode;
+      // Update toggle visuals immediately without full re-render
+      lblSession.className =
+        "ct-switch-label" + (newMode === "session" ? " ct-switch-label--active" : "");
+      lblAll.className = "ct-switch-label" + (newMode === "all" ? " ct-switch-label--active" : "");
+      track.className = "ct-switch-track" + (newMode === "all" ? " ct-switch-track--on" : "");
+      // Async load will call render() when data arrives
       if (onFilterModeChange) onFilterModeChange(newMode);
-      render();
     });
     legend.appendChild(switchWrap);
     // Legend lives OUTSIDE the scroll container (on its parent) so it never scrolls
@@ -430,6 +404,42 @@ export function mountContextTimeline(
     } else {
       container.appendChild(legendAnchor);
     }
+
+    if (buffer.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "ct-empty";
+      empty.textContent = "No LLM calls yet";
+      container.appendChild(empty);
+      return;
+    }
+
+    // Compute available bar height: clientHeight includes padding, so subtract it
+    const containerH = container.clientHeight || 200;
+    const cs = getComputedStyle(container);
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const padBot = parseFloat(cs.paddingBottom) || 0;
+    const contentH = containerH - padTop - padBot;
+    const maxBarHeight = Math.max(20, contentH - COLUMN_CHROME_PX);
+
+    // Find global max tokens across all bars for uniform scaling
+    let globalMax = 0;
+    for (const entry of buffer) {
+      const m = maxTokensFor(entry.event);
+      if (m > globalMax) globalMax = m;
+    }
+    if (globalMax <= 0) globalMax = 200_000;
+    currentGlobalMax = globalMax;
+
+    // Pre-compute response tokens for independent scaling
+    const respTokensArr: number[] = [];
+    for (const entry of buffer) {
+      respTokensArr.push(entry.event.responseTokens ?? 0);
+    }
+    let maxRespTokens = 0;
+    for (const r of respTokensArr) {
+      if (r > maxRespTokens) maxRespTokens = r;
+    }
+    if (maxRespTokens <= 0) maxRespTokens = 1;
 
     // Spacer pushes bars right when content doesn't overflow; shrinks to 0 when it does
     const spacer = document.createElement("div");
@@ -756,48 +766,49 @@ export function mountContextTimeline(
     },
 
     async loadSession(sessionKey: string) {
-      buffer.length = 0;
-      selectedIdx = null;
-      groupCounter = 0;
-
       if (!sessionKey) {
+        buffer.length = 0;
+        selectedIdx = null;
+        groupCounter = 0;
         render();
         return;
       }
 
       const base = getGatewayBase();
       try {
-        const resp = await fetch(
+        const resp = await authedFetch(
           `${base}/tinker/api/context-anatomy/${encodeURIComponent(sessionKey)}?limit=${MAX_BUFFER}`,
         );
         if (!resp.ok) {
-          render();
+          // Keep existing buffer on fetch failure
           return;
         }
         const body = await resp.json();
         // API returns { sessionKey, count, events: [...] } — DESC order from DB
         const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
-        if (events.length === 0) {
-          render();
-          return;
-        }
 
-        // API returns newest-first (DESC); reverse to chronological for display
-        events.reverse();
+        // Replace buffer only now that we have data (or confirmed empty)
+        buffer.length = 0;
+        selectedIdx = null;
+        groupCounter = 0;
 
-        // Backfill with turn-based grouping
-        for (const ev of events) {
-          const groupId = assignGroupId(undefined, ev);
-          push({ event: ev, groupId });
-        }
+        if (events.length > 0) {
+          // API returns newest-first (DESC); reverse to chronological for display
+          events.reverse();
 
-        // Auto-select latest
-        if (buffer.length > 0) {
+          // Backfill with turn-based grouping
+          for (const ev of events) {
+            const groupId = assignGroupId(undefined, ev);
+            push({ event: ev, groupId });
+          }
+
+          // Auto-select latest
           selectedIdx = buffer.length - 1;
           onBarSelect(buffer[selectedIdx].event, "context");
         }
       } catch {
-        // API not available — show empty
+        // API not available — keep existing buffer
+        return;
       }
       render();
     },
@@ -856,38 +867,46 @@ export function mountContextTimeline(
       return filterMode;
     },
 
-    async loadAllSessions(sessionKeys: string[]) {
-      buffer.length = 0;
-      selectedIdx = null;
-      groupCounter = 0;
+    async loadAllSessions(_sessionKeys?: string[]) {
       const base = getGatewayBase();
-      const allEvents: AnatomyEvent[] = [];
-      await Promise.all(
-        sessionKeys.map(async (sk) => {
-          try {
-            const resp = await fetch(
-              `${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=${MAX_BUFFER}`,
-            );
-            if (!resp.ok) return;
-            const body = await resp.json();
-            const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
-            allEvents.push(...events);
-          } catch {}
-        }),
-      );
-      // Sort by timestamp ascending
-      allEvents.sort((a, b) => {
-        const ta = a.timestampMs ?? (a.timestamp ? new Date(a.timestamp).getTime() : 0);
-        const tb = b.timestampMs ?? (b.timestamp ? new Date(b.timestamp).getTime() : 0);
-        return ta - tb;
-      });
-      for (const ev of allEvents) {
-        const groupId = assignGroupId(undefined, ev);
-        push({ event: ev, groupId });
-      }
-      if (buffer.length > 0) {
-        selectedIdx = buffer.length - 1;
-        onBarSelect(buffer[selectedIdx].event, "context");
+      try {
+        // Use the /recent endpoint which queries by timestamp across ALL sessions,
+        // regardless of whether the gateway's live session list includes them.
+        const resp = await authedFetch(
+          `${base}/tinker/api/context-anatomy/recent?hours=168&limit=${MAX_BUFFER}`,
+        );
+        if (!resp.ok) return;
+        const body = await resp.json();
+        const allEvents: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
+
+        // Replace buffer only after fetch succeeds
+        buffer.length = 0;
+        selectedIdx = null;
+        groupCounter = 0;
+
+        // /recent returns oldest-first (ASC) — no sort needed
+        for (const ev of allEvents) {
+          // Detect session boundary — force new group when sessionKey changes
+          const prevEntry = buffer[buffer.length - 1];
+          const prevSession = prevEntry?.event?.sessionKey;
+          const curSession = ev.sessionKey;
+
+          let groupId: string;
+          if (prevSession && curSession && prevSession !== curSession) {
+            groupId = `grp-${++groupCounter}`;
+          } else {
+            groupId = assignGroupId(ev.runId, ev);
+          }
+
+          push({ event: ev, runId: ev.runId, groupId });
+        }
+        if (buffer.length > 0) {
+          selectedIdx = buffer.length - 1;
+          onBarSelect(buffer[selectedIdx].event, "context");
+        }
+      } catch {
+        // API not available — keep existing buffer
+        return;
       }
       render();
     },
