@@ -2940,7 +2940,12 @@ function switchToTab(tabId: string) {
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
-    timelineCtrl?.loadSession(sessionKey);
+    // Reload timeline respecting current filter mode
+    if (timelineCtrl?.getFilterMode() === "all") {
+      timelineCtrl?.loadAllSessions();
+    } else {
+      timelineCtrl?.loadSession(sessionKey);
+    }
     // Background refresh from server — guarded inside loadChat
     loadChat();
   } else {
@@ -5988,7 +5993,7 @@ function init() {
       updateBackButtons();
     },
     () => sessionKey,
-    () => (import.meta.env.DEV ? "http://localhost:18789" : ""),
+    () => "",
     PROVIDER_ICONS,
     (groupIndex, firstEvent) => {
       // Show the prompt's context anatomy in the treemap
@@ -6031,6 +6036,7 @@ function init() {
         timelineCtrl?.loadSession(sessionKey);
       }
     },
+    () => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
   );
 }
 
