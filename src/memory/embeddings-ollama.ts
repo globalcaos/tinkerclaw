@@ -76,14 +76,20 @@ export async function createOllamaEmbeddingProvider(
   const client = resolveOllamaEmbeddingClient(options);
   const embedUrl = `${client.baseUrl.replace(/\/$/, "")}/api/embeddings`;
 
+  // FORK: Ollama embedding models have small context windows (typically 512 tokens).
+  // Hard-truncate input text to prevent HTTP 500 "input length exceeds context length".
+  // 512 tokens ≈ ~1500 chars for English text. We use 1400 chars as safe margin.
+  const MAX_PROMPT_CHARS = 1400;
+
   const embedOne = async (text: string): Promise<number[]> => {
+    const prompt = text.length > MAX_PROMPT_CHARS ? text.slice(0, MAX_PROMPT_CHARS) : text;
     const json = await withRemoteHttpResponse({
       url: embedUrl,
       ssrfPolicy: client.ssrfPolicy,
       init: {
         method: "POST",
         headers: client.headers,
-        body: JSON.stringify({ model: client.model, prompt: text }),
+        body: JSON.stringify({ model: client.model, prompt }),
       },
       onResponse: async (res) => {
         if (!res.ok) {
