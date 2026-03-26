@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { danger, info, success } from "openclaw/plugin-sdk/runtime-env";
-import { defaultRuntime, type RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { resolveWhatsAppAccount } from "./accounts.js";
 import { renderQrPngBase64 } from "./qr-image.js";
 import {
@@ -56,7 +56,8 @@ export async function startWebLoginWithQr(
     runtime?: RuntimeEnv;
   } = {},
 ): Promise<{ qrDataUrl?: string; message: string }> {
-  const runtime = opts.runtime ?? defaultRuntime;
+  const runtime =
+    opts.runtime ?? ({ log: (...args: unknown[]) => console.log(...args) } as RuntimeEnv);
   const cfg = loadConfig();
   const account = resolveWhatsAppAccount({ cfg, accountId: opts.accountId });
 
@@ -68,7 +69,10 @@ export async function startWebLoginWithQr(
       existing.qrDataUrl = `data:image/png;base64,${b64}`;
     }
     if (existing.qrDataUrl) {
-      return { qrDataUrl: existing.qrDataUrl, message: "QR already active. Scan it in WhatsApp → Linked Devices." };
+      return {
+        qrDataUrl: existing.qrDataUrl,
+        message: "QR already active. Scan it in WhatsApp → Linked Devices.",
+      };
     }
   }
 
@@ -77,11 +81,17 @@ export async function startWebLoginWithQr(
   // Promise that resolves when first QR arrives
   let resolveQr: ((code: string) => void) | null = null;
   let rejectQr: ((err: Error) => void) | null = null;
-  const qrPromise = new Promise<string>((res, rej) => { resolveQr = res; rejectQr = rej; });
+  const qrPromise = new Promise<string>((res, rej) => {
+    resolveQr = res;
+    rejectQr = rej;
+  });
 
-  const qrTimer = setTimeout(() => {
-    rejectQr?.(new Error("Timed out waiting for WhatsApp QR"));
-  }, Math.max(opts.timeoutMs ?? 30_000, 5000));
+  const qrTimer = setTimeout(
+    () => {
+      rejectQr?.(new Error("Timed out waiting for WhatsApp QR"));
+    },
+    Math.max(opts.timeoutMs ?? 30_000, 5000),
+  );
 
   let client: WhatsmeowClient;
   try {
@@ -127,7 +137,8 @@ export async function startWebLoginWithQr(
 
   // Start connection (async — emits QR events, then waits for pairing + 515 restart)
   // Use a generous timeout: QR scan + pairing + 515 restart can take up to 3 minutes
-  login.connectionPromise = client.connect()
+  login.connectionPromise = client
+    .connect()
     .then(() => client.waitForConnection(180_000))
     .then((connected) => {
       const cur = activeLogins.get(account.accountId);
@@ -161,7 +172,8 @@ export async function startWebLoginWithQr(
 export async function waitForWebLoginWm(
   opts: { timeoutMs?: number; runtime?: RuntimeEnv; accountId?: string } = {},
 ): Promise<{ connected: boolean; message: string }> {
-  const runtime = opts.runtime ?? defaultRuntime;
+  const runtime =
+    opts.runtime ?? ({ log: (...args: unknown[]) => console.log(...args) } as RuntimeEnv);
   const cfg = loadConfig();
   const account = resolveWhatsAppAccount({ cfg, accountId: opts.accountId });
   const login = activeLogins.get(account.accountId);
@@ -189,5 +201,8 @@ export async function waitForWebLoginWm(
     return { connected: true, message: "✅ Linked! WhatsApp is ready." };
   }
 
-  return { connected: false, message: "Still waiting for the QR scan. Let me know when you've scanned it." };
+  return {
+    connected: false,
+    message: "Still waiting for the QR scan. Let me know when you've scanned it.",
+  };
 }

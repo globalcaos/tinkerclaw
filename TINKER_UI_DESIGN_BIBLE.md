@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-03-26 (Fixed thinking bubble concatenation + flicker during streaming)
+> Last updated: 2026-03-26 (Gateway crash loop — missing dist/index.js after build wipe)
 
 ---
 
@@ -876,6 +876,13 @@ These are upstream files modified to support Tinker features. They require re-ap
 ---
 
 ## 7. Bug Fix Log
+
+### FIXED: Gateway Crash Loop — Missing dist/index.js (2026-03-26)
+
+- **Symptom:** Gateway systemd service in crash loop (85+ restarts, ~5s interval). Jarvis fully offline — no WhatsApp, no webchat, no LLM sessions. Tinker UI disconnected.
+- **Root cause:** `dist/index.js` (gateway entry point) was missing — the entire `dist/` directory was empty. Node threw `MODULE_NOT_FOUND` on every startup attempt. Likely caused by an interrupted build or merge that cleared `dist/` without completing the write.
+- **Fix:** Cleared stale caches (`dist/.cache`, `node_modules/.cache`) and rebuilt with `pnpm build`. Restarted gateway with `openclaw-restart` (SIGUSR1, 1s recovery).
+- **Rule:** After any build failure or upstream merge, verify `dist/index.js` exists before restarting. Consider adding a pre-start guard to the systemd unit and a `dist/index.js` check to `merge-guardian.sh`.
 
 ### FIXED: WhatsApp Plugin Runtime Unavailable — Two Layered Failures (2026-03-21)
 
