@@ -1,7 +1,6 @@
 import { buildDmGroupAccountAllowlistAdapter } from "openclaw/plugin-sdk/allowlist-config-edit";
 // FORK: whatsmeow login — side-effect import forces bundler inclusion
 import "./login-qr-wm.js";
-import { startWebLoginWithQr as startWebLoginWithQrWm, waitForWebLoginWm } from "./login-qr-wm.js";
 // WhatsApp-specific imports from local extension code (moved from src/web/ and src/channels/plugins/)
 import { resolveWhatsAppAccount, type ResolvedWhatsAppAccount } from "./accounts.js";
 import type { WebChannelStatus } from "./auto-reply/types.js";
@@ -13,6 +12,7 @@ import {
   resolveWhatsAppGroupRequireMention,
   resolveWhatsAppGroupToolPolicy,
 } from "./group-policy.js";
+import { startWebLoginWithQr as startWebLoginWithQrWm, waitForWebLoginWm } from "./login-qr-wm.js";
 import { looksLikeWhatsAppTargetId, normalizeWhatsAppMessagingTarget } from "./normalize.js";
 import {
   createActionGate,

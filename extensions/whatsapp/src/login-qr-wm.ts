@@ -76,6 +76,20 @@ export async function startWebLoginWithQr(
         message: "QR already active. Scan it in WhatsApp → Linked Devices.",
       };
     }
+    // If the login errored (e.g. ERR_QR from stale store), clean up and start fresh
+    if (existing.error) {
+      await resetActiveLogin(account.accountId);
+      const storePath = `${account.authDir}/whatsmeow.db`;
+      try {
+        const resolvedStore = (await import("openclaw/plugin-sdk/text-runtime")).resolveUserPath(storePath);
+        const { unlinkSync, existsSync } = await import("node:fs");
+        if (existsSync(resolvedStore)) {
+          unlinkSync(resolvedStore);
+          runtime.log(info("Cleared stale whatsmeow store after failed pairing."));
+        }
+      } catch { /* ignore */ }
+      // Fall through to create a fresh login below
+    } else {
     // Active login exists but QR hasn't arrived yet — wait for it (up to 15s)
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 500));
@@ -96,7 +110,8 @@ export async function startWebLoginWithQr(
     return {
       message: "QR generation timed out. Click Relink to try again.",
     };
-  }
+  } // end else (active login without error)
+  } // end if (existing && isLoginFresh && !existing.error)
 
   await resetActiveLogin(account.accountId);
 
@@ -111,9 +126,12 @@ export async function startWebLoginWithQr(
   const qrTimer = setTimeout(
     () => {
       rejectQr?.(new Error("Timed out waiting for WhatsApp QR"));
+      rejectQr = null;
     },
-    Math.max(opts.timeoutMs ?? 30_000, 5000),
+    Math.max(opts.timeoutMs ?? 60_000, 10000),
   );
+  // Prevent unhandled rejection from crashing the gateway
+  qrPromise.catch(() => {});
 
   // When force-relinking, delete stale whatsmeow store to avoid
   // "GetQRChannel can only be called when there's no user ID" error
@@ -209,7 +227,7 @@ export async function startWebLoginWithQr(
   // Use a generous timeout: QR scan + pairing + 515 restart can take up to 3 minutes
   login.connectionPromise = client
     .connect()
-    .then(() => client.waitForConnection(180_000))
+    .then(() => client.waitForConnection(300_000))
     .then((connected) => {
       const cur = activeLogins.get(account.accountId);
       if (cur?.id === login.id) {
