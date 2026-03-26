@@ -1185,30 +1185,53 @@ function onEvent(evt: any) {
         // render correctly as a single block.
         const hadTemps = messages.some((m: any) => m._temporary);
         if (hadTemps && p.message) {
-          // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
+          // Preserve segmented text bubbles for thinking/reasoning grouping.
+          // During streaming, tool calls freeze text into separate bubbles:
+          //   [reasoning1] [tool] [reasoning2] [tool] [final answer]
+          // Promote these segments as-is instead of concatenating everything
+          // into one blob (which destroys the thinking/answer separation).
+          // Only update the LAST text segment with the server's authoritative
+          // text to catch any tokens missed by delta throttling.
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
-          const finalText = finalContent
+          const serverText = finalContent
             .filter((b: any) => b.type === "text")
             .map((b: any) => b.text ?? "")
             .join("");
 
-          // Remove temp text-only messages, keep temp tool messages
-          messages = messages.filter((m: any) => {
-            if (!m._temporary) return true;
+          // Find the last temporary text-only message that is AFTER the last
+          // tool message (i.e. the live answer segment, not an earlier frozen one).
+          let lastTempToolIdx = -1;
+          let lastTempTextIdx = -1;
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const m = messages[i];
+            if (!m._temporary) continue;
             const c = Array.isArray(m.content) ? m.content : [];
             const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
-            return isToolMsg;
-          });
+            if (isToolMsg && lastTempToolIdx < 0) lastTempToolIdx = i;
+            if (!isToolMsg && lastTempTextIdx < 0) lastTempTextIdx = i;
+            if (lastTempToolIdx >= 0 && lastTempTextIdx >= 0) break;
+          }
 
-          // Insert the complete text as a single non-temp message after the last tool row
-          if (finalText.trim()) {
+          // Only update the last text if it's after the last tool (the final answer).
+          // If it's before (an intermediate), leave it alone.
+          const isLastTextAfterTools = lastTempTextIdx > lastTempToolIdx;
+          const finalSegment = frozenTextEnd > 0 ? serverText.slice(frozenTextEnd) : serverText;
+
+          if (lastTempTextIdx >= 0 && isLastTextAfterTools && serverText) {
+            // Update last text segment with authoritative server text
+            const textBlock = messages[lastTempTextIdx].content?.find((b: any) => b.type === "text");
+            if (textBlock) {
+              textBlock.text = finalSegment;
+            }
+          } else if ((!isLastTextAfterTools || lastTempTextIdx < 0) && finalSegment.trim()) {
+            // No temp text after last tool — add the final answer segment
             messages.push({
               role: "assistant",
-              content: [{ type: "text", text: finalText }],
+              content: [{ type: "text", text: finalSegment }],
             });
           }
 
-          // Clean up remaining temp flags
+          // Promote all temps to permanent
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
           }

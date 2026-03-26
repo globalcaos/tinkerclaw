@@ -125,11 +125,16 @@ export async function startWebLoginWithQr(
   };
   activeLogins.set(account.accountId, login);
 
-  // Start connection (async — emits QR events)
-  login.connectionPromise = connectWmClient(client, 120_000)
-    .then(() => {
+  // Start connection (async — emits QR events, then waits for pairing + 515 restart)
+  // Use a generous timeout: QR scan + pairing + 515 restart can take up to 3 minutes
+  login.connectionPromise = client.connect()
+    .then(() => client.waitForConnection(180_000))
+    .then((connected) => {
       const cur = activeLogins.get(account.accountId);
-      if (cur?.id === login.id) cur.connected = true;
+      if (cur?.id === login.id) {
+        cur.connected = connected;
+        if (!connected) cur.error = "Connection timed out after pairing";
+      }
     })
     .catch((err) => {
       const cur = activeLogins.get(account.accountId);
