@@ -1219,7 +1219,9 @@ function onEvent(evt: any) {
 
           if (lastTempTextIdx >= 0 && isLastTextAfterTools && serverText) {
             // Update last text segment with authoritative server text
-            const textBlock = messages[lastTempTextIdx].content?.find((b: any) => b.type === "text");
+            const textBlock = messages[lastTempTextIdx].content?.find(
+              (b: any) => b.type === "text",
+            );
             if (textBlock) {
               textBlock.text = finalSegment;
             }
@@ -2673,10 +2675,10 @@ function updateChat(skipScroll = false) {
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasText || plainText) assistantTextIndices.push(j);
       }
-      // During streaming, render all bubbles as normal assistant (no thinking style).
-      // After finalization, all except the last become thinking → reasoning group.
-      const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
-      const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
+      // All assistant text messages except the last in each run are thinking steps.
+      // This applies during streaming too — frozen bubbles before tool calls are
+      // definitively intermediate and slice(0,-1) already excludes the live bubble.
+      const intermediates = assistantTextIndices.slice(0, -1);
       for (const idx of intermediates) thinkingSet.add(idx);
       runStart = i + 1;
     }
