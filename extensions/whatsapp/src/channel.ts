@@ -667,7 +667,12 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm"
       ) {
-        return startWebLoginWithQrWm({ accountId, force, timeoutMs, verbose });
+        return (await loadWhatsAppChannelRuntime()).startWebLoginWithQr({
+          accountId,
+          force,
+          timeoutMs,
+          verbose,
+        });
       }
       return (await loadWhatsAppChannelRuntime()).startWebLoginWithQr({
         accountId,
@@ -681,7 +686,7 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm"
       ) {
-        return waitForWebLoginWm({ accountId, timeoutMs });
+        return (await loadWhatsAppChannelRuntime()).waitForWebLogin({ accountId, timeoutMs });
       }
       return (await loadWhatsAppChannelRuntime()).waitForWebLogin({ accountId, timeoutMs });
     },
