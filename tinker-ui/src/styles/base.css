@@ -2039,7 +2039,7 @@ body {
   padding: 3px 8px;
   border-radius: 6px;
   pointer-events: none;
-  white-space: pre;
+  white-space: pre-wrap;
   z-index: 10000;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   font-family: "SF Mono", monospace;
@@ -2524,11 +2524,9 @@ body {
   cursor: pointer;
   transition: background 0.1s;
   gap: 6px;
-  position: relative;
 }
 .session-row:hover {
   background: var(--surface2);
-  z-index: 10;
 }
 .session-row.session-active {
   background: rgba(37, 99, 235, 0.08);
@@ -2543,14 +2541,6 @@ body {
   white-space: nowrap;
   flex: 1;
   min-width: 0;
-  max-width: 160px;
-  transition: max-width 0.2s ease;
-}
-.session-row:hover .session-label {
-  overflow: visible;
-  max-width: 400px;
-  white-space: normal;
-  word-break: break-word;
 }
 .session-stats {
   font-size: 9px;
@@ -2920,11 +2910,6 @@ body {
   max-width: 180px;
   display: inline-block;
   vertical-align: middle;
-  transition: max-width 0.2s ease;
-}
-.tab:hover .tab-title {
-  max-width: 500px;
-  overflow: visible;
 }
 .tab-unattached .tab-title {
   font-style: italic;
