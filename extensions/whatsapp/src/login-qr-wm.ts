@@ -116,18 +116,17 @@ export async function startWebLoginWithQr(
     }
   }
 
+  // FORK: Import live-capture directly to ensure it's bound during bootstrap
+  let bindCapture: ((c: WhatsmeowClient) => void) | null = null;
+  try {
+    const captureMod = await import("../../../src/whatsapp-history/live-capture-wm.js");
+    bindCapture = captureMod.bindWmHistoryCapture;
+  } catch {
+    // Will fall back to session-wm.ts binding
+  }
+
   let client: WhatsmeowClient;
   try {
-    // FORK: Import live-capture directly to ensure it's bound during bootstrap
-    // The import through session-wm.ts may get tree-shaken in the bundle
-    let bindCapture: ((c: WhatsmeowClient) => void) | null = null;
-    try {
-      const captureMod = await import("../../../src/whatsapp-history/live-capture-wm.js");
-      bindCapture = captureMod.bindWmHistoryCapture;
-    } catch {
-      // Will fall back to session-wm.ts binding
-    }
-
     client = await createWmClient({
       verbose: opts.verbose,
       onQr: (code) => {
