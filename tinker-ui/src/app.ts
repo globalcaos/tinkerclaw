@@ -4441,21 +4441,64 @@ function init() {
     body.querySelectorAll(".alt-wa-btn").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const action = (btn as HTMLElement).dataset.action;
+        let action = (btn as HTMLElement).dataset.action;
         const qrArea = document.getElementById("wa-qr-area");
         if (action === "qr" || action === "relink") {
           if (qrArea)
             qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
-          const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
-            message: (err as Error).message,
-          }))) as any;
-          if (qrArea) {
-            if (r?.qrDataUrl) {
-              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
-            } else {
-              qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
+          // Auto-refreshing QR flow: poll for new QRs + wait for connection
+          let qrActive = true;
+          let lastQrUrl = "";
+          let qrRetries = 0;
+          const maxQrRetries = 15; // ~3 minutes total
+          const refreshQr = async () => {
+            while (qrActive && qrRetries < maxQrRetries) {
+              try {
+                // Always force=true so dead sockets get replaced
+                const r = (await req("web.login.start", { force: true })) as any;
+                if (qrArea && r?.qrDataUrl && r.qrDataUrl !== lastQrUrl) {
+                  lastQrUrl = r.qrDataUrl;
+                  qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">Scan with WhatsApp → Linked Devices</div><div style="font-size:9px;color:var(--muted);margin-top:2px">QR auto-refreshes</div></div>`;
+                  qrRetries = 0; // reset retry count on successful QR
+                } else if (qrArea && !r?.qrDataUrl) {
+                  qrRetries++;
+                  if (!lastQrUrl) {
+                    qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Waiting for QR… (${qrRetries})</div>`;
+                  }
+                }
+              } catch (err) {
+                qrRetries++;
+                if (qrArea && !lastQrUrl) {
+                  qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Retrying… (${qrRetries})</div>`;
+                }
+              }
+              await new Promise((r) => setTimeout(r, 12000));
             }
-          }
+            if (qrActive && qrArea) {
+              qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">QR timed out. Click Relink to try again.</div>`;
+            }
+          };
+          const waitForLink = async () => {
+            while (qrActive) {
+              try {
+                const w = (await req("web.login.wait", { timeoutMs: 30000 })) as any;
+                if (w?.connected) {
+                  qrActive = false;
+                  if (qrArea) {
+                    qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:#86efac">✅ Linked! WhatsApp is ready.</div>`;
+                    setTimeout(() => renderAltView("channels"), 2000);
+                  }
+                  return;
+                }
+                // Not connected yet — keep polling (the server-side wait timed out, which is normal)
+              } catch {
+                // Request failed — retry
+              }
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+          };
+          refreshQr();
+          waitForLink();
         } else if (action === "probe") {
           await req("channels.status", { probe: true }).catch(() => null);
           renderAltView("channels");
