@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { loadConfig } from "openclaw/plugin-sdk/config-runtime";
+
 import { danger, info, success } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { resolveWhatsAppAccount } from "./accounts.js";
@@ -58,7 +58,8 @@ export async function startWebLoginWithQr(
 ): Promise<{ qrDataUrl?: string; message: string }> {
   const runtime =
     opts.runtime ?? ({ log: (...args: unknown[]) => console.log(...args) } as RuntimeEnv);
-  const cfg = loadConfig();
+  const { loadConfig: _loadConfig } = await import("openclaw/plugin-sdk/config-runtime");
+  const cfg = _loadConfig();
   const account = resolveWhatsAppAccount({ cfg, accountId: opts.accountId });
 
   // Re-use a fresh login if one exists — NEVER kill an active login just because
@@ -228,7 +229,8 @@ export async function waitForWebLoginWm(
 ): Promise<{ connected: boolean; message: string }> {
   const runtime =
     opts.runtime ?? ({ log: (...args: unknown[]) => console.log(...args) } as RuntimeEnv);
-  const cfg = loadConfig();
+  const { loadConfig: _loadConfig } = await import("openclaw/plugin-sdk/config-runtime");
+  const cfg = _loadConfig();
   const account = resolveWhatsAppAccount({ cfg, accountId: opts.accountId });
   const login = activeLogins.get(account.accountId);
 
