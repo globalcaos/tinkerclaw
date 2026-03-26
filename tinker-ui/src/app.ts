@@ -2815,8 +2815,15 @@ function attachSessionToTab(key: string) {
 
   tab.sessionKey = key;
   tab.isAttached = true;
-  const sess = sessions.find((s: any) => s.key === key);
-  if (sess?.label) tab.title = sess.label.slice(0, 30);
+  // FORK: Preserve the fortune already associated with this session key
+  const storedFortune = getFortuneTitle(key);
+  if (storedFortune) {
+    tab.title = storedFortune;
+  } else {
+    const sess = sessions.find((s: any) => s.key === key);
+    if (sess?.label) tab.title = sess.label.slice(0, 30);
+  }
+  saveFortuneTitle(key, tab.title);
 
   sessionKey = key;
   messages = [];
@@ -3495,8 +3502,15 @@ function updateSessionsPanel() {
       const newTab = createTab();
       newTab.sessionKey = key;
       newTab.isAttached = true;
-      const sess = sessions.find((s: any) => s.key === key);
-      if (sess?.label) newTab.title = sess.label.slice(0, 30);
+      // FORK: Preserve the fortune already associated with this session key
+      const storedFortune = getFortuneTitle(key);
+      if (storedFortune) {
+        newTab.title = storedFortune;
+      } else {
+        const sess = sessions.find((s: any) => s.key === key);
+        if (sess?.label) newTab.title = sess.label.slice(0, 30);
+      }
+      saveFortuneTitle(key, newTab.title);
       renderTabs();
       switchToTab(newTab.id);
     });
