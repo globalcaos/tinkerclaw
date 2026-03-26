@@ -2258,6 +2258,9 @@ function renderMsg(
         // System-injected messages (runtime context, subagent results) → system style
         if (SYSTEM_INJECTED_RE.test(userText)) {
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
+        } else if (/^⚠️|^⚠/.test(userText)) {
+          // FORK: Gateway restart / warning messages → orange centered alert bubble
+          h += renderSystemMsg(userText, idx);
         } else {
           h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
         }
@@ -2306,6 +2309,9 @@ function renderMsg(
           // System-injected messages (runtime context, subagent results) → system style
           if (SYSTEM_INJECTED_RE.test(userText)) {
             h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
+          } else if (/^⚠️|^⚠/.test(userText)) {
+            // FORK: Gateway restart / warning messages → orange centered alert bubble
+            h += renderSystemMsg(userText, idx);
           } else {
             h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
           }
