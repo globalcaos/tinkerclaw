@@ -93,6 +93,24 @@ export async function startWebLoginWithQr(
     Math.max(opts.timeoutMs ?? 30_000, 5000),
   );
 
+  // When force-relinking, delete stale whatsmeow store to avoid
+  // "GetQRChannel can only be called when there's no user ID" error
+  if (opts.force) {
+    const storePath = `${account.authDir}/whatsmeow.db`;
+    const resolvedStore = (await import("openclaw/plugin-sdk/text-runtime")).resolveUserPath(
+      storePath,
+    );
+    try {
+      const { unlinkSync, existsSync } = await import("node:fs");
+      if (existsSync(resolvedStore)) {
+        unlinkSync(resolvedStore);
+        runtime.log(info("Cleared stale whatsmeow store for fresh pairing."));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   let client: WhatsmeowClient;
   try {
     client = await createWmClient({
