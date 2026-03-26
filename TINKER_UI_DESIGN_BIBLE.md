@@ -852,6 +852,18 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Fix:** Added `/^⚠️|^⚠/.test(userText)` check in both user-text rendering paths (legacy string format + content blocks) before the default user bubble fallback.
 - **Files:** `app.ts` (two sites: ~line 2262, ~line 2313)
 
+### 5.42 Fortune Cookie Predictions & Session Title Persistence (2026-03-26)
+
+- **Status:** `DEPLOYED`
+- **What:** New session tabs display a spiritual seer prediction (fortune cookie) as their title. Predictions are Buddhist/mindfulness-themed (shamatha, vipassana, metta, mind mastery) and serve as positive affirmations encouraging thought awareness and inner sovereignty.
+- **Fortune array:** 217 predictions in `FORTUNE_COOKIES[]`, each 12-25 words. ~50% conditional format with varied structures (imperatives, "the moment you...", "whoever...", "catch/master/refuse..."). 106 unique emoji icons (max 4 of any single icon). Categories: Shamatha, Vipassana, Mastering the Mind, Metta, Awareness, Non-Attachment, Karma, Impermanence, Equanimity, The Seer's Crystal Ball, Abundance, Connection, Destiny, Protection, Transformation, Joy, Wisdom, New Beginnings.
+- **Title persistence:** `tinker-fortune-map` localStorage key stores `sessionKey → title` map. `saveFortuneTitle()` / `getFortuneTitle()` functions. Persisted on tab create + every `saveTabs()` call. Survives tab close — orphaned server sessions retain their original fortune.
+- **Auto-assign:** `renderSessionRow()` auto-assigns a random fortune to tinker sessions with no stored title (prevents generic "Tinker UI" label from server's `displayName`).
+- **Click consistency:** Both `attachSessionToTab()` and session-row click handler check `getFortuneTitle(key)` before falling back to `sess.label`. A session's fortune never changes once assigned.
+- **Tab clamping:** `.tab-title` has `max-width: 180px` + `text-overflow: ellipsis`. Full text visible via `data-hint` tooltip (existing `#global-hint` system). Session labels use same `data-hint` approach.
+- **Global hint:** `#global-hint` CSS changed from `white-space: pre` to `pre-wrap` so longer fortune text wraps within the 320px tooltip.
+- **Files:** `app.ts` (FORTUNE_COOKIES array, persistence functions, renderTabs, renderSessionRow, attachSessionToTab, createTab, classifySession), `base.css` (.tab-title, #global-hint)
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
