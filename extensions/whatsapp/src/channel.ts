@@ -1,4 +1,7 @@
 import { buildDmGroupAccountAllowlistAdapter } from "openclaw/plugin-sdk/allowlist-config-edit";
+// FORK: whatsmeow login — side-effect import forces bundler inclusion
+import "./login-qr-wm.js";
+import { startWebLoginWithQr as startWebLoginWithQrWm, waitForWebLoginWm } from "./login-qr-wm.js";
 // WhatsApp-specific imports from local extension code (moved from src/web/ and src/channels/plugins/)
 import { resolveWhatsAppAccount, type ResolvedWhatsAppAccount } from "./accounts.js";
 import type { WebChannelStatus } from "./auto-reply/types.js";
@@ -664,8 +667,7 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm"
       ) {
-        const { startWebLoginWithQr: startWm } = await import("./login-qr-wm.js");
-        return startWm({ accountId, force, timeoutMs, verbose });
+        return startWebLoginWithQrWm({ accountId, force, timeoutMs, verbose });
       }
       return (await loadWhatsAppChannelRuntime()).startWebLoginWithQr({
         accountId,
@@ -679,7 +681,6 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
         process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm"
       ) {
-        const { waitForWebLoginWm } = await import("./login-qr-wm.js");
         return waitForWebLoginWm({ accountId, timeoutMs });
       }
       return (await loadWhatsAppChannelRuntime()).waitForWebLogin({ accountId, timeoutMs });
