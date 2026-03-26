@@ -4,7 +4,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-
 import { danger, info, success } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { resolveWhatsAppAccount } from "./accounts.js";
