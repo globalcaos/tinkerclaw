@@ -250,7 +250,7 @@ export function createHumorTrigger(
 
       // Score the top bridge
       const topBridge = bridges[0];
-      const score = limbicRuntime.scoreHumor(conceptA, conceptB, topBridge.bridge);
+      const score = await limbicRuntime.scoreHumor(conceptA, conceptB, topBridge.bridge);
 
       // Generate a stable attempt ID and persist it to the event store.
       const attemptId = `ha-${turnCount}-${Date.now()}`;

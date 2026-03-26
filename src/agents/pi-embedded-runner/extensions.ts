@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
+import { createOllamaEmbeddingProvider } from "../../memory/embeddings-ollama.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
@@ -143,8 +144,29 @@ export function buildEmbeddedExtensionFactories(params: {
     setObservationRuntime(params.sessionManager, observationRuntime);
 
     // Phase 4 (LIMBIC): wire humor pipeline using CORTEX for audience modeling.
+    // FORK: Use ollama mxbai-embed-large for semantic embeddings in humor bridge discovery.
+    // Provider creation is async but buildEmbeddedExtensionFactories is sync.
+    // Create runtime immediately (FNV-1a fallback), then upgrade once ollama resolves.
     const limbicRuntime = createLimbicRuntime(eventStore, {}, cortexRuntime);
     setLimbicRuntime(params.sessionManager, limbicRuntime);
+    createOllamaEmbeddingProvider({
+      config: params.cfg ?? ({} as import("../../config/config.js").OpenClawConfig),
+      provider: "ollama",
+      model: "mxbai-embed-large",
+      fallback: "none",
+    })
+      .then(({ provider }) => {
+        // Hot-swap: re-create runtime with real embeddings once provider is ready.
+        const semanticRuntime = createLimbicRuntime(
+          eventStore,
+          { embeddingProvider: provider },
+          cortexRuntime,
+        );
+        setLimbicRuntime(params.sessionManager, semanticRuntime);
+      })
+      .catch((err) => {
+        console.warn(`[limbic] Ollama embedding unavailable, keeping FNV-1a: ${err}`);
+      });
 
     factories.push(compactionEngramExtension(params.cfg));
   } else if (compactionMode === "safeguard") {
