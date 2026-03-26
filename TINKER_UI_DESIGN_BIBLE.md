@@ -468,7 +468,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Deployed:** 2026-03-02 (commit `fd164f50b` + `81800be95`)
 - **Unified layout (2026-03-05, commit `1cdb6c9ba`):** Flattened into two collapsible sections:
   - **FALLBACK CHAIN** — primary + fallbacks (all use circled numbers ①②③④). Contains ALL auth profile rows for each model.
-  - **CONFIGURED** — other models not in fallback chain, sorted by performance tier
+  - **CONFIGURED** — other models not in fallback chain, sorted by performance tier. **Starts collapsed** on page load (fallback chain starts open).
   - When collapsed, only active (glowing) models remain visible
 - **Data source:** `config.models` gateway method (fork-only, commit `1cdb6c9ba`) — reads config + auth store, returns labels, auth order, cooldown-aware profile resolution
 - **Per-auth-profile rows:** Provider SVG icons, model name, auth key label (from `authProfiles[keyId].label`), mode suffix

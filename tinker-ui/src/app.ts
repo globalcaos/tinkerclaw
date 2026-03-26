@@ -4485,7 +4485,9 @@ function init() {
             while (qrActive && qrRetries < maxQrRetries) {
               try {
                 // First call: force=true to relink. Subsequent: force=false to get existing QR
-                const r = (await req("web.login.start", { force: isFirstCall && action === "relink" })) as any;
+                const r = (await req("web.login.start", {
+                  force: isFirstCall && action === "relink",
+                })) as any;
                 isFirstCall = false;
                 if (qrArea && r?.qrDataUrl && r.qrDataUrl !== lastQrUrl) {
                   lastQrUrl = r.qrDataUrl;
