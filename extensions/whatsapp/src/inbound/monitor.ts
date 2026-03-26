@@ -36,10 +36,25 @@ export async function monitorWebInbox(options: {
 }) {
   const inboundLogger = getChildLogger({ module: "web-inbound" });
   const inboundConsoleLog = createSubsystemLogger("gateway/channels/whatsapp").child("inbound");
-  const sock = await createWaSocket(false, options.verbose, {
-    authDir: options.authDir,
-  });
-  await waitForWaConnection(sock);
+
+  // FORK: whatsmeow backend support — use Baileys adapter over whatsmeow-node
+  const useWhatsmeow = process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow"
+    || process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
+  let sock: Awaited<ReturnType<typeof createWaSocket>>;
+  if (useWhatsmeow) {
+    const { createWmMonitorSocket } = await import("./monitor-wm.js");
+    const { adapter } = await createWmMonitorSocket({
+      verbose: options.verbose,
+      authDir: options.authDir,
+    });
+    sock = adapter as unknown as Awaited<ReturnType<typeof createWaSocket>>;
+    inboundLogger.info("Using whatsmeow-node backend");
+  } else {
+    sock = await createWaSocket(false, options.verbose, {
+      authDir: options.authDir,
+    });
+    await waitForWaConnection(sock);
+  }
   const connectedAtMs = Date.now();
 
   let onCloseResolve: ((reason: WebListenerCloseReason) => void) | null = null;

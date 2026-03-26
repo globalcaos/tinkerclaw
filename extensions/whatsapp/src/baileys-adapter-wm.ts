@@ -19,12 +19,14 @@ type WAPresence = "available" | "unavailable" | "composing" | "recording" | "pau
  * Minimal Baileys-compatible event emitter that bridges whatsmeow events.
  */
 class BaileysEventBridge extends EventEmitter {
-  constructor(private wmClient: WhatsmeowClient) {
+  /** @internal */ wmClient: WhatsmeowClient;
+  constructor(wmClient: WhatsmeowClient) {
     super();
+    this.wmClient = wmClient;
     this.wireEvents();
   }
 
-  private wireEvents() {
+  /** @internal */ wireEvents() {
     // Map whatsmeow "message" → Baileys "messages.upsert"
     this.wmClient.on("message", ({ info, message }) => {
       const baileysMsg = {
