@@ -1930,8 +1930,8 @@ function md(text: string): string {
   );
   // Fractal reflection styling (green)
   h = h.replace(
-    /<strong>🌿 FRACTAL:<\/strong>\s*<em>(.*?)<\/em>/gi,
-    '<strong style="color:#2ECC71">🌿 FRACTAL:</strong> <em style="color:#2ECC71">$1</em>',
+    /<strong>(🌿 FRACTAL[^<]*?)<\/strong>\s*<em>(.*?)<\/em>/gi,
+    '<strong style="color:#2ECC71">$1</strong> <em style="color:#2ECC71">$2</em>',
   );
   return h;
 }

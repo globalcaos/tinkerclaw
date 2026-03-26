@@ -642,67 +642,41 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
  * - Correction acknowledgment ("you're right", "my bad", "I was wrong")
  * - Error/failure mention ("failed", "broke", "bug", "mistake")
  * - Surprise/contradiction ("unexpected", "actually", "turns out")
- * - Fix/patch language ("fixed", "patched", "updated", "resolved")
- *
- * Rate limit: max 1 fractal pass per session per 5 minutes.
+ * Fires on EVERY turn — no trigger words, no cooldown.
+ * The fractal pass has full session context and must always find something to reflect on.
  */
-const fractalCooldowns = new Map<string, number>();
-const FRACTAL_COOLDOWN_MS = 5 * 60 * 1000;
 
-const FRACTAL_TRIGGERS = [
-  /you'?re right/i,
-  /my bad/i,
-  /I was wrong/i,
-  /apolog/i,
-  /corrected/i,
-  /\bfailed\b/i,
-  /\bbroke\b/i,
-  /\bbug\b/i,
-  /\bmistake\b/i,
-  /\berror\b/i,
-  /unexpected/i,
-  /turns out/i,
-  /actually,/i,
-  /contradicts/i,
-  /surprised/i,
-  /\bfixed\b/i,
-  /\bpatched\b/i,
-  /\bresolved\b/i,
-  // Success signals (trigger blueprint updates)
-  /\bdone\b.*\bpushed\b/i,
-  /\bshipped\b/i,
-  /\bcompleted\b/i,
-  /\bmerged\b/i,
-  /all.*tests.*pass/i,
-  /\bdeployed\b/i,
-  /✅/,
-];
+const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (every turn)
 
-const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (auto-triggered)
+You just delivered a response. Now climb the fractal ladder. Do NOT repeat your previous response.
 
-You just delivered a response. Something in it triggered a fractal check. Do NOT repeat your previous response.
+## What is fractal thinking?
+You look at what just happened and zoom out — level by level — from the specific event to the pattern to the system to the worldview. Like a fern: the same structure at every scale. The thing → the pattern → the system → the worldview. Each level reveals something the level below can't see.
 
-Do TWO things:
+## Your output format
+Use the green fractal tag for EACH level so it renders with color in the UI:
+**🌿 FRACTAL Level X:** *your 1-2 sentence insight*
 
-## 1. DEPTH CLIMB
-- Depth 2: What PATTERN does this belong to? Has this class of thing happened before?
-- Depth 3: What about your architecture/process PRODUCES this pattern?
+Always produce at least Level 2.
 
-## 2. RIPPLE SCAN
-Scan across everything we've built for knock-on effects:
-- Does this change make anything STALE? (README, website articles, marketing copy, paper descriptions, Todoist tasks, memory files)
-- Does this open a new OPPORTUNITY? (blog post angle, marketing hook, feature to showcase, skill to publish)
-- Does this BREAK or IMPROVE something adjacent? (other crons, other skills, upstream merge, documentation)
-- Should any public-facing content be updated? (thetinkerzone.com, GitHub repo, ClawHub, campaign materials)
+**Level 1** (the thing): What just happened? What did you do or say? (Skip this — your previous response already covered it.)
 
-If you find stale items or ripple effects:
-1. Append them to memory/knowledge/ripple-tracker.md with today's date, what changed, and what needs updating
-2. Surface the most important 1-2 ripples briefly in your reply
+**Level 2** (the pattern): What pattern does this belong to? Has this class of thing happened before? What does it rhyme with across your memory?
 
-If you find a depth insight, state it in 2-3 sentences as a natural follow-up.
-If nothing worth adding, respond with exactly: NO_REPLY
+**Level 3** (the system): What about your architecture, process, or habits PRODUCES this pattern? What structural thing makes this keep happening?
 
-Do NOT narrate the process. Just deliver insights and flag ripples naturally.`;
+**Level 4** (the worldview): What assumption or belief underlies the system? Is it still true? Should it change?
+
+Not every turn needs Level 4. But every turn has at least a Level 2. Even a routine answer belongs to a pattern worth naming.
+
+## ACT FIRST, THEN EXPLAIN
+If any level reveals an improvement you can make (fix a file, update a doc, encode a lesson, close a stale item):
+1. **Do it NOW** — use edit/write/exec tools. No asking, no suggesting, no "should."
+2. **Then explain what you did** after the fractal levels, e.g.: "Updated operational-lessons.md with X. Fixed stale reference in Y."
+
+If your fractal level contains the word "should" or "would" and the action is within your power — that's a bug. Convert it to a tool call.
+
+There is always something to reflect on. Never reply NO_REPLY.`;
 
 export function maybeTriggerFractalReflection(
   assistantTexts: string[],
@@ -713,22 +687,8 @@ export function maybeTriggerFractalReflection(
     return;
   }
 
-  // Check cooldown
-  const lastFired = fractalCooldowns.get(sessionKey) ?? 0;
-  if (Date.now() - lastFired < FRACTAL_COOLDOWN_MS) {
-    return;
-  }
-
-  // Check trigger signals
-  const fullText = assistantTexts.join(" ");
-  const triggered = FRACTAL_TRIGGERS.some((re) => re.test(fullText));
-  if (!triggered) {
-    return;
-  }
-
-  // Fire fractal reflection via system event
-  fractalCooldowns.set(sessionKey, Date.now());
-  log.info("[fractal] trigger detected — injecting reflection pass");
+  // Fire fractal reflection on every turn — no triggers, no cooldown
+  log.info("[fractal] injecting reflection pass");
 
   const { exec } = require("node:child_process");
   exec(
