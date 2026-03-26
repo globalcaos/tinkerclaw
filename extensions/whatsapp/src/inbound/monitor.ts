@@ -8,9 +8,14 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
 import { jidToE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
-// FORK: whatsmeow backend — static imports so bundler includes them
-import { createWmClient, connectWmClient } from "../session-wm.js";
-import { createBaileysAdapter } from "../baileys-adapter-wm.js";
+// FORK: whatsmeow backend — force bundler to include these modules
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import * as _wmSession from "../session-wm.js";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import * as _wmAdapter from "../baileys-adapter-wm.js";
+const createWmClient = _wmSession.createWmClient;
+const connectWmClient = _wmSession.connectWmClient;
+const createBaileysAdapter = _wmAdapter.createBaileysAdapter;
 import { checkInboundAccessControl } from "./access-control.js";
 import { isRecentInboundMessage } from "./dedupe.js";
 import {

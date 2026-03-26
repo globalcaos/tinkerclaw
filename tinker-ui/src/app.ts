@@ -2700,7 +2700,7 @@ function renderTabs() {
       ? ""
       : `<span class="tab-close" data-tab-close="${tab.id}">&times;</span>`;
 
-    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" title="${escapeHtml(tab.title)}">
+    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
   }
@@ -3565,7 +3565,7 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
   return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
-    <span class="session-label" title="${escapeHtml(label)}">${esc(label)} ${channel}</span>
+    <span class="session-label" data-hint="${escapeHtml(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
