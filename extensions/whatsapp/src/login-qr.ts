@@ -131,11 +131,23 @@ export async function startWebLoginWithQr(
   }
 
   const existing = activeLogins.get(account.accountId);
-  if (existing && isLoginFresh(existing) && existing.qrDataUrl) {
-    return {
-      qrDataUrl: existing.qrDataUrl,
-      message: "QR already active. Scan it in WhatsApp → Linked Devices.",
-    };
+  if (existing && isLoginFresh(existing)) {
+    // If the login already errored (e.g. 408 QR timeout), tear it down and start fresh
+    if (existing.error || existing.errorStatus) {
+      await resetActiveLogin(account.accountId, "Previous login attempt failed; starting fresh.");
+    } else {
+      // If we have a current QR but stale data URL, regenerate it
+      if (existing.qr && !existing.qrDataUrl) {
+        const base64 = await renderQrPngBase64(existing.qr);
+        existing.qrDataUrl = `data:image/png;base64,${base64}`;
+      }
+      if (existing.qrDataUrl) {
+        return {
+          qrDataUrl: existing.qrDataUrl,
+          message: "QR already active. Scan it in WhatsApp → Linked Devices.",
+        };
+      }
+    }
   }
 
   await resetActiveLogin(account.accountId);
@@ -160,17 +172,29 @@ export async function startWebLoginWithQr(
     sock = await createWaSocket(false, Boolean(opts.verbose), {
       authDir: account.authDir,
       onQr: (qr: string) => {
-        if (pendingQr) {
-          return;
-        }
         pendingQr = qr;
         const current = activeLogins.get(account.accountId);
-        if (current && !current.qr) {
+        if (current) {
           current.qr = qr;
+          current.qrDataUrl = undefined; // will be regenerated on next request
         }
-        clearTimeout(qrTimer);
-        runtime.log(info("WhatsApp QR received."));
-        resolveQr?.(qr);
+        if (resolveQr) {
+          // First QR resolves the initial promise
+          clearTimeout(qrTimer);
+          runtime.log(info("WhatsApp QR received."));
+          resolveQr(qr);
+          resolveQr = null; // prevent double resolve
+        } else {
+          // Subsequent QRs (auto-refresh): update the login entry
+          runtime.log(info("WhatsApp QR refreshed."));
+          // Regenerate the data URL immediately for waiting clients
+          void renderQrPngBase64(qr).then((base64) => {
+            const refreshed = activeLogins.get(account.accountId);
+            if (refreshed && refreshed.qr === qr) {
+              refreshed.qrDataUrl = `data:image/png;base64,${base64}`;
+            }
+          });
+        }
       },
     });
   } catch (err) {
