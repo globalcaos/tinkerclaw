@@ -217,7 +217,11 @@ export async function startWebLoginWithQr(
 
   const base64 = await renderQrPngBase64(qrCode);
   login.qrDataUrl = `data:image/png;base64,${base64}`;
-  return { qrDataUrl: login.qrDataUrl, qrCode: qrCode, message: "Scan this QR in WhatsApp → Linked Devices." };
+  return {
+    qrDataUrl: login.qrDataUrl,
+    qrCode: qrCode,
+    message: "Scan this QR in WhatsApp → Linked Devices.",
+  };
 }
 
 /**
