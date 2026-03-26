@@ -845,6 +845,13 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Collapsed behavior preserved:** `.model-group:not(.open) > .model-group-body > .model-row:not(.model-live)` CSS rule keeps glowing rows visible when section is collapsed. The fix flows through `getAuthKeyCounts()` → `count > 0` → `.model-live` class → row stays visible.
 - **Files:** `app.ts`
 
+### 5.41 Gateway Restart Messages — Orange Centered Bubbles (2026-03-26)
+
+- **Status:** `DEPLOYED`
+- **What:** Gateway restart messages (`⚠️ Gateway restarted while processing your message...`) were rendering as green right-justified user bubbles because they arrive via `agentCommand` as `role: "user"`. Now detected by `⚠️`/`⚠` prefix and routed through `renderSystemMsg()`, which applies `.system-alert` — centered, orange (`#fb923c`), with subtle background.
+- **Fix:** Added `/^⚠️|^⚠/.test(userText)` check in both user-text rendering paths (legacy string format + content blocks) before the default user bubble fallback.
+- **Files:** `app.ts` (two sites: ~line 2262, ~line 2313)
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
