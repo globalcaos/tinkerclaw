@@ -816,7 +816,7 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-const collapsedModelSections = new Set<string>();
+const collapsedModelSections = new Set<string>(["configured"]);
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
@@ -4479,12 +4479,14 @@ function init() {
           let qrActive = true;
           let lastQrUrl = "";
           let qrRetries = 0;
+          let isFirstCall = true;
           const maxQrRetries = 15; // ~3 minutes total
           const refreshQr = async () => {
             while (qrActive && qrRetries < maxQrRetries) {
               try {
-                // Always force=true so dead sockets get replaced
-                const r = (await req("web.login.start", { force: true })) as any;
+                // First call: force=true to relink. Subsequent: force=false to get existing QR
+                const r = (await req("web.login.start", { force: isFirstCall && action === "relink" })) as any;
+                isFirstCall = false;
                 if (qrArea && r?.qrDataUrl && r.qrDataUrl !== lastQrUrl) {
                   lastQrUrl = r.qrDataUrl;
                   qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">Scan with WhatsApp → Linked Devices</div><div style="font-size:9px;color:var(--muted);margin-top:2px">QR auto-refreshes</div></div>`;
