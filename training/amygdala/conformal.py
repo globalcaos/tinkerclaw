@@ -189,11 +189,17 @@ class ConformalCalibrator:
             results[key] = self.calibrate_from_db(db_path, key)
             q    = results[key]
             flag = " [MISCALIBRATED]" if results[key].get("miscalibrated") else ""
+            cov = results[key].get('coverage')
+            asz = results[key].get('avg_set_size')
+            qual = results[key].get('quality')
+            cov_s = f"{cov:.3f}" if isinstance(cov, (int, float)) else "N/A"
+            asz_s = f"{asz:.2f}" if isinstance(asz, (int, float)) else "N/A"
+            qual_s = f"{qual:.2f}" if isinstance(qual, (int, float)) else "N/A"
             print(
                 f"[conformal] {key.upper()}: "
-                f"coverage={results[key].get('coverage', 'N/A'):.3f} "
-                f"avg_set_size={results[key].get('avg_set_size', 'N/A'):.2f} "
-                f"quality={results[key].get('quality', 0):.2f}{flag}"
+                f"coverage={cov_s} "
+                f"avg_set_size={asz_s} "
+                f"quality={qual_s}{flag}"
             )
         return results
 

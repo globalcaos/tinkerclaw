@@ -117,8 +117,9 @@ def export_prudence(
         model.eval()
         torch.onnx.export(
             wrapped,
-            (dummy,dynamo=False),
+            (dummy,),
             output_path,
+            dynamo=False,
             input_names=["sequence"],
             output_names=["gate_probabilities", "confidence", "ambiguity"],
             dynamic_axes={
@@ -158,8 +159,9 @@ def export_prudence(
         model.eval()
         torch.onnx.export(
             w2,
-            (dummy_ctx, dummy_curdynamo=False),
+            (dummy_ctx, dummy_cur),
             output_path,
+            dynamo=False,
             input_names=["context", "current"],
             output_names=["gate_probabilities", "confidence", "ambiguity"],
             dynamic_axes={
@@ -188,8 +190,9 @@ def export_prudence(
         model.eval()
         torch.onnx.export(
             w3,
-            (dummy_cur,dynamo=False),
+            (dummy_cur,),
             output_path,
+            dynamo=False,
             input_names=["current"],
             output_names=["gate_probabilities", "confidence", "ambiguity"],
             dynamic_axes={
@@ -234,7 +237,7 @@ def export_personality(
 
         model.eval()
         torch.onnx.export(
-            _PerABCWrapper(modeldynamo=False),
+            _PerABCWrapper(model),
             (dummy,),
             output_path,
             input_names=["sequence"],
@@ -259,7 +262,7 @@ def export_personality(
 
         model.eval()
         torch.onnx.export(
-            _PerDWrapper(modeldynamo=False),
+            _PerDWrapper(model),
             (dummy_ctx, dummy_cur),
             output_path,
             input_names=["context", "current"],
@@ -284,7 +287,7 @@ def export_personality(
 
         model.eval()
         torch.onnx.export(
-            _PerEWrapper(modeldynamo=False),
+            _PerEWrapper(model),
             (dummy_cur,),
             output_path,
             input_names=["current"],
