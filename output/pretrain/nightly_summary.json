@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-03-26T04:33:19.307014",
+  "started_at": "2026-03-27T04:35:10.235911",
   "steps": {
     "reward_labeling": {
       "labeled": 0,
@@ -7,53 +7,61 @@
     },
     "ppo": {
       "prudence_a": {
-        "policy_loss": -0.0003,
-        "value_loss": 6.5439,
-        "entropy": 0.7119,
-        "approx_kl": 0.1788
+        "policy_loss": 0.0074,
+        "value_loss": 6.5044,
+        "entropy": 0.8263,
+        "approx_kl": 0.2397
       },
       "prudence_b": {
-        "policy_loss": -0.0029,
-        "value_loss": 6.8715,
-        "entropy": 0.0902,
-        "approx_kl": 0.0255
+        "policy_loss": -0.0012,
+        "value_loss": 6.8538,
+        "entropy": 0.001,
+        "approx_kl": 0.0004
       },
       "prudence_c": {
-        "policy_loss": -0.0008,
-        "value_loss": 6.6209,
-        "entropy": 0.0022,
-        "approx_kl": 0.0019
+        "policy_loss": -0.0017,
+        "value_loss": 6.8427,
+        "entropy": 0.0016,
+        "approx_kl": 0.0016
       },
       "prudence_d": {
-        "policy_loss": -0.0029,
-        "value_loss": 6.8102,
-        "entropy": 0.8635,
-        "approx_kl": 0.1135
+        "policy_loss": 0.0012,
+        "value_loss": 6.5681,
+        "entropy": 0.9144,
+        "approx_kl": 0.1542
       },
       "prudence_e": {
-        "policy_loss": 0.0004,
-        "value_loss": 6.4921,
-        "entropy": 0.3524,
-        "approx_kl": 0.0215
+        "policy_loss": -0.0001,
+        "value_loss": 6.5011,
+        "entropy": 0.3755,
+        "approx_kl": 0.0223
       }
     },
     "finetune": {
-      "prudence_a": 0.19569370536243214,
-      "personality_a": 0.0038670034202582695,
-      "prudence_b": 0.1655849188566208,
-      "personality_b": 0.0021944653544136708,
-      "prudence_c": 0.16730817240827223,
-      "personality_c": 0.0015529360375641024,
-      "prudence_d": 0.22670505905852598,
-      "personality_d": 0.0011628840680179351,
-      "prudence_e": 0.18155538474812227,
-      "personality_e": 8.345680051955723e-5
+      "prudence_a": 0.1863592037383248,
+      "personality_a": 0.007261508730623652,
+      "prudence_b": 0.1654789405710557,
+      "personality_b": 0.0022256241097827166,
+      "prudence_c": 0.1666015723172356,
+      "personality_c": 0.0022669312598950723,
+      "prudence_d": 0.19506722232874701,
+      "personality_d": 0.0009726385928361731,
+      "prudence_e": 0.1783514958970687,
+      "personality_e": 8.689387400141533e-05
     },
     "conformal": {
-      "error": "Unknown format code 'f' for object of type 'str'"
+      "avg_set_size": 3.0,
+      "avg_coverage": 0.0,
+      "quality": {
+        "a": 0.5,
+        "b": 0.5,
+        "c": 0.5,
+        "d": 0.5,
+        "e": 0.5
+      }
     },
     "onnx": {
-      "error": "invalid syntax. Maybe you meant '==' or ':=' instead of '='? (export_onnx.py, line 120)"
+      "error": "[ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : Non-zero status code returned while running Reshape node. Name:'gemm_input_reshape' Status Message: /onnxruntime_src/onnxruntime/core/providers/cpu/tensor/reshape_helper.h:45 onnxruntime::ReshapeHelper::ReshapeHelper(const onnxruntime::TensorShape&, onnxruntime::TensorShapeVector&, bool) input_shape_size == size was false. The input tensor cannot be reshaped to the requested shape. Input shape:{32,2,96}, requested shape:{32,96}\n"
     },
     "meta_learner": "ok",
     "trust_ramp": {
@@ -62,6 +70,6 @@
       "avg_set_size": 3.0
     }
   },
-  "elapsed_secs": 34.8,
-  "completed_at": "2026-03-26T04:33:54.088485"
+  "elapsed_secs": 32.2,
+  "completed_at": "2026-03-27T04:35:42.448903"
 }
