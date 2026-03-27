@@ -228,29 +228,59 @@ export async function startWebLoginWithQr(
   activeLogins.set(account.accountId, login);
 
   // Start connection (async — emits QR events, then waits for pairing + 515 restart)
-  // Use a generous timeout: QR scan + pairing + 515 restart can take up to 3 minutes
+  // After QR scan, WhatsApp sends a 515 disconnect meaning "reconnect with your new creds".
+  // We handle this by: detecting the disconnect, waiting for SQLite flush, then creating
+  // a FRESH client (the store now has registered credentials) and connecting without QR.
   login.connectionPromise = (async () => {
     try {
       await client.connect();
-      // After QR scan, WhatsApp does a 515 restart. waitForConnection may return false.
-      // Retry connection up to 3 times with delays to handle the 515 cycle.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const connected = await client.waitForConnection(30_000);
-        if (connected) {
-          const cur = activeLogins.get(account.accountId);
-          if (cur?.id === login.id) cur.connected = true;
-          return;
-        }
-        // Not connected — likely 515 restart. Wait and reconnect.
-        await new Promise((r) => setTimeout(r, 3000));
-        try {
-          await client.connect();
-        } catch {
-          /* may already be connecting */
-        }
+
+      // Wait for initial connection (QR scan + pairing)
+      const initialConnected = await client.waitForConnection(120_000);
+      if (initialConnected) {
+        // Connected without 515 — great, we're done
+        const cur = activeLogins.get(account.accountId);
+        if (cur?.id === login.id) cur.connected = true;
+        return;
       }
+
+      // Not connected — likely 515 restart after pairing.
+      // The credentials are now saved in whatsmeow.db.
+      // Disconnect the old client and create a fresh one.
+      runtime.log(info("WhatsApp 515 restart detected — reconnecting with saved credentials..."));
+
+      try {
+        await client.disconnect();
+      } catch {
+        /* best-effort */
+      }
+
+      // Wait for SQLite WAL flush
+      await new Promise((r) => setTimeout(r, 3000));
+
+      // Create a fresh client — it will load the saved credentials from the store
+      const freshClient = await createWmClient({
+        verbose: opts.verbose,
+      });
+
+      // Update the login entry with the new client
       const cur = activeLogins.get(account.accountId);
-      if (cur?.id === login.id) cur.error = "Connection timed out after pairing";
+      if (cur?.id === login.id) {
+        cur.client = freshClient;
+      }
+
+      // Connect — no QR needed this time, we have stored creds
+      await freshClient.connect();
+      const reconnected = await freshClient.waitForConnection(30_000);
+
+      if (reconnected) {
+        const cur2 = activeLogins.get(account.accountId);
+        if (cur2?.id === login.id) cur2.connected = true;
+        runtime.log(success("WhatsApp reconnected after 515 restart."));
+      } else {
+        const cur2 = activeLogins.get(account.accountId);
+        if (cur2?.id === login.id) cur2.error = "Connection timed out after 515 restart";
+      }
     } catch (err) {
       const cur = activeLogins.get(account.accountId);
       if (cur?.id === login.id) cur.error = String(err);
