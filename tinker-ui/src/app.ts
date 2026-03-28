@@ -889,7 +889,13 @@ function onEvent(evt: any) {
         updateBtn();
       }
       // Cancel any deferred generic chat.error — successful delta supersedes
-      { const t = (window as any).__deferredErrorTimer; if (t) { clearTimeout(t); (window as any).__deferredErrorTimer = null; } }
+      {
+        const t = (window as any).__deferredErrorTimer;
+        if (t) {
+          clearTimeout(t);
+          (window as any).__deferredErrorTimer = null;
+        }
+      }
       // Clear stale error AND warning (fallback status) messages — a successful
       // delta means we have a working model, prior failures are resolved.
       {
@@ -1200,9 +1206,15 @@ function onEvent(evt: any) {
     // Track provider failures from model fallback
     // FORK: Only show fallback errors for the active session (skip other tabs' failures)
     // Cancel any deferred generic chat.error — the fallback-error has the real details
-    if (p?.stream === "lifecycle" && (p.data?.phase === "fallback-error" || p.data?.phase === "fallback-profile-error")) {
+    if (
+      p?.stream === "lifecycle" &&
+      (p.data?.phase === "fallback-error" || p.data?.phase === "fallback-profile-error")
+    ) {
       const timer = (window as any).__deferredErrorTimer;
-      if (timer) { clearTimeout(timer); (window as any).__deferredErrorTimer = null; }
+      if (timer) {
+        clearTimeout(timer);
+        (window as any).__deferredErrorTimer = null;
+      }
     }
     if (
       p?.stream === "lifecycle" &&
@@ -2204,7 +2216,7 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
+      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
   <span class="thinking-elapsed">${elapsed}s</span>
@@ -2214,7 +2226,7 @@ function renderThinkingIndicator(): string {
     return `<div class="thinking-indicator">${rows}</div>`;
   }
   if (sending) {
-    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23">
+    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23;--thinking-glow:#6b8e2340;--thinking-glow-bg:#6b8e2320;--thinking-glow-bg2:#6b8e2330">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
   <span class="thinking-stop">Stop</span>
@@ -2619,7 +2631,9 @@ function updateChat(skipScroll = false) {
         // Completed run with intermediates — wrap in collapsible group
         const groupId = `rg-${intermediateIndices[0]}`;
         const expanded = expandedTools.has(groupId);
-        const stepCount = intermediateIndices.filter((j) => thinkingSet.has(j) && !dedupHiddenSet.has(j)).length;
+        const stepCount = intermediateIndices.filter(
+          (j) => thinkingSet.has(j) && !dedupHiddenSet.has(j),
+        ).length;
         const chevron = expanded ? "▾" : "▸";
         const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
         const toolLabel =
@@ -3064,13 +3078,16 @@ function updateBudgetPanel() {
           : showSuffix
             ? ` \u00b7 ${keyLabel}`
             : "";
+      // FORK: Lifecycle events may lack authProfileId, so count is stored under
+      // modelId instead of keyId. Fall back to model-level count (same as multi-key path).
+      const singleKeyCount = counts.get(keyId || modelId) || counts.get(modelId) || 0;
       html += renderModelRow(
         modelId,
         provider,
         name,
         badge,
         suffix,
-        counts.get(keyId || modelId) || 0,
+        singleKeyCount,
         providerErrors.get(keyId || modelId),
         keyId,
       );
@@ -3102,7 +3119,10 @@ function updateBudgetPanel() {
     const allCounts = getAuthKeyCounts();
     console.log("[DEBUG glow] updateBudgetPanel", {
       activeRuns: [...activeRuns.entries()].map(([id, info]) => ({
-        runId: id, model: info.model, authProfileId: info.authProfileId, sessionKey: info.sessionKey,
+        runId: id,
+        model: info.model,
+        authProfileId: info.authProfileId,
+        sessionKey: info.sessionKey,
       })),
       countsAll: [...allCounts.entries()],
       primary,
@@ -3364,7 +3384,7 @@ function renderModelRow(
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
-      ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
+      ? ` style="--glow-color:${color}40;--glow-bg:${color}20;--glow-bg2:${color}30;--glow-border:${color}25"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
   const isAnthropicOAuth = keyId?.startsWith("anthropic:cli-") || false;
@@ -3402,7 +3422,7 @@ function renderAuthKeyRow(
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
-      ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
+      ? ` style="--glow-color:${color}40;--glow-bg:${color}20;--glow-bg2:${color}30;--glow-border:${color}25"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
   const isAnthropicOAuth = keyId.startsWith("anthropic:cli-");
@@ -3621,19 +3641,15 @@ function updateSessionsPanel() {
       if (!key) return;
       try {
         await req("sessions.delete", { key });
-        // Revert any tab using this session to unattached
+        // Close any tab using this session (don't just detach — the session is gone)
         const affectedTab = tabs.find((t) => t.sessionKey === key);
         if (affectedTab && affectedTab.id !== "tab-main") {
-          affectedTab.sessionKey = null;
-          affectedTab.isAttached = false;
-          affectedTab.title = randomFortune();
-          if (affectedTab.id === activeTabId) {
-            sessionKey = "";
-            messages = [];
-            updateChat();
-          }
-          renderTabs();
-          saveTabs();
+          closeTab(affectedTab.id);
+        } else if (affectedTab?.id === "tab-main") {
+          // Main tab can't be closed — just clear its chat
+          sessionKey = "";
+          messages = [];
+          updateChat();
         }
         // Reload from server to get authoritative list
         await loadSessions();
@@ -3688,9 +3704,9 @@ function renderSessionRow(s: any, shortLabel: string): string {
   // FORK: Session glow — pulse when an LLM run is active for this session
   const liveInfo = sessionHasActiveRuns(s.key);
   const liveClass = liveInfo.live ? " session-live" : "";
-  const liveColor = liveInfo.provider ? (PROVIDER_COLORS[liveInfo.provider] || "#6b8f3a") : "#6b8f3a";
+  const liveColor = liveInfo.provider ? PROVIDER_COLORS[liveInfo.provider] || "#6b8f3a" : "#6b8f3a";
   const liveStyle = liveInfo.live
-    ? ` style="--session-glow:${liveColor}80;--session-glow-bg:${liveColor}15"`
+    ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
     : "";
   return `<div class="session-row${isActive ? " session-active" : ""}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
     <span class="session-label" data-hint="${escapeHtml(label)}">${esc(label)} ${channel}</span>

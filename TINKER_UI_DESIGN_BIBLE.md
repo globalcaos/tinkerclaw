@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-03-26 (Gateway crash loop — missing dist/index.js after build wipe)
+> Last updated: 2026-03-28 (Shimmer glow rework, session glow, thinking shimmer, session delete closes tab)
 
 ---
 
@@ -262,7 +262,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Model rows in right panel glow with provider-colored breathing animation when a run is active on that model. Per-model agent count badge shows parallel usage. For multi-key providers (e.g., anthropic with 3 auth profiles), only the active auth profile row glows.
 - **Architecture:** Runner emits lifecycle `start` events with `model`, `modelProvider`, and `authProfileId`. Gateway (`server-chat.ts`) preserves runner-provided fields when present, falls back to `resolveSessionModelRef()` for events without model info (e.g., CLI providers). UI maintains `activeRuns` Map keyed by runId, derives per-model/per-profile counts, re-renders budget panel.
 - **State:** `activeRuns` Map keyed by runId → `{ model, provider, authProfileId, startedAt }`. Persisted to `sessionStorage["tinker-activeRuns"]`. Stale runs pruned after 5 min.
-- **CSS:** `@keyframes model-breathe`, `.model-row.model-live`, `.model-agent-count`
+- **CSS:** `@keyframes model-shimmer`, `.model-row.model-live`, `.model-agent-count`
 - **Gateway patch:** `server-chat.ts` — prefers runner-provided model/provider/authProfileId over session-entry resolution
 - **Files:** `app.ts` (tracking + rendering), `base.css` (animation), `server-chat.ts` (enrichment), `pi-embedded-subscribe.handlers.lifecycle.ts` (authProfileId source)
 - **Bug fix #1 (2026-03-05):** Multi-key providers never glowed. `getAuthKeyCounts` stored count under model ID (authProfileId was undefined), but multi-key rendering looked up by auth profile key — always 0. Fix: fall back to model-level count when per-key count is 0.
@@ -270,6 +270,8 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Bug fix #3 (2026-03-17):** All 3 auth key rows STILL glowed simultaneously. Root cause: model-fallback system doesn't pass `authProfileId` to the `run` callback, so embedded agent's `handleAgentStart` emits lifecycle `start` without `authProfileId`. UI fallback `modelCount` caused all rows to glow. Fix: two-part — (a) UI infers `authProfileId` from `modelConfigData.authOrder` on `start` events, preferring profiles with fresh budget data and no errors; (b) `renderAuthKeyRows` only broadcasts `modelCount` to all rows when NO per-key counts exist (`hasAnyKeyCount` guard).
 - **Bug fix #4 (2026-03-17):** Stale `providerErrors` in localStorage caused wrong profile to show errors after gateway restart. Fix: `loadBudget()` now clears `providerErrors` for profiles that have fresh `claudeProfiles` usage data.
 - **Bug fix #5 (2026-03-22):** Glow never appeared for any run. Root cause: upstream lifecycle `start`/`end`/`error` events (from `agent-command.ts`) carry `sessionKey` at the top level of the WS payload (enriched by `server-chat.ts`) but NOT inside `data`. The UI checked only `p.data.sessionKey`, silently dropping all upstream lifecycle events — so `activeRuns` was never populated. Fix: fall back to `p.sessionKey` when `p.data.sessionKey` is absent (`p.data.sessionKey ?? p.sessionKey`). Fork-specific events (`round-start`, `fallback-error`, etc.) still use their explicit `data.sessionKey`.
+- **Bug fix #6 (2026-03-28):** Single-key providers never glowed. Root cause: `authProfileId` is undefined in lifecycle `start` events, so `getAuthKeyCounts` stored count under model ID. Single-key render path looked up by auth profile key only — never fell back to model-level count. Multi-key path already had the fallback. Fix: `counts.get(keyId || modelId) || counts.get(modelId) || 0` in single-key path.
+- **Visual rework (2026-03-28):** Replaced breathing `box-shadow` outline with center-out radial gradient + narrow right-to-left shimmer sweep. No border. Provider-colored via CSS variables (`--glow-color`, `--glow-bg`, `--glow-bg2`). 1s animation cycle. CSS: `@keyframes model-shimmer`, radial-gradient background layer.
 
 ### 5.3 Per-Profile Fallback Error Visibility
 
@@ -888,6 +890,27 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Status:** `DEPLOYED`
 - **What:** When processing a WhatsApp message, the bot adds a 🤔 reaction as a progress indicator. Reaction is removed on final delivery + a safety-net timeout after dispatch. Isolated in its own module for merge safety.
 - **Files:** `src/fork/thinking-reaction.ts` (extracted module), `attempt.ts` (hook point)
+
+### 5.45 Session Glow — Active LLM Indicator (2026-03-28)
+
+- **Status:** `DEPLOYED`
+- **What:** Session rows in the sessions panel glow when they have active LLM runs. Same visual style as model rows — center-out radial gradient + right-to-left shimmer sweep, provider-colored, 1s cycle. Subagent sessions glow independently.
+- **Architecture:** `sessionHasActiveRuns(key)` iterates `activeRuns` Map, matching by `sessionKey`. Returns `{ live, provider }` for provider-colored CSS variables. `updateSessionsPanel()` called on lifecycle `start` and `end` events.
+- **CSS:** `@keyframes session-shimmer`, `.session-row.session-live`
+- **Files:** `app.ts` (`sessionHasActiveRuns`, `renderSessionRow`, `updateSessionsPanel` calls), `base.css` (animation)
+
+### 5.46 Thinking Indicator Shimmer (2026-03-28)
+
+- **Status:** `DEPLOYED`
+- **What:** Thinking indicator in chat uses the same radial glow + shimmer sweep as model/session rows. Provider-colored via `--thinking-glow*` CSS variables. On hover, animation stops and shows red "stop" style.
+- **CSS:** `@keyframes thinking-shimmer`, `.thinking-run`
+- **Files:** `app.ts` (inline style variables on `.thinking-run`), `base.css` (animation + hover override)
+
+### 5.47 Session Delete Closes Tab (2026-03-28)
+
+- **Status:** `DEPLOYED`
+- **What:** Deleting a session from the sessions panel now closes the associated tab via `closeTab()` instead of detaching and renaming it with a new fortune. Main tab cannot be closed — its chat is cleared instead.
+- **Files:** `app.ts` (session delete handler)
 
 ---
 
