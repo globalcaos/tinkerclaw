@@ -782,6 +782,7 @@ type ActiveRunInfo = {
   authProfileId?: string;
   startedAt: number;
   sessionKey?: string;
+  state?: "restarting";
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
@@ -969,6 +970,19 @@ function onFrame(f: any) {
             });
         })
         .catch((e) => console.error("connect:", e));
+      return;
+    }
+    // FORK: Graceful restart — mark active runs as "restarting" to hold the indicator
+    // Intentionally returns early so onEvent() does not process the shutdown frame.
+    if (f.event === "shutdown" && f.payload?.restartExpectedMs != null) {
+      if (activeRuns.size > 0) {
+        for (const [, info] of activeRuns) {
+          info.state = "restarting";
+        }
+        saveActiveRuns();
+        startThinkingTick(); // Ensure tick is running during restart window
+        updateChat();
+      }
       return;
     }
     onEvent(f);
