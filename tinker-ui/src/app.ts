@@ -48,242 +48,528 @@ interface Tab {
 }
 
 const FORTUNE_COOKIES = [
-  // ─── Shamatha · Calm Abiding ───
-  "🪷 Sit in stillness for just five breaths today, and the answer you've been chasing will arrive on its own quiet feet",
-  "🧘 A deep calm is settling into your bones right now — it will carry you through every challenge before sunset",
-  "🕯️ Pause before your next reaction and a clarity you haven't felt in months will flood through you like warm light",
-  "🪔 The still waters of your mind today reflect a truth that transforms your entire week ahead",
-  "🪷 Let your thoughts pass like clouds this morning; by afternoon your path will shine with a certainty born of stillness",
-  "🧘 Your breath is becoming your anchor today — each inhale draws in wisdom, each exhale releases doubt",
-  "🌙 Choose silence over noise for one hour and the universe will whisper something extraordinary to your quiet mind",
-  "🕊️ A peaceful awareness is rising in you that will make today's hardest moment feel effortless and light",
-  "🪷 Soften your gaze and relax your jaw right now — an insight you need will arrive within minutes of that release",
-  "🌿 The tranquility forming inside you today will radiate outward and calm everyone you encounter",
-  "🧘 Return to your breath each time the mind wanders; by evening you will discover something beautiful waiting there",
-  "🕯️ Stillness is building a cathedral in your mind today — its doors open to a revelation you didn't expect",
-  "🌀 Your calm today is not passive — it is a force reshaping circumstances in your favor as you sit",
-  // ─── Vipassana · Insight ───
-  "🔮 Observe your thoughts without judging them today, and one will reveal a solution hidden in plain sight all along",
-  "🔬 A flash of insight is approaching you — your awareness is sharp enough today to catch it before it passes",
-  "🧠 Watch the space between your thoughts today and you will notice a pattern that changes everything you assumed",
-  "👁️ Your inner observer is wide awake, seeing a door that your busy mind has been walking past for weeks without noticing",
-  "🪷 Notice what triggers your reactions this morning; by evening you will have freed yourself from an old invisible chain",
-  "🔬 The quality of your attention today is extraordinary — it will reveal the hidden structure beneath a stubborn problem",
-  "🧠 Sit with discomfort instead of running from it and it dissolves, leaving behind a gift of deep understanding in its place",
-  "🔍 Your awareness is a lens today — everything you examine closely will reveal layers of beauty and meaning within",
-  "🪷 Practice bare attention during your next conversation and you will hear what no one else in the room catches",
-  "🔬 A moment of pure seeing is coming — in that flash, months of confusion will reorganize into crystal clarity",
-  "🧠 Label each emotion as it arises without clinging, and tonight you will feel lighter than you have in years",
-  "🌠 The clear seeing you cultivate today ripples forward and prevents a mistake you would have made next week unknowingly",
-  // ─── Mastering the Mind · The Inner Throne ───
-  "🧠 Catch the first anxious thought before it breeds a second — that single interception today rewrites the mood of your entire afternoon",
-  "🪷 The moment you notice your mind racing, you have already won — awareness itself is the brake, and today it stops a spiral before it starts",
-  "🧘 Refuse to follow the next distraction that calls your name and an hour of focus will yield what a scattered day could not in a week",
-  "🔥 Your mind is a wild horse today — do not fight it, do not let it run, simply hold the reins with steady presence and it becomes your greatest ally",
-  "🗡️ Every thought you choose not to chase today strengthens a muscle of sovereignty that no circumstance can weaken once it is built",
-  "🎯 Discipline the wandering mind for ten minutes this morning and the concentration you build becomes a lens that magnifies everything you do after",
-  "🪞 When the inner critic speaks today, listen without obeying — that gap between hearing and believing is where your freedom lives and grows",
-  "🐉 Master one impulse today — just one — and the self-trust that follows unlocks a chain of better choices that lasts the rest of the week",
-  "🐒 The monkey mind chatters loudest when you are closest to a breakthrough — its noise today is proof you are almost through the wall",
-  "🏛️ Each time you return your attention from distraction to intention today, you are building a throne from which no thought can unseat you",
-  "🕳️ Slow the stream of thoughts for one minute and you will discover that beneath the rapids lies a still pool of knowing that has been waiting for you",
-  "🎭 Today your mind will offer you fear disguised as logic — see through the costume and the fear dissolves, leaving only clear, courageous action behind",
-  "⚔️ Train your attention like a blade today: sharpen it on small tasks, and by afternoon it cuts through complexity that baffled your scattered morning self",
-  "🔓 The thought you are most tempted to believe without questioning is the one most worth examining — investigate it today and discover unexpected freedom",
-  "👑 Whoever governs their own attention today governs their destiny — and you are governing yours with more skill than you realize right now",
-  "🏹 Watch how quickly a negative thought loses power when you simply name it: that naming is not passive, it is the most active thing a mind can do",
-  "🧩 Choose one hour today to think only about what you are doing, nothing else — that hour will outproduce the rest of the day combined",
-  "⏸️ Notice the gap between stimulus and response today: in that hairsbreadth pause lives a version of you that is free, sovereign, and unshakable",
-  // ─── Metta · Loving-Kindness ───
-  "💗 Silently wish well to the first stranger you see today, and a chain of kindness returns to you before dark in a form you didn't expect",
-  "🌸 A wave of compassion rising in your heart today will open a door that no amount of force could have budged",
-  "💝 Forgive one small thing before noon and the weight you've been carrying for months will lift entirely by evening",
-  "🫂 Your genuine warmth today is a beacon — someone who needs exactly what you offer will find their way to you",
-  "💗 Offer patience to someone who tests you today and watch the universe reward your restraint with something unexpectedly beautiful",
-  "🌸 The loving-kindness you send outward today returns as help from a direction you never imagined possible",
-  "💝 Replace one critical thought about yourself with a kind one, and your whole inner weather shifts as sunshine breaks through within",
-  "🫂 Someone is about to enter your day who desperately needs your warmth — your compassion will alter their entire trajectory",
-  "💗 Extend grace to yourself this morning and unlock a creative energy that has been waiting patiently behind self-doubt",
-  "🌸 Even a few silent phrases of metta today send ripples that reach farther than you will ever know",
-  "💝 Hold in your heart someone who frustrates you, and understanding will dawn that frees both of you from the cycle at once",
-  "🫂 Send loving-kindness to your past self and a wound you thought permanent begins its final healing today at last",
-  // ─── Awareness · Present Moment ───
-  "✨ Arrive fully in this present moment and you will notice an opportunity that was invisible to your scattered mind before",
-  "🌅 The present moment is extraordinarily rich for you today — each second you inhabit it fully multiplies your creative power",
-  "🍵 Taste your next meal with complete attention, and a forgotten joy will awaken that colors the rest of your entire day",
-  "🧲 Your presence today is magnetic — the moment you stop rehearsing the future, the right future walks directly toward you",
-  "📵 Put down your phone for the next ten minutes and just breathe; an idea worth more than anything on that screen is already arriving",
-  "🪙 Your attention is golden currency today — wherever you invest it fully, it returns compound interest in joy and clarity",
-  "🚶 Walk mindfully for even fifty steps today and the rhythm of your footfalls will unlock a solution you've been seeking",
-  "💫 Being fully here today is your superpower — while others rush past this moment, you find the treasure hidden inside it",
-  "🔎 Bring curious attention to a routine task today and it transforms into something surprisingly meaningful and revealing",
-  "✨ The quality of your presence today attracts exactly the people, ideas, and opportunities you have been quietly wishing for",
-  "⚓ Anchor yourself in this breath right now: the anxious future dissolves and the real path forward reveals itself clearly",
-  // ─── Non-Attachment · Letting Go ───
-  "🍃 Release your grip on one outcome today, and something far better than what you planned slides effortlessly into its place",
-  "🌬️ A burden you've been carrying is ready to be set down — the moment you release it, new energy floods that empty space",
-  "🕊️ Stop fighting what is and simply allow it; the situation rearranges itself into a configuration that serves you perfectly",
-  "🔗 The thing you cling to most tightly is the very thing blocking the abundance that is trying to reach you right now",
-  "🍃 Surrender the need to be right in one conversation today and you win something far more valuable than any argument ever gives",
-  "🫧 Your willingness to release control today creates space for a solution more elegant than anything you could have engineered",
-  "🛶 Trust the river today instead of swimming against it, and you arrive somewhere beautiful that was never on your original map",
-  "🦋 An attachment dissolving right now is not a loss — it is your cocoon cracking open so wings you didn't know you had can unfold",
-  "🍃 Watch a worry without feeding it today: it starves and fades, leaving behind pure clarity and a surprising sense of freedom",
-  "🤲 The hand that opens to release is the same hand that receives — your letting go today creates room for tomorrow's greatest gift",
-  "🌬️ Practice non-attachment with the results of your effort and the effort itself becomes joyful while the results exceed every expectation",
-  // ─── Karma · Right Action ───
-  "🌟 Choose the kind path over the clever one today and the ripples of that choice return to you magnified a hundredfold by evening",
-  "⚖️ Every small right action you take today is being woven into a safety net that catches you perfectly when you need it most next week",
-  "🪬 Act with integrity in the moment no one is watching, and the universe opens a door reserved only for the trustworthy",
-  "🌾 Seeds of your past generosity are germinating beneath the surface today — expect a bloom of abundance from a forgotten kindness",
-  "🎁 Give without expecting return today: the return finds you anyway, wearing a disguise so beautiful you almost don't recognize it",
-  "🧱 Your discipline today creates tomorrow's freedom — every conscious choice you make right now is a brick in the palace you're building",
-  "💊 Speak truth gently today, even when it's hard, and your words will land like medicine and heal something nobody knew was broken",
-  "🔄 A generous act from your past is circling back right now — someone you helped long ago is about to return the favor unexpectedly",
-  "🌟 Resist the easy shortcut and take the right path: what you build today stands forever while shortcuts collapse around you later",
-  "🕯️ Your intention behind each action matters more than the action itself — pure intentions today attract pure outcomes all week",
-  "🌟 Dedicate your effort today to something larger than yourself and your personal energy doubles while obstacles shrink to pebbles",
-  "🤝 Honor a commitment nobody would fault you for breaking, and your integrity today becomes your reputation tomorrow — opening doors",
-  // ─── Impermanence · Change ───
-  "🦋 Remember that this difficulty is temporary: that single remembrance strips it of power and transforms it into the teacher it was always meant to be",
-  "🌙 A phase of your life is completing right now — the ending feels tender, but what emerges will fill you with wonder and gratitude",
-  "🏄 Embrace today's uncertainty instead of resisting it and you ride the wave of change directly into something extraordinary and new",
-  "🌀 Something that seemed permanent is shifting beneath you — do not be afraid, for the ground is rearranging to support you even better",
-  "📬 Welcome each change today as a messenger rather than an enemy, and every message turns out to contain exactly the guidance you needed",
-  "🍂 The autumn of one chapter in your life is making room for a spring so vivid you will bless this very moment of change when you look back",
-  "⏳ Notice what is arising and passing away in you right now and you touch a freedom that no external circumstance can ever take from you",
-  "🌙 What feels like loss today is actually space being cleared — the universe is redecorating your life, and the new design is breathtaking",
-  "🪶 Hold lightly to both success and failure today, and a third option appears more creative than either winning or losing could ever be",
-  "🐍 An old identity is falling away and it feels strange — trust the process, because who you are becoming is worth every moment of uncertainty",
-  "🫁 Each breath is a tiny birth and death — discover that aliveness in this very second and it makes the whole day glow from inside out",
-  // ─── Inner Strength · Equanimity ───
-  "🏔️ Meet today's turbulence with a steady heart; by evening you'll see that your calm was the strongest force in the room all along",
-  "⚓ An unshakable center is forming in you right now — events that would have rattled you before pass through like wind through an open window",
-  "🏔️ Keep your balance when others lose theirs today and your steadiness becomes the lighthouse that guides everyone safely through the storm",
-  "⚓ Your equanimity is not indifference — it is the eye of a storm where vision is clearest and decisions are wisest and most precise",
-  "🎯 Respond instead of reacting just once today: that single moment of mastery cascades into a series of quiet victories all afternoon",
-  "🪨 The mountain in your heart does not move with the weather — storms may come today, but they only polish your summit into something magnificent",
-  "🫁 Breathe through the hardest moment instead of fleeing from it, and you prove to yourself a strength that nothing can ever take away",
-  "🌳 Your patience today is not weakness — it is a power so quiet that the world rearranges itself around your stillness without you even trying",
-  "☯️ Hold space for opposing feelings today without choosing sides, and a third intelligence emerges that resolves the tension beautifully",
-  "🛡️ Something that used to shake you tests you again today — and this time, you feel the difference your practice has made, clear as dawn",
-  "🏔️ Treat discomfort as information rather than threat and it delivers a message that unlocks months of stalled progress in a single moment",
-  "🧊 Your composure under pressure today earns a respect no boast could ever win — someone important sees your strength and never forgets it",
-  // ─── The Seer's Crystal Ball ───
-  "🔮 The crystal shows a stranger entering your orbit today who carries a message that reconnects you with a purpose you thought you had outgrown",
-  "🧭 Follow your curiosity into an unexpected direction today: the crystal shows it leading to a discovery that reshapes your entire month ahead",
-  "🕸️ I see a moment of synchronicity approaching before nightfall — two unrelated threads of your life are about to weave into something breathtaking",
-  "🔮 Trust the quiet voice over the loud one today, and the crystal reveals it leading you to the exact person you need to meet right now",
-  "✉️ The crystal ball shimmers with a coming conversation that will remind you why you chose this path and fill you with renewed fire",
-  "🫀 Share something vulnerable today — the crystal shows it being received with such warmth that it becomes a turning point in that relationship",
-  "🎰 I see three small blessings lining up for you: the first arrives before noon, the second over a meal, the third just before you sleep",
-  "📞 The crystal shows someone you haven't heard from in ages reaching out today with an opportunity you've been silently praying for",
-  "⚡ Act on your intuition before your logic catches up and the crystal sees you landing in exactly the right place at exactly the right time",
-  "🔮 I see a skill you've been quietly building suddenly clicking into place — today it stops being practice and becomes something you truly embody",
-  "🦁 Make one brave choice today, and the crystal reveals a cascade of fortunate events unfolding from it like dominoes over the next three weeks",
-  "☀️ The crystal glows warmest around this afternoon — something between two and five today will make you smile every time you remember it",
-  "🌃 I see tonight bringing a quiet realization that connects scattered pieces of your life into a picture so clear it takes your breath away",
-  // ─── Abundance · Flow ───
-  "🌊 Approach your work with gratitude today and abundance flows through channels you didn't even know existed until they opened before your eyes",
-  "💎 A current of prosperity is running beneath the surface of this ordinary day — your awareness is the dowsing rod that leads you straight to it",
-  "🤲 Give freely from your overflow today: the universe interprets it as a signal and amplifies your supply in a way that defies rational explanation",
-  "🎨 Your creative energy today is unusually potent — channel it with intention and what you produce will have value far beyond what you imagine now",
-  "🌊 Release scarcity thinking for just this one day and the evidence of abundance surrounding you becomes so obvious it makes you laugh out loud",
-  "💎 Something you considered ordinary about yourself is pure gold in someone else's world — today that recognition arrives and opens a new flow",
-  "🌈 Notice each small good thing today instead of waiting for the big one; by sunset the accumulation feels like a fortune quietly received",
-  "🧬 The work you love is aligning with what the world needs from you — today brings a sign of that alignment so clear you cannot dismiss it",
-  "🙏 Express appreciation for what you already have before asking for more, and the more arrives so quickly it feels like the universe was waiting",
-  "🗝️ An unexpected resource appears today — not money perhaps, but something equally valuable: a skill, a contact, a truth you'd stopped hoping for",
-  "📖 Share your knowledge without hoarding it, and the space that opens in your mind fills with an insight worth ten times what you gave away",
-  // ─── Connection · Sangha ───
-  "🤝 Reach out to someone you've been thinking of today and the connection reignites with a warmth and depth that surprises you both profoundly",
-  "🌉 A meaningful encounter is forming in today's ordinary fabric — your openness is the needle that threads it into something lasting and nourishing",
-  "👂 Listen more than you speak in your next exchange: you'll hear the hidden request beneath the words and your response will touch them deeply",
-  "🩹 Someone in your life is silently struggling — your simple presence today, without needing to fix a thing, becomes the medicine their heart required",
-  "❓ Ask a sincere question instead of giving advice today, and the answer you receive teaches you something that reshapes your own understanding",
-  "🌉 The bonds you nurture today with simple presence and authentic words will prove to be the strongest supports when unexpected change comes",
-  "👁️ Acknowledge someone's effort that usually goes unnoticed and you set off a chain reaction of goodwill that circles all the way back to you",
-  "🤝 A community you belong to is about to benefit enormously from something only you can contribute — today brings the moment to step forward",
-  "🪞 Show up authentically today without performing confidence or competence, and the real you lands better than any polished version ever could",
-  "😊 Your smile today reaches someone who was about to give up and gives them exactly enough light to keep going forward one more day",
-  "🗣️ Express your needs honestly instead of hinting, and someone steps forward today with exactly the help you need, grateful you finally asked",
-  // ─── Destiny · The Path ───
-  "🌌 Take one step today toward what excites you most, and the path illuminates itself twenty steps ahead in a direction more beautiful than your plan",
-  "⭐ A constellation of events has been quietly arranging around you — today you notice the pattern, and recognizing it is all you need to ride its current",
-  "📯 Honor the calling that has been whispering at the edge of your awareness and today it speaks clearly enough that doubt finally falls silent",
-  "🔄 Something you gave up on long ago is circling back in a new form — the universe did not forget your wish, it was simply perfecting the delivery",
-  "🌌 Make one choice today that aligns with who you are becoming rather than who you were, and a future you can barely imagine begins to crystallize",
-  "🧬 Your life is not a random sequence — today brings a moment of such clear synchronicity that you feel the pattern beneath the chaos and it steadies you",
-  "🚪 Say yes to the unexpected invitation today, and it becomes the first frame of a story you will tell with wonder for years to come",
-  "🗝️ A door you tried to open years ago is about to swing open on its own — you are finally ready for what waits on the other side of it",
-  "🛤️ Trust that every twist of your path, including the painful ones, was leading here — today rewards that trust with evidence so clear it moves you",
-  "⭐ You are closer to your purpose than you have ever been — today brings a sign so specific that even your inner skeptic goes quiet and listens",
-  "🧶 Follow the thread of joy today wherever it leads, even if impractical — it winds toward a door you didn't know was yours to open",
-  "📷 The universe has been preparing something for you in the dark — today, like a photograph developing, the first clear image of that gift becomes visible",
-  // ─── Protection · Sacred Shield ───
-  "🛡️ Set one clear boundary today and it protects not only this day but establishes a precedent that shields your peace for months to come",
-  "🧿 An invisible guardian energy surrounds you today — decisions that might have gone wrong course-correct as if an unseen hand adjusts them",
-  "🐍 Listen to the subtle warning in your body today and you sidestep something that would have cost you far more than you realize at the time",
-  "🧿 Your aura today is particularly strong — negativity that approaches you simply bounces off and dissolves, leaving you untouched and clear",
-  "😴 Honor your need for rest instead of pushing through, and you protect the very energy that tomorrow's breakthrough requires to emerge",
-  "🏰 Something you built with good intention is now building a protective field around you — your past diligence becomes today's invisible shield",
-  "🚶 Walk away from a conversation that drains you today: the energy you preserve becomes the fuel for a creative surge that arrives by evening",
-  "🪬 Your mindfulness practice is not just calming you — it is building a field of clarity that protects your decisions from the noise of the world",
-  "🐢 Slow down when everything around you speeds up and you become the eye of the storm where safety, clarity, and right action converge naturally",
-  "💛 The protection around you today comes from the love you have given freely — every act of kindness forms a circle of light that keeps you safe",
-  "🌍 Ground yourself this morning — feet on earth, breath in lungs, attention in body — and that grounding becomes armor against the day's uncertainties",
-  // ─── Transformation · The Chrysalis ───
-  "🐛 Sit with the discomfort of not knowing who you are becoming, and the chrysalis dissolves into something more beautiful than your boldest dream",
-  "🔥 A phoenix moment is approaching — something that felt like failure is about to reveal itself as the necessary burning away of what you'd outgrown",
-  "🧭 Honor the strange restlessness you've been feeling; it leads today to the exact threshold your soul has been searching for all this time",
-  "🪞 Your transformation is not visible to others yet, but today you feel it from the inside — a shift so real the mirror seems to show a new person",
-  "🛤️ Stop comparing your path to anyone else's today and your unique trajectory reveals an advantage that copying someone else would have erased",
-  "⚗️ What you've been through was not punishment — it was preparation, and today brings the first clear evidence of what it was all for",
-  "🌱 Embrace the awkwardness of growth instead of retreating to the familiar, and today you cross a threshold you can never be pushed back behind",
-  "🪶 An old version of you is dying so quietly you almost don't notice — the lightness you feel is the weight of who you no longer need to be",
-  "🐛 Allow yourself to be a beginner at something today and the humility opens a channel of learning so fast it feels like remembering",
-  "💎 The pressure you've endured is not breaking you — it is making you rare, and today someone reflects your diamond-nature back to you at last",
-  "🔥 Name the fear running beneath your decisions: naming it today strips it of power and what remains is pure, clear, actionable courage",
-  "🦊 Something you thought was your weakness is actually your most unusual strength — today proves it beyond any remaining shadow of doubt",
-  // ─── Joy · The Dancing Mind ───
-  "🎶 Allow yourself to feel delight without needing a reason and the unreasonable delight becomes the most productive energy you have ever channeled",
-  "🌻 A wave of spontaneous joy is approaching from an unexpected direction — your only job is to be present enough to catch it",
-  "😂 Laugh at something absurd today instead of analyzing it: the laughter unlocks a creative insight that serious thinking could never have reached",
-  "🔭 Your capacity for wonder is especially alive today — ordinary things reveal their hidden magnificence when you give them three seconds of attention",
-  "🃏 Take a playful approach to a serious task today and the playfulness produces better results than seriousness ever could",
-  "⚡ The joy reaching for you today is not a reward for finishing — it is the energy that makes the work feel like play and the hours like minutes",
-  "🎶 Notice beauty in something small today — light on water, a texture, a sound — and that noticing activates a gratitude that colors your evening golden",
-  "🌻 Someone will say something today that makes you laugh from a place so deep it feels like medicine, healing something you didn't know needed healing",
-  "💃 Move your body to music, even for thirty seconds, and stagnant energy transforms into momentum that carries your next three decisions forward",
-  "🧒 Your childlike wonder is not naivety — it is wisdom in its purest form, leading you today to something your adult seriousness would have walked past",
-  "🏆 Celebrate a small victory today instead of immediately chasing the next one: the celebration itself becomes a magnet that draws the next victory closer",
-  "🌺 Joy is not the absence of difficulty — it is the presence of aliveness, and today your aliveness is so strong that difficulties shrink in its light",
-  // ─── Wisdom · The Ancient Mind ───
-  "🦉 Approach a familiar problem today as if seeing it for the first time: fresh eyes reveal what experience alone had been concealing from you",
-  "📿 Ancient wisdom is alive in your body today — the answer you seek does not live in your thoughts but in the knowing that pulses just beneath",
-  "🏊 Choose depth over speed in one task today, and the depth rewards you with understanding that saves weeks of surface-level effort down the road",
-  "🌾 A lesson you learned long ago and forgot is resurfacing today — it arrives at exactly the right moment, as if your past self planted it here",
-  "💡 Question one assumption you have been taking for granted and the crack in that assumption lets light into a room that was unnecessarily dark",
-  "📿 Your inner sage is especially accessible today — pause and ask a sincere question of yourself, and the answer that rises will be remarkably wise",
-  "🦉 Teach someone what you know today: the act of teaching reveals layers of your own knowledge you didn't realize you possessed until now",
-  "📜 A book, a sentence, or a sign catches your eye today — it is the universe's footnote on a question you've been holding in your heart",
-  "🫗 Accept that not knowing is a valid position today, and the humility of it attracts exactly the teacher or experience that fills the gap",
-  "🧪 Your accumulated experience is crystallizing into intuition — decisions that used to require analysis now arrive as clear, embodied knowing",
-  "🌙 Sit with a question tonight instead of rushing to answer it: by morning the answer presents itself fully formed and more elegant than you could have built",
-  "🪶 Trust the simplest explanation when complexity tempts you today — simplicity turns out to be the key that complexity was only pretending to be",
-  // ─── The Morning Star · New Beginnings ───
-  "🌅 Set one intention with your whole heart this morning and the day organizes itself around it as if reality itself wants to help you fulfill it",
-  "⭐ A fresh chapter is opening in your story — the first paragraph writes itself beautifully when you show up with presence and willingness to begin",
-  "🧹 Release yesterday completely and start today with beginner's mind; the freshness reveals opportunities that habit had been hiding from you",
-  "🌱 Something dormant in you is waking up — today is when you first feel it stir and recognize it as the beginning of something real and lasting",
-  "🎁 Greet this morning as a gift rather than an obligation and the quality of everything that follows shifts in a way that surprises you with its magnitude",
-  "🌱 A new cycle is beginning in your life right now — the seed was planted in silence, but today it breaks the surface where you can finally see it",
-  "⏱️ Begin the project you've been postponing with just five minutes of effort: those five minutes unlock a momentum that was waiting for your first step",
-  "📄 The blank page of today is not emptiness — it is infinite possibility, and the first mark you make sets a tone more harmonious than you expect",
-  "🌅 Make today's first choice a conscious one instead of automatic: that consciousness ripples through every subsequent choice and elevates them all",
-  "☀️ Your energy has the quality of dawn — something in you is rising, warming, and illuminating what was dark before no matter what time you read this",
-  "🙏 Start today by feeling grateful for your own existence: every cell responds and the physical vitality that follows feels almost miraculous",
-  "🌿 Whatever happened yesterday is compost now — today's garden grows from it, and the flowers that bloom from composted difficulty are always the most vibrant",
+  // ─── Breakthroughs ───
+  "🔓 A problem surrenders today",
+  "💡 An idea strikes mid-talk",
+  "🧩 The missing piece appears",
+  "⚡ A shortcut saves hours",
+  "🔧 Something broken clicks",
+  "🎯 Nailed on the first try",
+  "🪄 One line replaces a hundred",
+  "🔑 Simpler than you thought",
+  "🧲 The right tool finds you",
+  "🏹 Your gut was right",
+  "💎 Elegance in plain sight",
+  "🌊 Clarity washes over you",
+  "🔬 You spot what all missed",
+  "🧪 An experiment pays off",
+  "🎪 Impossible becomes trivial",
+  "📐 Everything aligns",
+  "🗝️ A locked door opens",
+  "⏳ Patience pays generously",
+  "🌀 Confusion becomes clarity",
+  "🛤️ The detour was the shortcut",
+  "🧮 A formula simplifies itself",
+  "🪃 What you gave returns refined",
+  "🔩 Last piece lands at noon",
+  "🧯 Crisis resolves before panic",
+  "🪛 First fix actually works",
+  // ─── People ───
+  "🤝 Someone offers what you need",
+  "💬 One talk changes everything",
+  "📨 Good news lands unexpectedly",
+  "🫂 Your work gets appreciated",
+  "👀 The right person notices",
+  "🎤 Your words land perfectly",
+  "🌉 A bridge forms from nothing",
+  "📞 A message brings a smile",
+  "🤲 Help without asking",
+  "🪢 Two loose threads connect",
+  "🎭 You see hidden brilliance",
+  "✉️ An old contact resurfaces",
+  "🏗️ Someone builds on your work",
+  "📣 Your voice carries far",
+  "🧑‍🤝‍🧑 A collab sparks something",
+  "💌 Kindness returns multiplied",
+  "🎁 A gift disguised as a question",
+  "🫶 Gratitude finds you",
+  "🗣️ You explain it perfectly",
+  "🙌 Someone champions your idea",
+  "🧑‍🏫 You teach and learn more",
+  "🪞 Your best quality reflected back",
+  "🎠 A stranger brightens your day",
+  "🤗 An unexpected hug resets you",
+  "👐 You receive abundantly",
+  // ─── Energy ───
+  "🔥 You enter the zone",
+  "🌅 Better start than yesterday",
+  "☕ First sip sparks momentum",
+  "🎵 A rhythm carries you",
+  "🌬️ Second wind right on time",
+  "⛽ Energy from nowhere",
+  "🏄 Riding a productivity wave",
+  "🎢 Hard part's behind you",
+  "🌤️ Fog lifts early",
+  "🧘 Focus finds you naturally",
+  "🏃 Momentum builds itself",
+  "🎶 Everything flows",
+  "💫 You surprise yourself",
+  "🌈 Rainbow after the grind",
+  "⚖️ Balance finds you",
+  "🕊️ Peace in your work",
+  "🔋 Quick recharge today",
+  "🌸 Ease replaces struggle",
+  "🏖️ Calm confidence today",
+  "🦋 Heaviness lifts",
+  "🫗 Tension gone by lunch",
+  "🛁 Tonight's rest feels earned",
+  "🍵 A pause yields the best idea",
+  "🌡️ Energy peaks when needed",
+  "🧃 A treat refuels your afternoon",
+  // ─── Discovery ───
+  "📖 You learn something big",
+  "🗺️ New territory reveals itself",
+  "🔭 You see further today",
+  "🌍 Bigger picture clicks",
+  "📚 One line rewires you",
+  "🧭 New direction feels right",
+  "🔎 Small detail, big insight",
+  "🌱 An old seed sprouts",
+  "🪟 New perspective opens",
+  "🧬 Pattern in the chaos",
+  "🗻 Summit in sight",
+  "🔮 Foresight pays off",
+  "📡 You catch what all missed",
+  "🎓 Mastery sneaks up on you",
+  "🌐 Dots connect across fields",
+  "🏛️ Foundation stronger than expected",
+  "🔦 You light a dark corner",
+  "📝 Writing sharpens thought",
+  "🎨 Beauty in the structure",
+  "🧗 The climb teaches most",
+  "📰 One read shifts your view",
+  "🔍 Treasure in a footnote",
+  "🪐 You grasp something vast",
+  "🧫 Small clue, big theory",
+  "📻 A frequency only you hear",
+  // ─── Creation ───
+  "🏗️ What you build outlasts today",
+  "🎨 Your creation surprises you",
+  "🛠️ Right abstraction appears",
+  "🌳 You plant self-growing seeds",
+  "🏠 Foundation becomes visible",
+  "🧱 One block finishes the wall",
+  "✏️ Rough draft, nearly final",
+  "🎼 You compose a keeper",
+  "🪵 Raw becomes beautiful",
+  "🔩 Parts click into place",
+  "🎻 Practice becomes performance",
+  "⚒️ You forge something lasting",
+  "🖌️ Sketch captures the essence",
+  "🪡 Pieces stitch into whole",
+  "🧵 Threads become fabric",
+  "🏺 Form meets function",
+  "📦 You ship with pride",
+  "🗽 It stands on its own",
+  "🌻 Your work brightens a day",
+  "🎹 Pieces play together",
+  "🖋️ Worth rereading",
+  "🪆 Hidden depth in your layers",
+  "🧰 All you need is here already",
+  "🎸 Old idea becomes new",
+  "🪺 What you nurtured takes flight",
+  // ─── Timing ───
+  "🎰 Odds tip your way",
+  "⏰ Impeccable timing today",
+  "🌠 A small wish granted",
+  "🍀 Luck in a familiar face",
+  "🎲 A risk pays off big",
+  "🌊 Tide turns your way",
+  "📈 Numbers go your way",
+  "🎯 Right place, right time",
+  "🌙 Night brings a quiet win",
+  "☀️ Warmth when you need it",
+  "🫧 Bubbles up just in time",
+  "🧲 You attract what you sought",
+  "🕰️ Perfect timing, no rehearsal",
+  "🌾 Harvest from forgotten seeds",
+  "🪙 Small bet, big return",
+  "🎫 An unexpected door opens",
+  "🛎️ Opportunity rings twice",
+  "🦎 You adapt before the change",
+  "🎪 Stars align for your move",
+  "📬 What you sent returns better",
+  "🃏 Wildcard plays your way",
+  "🎳 One throw, perfect strike",
+  "🪄 Serendipity has your name",
+  "🦋 Tiny choice, big cascade",
+  "🎟️ You hold the winning ticket",
+  // ─── Confidence ───
+  "💪 Stronger than yesterday",
+  "🦁 Courage at the right moment",
+  "🏆 A quiet win boosts all",
+  "🪜 One step changes the view",
+  "🛡️ Grace under pressure",
+  "⚓ Your anchor holds",
+  "🗡️ You cut through noise",
+  "🏋️ Heavy load feels lighter",
+  "🌟 You shine without trying",
+  "🦅 Rising above the noise",
+  "💎 Your value undeniable",
+  "🧗 The wall was shorter",
+  "🎖️ Quiet respect earned",
+  "🔥 Doubt burns off by noon",
+  "🪨 You become someone's rock",
+  "⚔️ You don't flinch",
+  "🗼 Taller in your own eyes",
+  "🌊 Rough waters, skilled sailor",
+  "🎗️ Today earns tomorrow",
+  "🧊 Cool when it counts",
+  "🐉 You slay the dragon",
+  "🪖 Discipline impresses yourself",
+  "🏅 You exceed yourself",
+  "🦊 Wit where force failed",
+  "🐺 The pack follows you",
+  // ─── Joy ───
+  "🎉 Delight interrupts routine",
+  "😄 Unexpected laughter",
+  "🎈 Small moment, big lift",
+  "🍰 Something unexpected to savor",
+  "🎶 A sound brightens your mood",
+  "🌺 Beauty in unlikely places",
+  "🎊 Minor win feels major",
+  "🍫 Sweetness in the mundane",
+  "🌻 A contagious smile today",
+  "🎀 Small thing, big gift",
+  "🫧 Playfulness in the serious",
+  "🌈 Color in a grey afternoon",
+  "🧁 You've already earned a treat",
+  "🪁 Spirits lift effortlessly",
+  "✨ Magic in the ordinary",
+  "🎡 Scenery change sparks joy",
+  "🦜 Unexpected laugh",
+  "🌮 Best meal of the week",
+  "🎆 Wonder catches you off guard",
+  "🍯 Sweetest moment, unplanned",
+  "🎠 Nostalgia leaves you smiling",
+  "🪩 Ordinary becomes celebration",
+  "🧸 Comfort from nowhere",
+  "🎐 Breeze takes your worries",
+  "🎨 A color you've never seen",
+  // ─── Wisdom ───
+  "🧠 A knot untangles itself",
+  "🪷 Stillness holds the answer",
+  "📿 An old lesson clicks",
+  "🏔️ Distance gives perspective",
+  "🌙 Sleep brought the answer closer",
+  "🔮 Intuition beats analysis",
+  "📜 A forgotten rule proves timeless",
+  "🕯️ Quiet brings loud clarity",
+  "🪶 Simple beats complex",
+  "🧿 You know more than you think",
+  "🌊 Flow reveals the path",
+  "🦉 Wisdom hides in a question",
+  "🔔 A reminder changes course",
+  "🌗 The unclear becomes obvious",
+  "📏 You measure what matters",
+  "🪬 Preparation protects you",
+  "⚗️ Complexity distills down",
+  "🎑 Reflection shows the step",
+  "🧊 Cool head, warm victory",
+  "🌄 Answer arrives at dawn",
+  "🪔 Inner light guides you",
+  "🕸️ More connected than you knew",
+  "📀 Old memory, today's fix",
+  "🧂 A grain of truth changes all",
+  "🪨 Solid ground where you step",
+  // ─── The Seer Speaks ───
+  "🔮 You meet someone special today",
+  "🌟 Your kindness repays tenfold",
+  "🃏 A stranger holds your key",
+  "🕊️ Someone far away thinks of you",
+  "💫 The universe sides with you",
+  "🌙 Tonight, old wonder resolves",
+  "🔔 A bell rings, luck shifts",
+  "🧿 An unseen shield saves you",
+  "🪬 Someone life-changing enters",
+  "🌠 An old wish starts forming",
+  "🕯️ A forgotten flame still burns",
+  "🦋 Today's choice ripples for years",
+  "🌺 Someone falls for your mind",
+  "🔮 You say the perfect thing",
+  "🌙 Last night's dream was real",
+  "✨ What you lost returns better",
+  "🕸️ Unseen hands weave your win",
+  "🧭 Wrong turn, right destination",
+  "🌿 Healing in unexpected places",
+  "🔥 An inner fire reignites",
+  "💎 Someone sees your diamond",
+  "🌊 The scary wave carries furthest",
+  "🪷 One silence worth thousands",
+  "🦅 Life makes sense from above",
+  "🌈 An old promise is kept today",
+  "🧶 One pull unravels the mystery",
+  "🪞 Who you're becoming is magnificent",
+  "🌻 Who you help today helps many",
+  "🕰️ Time bends your way",
+  "🗝️ A secret changes everything",
+  "🌙 The moon guards your work",
+  "🔮 Closer than the stars say",
+  "🧿 Golden aura — people feel it",
+  "🪶 Your words echo further today",
+  "🌟 A forgotten talent returns",
+  "🦉 Ignored advice proves wise",
+  "💫 A new door appears today",
+  "🔔 Your name spoken with admiration",
+  "🌊 A deep current guides you",
+  "🕯️ You're someone's only light",
+  "🌙 The sky wrote you a message",
+  "🪬 What you guard, guards you",
+  "✨ You're an answered prayer",
+  "🧭 Every step today is right",
+  "🦋 Transformation while you rest",
+  "🌺 You bloom out of season",
+  "🔮 Three good things before dark",
+  "🌿 Earth returns what you buried",
+  "💎 Pressure makes you rare",
+  "🌠 Tonight, deep peace at last",
+  // ─── Fortune ───
+  "🪙 Money from an odd source",
+  "📈 Time investment pays off huge",
+  "🎰 Luck strikes at 3pm",
+  "💰 A worry dissolves by sunset",
+  "🏦 Gold-level opportunity appears",
+  "🎁 You get what you truly needed",
+  "🍀 Clovers grow where you walk",
+  "🌟 Stars wrote your fortune last night",
+  "🎲 Every gamble lands right",
+  "🪄 Impossible before dinner",
+  "🧞 Your next wish comes fast",
+  "🏆 A deserved prize finds you",
+  "💳 Abundance door creaks open",
+  "🎟️ Today's ticket, tomorrow's gold",
+  "🪙 The coin lands your way",
+  // ─── Heart ───
+  "💝 Words you've needed to hear",
+  "🫀 Heart opens what mind couldn't",
+  "💌 Love from unexpected places",
+  "🌹 Romance in the ordinary",
+  "💞 A bond deepens wordlessly",
+  "🫂 An embrace heals something old",
+  "💕 Eyes light up seeing you",
+  "🥰 Truly seen by who matters",
+  "💗 Today's compassion blooms for years",
+  "🌷 A fading bond is just starting",
+  "💘 Cupid aims, doesn't miss",
+  "🧡 Warmth radiates from you",
+  "💜 Purple sunset, new beginning",
+  "💛 Friendship deepens in silence",
+  "🩵 Someone you love takes a leap",
+  // ─── Destiny ───
+  "🌌 Destiny crosses your path",
+  "⭐ A dormant star aligns",
+  "🌍 Your world gets more beautiful",
+  "🛤️ The avoided road leads home",
+  "🚀 Today launches something big",
+  "🧬 New frequency starting today",
+  "🗺️ Map to what you gave up on",
+  "⏳ Hourglass tips, new chapter",
+  "🌅 This sunrise is a turning point",
+  "🔭 A future worth fighting for",
+  "🌀 The spiral reaches its center",
+  "🪐 Planets shift, so do you",
+  "🛸 Contact from beyond your world",
+  "🏰 Your secret kingdom reveals",
+  "🌋 Dormant power erupts perfectly",
+  // ─── Protection ───
+  "🛡️ Unseen guardian at your side",
+  "🧿 The evil eye turns away",
+  "🪬 Ancient protection surrounds you",
+  "🕊️ Peace clears your road",
+  "🌿 Nature keeps you safe",
+  "🐚 The ocean sends calm",
+  "🫧 Negativity slides off you",
+  "🌤️ Storms part before you",
+  "🪨 Solid ground in earthquakes",
+  "🏔️ The mountain shelters you",
+  "🦎 You dodge it unknowingly",
+  "🐢 Slow wins today's race",
+  "🌳 Ancient tree lends strength",
+  "🪸 The fragile proves unbreakable",
+  "🌬️ Wind shifts just for you",
+  // ─── Transformation ───
+  "🐛 Ordinary you, extraordinary day",
+  "🦋 Shedding what doesn't fit",
+  "🔥 Phoenix moment this afternoon",
+  "🌑 New moon, blank check",
+  "🪺 Ready to hatch",
+  "🧊 Old fear thaws today",
+  "🌊 Waves carry fears away",
+  "🫧 Illusion pops, reality's better",
+  "🎭 Mask drops, relief floods",
+  "🪡 New self from golden thread",
+  "🌋 Weeks of pressure, creative fire",
+  "🔮 Tomorrow-you thanks today-you",
+  "🧪 Being yourself works spectacularly",
+  "🌱 Growth you almost feel",
+  "⚗️ Mundane becomes gold",
+  // ─── Mastery ───
+  "🗡️ Your edge reveals itself",
+  "🎻 Your craft sings today",
+  "🧙 Effortless everyday magic",
+  "📖 One chapter closes, next opens",
+  "🏯 Knowledge gains a new tower",
+  "🎓 You level up today",
+  "⚔️ Mastery unlocks mastery",
+  "🪄 Hands know before mind does",
+  "🎼 Instincts compose a masterpiece",
+  "🏹 Stop thinking — just aim",
+  "🧬 Greater than the sum of parts",
+  "📐 Precision meets creativity",
+  "🔬 Deepest view of your field",
+  "🗂️ Scattered knowledge organizes",
+  "🎯 Expertise flows effortlessly",
+  // ─── Adventure ───
+  "🗺️ A detour becomes the highlight",
+  "🚢 Unknown waters, quick landfall",
+  "🧗 Unreachable peak, one climb away",
+  "🌋 Something dormant erupts alive",
+  "🏜️ Desert ends, oasis appears",
+  "🌊 Current takes you somewhere better",
+  "🦈 Power respects you today",
+  "🏕️ Shelter in unlikely places",
+  "🗻 View from the top, worth it",
+  "🧊 Breakthrough into warm waters",
+  "🌪️ Ride the whirlwind today",
+  "🏄 Unseen wave, best ride",
+  "🪂 Leap of faith, perfect landing",
+  "🛶 Rapids with unknown grace",
+  "🌌 The unknown welcomes you",
+  // ─── Visions ───
+  "🔮 Secret admirer reveals today",
+  "🌟 Your doubt becomes your power",
+  "🃏 Joker plays as your ace",
+  "🕯️ A far candle lit for you",
+  "🌙 Moonlight shows hidden truth",
+  "✨ Unforgettable to someone new",
+  "🧿 Enemies work in your favor",
+  "🪬 An unknown curse lifts",
+  "🔔 A forgotten name remembers you",
+  "🌠 Falling star carries your wish",
+  "🕊️ A grudge dissolves to peace",
+  "🔮 Your reflection knows a secret",
+  "🌺 Out-of-season bloom, just for you",
+  "💫 Wind whispers a coming name",
+  "🦉 Guidance wrapped in coincidence",
+  "🌿 Earth softens your path",
+  "🧶 Fate weaves you into a miracle",
+  "🪞 Yourself in stranger's eyes",
+  "🌊 Old sorrow washes out tonight",
+  "🕸️ Morning luck, evening fortune",
+  // ─── Promises ───
+  "🔮 Words before sunset make it all worth it",
+  "🌟 A doubter changes their mind",
+  "💫 Generosity triggers a chain reaction",
+  "🕯️ A revisited memory holds a gift",
+  "🌙 Tomorrow thanks today's choices",
+  "✨ A compliment returns as opportunity",
+  "🧿 Your patience prevents unseen crisis",
+  "🪶 A gentle word heals unseen wounds",
+  "🔔 Best news of the week on your phone",
+  "🌠 A childhood dream stirs again",
+  "🌺 Who you mentor surpasses all",
+  "🕊️ Peace offering accepted with tears",
+  "🦋 What you release finds better home",
+  "🌿 Fortune grows from your effort",
+  "🧶 Old friendship rewoven stronger",
+  "🪞 Father's strength in your hands",
+  "🌊 New river of possibility",
+  "💎 Pressure crystallizes into precious",
+  "🔮 The oracle says yes",
+  "🌟 Your light draws out the best",
+  // ─── Blessings in Disguise ───
+  "🌙 The obstacle is the graduation",
+  "🔥 Burning is forging",
+  "🌊 The flood brings fertile soil",
+  "⚡ Lightning illuminates the way",
+  "🌪️ Storm lands you perfectly",
+  "🧊 Cold front clears for weeks",
+  "🌑 Tonight's dark, tomorrow's seed",
+  "🪨 The rock becomes cornerstone",
+  "🐍 Threat was shedding skin for you",
+  "🌋 Eruption makes you proof",
+  "🦂 Last sting — now immune",
+  "🌧️ Rain waters hidden seeds",
+  "🕸️ The web catches your enemy",
+  "⏳ The delay saves you bigger",
+  "🌫️ Fog hides a surprise party",
+  "🐺 The wolf becomes your guard",
+  "🔮 Endings are beginnings",
+  "🌊 Undertow to a private shore",
+  "🪶 Weight compresses you to diamond",
+  "✨ Tears water forever blooms",
+  // ─── Your Day ───
+  "🔮 11:11 brings an unexplained shift",
+  "🌟 Afternoon talk redraws your map",
+  "💫 Lunch insight beats the meal",
+  "🕯️ Evening brings rare completeness",
+  "🌙 Tonight, a secret smile",
+  "☕ Morning routine hides a portal",
+  "🌅 Dawn cracks, so does possibility",
+  "🧿 Midday visitor who matters",
+  "🪬 Magic happens on the way home",
+  "✨ Best win hides between two tasks",
+  "🌺 You finally notice daily beauty",
+  "🔔 The notification you've waited for",
+  "🦋 Afternoon walk, morning answer",
+  "🌿 By 4pm, the worry dissolves",
+  "🍵 Tea time truth",
+  "🌙 Last work hour, most productive",
+  "🌊 Gratitude wave on the way home",
+  "🔮 Tonight's last thought plants a dream",
+  "🌟 A sunset painted just for you",
+  "💫 Today ends beyond prediction",
+  // ─── Gifts ───
+  "🎁 Solo practice, public applause",
+  "🪙 Helping money comes back double",
+  "🌱 Your mistake roots your best idea",
+  "🧬 Hidden talent activates today",
+  "🏆 You win a race you didn't enter",
+  "🎯 Everything you touch aims true",
+  "🎲 Chaos reorganizes for you",
+  "🌈 Seven good things, notice five",
+  "🔑 Forgotten password returns",
+  "📦 Arrives early, exceeds expectations",
+  "🎁 A debt repaid with extra kindness",
+  "🪄 Fixed with a single word",
+  "🌻 Children and animals sense your glow",
+  "🍀 Found on the first look",
+  "🌟 Your aura convinces skeptics",
+  "🎪 Center stage, standing ovation",
+  "🔮 Déjà vu — this time you know",
+  "💫 The cosmos bookmarks today",
+  "🌙 Ancestors smile at you tonight",
+  // ─── Final Words ───
+  "🔮 A years-old circle completes",
+  "🌟 Every word written about you is kind",
+  "💫 You fix a stranger's problem",
+  "🕯️ A forgotten prayer answered at dusk",
+  "🌙 Your silences speak volumes",
+  "✨ Today's photo becomes the favorite",
+  "🧿 Distraction can't reach you",
+  "🪬 Your talisman activates today",
+  "🔔 Your calling, clear as a bell",
+  "🌠 Inspiration meteor this afternoon",
+  "🌺 Future-you is grateful for today",
+  "🕊️ Your forgiveness frees you most",
+  "🦋 You become your childhood dream",
+  "🌿 The universe left you a love note",
+  "🧶 Life's tapestry, vivid new thread",
+  "🪞 You believe the good they say",
+  "🌊 Joy surfaces without reason",
+  "💎 Scars called constellations",
+  "🔮 Today exceeds all prophecy",
+  "🌟 This tab knows what's coming",
 ];
 
 function randomFortune(): string {
@@ -379,10 +665,6 @@ function saveTabs() {
   try {
     const persistable = tabs.filter((t) => t.id !== "tab-main");
     localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(persistable));
-    // FORK: Also persist each tab's title into the fortune map so orphaned sessions keep their name
-    for (const t of persistable) {
-      if (t.sessionKey && t.title) saveFortuneTitle(t.sessionKey, t.title);
-    }
   } catch {}
 }
 
@@ -392,29 +674,6 @@ function loadTabs() {
     return stored as Tab[];
   } catch {
     return [];
-  }
-}
-
-// FORK: Persist fortune cookie titles per sessionKey so they survive tab close.
-// When a tab is closed the Tab object is gone, but the server session remains.
-// This map lets renderSessionRow recover the original fortune for orphaned sessions.
-const FORTUNE_MAP_KEY = "tinker-fortune-map";
-
-function saveFortuneTitle(sessionKey: string, title: string) {
-  if (!sessionKey || !title) return;
-  try {
-    const map = JSON.parse(localStorage.getItem(FORTUNE_MAP_KEY) || "{}");
-    map[sessionKey] = title;
-    localStorage.setItem(FORTUNE_MAP_KEY, JSON.stringify(map));
-  } catch {}
-}
-
-function getFortuneTitle(sessionKey: string): string | undefined {
-  try {
-    const map = JSON.parse(localStorage.getItem(FORTUNE_MAP_KEY) || "{}");
-    return map[sessionKey];
-  } catch {
-    return undefined;
   }
 }
 
@@ -523,13 +782,11 @@ type ActiveRunInfo = {
   authProfileId?: string;
   startedAt: number;
   sessionKey?: string;
+  state?: "restarting";
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
-
-// FORK: Listener set for auth profile update events (supports concurrent re-auth flows)
-const authProfileListeners = new Set<(evt: any) => void>();
 
 function persistProviderErrors() {
   try {
@@ -557,7 +814,7 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-const collapsedModelSections = new Set<string>(["configured"]);
+const collapsedModelSections = new Set<string>();
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
@@ -878,33 +1135,6 @@ function onEvent(evt: any) {
     }
     if (p.state === "delta") {
       streamRunId = p.runId;
-      // FORK: Receiving a delta proves a model is producing output.
-      // 1. Re-assert sending (may have been missed after lifecycle:start race)
-      // 2. ALWAYS clear error messages — during model fallback the UI receives
-      //    chat.error for each failed model attempt (Opus→Sonnet→GPT), stacking
-      //    error bubbles. When the successful model's deltas arrive, those errors
-      //    are stale and must go, regardless of sending/activeRuns state.
-      if (!sending) {
-        sending = true;
-        updateBtn();
-      }
-      // Cancel any deferred generic chat.error — successful delta supersedes
-      {
-        const t = (window as any).__deferredErrorTimer;
-        if (t) {
-          clearTimeout(t);
-          (window as any).__deferredErrorTimer = null;
-        }
-      }
-      // Clear stale error AND warning (fallback status) messages — a successful
-      // delta means we have a working model, prior failures are resolved.
-      {
-        const hadStale = messages.some((m: any) => m._isError || m._isFallbackStatus);
-        if (hadStale) {
-          messages = messages.filter((m: any) => !m._isError && !m._isFallbackStatus);
-          clearPersistedErrors(sessionKey);
-        }
-      }
       // FORK: Un-queue any queued user messages — LLM absorbed them via steer
       for (const m of messages) {
         if (m._queued) delete m._queued;
@@ -953,55 +1183,30 @@ function onEvent(evt: any) {
         // render correctly as a single block.
         const hadTemps = messages.some((m: any) => m._temporary);
         if (hadTemps && p.message) {
-          // Preserve segmented text bubbles for thinking/reasoning grouping.
-          // During streaming, tool calls freeze text into separate bubbles:
-          //   [reasoning1] [tool] [reasoning2] [tool] [final answer]
-          // Promote these segments as-is instead of concatenating everything
-          // into one blob (which destroys the thinking/answer separation).
-          // Only update the LAST text segment with the server's authoritative
-          // text to catch any tokens missed by delta throttling.
+          // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
-          const serverText = finalContent
+          const finalText = finalContent
             .filter((b: any) => b.type === "text")
             .map((b: any) => b.text ?? "")
             .join("");
 
-          // Find the last temporary text-only message that is AFTER the last
-          // tool message (i.e. the live answer segment, not an earlier frozen one).
-          let lastTempToolIdx = -1;
-          let lastTempTextIdx = -1;
-          for (let i = messages.length - 1; i >= 0; i--) {
-            const m = messages[i];
-            if (!m._temporary) continue;
+          // Remove temp text-only messages, keep temp tool messages
+          messages = messages.filter((m: any) => {
+            if (!m._temporary) return true;
             const c = Array.isArray(m.content) ? m.content : [];
             const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
-            if (isToolMsg && lastTempToolIdx < 0) lastTempToolIdx = i;
-            if (!isToolMsg && lastTempTextIdx < 0) lastTempTextIdx = i;
-            if (lastTempToolIdx >= 0 && lastTempTextIdx >= 0) break;
-          }
+            return isToolMsg;
+          });
 
-          // Only update the last text if it's after the last tool (the final answer).
-          // If it's before (an intermediate), leave it alone.
-          const isLastTextAfterTools = lastTempTextIdx > lastTempToolIdx;
-          const finalSegment = frozenTextEnd > 0 ? serverText.slice(frozenTextEnd) : serverText;
-
-          if (lastTempTextIdx >= 0 && isLastTextAfterTools && serverText) {
-            // Update last text segment with authoritative server text
-            const textBlock = messages[lastTempTextIdx].content?.find(
-              (b: any) => b.type === "text",
-            );
-            if (textBlock) {
-              textBlock.text = finalSegment;
-            }
-          } else if ((!isLastTextAfterTools || lastTempTextIdx < 0) && finalSegment.trim()) {
-            // No temp text after last tool — add the final answer segment
+          // Insert the complete text as a single non-temp message after the last tool row
+          if (finalText.trim()) {
             messages.push({
               role: "assistant",
-              content: [{ type: "text", text: finalSegment }],
+              content: [{ type: "text", text: finalText }],
             });
           }
 
-          // Promote all temps to permanent
+          // Clean up remaining temp flags
           for (const m of messages) {
             if (m._temporary) delete m._temporary;
           }
@@ -1021,84 +1226,16 @@ function onEvent(evt: any) {
         }
       }
       if (p.state === "error" && p.errorMessage) {
-        // FORK: Suppress generic chat.error entirely — the per-model fallback-error
-        // lifecycle events provide much better detail (model name, reason, next model).
-        // chat.error arrives BEFORE fallback-error, so we can't check for existing
-        // fallback messages. Instead, defer: if no fallback-error arrives within 2s,
-        // show the error as a last resort (means no fallback chain is configured).
-        const errorText = p.errorMessage;
-        const deferredErrorTimer = setTimeout(() => {
-          // Only show if no fallback status messages appeared in the meantime
-          const hasFallbackMsgs = messages.some((m: any) => m._isFallbackStatus);
-          if (!hasFallbackMsgs) {
-            const errMsg = {
-              role: "assistant",
-              content: [{ type: "text", text: errorText }],
-              _isError: true,
-            };
-            messages.push(errMsg);
-            persistErrorMsg(sessionKey, errMsg);
-            updateChat();
-          }
-        }, 2000);
-        // Cancel the deferred error if we receive a fallback-error or delta soon
-        const origOnFallback = (window as any).__deferredErrorTimer;
-        if (origOnFallback) clearTimeout(origOnFallback);
-        (window as any).__deferredErrorTimer = deferredErrorTimer;
+        const errMsg = {
+          role: "assistant",
+          content: [{ type: "text", text: p.errorMessage }],
+          _isError: true,
+        };
+        messages.push(errMsg);
+        persistErrorMsg(sessionKey, errMsg);
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
-      }
-      // FORK: Detect gateway-draining errors and auto-retry.
-      // The draining error arrives as a normal "final" reply with "draining for restart"
-      // in the text. Convert it to an orange warning and re-queue the user's message.
-      {
-        const lastMsg = messages[messages.length - 1];
-        const lastText = lastMsg
-          ? (Array.isArray(lastMsg.content) ? lastMsg.content : [])
-              .filter((b: any) => b.type === "text")
-              .map((b: any) => b.text ?? "")
-              .join("")
-          : "";
-        if (lastText.includes("draining for restart")) {
-          // Restyle as orange centered warning
-          lastMsg._isWarning = true;
-          lastMsg._isDraining = true;
-          // Find last user message text for retry
-          let retryText = "";
-          for (let i = messages.length - 2; i >= 0; i--) {
-            if ((messages[i].role ?? "").toLowerCase() === "user") {
-              const c = Array.isArray(messages[i].content) ? messages[i].content : [];
-              retryText = c
-                .filter((b: any) => b.type === "text")
-                .map((b: any) => b.text ?? "")
-                .join("\n")
-                .trim();
-              break;
-            }
-          }
-          if (retryText) {
-            // Replace warning text with retry notice, then auto-retry after 5s
-            const drainBlock = lastMsg.content?.find((b: any) => b.type === "text");
-            if (drainBlock) {
-              drainBlock.text =
-                "⏳ Gateway restarting — your message will be resent automatically…";
-            }
-            setTimeout(() => {
-              // Remove the drain warning and the original user message
-              messages = messages.filter((m: any) => !m._isDraining);
-              // Remove the last user message since send() will re-add it
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if ((messages[i].role ?? "").toLowerCase() === "user") {
-                  messages.splice(i, 1);
-                  break;
-                }
-              }
-              updateChat();
-              send(retryText);
-            }, 5000);
-          }
-        }
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
@@ -1120,17 +1257,6 @@ function onEvent(evt: any) {
   }
   if (evt.event === "agent") {
     const p = evt.payload;
-    // DEBUG: trace lifecycle events to diagnose missing thinking indicator
-    if (p?.stream === "lifecycle") {
-      console.log("[DEBUG lifecycle]", {
-        phase: p.data?.phase,
-        model: p.data?.model,
-        sessionKey: p.data?.sessionKey,
-        uiSessionKey: sessionKey,
-        match: sessionKeyMatches(p.data?.sessionKey),
-        runId: p.runId,
-      });
-    }
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
@@ -1256,17 +1382,6 @@ function onEvent(evt: any) {
     }
     // Track provider failures from model fallback
     // FORK: Only show fallback errors for the active session (skip other tabs' failures)
-    // Cancel any deferred generic chat.error — the fallback-error has the real details
-    if (
-      p?.stream === "lifecycle" &&
-      (p.data?.phase === "fallback-error" || p.data?.phase === "fallback-profile-error")
-    ) {
-      const timer = (window as any).__deferredErrorTimer;
-      if (timer) {
-        clearTimeout(timer);
-        (window as any).__deferredErrorTimer = null;
-      }
-    }
     if (
       p?.stream === "lifecycle" &&
       p.data?.phase === "fallback-error" &&
@@ -1292,31 +1407,24 @@ function onEvent(evt: any) {
         updateBudgetPanel();
         startHealthPoll();
       }
-      // FORK: Show each fallback step as a chat message.
-      // Orange (warning) for recoverable (next model available), red (error) for terminal.
-      const isRecoverable = attempt != null && total != null && attempt < total;
-      const failedName = fm ? modelName(fm) : "unknown";
+      // Show each fallback step as a chat message
+      const profileId = (p.data.failedProfileId || "") as string;
+      const stepLabel = attempt && total ? `[${attempt}/${total}]` : "";
+      const modelLabel = fm || "unknown";
+      const profileLabel = profileId ? ` (${profileId})` : "";
       const reasonLabel = describeError(reason, errMsg);
-      const nextModel = p.data.nextModel as string | undefined;
-      const nextName = nextModel ? modelName(nextModel) : null;
-      let fallbackText: string;
-      if (isRecoverable && nextName) {
-        fallbackText = `${failedName} → ${reasonLabel}. <span class="fallback-next">Trying ${nextName}…</span>`;
-      } else if (isRecoverable) {
-        fallbackText = `${failedName} → ${reasonLabel}. <span class="fallback-next">Trying next model…</span>`;
-      } else {
-        fallbackText = `${failedName} → ${reasonLabel}. All models exhausted.`;
-      }
+      // (placeholder removed — real bars inserted on data arrival)
+      const nextLabel =
+        attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
+      const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
       const fallbackMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: fallbackText }],
-        _isError: !isRecoverable,
-        _isWarning: isRecoverable,
-        _isFallbackStatus: true,
+        _isError: true,
         _retryProvider: fp || undefined,
       };
       messages.push(fallbackMsg);
-      if (!isRecoverable) persistErrorMsg(sessionKey, fallbackMsg);
+      persistErrorMsg(sessionKey, fallbackMsg);
       updateChat();
     }
     // Show per-profile failure events (auth profile rotation within a provider)
@@ -1334,9 +1442,8 @@ function onEvent(evt: any) {
       const pIdx = p.data.profileIndex as number | undefined;
       const pTotal = (p.data.totalProfiles ?? p.data.profileTotal) as number | undefined;
       const reasonLabel = describeError(reason, errMsg);
-      const profileName = modelName(model);
-      const profileLabel = pid || prov;
-      const profileText = `↳ ${profileName} (${profileLabel}) — ${reasonLabel}`;
+      const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
+      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
       // Track per-profile error for model panel red labels
       if (pid) {
         providerErrors.set(pid, {
@@ -1351,11 +1458,11 @@ function onEvent(evt: any) {
       const profileMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: profileText }],
-        _isWarning: true,
-        _isFallbackStatus: true,
+        _isError: true,
         _retryProvider: prov,
       };
       messages.push(profileMsg);
+      persistErrorMsg(sessionKey, profileMsg);
       updateChat();
     }
     // Overseer periodic chat updates
@@ -1375,10 +1482,7 @@ function onEvent(evt: any) {
         updateChat();
       }
     }
-    if (
-      p?.stream === "lifecycle" &&
-      (p.data?.model || p.data?.phase === "end" || p.data?.phase === "error")
-    ) {
+    if (p?.stream === "lifecycle" && p.data?.model) {
       // FORK: Ignore lifecycle events that don't belong to the current session.
       // Events without a sessionKey (cron, heartbeat) are also ignored — they would
       // set sending=true and disrupt the active tab's UI.
@@ -1387,18 +1491,8 @@ function onEvent(evt: any) {
       if (
         !evtSessionKey ||
         (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
-      ) {
-        console.log("[DEBUG glow] DROPPED lifecycle event — sessionKey mismatch", {
-          phase: p.data.phase,
-          model: p.data.model,
-          evtSessionKey,
-          uiSessionKey: sessionKey,
-          hasEvtKey: Boolean(evtSessionKey),
-          match: evtSessionKey ? sessionKeyMatches(evtSessionKey) : "N/A",
-          isSubagent: evtSessionKey?.includes(":subagent:"),
-        });
+      )
         return;
-      }
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
@@ -1425,19 +1519,10 @@ function onEvent(evt: any) {
           startedAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
         });
-        console.log("[DEBUG glow] activeRuns.set", {
-          runId: p.runId,
-          model: p.data.model,
-          provider: startProvider,
-          authProfileId: p.data.authProfileId,
-          sessionKey: p.data.sessionKey,
-          activeRunsSize: activeRuns.size,
-        });
         // Re-assert sending in case a chat error event cleared it during fallback
         sending = true;
         saveActiveRuns();
         updateBudgetPanel();
-        updateSessionsPanel();
         updateChat();
         updateBtn();
         startThinkingTick();
@@ -1497,7 +1582,6 @@ function onEvent(evt: any) {
             sending = false;
           }
           updateBudgetPanel();
-          updateSessionsPanel();
           updateChat();
           updateBtn();
         }, 3000);
@@ -1529,30 +1613,6 @@ function onEvent(evt: any) {
         }, 500);
       }
     }
-  }
-
-  // FORK: Auth profile reload event — refresh models panel
-  if (evt.event === "auth.profiles.updated") {
-    for (const listener of authProfileListeners) {
-      try {
-        listener(evt);
-      } catch {}
-    }
-    const d = evt.data ?? evt.payload ?? {};
-    const profiles = (d.profiles ?? []) as string[];
-    const profileId = d.profileId as string | undefined;
-    if (d.clearAll) {
-      // File watcher: clear all non-permanent errors
-      for (const [k, v] of providerErrors) {
-        if (v.reason !== "billing" && v.reason !== "auth_permanent") providerErrors.delete(k);
-      }
-    } else {
-      if (profileId) providerErrors.delete(profileId);
-      for (const pid of profiles) providerErrors.delete(pid);
-    }
-    persistProviderErrors();
-    loadBudget();
-    return;
   }
 }
 
@@ -1844,8 +1904,8 @@ function md(text: string): string {
   );
   // Fractal reflection styling (green)
   h = h.replace(
-    /<strong>(🌿 FRACTAL[^<]*?)<\/strong>\s*<em>(.*?)<\/em>/gi,
-    '<strong style="color:#2ECC71">$1</strong> <em style="color:#2ECC71">$2</em>',
+    /<strong>🌿 FRACTAL:<\/strong>\s*<em>(.*?)<\/em>/gi,
+    '<strong style="color:#2ECC71">🌿 FRACTAL:</strong> <em style="color:#2ECC71">$1</em>',
   );
   return h;
 }
@@ -2147,21 +2207,21 @@ function renderMsg(
         // System-injected messages (runtime context, subagent results) → system style
         if (SYSTEM_INJECTED_RE.test(userText)) {
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
-        } else if (/^⚠️|^⚠/.test(userText)) {
-          // FORK: Gateway restart / warning messages → orange centered alert bubble
-          h += renderSystemMsg(userText, idx);
         } else {
           h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
         }
       }
     } else if (role === "assistant") {
-      const errorClass = msg._isWarning ? " msg-warning" : msg._isError ? " msg-error" : "";
+      const errorClass = msg._isError ? " msg-error" : "";
       const retryBtn =
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
       const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-      h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+      // FORK: Detect fractal reflection responses and apply green styling
+      const isFractal = text.trimStart().startsWith("🌿 FRACTAL:");
+      const fractalClass = isFractal ? " msg-fractal" : "";
+      h += `<div class="msg assistant${errorClass}${fractalClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
     } else {
       h += renderSystemMsg(text, idx);
     }
@@ -2198,9 +2258,6 @@ function renderMsg(
           // System-injected messages (runtime context, subagent results) → system style
           if (SYSTEM_INJECTED_RE.test(userText)) {
             h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
-          } else if (/^⚠️|^⚠/.test(userText)) {
-            // FORK: Gateway restart / warning messages → orange centered alert bubble
-            h += renderSystemMsg(userText, idx);
           } else {
             h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
           }
@@ -2212,7 +2269,10 @@ function renderMsg(
             ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
             : "";
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+        // FORK: Detect fractal reflection responses and apply green styling
+        const isFractal2 = text.trimStart().startsWith("🌿 FRACTAL:");
+        const fractalClass2 = isFractal2 ? " msg-fractal" : "";
+        h += `<div class="msg assistant${errorClass}${fractalClass2}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
       } else {
         h += renderSystemMsg(text, idx);
       }
@@ -2270,17 +2330,19 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
+      const badge =
+        info.state === "restarting" ? `<span class="restart-badge">RESTARTING</span>` : "";
+      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
-  <span class="thinking-elapsed">${elapsed}s</span>
+  ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
     }
     return `<div class="thinking-indicator">${rows}</div>`;
   }
   if (sending) {
-    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23;--thinking-glow:#6b8e2340;--thinking-glow-bg:#6b8e2320;--thinking-glow-bg2:#6b8e2330">
+    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
   <span class="thinking-stop">Stop</span>
@@ -2570,47 +2632,12 @@ function updateChat(skipScroll = false) {
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (hasText || plainText) assistantTextIndices.push(j);
       }
-      // All assistant text messages except the last in each run are thinking steps.
-      // This applies during streaming too — frozen bubbles before tool calls are
-      // definitively intermediate and slice(0,-1) already excludes the live bubble.
-      const intermediates = assistantTextIndices.slice(0, -1);
+      // During streaming, render all bubbles as normal assistant (no thinking style).
+      // After finalization, all except the last become thinking → reasoning group.
+      const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
+      const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
       for (const idx of intermediates) thinkingSet.add(idx);
       runStart = i + 1;
-    }
-  }
-  // FORK: Deduplicate overlapping assistant messages within a run.
-  // When the server transcript stores per-round assistant text, consecutive
-  // messages may overlap (the later one starts with the earlier one's text).
-  // Suppress the shorter message so the user doesn't see repeated content.
-  const dedupHiddenSet = new Set<number>();
-  {
-    const assistantText = (m: any): string => {
-      const c = Array.isArray(m.content) ? m.content : [];
-      return c
-        .filter((b: any) => b.type === "text")
-        .map((b: any) => (b.text ?? "").trim())
-        .join("\n");
-    };
-    let runStart2 = 0;
-    for (let i = 0; i <= messages.length; i++) {
-      const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
-      if (!isUserOrEnd) continue;
-      // Collect assistant text indices in this run
-      const aIndices: number[] = [];
-      for (let j = runStart2; j < i; j++) {
-        if ((messages[j].role ?? "").toLowerCase() !== "assistant") continue;
-        const txt = assistantText(messages[j]);
-        if (txt) aIndices.push(j);
-      }
-      // Check consecutive pairs — if text[k] is a prefix of text[k+1], hide text[k]
-      for (let k = 0; k < aIndices.length - 1; k++) {
-        const curText = assistantText(messages[aIndices[k]]);
-        const nextText = assistantText(messages[aIndices[k + 1]]);
-        if (nextText.startsWith(curText) && nextText.length > curText.length) {
-          dedupHiddenSet.add(aIndices[k]);
-        }
-      }
-      runStart2 = i + 1;
     }
   }
   // Build a global tool result map: tool_use_id → { content, isError, name }
@@ -2685,9 +2712,7 @@ function updateChat(skipScroll = false) {
         // Completed run with intermediates — wrap in collapsible group
         const groupId = `rg-${intermediateIndices[0]}`;
         const expanded = expandedTools.has(groupId);
-        const stepCount = intermediateIndices.filter(
-          (j) => thinkingSet.has(j) && !dedupHiddenSet.has(j),
-        ).length;
+        const stepCount = intermediateIndices.filter((j) => thinkingSet.has(j)).length;
         const chevron = expanded ? "▾" : "▸";
         const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
         const toolLabel =
@@ -2700,7 +2725,6 @@ function updateChat(skipScroll = false) {
         if (expanded) {
           h += `<div class="reasoning-content">`;
           for (const j of intermediateIndices) {
-            if (dedupHiddenSet.has(j)) continue;
             h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
           }
           h += `</div>`;
@@ -2711,7 +2735,6 @@ function updateChat(skipScroll = false) {
       } else {
         // Streaming run or no intermediates — render flat
         for (let j = runStart; j < runEnd; j++) {
-          if (dedupHiddenSet.has(j)) continue;
           h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
         }
       }
@@ -2851,7 +2874,7 @@ function renderTabs() {
       ? ""
       : `<span class="tab-close" data-tab-close="${tab.id}">&times;</span>`;
 
-    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
+    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
   }
@@ -2899,12 +2922,7 @@ function switchToTab(tabId: string) {
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
-    // Reload timeline respecting current filter mode
-    if (timelineCtrl?.getFilterMode() === "all") {
-      timelineCtrl?.loadAllSessions();
-    } else {
-      timelineCtrl?.loadSession(sessionKey);
-    }
+    timelineCtrl?.loadSession(sessionKey);
     // Background refresh from server — guarded inside loadChat
     loadChat();
   } else {
@@ -2930,7 +2948,6 @@ function createTab(): Tab {
   };
   tabs.push(tab);
   tabStates.set(tab.id, freshTabState());
-  if (tab.sessionKey) saveFortuneTitle(tab.sessionKey, tab.title);
   saveTabs();
   return tab;
 }
@@ -2966,15 +2983,8 @@ function attachSessionToTab(key: string) {
 
   tab.sessionKey = key;
   tab.isAttached = true;
-  // FORK: Preserve the fortune already associated with this session key
-  const storedFortune = getFortuneTitle(key);
-  if (storedFortune) {
-    tab.title = storedFortune;
-  } else {
-    const sess = sessions.find((s: any) => s.key === key);
-    if (sess?.label) tab.title = sess.label.slice(0, 30);
-  }
-  saveFortuneTitle(key, tab.title);
+  const sess = sessions.find((s: any) => s.key === key);
+  if (sess?.label) tab.title = sess.label.slice(0, 30);
 
   sessionKey = key;
   messages = [];
@@ -3132,16 +3142,13 @@ function updateBudgetPanel() {
           : showSuffix
             ? ` \u00b7 ${keyLabel}`
             : "";
-      // FORK: Lifecycle events may lack authProfileId, so count is stored under
-      // modelId instead of keyId. Fall back to model-level count (same as multi-key path).
-      const singleKeyCount = counts.get(keyId || modelId) || counts.get(modelId) || 0;
       html += renderModelRow(
         modelId,
         provider,
         name,
         badge,
         suffix,
-        singleKeyCount,
+        counts.get(keyId || modelId) || 0,
         providerErrors.get(keyId || modelId),
         keyId,
       );
@@ -3166,23 +3173,6 @@ function updateBudgetPanel() {
         );
       }
     }
-  }
-
-  // FORK: Debug glow — log active runs vs config model IDs
-  if (activeRuns.size > 0) {
-    const allCounts = getAuthKeyCounts();
-    console.log("[DEBUG glow] updateBudgetPanel", {
-      activeRuns: [...activeRuns.entries()].map(([id, info]) => ({
-        runId: id,
-        model: info.model,
-        authProfileId: info.authProfileId,
-        sessionKey: info.sessionKey,
-      })),
-      countsAll: [...allCounts.entries()],
-      primary,
-      fallbacks,
-      authOrder,
-    });
   }
 
   // Fallback chain: primary + fallbacks
@@ -3258,171 +3248,6 @@ function shortErrorLabel(reason: string): string {
   }
 }
 
-// ─── Auth Re-Auth UI ───
-
-/** Show a toast notification at the bottom of the screen. */
-function showToast(msg: string, isError = false): void {
-  const t = document.createElement("div");
-  t.className = `toast${isError ? " toast-error" : ""}`;
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
-}
-
-/** Show a popover with auth actions for an Anthropic OAuth profile. */
-function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
-  document.querySelector(".auth-action-popover")?.remove();
-
-  const pop = document.createElement("div");
-  pop.className = "auth-action-popover";
-  pop.innerHTML = `
-    <button class="auth-action-btn" data-action="reload">\u21bb Reload from disk</button>
-    <button class="auth-action-btn" data-action="reauth">\ud83d\udd11 Re-authenticate</button>
-  `;
-
-  const rect = anchor.getBoundingClientRect();
-  pop.style.position = "fixed";
-  pop.style.left = `${rect.left}px`;
-  pop.style.top = `${rect.bottom + 4}px`;
-  pop.style.zIndex = "9999";
-
-  pop.addEventListener("click", async (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>(".auth-action-btn");
-    if (!btn) return;
-    pop.remove();
-
-    const action = btn.dataset.action;
-    if (action === "reload") {
-      try {
-        await req("auth.reload", { profileId });
-        showToast(`Credentials reloaded for ${profileId.replace("anthropic:", "")}`);
-      } catch (err: any) {
-        showToast(`Reload failed: ${err?.message || err}`, true);
-      }
-    } else if (action === "reauth") {
-      startOAuthReauthFlow(profileId);
-    }
-  });
-
-  document.body.appendChild(pop);
-
-  const close = (e: MouseEvent) => {
-    if (!pop.contains(e.target as Node)) {
-      pop.remove();
-      document.removeEventListener("click", close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener("click", close, true), 0);
-}
-
-/** Start the OAuth re-auth popup flow for an Anthropic profile. */
-async function startOAuthReauthFlow(profileId: string): Promise<void> {
-  let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
-  try {
-    startResult = (await req("auth.reauth.start", { profileId })) as any;
-  } catch (err: any) {
-    showToast(`Re-auth failed: ${err?.message || err}`, true);
-    return;
-  }
-
-  const { sessionId, authUrl, fallbackAuthUrl } = startResult;
-  const popup = window.open(authUrl, "openclaw-reauth", "width=500,height=700");
-
-  let resolved = false;
-
-  const onAuthEvent = (evt: any) => {
-    const d = evt.data ?? evt.payload ?? {};
-    if (d.profileId === profileId || d.source === "oauth-reauth") {
-      resolved = true;
-      cleanup();
-      try {
-        popup?.close();
-      } catch {}
-      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    }
-  };
-
-  authProfileListeners.add(onAuthEvent);
-
-  const cleanup = () => {
-    authProfileListeners.delete(onAuthEvent);
-    clearTimeout(fallbackTimer);
-    clearInterval(popupPoll);
-  };
-
-  const fallbackTimer = setTimeout(() => {
-    if (!resolved) {
-      cleanup();
-      try {
-        popup?.close();
-      } catch {}
-      showPasteModal(sessionId, fallbackAuthUrl, profileId);
-    }
-  }, 15_000);
-
-  const popupPoll = setInterval(() => {
-    if (popup?.closed && !resolved) {
-      cleanup();
-      showPasteModal(sessionId, fallbackAuthUrl, profileId);
-    }
-  }, 500);
-}
-
-/** Show paste modal for fallback OAuth code entry. */
-function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: string): void {
-  document.querySelector(".auth-paste-modal-overlay")?.remove();
-
-  const overlay = document.createElement("div");
-  overlay.className = "auth-paste-modal-overlay";
-  overlay.innerHTML = `
-    <div class="auth-paste-modal">
-      <h3>Re-authenticate ${esc(profileId.replace("anthropic:", ""))}</h3>
-      <p>Auto-capture didn't work. Complete manually:</p>
-      <p>1. <a href="${fallbackAuthUrl}" target="_blank" rel="noopener">Click here to authorize</a></p>
-      <p>2. Copy the code from the callback page</p>
-      <p>3. Paste it below:</p>
-      <input type="text" class="auth-paste-input" placeholder="Paste code here (format: code#state)" autofocus />
-      <div class="auth-paste-actions">
-        <button class="auth-paste-cancel">Cancel</button>
-        <button class="auth-paste-submit">Submit</button>
-      </div>
-      <div class="auth-paste-status"></div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-
-  const input = overlay.querySelector<HTMLInputElement>(".auth-paste-input")!;
-  const status = overlay.querySelector<HTMLElement>(".auth-paste-status")!;
-  const submitBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-submit")!;
-  const cancelBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-cancel")!;
-
-  const submit = async () => {
-    const code = input.value.trim();
-    if (!code) return;
-    submitBtn.disabled = true;
-    status.textContent = "Exchanging code...";
-    try {
-      await req("auth.reauth.exchange", { sessionId, code });
-      overlay.remove();
-      showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    } catch (err: any) {
-      status.textContent = `Failed: ${err?.message || err}`;
-      status.style.color = "#f38ba8";
-      submitBtn.disabled = false;
-    }
-  };
-
-  submitBtn.addEventListener("click", submit);
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submit();
-  });
-  cancelBtn.addEventListener("click", () => overlay.remove());
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
-}
-
 function renderModelRow(
   id: string,
   provider: string,
@@ -3438,13 +3263,11 @@ function renderModelRow(
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
-      ? ` style="--glow-color:${color}40;--glow-bg:${color}20;--glow-bg2:${color}30;--glow-border:${color}25"`
+      ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
-  const isAnthropicOAuth = keyId?.startsWith("anthropic:cli-") || false;
-  const actionAttr = isAnthropicOAuth && errorInfo ? ` data-auth-profile="${esc(keyId!)}"` : "";
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge${isAnthropicOAuth ? " auth-clickable" : ""}"${actionAttr} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, id, keyId);
   const costLabel = getModelCost(id, keyId);
@@ -3476,13 +3299,11 @@ function renderAuthKeyRow(
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
-      ? ` style="--glow-color:${color}40;--glow-bg:${color}20;--glow-bg2:${color}30;--glow-border:${color}25"`
+      ? ` style="--glow-color:${color}80;--glow-bg:${color}18;--glow-bg2:${color}30;--glow-border:${color}50"`
       : "";
   const countBadge = count > 0 ? `<span class="model-agent-count">${count}</span>` : "";
-  const isAnthropicOAuth = keyId.startsWith("anthropic:cli-");
-  const actionAttr = isAnthropicOAuth && errorInfo ? ` data-auth-profile="${esc(keyId)}"` : "";
   const errorBadge = errorInfo
-    ? `<span class="model-error-badge${isAnthropicOAuth ? " auth-clickable" : ""}"${actionAttr} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
+    ? `<span class="model-error-badge" data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, modelId, keyId);
   const costLabel = getModelCost(modelId, keyId);
@@ -3565,7 +3386,7 @@ function classifySession(key: string): { group: string; shortLabel: string } {
   if (/:tinker:/.test(key) || key.startsWith("tinker:")) {
     const tab = tabs.find((t) => t.sessionKey === key);
     const tinkerSuffix = key.includes(":tinker:") ? key.split(":tinker:")[1] : key.slice(7);
-    const label = tab?.title || getFortuneTitle(key) || tinkerSuffix?.slice(0, 8) || "tab";
+    const label = tab?.title || tinkerSuffix?.slice(0, 8) || "tab";
     return { group: "pinned", shortLabel: label };
   }
   return { group: "other", shortLabel: key.slice(0, 24) };
@@ -3673,15 +3494,8 @@ function updateSessionsPanel() {
       const newTab = createTab();
       newTab.sessionKey = key;
       newTab.isAttached = true;
-      // FORK: Preserve the fortune already associated with this session key
-      const storedFortune = getFortuneTitle(key);
-      if (storedFortune) {
-        newTab.title = storedFortune;
-      } else {
-        const sess = sessions.find((s: any) => s.key === key);
-        if (sess?.label) newTab.title = sess.label.slice(0, 30);
-      }
-      saveFortuneTitle(key, newTab.title);
+      const sess = sessions.find((s: any) => s.key === key);
+      if (sess?.label) newTab.title = sess.label.slice(0, 30);
       renderTabs();
       switchToTab(newTab.id);
     });
@@ -3695,15 +3509,19 @@ function updateSessionsPanel() {
       if (!key) return;
       try {
         await req("sessions.delete", { key });
-        // Close any tab using this session (don't just detach — the session is gone)
+        // Revert any tab using this session to unattached
         const affectedTab = tabs.find((t) => t.sessionKey === key);
         if (affectedTab && affectedTab.id !== "tab-main") {
-          closeTab(affectedTab.id);
-        } else if (affectedTab?.id === "tab-main") {
-          // Main tab can't be closed — just clear its chat
-          sessionKey = "";
-          messages = [];
-          updateChat();
+          affectedTab.sessionKey = null;
+          affectedTab.isAttached = false;
+          affectedTab.title = randomFortune();
+          if (affectedTab.id === activeTabId) {
+            sessionKey = "";
+            messages = [];
+            updateChat();
+          }
+          renderTabs();
+          saveTabs();
         }
         // Reload from server to get authoritative list
         await loadSessions();
@@ -3727,43 +3545,20 @@ function updateSessionsPanel() {
   });
 }
 
-// FORK: Check if a session has active LLM runs (for session glow)
-function sessionHasActiveRuns(key: string): { live: boolean; provider?: string } {
-  for (const info of activeRuns.values()) {
-    if (info.sessionKey && (info.sessionKey === key || sessionKeyMatches(info.sessionKey, key))) {
-      return { live: true, provider: info.provider };
-    }
-  }
-  return { live: false };
-}
-
 function renderSessionRow(s: any, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
   const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
   const isMainSession = /:main$/.test(s.key);
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
-  // FORK: Auto-assign a fortune to orphaned tinker sessions that would otherwise show "Tinker UI"
-  let resolvedFortune = tinkerTab?.title || getFortuneTitle(s.key);
-  if (!resolvedFortune && isTinkerSession) {
-    resolvedFortune = randomFortune();
-    saveFortuneTitle(s.key, resolvedFortune);
-  }
   const label = isMainSession
     ? mainTab?.title || "🏠 Main"
-    : resolvedFortune || s.label || s.displayName || shortLabel;
+    : tinkerTab?.title || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
-  // FORK: Session glow — pulse when an LLM run is active for this session
-  const liveInfo = sessionHasActiveRuns(s.key);
-  const liveClass = liveInfo.live ? " session-live" : "";
-  const liveColor = liveInfo.provider ? PROVIDER_COLORS[liveInfo.provider] || "#6b8f3a" : "#6b8f3a";
-  const liveStyle = liveInfo.live
-    ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
-    : "";
-  return `<div class="session-row${isActive ? " session-active" : ""}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
-    <span class="session-label" data-hint="${escapeHtml(label)}">${esc(label)} ${channel}</span>
+  return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
+    <span class="session-label">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -3817,7 +3612,6 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
-        <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
@@ -3838,10 +3632,9 @@ function init() {
       </div>
       <div class="rpanel budget-panel-wrapper">
         <div class="rpanel-header">🧠 Models
-          <span class="ct-switch" id="budget-scope-toggle">
-            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
-            <span class="ct-switch-track"><span class="ct-switch-thumb"></span></span>
-            <span class="ct-switch-label" data-scope="all">All</span>
+          <span class="scope-toggle" id="budget-scope-toggle">
+            <button class="scope-btn scope-btn-active" data-scope="session">Session</button>
+            <button class="scope-btn" data-scope="all">All</button>
           </span>
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
@@ -3969,53 +3762,17 @@ function init() {
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
-  // FORK: Auth error badge click — show reload/re-auth popover
-  $("budget-panel")?.addEventListener("click", (e) => {
-    const badge = (e.target as HTMLElement).closest<HTMLElement>(".auth-clickable");
-    if (!badge) return;
-    e.stopPropagation();
-    const profileId = badge.dataset.authProfile;
-    if (!profileId) return;
-    showAuthActionPopover(badge, profileId);
-  });
   // FORK: Session/All scope toggle for Models panel
-  $("budget-scope-toggle")?.addEventListener("click", () => {
-    budgetScope = budgetScope === "session" ? "all" : "session";
-    const wrap = $("budget-scope-toggle")!;
-    wrap.querySelectorAll(".ct-switch-label").forEach((l) => {
-      l.classList.toggle(
-        "ct-switch-label--active",
-        (l as HTMLElement).dataset.scope === budgetScope,
-      );
-    });
-    wrap
-      .querySelector(".ct-switch-track")!
-      .classList.toggle("ct-switch-track--on", budgetScope === "all");
-    updateBudgetPanel();
-  });
-
-  // ─── Voice mute toggle ───
-  const voiceBtn = $("tb-voice")!;
-  const muteApi = "/tinker/api/jarvis-mute";
-  fetch(muteApi)
-    .then((r) => (r.ok ? r.json() : Promise.reject()))
-    .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
-    .catch(() => {});
-  voiceBtn.addEventListener("click", () => {
-    const willMute = voiceBtn.classList.contains("tb-active");
-    voiceBtn.classList.toggle("tb-active", !willMute);
-    fetch(muteApi, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ muted: willMute }),
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => voiceBtn.classList.toggle("tb-active", !d.muted))
-      .catch(() => {
-        voiceBtn.classList.toggle("tb-active", !willMute);
-        voiceBtn.classList.add("tb-error");
-        setTimeout(() => voiceBtn.classList.remove("tb-error"), 5000);
+  $("budget-scope-toggle")?.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
+    if (!btn) return;
+    budgetScope = btn.dataset.scope as "session" | "all";
+    $("budget-scope-toggle")!
+      .querySelectorAll(".scope-btn")
+      .forEach((b) => {
+        b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
       });
+    updateBudgetPanel();
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
@@ -4458,82 +4215,21 @@ function init() {
     body.querySelectorAll(".alt-wa-btn").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        let action = (btn as HTMLElement).dataset.action;
+        const action = (btn as HTMLElement).dataset.action;
         const qrArea = document.getElementById("wa-qr-area");
         if (action === "qr" || action === "relink") {
           if (qrArea)
             qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
-          // Auto-refreshing QR flow: poll for new QRs + wait for connection
-          let qrActive = true;
-          let lastQrUrl = "";
-          let qrRetries = 0;
-          let isFirstCall = true;
-          const maxQrRetries = 15; // ~3 minutes total
-          const refreshQr = async () => {
-            while (qrActive && qrRetries < maxQrRetries) {
-              try {
-                // First call: force=true to relink. Subsequent: force=false to get existing QR
-                const r = (await req("web.login.start", {
-                  force: isFirstCall && action === "relink",
-                })) as any;
-                isFirstCall = false;
-                if (
-                  qrArea &&
-                  (r?.qrDataUrl || r?.qrCode) &&
-                  (r.qrDataUrl || r.qrCode) !== lastQrUrl
-                ) {
-                  lastQrUrl = r.qrDataUrl || r.qrCode;
-                  // Render QR: try img first, but also include a link to open the QR image directly
-                  const qrHtml = r.qrDataUrl
-                    ? `<img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)" onerror="this.style.display='none'">`
-                    : "";
-                  const qrLink = r.qrDataUrl
-                    ? `<div style="margin-top:4px"><a href="${r.qrDataUrl}" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:underline">Open QR in new tab ↗</a></div>`
-                    : "";
-                  const qrText = r.qrCode
-                    ? `<div style="margin-top:4px;font-family:monospace;font-size:8px;word-break:break-all;max-width:300px;padding:4px;background:var(--surface2);border-radius:4px;color:var(--muted)">${altEsc(r.qrCode)}</div>`
-                    : "";
-                  qrArea.innerHTML = `<div style="margin-top:8px;text-align:center">${qrHtml}${qrLink}${qrText}<div style="font-size:10px;color:var(--muted);margin-top:4px">Scan with WhatsApp → Linked Devices</div><div style="font-size:9px;color:var(--muted);margin-top:2px">QR auto-refreshes</div></div>`;
-                  qrRetries = 0;
-                } else if (qrArea && !r?.qrDataUrl) {
-                  qrRetries++;
-                  if (!lastQrUrl) {
-                    qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Waiting for QR… (${qrRetries})</div>`;
-                  }
-                }
-              } catch (err) {
-                qrRetries++;
-                if (qrArea && !lastQrUrl) {
-                  qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Retrying… (${qrRetries})</div>`;
-                }
-              }
-              await new Promise((r) => setTimeout(r, 12000));
+          const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
+            message: (err as Error).message,
+          }))) as any;
+          if (qrArea) {
+            if (r?.qrDataUrl) {
+              qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
+            } else {
+              qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">${altEsc(r?.message ?? "No QR available")}</div>`;
             }
-            if (qrActive && qrArea) {
-              qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">QR timed out. Click Relink to try again.</div>`;
-            }
-          };
-          const waitForLink = async () => {
-            while (qrActive) {
-              try {
-                const w = (await req("web.login.wait", { timeoutMs: 30000 })) as any;
-                if (w?.connected) {
-                  qrActive = false;
-                  if (qrArea) {
-                    qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:#86efac">✅ Linked! WhatsApp is ready.</div>`;
-                    setTimeout(() => renderAltView("channels"), 2000);
-                  }
-                  return;
-                }
-                // Not connected yet — keep polling (the server-side wait timed out, which is normal)
-              } catch {
-                // Request failed — retry
-              }
-              await new Promise((r) => setTimeout(r, 1000));
-            }
-          };
-          refreshQr();
-          waitForLink();
+          }
         } else if (action === "probe") {
           await req("channels.status", { probe: true }).catch(() => null);
           renderAltView("channels");
@@ -5914,8 +5610,9 @@ function init() {
 
   // Delegated stop-button handler on messages container — survives innerHTML wipes
   $("messages")!.addEventListener("click", (e) => {
+    const stop = (e.target as HTMLElement).closest(".thinking-stop");
     const run = (e.target as HTMLElement).closest(".thinking-run");
-    if (run) abort();
+    if (stop && run) abort();
   });
 
   // Mount context treemap into bottom-right panel
@@ -6070,7 +5767,7 @@ function init() {
       updateBackButtons();
     },
     () => sessionKey,
-    () => "",
+    () => (import.meta.env.DEV ? "http://localhost:18789" : ""),
     PROVIDER_ICONS,
     (groupIndex, firstEvent) => {
       // Show the prompt's context anatomy in the treemap
@@ -6113,7 +5810,6 @@ function init() {
         timelineCtrl?.loadSession(sessionKey);
       }
     },
-    () => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
   );
 }
 
