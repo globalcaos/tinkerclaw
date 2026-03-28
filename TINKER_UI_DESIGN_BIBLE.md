@@ -912,6 +912,20 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Deleting a session from the sessions panel now closes the associated tab via `closeTab()` instead of detaching and renaming it with a new fortune. Main tab cannot be closed — its chat is cleared instead.
 - **Files:** `app.ts` (session delete handler)
 
+### 5.48 Thinking Indicator End-Event Fix (2026-03-28)
+
+- **Status:** `DEPLOYED`
+- **What:** Thinking indicator was stuck forever after Jarvis finished answering. The lifecycle event guard at `app.ts:1327` required `p.data?.model`, but the gateway's `end`/`error` lifecycle events don't include `model` (only `start` does). End events were silently dropped, so `activeRuns` never cleared.
+- **Fix:** Guard now allows `end`/`error` phase events through without `model`: `(p.data?.model || p.data?.phase === "end" || p.data?.phase === "error")`.
+- **Files:** `app.ts` (lifecycle event guard)
+
+### 5.49 Gateway Drain Auto-Retry Queue (2026-03-28)
+
+- **Status:** `DEPLOYED`
+- **What:** When the gateway restarts (SIGUSR1), messages that hit the drain window were shown as a raw error bubble ("⚠️ Agent failed before reply: Gateway is draining…"). Now: (1) the message is styled as an orange centered warning (`_isWarning`), (2) text is replaced with "⏳ Gateway restarting — your message will be resent automatically…", (3) after 5s the warning is removed and the user's last message is automatically re-sent via `send()`.
+- **Detection:** Checks final reply text for "draining for restart" substring.
+- **Files:** `app.ts` (drain detection + auto-retry in `onEvent` final handler)
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
