@@ -821,6 +821,7 @@ const DRAFT_STORAGE_KEY = "tinker-draft";
 const unconfirmedRuns = new Set<string>();
 // Pending delayed deletes for activeRuns — cancelled when a fallback model re-uses the same runId
 const pendingRunDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+let restartPruneTimer: ReturnType<typeof setTimeout> | null = null;
 
 function saveActiveRuns() {
   try {
@@ -848,18 +849,55 @@ function restoreActiveRuns() {
 /** After reconnect, clear restored runs that no lifecycle event confirmed. */
 function scheduleUnconfirmedPrune() {
   if (unconfirmedRuns.size === 0) return;
-  setTimeout(() => {
-    let changed = false;
-    for (const id of unconfirmedRuns) {
-      activeRuns.delete(id);
-      changed = true;
+  // FORK: Split — normal unconfirmed runs get 5s, restarting runs get 30s
+  const normalIds: string[] = [];
+  const restartIds: string[] = [];
+  for (const id of unconfirmedRuns) {
+    const info = activeRuns.get(id);
+    if (info?.state === "restarting") {
+      restartIds.push(id);
+    } else {
+      normalIds.push(id);
     }
-    unconfirmedRuns.clear();
-    if (changed) {
-      saveActiveRuns();
-      updateBudgetPanel();
-    }
-  }, 5000);
+  }
+  // 5s prune for normal unconfirmed runs (original behavior)
+  if (normalIds.length > 0) {
+    setTimeout(() => {
+      let changed = false;
+      for (const id of normalIds) {
+        if (unconfirmedRuns.has(id)) {
+          activeRuns.delete(id);
+          unconfirmedRuns.delete(id);
+          changed = true;
+        }
+      }
+      if (changed) {
+        saveActiveRuns();
+        updateBudgetPanel();
+        updateChat(); // Re-render to remove cleared indicator
+      }
+    }, 5000);
+  }
+  // 30s prune for restarting runs — cancel previous timer to handle rapid restarts
+  if (restartIds.length > 0) {
+    if (restartPruneTimer) clearTimeout(restartPruneTimer);
+    restartPruneTimer = setTimeout(() => {
+      restartPruneTimer = null;
+      let changed = false;
+      for (const id of restartIds) {
+        if (unconfirmedRuns.has(id)) {
+          activeRuns.delete(id);
+          unconfirmedRuns.delete(id);
+          changed = true;
+        }
+      }
+      if (changed) {
+        saveActiveRuns();
+        updateBudgetPanel();
+        updateChat(); // Re-render to remove cleared indicator
+      }
+    }, 30000);
+  }
 }
 
 // Restore on load
