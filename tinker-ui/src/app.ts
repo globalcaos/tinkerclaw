@@ -1049,6 +1049,57 @@ function onEvent(evt: any) {
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
       }
+      // FORK: Detect gateway-draining errors and auto-retry.
+      // The draining error arrives as a normal "final" reply with "draining for restart"
+      // in the text. Convert it to an orange warning and re-queue the user's message.
+      {
+        const lastMsg = messages[messages.length - 1];
+        const lastText = lastMsg
+          ? (Array.isArray(lastMsg.content) ? lastMsg.content : [])
+              .filter((b: any) => b.type === "text")
+              .map((b: any) => b.text ?? "")
+              .join("")
+          : "";
+        if (lastText.includes("draining for restart")) {
+          // Restyle as orange centered warning
+          lastMsg._isWarning = true;
+          lastMsg._isDraining = true;
+          // Find last user message text for retry
+          let retryText = "";
+          for (let i = messages.length - 2; i >= 0; i--) {
+            if ((messages[i].role ?? "").toLowerCase() === "user") {
+              const c = Array.isArray(messages[i].content) ? messages[i].content : [];
+              retryText = c
+                .filter((b: any) => b.type === "text")
+                .map((b: any) => b.text ?? "")
+                .join("\n")
+                .trim();
+              break;
+            }
+          }
+          if (retryText) {
+            // Replace warning text with retry notice, then auto-retry after 5s
+            const drainBlock = lastMsg.content?.find((b: any) => b.type === "text");
+            if (drainBlock) {
+              drainBlock.text =
+                "⏳ Gateway restarting — your message will be resent automatically…";
+            }
+            setTimeout(() => {
+              // Remove the drain warning and the original user message
+              messages = messages.filter((m: any) => !m._isDraining);
+              // Remove the last user message since send() will re-add it
+              for (let i = messages.length - 1; i >= 0; i--) {
+                if ((messages[i].role ?? "").toLowerCase() === "user") {
+                  messages.splice(i, 1);
+                  break;
+                }
+              }
+              updateChat();
+              send(retryText);
+            }, 5000);
+          }
+        }
+      }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
       frozenTextEnd = 0;
@@ -1324,7 +1375,10 @@ function onEvent(evt: any) {
         updateChat();
       }
     }
-    if (p?.stream === "lifecycle" && p.data?.model) {
+    if (
+      p?.stream === "lifecycle" &&
+      (p.data?.model || p.data?.phase === "end" || p.data?.phase === "error")
+    ) {
       // FORK: Ignore lifecycle events that don't belong to the current session.
       // Events without a sessionKey (cron, heartbeat) are also ignored — they would
       // set sending=true and disrupt the active tab's UI.
