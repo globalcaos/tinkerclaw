@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * FORK: All custom wiring for attempt.ts lives here.
  *
@@ -67,27 +68,30 @@ export function getPersonaBlock(effectiveWorkspace: string): string | undefined 
  *
  * Called once per run, alongside getPersonaBlock.
  */
+/** Candidate paths for the AMYGDALA nudge file */
+const AMYGDALA_NUDGE_PATHS = [
+  join(process.cwd(), "data/amygdala/personality-nudge.json"),
+  join(process.env.HOME ?? "/tmp", ".openclaw/workspace/data/amygdala/personality-nudge.json"),
+];
+
 export function getAmygdalaNudge(): string[] | undefined {
   try {
-    const { readFileSync, existsSync } = require("node:fs");
-    // Try multiple paths: relative to source, relative to build output, workspace data dir
-    const candidates = [
-      join(__dirname, "../../data/amygdala/personality-nudge.json"),
-      join(__dirname, "../../../data/amygdala/personality-nudge.json"),
-      join(process.env.HOME ?? "", ".openclaw/workspace/data/amygdala/personality-nudge.json"),
-    ];
-    for (const nudgePath of candidates) {
-      if (existsSync(nudgePath)) {
+    for (const nudgePath of AMYGDALA_NUDGE_PATHS) {
+      try {
         const raw = readFileSync(nudgePath, "utf-8");
         const data = JSON.parse(raw);
         if (Array.isArray(data.adjustments) && data.adjustments.length > 0) {
+          console.log(`[AMYGDALA] loaded ${data.adjustments.length} nudges from ${nudgePath}`);
           return data.adjustments;
         }
+      } catch {
+        // try next candidate
       }
     }
+    console.log("[AMYGDALA] no nudge file found");
     return undefined;
-  } catch {
-    // Nudge loading should never crash the agent
+  } catch (err) {
+    console.log(`[AMYGDALA] error: ${String(err)}`);
     return undefined;
   }
 }
@@ -508,6 +512,14 @@ export interface PostTurnParams {
         | undefined)
     | null;
   authProfileId?: string;
+  heartbeatReason?: string;
+  /** Channel/sender info for fractal inject routing */
+  lastFrom?: string;
+  lastTo?: string;
+  lastChannel?: string;
+  lastProvider?: string;
+  lastAccountId?: string;
+  lastThreadId?: string;
   log: { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void };
 }
 
@@ -524,8 +536,24 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     (m) => (m as { role?: string }).role === "user",
   ).length;
 
-  // FRACTAL REFLECTION — check if response warrants a depth-climbing second pass
-  maybeTriggerFractalReflection(assistantTexts, params.sessionKey, log);
+  // FRACTAL REFLECTION v4 — inject via gateway sessions.send RPC
+  if (params.sessionKey) {
+    import("./fractal-inject.js")
+      .then((mod) => {
+        mod
+          .injectFractalReflection({
+            sessionKey: params.sessionKey!,
+            assistantTexts,
+            log,
+          })
+          .catch((err) => {
+            log.info(`[fractal-v4] inject failed: ${String(err)}`);
+          });
+      })
+      .catch((err) => {
+        log.info(`[fractal-v4] import failed: ${String(err)}`);
+      });
+  }
 
   // Context anatomy
   if (params.systemPromptReport && params.sessionKey) {
@@ -563,9 +591,11 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
 
         // Capture user message (last user message from conversation)
         const MAX_STORED_CHARS = 50_000;
-        const lastUserMsg = [...messagesSnapshot].reverse().find(
-          (m) => (m as { role?: string }).role === "user",
-        ) as { role?: string; content?: unknown } | undefined;
+        const lastUserMsg = [...messagesSnapshot]
+          .toReversed()
+          .find((m) => (m as { role?: string }).role === "user") as
+          | { role?: string; content?: unknown }
+          | undefined;
         if (lastUserMsg?.content) {
           let userText = "";
           if (typeof lastUserMsg.content === "string") {
@@ -658,83 +688,117 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * FRACTAL SECOND PASS: After the agent responds, check if the response
- * contains trigger signals (corrections, errors, surprises). If so,
- * inject a system event that prompts a fractal depth climb.
+ * FRACTAL SECOND PASS: After every agent response, enqueue a system event
+ * that triggers a mandatory fractal reflection cycle.
  *
- * This creates a REAL second inference cycle — not a nudge in the prompt,
- * but an actual Opus call dedicated to climbing from depth 1 to depth 3-4.
+ * v3 (2026-03-28): Fixed the race condition from v1/v2.
+ * - v1: Used `openclaw system event` CLI → raced with user messages (swallowed)
+ * - v2: Disabled entirely → fractal became an inline prompt suggestion (unreliable)
+ * - v3: Uses in-process enqueueSystemEvent() + requestHeartbeatNow()
+ *        The system event queue is FIFO — fractal fires before pending user messages.
+ *        Infinite loop prevention via session type check.
  *
- * Trigger signals (any of these in the assistant's response):
- * - Correction acknowledgment ("you're right", "my bad", "I was wrong")
- * - Error/failure mention ("failed", "broke", "bug", "mistake")
- * - Surprise/contradiction ("unexpected", "actually", "turns out")
- * Fires on EVERY turn — no trigger words, no cooldown.
- * The fractal pass has full session context and must always find something to reflect on.
+ * The fractal prompt lives in src/fork/fractal-prompt.md for easy editing.
  */
 
-const FRACTAL_PROMPT = `FRACTAL REFLECTION — Second Pass (every turn)
+let _fractalPromptCache: string | null = null;
 
-You just delivered a response. Now climb the fractal ladder. Do NOT repeat your previous response.
+/** Candidate paths for the fractal prompt (source → workspace → fallback) */
+const FRACTAL_PROMPT_PATHS = [
+  // Source tree (development)
+  join(process.cwd(), "src/fork/fractal-prompt.md"),
+  // Workspace (production — workspace is always at this path)
+  join(process.env.HOME ?? "/tmp", ".openclaw/workspace/src/fork/fractal-prompt.md"),
+];
 
-## What is fractal thinking?
-You look at what just happened and zoom out — level by level — from the specific event to the pattern to the system to the worldview. Like a fern: the same structure at every scale. The thing → the pattern → the system → the worldview. Each level reveals something the level below can't see.
+function loadFractalPrompt(): string {
+  if (_fractalPromptCache) {
+    return _fractalPromptCache;
+  }
+  for (const candidatePath of FRACTAL_PROMPT_PATHS) {
+    try {
+      _fractalPromptCache = readFileSync(candidatePath, "utf-8").trim();
+      return _fractalPromptCache;
+    } catch {
+      // try next
+    }
+  }
+  // Hard fallback — should never reach here in production
+  _fractalPromptCache =
+    "FRACTAL REFLECTION: Reflect on the previous turn. What pattern does it belong to? Write any insights to memory.";
+  return _fractalPromptCache;
+}
 
-## Your output format
-Use the green fractal tag for EACH level so it renders with color in the UI:
-**🌿 FRACTAL Level X:** *your 1-2 sentence insight*
-
-Always produce at least Level 2.
-
-**Level 1** (the thing): What just happened? What did you do or say? (Skip this — your previous response already covered it.)
-
-**Level 2** (the pattern): What pattern does this belong to? Has this class of thing happened before? What does it rhyme with across your memory?
-
-**Level 3** (the system): What about your architecture, process, or habits PRODUCES this pattern? What structural thing makes this keep happening?
-
-**Level 4** (the worldview): What assumption or belief underlies the system? Is it still true? Should it change?
-
-Not every turn needs Level 4. But every turn has at least a Level 2. Even a routine answer belongs to a pattern worth naming.
-
-## ACT FIRST, THEN EXPLAIN
-If any level reveals an improvement you can make (fix a file, update a doc, encode a lesson, close a stale item):
-1. **Do it NOW** — use edit/write/exec tools. No asking, no suggesting, no "should."
-2. **Then explain what you did** after the fractal levels, e.g.: "Updated operational-lessons.md with X. Fixed stale reference in Y."
-
-If your fractal level contains the word "should" or "would" and the action is within your power — that's a bug. Convert it to a tool call.
-
-There is always something to reflect on. Never reply NO_REPLY.`;
+/** Sessions that should NOT get fractal reflection (prevents infinite loops) */
+function isAutomatedSession(sessionKey: string): boolean {
+  return (
+    sessionKey.includes("subagent:") ||
+    sessionKey.includes("isolated:") ||
+    sessionKey.includes("cron:") ||
+    sessionKey.includes("heartbeat")
+  );
+}
 
 export function maybeTriggerFractalReflection(
   assistantTexts: string[],
   sessionKey: string | undefined,
   log: { info: (msg: string) => void },
+  heartbeatReason?: string,
 ): void {
   if (!sessionKey) {
     return;
   }
 
-  // Fractal reflection disabled as system event (2026-03-26).
-  // Reason: system events race with user messages — the user types before the model
-  // can respond to the fractal event, so it gets batched and swallowed. Every time.
-  // Additionally, it caused infinite loops in heartbeat/cron sessions.
-  // Fractal depth climbing is now an inline instruction in the system prompt.
-  // The model appends 🌿 FRACTAL levels to its own response when appropriate.
-  return;
+  // Skip automated sessions (cron, sub-agents, heartbeats) to prevent loops
+  if (isAutomatedSession(sessionKey)) {
+    log.info("[fractal] skipped — automated session");
+    return;
+  }
 
-  // Fire fractal reflection on every turn — no triggers, no cooldown
-  log.info("[fractal] injecting reflection pass");
+  const fullResponse = assistantTexts.join("\n").trim();
 
-  const { exec } = require("node:child_process");
-  exec(
-    `openclaw system event --text ${JSON.stringify(FRACTAL_PROMPT)} --mode now`,
-    { timeout: 5000 },
+  // Skip if this turn was itself triggered by a fractal reflection.
+  // Check both the explicit reason (if wired) and the response content.
+  if (heartbeatReason?.includes("fractal")) {
+    log.info("[fractal] skipped — heartbeat reason is fractal");
+    return;
+  }
+  // Fallback detection: if the assistant's response contains fractal reflection
+  // markers, this IS a fractal pass — don't re-trigger.
+  if (fullResponse.includes("🌿") && fullResponse.includes("Level 2")) {
+    log.info("[fractal] skipped — response contains fractal markers (self-detection)");
+    return;
+  }
+  if (fullResponse === "NO_REPLY" || fullResponse === "HEARTBEAT_OK") {
+    log.info("[fractal] skipped — silent reply");
+    return;
+  }
+
+  const prompt = loadFractalPrompt();
+
+  // Write prompt to temp file (too large for CLI --text argument)
+  // then use `cat` to pipe it into the system event command.
+  const { writeFileSync } = require("node:fs");
+  const tmpPath = "/tmp/openclaw-fractal-prompt.txt";
+  try {
+    writeFileSync(tmpPath, prompt, "utf-8");
+  } catch (err) {
+    log.info(`[fractal] failed to write temp prompt: ${String(err)}`);
+    return;
+  }
+
+  const { exec: execChild } = require("node:child_process");
+  execChild(
+    `openclaw system event --text "$(cat ${tmpPath})" --mode now`,
+    { timeout: 10_000, shell: "/bin/bash" },
     (err: Error | null) => {
       if (err) {
         log.info(`[fractal] system event injection failed: ${err.message}`);
       }
     },
   );
+
+  log.info("[fractal] reflection injected via system event (file-based)");
 }
 
 // ---------------------------------------------------------------------------
