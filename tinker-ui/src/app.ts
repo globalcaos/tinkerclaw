@@ -895,8 +895,12 @@ function gwConnect() {
     frozenTextEnd = 0;
     lastDeltaLen = 0;
     streamRunId = null;
-    activeRuns.clear();
-    saveActiveRuns();
+    // FORK: Preserve activeRuns during graceful restart (state set by shutdown handler)
+    const hasRestartingRuns = [...activeRuns.values()].some((r) => r.state === "restarting");
+    if (!hasRestartingRuns) {
+      activeRuns.clear();
+      saveActiveRuns();
+    }
     updateDots();
     updateBtn();
     updateChat();
