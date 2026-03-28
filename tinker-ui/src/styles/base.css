@@ -2844,3 +2844,14 @@ body {
   background: var(--surface2);
   color: var(--text);
 }
+
+/* FORK: Restart continuity badge */
+.restart-badge {
+  font-size: 10px;
+  background: #d2992230;
+  color: #d29922;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}

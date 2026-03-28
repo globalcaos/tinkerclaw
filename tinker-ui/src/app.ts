@@ -2422,10 +2422,12 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
+      const badge =
+        info.state === "restarting" ? `<span class="restart-badge">RESTARTING</span>` : "";
       rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
-  <span class="thinking-elapsed">${elapsed}s</span>
+  ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
     }
