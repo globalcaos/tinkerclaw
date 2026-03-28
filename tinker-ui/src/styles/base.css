@@ -603,6 +603,49 @@ body {
   background: rgba(107, 142, 35, 0.2);
   color: #d4e8b8;
 }
+.fractal-details {
+  align-self: flex-start;
+  max-width: 85%;
+  margin: 2px 0;
+}
+.fractal-summary {
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(107, 142, 35, 0.1);
+  border: 1px solid rgba(107, 142, 35, 0.25);
+  border-left: 3px solid var(--green);
+  color: #a8c880;
+  font-size: 12px;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+.fractal-summary::-webkit-details-marker {
+  display: none;
+}
+.fractal-summary::marker {
+  display: none;
+  content: "";
+}
+.fractal-summary:hover {
+  background: rgba(107, 142, 35, 0.18);
+  color: #c4dfa0;
+}
+.fractal-summary-text {
+  font-style: italic;
+  opacity: 0.8;
+}
+.fractal-details[open] .fractal-summary {
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 0;
+}
+.fractal-details[open] .msg.msg-fractal {
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  margin-top: 0;
+}
 .retry-provider-btn {
   position: absolute;
   top: 3px;
@@ -2800,15 +2843,4 @@ body {
 .scope-btn-active {
   background: var(--surface2);
   color: var(--text);
-}
-
-/* FORK: Restart continuity badge */
-.restart-badge {
-  font-size: 10px;
-  background: #d2992230;
-  color: #d29922;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
 }
