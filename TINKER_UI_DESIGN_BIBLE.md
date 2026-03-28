@@ -1456,3 +1456,15 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Background embedding:** `EmbeddingWorker` in ENGRAM auto-embeds new events on `eventStore.append()` (batch=16, timeout=10s). Cache persists as `.vec` files in `~/.openclaw/engram/embeddings/`.
 - **Memory re-index:** Full re-index completed via `openclaw memory index --force`. All existing memory chunks re-embedded with mxbai vectors.
 - **Files:** `src/memory/embeddings-ollama.ts` (truncation), `src/memory/embedding-model-limits.ts` (known limits), `src/agents/pi-embedded-runner/extensions.ts` (wiring), `src/agents/pi-extensions/limbic-runtime.ts` (provider option), `src/agents/pi-extensions/retrieval-runtime.ts` (hybrid search)
+
+### 11.9 Stuck Session Auto-Recovery Watchdog (2026-03-28)
+
+- **Status:** `DEPLOYED`
+- **Problem:** Upstream session lane deadlock (#7630) leaves the main session permanently stuck in `processing` state after an LLM call times out or errors without releasing the session. New messages queue behind the zombie task and never execute — Jarvis goes silent until a full gateway restart.
+- **Root cause:** `markIdle()` is never called when certain error paths in `dispatchReplyFromConfig` exit before reaching the idle transition. The command queue's `activeTaskIds` retains a stale task ID, blocking the lane's drain pump from starting new work.
+- **Fix:** Two-part watchdog in the existing 30s diagnostic heartbeat:
+  1. **`resetCommandLane(lane)`** in `command-queue.ts` — targeted single-lane reset: clears `activeTaskIds`, bumps lane `generation` (so stale completions from the zombie task are ignored), re-drains any queued entries. Same logic as `resetAllLanes()` but scoped to one lane.
+  2. **Auto-recovery in `diagnostic.ts`** — when a session is stuck in `processing` for >180s (3 minutes), the watchdog calls `resetCommandLane()` for that session's lane, resets diagnostic state to `idle`, and logs `auto-recovered stuck session`. Queued messages drain immediately.
+- **Threshold:** 180 seconds (`STUCK_SESSION_RECOVERY_MS`). Gives legitimate long-running LLM calls (tool use, extended thinking) room to complete while preventing the 30-minute deadlocks.
+- **Observable:** Log line `[diagnostic] auto-recovered stuck session: sessionKey=... age=...s lane=... laneReset=true` confirms recovery happened.
+- **Files:** `src/process/command-queue.ts` (`resetCommandLane`), `src/logging/diagnostic.ts` (watchdog in heartbeat interval)
