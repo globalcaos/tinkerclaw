@@ -248,6 +248,26 @@ export function clearCommandLane(lane: string = CommandLane.Main) {
  * preserved work is pumped immediately rather than waiting for a future
  * `enqueueCommandInLane()` call (which may never come).
  */
+/**
+ * FORK: Reset a single lane's runtime state to idle.  Used by the stuck-session
+ * watchdog to recover a deadlocked session lane without disturbing other lanes.
+ * Same logic as resetAllLanes() but scoped to one lane.
+ */
+export function resetCommandLane(lane: string): boolean {
+  const cleaned = lane.trim() || CommandLane.Main;
+  const state = queueState.lanes.get(cleaned);
+  if (!state) {
+    return false;
+  }
+  state.generation += 1;
+  state.activeTaskIds.clear();
+  state.draining = false;
+  if (state.queue.length > 0) {
+    drainLane(cleaned);
+  }
+  return true;
+}
+
 export function resetAllLanes(): void {
   queueState.gatewayDraining = false;
   const lanesToDrain: string[] = [];
