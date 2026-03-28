@@ -12,6 +12,7 @@ const FORK_EXTENSION_ALLOWLIST = new Set([
   "overseer",
   "tinker",
   "whatsapp", // FORK: process-message-hooks + live-capture imports
+  "whatsapp-tinkerclaw", // FORK: whatsapp history + backfill bridge uses fork-internal db/capture APIs
 ]);
 
 function isProductionExtensionFile(filePath: string): boolean {

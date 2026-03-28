@@ -782,7 +782,6 @@ type ActiveRunInfo = {
   authProfileId?: string;
   startedAt: number;
   sessionKey?: string;
-  state?: "restarting";
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
@@ -2204,8 +2203,12 @@ function renderMsg(
       }
       const userText = userLines.join("\n").trim();
       if (userText) {
-        // System-injected messages (runtime context, subagent results) → system style
-        if (SYSTEM_INJECTED_RE.test(userText)) {
+        // FORK: Hide fractal reflection prompts (injected via sessions.send)
+        // Render as invisible div that preserves run boundary detection
+        if (userText.startsWith("# FRACTAL REFLECTION")) {
+          h += `<div class="fractal-boundary" style="display:none" data-msg-idx="${idx}"></div>`;
+        } else if (SYSTEM_INJECTED_RE.test(userText)) {
+          // System-injected messages (runtime context, subagent results) → system style
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
         } else {
           h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
@@ -2218,10 +2221,28 @@ function renderMsg(
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
       const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-      // FORK: Detect fractal reflection responses and apply green styling
+      // FORK: Detect fractal reflection responses — collapsible green block
       const isFractal = text.trimStart().startsWith("🌿 FRACTAL:");
       const fractalClass = isFractal ? " msg-fractal" : "";
-      h += `<div class="msg assistant${errorClass}${fractalClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+      // FORK: Hide the fractal instruction prompt (it's injected via sessions.send as assistant msg)
+      const isFractalPrompt = text.trimStart().startsWith("# FRACTAL REFLECTION");
+      if (isFractalPrompt) {
+        // Don't render the instruction prompt at all
+        return h;
+      }
+      if (isFractal) {
+        // Extract first Level 2 line as summary preview
+        const lvl2Match = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
+        const preview = lvl2Match?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
+        // Check if this fractal took action (tool calls in surrounding messages)
+        const hasAction = content.some(
+          (b: any) => b.type === "tool_use" || b.type === "tool_result",
+        );
+        const openAttr = hasAction ? " open" : "";
+        h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
+      } else {
+        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+      }
     } else {
       h += renderSystemMsg(text, idx);
     }
@@ -2269,10 +2290,25 @@ function renderMsg(
             ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
             : "";
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
-        // FORK: Detect fractal reflection responses and apply green styling
+        // FORK: Detect fractal reflection responses — collapsible green block
         const isFractal2 = text.trimStart().startsWith("🌿 FRACTAL:");
         const fractalClass2 = isFractal2 ? " msg-fractal" : "";
-        h += `<div class="msg assistant${errorClass}${fractalClass2}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+        // FORK: Hide the fractal instruction prompt
+        const isFractalPrompt2 = text.trimStart().startsWith("# FRACTAL REFLECTION");
+        if (isFractalPrompt2) {
+          return h;
+        }
+        if (isFractal2) {
+          const lvl2Match2 = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
+          const preview2 = lvl2Match2?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
+          const hasAction2 = content.some(
+            (b: any) => b.type === "tool_use" || b.type === "tool_result",
+          );
+          const openAttr2 = hasAction2 ? " open" : "";
+          h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
+        } else {
+          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+        }
       } else {
         h += renderSystemMsg(text, idx);
       }
@@ -2330,12 +2366,10 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      const badge =
-        info.state === "restarting" ? `<span class="restart-badge">RESTARTING</span>` : "";
       rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
-  ${badge}<span class="thinking-elapsed">${elapsed}s</span>
+  <span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
     }
@@ -2609,6 +2643,14 @@ function updateChat(skipScroll = false) {
   // current run are thinking (the live answer is a temporary message).
   // Tool result user messages are NOT run boundaries — they're mid-run tool responses.
   const isRunBoundary = (m: any) => {
+    // FORK: Fractal reflection responses start a new run
+    // (sessions.send injects them as assistant messages, so they won't have a user boundary)
+    const mc = Array.isArray(m.content) ? m.content : [];
+    const firstText =
+      mc.find((b: any) => b.type === "text" && b.text)?.text ??
+      (typeof m.content === "string" ? m.content : "");
+    if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) return true;
+
     if ((m.role ?? "").toLowerCase() !== "user") return false;
     const c = Array.isArray(m.content) ? m.content : [];
     // Pure tool_result messages are part of the run, not boundaries

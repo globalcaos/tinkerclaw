@@ -95,7 +95,9 @@ function extractQuotedInfo(msg: Record<string, unknown>): {
 function requestDmBackfill(client: WhatsmeowClient, jid: string): void {
   try {
     const db = getDb();
-    if (!db) return;
+    if (!db) {
+      return;
+    }
 
     const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h ago
     const staleChats = db
@@ -149,7 +151,10 @@ function requestDmBackfill(client: WhatsmeowClient, jid: string): void {
             if (historyMsg) {
               return client.sendPeerMessage(historyMsg as Record<string, unknown>);
             }
-            logger.warn({ chat: chat.chat }, "buildHistorySyncRequest returned null — protocol may not support DM backfill");
+            logger.warn(
+              { chat: chat.chat },
+              "buildHistorySyncRequest returned null — protocol may not support DM backfill",
+            );
           })
           .then(() => {
             logger.info({ chat: chat.chat }, "Backfill request sent");
