@@ -597,7 +597,7 @@ body {
 /* FORK: Orange warning for recoverable fallback events (model failed, next in chain) */
 .msg.msg-warning,
 .msg.assistant.msg-warning {
-  background: rgba(245, 158, 11, 0.10);
+  background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.25);
   color: #fbbf24;
   position: relative;
@@ -976,6 +976,11 @@ body {
   gap: 3px;
   padding: 4px 10px;
 }
+/* FORK: Thinking indicator radial glow + shimmer sweep */
+@keyframes thinking-shimmer {
+  0%   { background-position: 150% 0, center; }
+  100% { background-position: -150% 0, center; }
+}
 .thinking-run {
   display: flex;
   align-items: center;
@@ -983,19 +988,30 @@ body {
   cursor: pointer;
   padding: 5px 10px;
   border-radius: 6px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  border: none;
   font-size: 11px;
   color: var(--muted);
-  cursor: pointer;
   position: relative;
-  transition:
-    background 0.15s,
-    border-color 0.15s;
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--thinking-glow-bg, rgba(107, 142, 35, 0.15)) 47%,
+      var(--thinking-glow-bg2, rgba(107, 142, 35, 0.45)) 50%,
+      var(--thinking-glow-bg, rgba(107, 142, 35, 0.15)) 53%,
+      transparent 100%
+    ),
+    radial-gradient(ellipse at center,
+      var(--thinking-glow, rgba(107, 142, 35, 0.2)) 0%,
+      transparent 70%
+    );
+  background-size: 150% 100%, 100% 100%;
+  animation: thinking-shimmer 1s ease-in-out infinite;
 }
 .thinking-run:hover {
+  animation: none;
   background: rgba(220, 38, 38, 0.1);
-  border-color: rgba(220, 38, 38, 0.3);
+  border: 1px solid rgba(220, 38, 38, 0.3);
 }
 .thinking-run:hover .thinking-stop {
   opacity: 1;
@@ -1057,13 +1073,10 @@ body {
   transition: opacity 0.15s;
   padding: 0 2px;
 }
-.thinking-indicator[data-state="pending"] .thinking-run {
-  background: transparent;
-  border-color: transparent;
-}
 .thinking-indicator[data-state="pending"] .thinking-run:hover {
+  animation: none;
   background: rgba(220, 38, 38, 0.1);
-  border-color: rgba(220, 38, 38, 0.3);
+  border: 1px solid rgba(220, 38, 38, 0.3);
 }
 
 /* Chat header */
@@ -1771,21 +1784,30 @@ body {
 .model-row:hover {
   background: var(--surface2);
 }
-@keyframes model-breathe {
-  0%,
-  100% {
-    box-shadow: 0 0 6px 2px var(--glow-color, rgba(107, 142, 35, 0.4));
-    background: var(--glow-bg, rgba(107, 142, 35, 0.08));
-  }
-  50% {
-    box-shadow: 0 0 18px 4px var(--glow-color, rgba(107, 142, 35, 0.6));
-    background: var(--glow-bg2, rgba(107, 142, 35, 0.15));
-  }
+/* FORK: Radial glow + shimmer sweep — subtle "alive" effect */
+@keyframes model-shimmer {
+  0%   { background-position: 150% 0, center; }
+  100% { background-position: -150% 0, center; }
 }
 .model-row.model-live {
-  animation: model-breathe 2s ease-in-out infinite;
-  border: 1px solid var(--glow-border, rgba(107, 142, 35, 0.3));
+  position: relative;
+  border: none;
   border-radius: 4px;
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--glow-bg, rgba(107, 142, 35, 0.15)) 47%,
+      var(--glow-bg2, rgba(107, 142, 35, 0.45)) 50%,
+      var(--glow-bg, rgba(107, 142, 35, 0.15)) 53%,
+      transparent 100%
+    ),
+    radial-gradient(ellipse at center,
+      var(--glow-color, rgba(107, 142, 35, 0.2)) 0%,
+      transparent 70%
+    );
+  background-size: 150% 100%, 100% 100%;
+  animation: model-shimmer 1s ease-in-out infinite;
 }
 .model-agent-count {
   background: rgba(255, 255, 255, 0.15);
@@ -2552,20 +2574,28 @@ body {
   background: rgba(37, 99, 235, 0.08);
   border: 1px solid rgba(37, 99, 235, 0.15);
 }
-/* FORK: Session glow — breathing pulse when an LLM run is active */
-.session-row.session-live {
-  animation: session-breathe 2s ease-in-out infinite;
-  border: 1px solid var(--session-glow, rgba(107, 142, 35, 0.4));
+/* FORK: Session radial glow + shimmer when LLM run is active */
+@keyframes session-shimmer {
+  0%   { background-position: 150% 0, center; }
+  100% { background-position: -150% 0, center; }
 }
-@keyframes session-breathe {
-  0%, 100% {
-    box-shadow: 0 0 4px 1px var(--session-glow, rgba(107, 142, 35, 0.3));
-    background: var(--session-glow-bg, rgba(107, 142, 35, 0.06));
-  }
-  50% {
-    box-shadow: 0 0 10px 2px var(--session-glow, rgba(107, 142, 35, 0.5));
-    background: var(--session-glow-bg, rgba(107, 142, 35, 0.12));
-  }
+.session-row.session-live {
+  border: none;
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--session-glow-bg, rgba(107, 142, 35, 0.15)) 47%,
+      var(--session-glow-bg, rgba(107, 142, 35, 0.45)) 50%,
+      var(--session-glow-bg, rgba(107, 142, 35, 0.15)) 53%,
+      transparent 100%
+    ),
+    radial-gradient(ellipse at center,
+      var(--session-glow, rgba(107, 142, 35, 0.2)) 0%,
+      transparent 70%
+    );
+  background-size: 150% 100%, 100% 100%;
+  animation: session-shimmer 1s ease-in-out infinite;
 }
 .session-label {
   font-size: 10px;
