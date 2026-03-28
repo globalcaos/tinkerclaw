@@ -57,6 +57,18 @@ export async function handleContextAnatomyRequest(
     return false;
   }
 
+  // FORK: Handle CORS preflight for Vite dev server (localhost:18790 → localhost:18789)
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    });
+    res.end();
+    return true;
+  }
+
   if (req.method !== "GET") {
     sendJson(res, 405, { error: "Method not allowed" });
     return true;
