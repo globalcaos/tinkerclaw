@@ -878,6 +878,27 @@ function onEvent(evt: any) {
     }
     if (p.state === "delta") {
       streamRunId = p.runId;
+      // FORK: Receiving a delta proves a model is producing output.
+      // 1. Re-assert sending (may have been missed after lifecycle:start race)
+      // 2. ALWAYS clear error messages — during model fallback the UI receives
+      //    chat.error for each failed model attempt (Opus→Sonnet→GPT), stacking
+      //    error bubbles. When the successful model's deltas arrive, those errors
+      //    are stale and must go, regardless of sending/activeRuns state.
+      if (!sending) {
+        sending = true;
+        updateBtn();
+      }
+      // Cancel any deferred generic chat.error — successful delta supersedes
+      { const t = (window as any).__deferredErrorTimer; if (t) { clearTimeout(t); (window as any).__deferredErrorTimer = null; } }
+      // Clear stale error AND warning (fallback status) messages — a successful
+      // delta means we have a working model, prior failures are resolved.
+      {
+        const hadStale = messages.some((m: any) => m._isError || m._isFallbackStatus);
+        if (hadStale) {
+          messages = messages.filter((m: any) => !m._isError && !m._isFallbackStatus);
+          clearPersistedErrors(sessionKey);
+        }
+      }
       // FORK: Un-queue any queued user messages — LLM absorbed them via steer
       for (const m of messages) {
         if (m._queued) delete m._queued;
@@ -994,13 +1015,30 @@ function onEvent(evt: any) {
         }
       }
       if (p.state === "error" && p.errorMessage) {
-        const errMsg = {
-          role: "assistant",
-          content: [{ type: "text", text: p.errorMessage }],
-          _isError: true,
-        };
-        messages.push(errMsg);
-        persistErrorMsg(sessionKey, errMsg);
+        // FORK: Suppress generic chat.error entirely — the per-model fallback-error
+        // lifecycle events provide much better detail (model name, reason, next model).
+        // chat.error arrives BEFORE fallback-error, so we can't check for existing
+        // fallback messages. Instead, defer: if no fallback-error arrives within 2s,
+        // show the error as a last resort (means no fallback chain is configured).
+        const errorText = p.errorMessage;
+        const deferredErrorTimer = setTimeout(() => {
+          // Only show if no fallback status messages appeared in the meantime
+          const hasFallbackMsgs = messages.some((m: any) => m._isFallbackStatus);
+          if (!hasFallbackMsgs) {
+            const errMsg = {
+              role: "assistant",
+              content: [{ type: "text", text: errorText }],
+              _isError: true,
+            };
+            messages.push(errMsg);
+            persistErrorMsg(sessionKey, errMsg);
+            updateChat();
+          }
+        }, 2000);
+        // Cancel the deferred error if we receive a fallback-error or delta soon
+        const origOnFallback = (window as any).__deferredErrorTimer;
+        if (origOnFallback) clearTimeout(origOnFallback);
+        (window as any).__deferredErrorTimer = deferredErrorTimer;
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
@@ -1025,6 +1063,17 @@ function onEvent(evt: any) {
   }
   if (evt.event === "agent") {
     const p = evt.payload;
+    // DEBUG: trace lifecycle events to diagnose missing thinking indicator
+    if (p?.stream === "lifecycle") {
+      console.log("[DEBUG lifecycle]", {
+        phase: p.data?.phase,
+        model: p.data?.model,
+        sessionKey: p.data?.sessionKey,
+        uiSessionKey: sessionKey,
+        match: sessionKeyMatches(p.data?.sessionKey),
+        runId: p.runId,
+      });
+    }
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
@@ -1150,6 +1199,11 @@ function onEvent(evt: any) {
     }
     // Track provider failures from model fallback
     // FORK: Only show fallback errors for the active session (skip other tabs' failures)
+    // Cancel any deferred generic chat.error — the fallback-error has the real details
+    if (p?.stream === "lifecycle" && (p.data?.phase === "fallback-error" || p.data?.phase === "fallback-profile-error")) {
+      const timer = (window as any).__deferredErrorTimer;
+      if (timer) { clearTimeout(timer); (window as any).__deferredErrorTimer = null; }
+    }
     if (
       p?.stream === "lifecycle" &&
       p.data?.phase === "fallback-error" &&
@@ -1175,24 +1229,31 @@ function onEvent(evt: any) {
         updateBudgetPanel();
         startHealthPoll();
       }
-      // Show each fallback step as a chat message
-      const profileId = (p.data.failedProfileId || "") as string;
-      const stepLabel = attempt && total ? `[${attempt}/${total}]` : "";
-      const modelLabel = fm || "unknown";
-      const profileLabel = profileId ? ` (${profileId})` : "";
+      // FORK: Show each fallback step as a chat message.
+      // Orange (warning) for recoverable (next model available), red (error) for terminal.
+      const isRecoverable = attempt != null && total != null && attempt < total;
+      const failedName = fm ? modelName(fm) : "unknown";
       const reasonLabel = describeError(reason, errMsg);
-      // (placeholder removed — real bars inserted on data arrival)
-      const nextLabel =
-        attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
-      const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
+      const nextModel = p.data.nextModel as string | undefined;
+      const nextName = nextModel ? modelName(nextModel) : null;
+      let fallbackText: string;
+      if (isRecoverable && nextName) {
+        fallbackText = `${failedName} → ${reasonLabel}. <span class="fallback-next">Trying ${nextName}…</span>`;
+      } else if (isRecoverable) {
+        fallbackText = `${failedName} → ${reasonLabel}. <span class="fallback-next">Trying next model…</span>`;
+      } else {
+        fallbackText = `${failedName} → ${reasonLabel}. All models exhausted.`;
+      }
       const fallbackMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: fallbackText }],
-        _isError: true,
+        _isError: !isRecoverable,
+        _isWarning: isRecoverable,
+        _isFallbackStatus: true,
         _retryProvider: fp || undefined,
       };
       messages.push(fallbackMsg);
-      persistErrorMsg(sessionKey, fallbackMsg);
+      if (!isRecoverable) persistErrorMsg(sessionKey, fallbackMsg);
       updateChat();
     }
     // Show per-profile failure events (auth profile rotation within a provider)
@@ -1210,8 +1271,9 @@ function onEvent(evt: any) {
       const pIdx = p.data.profileIndex as number | undefined;
       const pTotal = (p.data.totalProfiles ?? p.data.profileTotal) as number | undefined;
       const reasonLabel = describeError(reason, errMsg);
-      const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
-      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
+      const profileName = modelName(model);
+      const profileLabel = pid || prov;
+      const profileText = `↳ ${profileName} (${profileLabel}) — ${reasonLabel}`;
       // Track per-profile error for model panel red labels
       if (pid) {
         providerErrors.set(pid, {
@@ -1226,11 +1288,11 @@ function onEvent(evt: any) {
       const profileMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: profileText }],
-        _isError: true,
+        _isWarning: true,
+        _isFallbackStatus: true,
         _retryProvider: prov,
       };
       messages.push(profileMsg);
-      persistErrorMsg(sessionKey, profileMsg);
       updateChat();
     }
     // Overseer periodic chat updates
@@ -1259,8 +1321,18 @@ function onEvent(evt: any) {
       if (
         !evtSessionKey ||
         (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
-      )
+      ) {
+        console.log("[DEBUG glow] DROPPED lifecycle event — sessionKey mismatch", {
+          phase: p.data.phase,
+          model: p.data.model,
+          evtSessionKey,
+          uiSessionKey: sessionKey,
+          hasEvtKey: Boolean(evtSessionKey),
+          match: evtSessionKey ? sessionKeyMatches(evtSessionKey) : "N/A",
+          isSubagent: evtSessionKey?.includes(":subagent:"),
+        });
         return;
+      }
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       if (p.data.phase === "start") {
@@ -1287,10 +1359,19 @@ function onEvent(evt: any) {
           startedAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
         });
+        console.log("[DEBUG glow] activeRuns.set", {
+          runId: p.runId,
+          model: p.data.model,
+          provider: startProvider,
+          authProfileId: p.data.authProfileId,
+          sessionKey: p.data.sessionKey,
+          activeRunsSize: activeRuns.size,
+        });
         // Re-assert sending in case a chat error event cleared it during fallback
         sending = true;
         saveActiveRuns();
         updateBudgetPanel();
+        updateSessionsPanel();
         updateChat();
         updateBtn();
         startThinkingTick();
@@ -1350,6 +1431,7 @@ function onEvent(evt: any) {
             sending = false;
           }
           updateBudgetPanel();
+          updateSessionsPanel();
           updateChat();
           updateBtn();
         }, 3000);
@@ -2007,7 +2089,7 @@ function renderMsg(
         }
       }
     } else if (role === "assistant") {
-      const errorClass = msg._isError ? " msg-error" : "";
+      const errorClass = msg._isWarning ? " msg-warning" : msg._isError ? " msg-error" : "";
       const retryBtn =
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
@@ -2430,6 +2512,41 @@ function updateChat(skipScroll = false) {
       runStart = i + 1;
     }
   }
+  // FORK: Deduplicate overlapping assistant messages within a run.
+  // When the server transcript stores per-round assistant text, consecutive
+  // messages may overlap (the later one starts with the earlier one's text).
+  // Suppress the shorter message so the user doesn't see repeated content.
+  const dedupHiddenSet = new Set<number>();
+  {
+    const assistantText = (m: any): string => {
+      const c = Array.isArray(m.content) ? m.content : [];
+      return c
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => (b.text ?? "").trim())
+        .join("\n");
+    };
+    let runStart2 = 0;
+    for (let i = 0; i <= messages.length; i++) {
+      const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
+      if (!isUserOrEnd) continue;
+      // Collect assistant text indices in this run
+      const aIndices: number[] = [];
+      for (let j = runStart2; j < i; j++) {
+        if ((messages[j].role ?? "").toLowerCase() !== "assistant") continue;
+        const txt = assistantText(messages[j]);
+        if (txt) aIndices.push(j);
+      }
+      // Check consecutive pairs — if text[k] is a prefix of text[k+1], hide text[k]
+      for (let k = 0; k < aIndices.length - 1; k++) {
+        const curText = assistantText(messages[aIndices[k]]);
+        const nextText = assistantText(messages[aIndices[k + 1]]);
+        if (nextText.startsWith(curText) && nextText.length > curText.length) {
+          dedupHiddenSet.add(aIndices[k]);
+        }
+      }
+      runStart2 = i + 1;
+    }
+  }
   // Build a global tool result map: tool_use_id → { content, isError, name }
   // so tool_use blocks can find their paired results even across messages.
   const globalResultMap = new Map<string, { content: string; isError: boolean }>();
@@ -2502,7 +2619,7 @@ function updateChat(skipScroll = false) {
         // Completed run with intermediates — wrap in collapsible group
         const groupId = `rg-${intermediateIndices[0]}`;
         const expanded = expandedTools.has(groupId);
-        const stepCount = intermediateIndices.filter((j) => thinkingSet.has(j)).length;
+        const stepCount = intermediateIndices.filter((j) => thinkingSet.has(j) && !dedupHiddenSet.has(j)).length;
         const chevron = expanded ? "▾" : "▸";
         const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
         const toolLabel =
@@ -2515,6 +2632,7 @@ function updateChat(skipScroll = false) {
         if (expanded) {
           h += `<div class="reasoning-content">`;
           for (const j of intermediateIndices) {
+            if (dedupHiddenSet.has(j)) continue;
             h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
           }
           h += `</div>`;
@@ -2525,6 +2643,7 @@ function updateChat(skipScroll = false) {
       } else {
         // Streaming run or no intermediates — render flat
         for (let j = runStart; j < runEnd; j++) {
+          if (dedupHiddenSet.has(j)) continue;
           h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
         }
       }
@@ -2976,6 +3095,20 @@ function updateBudgetPanel() {
         );
       }
     }
+  }
+
+  // FORK: Debug glow — log active runs vs config model IDs
+  if (activeRuns.size > 0) {
+    const allCounts = getAuthKeyCounts();
+    console.log("[DEBUG glow] updateBudgetPanel", {
+      activeRuns: [...activeRuns.entries()].map(([id, info]) => ({
+        runId: id, model: info.model, authProfileId: info.authProfileId, sessionKey: info.sessionKey,
+      })),
+      countsAll: [...allCounts.entries()],
+      primary,
+      fallbacks,
+      authOrder,
+    });
   }
 
   // Fallback chain: primary + fallbacks
@@ -3524,6 +3657,16 @@ function updateSessionsPanel() {
   });
 }
 
+// FORK: Check if a session has active LLM runs (for session glow)
+function sessionHasActiveRuns(key: string): { live: boolean; provider?: string } {
+  for (const info of activeRuns.values()) {
+    if (info.sessionKey && (info.sessionKey === key || sessionKeyMatches(info.sessionKey, key))) {
+      return { live: true, provider: info.provider };
+    }
+  }
+  return { live: false };
+}
+
 function renderSessionRow(s: any, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
   const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
@@ -3542,7 +3685,14 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
-  return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
+  // FORK: Session glow — pulse when an LLM run is active for this session
+  const liveInfo = sessionHasActiveRuns(s.key);
+  const liveClass = liveInfo.live ? " session-live" : "";
+  const liveColor = liveInfo.provider ? (PROVIDER_COLORS[liveInfo.provider] || "#6b8f3a") : "#6b8f3a";
+  const liveStyle = liveInfo.live
+    ? ` style="--session-glow:${liveColor}80;--session-glow-bg:${liveColor}15"`
+    : "";
+  return `<div class="session-row${isActive ? " session-active" : ""}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
     <span class="session-label" data-hint="${escapeHtml(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">

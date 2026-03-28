@@ -102,6 +102,10 @@ export type ContextAnatomyEvent = {
     textChars?: number;
     toolCallChars?: number;
   };
+  /** The user message that triggered this LLM turn (text only, max 50K chars). */
+  userMessage?: string;
+  /** The assistant's response text for this turn (max 50K chars). */
+  assistantResponse?: string;
 };
 
 // ---------------------------------------------------------------------------

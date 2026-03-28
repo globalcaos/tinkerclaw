@@ -120,7 +120,9 @@ export function openAnatomyDb(): Database.Database {
       response_tool_call_tokens INTEGER,
       cache_read_tokens INTEGER,
       cache_creation_tokens INTEGER,
-      response_content TEXT
+      response_content TEXT,
+      user_message TEXT,
+      assistant_response TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_timestamp_ms ON anatomy_events(timestamp_ms);
@@ -135,6 +137,9 @@ export function openAnatomyDb(): Database.Database {
   }
 
   migrateFromJsonl(db);
+
+  // Schema v3: add user_message + assistant_response columns to existing DBs
+  migrateToV3(db);
 
   return db;
 }
@@ -211,6 +216,28 @@ function migrateFromJsonl(database: Database.Database): void {
   console.log(`[anatomy-db] Migration complete: ${totalEvents} events from ${files.length} files`);
 }
 
+// ---------------------------------------------------------------------------
+// Schema v3 migration — add user_message + assistant_response columns
+// ---------------------------------------------------------------------------
+
+function migrateToV3(database: Database.Database): void {
+  const version = database.pragma("user_version", { simple: true }) as number;
+  if (version >= 3) {
+    return;
+  }
+  // Check if columns already exist (defensive — CREATE TABLE may have them on new DBs)
+  const cols = database.prepare("PRAGMA table_info(anatomy_events)").all() as Array<{ name: string }>;
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has("user_message")) {
+    database.exec("ALTER TABLE anatomy_events ADD COLUMN user_message TEXT");
+  }
+  if (!colNames.has("assistant_response")) {
+    database.exec("ALTER TABLE anatomy_events ADD COLUMN assistant_response TEXT");
+  }
+  database.pragma("user_version = 3");
+  console.log("[anatomy-db] Migrated to v3: added user_message + assistant_response columns");
+}
+
 /** Close the database handle and reset singleton state. */
 export function closeAnatomyDb(): void {
   if (db) {
@@ -242,7 +269,7 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
         topics, topic_transition, memories_injected,
         response_tokens, response_thinking_tokens, response_text_tokens,
         response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
-        response_content
+        response_content, user_message, assistant_response
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
@@ -250,7 +277,7 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
         ?, ?, ?,
         ?, ?, ?,
         ?, ?, ?,
-        ?
+        ?, ?, ?
       )
     `);
   }
@@ -281,6 +308,8 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
     (ext["cacheReadTokens"] as number) ?? null,
     (ext["cacheCreationTokens"] as number) ?? null,
     (ext["responseContent"] as string) ?? null,
+    event.userMessage ? compressJson(event.userMessage) : null,
+    event.assistantResponse ? compressJson(event.assistantResponse) : null,
   );
 }
 
@@ -309,6 +338,7 @@ export function updateAnatomyResponse(
     cacheCreationTokens?: number;
     responseContent?: string;
     toolsTriggered?: unknown;
+    assistantResponse?: string;
   },
 ): void {
   const database = openAnatomyDb();
@@ -326,7 +356,8 @@ export function updateAnatomyResponse(
         cache_read_tokens = COALESCE(?, cache_read_tokens),
         cache_creation_tokens = COALESCE(?, cache_creation_tokens),
         response_content = COALESCE(?, response_content),
-        tools_triggered = COALESCE(?, tools_triggered)
+        tools_triggered = COALESCE(?, tools_triggered),
+        assistant_response = COALESCE(?, assistant_response)
       WHERE run_id = ? AND round_number = ?
     `,
     )
@@ -341,6 +372,7 @@ export function updateAnatomyResponse(
       data.cacheCreationTokens ?? null,
       data.responseContent ?? null,
       data.toolsTriggered != null ? compressJson(data.toolsTriggered) : null,
+      data.assistantResponse ? compressJson(data.assistantResponse) : null,
       runId,
       roundNumber,
     );
@@ -380,6 +412,8 @@ interface AnatomyRow {
   cache_read_tokens: number | null;
   cache_creation_tokens: number | null;
   response_content: string | null;
+  user_message: Buffer | string | null;
+  assistant_response: Buffer | string | null;
 }
 
 /**
@@ -444,6 +478,8 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
     cacheReadTokens: row.cache_read_tokens ?? undefined,
     cacheCreationTokens: row.cache_creation_tokens ?? undefined,
     responseContent: decompressJson(row.response_content) ?? undefined,
+    userMessage: decompressJson<string>(row.user_message) ?? undefined,
+    assistantResponse: decompressJson<string>(row.assistant_response) ?? undefined,
   };
 }
 

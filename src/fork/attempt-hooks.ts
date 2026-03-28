@@ -560,6 +560,33 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         // and switch to INSERT OR REPLACE to avoid duplicates.
         contextAnatomy.runId = params.runId;
         contextAnatomy.sessionKey = contextAnatomy.sessionKey ?? params.sessionKey;
+
+        // Capture user message (last user message from conversation)
+        const MAX_STORED_CHARS = 50_000;
+        const lastUserMsg = [...messagesSnapshot].reverse().find(
+          (m) => (m as { role?: string }).role === "user",
+        ) as { role?: string; content?: unknown } | undefined;
+        if (lastUserMsg?.content) {
+          let userText = "";
+          if (typeof lastUserMsg.content === "string") {
+            userText = lastUserMsg.content;
+          } else if (Array.isArray(lastUserMsg.content)) {
+            userText = (lastUserMsg.content as Array<{ type?: string; text?: string }>)
+              .filter((c) => c.type === "text" && c.text)
+              .map((c) => c.text!)
+              .join("\n");
+          }
+          if (userText) {
+            contextAnatomy.userMessage = userText.slice(0, MAX_STORED_CHARS);
+          }
+        }
+
+        // Capture assistant response
+        if (assistantTexts.length > 0) {
+          const responseText = assistantTexts.join("\n");
+          contextAnatomy.assistantResponse = responseText.slice(0, MAX_STORED_CHARS);
+        }
+
         insertAnatomyEvent(contextAnatomy);
         // Update cache/response token columns on the row we just inserted
         const usage = params.getUsageTotals?.();

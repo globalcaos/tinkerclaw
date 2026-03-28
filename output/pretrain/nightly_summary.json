@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-03-27T04:35:10.235911",
+  "started_at": "2026-03-28T04:34:26.685270",
   "steps": {
     "reward_labeling": {
       "labeled": 0,
@@ -7,47 +7,47 @@
     },
     "ppo": {
       "prudence_a": {
-        "policy_loss": 0.0074,
-        "value_loss": 6.5044,
-        "entropy": 0.8263,
-        "approx_kl": 0.2397
+        "policy_loss": 0.0008,
+        "value_loss": 6.6239,
+        "entropy": 0.7068,
+        "approx_kl": 0.1773
       },
       "prudence_b": {
-        "policy_loss": -0.0012,
-        "value_loss": 6.8538,
-        "entropy": 0.001,
-        "approx_kl": 0.0004
+        "policy_loss": -0.001,
+        "value_loss": 6.8503,
+        "entropy": 0.0326,
+        "approx_kl": 0.008
       },
       "prudence_c": {
-        "policy_loss": -0.0017,
-        "value_loss": 6.8427,
-        "entropy": 0.0016,
-        "approx_kl": 0.0016
+        "policy_loss": -0.0027,
+        "value_loss": 6.88,
+        "entropy": 0.0006,
+        "approx_kl": 0.0006
       },
       "prudence_d": {
-        "policy_loss": 0.0012,
-        "value_loss": 6.5681,
-        "entropy": 0.9144,
-        "approx_kl": 0.1542
+        "policy_loss": -0.0003,
+        "value_loss": 6.653,
+        "entropy": 0.664,
+        "approx_kl": 0.1022
       },
       "prudence_e": {
-        "policy_loss": -0.0001,
-        "value_loss": 6.5011,
-        "entropy": 0.3755,
-        "approx_kl": 0.0223
+        "policy_loss": -0.0014,
+        "value_loss": 6.4773,
+        "entropy": 0.3662,
+        "approx_kl": 0.035
       }
     },
     "finetune": {
-      "prudence_a": 0.1863592037383248,
-      "personality_a": 0.007261508730623652,
-      "prudence_b": 0.1654789405710557,
-      "personality_b": 0.0022256241097827166,
-      "prudence_c": 0.1666015723172356,
-      "personality_c": 0.0022669312598950723,
-      "prudence_d": 0.19506722232874701,
-      "personality_d": 0.0009726385928361731,
-      "prudence_e": 0.1783514958970687,
-      "personality_e": 8.689387400141533e-05
+      "prudence_a": 0.1969567200716804,
+      "personality_a": 0.004592844794559128,
+      "prudence_b": 0.16580544675097747,
+      "personality_b": 0.001572129165972857,
+      "prudence_c": 0.16784982015104855,
+      "personality_c": 0.001868472941329374,
+      "prudence_d": 0.21566215350347406,
+      "personality_d": 0.0014709890340728795,
+      "prudence_e": 0.183793585265384,
+      "personality_e": 9.119883834500797e-05
     },
     "conformal": {
       "avg_set_size": 3.0,
@@ -70,6 +70,6 @@
       "avg_set_size": 3.0
     }
   },
-  "elapsed_secs": 32.2,
-  "completed_at": "2026-03-27T04:35:42.448903"
+  "elapsed_secs": 32.9,
+  "completed_at": "2026-03-28T04:34:59.609925"
 }

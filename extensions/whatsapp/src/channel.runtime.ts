@@ -1,4 +1,5 @@
 import { getActiveWebListener as getActiveWebListenerImpl } from "./active-listener.js";
+import { getWmClient as getWmClientImpl } from "./session-wm.js";
 import {
   getWebAuthAgeMs as getWebAuthAgeMsImpl,
   logWebSelfId as logWebSelfIdImpl,
@@ -79,4 +80,8 @@ export function monitorWebChannel(
   ...args: Parameters<MonitorWebChannel>
 ): ReturnType<MonitorWebChannel> {
   return monitorWebChannelImpl(...args);
+}
+
+export function getWmClient() {
+  return getWmClientImpl();
 }

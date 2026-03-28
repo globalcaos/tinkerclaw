@@ -12,7 +12,8 @@ import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
-import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
+import { describeFailoverError, isFailoverError } from "../../agents/failover-error.js";
 import { defaultRuntime } from "../../runtime.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
@@ -206,6 +207,27 @@ export function createFollowupRunner(params: {
             agentId: queued.run.agentId,
             sessionKey: queued.run.sessionKey,
           }),
+          // FORK: Emit per-model fallback-error lifecycle events for Tinker UI
+          onError: async ({ provider: fp, model: fm, error: err, attempt, total, nextModel }) => {
+            const described = isFailoverError(err) ? describeFailoverError(err) : { reason: "unknown", message: String(err) };
+            emitAgentEvent({
+              runId,
+              sessionKey,
+              stream: "lifecycle",
+              data: {
+                phase: "fallback-error",
+                failedProvider: fp,
+                failedModel: fm ? `${fp}/${fm}` : fp,
+                failedProfileId: isFailoverError(err) ? err.profileId : undefined,
+                reason: described.reason ?? "unknown",
+                error: described.message ?? String(err),
+                attempt,
+                total,
+                nextModel,
+                sessionKey,
+              },
+            });
+          },
           run: async (provider, model, runOptions) => {
             const authProfile = resolveRunAuthProfile(queued.run, provider);
             let attemptCompactionCount = 0;

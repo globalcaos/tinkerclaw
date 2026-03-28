@@ -96,13 +96,15 @@ type RuntimeAuthState = {
 const RUNTIME_AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const RUNTIME_AUTH_REFRESH_RETRY_MS = 60 * 1000;
 const RUNTIME_AUTH_REFRESH_MIN_DELAY_MS = 5 * 1000;
-// Keep overload pacing noticeable enough to avoid tight retry bursts, but short
-// enough that fallback still feels responsive within a single turn.
+// FORK: Increased patience for overload retries — Anthropic deprioritises
+// third-party OAuth clients, so transient 529s are common during peak load.
+// With factor 1.5 the sequence is ~300 → 450 → 675 → 1012 → 1518 → 2277 → 3000
+// (7 attempts, ~9s total) before falling through to model fallback.
 const OVERLOAD_FAILOVER_BACKOFF_POLICY: BackoffPolicy = {
-  initialMs: 250,
-  maxMs: 1_500,
-  factor: 2,
-  jitter: 0.2,
+  initialMs: 300,
+  maxMs: 3_000,
+  factor: 1.5,
+  jitter: 0.25,
 };
 
 // Avoid Anthropic's refusal test token poisoning session transcripts.

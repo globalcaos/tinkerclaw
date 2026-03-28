@@ -103,6 +103,8 @@ type ModelFallbackErrorHandler = (attempt: {
   error: unknown;
   attempt: number;
   total: number;
+  /** FORK: next candidate model in the fallback chain (if any) */
+  nextModel?: string;
 }) => void | Promise<void>;
 
 type ModelFallbackRunResult<T> = {
@@ -774,13 +776,17 @@ export async function runWithModelFallback<T>(params: {
         requestedModelMatched: requestedModel,
         fallbackConfigured: hasFallbackCandidates,
       });
-      await params.onError?.({
-        provider: candidate.provider,
-        model: candidate.model,
-        error: isKnownFailover ? normalized : err,
-        attempt: i + 1,
-        total: candidates.length,
-      });
+      {
+        const next = candidates[i + 1];
+        await params.onError?.({
+          provider: candidate.provider,
+          model: candidate.model,
+          error: isKnownFailover ? normalized : err,
+          attempt: i + 1,
+          total: candidates.length,
+          nextModel: next ? `${next.provider}/${next.model}` : undefined,
+        });
+      }
     }
   }
 

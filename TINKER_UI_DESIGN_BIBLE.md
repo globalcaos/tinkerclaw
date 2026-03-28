@@ -308,6 +308,17 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Users can delete non-main sessions from the sessions panel. Upstream blocks webchat from deleting sessions.
 - **Gateway patch:** `sessions.ts` — 3-line early return before the webchat rejection guard. Guard string: `"Allow webchat delete"`. Auto-applied by `apply-fork-wiring.mjs` → `patchSessions()`.
 - **Files:** `app.ts` (delete button + handler), `sessions.ts` (bypass guard)
+- **Session data on delete:** Metadata entry removed from `sessions.json`, but transcript `.jsonl` files are renamed with `.deleted.<timestamp>` suffix (preserved on disk, not destroyed). Main session (`agent:main:main`) is protected — delete is refused.
+
+### 5.5a Webchat Session Protection from Cron Archival (2026-03-27)
+
+- **Status:** `DEPLOYED`
+- **Problem:** Two system crontab scripts could destroy webchat session context:
+  1. `nightly-session-trim.sh` (02:00) — archived `.jsonl` files by size/age without checking if they belong to active sessions. Moving the main session's transcript caused the gateway to create a fresh empty session, losing all conversation history.
+  2. `reset-whatsapp-sessions.sh` (23:00) — wrong port (4440→18789), no gateway token, and no exclusion for webchat sessions.
+- **Fix (trim):** Script now reads `sessions.json` to build a set of active session IDs. Any transcript referenced by an active session is skipped. Only orphaned transcripts get archived.
+- **Fix (reset):** Port corrected. Explicit exclusion for `agent:main:main`, `:tinker:`, and `:webchat:` session keys. Filter tightened to require `whatsapp` in key.
+- **Files:** `~/.openclaw/scripts/nightly-session-trim.sh`, `~/.openclaw/scripts/reset-whatsapp-sessions.sh`
 
 ### 5.6 Live Tool Call Display
 
