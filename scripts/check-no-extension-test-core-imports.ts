@@ -1,6 +1,25 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { collectFilesSync, relativeToCwd } from "./check-file-utils.js";
+
+// FORK: Skip files not tracked by git — untracked working-tree files from upstream
+// merges should not fail the pre-commit check.
+function getTrackedFiles(): Set<string> {
+  try {
+    const output = execSync("git ls-files", { encoding: "utf8" });
+    const cwd = process.cwd();
+    return new Set(
+      output
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((f) => path.resolve(cwd, f)),
+    );
+  } catch {
+    return new Set();
+  }
+}
 
 const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; hint: string }> = [
   {
@@ -40,11 +59,16 @@ function collectExtensionTestFiles(rootDir: string): string[] {
 }
 
 function main() {
+  const trackedFiles = getTrackedFiles();
   const extensionsDir = path.join(process.cwd(), "extensions");
   const files = collectExtensionTestFiles(extensionsDir);
   const offenders: Array<{ file: string; hint: string }> = [];
 
   for (const file of files) {
+    // FORK: Skip untracked files — only committed code is checked.
+    if (trackedFiles.size > 0 && !trackedFiles.has(file)) {
+      continue;
+    }
     const content = fs.readFileSync(file, "utf8");
     for (const rule of FORBIDDEN_PATTERNS) {
       if (!rule.pattern.test(content)) {

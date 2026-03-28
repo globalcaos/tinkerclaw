@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { discoverOpenClawPlugins } from "../src/plugins/discovery.js";
@@ -52,7 +53,27 @@ function collectBundledExtensionSourceFiles(): string[] {
   return files;
 }
 
+// FORK: Build a set of git-tracked files so we can skip untracked working-tree files.
+// Untracked files from upstream merges that weren't added to the index should not
+// fail the pre-commit check — they're not part of the committed codebase yet.
+function getTrackedFiles(): Set<string> {
+  try {
+    const output = execSync("git ls-files", { encoding: "utf8" });
+    const cwd = process.cwd();
+    return new Set(
+      output
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((f) => path.resolve(cwd, f)),
+    );
+  } catch {
+    return new Set(); // If git is unavailable, check all files (safe fallback)
+  }
+}
+
 function main() {
+  const trackedFiles = getTrackedFiles();
   const discovery = discoverOpenClawPlugins({});
   const bundledCandidates = discovery.candidates.filter((c) => c.origin === "bundled");
   const filesToCheck = new Set<string>();
@@ -72,6 +93,11 @@ function main() {
   const monolithicOffenders: string[] = [];
   const legacyCompatOffenders: string[] = [];
   for (const entryFile of filesToCheck) {
+    // FORK: Skip files that are not tracked by git (untracked working-tree files from
+    // upstream merges should not block commits — only committed code is checked).
+    if (trackedFiles.size > 0 && !trackedFiles.has(entryFile)) {
+      continue;
+    }
     let content = "";
     try {
       content = fs.readFileSync(entryFile, "utf8");

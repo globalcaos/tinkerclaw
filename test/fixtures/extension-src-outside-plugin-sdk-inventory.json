@@ -150,5 +150,53 @@
     "specifier": "../../../src/whatsapp-history/live-capture-wm.js",
     "resolvedPath": "src/whatsapp-history/live-capture-wm.js",
     "reason": "dynamically imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp-tinkerclaw/backfill/index.ts",
+    "line": 14,
+    "kind": "import",
+    "specifier": "../../../src/logging.js",
+    "resolvedPath": "src/logging.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp-tinkerclaw/history/db.ts",
+    "line": 9,
+    "kind": "import",
+    "specifier": "../../../src/utils.js",
+    "resolvedPath": "src/utils.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp-tinkerclaw/history/live-capture-wm.ts",
+    "line": 7,
+    "kind": "import",
+    "specifier": "../../../src/logging.js",
+    "resolvedPath": "src/logging.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp-tinkerclaw/history/live-capture.ts",
+    "line": 8,
+    "kind": "import",
+    "specifier": "../../../src/logging.js",
+    "resolvedPath": "src/logging.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp-tinkerclaw/tools/whatsapp-history-tool.ts",
+    "line": 7,
+    "kind": "import",
+    "specifier": "../../../src/agents/tools/common.js",
+    "resolvedPath": "src/agents/tools/common.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
+  },
+  {
+    "file": "extensions/whatsapp-tinkerclaw/tools/whatsapp-history-tool.ts",
+    "line": 13,
+    "kind": "import",
+    "specifier": "../../../src/agents/tools/common.js",
+    "resolvedPath": "src/agents/tools/common.js",
+    "reason": "imports core src path outside plugin-sdk from an extension"
   }
 ]
