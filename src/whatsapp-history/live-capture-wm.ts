@@ -89,6 +89,82 @@ function extractQuotedInfo(msg: Record<string, unknown>): {
 }
 
 /**
+ * Request backfill for DM chats with stale messages (>24h old).
+ * Sends WhatsApp history sync requests via the whatsmeow peer message protocol.
+ */
+function requestDmBackfill(client: WhatsmeowClient, jid: string): void {
+  try {
+    const db = getDb();
+    if (!db) return;
+
+    const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h ago
+    const staleChats = db
+      .prepare(
+        `SELECT chat_jid as chat, MAX(timestamp) as lastTs,
+              (SELECT id FROM messages m2 WHERE m2.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastId,
+              (SELECT COALESCE(sender_jid, '') FROM messages m3 WHERE m3.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastSender
+       FROM messages m
+       WHERE chat_jid != 'status@broadcast'
+         AND chat_jid NOT LIKE '%@g.us'
+       GROUP BY chat_jid
+       HAVING MAX(timestamp) < ?
+       ORDER BY MAX(timestamp) DESC
+       LIMIT 50`,
+      )
+      .all(cutoff) as Array<{
+      chat: string;
+      lastTs: number;
+      lastId: string;
+      lastSender: string;
+    }>;
+
+    if (staleChats.length === 0) {
+      logger.info("No stale DM chats found for backfill");
+      return;
+    }
+
+    logger.info({ count: staleChats.length }, "Found stale DM chats — requesting backfill");
+
+    // Stagger requests to avoid flooding (200ms apart)
+    let delay = 0;
+    for (const chat of staleChats) {
+      const ageHours = (Date.now() / 1000 - chat.lastTs) / 3600;
+      delay += 200;
+      setTimeout(() => {
+        logger.info(
+          { chat: chat.chat, ageHours: Math.round(ageHours) },
+          "Backfill request for DM chat",
+        );
+        void client
+          .buildHistorySyncRequest(
+            {
+              chat: chat.chat,
+              sender: chat.lastSender || jid,
+              id: chat.lastId,
+              timestamp: Math.floor(Date.now() / 1000),
+            },
+            50,
+          )
+          .then((historyMsg) => {
+            if (historyMsg) {
+              return client.sendPeerMessage(historyMsg as Record<string, unknown>);
+            }
+            logger.warn({ chat: chat.chat }, "buildHistorySyncRequest returned null — protocol may not support DM backfill");
+          })
+          .then(() => {
+            logger.info({ chat: chat.chat }, "Backfill request sent");
+          })
+          .catch((err) => {
+            logger.warn({ chat: chat.chat, error: String(err) }, "Backfill request failed");
+          });
+      }, delay);
+    }
+  } catch (err) {
+    logger.warn({ error: String(err) }, "Failed to check stale chats for backfill");
+  }
+}
+
+/**
  * Bind whatsmeow-node client events to SQLite history capture.
  */
 export function bindWmHistoryCapture(client: WhatsmeowClient): void {
@@ -130,71 +206,30 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
     // individual messages arrive via the "message" event after sync completes.
   });
 
+  let connectedJid: string | null = null;
+
   client.on("connected", ({ jid }) => {
     logger.info({ jid }, "Connected — history capture active (wm)");
-
-    // On reconnect, find DM chats with gaps (last message >24h old) and request backfill for each
-    try {
-      const db = getDb();
-      if (db) {
-        const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h ago
-        const staleChats = db
-          .prepare(
-            `SELECT chat_jid as chat, MAX(timestamp) as lastTs,
-                  (SELECT id FROM messages m2 WHERE m2.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastId,
-                  (SELECT COALESCE(sender_jid, '') FROM messages m3 WHERE m3.chat_jid = m.chat_jid ORDER BY timestamp DESC LIMIT 1) as lastSender
-           FROM messages m
-           WHERE chat_jid != 'status@broadcast'
-           GROUP BY chat_jid
-           HAVING MAX(timestamp) < ? 
-           ORDER BY MAX(timestamp) DESC
-           `,
-          )
-          .all(cutoff) as Array<{
-          chat: string;
-          lastTs: number;
-          lastId: string;
-          lastSender: string;
-        }>;
-
-        if (staleChats.length > 0) {
-          logger.info({ count: staleChats.length }, "Found stale DM chats — requesting backfill");
-          for (const chat of staleChats) {
-            const ageHours = (Date.now() / 1000 - chat.lastTs) / 3600;
-            logger.info(
-              { chat: chat.chat, ageHours: Math.round(ageHours) },
-              "Backfill request for chat",
-            );
-            void client
-              .buildHistorySyncRequest(
-                {
-                  chat: chat.chat,
-                  sender: chat.lastSender || jid,
-                  id: chat.lastId,
-                  timestamp: Math.floor(Date.now() / 1000),
-                },
-                50,
-              )
-              .then((historyMsg) => {
-                if (historyMsg) {
-                  return client.sendPeerMessage(historyMsg as Record<string, unknown>);
-                }
-              })
-              .then(() => {
-                logger.info({ chat: chat.chat }, "Backfill request sent");
-              })
-              .catch((err) => {
-                logger.warn({ chat: chat.chat, error: String(err) }, "Backfill request failed");
-              });
-          }
-        } else {
-          logger.info("No stale DM chats found for backfill");
-        }
-      }
-    } catch (err) {
-      logger.warn({ error: String(err) }, "Failed to check stale chats for backfill");
-    }
+    connectedJid = jid;
+    requestDmBackfill(client, jid);
   });
+
+  // Deferred backfill trigger: fires 8s after bind to catch the case where
+  // the 'connected' event already fired before we registered the listener
+  // (common during QR login → 515 restart → fresh client handoff).
+  setTimeout(() => {
+    if (!connectedJid) {
+      logger.info("Deferred backfill check — 'connected' event not yet received, running anyway");
+      // Try with empty JID — the DB query doesn't need it if lastSender is populated
+      requestDmBackfill(client, "");
+    }
+  }, 8000);
+
+  // Second attempt at 60s in case the first was too early (session still stabilizing)
+  setTimeout(() => {
+    logger.info("Scheduled backfill check (60s post-bind)");
+    requestDmBackfill(client, connectedJid ?? "");
+  }, 60_000);
 
   logger.info("whatsmeow history capture bound successfully");
 }

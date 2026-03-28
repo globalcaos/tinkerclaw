@@ -584,12 +584,31 @@ body {
   border-radius: 3px;
   border: 1px dashed rgba(107, 142, 35, 0.4);
 }
-.msg.msg-error {
+.msg.msg-error,
+.msg.assistant.msg-error {
   background: rgba(239, 68, 68, 0.15);
   border: 1px solid rgba(239, 68, 68, 0.3);
   color: #fca5a5;
   position: relative;
   align-self: center;
+  text-align: center;
+  max-width: 85%;
+}
+/* FORK: Orange warning for recoverable fallback events (model failed, next in chain) */
+.msg.msg-warning,
+.msg.assistant.msg-warning {
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #fbbf24;
+  position: relative;
+  align-self: center;
+  text-align: center;
+  font-size: 0.85em;
+  padding: 4px 10px;
+  max-width: 85%;
+}
+.msg.msg-warning .fallback-next {
+  color: #a3e635;
 }
 .retry-provider-btn {
   position: absolute;
@@ -2532,6 +2551,21 @@ body {
 .session-row.session-active {
   background: rgba(37, 99, 235, 0.08);
   border: 1px solid rgba(37, 99, 235, 0.15);
+}
+/* FORK: Session glow — breathing pulse when an LLM run is active */
+.session-row.session-live {
+  animation: session-breathe 2s ease-in-out infinite;
+  border: 1px solid var(--session-glow, rgba(107, 142, 35, 0.4));
+}
+@keyframes session-breathe {
+  0%, 100% {
+    box-shadow: 0 0 4px 1px var(--session-glow, rgba(107, 142, 35, 0.3));
+    background: var(--session-glow-bg, rgba(107, 142, 35, 0.06));
+  }
+  50% {
+    box-shadow: 0 0 10px 2px var(--session-glow, rgba(107, 142, 35, 0.5));
+    background: var(--session-glow-bg, rgba(107, 142, 35, 0.12));
+  }
 }
 .session-label {
   font-size: 10px;
