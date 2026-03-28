@@ -1,6 +1,8 @@
+import { resolveEmbeddedSessionLane } from "../agents/pi-embedded-runner/lanes.js";
 import { loadConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
+import { resetCommandLane } from "../process/command-queue.js";
 import {
   diagnosticSessionStates,
   getDiagnosticSessionState,
@@ -13,6 +15,9 @@ import {
 import { createSubsystemLogger } from "./subsystem.js";
 
 const diag = createSubsystemLogger("diagnostic");
+
+/** FORK: Threshold beyond which a stuck session is automatically recovered. */
+const STUCK_SESSION_RECOVERY_MS = 180_000;
 
 const webhookStats = {
   received: 0,
@@ -403,6 +408,20 @@ export function startDiagnosticHeartbeat(config?: OpenClawConfig) {
           state: state.state,
           ageMs,
         });
+
+        // FORK: auto-recover sessions stuck beyond the recovery threshold.
+        // Clears the command lane's activeTaskIds so queued messages can drain,
+        // then resets diagnostic state to idle.
+        if (ageMs > STUCK_SESSION_RECOVERY_MS && state.sessionKey) {
+          const lane = resolveEmbeddedSessionLane(state.sessionKey);
+          const reset = resetCommandLane(lane);
+          state.state = "idle";
+          state.lastActivity = now;
+          state.queueDepth = 0;
+          diag.warn(
+            `auto-recovered stuck session: sessionKey=${state.sessionKey} age=${Math.round(ageMs / 1000)}s lane=${lane} laneReset=${reset}`,
+          );
+        }
       }
     }
   }, 30_000);
