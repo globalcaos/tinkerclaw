@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-03-28 (Shimmer glow rework, session glow, thinking shimmer, session delete closes tab)
+> Last updated: 2026-03-28 (Thinking indicator restart continuity §5.7.1)
 
 ---
 
@@ -346,6 +346,23 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **CSS:** `.thinking-run`, `.thinking-dots span` (bounce animation), `.thinking-stop` (inline, right-aligned)
 - **Files:** `app.ts`, `base.css`
 - **Bug fix (2026-03-06):** Stop button didn't work — see Bug Fix Log §7
+- **Restart continuity (2026-03-28):** See §5.7.1
+
+### 5.7.1 Thinking Indicator Restart Continuity
+
+- **Status:** `DEPLOYED` (2026-03-28)
+- **What:** When the gateway self-restarts (SIGUSR1), the thinking indicator persists through the WebSocket disconnect/reconnect cycle with an amber "RESTARTING" badge. The user never sees a dead zone — the dots keep bouncing, the elapsed timer keeps ticking, and the badge signals the system is in a transitional state.
+- **State machine:** THINKING → (shutdown event) → RESTARTING → (lifecycle start on reconnect) → THINKING. Timeout to OFF after 30s if no confirmation.
+- **Visual:** Small amber pill badge (`RESTARTING`) inserted between model name and elapsed time. Provider color stays unchanged. CSS class: `.restart-badge` (background `#d2992230`, color `#d29922`, 10px, rounded pill).
+- **Mechanism (client-side):**
+  - `onFrame()` handles `shutdown` event with `restartExpectedMs` — marks all active runs with `state: "restarting"`, saves to sessionStorage, calls `startThinkingTick()` defensively
+  - `ws.onclose` checks `hasRestartingRuns` — preserves `activeRuns` if any run has `state === "restarting"`, clears as normal otherwise (crash/unexpected disconnect)
+  - `scheduleUnconfirmedPrune()` splits into 5s (normal) and 30s (restarting) timeouts. Restarting timer is cancellable via `restartPruneTimer` for rapid restart handling
+  - `renderThinkingIndicator()` renders badge when `info.state === "restarting"`
+- **Server-side:** No change. `RestartSentinelPayload` lacks `runId`/`model` fields. Confirmation comes from the auto-retry path (client re-sends message after 5s, new LLM call emits lifecycle `start`).
+- **Edge cases:** Unexpected disconnect (crash) clears indicator as before. Tab refresh during restart restores from sessionStorage. Multiple rapid restarts reset the 30s timer. No active runs at restart = nothing happens.
+- **Files:** `app.ts` (shutdown handler, onclose guard, ActiveRunInfo.state, badge rendering, timeout split), `base.css` (.restart-badge)
+- **Spec:** `jarvis-icu/docs/superpowers/specs/2026-03-28-thinking-indicator-restart-continuity-design.md`
 
 ### 5.8 Thinking Bubble Interlacing
 
