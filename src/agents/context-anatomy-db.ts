@@ -226,7 +226,9 @@ function migrateToV3(database: Database.Database): void {
     return;
   }
   // Check if columns already exist (defensive — CREATE TABLE may have them on new DBs)
-  const cols = database.prepare("PRAGMA table_info(anatomy_events)").all() as Array<{ name: string }>;
+  const cols = database.prepare("PRAGMA table_info(anatomy_events)").all() as Array<{
+    name: string;
+  }>;
   const colNames = new Set(cols.map((c) => c.name));
   if (!colNames.has("user_message")) {
     database.exec("ALTER TABLE anatomy_events ADD COLUMN user_message TEXT");

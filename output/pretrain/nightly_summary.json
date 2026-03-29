@@ -47,7 +47,7 @@
       "prudence_d": 0.21566215350347406,
       "personality_d": 0.0014709890340728795,
       "prudence_e": 0.183793585265384,
-      "personality_e": 9.119883834500797e-05
+      "personality_e": 9.119883834500797e-5
     },
     "conformal": {
       "avg_set_size": 3.0,

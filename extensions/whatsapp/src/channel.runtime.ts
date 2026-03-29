@@ -1,5 +1,4 @@
 import { getActiveWebListener as getActiveWebListenerImpl } from "./active-listener.js";
-import { getWmClient as getWmClientImpl } from "./session-wm.js";
 import {
   getWebAuthAgeMs as getWebAuthAgeMsImpl,
   logWebSelfId as logWebSelfIdImpl,
@@ -9,6 +8,7 @@ import {
 } from "./auth-store.js";
 import { monitorWebChannel as monitorWebChannelImpl } from "./auto-reply/monitor.js";
 import { loginWeb as loginWebImpl } from "./login.js";
+import { getWmClient as getWmClientImpl } from "./session-wm.js";
 import { whatsappSetupWizard as whatsappSetupWizardImpl } from "./setup-surface.js";
 
 type GetActiveWebListener = typeof import("./active-listener.js").getActiveWebListener;

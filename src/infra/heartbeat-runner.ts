@@ -80,7 +80,11 @@ import {
   resolveHeartbeatDeliveryTarget,
   resolveHeartbeatSenderContext,
 } from "./outbound/targets.js";
-import { peekSystemEventEntries } from "./system-events.js";
+import {
+  peekSystemEventEntries,
+  drainSystemEventEntries,
+  enqueueSystemEvent,
+} from "./system-events.js";
 
 export type HeartbeatDeps = OutboundSendDeps &
   ChannelHeartbeatDeps & {
@@ -510,11 +514,38 @@ function resolveHeartbeatRunPrompt(params: {
     .map((event) => event.text);
   const hasExecCompletion = pendingEvents.some(isExecCompletionEvent);
   const hasCronEvents = cronEvents.length > 0;
-  const basePrompt = hasExecCompletion
-    ? buildExecEventPrompt({ deliverToUser: params.canRelayToUser })
-    : hasCronEvents
-      ? buildCronEventPrompt(cronEvents, { deliverToUser: params.canRelayToUser })
-      : resolveHeartbeatPrompt(params.cfg, params.heartbeat);
+  // FORK: Fractal reflection hook — when the wake reason is a fractal hook,
+  // the pending system event IS the prompt. Don't overlay the heartbeat prompt.
+  // We also drain the fractal events here so session-updates.ts doesn't
+  // re-inject them as System: lines (which would show the prompt twice).
+  const hasFractalHook = pendingEventEntries.some((event) =>
+    event.text.includes("FRACTAL REFLECTION"),
+  );
+  if (hasFractalHook) {
+    // Drain fractal events to prevent duplication in session-updates.
+    // drainSystemEventEntries and enqueueSystemEvent are already imported
+    // at the top of this file (via peekSystemEventEntries from system-events).
+    const drained = drainSystemEventEntries(params.preflight.session.sessionKey);
+    // Re-enqueue any non-fractal events that were in the queue
+    for (const event of drained) {
+      if (!event.text.includes("FRACTAL REFLECTION")) {
+        enqueueSystemEvent(event.text, {
+          sessionKey: params.preflight.session.sessionKey,
+          contextKey: event.contextKey,
+        });
+      }
+    }
+  }
+  const basePrompt = hasFractalHook
+    ? pendingEventEntries
+        .filter((event) => event.text.includes("FRACTAL REFLECTION"))
+        .map((event) => event.text)
+        .join("\n")
+    : hasExecCompletion
+      ? buildExecEventPrompt({ deliverToUser: params.canRelayToUser })
+      : hasCronEvents
+        ? buildCronEventPrompt(cronEvents, { deliverToUser: params.canRelayToUser })
+        : resolveHeartbeatPrompt(params.cfg, params.heartbeat);
   const prompt = appendHeartbeatWorkspacePathHint(basePrompt, params.workspaceDir);
 
   return { prompt, hasExecCompletion, hasCronEvents };
@@ -648,6 +679,15 @@ export async function runHeartbeatOnce(opts: {
     Provider: hasExecCompletion ? "exec-event" : hasCronEvents ? "cron-event" : "heartbeat",
     SessionKey: runSessionKey,
   };
+  // FORK: For fractal hooks, override the context to route through webchat
+  // so the response appears in the same session as the original conversation.
+  if (hasFractalHook && entry) {
+    ctx.Provider = ((entry as Record<string, unknown>).lastProvider as string) ?? "webchat";
+    ctx.OriginatingChannel =
+      ((entry as Record<string, unknown>).lastChannel as string) ?? "webchat";
+    ctx.From = ((entry as Record<string, unknown>).lastFrom as string) ?? sender;
+    ctx.To = ((entry as Record<string, unknown>).lastTo as string) ?? sender;
+  }
   if (!visibility.showAlerts && !visibility.showOk && !visibility.useIndicator) {
     emitHeartbeatEvent({
       status: "skipped",
