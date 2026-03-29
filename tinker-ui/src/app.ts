@@ -1532,7 +1532,13 @@ function onEvent(evt: any) {
           setTimeout(() => {
             if (sk && timelineCtrl) {
               const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-              fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+              const hdrs: Record<string, string> = TOKEN
+                ? { Authorization: `Bearer ${TOKEN}` }
+                : {};
+              fetch(
+                `${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`,
+                Object.keys(hdrs).length ? { headers: hdrs } : undefined,
+              )
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
                   const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
@@ -1591,7 +1597,11 @@ function onEvent(evt: any) {
         setTimeout(() => {
           if (sk && timelineCtrl) {
             const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-            fetch(`${base}/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
+            const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
+            fetch(
+              `${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`,
+              Object.keys(hdrs).length ? { headers: hdrs } : undefined,
+            )
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
                 const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
@@ -5872,6 +5882,9 @@ function init() {
         timelineCtrl?.loadSession(sessionKey);
       }
     },
+    // FORK: Pass auth headers so timeline API calls work in dev mode (Vite proxy
+    // only intercepts relative URLs, but getGatewayBase returns absolute URL)
+    () => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
   );
 }
 
