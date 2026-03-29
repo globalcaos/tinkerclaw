@@ -776,14 +776,7 @@ function clearPersistedErrors(sk: string) {
 }
 
 // ─── Active Model Tracking ───
-type ActiveRunInfo = {
-  model: string;
-  provider: string;
-  authProfileId?: string;
-  startedAt: number;
-  sessionKey?: string;
-  state?: "restarting";
-};
+type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number; sessionKey?: string };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
@@ -821,7 +814,6 @@ const DRAFT_STORAGE_KEY = "tinker-draft";
 const unconfirmedRuns = new Set<string>();
 // Pending delayed deletes for activeRuns — cancelled when a fallback model re-uses the same runId
 const pendingRunDeletes = new Map<string, ReturnType<typeof setTimeout>>();
-let restartPruneTimer: ReturnType<typeof setTimeout> | null = null;
 
 function saveActiveRuns() {
   try {
@@ -849,55 +841,18 @@ function restoreActiveRuns() {
 /** After reconnect, clear restored runs that no lifecycle event confirmed. */
 function scheduleUnconfirmedPrune() {
   if (unconfirmedRuns.size === 0) return;
-  // FORK: Split — normal unconfirmed runs get 5s, restarting runs get 30s
-  const normalIds: string[] = [];
-  const restartIds: string[] = [];
-  for (const id of unconfirmedRuns) {
-    const info = activeRuns.get(id);
-    if (info?.state === "restarting") {
-      restartIds.push(id);
-    } else {
-      normalIds.push(id);
+  setTimeout(() => {
+    let changed = false;
+    for (const id of unconfirmedRuns) {
+      activeRuns.delete(id);
+      changed = true;
     }
-  }
-  // 5s prune for normal unconfirmed runs (original behavior)
-  if (normalIds.length > 0) {
-    setTimeout(() => {
-      let changed = false;
-      for (const id of normalIds) {
-        if (unconfirmedRuns.has(id)) {
-          activeRuns.delete(id);
-          unconfirmedRuns.delete(id);
-          changed = true;
-        }
-      }
-      if (changed) {
-        saveActiveRuns();
-        updateBudgetPanel();
-        updateChat(); // Re-render to remove cleared indicator
-      }
-    }, 5000);
-  }
-  // 30s prune for restarting runs — cancel previous timer to handle rapid restarts
-  if (restartIds.length > 0) {
-    if (restartPruneTimer) clearTimeout(restartPruneTimer);
-    restartPruneTimer = setTimeout(() => {
-      restartPruneTimer = null;
-      let changed = false;
-      for (const id of restartIds) {
-        if (unconfirmedRuns.has(id)) {
-          activeRuns.delete(id);
-          unconfirmedRuns.delete(id);
-          changed = true;
-        }
-      }
-      if (changed) {
-        saveActiveRuns();
-        updateBudgetPanel();
-        updateChat(); // Re-render to remove cleared indicator
-      }
-    }, 30000);
-  }
+    unconfirmedRuns.clear();
+    if (changed) {
+      saveActiveRuns();
+      updateBudgetPanel();
+    }
+  }, 5000);
 }
 
 // Restore on load
@@ -908,8 +863,7 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
   for (const info of activeRuns.values()) {
     if (forModel && info.model !== forModel) continue;
     // FORK: Filter by scope toggle — "session" only counts runs for the active session
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
-      continue;
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -933,12 +887,8 @@ function gwConnect() {
     frozenTextEnd = 0;
     lastDeltaLen = 0;
     streamRunId = null;
-    // FORK: Preserve activeRuns during graceful restart (state set by shutdown handler)
-    const hasRestartingRuns = [...activeRuns.values()].some((r) => r.state === "restarting");
-    if (!hasRestartingRuns) {
-      activeRuns.clear();
-      saveActiveRuns();
-    }
+    activeRuns.clear();
+    saveActiveRuns();
     updateDots();
     updateBtn();
     updateChat();
@@ -1012,19 +962,6 @@ function onFrame(f: any) {
             });
         })
         .catch((e) => console.error("connect:", e));
-      return;
-    }
-    // FORK: Graceful restart — mark active runs as "restarting" to hold the indicator
-    // Intentionally returns early so onEvent() does not process the shutdown frame.
-    if (f.event === "shutdown" && f.payload?.restartExpectedMs != null) {
-      if (activeRuns.size > 0) {
-        for (const [, info] of activeRuns) {
-          info.state = "restarting";
-        }
-        saveActiveRuns();
-        startThinkingTick(); // Ensure tick is running during restart window
-        updateChat();
-      }
       return;
     }
     onEvent(f);
@@ -1543,10 +1480,7 @@ function onEvent(evt: any) {
       // set sending=true and disrupt the active tab's UI.
       // Allow subagent sessions through — they're child runs the user cares about.
       const evtSessionKey = p.data.sessionKey as string | undefined;
-      if (
-        !evtSessionKey ||
-        (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
-      )
+      if (!evtSessionKey || (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:")))
         return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
@@ -1607,22 +1541,14 @@ function onEvent(evt: any) {
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
           const targetTab = evtKey
-            ? tabs.find(
-                (t) =>
-                  t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey),
-              )
+            ? tabs.find((t) => t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey))
             : tabs.find((t) => t.id === activeTabId && t.id !== "tab-main");
           if (targetTab) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
             const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
             if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
-              console.log(
-                "[tabs] triggering title generation for turn",
-                tabTurns,
-                "tab",
-                targetTab.id,
-              );
+              console.log("[tabs] triggering title generation for turn", tabTurns, "tab", targetTab.id);
               generateTabTitle(targetTab);
             }
           }
@@ -1758,8 +1684,8 @@ async function generateTabTitle(tab: Tab) {
   if (!tab.sessionKey || tab.id === "tab-main") return;
 
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
-  const tabMessages =
-    tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
+  const tabMessages = tab.sessionKey === sessionKey ? messages
+    : (tabStates.get(tab.id)?.messages ?? []);
   // Collect last N Q&A pairs from messages
   const pairs: string[] = [];
   let count = 0;
@@ -1849,11 +1775,7 @@ async function send(text: string) {
     sending = true;
   }
   currentTurnNumber++;
-  messages.push({
-    role: "user",
-    content: [{ type: "text", text }],
-    ...(isQueued ? { _queued: true } : {}),
-  });
+  messages.push({ role: "user", content: [{ type: "text", text }], ...(isQueued ? { _queued: true } : {}) });
   updateChat();
   if (!isQueued) updateBtn();
   scrollChat();
@@ -2224,6 +2146,11 @@ function renderMsg(
   const queuedClass = msg._queued ? " msg-queued" : "";
   const queuedBadge = msg._queued ? `<span class="queued-badge">queued</span>` : "";
   let h = "";
+
+  // FORK: Hide fractal reflection prompts regardless of role (user/assistant/toolResult)
+  // sessions.send injects them as toolResult messages in the transcript
+  const _allMsgTexts = content.map((b: any) => (b.text ?? "")).join(" ") + (typeof msg.content === "string" ? msg.content : "");
+  if (_allMsgTexts.trimStart().startsWith("# FRACTAL REFLECTION")) return h;
   let blockIdx = 0;
   let hasNonToolContent = false;
 
@@ -2291,9 +2218,7 @@ function renderMsg(
         const lvl2Match = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
         const preview = lvl2Match?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
         // Check if this fractal took action (tool calls in surrounding messages)
-        const hasAction = content.some(
-          (b: any) => b.type === "tool_use" || b.type === "tool_result",
-        );
+        const hasAction = content.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
         const openAttr = hasAction ? " open" : "";
         h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
       } else {
@@ -2357,9 +2282,7 @@ function renderMsg(
         if (isFractal2) {
           const lvl2Match2 = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
           const preview2 = lvl2Match2?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
-          const hasAction2 = content.some(
-            (b: any) => b.type === "tool_use" || b.type === "tool_result",
-          );
+          const hasAction2 = content.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
           const openAttr2 = hasAction2 ? " open" : "";
           h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
         } else {
@@ -2422,12 +2345,10 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      const badge =
-        info.state === "restarting" ? `<span class="restart-badge">RESTARTING</span>` : "";
       rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
-  ${badge}<span class="thinking-elapsed">${elapsed}s</span>
+  <span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
     }
@@ -2704,9 +2625,7 @@ function updateChat(skipScroll = false) {
     // FORK: Fractal reflection responses start a new run
     // (sessions.send injects them as assistant messages, so they won't have a user boundary)
     const mc = Array.isArray(m.content) ? m.content : [];
-    const firstText =
-      mc.find((b: any) => b.type === "text" && b.text)?.text ??
-      (typeof m.content === "string" ? m.content : "");
+    const firstText = mc.find((b: any) => b.type === "text" && b.text)?.text ?? (typeof m.content === "string" ? m.content : "");
     if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) return true;
 
     if ((m.role ?? "").toLowerCase() !== "user") return false;
@@ -3523,8 +3442,7 @@ function updateSessionsPanel() {
   for (const tab of tabs) {
     if (tab.id === "tab-main" || !tab.sessionKey) continue;
     const serverKeys = sessions.map((s: any) => s.key);
-    const hasServer =
-      serverKeys.includes(tab.sessionKey) ||
+    const hasServer = serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
     if (!hasServer) {
       const fakeSession = { key: tab.sessionKey, label: tab.title };
@@ -3651,9 +3569,8 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
   const isMainSession = /:main$/.test(s.key);
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
-  const label = isMainSession
-    ? mainTab?.title || "🏠 Main"
-    : tinkerTab?.title || s.label || s.displayName || shortLabel;
+  const label = isMainSession ? (mainTab?.title || "🏠 Main")
+    : (tinkerTab?.title) || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
@@ -3867,11 +3784,9 @@ function init() {
     const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
     if (!btn) return;
     budgetScope = btn.dataset.scope as "session" | "all";
-    $("budget-scope-toggle")!
-      .querySelectorAll(".scope-btn")
-      .forEach((b) => {
-        b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
-      });
+    $("budget-scope-toggle")!.querySelectorAll(".scope-btn").forEach((b) => {
+      b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
+    });
     updateBudgetPanel();
   });
 

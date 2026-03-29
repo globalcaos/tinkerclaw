@@ -7,13 +7,13 @@ import { resolveRunModelFallbacksOverride } from "../../agents/agent-scope.js";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { describeFailoverError, isFailoverError } from "../../agents/failover-error.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
-import { describeFailoverError, isFailoverError } from "../../agents/failover-error.js";
 import { defaultRuntime } from "../../runtime.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
@@ -209,7 +209,9 @@ export function createFollowupRunner(params: {
           }),
           // FORK: Emit per-model fallback-error lifecycle events for Tinker UI
           onError: async ({ provider: fp, model: fm, error: err, attempt, total, nextModel }) => {
-            const described = isFailoverError(err) ? describeFailoverError(err) : { reason: "unknown", message: String(err) };
+            const described = isFailoverError(err)
+              ? describeFailoverError(err)
+              : { reason: "unknown", message: String(err) };
             emitAgentEvent({
               runId,
               sessionKey,
