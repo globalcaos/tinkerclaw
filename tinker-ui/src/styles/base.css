@@ -1318,7 +1318,8 @@ body {
   transition: opacity 0.2s ease 0.15s;
 }
 #app.bottom-collapsed .context-timeline,
-#app.bottom-collapsed .bottom-right-panel {
+#app.bottom-collapsed .bottom-right-panel,
+#app.bottom-collapsed .ct-legend-anchor {
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
@@ -1434,14 +1435,16 @@ body {
   border: 1px solid #333;
 }
 .ct-legend-anchor {
-  position: sticky;
-  right: 0;
-  flex-shrink: 0;
+  /* Must sit in the same grid cell as .context-timeline (row 3, cols 1-2)
+     so it overlays the timeline without being clipped by #app overflow:hidden */
+  grid-column: 1 / 3;
+  grid-row: 3;
+  pointer-events: none;
+  justify-self: end;
+  align-self: start;
+  z-index: 20;
   width: 0;
   overflow: visible;
-  order: 9999;
-  align-self: flex-start;
-  z-index: 20;
 }
 .ct-legend {
   position: absolute;
@@ -1457,6 +1460,7 @@ body {
   background: var(--surface);
   border-radius: 3px;
   white-space: nowrap;
+  pointer-events: auto;
 }
 /* Toggle switch for session/all filter */
 .ct-switch {
