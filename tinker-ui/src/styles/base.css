@@ -1472,6 +1472,7 @@ body {
   font-family: "SF Mono", monospace;
   color: var(--muted);
   transition: color 0.12s;
+  text-transform: none;
 }
 .ct-switch-label.ct-switch-label--active {
   color: var(--text);
@@ -1944,7 +1945,8 @@ body {
   padding: 3px 8px;
   border-radius: 6px;
   pointer-events: none;
-  white-space: pre;
+  white-space: pre-wrap;
+  max-width: 280px;
   z-index: 10000;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   font-family: "SF Mono", monospace;
@@ -2793,6 +2795,9 @@ body {
 }
 .tab-title {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 .tab-unattached .tab-title {
   font-style: italic;

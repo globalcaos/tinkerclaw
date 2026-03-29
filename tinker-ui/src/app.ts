@@ -776,7 +776,13 @@ function clearPersistedErrors(sk: string) {
 }
 
 // ─── Active Model Tracking ───
-type ActiveRunInfo = { model: string; provider: string; authProfileId?: string; startedAt: number; sessionKey?: string };
+type ActiveRunInfo = {
+  model: string;
+  provider: string;
+  authProfileId?: string;
+  startedAt: number;
+  sessionKey?: string;
+};
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
@@ -863,7 +869,8 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
   for (const info of activeRuns.values()) {
     if (forModel && info.model !== forModel) continue;
     // FORK: Filter by scope toggle — "session" only counts runs for the active session
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) continue;
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+      continue;
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -1480,7 +1487,10 @@ function onEvent(evt: any) {
       // set sending=true and disrupt the active tab's UI.
       // Allow subagent sessions through — they're child runs the user cares about.
       const evtSessionKey = p.data.sessionKey as string | undefined;
-      if (!evtSessionKey || (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:")))
+      if (
+        !evtSessionKey ||
+        (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
+      )
         return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
@@ -1541,14 +1551,22 @@ function onEvent(evt: any) {
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
           const targetTab = evtKey
-            ? tabs.find((t) => t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey))
+            ? tabs.find(
+                (t) =>
+                  t.id !== "tab-main" && t.sessionKey && sessionKeyMatches(evtKey, t.sessionKey),
+              )
             : tabs.find((t) => t.id === activeTabId && t.id !== "tab-main");
           if (targetTab) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
             const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
             if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
-              console.log("[tabs] triggering title generation for turn", tabTurns, "tab", targetTab.id);
+              console.log(
+                "[tabs] triggering title generation for turn",
+                tabTurns,
+                "tab",
+                targetTab.id,
+              );
               generateTabTitle(targetTab);
             }
           }
@@ -1684,8 +1702,8 @@ async function generateTabTitle(tab: Tab) {
   if (!tab.sessionKey || tab.id === "tab-main") return;
 
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
-  const tabMessages = tab.sessionKey === sessionKey ? messages
-    : (tabStates.get(tab.id)?.messages ?? []);
+  const tabMessages =
+    tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
   // Collect last N Q&A pairs from messages
   const pairs: string[] = [];
   let count = 0;
@@ -1775,7 +1793,11 @@ async function send(text: string) {
     sending = true;
   }
   currentTurnNumber++;
-  messages.push({ role: "user", content: [{ type: "text", text }], ...(isQueued ? { _queued: true } : {}) });
+  messages.push({
+    role: "user",
+    content: [{ type: "text", text }],
+    ...(isQueued ? { _queued: true } : {}),
+  });
   updateChat();
   if (!isQueued) updateBtn();
   scrollChat();
@@ -2149,7 +2171,9 @@ function renderMsg(
 
   // FORK: Hide fractal reflection prompts regardless of role (user/assistant/toolResult)
   // sessions.send injects them as toolResult messages in the transcript
-  const _allMsgTexts = content.map((b: any) => (b.text ?? "")).join(" ") + (typeof msg.content === "string" ? msg.content : "");
+  const _allMsgTexts =
+    content.map((b: any) => b.text ?? "").join(" ") +
+    (typeof msg.content === "string" ? msg.content : "");
   if (_allMsgTexts.trimStart().startsWith("# FRACTAL REFLECTION")) return h;
   let blockIdx = 0;
   let hasNonToolContent = false;
@@ -2218,7 +2242,9 @@ function renderMsg(
         const lvl2Match = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
         const preview = lvl2Match?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
         // Check if this fractal took action (tool calls in surrounding messages)
-        const hasAction = content.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+        const hasAction = content.some(
+          (b: any) => b.type === "tool_use" || b.type === "tool_result",
+        );
         const openAttr = hasAction ? " open" : "";
         h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
       } else {
@@ -2282,7 +2308,9 @@ function renderMsg(
         if (isFractal2) {
           const lvl2Match2 = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
           const preview2 = lvl2Match2?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
-          const hasAction2 = content.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+          const hasAction2 = content.some(
+            (b: any) => b.type === "tool_use" || b.type === "tool_result",
+          );
           const openAttr2 = hasAction2 ? " open" : "";
           h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
         } else {
@@ -2625,7 +2653,9 @@ function updateChat(skipScroll = false) {
     // FORK: Fractal reflection responses start a new run
     // (sessions.send injects them as assistant messages, so they won't have a user boundary)
     const mc = Array.isArray(m.content) ? m.content : [];
-    const firstText = mc.find((b: any) => b.type === "text" && b.text)?.text ?? (typeof m.content === "string" ? m.content : "");
+    const firstText =
+      mc.find((b: any) => b.type === "text" && b.text)?.text ??
+      (typeof m.content === "string" ? m.content : "");
     if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) return true;
 
     if ((m.role ?? "").toLowerCase() !== "user") return false;
@@ -2893,7 +2923,7 @@ function renderTabs() {
       ? ""
       : `<span class="tab-close" data-tab-close="${tab.id}">&times;</span>`;
 
-    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}">
+    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
   }
@@ -3442,7 +3472,8 @@ function updateSessionsPanel() {
   for (const tab of tabs) {
     if (tab.id === "tab-main" || !tab.sessionKey) continue;
     const serverKeys = sessions.map((s: any) => s.key);
-    const hasServer = serverKeys.includes(tab.sessionKey) ||
+    const hasServer =
+      serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
     if (!hasServer) {
       const fakeSession = { key: tab.sessionKey, label: tab.title };
@@ -3569,13 +3600,14 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
   const isMainSession = /:main$/.test(s.key);
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
-  const label = isMainSession ? (mainTab?.title || "🏠 Main")
-    : (tinkerTab?.title) || s.label || s.displayName || shortLabel;
+  const label = isMainSession
+    ? mainTab?.title || "🏠 Main"
+    : tinkerTab?.title || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
   return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
-    <span class="session-label">${esc(label)} ${channel}</span>
+    <span class="session-label" data-hint="${esc(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -3649,9 +3681,10 @@ function init() {
       </div>
       <div class="rpanel budget-panel-wrapper">
         <div class="rpanel-header">🧠 Models
-          <span class="scope-toggle" id="budget-scope-toggle">
-            <button class="scope-btn scope-btn-active" data-scope="session">Session</button>
-            <button class="scope-btn" data-scope="all">All</button>
+          <span class="ct-switch" id="budget-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
+            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-scope="all">All</span>
           </span>
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
@@ -3781,11 +3814,25 @@ function init() {
   });
   // FORK: Session/All scope toggle for Models panel
   $("budget-scope-toggle")?.addEventListener("click", (e) => {
-    const btn = (e.target as HTMLElement).closest("[data-scope]") as HTMLElement | null;
-    if (!btn) return;
-    budgetScope = btn.dataset.scope as "session" | "all";
-    $("budget-scope-toggle")!.querySelectorAll(".scope-btn").forEach((b) => {
-      b.classList.toggle("scope-btn-active", (b as HTMLElement).dataset.scope === budgetScope);
+    const el = e.target as HTMLElement;
+    // Click on label or track toggles scope
+    const label = el.closest("[data-scope]") as HTMLElement | null;
+    const track = el.closest("[data-scope-track]") as HTMLElement | null;
+    if (!label && !track) return;
+    if (label) {
+      budgetScope = label.dataset.scope as "session" | "all";
+    } else {
+      // Toggle when clicking the track
+      budgetScope = budgetScope === "session" ? "all" : "session";
+    }
+    const toggle = $("budget-scope-toggle")!;
+    const trackEl = toggle.querySelector(".ct-switch-track")!;
+    trackEl.classList.toggle("ct-switch-track--on", budgetScope === "all");
+    toggle.querySelectorAll(".ct-switch-label").forEach((b) => {
+      b.classList.toggle(
+        "ct-switch-label--active",
+        (b as HTMLElement).dataset.scope === budgetScope,
+      );
     });
     updateBudgetPanel();
   });
