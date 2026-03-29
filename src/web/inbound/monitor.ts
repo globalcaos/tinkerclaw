@@ -20,6 +20,7 @@ import {
 } from "./extract.js";
 import { downloadInboundMedia } from "./media.js";
 import { createWebSendApi } from "./send-api.js";
+import { isSentByUs } from "./sent-ids.js";
 import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
 
 export async function monitorWebInbox(options: {
@@ -176,6 +177,11 @@ export async function monitorWebInbox(options: {
         if (isRecentInboundMessage(dedupeKey)) {
           continue;
         }
+      }
+      // Skip messages we sent ourselves — prevents echo loops where the bot
+      // re-ingests its own voice notes or media as new inbound messages.
+      if (id && isSentByUs(id)) {
+        continue;
       }
       const participantJid = msg.key?.participant ?? undefined;
       const from = group ? remoteJid : await resolveInboundJid(remoteJid);
@@ -364,6 +370,7 @@ export async function monitorWebInbox(options: {
     sock: {
       sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
+      presenceSubscribe: (jid: string) => sock.presenceSubscribe(jid),
     },
     defaultAccountId: options.accountId,
   });
