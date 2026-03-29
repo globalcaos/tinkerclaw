@@ -1,8 +1,8 @@
 import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
-import { recordChannelActivity } from "openclaw/plugin-sdk/infra-runtime";
-import { toWhatsappJid } from "openclaw/plugin-sdk/text-runtime";
+import { recordChannelActivity } from "../../infra/channel-activity.js";
+import { toWhatsappJid } from "../../utils.js";
 import type { ActiveWebSendOptions } from "../active-listener.js";
-import { trackSentMessageId } from "./sent-ids.js"; // fork: echo prevention
+import { trackSentMessageId } from "./sent-ids.js";
 
 function recordWhatsAppOutbound(accountId: string) {
   recordChannelActivity({
@@ -22,7 +22,7 @@ export function createWebSendApi(params: {
   sock: {
     sendMessage: (jid: string, content: AnyMessageContent) => Promise<unknown>;
     sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
-    presenceSubscribe?: (jid: string) => Promise<unknown>; // FORK: group presence
+    presenceSubscribe: (jid: string) => Promise<void>;
   };
   defaultAccountId: string;
 }) {
@@ -69,7 +69,9 @@ export function createWebSendApi(params: {
       const accountId = sendOptions?.accountId ?? params.defaultAccountId;
       recordWhatsAppOutbound(accountId);
       const messageId = resolveOutboundMessageId(result);
-      trackSentMessageId(messageId); // fork: echo prevention
+      if (messageId !== "unknown") {
+        trackSentMessageId(messageId);
+      }
       return { messageId };
     },
     sendPoll: async (
@@ -110,6 +112,15 @@ export function createWebSendApi(params: {
     },
     sendComposingTo: async (to: string): Promise<void> => {
       const jid = toWhatsappJid(to);
+      // WhatsApp requires presence subscription before composing works in groups.
+      // Without this, sendPresenceUpdate("composing") silently fails for group JIDs.
+      if (jid.endsWith("@g.us")) {
+        try {
+          await params.sock.presenceSubscribe(jid);
+        } catch {
+          // Non-fatal: composing may still work in some cases
+        }
+      }
       await params.sock.sendPresenceUpdate("composing", jid);
     },
   } as const;
