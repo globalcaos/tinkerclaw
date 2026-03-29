@@ -740,6 +740,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Status:** `DEPLOYED`
 - **What:** Models panel Session/All toggle now uses the same iOS-style switch (`.ct-switch` track + thumb) as the timeline, instead of button-pair toggle. Labels render in proper case ("Session" / "All") — `text-transform:none` override on `.ct-switch-label` prevents `.rpanel-header`'s `uppercase` from affecting switch labels.
 - **2026-03-26 fix:** HTML still used old `.scope-btn` button-pair markup (no CSS backing it — looked like plain text). Replaced with `ct-switch` markup (`ct-switch-label` + `ct-switch-track` + `ct-switch-thumb`) matching the timeline toggle. JS handler updated to toggle `ct-switch-label--active` and `ct-switch-track--on` classes.
+- **2026-03-29 re-fix:** Upstream merge reintroduced old `scope-btn` button-pair HTML (same symptom — plain text, no toggle styling). Re-applied `ct-switch` markup + JS handler. Also added `text-transform: none` on `.ct-switch-label` to prevent `.rpanel-header` uppercase inheritance. Track click toggles scope; label click sets specific scope.
 - **Files:** `app.ts`, `base.css`
 
 ### 5.31 Timeline SQLite Persistence + Response Breakdown (2026-03-16, updated 2026-03-26)
@@ -891,8 +892,8 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Title persistence:** `tinker-fortune-map` localStorage key stores `sessionKey → title` map. `saveFortuneTitle()` / `getFortuneTitle()` functions. Persisted on tab create + every `saveTabs()` call. Survives tab close — orphaned server sessions retain their original fortune.
 - **Auto-assign:** `renderSessionRow()` auto-assigns a random fortune to tinker sessions with no stored title (prevents generic "Tinker UI" label from server's `displayName`).
 - **Click consistency:** Both `attachSessionToTab()` and session-row click handler check `getFortuneTitle(key)` before falling back to `sess.label`. A session's fortune never changes once assigned.
-- **Tab clamping:** `.tab-title` has `max-width: 180px` + `text-overflow: ellipsis`. Full text visible via `data-hint` tooltip (existing `#global-hint` system). Session labels use same `data-hint` approach.
-- **Global hint:** `#global-hint` CSS changed from `white-space: pre` to `pre-wrap` so longer fortune text wraps within the 320px tooltip.
+- **Tab clamping:** `.tab-title` has `max-width: 140px` + `text-overflow: ellipsis` + `overflow: hidden`. Full text visible via `data-hint` tooltip on the tab div (existing `#global-hint` system). Session labels in the sessions panel use same `data-hint` approach.
+- **Global hint:** `#global-hint` CSS changed from `white-space: pre` to `pre-wrap` with `max-width: 280px` so longer fortune text wraps instead of rendering as a single clamped line.
 - **Files:** `app.ts` (FORTUNE_COOKIES array, persistence functions, renderTabs, renderSessionRow, attachSessionToTab, createTab, classifySession), `base.css` (.tab-title, #global-hint)
 
 ### 5.43 Colored Brain Systems — AMYGDALA & FRACTAL Tags (2026-03-23)
