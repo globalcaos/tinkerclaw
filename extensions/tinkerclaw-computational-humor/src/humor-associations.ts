@@ -1,16 +1,20 @@
 /**
- * LIMBIC Phase 6E: Humor Associations in Memory.
+ * FORK: LIMBIC Phase 6E: Humor Associations in Memory.
  *
- * - HumorAssociation schema stored as ENGRAM events (kind: "humor_association")
+ * - HumorAssociation schema (serialized to JSON for file-based persistence)
  * - Callback bonus for successfully landed humor
  * - Running gag detection
  * - Staleness model
+ *
+ * Unlike the original source this file stores associations to a local JSON
+ * file instead of the ENGRAM event store. The extension persists its state
+ * to ~/.openclaw/cognitive/computational-humor.json.
  */
 
 import { LIMBIC_CONFIG } from "./config.js";
 
 // ---------------------------------------------------------------------------
-// Schema (LIMBIC §8.3)
+// Schema (LIMBIC section 8.3)
 // ---------------------------------------------------------------------------
 
 export interface HumorAssociation {
@@ -36,8 +40,8 @@ export interface HumorAssociation {
 /**
  * Compute staleness factor for a humor association.
  *
- * Staleness increases with use (λ per use) and decreases with time (μ per hour).
- * s(n, Δt) = max(0, λ·n - μ·Δt)
+ * Staleness increases with use (lambda per use) and decreases with time (mu per hour).
+ * s(n, delta_t) = max(0, lambda*n - mu*delta_t)
  *
  * Returns 0 (fresh) to 1 (stale). Values > 1 are clamped.
  */
@@ -55,7 +59,7 @@ export function computeStaleness(timesUsed: number, hoursSinceLastUse: number): 
  * Compute callback bonus for a humor association.
  * Successful humor gets a retrieval boost that decays over time.
  *
- * bonus = confidence × (1 - staleness) × timeDecay
+ * bonus = confidence * (1 - staleness) * timeDecay
  */
 export function computeCallbackBonus(association: HumorAssociation, nowMs: number): number {
   const lastUsedMs = new Date(association.lastUsed).getTime();
@@ -82,7 +86,7 @@ export function computeCallbackBonus(association: HumorAssociation, nowMs: numbe
 // ---------------------------------------------------------------------------
 
 /**
- * Detect running gags: associations used ≥ threshold times with high confidence.
+ * Detect running gags: associations used >= threshold times with high confidence.
  */
 export function detectRunningGags(
   associations: HumorAssociation[],
@@ -152,14 +156,14 @@ export function recordOutcome(association: HumorAssociation, positive: boolean):
 }
 
 /**
- * Serialize a HumorAssociation for storage as an ENGRAM event content string.
+ * Serialize a HumorAssociation for storage.
  */
 export function serializeAssociation(association: HumorAssociation): string {
   return JSON.stringify(association);
 }
 
 /**
- * Deserialize a HumorAssociation from an ENGRAM event content string.
+ * Deserialize a HumorAssociation from a stored string.
  */
 export function deserializeAssociation(content: string): HumorAssociation {
   return JSON.parse(content) as HumorAssociation;

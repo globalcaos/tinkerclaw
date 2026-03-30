@@ -12,15 +12,15 @@ import type { EventStore } from "../../memory/engram/event-store.js";
 import {
   discoverBridges as discoverBridgesCascade,
   type BridgeCandidate,
-} from "../../memory/limbic/bridge-discovery.js";
-import { LIMBIC_CONFIG } from "../../memory/limbic/config.js";
+} from "../../../extensions/tinkerclaw-computational-humor/src/bridge-discovery.js";
+import { LIMBIC_CONFIG } from "../../../extensions/tinkerclaw-computational-humor/src/config.js";
 import {
   createAssociation,
   recordOutcome,
   serializeAssociation,
-} from "../../memory/limbic/humor-associations.js";
-import { humorPotentialV2, type AnnIndex } from "../../memory/limbic/humor-potential.js";
-import { sensitivityGate, type SensitivityResult } from "../../memory/limbic/sensitivity-gate.js";
+} from "../../../extensions/tinkerclaw-computational-humor/src/humor-associations.js";
+import { humorPotentialV2, type AnnIndex } from "../../../extensions/tinkerclaw-computational-humor/src/humor-potential.js";
+import { sensitivityGate, type SensitivityResult } from "../../../extensions/tinkerclaw-computational-humor/src/sensitivity-gate.js";
 import type { CortexRuntime } from "./cortex-runtime.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
 

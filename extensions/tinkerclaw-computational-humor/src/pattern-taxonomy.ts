@@ -1,7 +1,7 @@
 /**
- * LIMBIC Phase 6B: 12-pattern humor taxonomy.
+ * FORK: LIMBIC Phase 6B: 12-pattern humor taxonomy.
  *
- * 4 meta-categories × 3 patterns each:
+ * 4 meta-categories x 3 patterns each:
  *   Semantic (1-3): Antonymic Inversion, Hyperbolic Extension, Reductio
  *   Pragmatic (4-6): Expectation Subversion, Register Shift, Pragmatic Overload
  *   Structural (7-9): Domain Transfer, Similarity in Dissimilarity, Frame Collision
@@ -112,7 +112,6 @@ function conceptPairs(ctx: ConversationContext): Array<{
 // ---------------------------------------------------------------------------
 
 // Pattern 1: Antonymic Inversion (Semantic)
-// Find near-antonyms, collapse the opposition into a bridge.
 registerPattern({
   id: 1,
   name: "Antonymic Inversion",
@@ -122,18 +121,15 @@ registerPattern({
     const results: CandidateBridge[] = [];
     for (const { a, b } of conceptPairs(ctx)) {
       const dist = cosineDistance(a.embedding, b.embedding);
-      // Antonyms tend to be moderately distant but in same semantic field
       if (dist < 0.5 || dist > 0.95) {
         continue;
       }
 
-      // Search for concepts that invert the relationship
       const antiMidpoint = vectorMean(a.embedding, b.embedding);
       const neighbors = index.query(antiMidpoint, 10);
       for (const n of neighbors) {
         const simA = cosineSimilarity(n.vector, a.embedding);
         const simB = cosineSimilarity(n.vector, b.embedding);
-        // Bridge should connect to both but be somewhat surprising
         if (Math.min(simA, simB) > 0.15) {
           results.push({
             conceptA: a.label,
@@ -152,7 +148,6 @@ registerPattern({
 });
 
 // Pattern 4: Expectation Subversion (Pragmatic)
-// Setup a prediction, deliver a distant-but-valid completion.
 registerPattern({
   id: 4,
   name: "Expectation Subversion",
@@ -165,9 +160,7 @@ registerPattern({
     }
 
     for (const concept of ctx.recentConcepts) {
-      // Find what's "expected" near the topic
       index.query(ctx.topicEmbedding, 5);
-      // Find what's "unexpected" — far from topic but still valid
       const farNeighbors = index.query(concept.embedding, 20);
       const unexpected = farNeighbors.filter(
         (n) => cosineDistance(n.vector, ctx.topicEmbedding!) > 0.6,
@@ -196,7 +189,6 @@ registerPattern({
 });
 
 // Pattern 7: Domain Transfer (Structural)
-// Import vocabulary/framing from domain A into domain B.
 registerPattern({
   id: 7,
   name: "Domain Transfer",
@@ -208,14 +200,12 @@ registerPattern({
       const dist = cosineDistance(a.embedding, b.embedding);
       if (dist < 0.6) {
         continue;
-      } // need sufficient domain separation
+      }
 
-      // Find concepts near A that have some (small) relevance to B
       const domainA = index.query(a.embedding, 15);
       for (const candidate of domainA) {
         const simToA = cosineSimilarity(candidate.vector, a.embedding);
         const simToB = cosineSimilarity(candidate.vector, b.embedding);
-        // Good transfer: close to A's domain, weak but nonzero link to B
         if (simToA > 0.4 && simToB > 0.1 && simToB < 0.4) {
           results.push({
             conceptA: a.label,
@@ -224,7 +214,7 @@ registerPattern({
             bridgeEmbedding: candidate.vector,
             patternId: 7,
             patternName: "Domain Transfer",
-            score: dist * simToB * (1 - simToB), // peaks at moderate cross-domain relevance
+            score: dist * simToB * (1 - simToB),
           });
         }
       }
@@ -234,7 +224,6 @@ registerPattern({
 });
 
 // Pattern 8: Similarity in Dissimilarity (Structural)
-// Find shared attributes between distant concepts.
 registerPattern({
   id: 8,
   name: "Similarity in Dissimilarity",
@@ -246,15 +235,13 @@ registerPattern({
       const dist = cosineDistance(a.embedding, b.embedding);
       if (dist < 0.6) {
         continue;
-      } // need distant concepts
+      }
 
-      // Midpoint captures shared semantic space
       const mid = vectorMean(a.embedding, b.embedding);
       const neighbors = index.query(mid, 10);
       for (const n of neighbors) {
         const simA = cosineSimilarity(n.vector, a.embedding);
         const simB = cosineSimilarity(n.vector, b.embedding);
-        // Bridge should be equidistant-ish from both
         const balance = 1 - Math.abs(simA - simB);
         if (balance > 0.7 && Math.min(simA, simB) > 0.15) {
           results.push({
@@ -286,7 +273,6 @@ registerPattern({
   fn(ctx, index) {
     const results: CandidateBridge[] = [];
     for (const concept of ctx.recentConcepts) {
-      // "Extend" the concept vector away from the origin/topic
       const direction = ctx.topicEmbedding
         ? vectorSub(concept.embedding, ctx.topicEmbedding)
         : concept.embedding;
@@ -320,11 +306,9 @@ registerPattern({
   fn(ctx, index) {
     const results: CandidateBridge[] = [];
     for (const concept of ctx.recentConcepts) {
-      // Search for trivial/mundane neighbors
       const neighbors = index.query(concept.embedding, 20);
       for (const n of neighbors) {
         const sim = cosineSimilarity(n.vector, concept.embedding);
-        // Moderately similar but not identical — trivial reframing
         if (sim > 0.3 && sim < 0.7) {
           results.push({
             conceptA: concept.label,
@@ -333,7 +317,7 @@ registerPattern({
             bridgeEmbedding: n.vector,
             patternId: 3,
             patternName: "Reductio",
-            score: (1 - sim) * sim, // peaks at moderate similarity
+            score: (1 - sim) * sim,
           });
         }
       }
@@ -347,11 +331,10 @@ registerPattern({
   id: 5,
   name: "Register Shift",
   metaCategory: MetaCategory.PRAGMATIC,
-  description: "Shift linguistic register unexpectedly (formal↔casual, technical↔colloquial).",
+  description: "Shift linguistic register unexpectedly (formal/casual, technical/colloquial).",
   fn(ctx, index) {
     const results: CandidateBridge[] = [];
     for (const concept of ctx.recentConcepts) {
-      // Find concepts in a different "register zone"
       const neighbors = index.query(concept.embedding, 20);
       for (const n of neighbors) {
         const dist = cosineDistance(n.vector, concept.embedding);
@@ -386,7 +369,6 @@ registerPattern({
       for (const n of neighbors) {
         const simA = cosineSimilarity(n.vector, a.embedding);
         const simB = cosineSimilarity(n.vector, b.embedding);
-        // Overload: bridge is meaningfully connected to BOTH
         if (simA > 0.3 && simB > 0.3) {
           results.push({
             conceptA: a.label,
@@ -416,7 +398,7 @@ registerPattern({
       const dist = cosineDistance(a.embedding, b.embedding);
       if (dist < 0.7) {
         continue;
-      } // need truly incompatible frames
+      }
 
       const mid = vectorMean(a.embedding, b.embedding);
       const neighbors = index.query(mid, 10);
@@ -454,16 +436,14 @@ registerPattern({
 
     for (const prev of ctx.previousHumor) {
       for (const concept of ctx.recentConcepts) {
-        // Check if current concept is related to a previous humor bridge
-        // (simplified: label matching since we may not have embeddings for old bridges)
         results.push({
           conceptA: concept.label,
           conceptB: prev.conceptA,
           bridge: prev.bridge,
-          bridgeEmbedding: concept.embedding, // placeholder; real impl uses stored embedding
+          bridgeEmbedding: concept.embedding,
           patternId: 10,
           patternName: "Callback",
-          score: 0.5, // baseline callback score; actual scoring in humor-associations
+          score: 0.5,
         });
       }
     }
@@ -484,7 +464,6 @@ registerPattern({
     }
 
     for (const concept of ctx.recentConcepts) {
-      // Escalate: push concept further from center
       const extended = normalize(concept.embedding.map((v) => v * 1.5));
       const neighbors = index.query(extended, 5);
       for (const n of neighbors) {
@@ -515,11 +494,9 @@ registerPattern({
   fn(ctx, index) {
     const results: CandidateBridge[] = [];
     for (const concept of ctx.recentConcepts) {
-      // Find mundane/trivial neighbors of an elevated concept
       const neighbors = index.query(concept.embedding, 20);
       for (const n of neighbors) {
         const dist = cosineDistance(n.vector, concept.embedding);
-        // Bathos: moderate distance, suggesting deflation
         if (dist > 0.4 && dist < 0.8) {
           results.push({
             conceptA: concept.label,
