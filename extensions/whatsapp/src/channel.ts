@@ -1,4 +1,9 @@
 import { buildDmGroupAccountAllowlistAdapter } from "openclaw/plugin-sdk/allowlist-config-edit";
+import { resolveReactionMessageId } from "openclaw/plugin-sdk/channel-actions";
+import {
+  createAsyncComputedAccountStatusAdapter,
+  createDefaultChannelRuntimeState,
+} from "openclaw/plugin-sdk/status-helpers";
 // FORK: whatsmeow login — side-effect import forces bundler inclusion
 import "./login-qr-wm.js";
 // WhatsApp-specific imports from local extension code (moved from src/web/ and src/channels/plugins/)
@@ -57,10 +62,12 @@ function parseWhatsAppExplicitTarget(raw: string) {
   };
 }
 
-export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
-  createChatChannelPlugin<ResolvedWhatsAppAccount>({
-    pairing: {
-      idLabel: "whatsappSenderId",
+export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
+  ...createWhatsAppPluginBase({
+    groups: {
+      resolveRequireMention: resolveWhatsAppGroupRequireMention,
+      resolveToolPolicy: resolveWhatsAppGroupToolPolicy,
+      resolveGroupIntroHint: resolveWhatsAppGroupIntroHint,
     },
     setupWizard: whatsappSetupWizardProxy,
     setup: whatsappSetupAdapter,
@@ -976,4 +983,5 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
         },
       },
     },
-  });
+  },
+};

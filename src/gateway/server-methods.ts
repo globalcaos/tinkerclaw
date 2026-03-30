@@ -96,7 +96,6 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...usageHandlers,
   ...agentHandlers,
   ...agentsHandlers,
-  ...browserHandlers,
   ...forensicHandlers,
 };
 

@@ -483,7 +483,11 @@ export async function runEmbeddedPiAgent(
           thinkLevel = next;
         },
         log,
+        runId: params.runId,
+        sessionKey: params.sessionKey,
       });
+
+      await initializeAuthProfile();
 
       const applyApiKeyInfo = async (candidate?: string): Promise<void> => {
         apiKeyInfo = await resolveApiKeyForCandidate(candidate);
@@ -542,138 +546,6 @@ export async function runEmbeddedPiAgent(
         lastProfileId = apiKeyInfo.profileId;
       };
 
-      const advanceAuthProfile = async (): Promise<boolean> => {
-        if (lockedProfileId) {
-          return false;
-        }
-        let nextIndex = profileIndex + 1;
-        while (nextIndex < profileCandidates.length) {
-          const candidate = profileCandidates[nextIndex];
-          if (candidate && isProfileInCooldown(authStore, candidate)) {
-            // FORK: emit per-profile fallback error for cooldown skip
-            emitAgentEvent({
-              runId: params.runId,
-              sessionKey: params.sessionKey,
-              stream: "lifecycle",
-              data: {
-                phase: "fallback-profile-error",
-                profileId: candidate,
-                profileIndex: nextIndex,
-                totalProfiles: profileCandidates.length,
-                reason: "cooldown",
-              },
-            });
-            nextIndex += 1;
-            continue;
-          }
-          try {
-            await applyApiKeyInfo(candidate);
-            profileIndex = nextIndex;
-            thinkLevel = initialThinkLevel;
-            attemptedThinking.clear();
-            return true;
-          } catch (err) {
-            if (candidate && candidate === lockedProfileId) {
-              throw err;
-            }
-            // FORK: emit per-profile fallback error for key resolution failure
-            emitAgentEvent({
-              runId: params.runId,
-              sessionKey: params.sessionKey,
-              stream: "lifecycle",
-              data: {
-                phase: "fallback-profile-error",
-                profileId: candidate,
-                profileIndex: nextIndex,
-                totalProfiles: profileCandidates.length,
-                reason: "auth",
-                message: String(err),
-              },
-            });
-            nextIndex += 1;
-          }
-        }
-        return false;
-      };
-
-      try {
-        const autoProfileCandidates = profileCandidates.filter(
-          (candidate): candidate is string =>
-            typeof candidate === "string" && candidate.length > 0 && candidate !== lockedProfileId,
-        );
-        const allAutoProfilesInCooldown =
-          autoProfileCandidates.length > 0 &&
-          autoProfileCandidates.every((candidate) => isProfileInCooldown(authStore, candidate));
-        const unavailableReason = allAutoProfilesInCooldown
-          ? (resolveProfilesUnavailableReason({
-              store: authStore,
-              profileIds: autoProfileCandidates,
-            }) ?? "unknown")
-          : null;
-        const allowTransientCooldownProbe =
-          params.allowTransientCooldownProbe === true &&
-          allAutoProfilesInCooldown &&
-          (unavailableReason === "rate_limit" ||
-            unavailableReason === "overloaded" ||
-            unavailableReason === "billing" ||
-            unavailableReason === "unknown");
-        let didTransientCooldownProbe = false;
-
-        while (profileIndex < profileCandidates.length) {
-          const candidate = profileCandidates[profileIndex];
-          const inCooldown =
-            candidate && candidate !== lockedProfileId && isProfileInCooldown(authStore, candidate);
-          if (inCooldown) {
-            if (allowTransientCooldownProbe && !didTransientCooldownProbe) {
-              didTransientCooldownProbe = true;
-              log.warn(
-                `probing cooldowned auth profile for ${provider}/${modelId} due to ${unavailableReason ?? "transient"} unavailability`,
-              );
-            } else {
-              profileIndex += 1;
-              continue;
-            }
-          }
-          await applyApiKeyInfo(profileCandidates[profileIndex]);
-          break;
-        }
-        if (profileIndex >= profileCandidates.length) {
-          throwAuthProfileFailover({ allInCooldown: true });
-        }
-      } catch (err) {
-        if (err instanceof FailoverError) {
-          throw err;
-        }
-        if (profileCandidates[profileIndex] === lockedProfileId) {
-          throwAuthProfileFailover({ allInCooldown: false, error: err });
-        }
-        const advanced = await advanceAuthProfile();
-        if (!advanced) {
-          throwAuthProfileFailover({ allInCooldown: false, error: err });
-        }
-      }
-
-      const maybeRefreshRuntimeAuthForAuthError = async (
-        errorText: string,
-        retried: boolean,
-      ): Promise<boolean> => {
-        if (!runtimeAuthState || retried) {
-          return false;
-        }
-        if (!isFailoverErrorMessage(errorText)) {
-          return false;
-        }
-        if (classifyFailoverReason(errorText) !== "auth") {
-          return false;
-        }
-        try {
-          await refreshRuntimeAuth("auth-error");
-          scheduleRuntimeAuthRefresh();
-          return true;
-        } catch {
-          return false;
-        }
-      };
 
       const MAX_TIMEOUT_COMPACTION_ATTEMPTS = 2;
       const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;

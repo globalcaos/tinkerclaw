@@ -19,25 +19,8 @@ export function resolveDefaultWebAuthDir(): string {
 
 export const WA_WEB_AUTH_DIR = resolveDefaultWebAuthDir();
 
-export function resolveWebCredsPath(authDir: string): string {
-  return path.join(authDir, "creds.json");
-}
-
-export function resolveWebCredsBackupPath(authDir: string): string {
-  return path.join(authDir, "creds.json.bak");
-}
-
 export function resolveWebStorePath(authDir: string): string {
   return path.join(authDir, "baileys_store_multi.json");
-}
-
-export function hasWebCredsSync(authDir: string): boolean {
-  try {
-    const stats = fsSync.statSync(resolveWebCredsPath(authDir));
-    return stats.isFile() && stats.size > 1;
-  } catch {
-    return false;
-  }
 }
 
 export function readCredsJsonRaw(filePath: string): string | null {
