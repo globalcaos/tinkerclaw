@@ -35,7 +35,6 @@ const VECTOR_TABLE = "chunks_vec";
 const FTS_TABLE = "chunks_fts";
 const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const BATCH_FAILURE_LIMIT = 2;
-const HYBRID_CANDIDATES_MAX = 200;
 
 const MEMORY_INDEX_MANAGER_CACHE_KEY = Symbol.for("openclaw.memoryIndexManagerCache");
 type MemoryIndexManagerCacheStore = {
@@ -340,12 +339,42 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     const maxResults = opts?.maxResults ?? this.settings.query.maxResults;
     const hybrid = this.settings.query.hybrid;
     const candidates = Math.min(
-      HYBRID_CANDIDATES_MAX,
+      200,
       Math.max(1, Math.floor(maxResults * hybrid.candidateMultiplier)),
     );
 
+    // FTS-only mode: no embedding provider available
     if (!this.provider) {
-      return this.searchFtsOnly(cleaned, minScore, maxResults, candidates);
+      if (!this.fts.enabled || !this.fts.available) {
+        log.warn("memory search: no provider and FTS unavailable");
+        return [];
+      }
+
+      // Extract keywords for better FTS matching on conversational queries
+      // e.g., "that thing we discussed about the API" → ["discussed", "API"]
+      const keywords = extractKeywords(cleaned, {
+        ftsTokenizer: this.settings.store.fts.tokenizer,
+      });
+      const searchTerms = keywords.length > 0 ? keywords : [cleaned];
+
+      // Search with each keyword and merge results
+      const resultSets = await Promise.all(
+        searchTerms.map((term) => this.searchKeyword(term, candidates).catch(() => [])),
+      );
+
+      // Merge and deduplicate results, keeping highest score for each chunk
+      const seenIds = new Map<string, (typeof resultSets)[0][0]>();
+      for (const results of resultSets) {
+        for (const result of results) {
+          const existing = seenIds.get(result.id);
+          if (!existing || result.score > existing.score) {
+            seenIds.set(result.id, result);
+          }
+        }
+      }
+
+      const merged = [...seenIds.values()].toSorted((a, b) => b.score - a.score);
+      return this.selectScoredResults(merged, maxResults, minScore, 0);
     }
 
     // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
@@ -428,78 +457,6 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         }
       | undefined;
     return ftsRow?.found === 1;
-  }
-
-  private computeSourceCounts(sourceFilter: {
-    sql: string;
-    params: MemorySource[];
-  }): Array<{ source: MemorySource; files: number; chunks: number }> {
-    const sources = Array.from(this.sources);
-    if (sources.length === 0) {
-      return [];
-    }
-    const bySource = new Map<MemorySource, { files: number; chunks: number }>();
-    for (const source of sources) {
-      bySource.set(source, { files: 0, chunks: 0 });
-    }
-    const fileRows = this.db
-      .prepare(
-        `SELECT source, COUNT(*) as c FROM files WHERE 1=1${sourceFilter.sql} GROUP BY source`,
-      )
-      .all(...sourceFilter.params) as Array<{ source: MemorySource; c: number }>;
-    for (const row of fileRows) {
-      const entry = bySource.get(row.source) ?? { files: 0, chunks: 0 };
-      entry.files = row.c ?? 0;
-      bySource.set(row.source, entry);
-    }
-    const chunkRows = this.db
-      .prepare(
-        `SELECT source, COUNT(*) as c FROM chunks WHERE 1=1${sourceFilter.sql} GROUP BY source`,
-      )
-      .all(...sourceFilter.params) as Array<{ source: MemorySource; c: number }>;
-    for (const row of chunkRows) {
-      const entry = bySource.get(row.source) ?? { files: 0, chunks: 0 };
-      entry.chunks = row.c ?? 0;
-      bySource.set(row.source, entry);
-    }
-    return sources.map((source) => Object.assign({ source }, bySource.get(source)!));
-  }
-
-  private async searchFtsOnly(
-    query: string,
-    minScore: number,
-    maxResults: number,
-    candidates: number,
-  ): Promise<MemorySearchResult[]> {
-    if (!this.fts.enabled || !this.fts.available) {
-      log.warn("memory search: no provider and FTS unavailable");
-      return [];
-    }
-
-    // Conversational queries like "that API thing we discussed" perform poorly
-    // with literal FTS; extract meaningful keywords to get better recall.
-    const keywords = extractKeywords(query);
-    const searchTerms = keywords.length > 0 ? keywords : [query];
-
-    const resultSets = await Promise.all(
-      searchTerms.map((term) => this.searchKeyword(term, candidates).catch(() => [])),
-    );
-
-    // Merge across keyword sets, keeping the best score per chunk.
-    const bestByChunkId = new Map<string, (typeof resultSets)[0][0]>();
-    for (const results of resultSets) {
-      for (const result of results) {
-        const existing = bestByChunkId.get(result.id);
-        if (!existing || result.score > existing.score) {
-          bestByChunkId.set(result.id, result);
-        }
-      }
-    }
-
-    return [...bestByChunkId.values()]
-      .toSorted((a, b) => b.score - a.score)
-      .filter((entry) => entry.score >= minScore)
-      .slice(0, maxResults);
   }
 
   private async searchVector(
@@ -752,13 +709,33 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       kind: "files" | "chunks";
       source: MemorySource;
       c: number;
-    };
-    const chunks = this.db
-      .prepare(`SELECT COUNT(*) as c FROM chunks WHERE 1=1${sourceFilter.sql}`)
-      .get(...sourceFilter.params) as {
-      c: number;
-    };
-    const sourceCounts = this.computeSourceCounts(sourceFilter);
+    }>;
+    const aggregateState = (() => {
+      const sources = Array.from(this.sources);
+      const bySource = new Map<MemorySource, { files: number; chunks: number }>();
+      for (const source of sources) {
+        bySource.set(source, { files: 0, chunks: 0 });
+      }
+      let files = 0;
+      let chunks = 0;
+      for (const row of aggregateRows) {
+        const count = row.c ?? 0;
+        const entry = bySource.get(row.source) ?? { files: 0, chunks: 0 };
+        if (row.kind === "files") {
+          entry.files = count;
+          files += count;
+        } else {
+          entry.chunks = count;
+          chunks += count;
+        }
+        bySource.set(row.source, entry);
+      }
+      return {
+        files,
+        chunks,
+        sourceCounts: sources.map((source) => Object.assign({ source }, bySource.get(source)!)),
+      };
+    })();
 
     const searchMode = this.provider || !this.providerInitialized ? "hybrid" : "fts-only";
     const providerInfo = this.provider
