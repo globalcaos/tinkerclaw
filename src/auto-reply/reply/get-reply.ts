@@ -22,16 +22,27 @@ import { handleInlineActions } from "./get-reply-inline-actions.js";
 import { runPreparedReply } from "./get-reply-run.js";
 import { finalizeInboundContext } from "./inbound-context.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
-import { applyResetModelOverride } from "./session-reset-model.js";
 import { initSessionState } from "./session.js";
-import { stageSandboxMedia } from "./stage-sandbox-media.js";
 import { createTypingController } from "./typing.js";
 
-function shouldLogCoreIngressTiming(): boolean {
-  return process.env.OPENCLAW_DEBUG_INGRESS_TIMING === "1";
+type ResetCommandAction = "new" | "reset";
+
+let sessionResetModelRuntimePromise: Promise<
+  typeof import("./session-reset-model.runtime.js")
+> | null = null;
+let stageSandboxMediaRuntimePromise: Promise<
+  typeof import("./stage-sandbox-media.runtime.js")
+> | null = null;
+
+function loadSessionResetModelRuntime() {
+  sessionResetModelRuntimePromise ??= import("./session-reset-model.runtime.js");
+  return sessionResetModelRuntimePromise;
 }
 
-type ResetCommandAction = "new" | "reset";
+function loadStageSandboxMediaRuntime() {
+  stageSandboxMediaRuntimePromise ??= import("./stage-sandbox-media.runtime.js");
+  return stageSandboxMediaRuntimePromise;
+}
 
 function mergeSkillFilters(channelFilter?: string[], agentFilter?: string[]): string[] | undefined {
   const normalize = (list?: string[]) => {
@@ -109,20 +120,11 @@ export async function getReplyFromConfig(
   opts?: GetReplyOptions,
   configOverride?: OpenClawConfig,
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
-  const ingressTimingEnabled = shouldLogCoreIngressTiming();
-  const ingressStartMs = ingressTimingEnabled ? Date.now() : 0;
-  const logIngressStage = (stage: string, extra?: string) => {
-    if (!ingressTimingEnabled) {
-      return;
-    }
-    const sessionKey = ctx.SessionKey?.trim() || "(no-session)";
-    const suffix = extra ? ` ${extra}` : "";
-    defaultRuntime.log?.(
-      `[ingress] session=${sessionKey} stage=${stage} elapsedMs=${Date.now() - ingressStartMs}${suffix}`,
-    );
-  };
   const isFastTestEnv = process.env.OPENCLAW_TEST_FAST === "1";
-  const cfg = configOverride ?? loadConfig();
+  const cfg =
+    configOverride == null
+      ? loadConfig()
+      : (applyMergePatch(loadConfig(), configOverride) as OpenClawConfig);
   const targetSessionKey =
     ctx.CommandSource === "native" ? ctx.CommandTargetSessionKey?.trim() : undefined;
   const agentSessionKey = targetSessionKey || ctx.SessionKey;
@@ -170,7 +172,6 @@ export async function getReplyFromConfig(
     ensureBootstrapFiles: !agentCfg?.skipBootstrap && !isFastTestEnv,
   });
   const workspaceDir = workspace.dir;
-  logIngressStage("workspace-ready");
   const agentDir = resolveAgentDir(cfg, agentId);
   const timeoutMs = resolveAgentTimeoutMs({ cfg, overrideSeconds: opts?.timeoutOverrideSeconds });
   const configuredTypingSeconds =
@@ -189,18 +190,16 @@ export async function getReplyFromConfig(
   const finalized = finalizeInboundContext(ctx);
 
   if (!isFastTestEnv) {
-    const appliedMediaUnderstanding = await applyMediaUnderstandingIfNeeded({
+    await applyMediaUnderstandingIfNeeded({
       ctx: finalized,
       cfg,
       agentDir,
       activeModel: { provider, model },
     });
-    logIngressStage("media-understanding", `applied=${appliedMediaUnderstanding ? "1" : "0"}`);
-    const appliedLinkUnderstanding = await applyLinkUnderstandingIfNeeded({
+    await applyLinkUnderstandingIfNeeded({
       ctx: finalized,
       cfg,
     });
-    logIngressStage("link-understanding", `applied=${appliedLinkUnderstanding ? "1" : "0"}`);
   }
   emitPreAgentMessageHooks({
     ctx: finalized,
@@ -219,7 +218,6 @@ export async function getReplyFromConfig(
     cfg,
     commandAuthorized,
   });
-  logIngressStage("session-init");
   let {
     sessionCtx,
     sessionEntry,
@@ -262,21 +260,24 @@ export async function getReplyFromConfig(
     }
   }
 
-  await applyResetModelOverride({
-    cfg,
-    agentId,
-    resetTriggered,
-    bodyStripped,
-    sessionCtx,
-    ctx: finalized,
-    sessionEntry,
-    sessionStore,
-    sessionKey,
-    storePath,
-    defaultProvider,
-    defaultModel,
-    aliasIndex,
-  });
+  if (resetTriggered && bodyStripped?.trim()) {
+    const { applyResetModelOverride } = await loadSessionResetModelRuntime();
+    await applyResetModelOverride({
+      cfg,
+      agentId,
+      resetTriggered,
+      bodyStripped,
+      sessionCtx,
+      ctx: finalized,
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      storePath,
+      defaultProvider,
+      defaultModel,
+      aliasIndex,
+    });
+  }
 
   const channelModelOverride = resolveChannelModelOverride({
     cfg,
@@ -335,7 +336,6 @@ export async function getReplyFromConfig(
     opts: resolvedOpts,
     skillFilter: mergedSkillFilter,
   });
-  logIngressStage("directives-resolved");
   if (directiveResult.kind === "reply") {
     logIngressStage("early-reply");
     await clearSessionResume(agentSessionKey).catch(() => {});
@@ -444,14 +444,16 @@ export async function getReplyFromConfig(
   directives = inlineActionResult.directives;
   abortedLastRun = inlineActionResult.abortedLastRun ?? abortedLastRun;
 
-  await stageSandboxMedia({
-    ctx,
-    sessionCtx,
-    cfg,
-    sessionKey,
-    workspaceDir,
-  });
-  logIngressStage("sandbox-media");
+  if (sessionKey && hasInboundMedia(ctx)) {
+    const { stageSandboxMedia } = await loadStageSandboxMediaRuntime();
+    await stageSandboxMedia({
+      ctx,
+      sessionCtx,
+      cfg,
+      sessionKey,
+      workspaceDir,
+    });
+  }
 
   // Run the LLM reply, then clear session resume AFTER completion.
   // Clearing before runPreparedReply would lose the resume file during the
