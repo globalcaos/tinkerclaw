@@ -429,10 +429,16 @@ export async function monitorWebInbox(options: {
   };
 
   const handleMessagesUpsert = async (upsert: { type?: string; messages?: Array<WAMessage> }) => {
+    console.log(`[wa-pipeline] handleMessagesUpsert type=${upsert.type} count=${upsert.messages?.length ?? 0}`);
     if (upsert.type !== "notify" && upsert.type !== "append") {
+      console.log(`[wa-pipeline] SKIP: type=${upsert.type} not notify/append`);
       return;
     }
     for (const msg of upsert.messages ?? []) {
+      const msgJid = msg.key?.remoteJid;
+      const msgId = msg.key?.id;
+      const msgFromMe = msg.key?.fromMe;
+      console.log(`[wa-pipeline] processing msg jid=${msgJid} id=${msgId} fromMe=${msgFromMe}`);
       recordChannelActivity({
         channel: "whatsapp",
         accountId: options.accountId,
@@ -440,6 +446,7 @@ export async function monitorWebInbox(options: {
       });
       const inbound = await normalizeInboundMessage(msg);
       if (!inbound) {
+        console.log(`[wa-pipeline] DROPPED by normalizeInboundMessage: jid=${msgJid} id=${msgId}`);
         continue;
       }
 
