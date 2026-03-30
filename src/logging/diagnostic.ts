@@ -335,7 +335,10 @@ export function logActiveRuns() {
 
 let heartbeatInterval: NodeJS.Timeout | null = null;
 
-export function startDiagnosticHeartbeat(config?: OpenClawConfig) {
+export function startDiagnosticHeartbeat(
+  config?: OpenClawConfig,
+  opts?: { getConfig?: () => OpenClawConfig },
+) {
   if (heartbeatInterval) {
     return;
   }
@@ -343,7 +346,7 @@ export function startDiagnosticHeartbeat(config?: OpenClawConfig) {
     let heartbeatConfig = config;
     if (!heartbeatConfig) {
       try {
-        heartbeatConfig = loadConfig();
+        heartbeatConfig = (opts?.getConfig ?? getRuntimeConfig)();
       } catch {
         heartbeatConfig = undefined;
       }

@@ -4,6 +4,13 @@ import type { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { recordPendingHistoryEntryIfEnabled } from "openclaw/plugin-sdk/reply-history";
 import { parseActivationCommand } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
+import {
+  getPrimaryIdentityId,
+  getReplyContext,
+  getSelfIdentity,
+  getSenderIdentity,
+  identitiesOverlap,
+} from "../../identity.js";
 import type { MentionConfig } from "../mentions.js";
 import { buildMentionConfig, debugMention, resolveOwnerList } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
@@ -20,11 +27,11 @@ export type GroupHistoryEntry = {
 };
 
 function isOwnerSender(baseMentionConfig: MentionConfig, msg: WebInboundMsg) {
-  const sender = normalizeE164(msg.senderE164 ?? "");
+  const sender = normalizeE164(getSenderIdentity(msg).e164 ?? "");
   if (!sender) {
     return false;
   }
-  const owners = resolveOwnerList(baseMentionConfig, msg.selfE164 ?? undefined);
+  const owners = resolveOwnerList(baseMentionConfig, getSelfIdentity(msg).e164 ?? undefined);
   return owners.includes(sender);
 }
 
@@ -34,10 +41,14 @@ function recordPendingGroupHistoryEntry(params: {
   groupHistoryKey: string;
   groupHistoryLimit: number;
 }) {
+  const senderIdentity = getSenderIdentity(params.msg);
   const sender =
-    params.msg.senderName && params.msg.senderE164
-      ? `${params.msg.senderName} (${params.msg.senderE164})`
-      : (params.msg.senderName ?? params.msg.senderE164 ?? "Unknown");
+    senderIdentity.name && senderIdentity.e164
+      ? `${senderIdentity.name} (${senderIdentity.e164})`
+      : (senderIdentity.name ??
+        senderIdentity.e164 ??
+        getPrimaryIdentityId(senderIdentity) ??
+        "Unknown");
   recordPendingHistoryEntryIfEnabled({
     historyMap: params.groupHistories,
     historyKey: params.groupHistoryKey,
@@ -47,7 +58,7 @@ function recordPendingGroupHistoryEntry(params: {
       body: params.msg.body,
       timestamp: params.msg.timestamp,
       id: params.msg.id,
-      senderJid: params.msg.senderJid,
+      senderJid: senderIdentity.jid ?? params.msg.senderJid,
     },
   });
 }
@@ -102,8 +113,8 @@ export function applyGroupGating(params: {
   noteGroupMember(
     params.groupMemberNames,
     params.groupHistoryKey,
-    params.msg.senderE164,
-    params.msg.senderName,
+    sender.e164 ?? undefined,
+    sender.name ?? undefined,
   );
 
   // — Rule 2: Authorized Sender —
