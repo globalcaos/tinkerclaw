@@ -22,6 +22,7 @@ import {
   applyContextPruningDefaults,
   applyAgentDefaults,
   applyForkAgentDefaults,
+  applyForkCognitiveDefaults,
   applyForkPluginDefaults,
   applyLoggingDefaults,
   applyMessageDefaults,
@@ -1802,15 +1803,17 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         deps.logger.warn(`Config warnings:\\n${details}`);
       }
       warnIfConfigFromFuture(validated.config, deps.logger);
-      const cfg = applyForkPluginDefaults(
-        applyTalkConfigNormalization(
-          applyModelDefaults(
-            applyCompactionDefaults(
-              applyForkAgentDefaults(
-                applyContextPruningDefaults(
-                  applyAgentDefaults(
-                    applySessionDefaults(
-                      applyLoggingDefaults(applyMessageDefaults(validated.config)),
+      const cfg = applyForkCognitiveDefaults(
+        applyForkPluginDefaults(
+          applyTalkConfigNormalization(
+            applyModelDefaults(
+              applyCompactionDefaults(
+                applyForkAgentDefaults(
+                  applyContextPruningDefaults(
+                    applyAgentDefaults(
+                      applySessionDefaults(
+                        applyLoggingDefaults(applyMessageDefaults(validated.config)),
+                      ),
                     ),
                   ),
                 ),
@@ -1899,14 +1902,16 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
     const exists = deps.fs.existsSync(configPath);
     if (!exists) {
       const hash = hashConfigRaw(null);
-      const config = applyForkPluginDefaults(
-        applyTalkApiKey(
-          applyTalkConfigNormalization(
-            applyModelDefaults(
-              applyCompactionDefaults(
-                applyForkAgentDefaults(
-                  applyContextPruningDefaults(
-                    applyAgentDefaults(applySessionDefaults(applyMessageDefaults({}))),
+      const config = applyForkCognitiveDefaults(
+        applyForkPluginDefaults(
+          applyTalkApiKey(
+            applyTalkConfigNormalization(
+              applyModelDefaults(
+                applyCompactionDefaults(
+                  applyForkAgentDefaults(
+                    applyContextPruningDefaults(
+                      applyAgentDefaults(applySessionDefaults(applyMessageDefaults({}))),
+                    ),
                   ),
                 ),
               ),
@@ -2026,16 +2031,18 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
 
       warnIfConfigFromFuture(validated.config, deps.logger);
       const snapshotConfig = normalizeConfigPaths(
-        applyForkPluginDefaults(
-          applyTalkApiKey(
-            applyTalkConfigNormalization(
-              applyModelDefaults(
-                applyCompactionDefaults(
-                  applyForkAgentDefaults(
-                    applyContextPruningDefaults(
-                      applyAgentDefaults(
-                        applySessionDefaults(
-                          applyLoggingDefaults(applyMessageDefaults(validated.config)),
+        applyForkCognitiveDefaults(
+          applyForkPluginDefaults(
+            applyTalkApiKey(
+              applyTalkConfigNormalization(
+                applyModelDefaults(
+                  applyCompactionDefaults(
+                    applyForkAgentDefaults(
+                      applyContextPruningDefaults(
+                        applyAgentDefaults(
+                          applySessionDefaults(
+                            applyLoggingDefaults(applyMessageDefaults(validated.config)),
+                          ),
                         ),
                       ),
                     ),
