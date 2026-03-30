@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/total-recall",
+  "version": "0.1.0",
+  "description": "ENGRAM — Episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation, and artifact externalization",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
