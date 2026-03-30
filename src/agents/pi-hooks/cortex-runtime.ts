@@ -16,16 +16,16 @@ import { join, dirname } from "node:path";
 import {
   computeConsistency,
   type ConsistencyResult,
-} from "../../memory/cortex/consistency-metric.js";
+} from "../../../extensions/tinkerclaw-identity-persistence/src/consistency-metric.js";
 import {
   computeDriftScore,
   createDriftState,
   detectUserCorrections,
   type DriftScore,
   type DriftState,
-} from "../../memory/cortex/drift-detection.js";
-import { createDefaultPersonaState, type PersonaState } from "../../memory/cortex/persona-state.js";
-import { renderTier1A } from "../../memory/cortex/priority-injection.js";
+} from "../../../extensions/tinkerclaw-identity-persistence/src/drift-detection.js";
+import { createDefaultPersonaState, type PersonaState } from "../../../extensions/tinkerclaw-identity-persistence/src/persona-state.js";
+import { renderTier1A } from "../../../extensions/tinkerclaw-identity-persistence/src/priority-injection.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
 
 // ---------------------------------------------------------------------------
