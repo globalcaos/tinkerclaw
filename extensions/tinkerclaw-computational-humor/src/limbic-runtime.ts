@@ -1,32 +1,39 @@
 /**
- * LIMBIC Phase 4 Runtime: Humor pipeline wiring.
+ * FORK: LIMBIC Runtime -- humor pipeline wiring for the extension.
  *
- * Wraps bridge-discovery.ts, humor-potential.ts, and sensitivity-gate.ts
- * into a session-scoped runtime with event-store persistence for reactions.
- *
- * Registry pattern mirrors cortex-runtime.ts / ingestion-runtime.ts.
+ * Wraps bridge-discovery, humor-potential, and sensitivity-gate into a
+ * self-contained runtime. Unlike the original pi-extensions/limbic-runtime.ts
+ * this version:
+ *   - Has NO dependency on EventStore (persists to JSON file instead)
+ *   - Has NO dependency on CortexRuntime (reads Identity Persistence shared state)
+ *   - Uses a local WeakMap instead of createSessionManagerRuntimeRegistry
+ *   - Falls back to FNV-1a hash when no embedding provider is available
  */
 
-import type { EmbeddingProvider } from "../../memory/embeddings.js";
-import type { EventStore } from "../../memory/engram/event-store.js";
 import {
   discoverBridges as discoverBridgesCascade,
   type BridgeCandidate,
-} from "../../../extensions/tinkerclaw-computational-humor/src/bridge-discovery.js";
-import { LIMBIC_CONFIG } from "../../../extensions/tinkerclaw-computational-humor/src/config.js";
+} from "./bridge-discovery.js";
+import { LIMBIC_CONFIG } from "./config.js";
 import {
   createAssociation,
   recordOutcome,
   serializeAssociation,
-} from "../../../extensions/tinkerclaw-computational-humor/src/humor-associations.js";
-import { humorPotentialV2, type AnnIndex } from "../../../extensions/tinkerclaw-computational-humor/src/humor-potential.js";
-import { sensitivityGate, type SensitivityResult } from "../../../extensions/tinkerclaw-computational-humor/src/sensitivity-gate.js";
-import type { CortexRuntime } from "./cortex-runtime.js";
-import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
+  type HumorAssociation,
+} from "./humor-associations.js";
+import { humorPotentialV2, type AnnIndex } from "./humor-potential.js";
+import { sensitivityGate, type SensitivityResult, type HumorCalibration } from "./sensitivity-gate.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Optional embedding provider interface (subset of OpenClaw's EmbeddingProvider). */
+export interface EmbeddingProvider {
+  id: string;
+  model: string;
+  embedQuery(text: string): Promise<number[]>;
+}
 
 export interface LimbicRuntimeOptions {
   /** Embedding dimension for concept vectors (default 128, ignored when embeddingProvider is set). */
@@ -35,6 +42,8 @@ export interface LimbicRuntimeOptions {
   highAffinityPairs?: Array<[string, string]>;
   /** Real embedding provider (e.g. ollama/mxbai-embed-large). When set, replaces FNV-1a hashes with semantic vectors. */
   embeddingProvider?: EmbeddingProvider;
+  /** Humor calibration override. When absent, reads from Identity Persistence shared state. */
+  calibration?: HumorCalibration;
 }
 
 export interface BridgeResult {
@@ -58,10 +67,7 @@ export interface LimbicRuntime {
   scoreHumor(conceptA: string, conceptB: string, bridge: string): Promise<number>;
   /** Run sensitivity gate for a topic and optional context string. */
   checkSensitivity(topic: string, context?: string): SensitivityResult;
-  /**
-   * Log a humor attempt to the ENGRAM event store (kind: "humor_attempt").
-   * Returns the attempt ID for later reaction correlation via recordReaction().
-   */
+  /** Log a humor attempt (in-memory pending registry). */
   logAttempt(id: string, params: HumorAttemptParams, turnId: number): void;
   /**
    * Inspect a user message for positive reaction signals (laughter, emoji).
@@ -69,15 +75,19 @@ export interface LimbicRuntime {
    * Returns true when a positive reaction was detected and recorded.
    */
   captureReaction(userMessage: string, humorAttemptId: string): Promise<boolean>;
-  /** Persist audience reaction to a humor attempt in the event store. */
+  /** Record audience reaction to a humor attempt. */
   recordReaction(
     humorAttemptId: string,
     reaction: "positive" | "neutral" | "negative",
   ): Promise<void>;
+  /** Get all recorded associations (for persistence). */
+  getAssociations(): HumorAssociation[];
+  /** Get all pending attempts (for state dump). */
+  getPendingAttempts(): Map<string, PendingAttempt>;
 }
 
 // ---------------------------------------------------------------------------
-// Concept → embedding (semantic via provider, or deterministic FNV-1a fallback)
+// Concept -> embedding (semantic via provider, or deterministic FNV-1a fallback)
 // ---------------------------------------------------------------------------
 
 /**
@@ -108,7 +118,7 @@ function createRuntimeIndex(entries: Array<{ id: string; vector: number[] }>): A
     query(vector: number[], k: number) {
       const scored = entries.map((e) => ({
         ...e,
-        sim: e.vector.reduce((s, x, i) => s + x * vector[i], 0), // dot product of unit vectors = cos sim
+        sim: e.vector.reduce((s, x, i) => s + x * vector[i], 0),
       }));
       scored.sort((a, b) => b.sim - a.sim);
       return scored.slice(0, k);
@@ -129,7 +139,7 @@ function createRuntimeIndex(entries: Array<{ id: string; vector: number[] }>): A
 // Pending-reaction index (in-memory, keyed by attempt ID)
 // ---------------------------------------------------------------------------
 
-interface PendingAttempt {
+export interface PendingAttempt {
   conceptA: string;
   conceptB: string;
   bridge: string;
@@ -141,56 +151,51 @@ interface PendingAttempt {
 // Positive reaction detection
 // ---------------------------------------------------------------------------
 
-/**
- * Text patterns that indicate a positive humor reaction.
- * Matches laughter text, positive emoji, and common affirmation phrases.
- */
 const POSITIVE_REACTION_PATTERNS = [
-  // Laugh text
   /\b(ha{2,}|he{2,}|hi{2,}|hehe|haha|hoho|lol|lmao|rofl|lmfao)\b/i,
-  // Positive humor words
   /\b(funny|hilarious|clever|witty|good one|nice one|made me laugh|cracked me up)\b/i,
-  // Laugh emoji (Unicode ranges for 😂🤣😄😆😁😀🙂)
   /[\u{1F602}\u{1F923}\u{1F604}\u{1F606}\u{1F601}\u{1F600}\u{1F642}]/u,
-  // Clap emoji: 👏
   /\u{1F44F}/u,
 ];
 
 /**
  * Detect whether a user message contains positive humor reaction signals.
  */
-function detectPositiveReaction(message: string): boolean {
+export function detectPositiveReaction(message: string): boolean {
   return POSITIVE_REACTION_PATTERNS.some((pattern) => pattern.test(message));
 }
+
+// ---------------------------------------------------------------------------
+// Default calibration
+// ---------------------------------------------------------------------------
+
+const DEFAULT_CALIBRATION: HumorCalibration = {
+  humorFrequency: 0.15,
+  preferredPatterns: [1, 4, 7],
+  sensitivityThreshold: 0.5,
+  audienceModel: {},
+};
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
- * Create a LIMBIC runtime backed by an ENGRAM event store.
+ * Create a LIMBIC runtime for the extension.
  *
- * On construction, the runtime pre-computes bridge candidates for any
- * `highAffinityPairs` supplied in options.
+ * Stores humor associations in-memory (caller is responsible for persisting
+ * via getAssociations() to the shared-state file).
  */
 export function createLimbicRuntime(
-  eventStore: EventStore,
   options: LimbicRuntimeOptions = {},
-  cortexRuntime?: CortexRuntime,
 ): LimbicRuntime {
   const dim = options.embeddingDim ?? 128;
   const embedProvider = options.embeddingProvider ?? null;
+  const calibrationOverride = options.calibration ?? null;
 
-  if (embedProvider) {
-    console.log(
-      `[limbic] Semantic embeddings active via ${embedProvider.id}/${embedProvider.model}`,
-    );
-  }
-
-  // Concept vector cache — reuse vectors across calls for the same label.
+  // Concept vector cache
   const vectorCache = new Map<string, number[]>();
 
-  /** Embed a concept using the provider (semantic) or FNV-1a fallback (deterministic). */
   async function getVector(concept: string): Promise<number[]> {
     let v = vectorCache.get(concept);
     if (v) {
@@ -205,19 +210,16 @@ export function createLimbicRuntime(
     return v;
   }
 
-  // Build a shared ANN index from all cached concepts (grows over time).
   function buildIndex(): AnnIndex {
     const entries = Array.from(vectorCache.entries()).map(([id, vector]) => ({ id, vector }));
     return createRuntimeIndex(entries);
   }
 
-  // In-memory pending-attempt registry (keyed by humorAttemptId).
   const pendingAttempts = new Map<string, PendingAttempt>();
+  const associations: HumorAssociation[] = [];
 
-  // ---------- Pre-computation for high-affinity pairs ----------
+  // Pre-computation for high-affinity pairs
   if (options.highAffinityPairs?.length) {
-    // Eagerly populate vector cache so the index is richer from the start.
-    // Fire-and-forget: does not block construction.
     void (async () => {
       for (const [a, b] of options.highAffinityPairs!) {
         await getVector(a);
@@ -226,16 +228,8 @@ export function createLimbicRuntime(
     })();
   }
 
-  // ---------- Humor calibration from CORTEX (or defaults) ----------
-  function getCalibration() {
-    return (
-      cortexRuntime?.persona.humor ?? {
-        humorFrequency: 0.15,
-        preferredPatterns: [1, 4, 7],
-        sensitivityThreshold: 0.5,
-        audienceModel: {},
-      }
-    );
+  function getCalibration(): HumorCalibration {
+    return calibrationOverride ?? DEFAULT_CALIBRATION;
   }
 
   return {
@@ -268,38 +262,16 @@ export function createLimbicRuntime(
 
     checkSensitivity(topic: string, context?: string): SensitivityResult {
       const calibration = getCalibration();
-      // sensitivityGate needs conceptA/conceptB/bridge breakdown; map topic to those roles.
       return sensitivityGate(topic, context ?? "", "", calibration);
     },
 
-    logAttempt(id: string, params: HumorAttemptParams, turnId: number): void {
-      // Register in pending-attempt registry for later reaction correlation.
+    logAttempt(id: string, params: HumorAttemptParams, _turnId: number): void {
       pendingAttempts.set(id, {
         conceptA: params.conceptA,
         conceptB: params.conceptB,
         bridge: params.bridge,
-        audience: params.audience ?? eventStore.sessionKey,
+        audience: params.audience ?? "general",
         timestamp: new Date().toISOString(),
-      });
-
-      // Persist a humor_attempt event so the attempt is durable.
-      eventStore.append({
-        turnId,
-        sessionKey: eventStore.sessionKey,
-        kind: "humor_attempt",
-        content: JSON.stringify({
-          id,
-          conceptA: params.conceptA,
-          conceptB: params.conceptB,
-          bridge: params.bridge,
-          score: params.score,
-          audience: params.audience ?? eventStore.sessionKey,
-        }),
-        tokens: Math.ceil(JSON.stringify(params).length / 4),
-        metadata: {
-          tags: ["limbic", "humor_attempt"],
-          importance: 5,
-        },
       });
     },
 
@@ -319,7 +291,7 @@ export function createLimbicRuntime(
       const conceptA = pending?.conceptA ?? "unknown";
       const conceptB = pending?.conceptB ?? "unknown";
       const bridge = pending?.bridge ?? "unknown";
-      const audience = pending?.audience ?? eventStore.sessionKey;
+      const audience = pending?.audience ?? "general";
 
       const association = createAssociation({
         conceptA,
@@ -331,32 +303,17 @@ export function createLimbicRuntime(
         discoveredVia: "conversation",
       });
       const updated = recordOutcome(association, reaction === "positive");
-
-      eventStore.append({
-        turnId: 0,
-        sessionKey: eventStore.sessionKey,
-        kind: "humor_association",
-        content: serializeAssociation(updated),
-        tokens: Math.ceil(serializeAssociation(updated).length / 4),
-        metadata: {
-          tags: ["limbic", "humor_reaction", reaction],
-          importance: reaction === "positive" ? 7 : reaction === "negative" ? 4 : 5,
-        },
-      });
+      associations.push(updated);
 
       pendingAttempts.delete(humorAttemptId);
     },
+
+    getAssociations(): HumorAssociation[] {
+      return [...associations];
+    },
+
+    getPendingAttempts(): Map<string, PendingAttempt> {
+      return new Map(pendingAttempts);
+    },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
-
-const registry = createSessionManagerRuntimeRegistry<LimbicRuntime>();
-
-/** Store a LimbicRuntime for a given session manager instance. */
-export const setLimbicRuntime = registry.set;
-
-/** Retrieve the LimbicRuntime for a given session manager instance, or null. */
-export const getLimbicRuntime = registry.get;

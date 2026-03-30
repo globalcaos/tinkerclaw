@@ -1,17 +1,28 @@
 /**
- * LIMBIC Phase 6D: Sensitivity Gate & Humor Calibration.
+ * FORK: LIMBIC Phase 6D: Sensitivity Gate & Humor Calibration.
  *
  * - Category-based sensitivity scoring (health, grief, politics, etc.)
  * - Hard block on recent trauma topics
  * - Per-user audience model
- * - Humor frequency calibration from PersonaState
+ * - Humor frequency calibration
+ *
+ * Unlike the original source, this file defines its own HumorCalibration
+ * interface locally to avoid importing from cortex/persona-state. The
+ * extension reads persona calibration from the Identity Persistence
+ * shared-state file at runtime.
  */
-
-import type { HumorCalibration } from "../cortex/persona-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Humor calibration settings (matches Identity Persistence persona.humor). */
+export interface HumorCalibration {
+  humorFrequency: number; // 0.0-1.0
+  preferredPatterns: number[]; // LIMBIC pattern IDs 1-12
+  sensitivityThreshold: number;
+  audienceModel: Record<string, unknown>; // per-user
+}
 
 export interface AudienceModel {
   userId: string;

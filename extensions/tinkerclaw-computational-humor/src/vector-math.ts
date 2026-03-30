@@ -1,6 +1,8 @@
 /**
- * Vector math utilities for LIMBIC humor computations.
+ * FORK: Vector math utilities for LIMBIC humor computations.
  * Cosine similarity/distance, vector mean, normalization.
+ *
+ * Pure math -- no external dependencies.
  */
 
 export function dotProduct(a: number[], b: number[]): number {
