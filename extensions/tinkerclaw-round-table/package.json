@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/round-table",
+  "version": "0.1.0",
+  "description": "SYNAPSE — Multi-model debate via RAAC protocol with cognitive diversity scoring",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
