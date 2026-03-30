@@ -1,13 +1,15 @@
-// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
-import type { OpenClawConfig } from "../config/config.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
-import type { ResolvedQmdConfig } from "./backend-config.js";
-import { resolveMemoryBackendConfig } from "./backend-config.js";
-import type {
-  MemoryEmbeddingProbeResult,
-  MemorySearchManager,
-  MemorySyncProgressUpdate,
-} from "./types.js";
+import {
+  createSubsystemLogger,
+  resolveGlobalSingleton,
+  type OpenClawConfig,
+} from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
+import {
+  resolveMemoryBackendConfig,
+  type MemoryEmbeddingProbeResult,
+  type MemorySearchManager,
+  type MemorySyncProgressUpdate,
+  type ResolvedQmdConfig,
+} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 const MEMORY_SEARCH_MANAGER_CACHE_KEY = Symbol.for("openclaw.memorySearchManagerCache");
 type MemorySearchManagerCacheStore = {
