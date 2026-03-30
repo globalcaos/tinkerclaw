@@ -76,6 +76,7 @@ function nodeBuildConfig(config: UserConfig): UserConfig {
     env,
     fixedExtension: false,
     platform: "node",
+    // FORK: native addons now in deps.neverBundle (upstream adopted this pattern)
     inputOptions: buildInputOptions,
   };
 }
