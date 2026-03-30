@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/fractal-reflection",
+  "version": "0.1.0",
+  "description": "Post-turn self-reflection with 4-level framework (specific, pattern, system, worldview)",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
