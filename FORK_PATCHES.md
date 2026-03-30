@@ -6,6 +6,26 @@ and how to handle them during upstream merges.
 For detailed patch descriptions, guard strings, and post-merge checklists,
 see `~/.openclaw/fork-scripts/FORK_PATCHES.md` (the comprehensive reference).
 
+## Post-Modularization Audit (2026-03-28)
+
+| Metric | Count | Notes |
+|--------|-------|-------|
+| FORK: marker files (src/, excl. src/fork/ and tests) | 57 | Upstream-touching files with fork modifications |
+| FORK: marker occurrences total | 119 | Across 63 files (incl. src/fork/) |
+| Patch functions (apply-fork-wiring.mjs) | 14 | Auto-applied after --theirs merge |
+| Guardian checks (merge-guardian.sh) | 50 | Wiring + build verification points |
+| TIER1 files | 14 | Accept upstream + re-wire (matches patch function count) |
+| MANUAL files | 10 | Require human review |
+| PRESERVE paths | 13 | Always keep fork version |
+
+Cognitive extraction status:
+- `src/memory/synapse/`, `src/memory/cortex/`, `src/memory/limbic/` — DELETED (extracted to extensions)
+- `src/memory/**` PRESERVE rule — still valid for remaining files (embeddings-ollama.ts, embedding-model-limits.ts)
+- `src/agents/system-prompt.ts` — STILL IN TIER1 (personaBlock injection remains inline, gated by feature flag)
+- `src/agents/pi-embedded-runner/run.ts` — STILL IN TIER1 (per-profile fallback events not extracted)
+
+Dry-run merge (2026-03-28): 185 commits behind upstream, 4 conflicts, no tags pending.
+
 ## TIER1 — Accept Upstream + Re-Wire
 These files are resolved with `--theirs` (accept upstream version), then
 `apply-fork-wiring.mjs` re-applies fork hooks.
@@ -18,13 +38,14 @@ These files are resolved with `--theirs` (accept upstream version), then
 | src/agents/pi-embedded-subscribe.types.ts | patchSubscribeTypes | authProfileId field |
 | src/agents/pi-embedded-helpers/errors.ts | patchErrors | Billing cap classification |
 | src/agents/pi-embedded-helpers/failover-matches.ts | patchFailoverMatches | Billing pattern in failover array |
-| src/agents/model-fallback.ts | patchBillingGate | Billing gate import + pre-flight check |
 | src/gateway/server-methods/sessions.ts | patchSessions | Webchat delete bypass |
-| src/web/auto-reply/monitor.ts | patchMonitor | syncFullHistory + ActiveWebListener |
-| src/web/auto-reply/monitor/process-message.ts | patchProcessMessage | Thinking reaction + offline recovery hooks |
-| src/web/outbound.ts | patchOutbound | WhatsApp group/edit/delete/reply/sticker wrappers |
+| extensions/whatsapp/src/auto-reply/monitor.ts | patchMonitor | syncFullHistory + ActiveWebListener |
+| extensions/whatsapp/src/auto-reply/monitor/process-message.ts | patchProcessMessage | Thinking reaction + offline recovery hooks |
+| extensions/whatsapp/src/send.ts | patchOutbound | WhatsApp group/edit/delete/reply/sticker wrappers |
+| extensions/whatsapp/src/session.ts | patchWhatsAppSession | Baileys 515 error handling (credsSaveQueues) |
+| src/gateway/server/ws-connection/message-handler.ts | patchMessageHandlerScopes | Extension relay scopes |
 | tsdown.config.ts | patchTsdownConfig | Native addon externals (better-sqlite3, bindings) |
-| extensions/whatsapp/src/inbound/monitor.ts | patchMonitor | syncFullHistory + ActiveWebListener |
+| package.json | patchDevDeps | Fork dev dependencies |
 
 ## PRESERVE — Always Keep Fork Version
 These paths are always resolved with `--ours` during merge.
@@ -32,7 +53,7 @@ These paths are always resolved with `--ours` during merge.
 | Path | Reason |
 |------|--------|
 | src/fork/** | Fork hook implementations |
-| src/memory/** | Cortex, engram, limbic, synapse |
+| src/memory/** | Embeddings (ollama, model-limits) — cortex/limbic/synapse extracted to extensions |
 | src/whatsapp-history/** | WhatsApp history import |
 | src/agents/pi-extensions/** | Retrieval runtime + tools |
 | src/agents/tools/** | Fork custom tools |
@@ -58,7 +79,8 @@ These files have fork patches that cannot be auto-applied by regex.
 | src/agents/auth-profiles/credential-file.ts | refreshAnthropicOAuthToken | No scope in OAuth refresh body |
 | src/agents/auth-profiles/oauth.ts | getOAuthApiKey | try-catch around OAuth key resolution |
 | src/cli/daemon-cli/restart-health.ts | DEFAULT_RESTART_HEALTH_TIMEOUT_MS | 60s->10s health timeout |
-| extensions/whatsapp/src/session.ts | credsSaveQueues | Baileys 515 error handling |
+| src/agents/model-fallback.ts | billing gate | 4 FORK markers: billing gate, fallback notify, profileId tracking |
+| extensions/whatsapp/src/inbound/monitor.ts | whatsmeow | 5 FORK markers: whatsmeow backend, E164 group fix, triggerPrefix |
 
 ## IGNORE — Skip During Merge
 These files are generated or local-only.
