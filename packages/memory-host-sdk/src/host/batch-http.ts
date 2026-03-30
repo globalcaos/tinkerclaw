@@ -1,6 +1,5 @@
-// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
-import type { SsrFPolicy } from "../infra/net/ssrf.js";
-import { retryAsync } from "../infra/retry.js";
+import type { SsrFPolicy } from "../../../../src/infra/net/ssrf.js";
+import { retryAsync } from "../../../../src/infra/retry.js";
 import { postJson } from "./post-json.js";
 
 export async function postJsonWithRetry<T>(params: {
