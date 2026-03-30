@@ -1,4 +1,4 @@
-// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
+import fs from "node:fs";
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../../../../src/agents/agent-scope.js";
 import { parseDurationMs } from "../../../../src/cli/parse-duration.js";
@@ -63,6 +63,7 @@ export type ResolvedQmdConfig = {
   command: string;
   mcporter: ResolvedQmdMcporterConfig;
   searchMode: MemoryQmdSearchMode;
+  searchTool?: string;
   collections: ResolvedQmdCollection[];
   sessions: ResolvedQmdSessionConfig;
   update: ResolvedQmdUpdateConfig;
@@ -113,6 +114,33 @@ function sanitizeName(input: string): string {
 
 function scopeCollectionBase(base: string, agentId: string): string {
   return `${base}-${sanitizeName(agentId)}`;
+}
+
+function canonicalizePathForContainment(rawPath: string): string {
+  const resolved = path.resolve(rawPath);
+  let current = resolved;
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      const canonical = path.normalize(fs.realpathSync.native(current));
+      return path.normalize(path.join(canonical, ...suffix));
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return path.normalize(resolved);
+      }
+      suffix.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+function isPathInsideRoot(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(
+    canonicalizePathForContainment(rootPath),
+    canonicalizePathForContainment(candidatePath),
+  );
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function ensureUniqueName(base: string, existing: Set<string>): string {
@@ -203,6 +231,11 @@ function resolveSearchMode(raw?: MemoryQmdConfig["searchMode"]): MemoryQmdSearch
   return DEFAULT_QMD_SEARCH_MODE;
 }
 
+function resolveSearchTool(raw?: MemoryQmdConfig["searchTool"]): string | undefined {
+  const value = raw?.trim();
+  return value ? value : undefined;
+}
+
 function resolveSessionConfig(
   cfg: MemoryQmdConfig["sessions"],
   workspaceDir: string,
@@ -247,7 +280,11 @@ function resolveCustomPaths(
       return;
     }
     seenRoots.add(dedupeKey);
-    const baseName = scopeCollectionBase(entry.name?.trim() || `custom-${index + 1}`, agentId);
+    const explicitName = entry.name?.trim();
+    const baseName =
+      explicitName && !isPathInsideRoot(resolved, workspaceDir)
+        ? explicitName
+        : scopeCollectionBase(explicitName || `custom-${index + 1}`, agentId);
     const name = ensureUniqueName(baseName, existing);
     collections.push({
       name,
@@ -347,6 +384,7 @@ export function resolveMemoryBackendConfig(params: {
     command,
     mcporter: resolveMcporterConfig(qmdCfg?.mcporter),
     searchMode: resolveSearchMode(qmdCfg?.searchMode),
+    searchTool: resolveSearchTool(qmdCfg?.searchTool),
     collections,
     includeDefaultMemory,
     sessions: resolveSessionConfig(qmdCfg?.sessions, workspaceDir),
