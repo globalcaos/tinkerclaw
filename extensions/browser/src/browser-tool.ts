@@ -1,32 +1,5 @@
 import crypto from "node:crypto";
 import {
-  browserAct,
-  browserArmDialog,
-  browserArmFileChooser,
-  browserNavigate,
-  browserPdfSave,
-  browserScreenshotAction,
-} from "../../browser/client-actions.js";
-import {
-  browserCloseTab,
-  browserCookies,
-  browserFocusTab,
-  browserOpenTab,
-  browserProfiles,
-  browserStart,
-  browserStatus,
-  browserStop,
-} from "../../browser/client.js";
-import { resolveBrowserConfig, resolveProfile } from "../../browser/config.js";
-import { DEFAULT_UPLOAD_DIR, resolveExistingPathsWithinRoot } from "../../browser/paths.js";
-import { getBrowserProfileCapabilities } from "../../browser/profile-capabilities.js";
-import { applyBrowserProxyPaths, persistBrowserProxyFiles } from "../../browser/proxy-files.js";
-import {
-  trackSessionBrowserTab,
-  untrackSessionBrowserTab,
-} from "../../browser/session-tab-registry.js";
-import { loadConfig } from "../../config/config.js";
-import {
   executeActAction,
   executeConsoleAction,
   executeSnapshotAction,
@@ -773,39 +746,6 @@ export function createBrowserTool(opts?: {
             profile,
             proxyRequest,
           });
-        }
-        case "cookies": {
-          const targetId = readStringParam(params, "targetId");
-          const domain = readStringParam(params, "domain");
-          if (proxyRequest) {
-            const result = (await proxyRequest({
-              method: "GET",
-              path: "/cookies",
-              profile,
-              query: {
-                targetId,
-              },
-            })) as { ok: boolean; targetId: string; cookies: unknown[] };
-            // Server endpoint doesn't support domain filtering, so filter client-side
-            if (domain && Array.isArray(result.cookies)) {
-              const domainFilter = domain.toLowerCase();
-              result.cookies = result.cookies.filter((c) => {
-                const cookieDomain =
-                  typeof c === "object" && c && "domain" in c
-                    ? String((c as { domain: unknown }).domain).toLowerCase()
-                    : "";
-                return cookieDomain.includes(domainFilter);
-              });
-            }
-            return jsonResult(result);
-          }
-          return jsonResult(
-            await browserCookies(baseUrl, {
-              targetId: targetId ?? undefined,
-              domain: domain ?? undefined,
-              profile,
-            }),
-          );
         }
         default:
           throw new Error(`Unknown action: ${action}`);
