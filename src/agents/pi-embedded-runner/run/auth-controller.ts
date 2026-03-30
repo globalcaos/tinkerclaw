@@ -260,19 +260,19 @@ export function createEmbeddedRunAuthController(params: {
       message,
       profileIds: params.profileCandidates,
     });
-    if (params.fallbackConfigured) {
-      throw new FailoverError(message, {
-        reason,
-        provider,
-        model: modelId,
-        status: resolveFailoverStatus(reason),
-        cause: failoverParams.error,
-      });
-    }
-    if (failoverParams.error instanceof Error) {
-      throw failoverParams.error;
-    }
-    throw new Error(message);
+    // FORK: Always throw FailoverError so the model-fallback layer (and Tinker UI)
+    // can extract profileId and display error badges on the correct auth row.
+    // Previously, non-fallback configs threw plain Error which lost profile context.
+    const currentProfileId = params.profileCandidates[params.getProfileIndex()] ??
+      params.profileCandidates[0];
+    throw new FailoverError(message, {
+      reason,
+      provider,
+      model: modelId,
+      profileId: currentProfileId,
+      status: resolveFailoverStatus(reason),
+      cause: failoverParams.error,
+    });
   };
 
   const resolveApiKeyForCandidate = async (candidate?: string) => {
@@ -391,7 +391,7 @@ export function createEmbeddedRunAuthController(params: {
             profileIndex: nextIndex,
             totalProfiles: params.profileCandidates.length,
             reason: "auth",
-            message: String(err),
+            error: String(err),
           },
         });
         nextIndex += 1;
