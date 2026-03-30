@@ -122,6 +122,18 @@ export type OpenClawConfig = {
   gateway?: GatewayConfig;
   memory?: MemoryConfig;
   mcp?: McpConfig;
+  /** FORK: per-subsystem cognitive feature flags. */
+  fork?: {
+    cognitive?: {
+      engram?: "inline" | "extension" | "disabled";
+      cortex?: "inline" | "extension" | "disabled";
+      synapse?: "inline" | "extension" | "disabled";
+      amygdala?: "inline" | "extension" | "disabled";
+      limbic?: "inline" | "extension" | "disabled";
+      fractal?: "inline" | "extension" | "disabled";
+      observation?: "inline" | "extension" | "disabled";
+    };
+  };
 };
 
 declare const openClawConfigStateBrand: unique symbol;

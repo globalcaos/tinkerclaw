@@ -647,6 +647,27 @@ export function applyForkPluginDefaults(cfg: OpenClawConfig): OpenClawConfig {
   };
 }
 
+export function applyForkCognitiveDefaults(cfg: OpenClawConfig): OpenClawConfig {
+  if (cfg.fork?.cognitive) {
+    return cfg;
+  }
+  return {
+    ...cfg,
+    fork: {
+      ...cfg.fork,
+      cognitive: {
+        engram: "inline",
+        cortex: "inline",
+        synapse: "inline",
+        amygdala: "inline",
+        limbic: "inline",
+        fractal: "inline",
+        observation: "inline",
+      },
+    },
+  };
+}
+
 export function resetSessionDefaultsWarningForTests() {
   defaultWarnState = { warned: false };
 }
