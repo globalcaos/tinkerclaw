@@ -37,6 +37,29 @@ import { pointerCompact, estimateCacheTokens } from "../memory/engram/pointer-co
 import { renderMarkers } from "../memory/engram/time-range-marker.js";
 
 // ---------------------------------------------------------------------------
+// Cognitive feature-flag helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the given cognitive subsystem should run inline
+ * (the default). Returns false when set to "extension" or "disabled",
+ * meaning this code path should be skipped.
+ */
+function isInlineMode(subsystem: string): boolean {
+  try {
+    const { getRuntimeConfigSnapshot } = require("../config/config.js") as {
+      getRuntimeConfigSnapshot: () => { config?: Record<string, unknown> } | undefined;
+    };
+    const cfg = getRuntimeConfigSnapshot()?.config as Record<string, unknown> | undefined;
+    const fork = cfg?.fork as { cognitive?: Record<string, string> } | undefined;
+    const mode = fork?.cognitive?.[subsystem];
+    return mode !== "extension" && mode !== "disabled";
+  } catch {
+    return true; // safe fallback: inline
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Hook: Persona block (before system prompt build)
 // ---------------------------------------------------------------------------
 
@@ -46,6 +69,7 @@ import { renderMarkers } from "../memory/engram/time-range-marker.js";
  * Called once per run, before buildEmbeddedSystemPrompt.
  */
 export function getPersonaBlock(effectiveWorkspace: string): string | undefined {
+  if (!isInlineMode("cortex")) return undefined;
   try {
     const soulPath = join(effectiveWorkspace, "SOUL.md");
     const rt = createCortexRuntime({ soulPath });
@@ -75,6 +99,7 @@ const AMYGDALA_NUDGE_PATHS = [
 ];
 
 export function getAmygdalaNudge(): string[] | undefined {
+  if (!isInlineMode("amygdala")) return undefined;
   try {
     for (const nudgePath of AMYGDALA_NUDGE_PATHS) {
       try {
@@ -110,6 +135,7 @@ export async function injectRetrievalPack(
   query: string,
   log: { info: (msg: string) => void },
 ): Promise<string> {
+  if (!isInlineMode("engram")) return systemPromptText;
   const rt = getRetrievalRuntime(sessionManager);
   console.log(
     `[ENGRAM] retrieval runtime lookup: ${rt ? "FOUND" : "NULL"}, assemble: ${!!rt?.assemble}`,
@@ -140,6 +166,7 @@ export function applyMidContextReinjectHook(
   systemPromptText: string,
   log: { info: (msg: string) => void },
 ): { systemPromptText: string; reinjected: boolean } {
+  if (!isInlineMode("cortex")) return { systemPromptText, reinjected: false };
   const cortexRuntime = getCortexRuntime(sessionManager);
   const reinjectResult = applyMidContextReinject(cortexRuntime, systemPromptText);
   if (reinjectResult.reinjected) {
@@ -537,7 +564,7 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   ).length;
 
   // FRACTAL REFLECTION v4 — inject via gateway sessions.send RPC
-  if (params.sessionKey) {
+  if (params.sessionKey && isInlineMode("fractal")) {
     import("./fractal-inject.js")
       .then((mod) => {
         mod
@@ -634,21 +661,23 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   }
 
   // ENGRAM ingestion
-  const ingestionRuntime = getIngestionRuntime(sessionManager);
-  if (ingestionRuntime) {
-    ingestionRuntime.ingest(params.messagesSnapshot as never).catch((err) => {
-      log.warn(`ENGRAM ingestion failed: ${String(err)}`);
-    });
+  if (isInlineMode("engram")) {
+    const ingestionRuntime = getIngestionRuntime(sessionManager);
+    if (ingestionRuntime) {
+      ingestionRuntime.ingest(params.messagesSnapshot as never).catch((err) => {
+        log.warn(`ENGRAM ingestion failed: ${String(err)}`);
+      });
+    }
   }
 
   // SyncScore evaluation
-  {
+  if (isInlineMode("cortex")) {
     const cortexRuntime = getCortexRuntime(sessionManager);
     evaluateTurnSyncScore(cortexRuntime, assistantTexts, turnNumber, (msg) => log.info(msg));
   }
 
   // Observational memory extraction
-  {
+  if (isInlineMode("observation")) {
     const observationRuntime = getObservationRuntime(sessionManager);
     if (observationRuntime) {
       const recentTexts = messagesSnapshot.slice(-RECENT_MESSAGES_WINDOW).flatMap((rawMsg) => {
@@ -745,6 +774,7 @@ export function maybeTriggerFractalReflection(
   log: { info: (msg: string) => void },
   heartbeatReason?: string,
 ): void {
+  if (!isInlineMode("fractal")) return;
   if (!sessionKey) {
     return;
   }

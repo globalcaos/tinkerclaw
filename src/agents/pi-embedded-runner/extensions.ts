@@ -101,108 +101,126 @@ export function buildEmbeddedExtensionFactories(params: {
 }): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   const compactionMode = resolveCompactionMode(params.cfg);
+  const cognitive = (params.cfg as Record<string, unknown>)?.fork as
+    | { cognitive?: Record<string, string> }
+    | undefined;
+  const cogFlags = cognitive?.cognitive ?? {};
+  /** True when a subsystem should run inline (default behavior). */
+  const isInline = (key: string): boolean =>
+    cogFlags[key] !== "extension" && cogFlags[key] !== "disabled";
+
   if (compactionMode === "engram") {
-    // Initialise the ENGRAM ingestion pipeline for this session.
-    // Phase 1.1b will call getIngestionRuntime(sessionManager) from
-    // agent-runner-execution.ts to hook every turn event.
-    const engramBaseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
-    mkdirSync(engramBaseDir, { recursive: true });
-    // Use the explicit sessionKey passed from the runner (e.g. "agent:main:main").
-    // Fall back to reading sessionId off the SessionManager internals only as a
-    // last resort — the internal field is unreliable and produced "live" previously.
-    const smInternal = params.sessionManager as unknown as { sessionId?: string };
-    const sessionKey = params.sessionKey?.trim() || smInternal.sessionId || "default";
-    const pipeline = createIngestionPipeline({ baseDir: engramBaseDir, sessionKey });
-    setIngestionRuntime(params.sessionManager, pipeline);
+    // Shared state: engramBaseDir and eventStore are needed by ENGRAM, SYNAPSE,
+    // LIMBIC, and OBSERVATION. Create them if ANY of those subsystems are inline.
+    const needsEngram = isInline("engram");
+    const needsSynapse = isInline("synapse");
+    const needsCortex = isInline("cortex");
+    const needsObservation = isInline("observation");
+    const needsLimbic = isInline("limbic");
+    const needsSharedStore = needsEngram || needsSynapse || needsObservation || needsLimbic;
 
-    // Phase 1.2: wire retrieval runtime alongside ingestion pipeline.
-    // getRetrievalRuntime(sessionManager) will be called by retrieval-aware
-    // turn hooks to inject the assembled pack into each turn's system prompt.
-    const eventStore = createEventStore({ baseDir: engramBaseDir, sessionKey });
-    // Use global FTS5 database for retrieval (878K+ events) instead of per-session JSONL.
-    // Starts FTS-only; upgraded to hybrid (FTS + vector) once ollama provider resolves.
-    setRetrievalRuntime(params.sessionManager, { eventStore, searchIndex: globalFtsSearch });
+    let engramBaseDir: string | undefined;
+    let sessionKey: string | undefined;
+    let eventStore: ReturnType<typeof createEventStore> | undefined;
 
-    // Phase 1.3: register pointer compaction handler as a feature-flagged
-    // alternative to narrative compaction. Works alongside compaction-engram.ts;
-    // accessible via getPointerCompactionRuntime(sessionManager).
-    const ptrHandler = createPointerCompactionHandler(eventStore);
-    setPointerCompactionRuntime(params.sessionManager, ptrHandler);
+    if (needsSharedStore) {
+      engramBaseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
+      mkdirSync(engramBaseDir, { recursive: true });
+      const smInternal = params.sessionManager as unknown as { sessionId?: string };
+      sessionKey = params.sessionKey?.trim() || smInternal.sessionId || "default";
+      eventStore = createEventStore({ baseDir: engramBaseDir, sessionKey });
+    }
 
-    // Phase 1.5: wire compaction self-reflection loop.
-    // After every compact() call, invoke getReflectionRuntime(sessionManager)?.reflect(...)
-    // to produce a structured learning record stored as a system_event.
-    initReflectionRuntime(params.sessionManager, eventStore);
+    // ENGRAM: ingestion, retrieval, pointer compaction, reflection
+    if (needsEngram && engramBaseDir && sessionKey && eventStore) {
+      const pipeline = createIngestionPipeline({ baseDir: engramBaseDir, sessionKey });
+      setIngestionRuntime(params.sessionManager, pipeline);
 
-    // Phase 5: wire SYNAPSE multi-model debate runtime using the same event
-    // store so debate traces land in the ENGRAM event log automatically.
-    setSynapseRuntime(createSynapseRuntime(eventStore));
+      setRetrievalRuntime(params.sessionManager, { eventStore, searchIndex: globalFtsSearch });
 
-    // Phase 3 (CORTEX): wire persona state injection, SyncScore, drift detection,
-    // and observation extraction into the engram runtime.
-    const cortexRuntime = createCortexRuntime();
-    setCortexRuntime(params.sessionManager, cortexRuntime);
+      const ptrHandler = createPointerCompactionHandler(eventStore);
+      setPointerCompactionRuntime(params.sessionManager, ptrHandler);
 
-    const observationRuntime = createObservationExtractor(eventStore);
-    setObservationRuntime(params.sessionManager, observationRuntime);
+      initReflectionRuntime(params.sessionManager, eventStore);
+    }
 
-    // Phase 4 (LIMBIC): wire humor pipeline using CORTEX for audience modeling.
-    // FORK: Use ollama mxbai-embed-large for semantic embeddings in humor bridge discovery.
-    // Provider creation is async but buildEmbeddedExtensionFactories is sync.
-    // Create runtime immediately (FNV-1a fallback), then upgrade once ollama resolves.
-    const limbicRuntime = createLimbicRuntime(eventStore, {}, cortexRuntime);
-    setLimbicRuntime(params.sessionManager, limbicRuntime);
-    // FORK: ollama mxbai-embed-large for semantic embeddings.
-    // Once resolved, upgrades both LIMBIC (humor) and ENGRAM (retrieval) to vector search.
-    createOllamaEmbeddingProvider({
-      config: params.cfg ?? ({} as import("../../config/config.js").OpenClawConfig),
-      provider: "ollama",
-      model: "mxbai-embed-large",
-      fallback: "none",
-    })
-      .then(({ provider }) => {
-        // LIMBIC: hot-swap to semantic embeddings for humor bridge discovery
-        const semanticRuntime = createLimbicRuntime(
-          eventStore,
-          { embeddingProvider: provider },
-          cortexRuntime,
-        );
-        setLimbicRuntime(params.sessionManager, semanticRuntime);
+    // SYNAPSE: multi-model debate runtime
+    if (needsSynapse && eventStore) {
+      setSynapseRuntime(createSynapseRuntime(eventStore));
+    }
 
-        // ENGRAM: wire vector search into retrieval pipeline (hybrid FTS + vector)
-        const embCache = createEmbeddingCache(engramBaseDir, 1024); // mxbai = 1024-dim
-        const embedFn: import("../../memory/engram/embedding-worker.js").EmbedFn = async (
-          texts,
-        ) => {
-          const vectors = await provider.embedBatch(texts);
-          return vectors.map((v) => new Float32Array(v));
-        };
-        setRetrievalRuntime(params.sessionManager, {
-          eventStore,
-          searchIndex: globalFtsSearch,
-          embeddingCache: embCache,
-          embedFn,
-        });
-        // Background worker: embed new events as they're ingested
-        const worker = createEmbeddingWorker({
-          embedFn,
-          cache: embCache,
-          batchSize: 16,
-          batchTimeoutMs: 10000,
-          onError: (err) => console.warn(`[engram] Embedding worker error: ${err.message}`),
-        });
-        // Hook into the event store to auto-embed new events
-        const origAppend = eventStore.append.bind(eventStore);
-        eventStore.append = (event) => {
-          const result = origAppend(event);
-          worker.enqueue(event);
-          return result;
-        };
-        console.log("[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)");
+    // CORTEX: persona state injection, SyncScore, drift detection
+    let cortexRuntime: ReturnType<typeof createCortexRuntime> | undefined;
+    if (needsCortex) {
+      cortexRuntime = createCortexRuntime();
+      setCortexRuntime(params.sessionManager, cortexRuntime);
+    }
+
+    // OBSERVATION: observation extractor (needs eventStore)
+    if (needsObservation && eventStore) {
+      const observationRuntime = createObservationExtractor(eventStore);
+      setObservationRuntime(params.sessionManager, observationRuntime);
+    }
+
+    // LIMBIC: humor pipeline (needs eventStore + cortexRuntime)
+    if (needsLimbic && eventStore) {
+      const limbicRuntime = createLimbicRuntime(eventStore, {}, cortexRuntime);
+      setLimbicRuntime(params.sessionManager, limbicRuntime);
+    }
+
+    // Ollama embedding upgrade: enhances both LIMBIC and ENGRAM when available.
+    // Only start if at least one consumer is inline.
+    if ((needsEngram || needsLimbic) && engramBaseDir && eventStore) {
+      createOllamaEmbeddingProvider({
+        config: params.cfg ?? ({} as import("../../config/config.js").OpenClawConfig),
+        provider: "ollama",
+        model: "mxbai-embed-large",
+        fallback: "none",
       })
-      .catch((err) => {
-        console.warn(`[fork] Ollama embedding unavailable, FTS-only retrieval: ${err}`);
-      });
+        .then(({ provider }) => {
+          if (needsLimbic) {
+            const semanticRuntime = createLimbicRuntime(
+              eventStore!,
+              { embeddingProvider: provider },
+              cortexRuntime,
+            );
+            setLimbicRuntime(params.sessionManager, semanticRuntime);
+          }
+
+          if (needsEngram) {
+            const embCache = createEmbeddingCache(engramBaseDir!, 1024);
+            const embedFn: import("../../memory/engram/embedding-worker.js").EmbedFn = async (
+              texts,
+            ) => {
+              const vectors = await provider.embedBatch(texts);
+              return vectors.map((v) => new Float32Array(v));
+            };
+            setRetrievalRuntime(params.sessionManager, {
+              eventStore: eventStore!,
+              searchIndex: globalFtsSearch,
+              embeddingCache: embCache,
+              embedFn,
+            });
+            const worker = createEmbeddingWorker({
+              embedFn,
+              cache: embCache,
+              batchSize: 16,
+              batchTimeoutMs: 10000,
+              onError: (err) => console.warn(`[engram] Embedding worker error: ${err.message}`),
+            });
+            const origAppend = eventStore!.append.bind(eventStore!);
+            eventStore!.append = (event) => {
+              const result = origAppend(event);
+              worker.enqueue(event);
+              return result;
+            };
+          }
+          console.log("[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)");
+        })
+        .catch((err) => {
+          console.warn(`[fork] Ollama embedding unavailable, FTS-only retrieval: ${err}`);
+        });
+    }
 
     factories.push(compactionEngramExtension(params.cfg));
   } else if (compactionMode === "safeguard") {
