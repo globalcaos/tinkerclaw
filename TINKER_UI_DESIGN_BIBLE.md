@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-03-28 (Thinking indicator restart continuity §5.7.1)
+> Last updated: 2026-03-30 (Merge repair, timeline CORS fix, WA trigger rules §11.6a, session delete §5.5, voice mute §5.36 restore, heartbeat fix)
 
 ---
 
@@ -311,6 +311,9 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Gateway patch:** `sessions.ts` — 3-line early return before the webchat rejection guard. Guard string: `"Allow webchat delete"`. Auto-applied by `apply-fork-wiring.mjs` → `patchSessions()`.
 - **Files:** `app.ts` (delete button + handler), `sessions.ts` (bypass guard)
 - **Session data on delete:** Metadata entry removed from `sessions.json`, but transcript `.jsonl` files are renamed with `.deleted.<timestamp>` suffix (preserved on disk, not destroyed). Main session (`agent:main:main`) is protected — delete is refused.
+- **Tab auto-close (2026-03-30):** Deleting a session that has an open tab now calls `closeTab()` — removes the tab, cleans up `tabStates`, and switches to main if it was the active tab. Previously only detached the tab, leaving an orphan with no session.
+- **Event delegation (2026-03-30):** Row clicks and delete button clicks consolidated into a single delegated handler on `#sessions-list`. Delete button checked FIRST to prevent the row navigation handler from firing. Per-element listeners were destroyed on every `innerHTML` re-render — delegation survives. Delete adds visual feedback: row fades to 30% opacity.
+- **Session key preservation on detach (2026-03-30):** When a session is no longer on the server (gateway restart), the tab keeps its `sessionKey` (only `isAttached=false`). Timeline and treemap can still load historical data from the anatomy DB.
 
 ### 5.5a Webchat Session Protection from Cron Archival (2026-03-27)
 
@@ -1424,10 +1427,44 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Sent Message ID Tracking:** Tracks outbound message IDs to prevent voice note echo re-ingestion (bot hearing its own TTS output).
 - **Group Typing Indicators:** `presenceSubscribe` for groups before composing, for both inbound monitor and outbound API.
 - **515 Stream Error Auto-Restart:** WhatsApp's 515 disconnect handled with automatic reconnection.
-- **Strict 3-Rule Group Gate:** No bypasses for media or owner messages — all group messages go through triggerPrefix + whitelist + rate limit.
-- **triggerPrefix for DMs:** DM conversations also require triggerPrefix (upstream doesn't enforce this).
 - **senderE164 Resolution:** Resolves sender phone number for `fromMe` group messages where Baileys lacks the `participant` field.
 - **Files:** `extensions/whatsapp/src/`, `src/whatsapp-history/`
+
+### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30)
+
+- **Status:** `DEPLOYED`
+- **File:** `extensions/whatsapp/src/inbound/access-control.ts`
+- **Config keys:** `channels.whatsapp.triggerPrefix`, `channels.whatsapp.triggerPrefixExempt`, `channels.whatsapp.allowFrom`, `channels.whatsapp.groupAllowFrom`, `channels.whatsapp.dmPolicy`, `channels.whatsapp.groupPolicy`
+- **Unified model:** One decision tree for both DMs and groups. The triggerPrefix ("jarvis") is the universal gate for non-self-chat interactions.
+
+**Decision table:**
+
+| Who                | Where                 | Prefix needed? | Result                                      |
+| ------------------ | --------------------- | -------------- | ------------------------------------------- |
+| the user (self-chat)  | Message yourself      | No             | Always triggers                             |
+| the user (fromMe)     | Exempt group          | No             | Always triggers                             |
+| the user (fromMe)     | Any other DM or group | "jarvis ..."   | Triggers                                    |
+| the user (fromMe)     | Anywhere, no prefix   | —              | Ignored                                     |
+| Allowlisted person | Exempt group          | No             | Triggers (sender must be in groupAllowFrom) |
+| Allowlisted person | Non-exempt group      | "jarvis ..."   | Triggers (sender must be in groupAllowFrom) |
+| Allowlisted person | DM                    | "jarvis ..."   | Triggers (sender must be in allowFrom)      |
+| Allowlisted person | Anywhere, no prefix   | —              | Ignored (unless exempt group)               |
+| Anyone else        | Anywhere              | —              | Always blocked, even with prefix            |
+
+**Exempt groups** (`triggerPrefixExempt`): Dedicated agent-to-agent conversation groups where all participants (including other OpenClaw agents) can talk without prefix. Messages still require the sender to be in `groupAllowFrom`. Currently 10 groups configured.
+
+**Multi-agent congestion control** (`extensions/whatsapp/src/multi-agent/congestion.ts`):
+
+- Prevents message explosion in multi-agent groups
+- **Delay:** `baseDelayFactor (150ms) × agentCount²` + random jitter
+- **Backpressure:** 2× delay if an agent exceeds 1.5× its fair share of recent messages
+- **Yield:** If another agent posted during wait, restart the delay timer
+- **Cap:** 30s maximum delay
+- **Window:** 60s sliding window for recent message tracking
+
+**whatsmeow adapter JID fix (2026-03-30):** Adapter must be created BEFORE `connectWmClient()` so the "connected" event handler captures the self JID. Without this, `selfE164=null` and self-chat bypass fails. Also passes `messageBody` to `checkInboundAccessControl` for triggerPrefix evaluation.
+
+**Workspace extension shadowing (2026-03-30 incident):** Gateway loads extensions from `~/.openclaw/workspace/extensions/` FIRST (plugin discovery priority). A stale copy at `~/.openclaw/workspace/extensions/whatsapp/` (3 days old) shadowed source changes. Fix: renamed to `.STALE-2026-03-30`. **Rule:** After any WhatsApp extension change, verify the workspace doesn't have a stale copy.
 
 ### 11.7 Fork Infrastructure (2026-02 → 2026-03)
 

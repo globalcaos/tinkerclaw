@@ -16,6 +16,8 @@ import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.j
 const createWmClient = _wmSession.createWmClient;
 const connectWmClient = _wmSession.connectWmClient;
 const createBaileysAdapter = _wmAdapter.createBaileysAdapter;
+import { readWebSelfIdentity } from "../auth-store.js";
+import { getPrimaryIdentityId } from "../identity.js";
 import { checkInboundAccessControl } from "./access-control.js";
 import {
   isRecentInboundMessage,
@@ -74,10 +76,16 @@ export async function monitorWebInbox(options: {
       );
     }
     const client = await createWmClient({ storePath, verbose: options.verbose });
-    await connectWmClient(client);
+    // FORK: Create adapter BEFORE connecting so its "connected" event handler
+    // captures the self JID. connectWmClient fires "connected" synchronously
+    // during resolution — if adapter is created after, the handler misses the event.
     const adapter = createBaileysAdapter({ wmClient: client });
     sock = adapter as unknown as Awaited<ReturnType<typeof createWaSocket>>;
+    await connectWmClient(client);
     inboundLogger.info("Using whatsmeow-node backend");
+    console.log(
+      `[wa-debug] WM adapter created, sock.user.id=${sock.user?.id}, sock.ev type=${typeof sock.ev}`,
+    );
   } else {
     sock = await createWaSocket(false, options.verbose, {
       authDir: options.authDir,
@@ -242,9 +250,11 @@ export async function monitorWebInbox(options: {
     const id = msg.key?.id ?? undefined;
     const remoteJid = msg.key?.remoteJid;
     if (!remoteJid) {
+      console.log(`[wa-debug] DROP: no remoteJid id=${id}`);
       return null;
     }
     if (remoteJid.endsWith("@status") || remoteJid.endsWith("@broadcast")) {
+      console.log(`[wa-debug] DROP: status/broadcast jid=${remoteJid} id=${id}`);
       return null;
     }
 
@@ -261,25 +271,27 @@ export async function monitorWebInbox(options: {
         messageId: id,
       })
     ) {
-      logVerbose(`Skipping recent outbound WhatsApp echo ${id} for ${remoteJid}`);
+      console.log(`[wa-debug] DROP: recent outbound echo id=${id} jid=${remoteJid}`);
       return null;
     }
     if (id) {
       const dedupeKey = `${options.accountId}:${remoteJid}:${id}`;
       if (isRecentInboundMessage(dedupeKey)) {
+        console.log(`[wa-debug] DROP: dedupe id=${id} jid=${remoteJid}`);
         return null;
       }
     }
     const participantJid = msg.key?.participant ?? undefined;
     const from = group ? remoteJid : await resolveInboundJid(remoteJid);
     if (!from) {
+      console.log(`[wa-debug] DROP: resolveInboundJid returned null jid=${remoteJid} id=${id}`);
       return null;
     }
     const senderE164 = group
       ? participantJid
         ? await resolveInboundJid(participantJid)
-        : Boolean(msg.key?.fromMe) && selfE164
-          ? selfE164 // FORK: fromMe group messages lack participant — use own E164
+        : Boolean(msg.key?.fromMe) && self.e164
+          ? self.e164 // FORK: fromMe group messages lack participant — use own E164
           : null
       : from;
 
@@ -294,6 +306,8 @@ export async function monitorWebInbox(options: {
       ? Number(msg.messageTimestamp) * 1000
       : undefined;
 
+    // FORK: Extract message body before access control for triggerPrefix evaluation
+    const messageBody = extractText(msg.message ?? undefined) ?? "";
     const access = await checkInboundAccessControl({
       accountId: options.accountId,
       from,
@@ -304,10 +318,15 @@ export async function monitorWebInbox(options: {
       isFromMe: Boolean(msg.key?.fromMe),
       messageTimestampMs,
       connectedAtMs,
+      messageBody,
       sock: { sendMessage: (jid, content) => sendTrackedMessage(jid, content) },
       remoteJid,
     });
+    console.log(
+      `[wa-debug] access: allowed=${access.allowed} isSelfChat=${access.isSelfChat} from=${from} selfE164=${self.e164} fromMe=${msg.key?.fromMe} id=${id}`,
+    );
     if (!access.allowed) {
+      console.log(`[wa-debug] DROP: access denied from=${from} id=${id}`);
       return null;
     }
 
@@ -493,7 +512,9 @@ export async function monitorWebInbox(options: {
   };
 
   const handleMessagesUpsert = async (upsert: { type?: string; messages?: Array<WAMessage> }) => {
-    console.log(`[wa-pipeline] handleMessagesUpsert type=${upsert.type} count=${upsert.messages?.length ?? 0}`);
+    console.log(
+      `[wa-pipeline] handleMessagesUpsert type=${upsert.type} count=${upsert.messages?.length ?? 0}`,
+    );
     if (upsert.type !== "notify" && upsert.type !== "append") {
       console.log(`[wa-pipeline] SKIP: type=${upsert.type} not notify/append`);
       return;
@@ -560,6 +581,9 @@ export async function monitorWebInbox(options: {
     },
     "messages.upsert",
     handleMessagesUpsert as unknown as (...args: unknown[]) => void,
+  );
+  console.log(
+    `[wa-debug] EVENT SUBSCRIPTION ATTACHED: messages.upsert on sock.ev (type=${typeof sock.ev}, hasOn=${typeof sock.ev?.on})`,
   );
   const detachConnectionUpdate = attachEmitterListener(
     sock.ev as unknown as {

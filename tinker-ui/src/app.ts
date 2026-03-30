@@ -1531,14 +1531,8 @@ function onEvent(evt: any) {
           const tn = currentTurnNumber;
           setTimeout(() => {
             if (sk && timelineCtrl) {
-              const base = import.meta.env.DEV ? "http://localhost:18789" : "";
-              const hdrs: Record<string, string> = TOKEN
-                ? { Authorization: `Bearer ${TOKEN}` }
-                : {};
-              fetch(
-                `${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`,
-                Object.keys(hdrs).length ? { headers: hdrs } : undefined,
-              )
+              // Use relative URL so Vite proxy handles auth (avoids CORS preflight)
+              fetch(`/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
                   const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
@@ -1629,11 +1623,18 @@ function onEvent(evt: any) {
 async function loadSessions(opts?: { loadChat?: boolean }) {
   const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
   sessions = res.sessions ?? [];
+  const hadSessionKey = Boolean(sessionKey);
   if (!sessionKey && sessions.length) {
     sessionKey = sessions[0].key;
   }
   updateSelect();
   updateSessionsPanel();
+  // FORK: If sessionKey was just resolved for the first time, load timeline + treemap
+  if (!hadSessionKey && sessionKey) {
+    timelineCtrl?.loadSession(sessionKey);
+    const tmCanvas = $("treemap-canvas");
+    if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
+  }
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
     if (tab.isAttached && tab.sessionKey && tab.id !== "tab-main") {
@@ -1649,10 +1650,10 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
       } else if (!sess) {
         // Session doesn't exist on server yet — keep tab (don't detach new tabs)
         // Only detach if tab was previously canonicalized (key contains "agent:")
+        // FORK: Keep sessionKey for timeline/treemap lookups — only mark as unattached
+        // so new messages can't be sent, but historical data is still accessible.
         if (tab.sessionKey!.startsWith("agent:")) {
-          tab.sessionKey = null;
           tab.isAttached = false;
-          tab.title = randomFortune();
         }
       }
     }
@@ -2971,7 +2972,7 @@ function switchToTab(tabId: string) {
 
   activeTabId = tab.id;
 
-  if (tab.isAttached && tab.sessionKey) {
+  if (tab.sessionKey) {
     sessionKey = tab.sessionKey;
     // FORK: Restore per-tab state atomically — no async, no clearing
     loadTabState(tab.id);
@@ -2982,8 +2983,8 @@ function switchToTab(tabId: string) {
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
     timelineCtrl?.loadSession(sessionKey);
-    // Background refresh from server — guarded inside loadChat
-    loadChat();
+    // Background refresh from server — only if still attached (server has the session)
+    if (tab.isAttached) loadChat();
   } else {
     sessionKey = "";
     loadTabState(tab.id); // loads fresh empty state
@@ -3530,65 +3531,69 @@ function updateSessionsPanel() {
   html += "</div>";
   el.innerHTML = html;
 
-  // Wire session row clicks
-  el.querySelectorAll(".session-row").forEach((row) => {
-    row.addEventListener("click", () => {
-      const key = (row as HTMLElement).dataset.sessionKey;
-      if (!key || key === sessionKey) return;
+  // Wire session row clicks + delete buttons via single event delegation
+  // (per-element listeners get destroyed on innerHTML re-render)
+  if (!(el as any).__sessionsWired) {
+    (el as any).__sessionsWired = true;
+    el.addEventListener("click", async (e) => {
+      const tgt = e.target as HTMLElement;
 
-      const activeTab = tabs.find((t) => t.id === activeTabId);
-
-      if (activeTab && !activeTab.isAttached) {
-        attachSessionToTab(key);
-        return;
-      }
-
-      const existingTab = tabs.find((t) => t.sessionKey === key);
-      if (existingTab) {
-        switchToTab(existingTab.id);
-        return;
-      }
-
-      // Active tab is already attached — open this session in a new tab instead of rebinding
-      const newTab = createTab();
-      newTab.sessionKey = key;
-      newTab.isAttached = true;
-      const sess = sessions.find((s: any) => s.key === key);
-      if (sess?.label) newTab.title = sess.label.slice(0, 30);
-      renderTabs();
-      switchToTab(newTab.id);
-    });
-  });
-
-  // Wire session delete buttons
-  el.querySelectorAll(".session-delete-btn").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const key = (btn as HTMLElement).dataset.deleteKey;
-      if (!key) return;
-      try {
-        await req("sessions.delete", { key });
-        // Revert any tab using this session to unattached
-        const affectedTab = tabs.find((t) => t.sessionKey === key);
-        if (affectedTab && affectedTab.id !== "tab-main") {
-          affectedTab.sessionKey = null;
-          affectedTab.isAttached = false;
-          affectedTab.title = randomFortune();
-          if (affectedTab.id === activeTabId) {
+      // ── Delete button (check FIRST — before row click swallows it) ──
+      const delBtn = tgt.closest(".session-delete-btn") as HTMLElement | null;
+      if (delBtn) {
+        e.stopPropagation();
+        const key = delBtn.dataset.deleteKey;
+        if (!key) return;
+        const row = delBtn.closest(".session-row") as HTMLElement | null;
+        if (row) row.style.opacity = "0.3";
+        try {
+          await req("sessions.delete", { key });
+          // Close any tab that was using this session
+          const affectedTab = tabs.find((t) => t.sessionKey === key);
+          if (affectedTab && affectedTab.id !== "tab-main") {
+            closeTab(affectedTab.id);
+          } else if (affectedTab?.id === "tab-main") {
+            // Main tab can't be closed — just clear its state
             sessionKey = "";
             messages = [];
             updateChat();
           }
-          renderTabs();
-          saveTabs();
+          await loadSessions();
+        } catch (err) {
+          console.error("Failed to delete session:", err);
+          if (row) row.style.opacity = "1";
         }
-        // Reload from server to get authoritative list
-        await loadSessions();
-      } catch (err) {
-        console.error("Failed to delete session:", err);
+        return;
+      }
+
+      // ── Session row click (navigate) ──
+      const row = tgt.closest(".session-row") as HTMLElement | null;
+      if (row) {
+        const key = row.dataset.sessionKey;
+        if (!key || key === sessionKey) return;
+
+        const activeTab = tabs.find((t) => t.id === activeTabId);
+        if (activeTab && !activeTab.isAttached) {
+          attachSessionToTab(key);
+          return;
+        }
+
+        const existingTab = tabs.find((t) => t.sessionKey === key);
+        if (existingTab) {
+          switchToTab(existingTab.id);
+          return;
+        }
+
+        const newTab = createTab();
+        newTab.sessionKey = key;
+        newTab.isAttached = true;
+        const sess = sessions.find((s: any) => s.key === key);
+        if (sess?.label) newTab.title = sess.label.slice(0, 30);
+        renderTabs();
+        switchToTab(newTab.id);
       }
     });
-  });
+  }
 
   // Wire group header clicks (toggle collapse)
   el.querySelectorAll(".session-group-header").forEach((hdr) => {
@@ -3671,6 +3676,7 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
+        <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
@@ -3845,6 +3851,30 @@ function init() {
       );
     });
     updateBudgetPanel();
+  });
+
+  // ─── Voice mute toggle (§5.36) ───
+  const voiceBtn = $("tb-voice")!;
+  const muteApi = "/tinker/api/jarvis-mute";
+  fetch(muteApi)
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((d: { muted: boolean }) => voiceBtn.classList.toggle("tb-active", !d.muted))
+    .catch(() => {});
+  voiceBtn.addEventListener("click", () => {
+    const willMute = voiceBtn.classList.contains("tb-active");
+    voiceBtn.classList.toggle("tb-active", !willMute);
+    fetch(muteApi, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ muted: willMute }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { muted: boolean }) => voiceBtn.classList.toggle("tb-active", !d.muted))
+      .catch(() => {
+        voiceBtn.classList.toggle("tb-active", !willMute);
+        voiceBtn.classList.add("tb-error");
+        setTimeout(() => voiceBtn.classList.remove("tb-error"), 5000);
+      });
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───

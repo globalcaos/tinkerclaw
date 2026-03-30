@@ -84,6 +84,7 @@ import {
   peekSystemEventEntries,
   drainSystemEventEntries,
   enqueueSystemEvent,
+  resolveSystemEventDeliveryContext,
 } from "./system-events.js";
 
 export type HeartbeatDeps = OutboundSendDeps &
