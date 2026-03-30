@@ -1892,6 +1892,15 @@ body {
   text-decoration: line-through;
   text-decoration-color: rgba(255, 60, 60, 0.4);
 }
+.model-error-badge.auth-clickable {
+  cursor: pointer;
+  border-color: rgba(255, 60, 60, 0.5);
+  transition: background 0.15s, border-color 0.15s;
+}
+.model-error-badge.auth-clickable:hover {
+  background: rgba(255, 60, 60, 0.3);
+  border-color: rgba(255, 60, 60, 0.7);
+}
 
 /* Panel interactive icons — unified hover: scale + brighten + hint label */
 .panel-icon,
