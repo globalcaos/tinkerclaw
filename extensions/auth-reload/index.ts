@@ -13,6 +13,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
+  saveAuthProfileStore,
 } from "../../src/agents/auth-profiles/store.js";
 import { clearAuthProfileCooldown } from "../../src/agents/auth-profiles/usage.js";
 import {
@@ -52,6 +53,40 @@ export default function register(api: OpenClawPluginApi) {
 
     context.broadcast("auth.profiles.updated", { source: "rpc", profiles: cleared });
     respond(true, { ok: true, profiles: cleared });
+  });
+
+  // FORK: Direct token paste — write an access token to a profile without OAuth flow
+  api.registerGatewayMethod("auth.applyToken", async ({ params, respond, context }) => {
+    setBroadcast(context.broadcast);
+    const p = params as Record<string, unknown>;
+    const profileId = p.profileId as string | undefined;
+    const accessToken = p.accessToken as string | undefined;
+    if (!profileId || !accessToken) {
+      respond(false, undefined, { code: "INVALID_REQUEST", message: "profileId and accessToken are required" });
+      return;
+    }
+    if (!accessToken.startsWith("sk-ant-")) {
+      respond(false, undefined, { code: "INVALID_TOKEN", message: "Token must start with sk-ant-" });
+      return;
+    }
+    try {
+      const store = ensureAuthProfileStore();
+      const profile = store.profiles[profileId];
+      if (!profile) {
+        respond(false, undefined, { code: "PROFILE_NOT_FOUND", message: `Profile ${profileId} not found` });
+        return;
+      }
+      profile.accessToken = accessToken;
+      profile.expires = Date.now() + 3600_000; // 1 hour from now
+      saveAuthProfileStore(store);
+      clearRuntimeAuthProfileStoreSnapshots();
+      await clearAuthProfileCooldown({ store: ensureAuthProfileStore(), profileId });
+      context.broadcast("auth.profiles.updated", { source: "rpc", profiles: [profileId], profileId });
+      respond(true, { ok: true, profileId });
+      console.log(`[auth-reload] token applied for ${profileId}`);
+    } catch (err: any) {
+      respond(false, undefined, { code: "APPLY_FAILED", message: err?.message || String(err) });
+    }
   });
 
   api.registerGatewayMethod("auth.reauth.start", async ({ params, respond, context }) => {
