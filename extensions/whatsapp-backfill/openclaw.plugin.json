@@ -1,0 +1,11 @@
+{
+  "id": "whatsapp-backfill",
+  "name": "WhatsApp Backfill",
+  "description": "Automatically requests missed WhatsApp messages (DMs + groups) on reconnect based on actual downtime",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

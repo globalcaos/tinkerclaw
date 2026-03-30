@@ -1,0 +1,11 @@
+{
+  "id": "whatsapp-tinkerclaw",
+  "name": "WhatsApp TinkerClaw",
+  "description": "Fork WhatsApp enhancements: message history archive (SQLite), reconnect backfill, multi-agent protocol (congestion/budget/lifecycle), and history search tool",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
