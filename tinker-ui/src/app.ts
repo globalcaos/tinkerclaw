@@ -3354,7 +3354,8 @@ function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
   pop.className = "auth-action-popover";
   pop.innerHTML = `
     <button class="auth-action-btn" data-action="reload">\u21bb Reload from disk</button>
-    <button class="auth-action-btn" data-action="reauth">\ud83d\udd11 Re-authenticate</button>
+    <button class="auth-action-btn" data-action="paste">\ud83d\udccb Paste token</button>
+    <button class="auth-action-btn" data-action="reauth">\ud83d\udd11 Re-authenticate (OAuth)</button>
   `;
   const rect = anchor.getBoundingClientRect();
   pop.style.position = "fixed";
@@ -3373,6 +3374,8 @@ function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
       } catch (err: any) {
         showToast(`Reload failed: ${err?.message || err}`, true);
       }
+    } else if (action === "paste") {
+      showDirectPasteModal(profileId);
     } else if (action === "reauth") {
       startOAuthReauthFlow(profileId);
     }
@@ -3385,6 +3388,56 @@ function showAuthActionPopover(anchor: HTMLElement, profileId: string): void {
     }
   };
   setTimeout(() => document.addEventListener("click", close, true), 0);
+}
+
+/** Direct paste modal — skip OAuth popup, go straight to token paste. */
+function showDirectPasteModal(profileId: string): void {
+  document.querySelector(".auth-paste-modal-overlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "auth-paste-modal-overlay";
+  overlay.innerHTML = `
+    <div class="auth-paste-modal">
+      <h3>Re-authenticate ${esc(profileId.replace("anthropic:", ""))}</h3>
+      <p>Paste a fresh OAuth access token below.</p>
+      <p>Get one by running: <code>node ~/src/jarvis-icu/anthropic-oauth-login.mjs</code></p>
+      <p>Or copy from Claude Code: <code>~/.claude/.credentials.json</code> &rarr; <code>claudeAiOauth.accessToken</code></p>
+      <textarea class="auth-paste-input" rows="3" placeholder="sk-ant-oat01-..." autofocus></textarea>
+      <div class="auth-paste-actions">
+        <button class="auth-paste-cancel">Cancel</button>
+        <button class="auth-paste-submit">Apply</button>
+      </div>
+      <div class="auth-paste-status"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector<HTMLTextAreaElement>(".auth-paste-input")!;
+  const status = overlay.querySelector<HTMLElement>(".auth-paste-status")!;
+  const submitBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-submit")!;
+  const cancelBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-cancel")!;
+  const submit = async () => {
+    const token = input.value.trim();
+    if (!token) return;
+    if (!token.startsWith("sk-ant-")) {
+      status.textContent = "Token should start with sk-ant-";
+      status.style.color = "#f38ba8";
+      return;
+    }
+    submitBtn.disabled = true;
+    status.textContent = "Applying token...";
+    try {
+      await req("auth.applyToken", { profileId, accessToken: token });
+      overlay.remove();
+      showToast(`Token applied for ${profileId.replace("anthropic:", "")}`);
+    } catch (err: any) {
+      status.textContent = `Failed: ${err?.message || err}`;
+      status.style.color = "#f38ba8";
+      submitBtn.disabled = false;
+    }
+  };
+  submitBtn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
+  cancelBtn.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
 async function startOAuthReauthFlow(profileId: string): Promise<void> {
