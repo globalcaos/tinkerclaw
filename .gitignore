@@ -180,7 +180,6 @@ scripts/sync-from-tinkerclaw.sh
 scripts/fork-build.sh
 scripts/fork-setup.sh
 docs/README-SPEC.md
-FORK_PATCHES.md
 scripts/post-merge-build-playbook.md
 docs/fork-setup.md
 docs/plans/2026-03-21-whatsapp-protocol-v2.md
