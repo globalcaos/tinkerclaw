@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/learned-intuition",
+  "version": "0.1.0",
+  "description": "AMYGDALA — Neural safety gate trained on real failures. 10 ONNX networks evaluate every action. Falls back to rules when models unavailable.",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
