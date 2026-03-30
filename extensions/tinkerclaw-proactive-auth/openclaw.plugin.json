@@ -1,0 +1,12 @@
+{
+  "id": "tinkerclaw-proactive-auth",
+  "name": "Proactive OAuth Refresh",
+  "description": "Keeps OAuth subscription tokens fresh by proactively refreshing them before expiry. Mirrors Claude Code's single-writer refresh approach.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true }
+    }
+  }
+}
