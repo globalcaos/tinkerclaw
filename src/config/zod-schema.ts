@@ -950,6 +950,17 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    fork: z
+      .object({
+        cognitive: z
+          .record(
+            z.string(),
+            z.union([z.literal("inline"), z.literal("extension"), z.literal("disabled")]),
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {
