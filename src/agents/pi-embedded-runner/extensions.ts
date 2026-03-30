@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
-import { createOllamaEmbeddingProvider } from "../../memory/embeddings-ollama.js";
+import { createOllamaEmbeddingProvider } from "../../plugin-sdk/ollama.js";
 import { createEmbeddingCache } from "../../memory/engram/embedding-cache.js";
 import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
