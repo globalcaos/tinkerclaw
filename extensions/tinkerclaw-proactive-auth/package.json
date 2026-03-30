@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/proactive-auth",
+  "version": "0.1.0",
+  "description": "Proactive OAuth token refresh via gateway lifecycle hooks",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
