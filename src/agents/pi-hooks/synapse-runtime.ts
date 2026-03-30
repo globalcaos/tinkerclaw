@@ -11,14 +11,14 @@ import {
   measureCDI,
   DEFAULT_PROVIDER_PROFILES,
   type ProviderProfile,
-} from "../../memory/synapse/cognitive-diversity.js";
-import { createPersistentDeliberation } from "../../memory/synapse/persistent-deliberation.js";
+} from "../../../extensions/tinkerclaw-round-table/src/cognitive-diversity.js";
+import { createPersistentDeliberation } from "../../../extensions/tinkerclaw-round-table/src/persistent-deliberation.js";
 import {
   runDebate,
   DEFAULT_DEBATE_CONFIG,
   type DebateParticipant,
   type DebateConfig,
-} from "../../memory/synapse/raac-protocol.js";
+} from "../../../extensions/tinkerclaw-round-table/src/raac-protocol.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
