@@ -1439,12 +1439,11 @@ body {
      so it overlays the timeline without being clipped by #app overflow:hidden */
   grid-column: 1 / 3;
   grid-row: 3;
+  position: relative;
   pointer-events: none;
   justify-self: end;
   align-self: start;
   z-index: 20;
-  width: 0;
-  overflow: visible;
 }
 .ct-legend {
   position: absolute;
