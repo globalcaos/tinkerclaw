@@ -233,6 +233,7 @@ const plugin = {
           }
           try {
             const subPath = pathname.slice(`${PREFIX}/api/context-anatomy/`.length);
+            api.logger.info(`context-anatomy request: subPath="${subPath}" query="${url.search}"`);
             // /tinker/api/context-anatomy/recent?hours=24
             if (subPath === "recent") {
               const hoursParam = url.searchParams.get("hours");
@@ -258,6 +259,9 @@ const plugin = {
               return true;
             }
             const events = anatomyDb.querySessionEvents(sessionKey, limit);
+            api.logger.info(
+              `context-anatomy session="${sessionKey}" limit=${limit} → ${events.length} events`,
+            );
             res.writeHead(200, jsonHeaders);
             res.end(JSON.stringify({ sessionKey, count: events.length, events }));
             return true;

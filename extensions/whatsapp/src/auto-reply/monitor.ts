@@ -154,6 +154,7 @@ export async function monitorWebChannel(
   process.once("SIGINT", handleSigint);
 
   let reconnectAttempts = 0;
+  let unregisterUnhandled: (() => void) | null = null;
 
   while (true) {
     if (stopRequested()) {

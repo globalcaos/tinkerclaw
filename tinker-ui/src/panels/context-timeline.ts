@@ -179,10 +179,13 @@ export function mountContextTimeline(
   let filterMode: "session" | "all" = "session";
   let currentGlobalMax = 200_000;
 
-  /** Fetch with auth headers (needed when UI is served from Vite dev server). */
+  /** Fetch timeline API. In dev mode (Vite), uses relative URL so the Vite proxy
+   *  handles auth server-side — avoids CORS preflight from cross-origin Authorization header. */
   function authedFetch(url: string): Promise<Response> {
-    const headers = getAuthHeaders?.() ?? {};
-    return fetch(url, Object.keys(headers).length ? { headers } : undefined);
+    // If URL is absolute (http://localhost:18789/tinker/api/...), convert to relative
+    // (/tinker/api/...) so the Vite dev server proxy handles the request + auth.
+    const relativeUrl = url.replace(/^https?:\/\/[^/]+/, "");
+    return fetch(relativeUrl);
   }
 
   // ─── Tooltip ───
@@ -342,7 +345,8 @@ export function mountContextTimeline(
   // ─── Render ───
   function render() {
     container.innerHTML = "";
-    // Remove previous legend (lives outside the scroll container)
+    // Legend anchor is now inside the container — cleared by innerHTML = "" above.
+    // The parentElement query below handles any old-state anchor that might linger outside.
     container.parentElement?.querySelector(".ct-legend-anchor")?.remove();
 
     // Legend (sticky right) — always rendered so the Session/All toggle is accessible
@@ -395,15 +399,12 @@ export function mountContextTimeline(
       if (onFilterModeChange) onFilterModeChange(newMode);
     });
     legend.appendChild(switchWrap);
-    // Legend lives OUTSIDE the scroll container (on its parent) so it never scrolls
+    // Legend lives INSIDE the timeline container — position:sticky keeps it at the right edge
     const legendAnchor = document.createElement("div");
     legendAnchor.className = "ct-legend-anchor";
     legendAnchor.appendChild(legend);
-    if (container.parentElement) {
-      container.parentElement.appendChild(legendAnchor);
-    } else {
-      container.appendChild(legendAnchor);
-    }
+    // Always inside the timeline container — positioned with sticky so it never scrolls away
+    container.appendChild(legendAnchor);
 
     if (buffer.length === 0) {
       const empty = document.createElement("div");

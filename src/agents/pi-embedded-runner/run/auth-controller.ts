@@ -1,3 +1,4 @@
+import { emitAgentEvent } from "../../../infra/agent-events.js"; // FORK: per-profile fallback error events
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 import { prepareProviderRuntimeAuth } from "../../../plugins/provider-runtime.js";
@@ -65,6 +66,8 @@ export function createEmbeddedRunAuthController(params: {
   getProfileIndex(): number;
   setProfileIndex(next: number): void;
   setThinkLevel(next: ThinkLevel): void;
+  runId: string;
+  sessionKey: string;
   log: LogLike;
 }) {
   const hasRefreshableRuntimeAuth = () =>
@@ -351,6 +354,19 @@ export function createEmbeddedRunAuthController(params: {
         candidate &&
         isProfileInCooldown(params.authStore, candidate, undefined, params.getModelId())
       ) {
+        // FORK: emit per-profile fallback error for cooldown skip
+        emitAgentEvent({
+          runId: params.runId,
+          sessionKey: params.sessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "fallback-profile-error",
+            profileId: candidate,
+            profileIndex: nextIndex,
+            totalProfiles: params.profileCandidates.length,
+            reason: "cooldown",
+          },
+        });
         nextIndex += 1;
         continue;
       }
@@ -364,6 +380,20 @@ export function createEmbeddedRunAuthController(params: {
         if (candidate && candidate === params.lockedProfileId) {
           throw err;
         }
+        // FORK: emit per-profile fallback error for key resolution failure
+        emitAgentEvent({
+          runId: params.runId,
+          sessionKey: params.sessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "fallback-profile-error",
+            profileId: candidate,
+            profileIndex: nextIndex,
+            totalProfiles: params.profileCandidates.length,
+            reason: "auth",
+            message: String(err),
+          },
+        });
         nextIndex += 1;
       }
     }

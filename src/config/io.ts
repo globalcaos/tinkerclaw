@@ -45,12 +45,10 @@ import {
 } from "./includes.js";
 import { migrateLegacyConfig } from "./legacy-migrate.js";
 import { findLegacyConfigIssues } from "./legacy.js";
-import {
-  asResolvedSourceConfig,
-  asRuntimeConfig,
-  materializeRuntimeConfig,
-} from "./materialize.js";
+import { asResolvedSourceConfig, asRuntimeConfig } from "./materialize.js";
 import { applyMergePatch } from "./merge-patch.js";
+import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
+import { normalizeConfigPaths } from "./normalize-paths.js";
 import { resolveConfigPath, resolveDefaultConfigCandidates, resolveStateDir } from "./paths.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
@@ -2049,6 +2047,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
         ),
       );
       normalizeExecSafeBinProfilesInConfig(snapshotConfig);
+      const snapshotSourceConfig = coerceConfig(effectiveConfigRaw);
       return {
         snapshot: {
           path: configPath,
@@ -2057,16 +2056,20 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
           parsed: effectiveParsed,
           // Use resolvedConfigRaw (after $include and ${ENV} substitution but BEFORE runtime defaults)
           // for config set/unset operations (issue #6070)
-          sourceConfig: coerceConfig(effectiveConfigRaw),
+          sourceConfig: snapshotSourceConfig,
+          // FORK: resolved is required by ConfigFileSnapshot type — mirrors sourceConfig for compat
+          resolved: snapshotSourceConfig,
           valid: true,
           runtimeConfig: snapshotConfig,
+          // FORK: config is deprecated alias for runtimeConfig — required by many call sites
+          config: snapshotConfig,
           hash,
           issues: [],
           warnings: [...validated.warnings, ...envVarWarnings],
           legacyIssues: legacyResolution.sourceLegacyIssues,
-        }),
+        },
         envSnapshotForRestore: readResolution.envSnapshotForRestore,
-      });
+      };
     } catch (err) {
       const nodeErr = err as NodeJS.ErrnoException;
       let message: string;

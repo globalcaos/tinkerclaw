@@ -1,10 +1,9 @@
 import { exec } from "node:child_process";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { resolveAuthProfileOrder } from "../../agents/auth-profiles/order.js";
 import { loadAuthProfileStoreForSecretsRuntime } from "../../agents/auth-profiles/store.js";
-import { listChannelPlugins } from "../../channels/plugins/index.js";
 import {
   createConfigIO,
+  loadConfig,
   parseConfigJson5,
   readConfigFileSnapshot,
   readConfigFileSnapshotForWrite,
