@@ -9,8 +9,6 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
-import type { OpenClawConfig } from "../../../config/config.js";
-import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import {
   ensureGlobalUndiciEnvProxyDispatcher,
@@ -74,7 +72,6 @@ import {
   validateGeminiTurns,
 } from "../../pi-embedded-helpers.js";
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
-import { getRetrievalRuntime as _getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
 import { applyPiAutoCompactionGuard } from "../../pi-settings.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
@@ -629,11 +626,6 @@ export async function runEmbeddedAttempt(
       ? resolveHeartbeatPrompt(params.config?.agents?.defaults?.heartbeat?.prompt)
       : undefined;
 
-    // FORK: persona block injection from CORTEX/SOUL.md
-    const personaBlock = _forkAttemptHooks.getPersonaBlock(effectiveWorkspace);
-    // FORK: AMYGDALA personality thermostat nudge
-    const amygdalaNudge = _forkAttemptHooks.getAmygdalaNudge?.();
-
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -661,8 +653,6 @@ export async function runEmbeddedAttempt(
       userTimeFormat,
       contextFiles,
       memoryCitationsMode: params.config?.memory?.citations,
-      personaBlock, // FORK: Tier 1 persona block from CORTEX runtime
-      amygdalaNudge, // FORK: AMYGDALA personality thermostat nudge
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
@@ -1002,6 +992,7 @@ export async function runEmbeddedAttempt(
 
       if (
         params.model.api === "openai-responses" ||
+        params.model.api === "azure-openai-responses" ||
         params.model.api === "openai-codex-responses"
       ) {
         const inner = activeSession.agent.streamFn;
@@ -1486,6 +1477,7 @@ export async function runEmbeddedAttempt(
             workspaceDir: effectiveWorkspace,
             model: params.model,
             existingImages: params.images,
+            imageOrder: params.imageOrder,
             maxBytes: MAX_IMAGE_BYTES,
             maxDimensionPx: resolveImageSanitizationLimits(params.config).maxDimensionPx,
             workspaceOnly: effectiveFsWorkspaceOnly,
@@ -1555,18 +1547,6 @@ export async function runEmbeddedAttempt(
             messages: btwSnapshotMessages,
             inFlightPrompt: effectivePrompt,
           });
-
-          // FORK: mid-context persona re-injection when SyncScore drops
-          {
-            const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
-              activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-              systemPromptText ?? "",
-              log,
-            );
-            if (reinjectResult.reinjected && systemPromptText != null) {
-              systemPromptText = reinjectResult.systemPromptText;
-            }
-          }
 
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
@@ -1791,24 +1771,6 @@ export async function runEmbeddedAttempt(
               log.warn(`agent_end hook failed: ${err}`);
             });
         }
-
-        // FORK: text-tool-call interception for local providers (ollama/lmstudio/vllm)
-        if (!promptError && !aborted && tools.length > 0) {
-          const ttcResult = await _forkAttemptHooks.interceptTextToolCalls({
-            provider: params.provider,
-            activeSession: activeSession as never,
-            tools: tools as never,
-            toolMetas: toolMetas as never,
-            promptError,
-            aborted,
-            abortSignal: params.abortSignal,
-            abortable,
-            log,
-          });
-          if (ttcResult.promptError) {
-            promptError = ttcResult.promptError;
-          }
-        }
       } finally {
         clearTimeout(abortTimer);
         if (abortWarnTimer) {
@@ -1872,28 +1834,6 @@ export async function runEmbeddedAttempt(
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
       }
-
-      // FORK: fire-and-forget post-turn processing (context anatomy, ENGRAM, SyncScore, observations)
-      _forkAttemptHooks
-        .onTurnComplete({
-          runId: params.runId,
-          sessionManager:
-            activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-          sessionKey: params.sessionKey,
-          messagesSnapshot,
-          assistantTexts,
-          systemPromptReport,
-          provider: params.provider,
-          modelId: params.modelId,
-          contextWindowTokens:
-            params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-          getCompactionCount,
-          getUsageTotals,
-          log,
-        })
-        .catch((err) => {
-          log.warn(`fork onTurnComplete failed: ${String(err)}`);
-        });
 
       return {
         aborted,
