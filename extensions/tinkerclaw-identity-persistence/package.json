@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/identity-persistence",
+  "version": "0.1.0",
+  "description": "CORTEX — Persona injection from SOUL.md, EWMA SyncScore drift detection, mid-context identity reinforcement, and observation extraction",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
