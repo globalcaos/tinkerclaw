@@ -68,7 +68,7 @@ export function isProfileInCooldown(
   store: AuthProfileStore,
   profileId: string,
   now?: number,
-  forModel?: string,
+  _forModel?: string,
 ): boolean {
   if (isAuthCooldownBypassedForProvider(store.profiles[profileId]?.provider)) {
     return false;
@@ -77,6 +77,7 @@ export function isProfileInCooldown(
   if (!stats) {
     return false;
   }
+  const unusableUntil = resolveProfileUnusableUntil(stats);
   const ts = now ?? Date.now();
   if (!unusableUntil || ts >= unusableUntil) {
     return false;

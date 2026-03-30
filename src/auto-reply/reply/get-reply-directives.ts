@@ -436,6 +436,10 @@ export async function resolveReplyDirectives(params: {
     (await modelState.resolveDefaultThinkingLevel()) ??
     (agentCfg?.thinkingDefault as ThinkLevel | undefined);
 
+  const agentReasoningDefault = agentEntry?.reasoningDefault as ReasoningLevel | undefined;
+  const hasAgentReasoningDefault =
+    agentReasoningDefault !== undefined && agentReasoningDefault !== null;
+
   // When neither directive nor session set reasoning, default to model capability
   // (e.g. OpenRouter with reasoning: true). When thinking is active, default to
   // "stream" so that native thinking blocks are broadcast to WebSocket clients

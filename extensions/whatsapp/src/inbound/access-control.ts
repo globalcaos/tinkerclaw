@@ -130,15 +130,153 @@ export async function checkInboundAccessControl(params: {
         : normalizedEntrySet.has(normalizedDmSender);
     },
   });
-  if (params.group && access.decision !== "allow") {
-    if (access.reason === "groupPolicy=disabled") {
-      logVerbose("Blocked group message (groupPolicy: disabled)");
-    } else if (access.reason === "groupPolicy=allowlist (empty allowlist)") {
-      logVerbose("Blocked group message (groupPolicy: allowlist, no groupAllowFrom)");
-    } else {
+  // ─── FORK: Unified trigger logic ───
+  // Self-chat (same phone): always allow, no prefix needed.
+  if (!params.group && isSamePhone) {
+    logVerbose("Allowing self-chat DM (same phone, no prefix required)");
+    return {
+      allowed: true,
+      shouldMarkRead: true,
+      isSelfChat,
+      resolvedAccountId: account.accountId,
+    };
+  }
+
+  // Resolve triggerPrefix once — used for all non-self-chat paths.
+  const triggerPrefix =
+    cfg.channels?.whatsapp?.triggerPrefix ?? cfg.channels?.defaults?.triggerPrefix;
+  const bodyTrimmed = (params.messageBody ?? "").trim().toLowerCase();
+  const prefixMatches = triggerPrefix ? bodyTrimmed.startsWith(triggerPrefix.toLowerCase()) : false;
+
+  // Exempt groups: agent-to-agent chats where prefix is not required.
+  // These are dedicated conversation groups where agents talk freely.
+  const exemptGroups: string[] = cfg.channels?.whatsapp?.triggerPrefixExempt ?? [];
+  const isExemptGroup = params.group && exemptGroups.includes(params.remoteJid);
+
+  // Owner (isFromMe) in any chat (DM or group): require prefix, unless exempt group.
+  if (params.isFromMe) {
+    if (isExemptGroup) {
+      logVerbose(`Allowing owner message (fromMe) in exempt group ${params.remoteJid}`);
+      return {
+        allowed: true,
+        shouldMarkRead: true,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    if (!triggerPrefix) {
+      logVerbose("Blocked owner message (fromMe) — no triggerPrefix configured");
+      return {
+        allowed: false,
+        shouldMarkRead: false,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    if (!prefixMatches) {
+      logVerbose(`Blocked owner message (fromMe) — prefix "${triggerPrefix}" not matched`);
+      return {
+        allowed: false,
+        shouldMarkRead: false,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    logVerbose(
+      `Allowing owner message (fromMe) — prefix "${triggerPrefix}" matched in ${params.group ? "group" : "DM"}`,
+    );
+    return {
+      allowed: true,
+      shouldMarkRead: true,
+      isSelfChat,
+      resolvedAccountId: account.accountId,
+    };
+  }
+
+  // Other senders: must be in allowlist. Prefix required unless exempt group.
+  // Groups: check groupAllowFrom. DMs: check allowFrom/dmPolicy.
+  if (params.group) {
+    if (access.decision !== "allow") {
       logVerbose(
-        `Blocked group message from ${params.senderE164 ?? "unknown sender"} (groupPolicy: allowlist)`,
+        `Blocked group message from ${params.senderE164 ?? "unknown"} (not in groupAllowFrom)`,
       );
+      return {
+        allowed: false,
+        shouldMarkRead: false,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    // Sender is allowed — exempt groups skip prefix, others require it.
+    if (isExemptGroup) {
+      logVerbose(`Allowing message from ${params.senderE164 ?? "unknown"} in exempt group`);
+      return {
+        allowed: true,
+        shouldMarkRead: true,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    if (!prefixMatches) {
+      logVerbose(
+        `Blocked group message from ${params.senderE164 ?? "unknown"} — prefix not matched`,
+      );
+      return {
+        allowed: false,
+        shouldMarkRead: false,
+        isSelfChat,
+        resolvedAccountId: account.accountId,
+      };
+    }
+    logVerbose(`Allowing group message from ${params.senderE164 ?? "unknown"} — prefix matched`);
+    return {
+      allowed: true,
+      shouldMarkRead: true,
+      isSelfChat,
+      resolvedAccountId: account.accountId,
+    };
+  }
+
+  // DMs from others: check dmPolicy + allowlist, then prefix.
+  if (access.decision === "block" && access.reason === "dmPolicy=disabled") {
+    logVerbose("Blocked DM (dmPolicy: disabled)");
+    return {
+      allowed: false,
+      shouldMarkRead: false,
+      isSelfChat,
+      resolvedAccountId: account.accountId,
+    };
+  }
+  if (access.decision === "pairing" && !isSamePhone) {
+    const candidate = params.from;
+    if (suppressPairingReply) {
+      logVerbose(`Skipping pairing reply for historical DM from ${candidate}.`);
+    } else {
+      await createChannelPairingChallengeIssuer({
+        channel: "whatsapp",
+        upsertPairingRequest: async ({ id, meta }) =>
+          await upsertChannelPairingRequest({
+            channel: "whatsapp",
+            id,
+            accountId: account.accountId,
+            meta,
+          }),
+      })({
+        senderId: candidate,
+        senderIdLine: `Your WhatsApp phone number: ${candidate}`,
+        meta: { name: (params.pushName ?? "").trim() || undefined },
+        onCreated: () => {
+          logVerbose(
+            `whatsapp pairing request sender=${candidate} name=${params.pushName ?? "unknown"}`,
+          );
+        },
+        sendPairingReply: async (text) => {
+          await params.sock.sendMessage(params.remoteJid, { text });
+        },
+        onReplyError: (err) => {
+          logVerbose(`whatsapp pairing reply failed for ${candidate}: ${String(err)}`);
+        },
+      });
     }
     return {
       allowed: false,
@@ -147,105 +285,27 @@ export async function checkInboundAccessControl(params: {
       resolvedAccountId: account.accountId,
     };
   }
-
-  // DM access control (secure defaults): "pairing" (default) / "allowlist" / "open" / "disabled".
-  if (!params.group) {
-    if (params.isFromMe && !isSamePhone) {
-      // Allow outbound DMs if they match the triggerPrefix (e.g., "Jarvis hello" in any DM).
-      // This lets the owner invoke the bot from any DM conversation.
-      const triggerPrefix =
-        cfg.channels?.whatsapp?.triggerPrefix ?? cfg.channels?.defaults?.triggerPrefix;
-
-      // If no triggerPrefix configured, skip all outbound DMs (original behavior).
-      if (!triggerPrefix) {
-        logVerbose("Skipping outbound DM (fromMe); no triggerPrefix configured.");
-        return {
-          allowed: false,
-          shouldMarkRead: false,
-          isSelfChat,
-          resolvedAccountId: account.accountId,
-        };
-      }
-
-      // Check if message matches the configured triggerPrefix.
-      const bodyTrimmed = (params.messageBody ?? "").trim().toLowerCase();
-      const prefixMatches = bodyTrimmed.startsWith(triggerPrefix.toLowerCase());
-      if (!prefixMatches) {
-        logVerbose(`Skipping outbound DM (fromMe); triggerPrefix "${triggerPrefix}" not matched.`);
-        return {
-          allowed: false,
-          shouldMarkRead: false,
-          isSelfChat,
-          resolvedAccountId: account.accountId,
-        };
-      }
-      // Prefix matches - allow the outbound DM to be processed.
-      logVerbose(`Allowing outbound DM (fromMe) - triggerPrefix "${triggerPrefix}" matched.`);
-    }
-    if (access.decision === "block" && access.reason === "dmPolicy=disabled") {
-      logVerbose("Blocked dm (dmPolicy: disabled)");
-      return {
-        allowed: false,
-        shouldMarkRead: false,
-        isSelfChat,
-        resolvedAccountId: account.accountId,
-      };
-    }
-    if (access.decision === "pairing" && !isSamePhone) {
-      const candidate = params.from;
-      if (suppressPairingReply) {
-        logVerbose(`Skipping pairing reply for historical DM from ${candidate}.`);
-      } else {
-        await createChannelPairingChallengeIssuer({
-          channel: "whatsapp",
-          upsertPairingRequest: async ({ id, meta }) =>
-            await upsertChannelPairingRequest({
-              channel: "whatsapp",
-              id,
-              accountId: account.accountId,
-              meta,
-            }),
-        })({
-          senderId: candidate,
-          senderIdLine: `Your WhatsApp phone number: ${candidate}`,
-          meta: { name: (params.pushName ?? "").trim() || undefined },
-          onCreated: () => {
-            logVerbose(
-              `whatsapp pairing request sender=${candidate} name=${params.pushName ?? "unknown"}`,
-            );
-          },
-          sendPairingReply: async (text) => {
-            await params.sock.sendMessage(params.remoteJid, { text });
-          },
-          onReplyError: (err) => {
-            logVerbose(`whatsapp pairing reply failed for ${candidate}: ${String(err)}`);
-          },
-        });
-      }
-      return {
-        allowed: false,
-        shouldMarkRead: false,
-        isSelfChat,
-        resolvedAccountId: account.accountId,
-      };
-    }
-    if (access.decision !== "allow") {
-      logVerbose(`Blocked unauthorized sender ${params.from} (dmPolicy=${dmPolicy})`);
-      return {
-        allowed: false,
-        shouldMarkRead: false,
-        isSelfChat,
-        resolvedAccountId: account.accountId,
-      };
-    }
+  if (access.decision !== "allow") {
+    logVerbose(`Blocked unauthorized DM sender ${params.from} (dmPolicy=${dmPolicy})`);
+    return {
+      allowed: false,
+      shouldMarkRead: false,
+      isSelfChat,
+      resolvedAccountId: account.accountId,
+    };
   }
-
-  return {
-    allowed: true,
-    shouldMarkRead: true,
-    isSelfChat,
-    resolvedAccountId: account.accountId,
-  };
+  // Sender is in DM allowlist — check prefix.
+  if (!prefixMatches) {
+    logVerbose(`Blocked DM from ${params.from} — prefix not matched`);
+    return {
+      allowed: false,
+      shouldMarkRead: false,
+      isSelfChat,
+      resolvedAccountId: account.accountId,
+    };
+  }
+  logVerbose(`Allowing DM from ${params.from} — prefix matched`);
+  return { allowed: true, shouldMarkRead: true, isSelfChat, resolvedAccountId: account.accountId };
 }
 
 export const __testing = {

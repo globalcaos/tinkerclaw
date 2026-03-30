@@ -19,7 +19,6 @@ import { setVerbose } from "../../globals.js";
 import { GatewayLockError } from "../../infra/gateway-lock.js";
 import { formatPortDiagnostics, inspectPortUsage } from "../../infra/ports.js";
 import { cleanStaleGatewayProcessesSync } from "../../infra/restart-stale-pids.js";
-import { detectRespawnSupervisor } from "../../infra/supervisor-markers.js";
 import { setConsoleSubsystemFilter, setConsoleTimestampPrefix } from "../../logging/console.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -92,8 +91,6 @@ const GATEWAY_RUN_BOOLEAN_KEYS = [
   "compact",
   "rawStream",
 ] as const;
-
-const SUPERVISED_GATEWAY_LOCK_RETRY_MS = 5000;
 
 const GATEWAY_AUTH_MODES: readonly GatewayAuthMode[] = [
   "none",
@@ -168,23 +165,6 @@ function resolveGatewayRunOptions(opts: GatewayRunOpts, command?: Command): Gate
   }
 
   return resolved;
-}
-
-function isGatewayLockError(err: unknown): err is GatewayLockError {
-  return (
-    err instanceof GatewayLockError ||
-    (!!err && typeof err === "object" && (err as { name?: string }).name === "GatewayLockError")
-  );
-}
-
-function isHealthyGatewayLockError(err: unknown): boolean {
-  if (!isGatewayLockError(err) || typeof err.message !== "string") {
-    return false;
-  }
-  return (
-    err.message.includes("gateway already running") ||
-    err.message.includes("another gateway instance is already listening")
-  );
 }
 
 async function runGatewayCommand(opts: GatewayRunOpts) {
@@ -449,117 +429,117 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         }
       : undefined;
 
-  try {
-    if (opts.secure) {
-      gatewayLog.info("Starting in SECURE mode (Docker + Secrets Proxy)");
+  if (opts.secure) {
+    gatewayLog.info("Starting in SECURE mode (Docker + Secrets Proxy)");
 
-      // Set secure mode environment variable for this process
-      process.env.OPENCLAW_SECURE_MODE = "1";
+    // Set secure mode environment variable for this process
+    process.env.OPENCLAW_SECURE_MODE = "1";
 
-      const proxyPort = 8080;
-      const proxyUrl = `http://host.docker.internal:${proxyPort}`;
+    const proxyPort = 8080;
+    const proxyUrl = `http://host.docker.internal:${proxyPort}`;
 
-      // Start secrets proxy first
-      let proxyServer: Awaited<ReturnType<typeof startSecretsProxy>>;
-      try {
-        proxyServer = await startSecretsProxy({ port: proxyPort });
-        gatewayLog.info(`Secrets proxy started on port ${proxyPort}`);
-      } catch (err) {
-        gatewayLog.error(`Failed to start secrets proxy: ${String(err)}`);
-        defaultRuntime.exit(1);
-        return;
-      }
-
-      // Start gateway container
-      let containerName: string;
-      try {
-        containerName = await startGatewayContainer({
-          proxyUrl,
-          env: process.env,
-          // TODO: Read bind mounts from config
-          // binds: config?.gateway?.secretsProxy?.binds || [],
-        });
-        gatewayLog.info(`Gateway container started: ${containerName}`);
-      } catch (err) {
-        gatewayLog.error(`Failed to start gateway container: ${String(err)}`);
-        proxyServer.close();
-        defaultRuntime.exit(1);
-        return;
-      }
-
-      // P1 Fix: Wait for container to be ready with timeout
-      const HEALTH_CHECK_INTERVAL = 1000;
-      const HEALTH_CHECK_TIMEOUT = 30000;
-      const startTime = Date.now();
-      let containerReady = false;
-
-      while (Date.now() - startTime < HEALTH_CHECK_TIMEOUT) {
-        const isRunning = await isGatewayContainerRunning();
-        if (isRunning) {
-          containerReady = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
-      }
-
-      if (!containerReady) {
-        gatewayLog.error("Gateway container failed to start within timeout");
-        const logs = await getGatewayContainerLogs(20);
-        gatewayLog.error(`Container logs:\n${logs}`);
-        await stopGatewayContainer();
-        proxyServer.close();
-        defaultRuntime.exit(1);
-        return;
-      }
-
-      gatewayLog.info("Gateway container is ready and healthy");
-
-      // Set up graceful shutdown handlers
-      const shutdown = async () => {
-        gatewayLog.info("Shutting down secure gateway...");
-        try {
-          await stopGatewayContainer();
-          gatewayLog.info("Gateway container stopped");
-        } catch (err) {
-          gatewayLog.error(`Error stopping container: ${String(err)}`);
-        }
-        try {
-          proxyServer.close();
-          gatewayLog.info("Secrets proxy stopped");
-        } catch (err) {
-          gatewayLog.error(`Error stopping proxy: ${String(err)}`);
-        }
-        defaultRuntime.exit(0);
-      };
-
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-
-      gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
-
-      // P1 Fix: Monitor container health periodically
-      const healthCheckLoop = async () => {
-        while (true) {
-          await new Promise((resolve) => setTimeout(resolve, 10000)); // Check every 10s
-          const isRunning = await isGatewayContainerRunning();
-          if (!isRunning) {
-            gatewayLog.error("Gateway container stopped unexpectedly");
-            const logs = await getGatewayContainerLogs(50);
-            gatewayLog.error(`Final container logs:\n${logs}`);
-            await shutdown();
-            return;
-          }
-        }
-      };
-
-      // Run health check loop (non-blocking)
-      void healthCheckLoop();
-
-      // Keep process alive
-      await new Promise(() => {});
+    // Start secrets proxy first
+    let proxyServer: Awaited<ReturnType<typeof startSecretsProxy>>;
+    try {
+      proxyServer = await startSecretsProxy({ port: proxyPort });
+      gatewayLog.info(`Secrets proxy started on port ${proxyPort}`);
+    } catch (err) {
+      gatewayLog.error(`Failed to start secrets proxy: ${String(err)}`);
+      defaultRuntime.exit(1);
       return;
     }
 
+    // Start gateway container
+    let containerName: string;
+    try {
+      containerName = await startGatewayContainer({
+        proxyUrl,
+        env: process.env,
+        // TODO: Read bind mounts from config
+        // binds: config?.gateway?.secretsProxy?.binds || [],
+      });
+      gatewayLog.info(`Gateway container started: ${containerName}`);
+    } catch (err) {
+      gatewayLog.error(`Failed to start gateway container: ${String(err)}`);
+      proxyServer.close();
+      defaultRuntime.exit(1);
+      return;
+    }
+
+    // P1 Fix: Wait for container to be ready with timeout
+    const HEALTH_CHECK_INTERVAL = 1000;
+    const HEALTH_CHECK_TIMEOUT = 30000;
+    const startTime = Date.now();
+    let containerReady = false;
+
+    while (Date.now() - startTime < HEALTH_CHECK_TIMEOUT) {
+      const isRunning = await isGatewayContainerRunning();
+      if (isRunning) {
+        containerReady = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
+    }
+
+    if (!containerReady) {
+      gatewayLog.error("Gateway container failed to start within timeout");
+      const logs = await getGatewayContainerLogs(20);
+      gatewayLog.error(`Container logs:\n${logs}`);
+      await stopGatewayContainer();
+      proxyServer.close();
+      defaultRuntime.exit(1);
+      return;
+    }
+
+    gatewayLog.info("Gateway container is ready and healthy");
+
+    // Set up graceful shutdown handlers
+    const shutdown = async () => {
+      gatewayLog.info("Shutting down secure gateway...");
+      try {
+        await stopGatewayContainer();
+        gatewayLog.info("Gateway container stopped");
+      } catch (err) {
+        gatewayLog.error(`Error stopping container: ${String(err)}`);
+      }
+      try {
+        proxyServer.close();
+        gatewayLog.info("Secrets proxy stopped");
+      } catch (err) {
+        gatewayLog.error(`Error stopping proxy: ${String(err)}`);
+      }
+      defaultRuntime.exit(0);
+    };
+
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+
+    gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
+
+    // P1 Fix: Monitor container health periodically
+    const healthCheckLoop = async () => {
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 10000)); // Check every 10s
+        const isRunning = await isGatewayContainerRunning();
+        if (!isRunning) {
+          gatewayLog.error("Gateway container stopped unexpectedly");
+          const logs = await getGatewayContainerLogs(50);
+          gatewayLog.error(`Final container logs:\n${logs}`);
+          await shutdown();
+          return;
+        }
+      }
+    };
+
+    // Run health check loop (non-blocking)
+    void healthCheckLoop();
+
+    // Keep process alive
+    await new Promise(() => {});
+    return;
+  }
+
+  try {
     await runGatewayLoop({
       runtime: defaultRuntime,
       lockPort: port,
@@ -570,29 +550,11 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
           tailscale: tailscaleOverride,
         }),
     });
-
-  try {
-    const supervisor = detectRespawnSupervisor(process.env);
-    while (true) {
-      try {
-        await startLoop();
-        break;
-      } catch (err) {
-        const isGatewayAlreadyRunning =
-          err instanceof GatewayLockError &&
-          typeof err.message === "string" &&
-          err.message.includes("gateway already running");
-        if (!supervisor || !isGatewayAlreadyRunning) {
-          throw err;
-        }
-        gatewayLog.warn(
-          `gateway already running under ${supervisor}; waiting ${SUPERVISED_GATEWAY_LOCK_RETRY_MS}ms before retrying startup`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, SUPERVISED_GATEWAY_LOCK_RETRY_MS));
-      }
-    }
   } catch (err) {
-    if (isGatewayLockError(err)) {
+    if (
+      err instanceof GatewayLockError ||
+      (err && typeof err === "object" && (err as { name?: string }).name === "GatewayLockError")
+    ) {
       const errMessage = describeUnknownError(err);
       defaultRuntime.error(
         `Gateway failed to start: ${errMessage}\nIf the gateway is supervised, stop it with: ${formatCliCommand("openclaw gateway stop")}`,
@@ -608,7 +570,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         // ignore diagnostics failures
       }
       await maybeExplainGatewayServiceStop();
-      defaultRuntime.exit(isHealthyGatewayLockError(err) ? 0 : 1);
+      defaultRuntime.exit(1);
       return;
     }
     defaultRuntime.error(`Gateway failed to start: ${String(err)}`);

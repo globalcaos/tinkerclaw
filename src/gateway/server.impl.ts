@@ -1,5 +1,6 @@
 import path from "node:path";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
+// FORK: Proactive OAuth refresh — keeps Claude subscription tokens fresh
 import {
   startProactiveOAuthRefresh,
   type ProactiveRefreshHandle,
@@ -859,6 +860,7 @@ export async function startGatewayServer(
   let heartbeatUnsub: (() => void) | null = null;
   let transcriptUnsub: (() => void) | null = null;
   let lifecycleUnsub: (() => void) | null = null;
+  let proactiveRefresh: ProactiveRefreshHandle | null = null;
   try {
     if (!minimalTestGateway) {
       const machineDisplayName = await getMachineDisplayName();
@@ -1037,131 +1039,22 @@ export async function startGatewayServer(
             { dropIfSlow: true },
           );
 
-  const lifecycleUnsub = minimalTestGateway
-    ? null
-    : onSessionLifecycleEvent((event) => {
-        const connIds = sessionEventSubscribers.getAll();
-        if (connIds.size === 0) {
-          return;
-        }
-        const sessionRow = loadGatewaySessionRow(event.sessionKey);
-        broadcastToConnIds(
-          "sessions.changed",
-          {
-            sessionKey: event.sessionKey,
-            reason: event.reason,
-            parentSessionKey: event.parentSessionKey,
-            label: event.label,
-            displayName: event.displayName,
-            ts: Date.now(),
-            ...(sessionRow
-              ? {
-                  updatedAt: sessionRow.updatedAt ?? undefined,
-                  sessionId: sessionRow.sessionId,
-                  kind: sessionRow.kind,
-                  channel: sessionRow.channel,
-                  label: event.label ?? sessionRow.label,
-                  displayName: event.displayName ?? sessionRow.displayName,
-                  deliveryContext: sessionRow.deliveryContext,
-                  parentSessionKey: event.parentSessionKey ?? sessionRow.parentSessionKey,
-                  childSessions: sessionRow.childSessions,
-                  thinkingLevel: sessionRow.thinkingLevel,
-                  systemSent: sessionRow.systemSent,
-                  abortedLastRun: sessionRow.abortedLastRun,
-                  lastChannel: sessionRow.lastChannel,
-                  lastTo: sessionRow.lastTo,
-                  lastAccountId: sessionRow.lastAccountId,
-                  totalTokens: sessionRow.totalTokens,
-                  totalTokensFresh: sessionRow.totalTokensFresh,
-                  contextTokens: sessionRow.contextTokens,
-                  estimatedCostUsd: sessionRow.estimatedCostUsd,
-                  modelProvider: sessionRow.modelProvider,
-                  model: sessionRow.model,
-                  status: sessionRow.status,
-                  startedAt: sessionRow.startedAt,
-                  endedAt: sessionRow.endedAt,
-                  runtimeMs: sessionRow.runtimeMs,
-                }
-              : {}),
-          },
-          connIds,
-          { dropIfSlow: true },
-        );
-      });
-
-  let heartbeatRunner: HeartbeatRunner = minimalTestGateway
-    ? {
-        stop: () => {},
-        updateConfig: () => {},
-      }
-    : startHeartbeatRunner({ cfg: cfgAtStart });
-
-  // FORK: Proactive OAuth refresh — keeps Claude subscription tokens fresh
-  // so the gateway never hits request-time refresh failures after sleep/reboot.
-  const proactiveRefresh: ProactiveRefreshHandle | null = minimalTestGateway
-    ? null
-    : startProactiveOAuthRefresh();
-
-  const healthCheckMinutes = cfgAtStart.gateway?.channelHealthCheckMinutes;
-  const healthCheckDisabled = healthCheckMinutes === 0;
-  const staleEventThresholdMinutes = cfgAtStart.gateway?.channelStaleEventThresholdMinutes;
-  const maxRestartsPerHour = cfgAtStart.gateway?.channelMaxRestartsPerHour;
-  let channelHealthMonitor = healthCheckDisabled
-    ? null
-    : startChannelHealthMonitor({
-        channelManager,
-        checkIntervalMs: (healthCheckMinutes ?? 5) * 60_000,
-        ...(staleEventThresholdMinutes != null && {
-          staleEventThresholdMs: staleEventThresholdMinutes * 60_000,
-        }),
-        ...(maxRestartsPerHour != null && { maxRestartsPerHour }),
-      });
-
-  if (!minimalTestGateway) {
-    void cron.start().catch((err) => logCron.error(`failed to start: ${String(err)}`));
-  }
-
-  const stopModelPricingRefresh =
-    !minimalTestGateway && process.env.VITEST !== "1"
-      ? startGatewayModelPricingRefresh({ config: cfgAtStart })
-      : () => {};
-
-  // Recover pending outbound deliveries from previous crash/restart.
-  if (!minimalTestGateway) {
-    void (async () => {
-      const { recoverPendingDeliveries } = await import("../infra/outbound/delivery-queue.js");
-      const { deliverOutboundPayloads } = await import("../infra/outbound/deliver.js");
-      const logRecovery = log.child("delivery-recovery");
-      await recoverPendingDeliveries({
-        deliver: deliverOutboundPayloads,
-        log: logRecovery,
-        cfg: cfgAtStart,
-      });
-    })().catch((err) => log.error(`Delivery recovery failed: ${String(err)}`));
-  }
-
-  const execApprovalManager = new ExecApprovalManager();
-  const execApprovalForwarder = createExecApprovalForwarder();
-  const execApprovalHandlers = createExecApprovalHandlers(execApprovalManager, {
-    forwarder: execApprovalForwarder,
-  });
-  const secretsHandlers = createSecretsHandlers({
-    reloadSecrets: async () => {
-      const active = getActiveSecretsRuntimeSnapshot();
-      if (!active) {
-        throw new Error("Secrets runtime snapshot is not active.");
-      }
-      const prepared = await activateRuntimeSecrets(active.sourceConfig, {
-        reason: "reload",
-        activate: true,
-      });
-      return { warningCount: prepared.warnings.length };
-    },
-    resolveSecrets: async ({ commandName, targetIds }) => {
-      const { assignments, diagnostics, inactiveRefPaths } =
-        resolveCommandSecretsFromActiveRuntimeSnapshot({
-          commandName,
-          targetIds: new Set(targetIds),
+          const sessionEventConnIds = sessionEventSubscribers.getAll();
+          if (sessionEventConnIds.size > 0) {
+            broadcastToConnIds(
+              "sessions.changed",
+              {
+                sessionKey,
+                phase: "message",
+                ts: Date.now(),
+                ...(typeof update.messageId === "string" ? { messageId: update.messageId } : {}),
+                ...(typeof messageSeq === "number" ? { messageSeq } : {}),
+                ...sessionSnapshot,
+              },
+              sessionEventConnIds,
+              { dropIfSlow: true },
+            );
+          }
         });
 
     lifecycleUnsub = minimalTestGateway
@@ -1239,6 +1132,10 @@ export async function startGatewayServer(
     if (!minimalTestGateway) {
       heartbeatRunner = startHeartbeatRunner({ cfg: cfgAtStart });
     }
+
+    // FORK: Proactive OAuth refresh — keeps Claude subscription tokens fresh
+    // so the gateway never hits request-time refresh failures after sleep/reboot.
+    proactiveRefresh = minimalTestGateway ? null : startProactiveOAuthRefresh();
 
     const healthCheckMinutes = cfgAtStart.gateway?.channelHealthCheckMinutes;
     const healthCheckDisabled = healthCheckMinutes === 0;
@@ -1625,7 +1522,7 @@ export async function startGatewayServer(
       browserAuthRateLimiter.dispose();
       stopModelPricingRefresh();
       channelHealthMonitor?.stop();
-      proactiveRefresh?.stop();
+      proactiveRefresh?.stop(); // FORK: stop proactive OAuth refresh
       clearSecretsRuntimeSnapshot();
       await close(opts);
     },

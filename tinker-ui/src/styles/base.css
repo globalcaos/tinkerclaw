@@ -1318,8 +1318,7 @@ body {
   transition: opacity 0.2s ease 0.15s;
 }
 #app.bottom-collapsed .context-timeline,
-#app.bottom-collapsed .bottom-right-panel,
-#app.bottom-collapsed .ct-legend-anchor {
+#app.bottom-collapsed .bottom-right-panel {
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
@@ -1435,15 +1434,18 @@ body {
   border: 1px solid #333;
 }
 .ct-legend-anchor {
-  /* Must sit in the same grid cell as .context-timeline (row 3, cols 1-2)
-     so it overlays the timeline without being clipped by #app overflow:hidden */
-  grid-column: 1 / 3;
-  grid-row: 3;
-  position: relative;
+  /* Sits inside .context-timeline (flex container). Sticky-right so it never
+     scrolls with the bars, but always aligns to the right edge of the panel. */
+  position: sticky;
+  right: 0;
+  top: 0;
+  flex-shrink: 0;
+  width: 0;
+  overflow: visible;
+  align-self: flex-start;
   pointer-events: none;
-  justify-self: end;
-  align-self: start;
   z-index: 20;
+  order: 9999;
 }
 .ct-legend {
   position: absolute;

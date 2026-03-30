@@ -29,7 +29,8 @@ import { createSessionsSendTool } from "./tools/sessions-send-tool.js";
 import { createSessionsSpawnTool } from "./tools/sessions-spawn-tool.js";
 import { createSessionsYieldTool } from "./tools/sessions-yield-tool.js";
 import { createSubagentsTool } from "./tools/subagents-tool.js";
-import { createSynapseDebateTool } from "./tools/synapse-tool.js"; // FORK: SYNAPSE multi-model debate
+// FORK: SYNAPSE disabled — upstream merge deleted synapse-runtime + persistent-deliberation modules
+// import { createSynapseDebateTool } from "./tools/synapse-tool.js";
 import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { createWhatsAppHistoryTool } from "./tools/whatsapp-history-tool.js"; // FORK: WhatsApp history search
@@ -261,7 +262,7 @@ export function createOpenClawTools(
     ...(imageTool ? [imageTool] : []),
     ...(pdfTool ? [pdfTool] : []),
     createWhatsAppHistoryTool(), // FORK: WhatsApp message history search/import
-    createSynapseDebateTool(), // FORK: SYNAPSE multi-model debate
+    // createSynapseDebateTool(), // FORK: SYNAPSE disabled — upstream merge deleted modules
   ];
 
   const pluginTools = resolvePluginTools({
