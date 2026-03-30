@@ -1,13 +1,13 @@
 /**
- * LIMBIC configuration constants — all tunable parameters from the plan.
+ * FORK: LIMBIC configuration constants -- all tunable parameters from the plan.
  */
 
 export const LIMBIC_CONFIG = {
   humorZone: {
-    distanceMin: 0.6, // δ_min
-    distanceMax: 0.95, // δ_max
-    validityThreshold: 0.15, // τ_v
-    surpriseThreshold: 0.3, // τ_σ
+    distanceMin: 0.6, // delta_min
+    distanceMax: 0.95, // delta_max
+    validityThreshold: 0.15, // tau_v
+    surpriseThreshold: 0.3, // tau_sigma
   },
   bridge: {
     surpriseK: 100, // k for reciprocal rank surprise

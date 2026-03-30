@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/computational-humor",
+  "version": "0.1.0",
+  "description": "LIMBIC — Humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture, and calibration.",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

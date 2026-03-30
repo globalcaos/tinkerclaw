@@ -1,21 +1,21 @@
 /**
- * LIMBIC Phase 6A: Humor Potential Function h_v2.
+ * FORK: LIMBIC Phase 6A: Humor Potential Function h_v2.
  *
- * h_v2(A, B, β) = d(A,B) · v(β,A,B) · σ(β|A,B)
+ * h_v2(A, B, beta) = d(A,B) * v(beta,A,B) * sigma(beta|A,B)
  *
  * Where:
  *   d(A,B) = cosine distance between concept embeddings A, B
- *   v(β,A,B) = min(cos(β,A), cos(β,B)) — bridge validity
- *   σ(β|A,B) = reciprocal-rank surprise of β in k-NN around midpoint(A,B)
+ *   v(beta,A,B) = min(cos(beta,A), cos(beta,B)) -- bridge validity
+ *   sigma(beta|A,B) = reciprocal-rank surprise of beta in k-NN around midpoint(A,B)
  *
- * Implements LIMBIC §3, §7.1.1.
+ * Implements LIMBIC section 3, section 7.1.1.
  */
 
 import { LIMBIC_CONFIG } from "./config.js";
 import { cosineDistance, cosineSimilarity, vectorMean } from "./vector-math.js";
 
 // ---------------------------------------------------------------------------
-// ANN Index interface — consumers provide their own implementation
+// ANN Index interface -- consumers provide their own implementation
 // ---------------------------------------------------------------------------
 
 export interface AnnIndex {
@@ -30,9 +30,9 @@ export interface AnnIndex {
 // ---------------------------------------------------------------------------
 
 /**
- * Compute bridge surprise: how unexpected is β as a bridge between A and B?
+ * Compute bridge surprise: how unexpected is beta as a bridge between A and B?
  * Uses reciprocal rank in the k-NN neighborhood of midpoint(A,B).
- * If β is not found in top-k, returns 1.0 (maximally surprising).
+ * If beta is not found in top-k, returns 1.0 (maximally surprising).
  */
 export function bridgeSurprise(
   bridge: number[],
@@ -50,7 +50,7 @@ export function bridgeSurprise(
       return rank / k;
     }
   }
-  return 1.0; // not in top-k → maximally surprising
+  return 1.0; // not in top-k -> maximally surprising
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ export function bridgeSurprise(
 /**
  * Compute the humor potential score h_v2 for a triplet (A, B, bridge).
  *
- * h_v2 = d(A,B) × v(β,A,B) × σ(β|A,B)
+ * h_v2 = d(A,B) * v(beta,A,B) * sigma(beta|A,B)
  */
 export function humorPotentialV2(
   A: number[],
@@ -75,7 +75,7 @@ export function humorPotentialV2(
 }
 
 /**
- * Bridge validity: min(cos(β,A), cos(β,B)).
+ * Bridge validity: min(cos(beta,A), cos(beta,B)).
  * Measures how well the bridge connects to both concepts.
  */
 export function bridgeValidity(bridge: number[], A: number[], B: number[]): number {

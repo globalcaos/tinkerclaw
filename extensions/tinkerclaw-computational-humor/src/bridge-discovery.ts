@@ -1,14 +1,14 @@
 /**
- * LIMBIC Phase 6C: Bridge Discovery Pipeline.
+ * FORK: LIMBIC Phase 6C: Bridge Discovery Pipeline.
  *
- * Cascading pipeline (LIMBIC §6.7):
- * 1. Midpoint search (embedding arithmetic) — fast
- * 2. Analogy completion — fast
- * 3. Conceptual blending — fast
- * 4. Graph traversal (placeholder) — medium
- * 5. LLM-guided generate-then-score — slow fallback
+ * Cascading pipeline (LIMBIC section 6.7):
+ * 1. Midpoint search (embedding arithmetic) -- fast
+ * 2. Analogy completion -- fast
+ * 3. Conceptual blending -- fast
+ * 4. Graph traversal (placeholder) -- medium
+ * 5. LLM-guided generate-then-score -- slow fallback
  *
- * Quality filter: q(β,A,B) = v(β,A,B) · σ(β|A,B) > q_min
+ * Quality filter: q(beta,A,B) = v(beta,A,B) * sigma(beta|A,B) > q_min
  */
 
 import { LIMBIC_CONFIG } from "./config.js";
@@ -23,7 +23,7 @@ export interface BridgeCandidate {
   id: string;
   vector: number[];
   method: BridgeMethod;
-  quality: number; // v × σ
+  quality: number; // v * sigma
 }
 
 export type BridgeMethod = "midpoint" | "analogy" | "blending" | "graph_traversal" | "llm_guided";
@@ -39,7 +39,7 @@ export type LlmBridgeGenerator = (
 // ---------------------------------------------------------------------------
 
 /**
- * Method 1: Midpoint search — find concepts near the midpoint of A and B.
+ * Method 1: Midpoint search -- find concepts near the midpoint of A and B.
  */
 export function midpointSearch(
   A: number[],
@@ -58,7 +58,7 @@ export function midpointSearch(
 }
 
 /**
- * Method 2: Analogy completion — A is to X as B is to ? (vector arithmetic).
+ * Method 2: Analogy completion -- A is to X as B is to ? (vector arithmetic).
  * Finds bridges by computing A - mean(A,B) + B and searching near that.
  */
 export function analogySearch(
@@ -67,7 +67,6 @@ export function analogySearch(
   index: AnnIndex,
   topN = 10,
 ): BridgeCandidate[] {
-  // Analogy: find concept that relates to A the way B's context suggests
   const offset = vectorSub(A, B);
   const target = normalize(
     vectorAdd(
@@ -85,7 +84,7 @@ export function analogySearch(
 }
 
 /**
- * Method 3: Conceptual blending — search orthogonal to the A-B axis.
+ * Method 3: Conceptual blending -- search orthogonal to the A-B axis.
  * Finds equidistant concepts that are off the direct line between A and B.
  */
 export function blendingSearch(
@@ -95,16 +94,13 @@ export function blendingSearch(
   topN = 10,
 ): BridgeCandidate[] {
   const mid = vectorMean(A, B);
-  // Perturb midpoint slightly to get off-axis results
   const perturbations: BridgeCandidate[] = [];
   const axis = vectorSub(A, B);
   const axisNorm = normalize(axis);
 
-  // Create orthogonal perturbation by zeroing out axis component from mid
   const projection = axisNorm.map((v) => v * axisNorm.reduce((s, x, i) => s + x * mid[i], 0));
   const orthogonal = normalize(vectorSub(mid, projection));
 
-  // Search near the orthogonal direction from midpoint
   const searchPoint = normalize(
     vectorAdd(
       mid,
@@ -126,7 +122,7 @@ export function blendingSearch(
 /**
  * Method 4: Graph traversal (placeholder).
  * In a full implementation, this would walk a concept graph.
- * Currently returns empty — acts as a no-op in the cascade.
+ * Currently returns empty -- acts as a no-op in the cascade.
  */
 export function graphTraversalSearch(
   _A: number[],
@@ -134,7 +130,6 @@ export function graphTraversalSearch(
   _index: AnnIndex,
   _topN = 10,
 ): BridgeCandidate[] {
-  // Placeholder: real implementation would use a concept graph (e.g., ConceptNet)
   return [];
 }
 
