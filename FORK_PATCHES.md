@@ -6,6 +6,17 @@ and how to handle them during upstream merges.
 For detailed patch descriptions, guard strings, and post-merge checklists,
 see `~/.openclaw/fork-scripts/FORK_PATCHES.md` (the comprehensive reference).
 
+## Resolution Cascade (6 layers)
+
+When a conflict occurs during upstream merge, it passes through these resolvers in order:
+
+1. **TIER1 merge driver** — `.gitattributes` routes TIER1 files to `tier1-driver.sh` (accept upstream + re-wire)
+2. **Git rerere** — auto-applies recorded resolutions from past merges (168 cached as of 2026-03-28)
+3. **PRESERVE paths** — `merge-upstream.sh` keeps `--ours` for fork-only directories
+4. **Mergiraf** — syntax-aware merge for TS/JS files (NOT INSTALLED: no cargo, no binary available)
+5. **Wiring script** — `apply-fork-wiring.mjs` re-applies fork hooks post-merge
+6. **LLM agent** — cron agent (opus, 60min) resolves remaining conflicts
+
 ## Post-Modularization Audit (2026-03-28)
 
 | Metric | Count | Notes |
