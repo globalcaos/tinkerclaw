@@ -624,6 +624,7 @@ export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string)
   } satisfies AuthProfileStore;
   saveJsonFile(authPath, payload);
   writeCachedAuthProfileStore(authPath, readAuthStoreMtimeMs(authPath), payload);
+  const runtimeKey = resolveRuntimeStoreKey(agentDir);
   if (runtimeAuthStoreSnapshots.has(runtimeKey)) {
     runtimeAuthStoreSnapshots.set(runtimeKey, cloneAuthProfileStore(payload));
   }
