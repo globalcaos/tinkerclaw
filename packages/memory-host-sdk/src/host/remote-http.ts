@@ -1,6 +1,5 @@
-// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
-import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
-import type { SsrFPolicy } from "../infra/net/ssrf.js";
+import { fetchWithSsrFGuard } from "../../../../src/infra/net/fetch-guard.js";
+import type { SsrFPolicy } from "../../../../src/infra/net/ssrf.js";
 
 export function buildRemoteBaseUrlPolicy(baseUrl: string): SsrFPolicy | undefined {
   const trimmed = baseUrl.trim();
