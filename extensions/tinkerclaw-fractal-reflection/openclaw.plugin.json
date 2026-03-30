@@ -1,0 +1,13 @@
+{
+  "id": "tinkerclaw-fractal-reflection",
+  "name": "Fractal Reflection",
+  "description": "Post-turn self-reflection with 4-level framework. The agent reflects on what it did, finds patterns, and improves.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "debounceMs": { "type": "number", "default": 30000, "description": "Minimum ms between reflections per session" },
+      "enabled": { "type": "boolean", "default": true }
+    }
+  }
+}
