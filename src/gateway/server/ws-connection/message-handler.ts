@@ -551,16 +551,10 @@ export function attachGatewayWsMessageHandler(params: {
           // Shared token/password auth can bypass pairing for trusted operators.
           // Device-less clients only keep self-declared scopes on the explicit
           // allow path, including trusted token-authenticated backend operators.
-          if (
-            !device &&
-            shouldClearUnboundScopesForMissingDeviceIdentity({
-              decision,
-              controlUiAuthPolicy,
-              preserveInsecureLocalControlUiScopes,
-              authMethod,
-              trustedProxyAuthOk,
-            })
-          ) {
+          // FORK: preserve scopes for all authenticated operators (webchat + control-ui).
+          // Upstream clears scopes for device-less clients, but Tinker UI is a trusted
+          // local operator authenticated via token — it needs operator.admin scopes.
+          if (!device && decision.kind !== "allow" && !authOk) {
             clearUnboundScopes();
           }
           if (decision.kind === "allow") {
