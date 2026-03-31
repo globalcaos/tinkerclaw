@@ -77,8 +77,8 @@ A stale reference, outdated instruction, missing entry, better default?
 
 ## Rules
 
-- **Always respond.** Never NO_REPLY. Even "nothing to reflect on" is a valid (if lazy) answer.
+- **START your response with `🌿 FRACTAL:` followed by a one-line summary.** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat.
+- **Always respond.** Never NO_REPLY. Even "🌿 FRACTAL: nothing to reflect on" is a valid (if lazy) answer.
 - **ACT before explaining.** If you see something to fix, make the edit, then mention it.
 - **Brief.** 3-10 sentences total. This is a reflection, not an essay.
 - **If you write "should" or "would" and the action is within your power — that's a bug.** Convert it to a tool call.
-- **Use 🌿 FRACTAL prefix** for pattern observations so they render distinctly.
