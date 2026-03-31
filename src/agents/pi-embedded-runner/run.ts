@@ -108,19 +108,17 @@ type RuntimeAuthState = {
 const RUNTIME_AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const RUNTIME_AUTH_REFRESH_RETRY_MS = 60 * 1000;
 const RUNTIME_AUTH_REFRESH_MIN_DELAY_MS = 5 * 1000;
-// FORK: Claude Code-style patience for overload retries — Anthropic deprioritises
-// third-party OAuth clients, so transient 529s are common during peak load.
-// With factor 2.0 the sequence is ~1000 → 2000 → 4000 → 8000 → 16000 → 30000
-// (6 attempts, ~61s total) before falling through to model fallback.
-// This matches Claude Code's behavior: wait longer, retry the SAME provider,
-// because switching to a weaker fallback during a transient overload is worse
-// than waiting 30s for the primary to recover.
-const OVERLOAD_FAILOVER_BACKOFF_POLICY: BackoffPolicy = {
-  initialMs: 1_000,
-  maxMs: 30_000,
-  factor: 2.0,
-  jitter: 0.3,
-};
+// FORK: Aggressive overload retry — spam Anthropic with short delays.
+// 10x 1s, then 5x 2s, then 5x escalating 3-8s. Total ~20 attempts, ~45s.
+// Transient 529s usually clear within 10-15s. Don't give up early.
+function overloadDelayMs(attempt: number): number {
+  if (attempt <= 10) return 1_000;
+  if (attempt <= 15) return 2_000;
+  // Attempts 16-20: 3s, 4s, 5s, 6s, 8s
+  const escalation = [3_000, 4_000, 5_000, 6_000, 8_000];
+  return escalation[Math.min(attempt - 16, escalation.length - 1)] ?? 8_000;
+}
+const MAX_OVERLOAD_RETRIES = 20;
 
 // Avoid Anthropic's refusal test token poisoning session transcripts.
 const ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL = "ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL";
@@ -1356,10 +1354,10 @@ export async function runEmbeddedPiAgent(
             // to a weaker fallback provider. Retry up to 15 times with increasing delay.
             if (promptFailoverReason === "overloaded") {
               overloadFailoverAttempts += 1;
-              if (overloadFailoverAttempts <= 15) {
-                const delayMs = computeBackoff(OVERLOAD_FAILOVER_BACKOFF_POLICY, overloadFailoverAttempts);
+              if (overloadFailoverAttempts <= MAX_OVERLOAD_RETRIES) {
+                const delayMs = overloadDelayMs(overloadFailoverAttempts);
                 log.warn(
-                  `overload retry ${overloadFailoverAttempts}/15 for ${provider}/${modelId}: waiting ${delayMs}ms`,
+                  `overload retry ${overloadFailoverAttempts}/${MAX_OVERLOAD_RETRIES} for ${provider}/${modelId}: waiting ${delayMs}ms`,
                 );
                 try {
                   await sleepWithAbort(delayMs, params.abortSignal);
@@ -1373,7 +1371,7 @@ export async function runEmbeddedPiAgent(
                 }
                 continue; // Retry the SAME model
               }
-              log.warn(`overload retry exhausted (15 attempts) for ${provider}/${modelId} — falling back`);
+              log.warn(`overload retry exhausted (${MAX_OVERLOAD_RETRIES} attempts) for ${provider}/${modelId} — falling back`);
             }
             // Throw FailoverError for prompt-side failover reasons when fallbacks
             // are configured so outer model fallback can continue on overload,
