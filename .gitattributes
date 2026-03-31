@@ -18,5 +18,7 @@ extensions/whatsapp/src/auto-reply/monitor/process-message.ts merge=tier1
 extensions/whatsapp/src/auto-reply/monitor.ts merge=tier1
 extensions/whatsapp/src/send.ts merge=tier1
 extensions/whatsapp/src/session.ts merge=tier1
+src/gateway/server-methods/config.ts merge=tier1
 tsdown.config.ts merge=tier1
+tsconfig.oxlint.json merge=tier1
 package.json merge=tier1
