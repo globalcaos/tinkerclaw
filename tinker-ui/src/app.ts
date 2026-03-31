@@ -2718,7 +2718,15 @@ function updateChat(skipScroll = false) {
         const c = Array.isArray(m.content) ? m.content : [];
         const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
-        if (hasText || plainText) assistantTextIndices.push(j);
+        if (!hasText && !plainText) continue;
+        // FORK: Fractal responses are NOT real assistant text — they render as
+        // their own collapsed block. Exclude them so the real answer before
+        // a fractal isn't demoted to "thinking".
+        const firstTextBlock = c.find((b: any) => b.type === "text" && b.text)?.text ?? (plainText || "");
+        if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) continue;
+        // FORK: Fractal prompts are hidden entirely — don't count them
+        if ((firstTextBlock as string).trimStart().startsWith("# FRACTAL REFLECTION")) continue;
+        assistantTextIndices.push(j);
       }
       // During streaming, render all bubbles as normal assistant (no thinking style).
       // After finalization, all except the last become thinking → reasoning group.
