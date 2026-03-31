@@ -116,25 +116,31 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
     return false;
   }
 
-  // Extract assistant texts from messages (if provided by agent_end event)
-  const assistantTexts: string[] = [];
+  // Extract the LAST assistant message only (not full history — checking all
+  // messages causes permanent self-detection block when any prior turn had 🌿)
+  let fullResponse = "";
   if (messages) {
-    for (const msg of messages) {
+    for (let i = (messages as unknown[]).length - 1; i >= 0; i--) {
+      const msg = (messages as unknown[])[i];
       if (!msg || typeof msg !== "object") continue;
       const m = msg as Record<string, unknown>;
       if (m.role !== "assistant") continue;
+      const texts: string[] = [];
       if (typeof m.content === "string") {
-        assistantTexts.push(m.content);
+        texts.push(m.content);
       } else if (Array.isArray(m.content)) {
         for (const block of m.content as Array<Record<string, unknown>>) {
           if (block.type === "text" && typeof block.text === "string") {
-            assistantTexts.push(block.text);
+            texts.push(block.text);
           }
         }
       }
+      if (texts.length > 0) {
+        fullResponse = texts.join("\n").trim();
+        break; // only the last assistant message
+      }
     }
   }
-  const fullResponse = assistantTexts.join("\n").trim();
 
   // Skip silent replies
   if (fullResponse === "NO_REPLY" || fullResponse === "HEARTBEAT_OK") {
@@ -157,13 +163,18 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
       if (!msg || typeof msg !== "object") continue;
       const m = msg as Record<string, unknown>;
       if (m.role !== "user") continue;
-      const userText = typeof m.content === "string"
-        ? m.content
-        : Array.isArray(m.content)
-          ? (m.content as Array<Record<string, unknown>>).find((b) => b.type === "text" && typeof b.text === "string")?.text as string ?? ""
-          : "";
+      const userText =
+        typeof m.content === "string"
+          ? m.content
+          : Array.isArray(m.content)
+            ? (((m.content as Array<Record<string, unknown>>).find(
+                (b) => b.type === "text" && typeof b.text === "string",
+              )?.text as string) ?? "")
+            : "";
       if (userText.trimStart().startsWith("# FRACTAL REFLECTION")) {
-        log.info("[fractal-reflection] skipped -- run was triggered by fractal prompt (loop prevention)");
+        log.info(
+          "[fractal-reflection] skipped -- run was triggered by fractal prompt (loop prevention)",
+        );
         return false;
       }
     }
