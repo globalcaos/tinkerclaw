@@ -1225,10 +1225,21 @@ function onEvent(evt: any) {
         }
       }
       if (p.state === "error" && p.errorMessage) {
+        const errText = p.errorMessage as string;
+        // FORK: Classify auto-recovering errors as orange warnings
+        const isAutoRecovering =
+          errText.includes("draining for restart") ||
+          errText.includes("overloaded") ||
+          errText.includes("temporarily unavailable") ||
+          errText.includes("HTTP 502") ||
+          errText.includes("HTTP 503") ||
+          errText.includes("HTTP 529");
+        // Clean up unhelpful CLI hints from webchat error messages
+        const cleanText = errText.replace(/\s*Logs:.*$/s, "").trim();
         const errMsg = {
           role: "assistant",
-          content: [{ type: "text", text: p.errorMessage }],
-          _isError: true,
+          content: [{ type: "text", text: cleanText }],
+          ...(isAutoRecovering ? { _isWarning: true } : { _isError: true }),
         };
         messages.push(errMsg);
         persistErrorMsg(sessionKey, errMsg);
