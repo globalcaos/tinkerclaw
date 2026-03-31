@@ -1447,7 +1447,7 @@ function onEvent(evt: any) {
       const fallbackMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: fallbackText }],
-        _isError: true,
+        _isWarning: true,
         _retryProvider: fp || undefined,
       };
       messages.push(fallbackMsg);
@@ -1485,7 +1485,7 @@ function onEvent(evt: any) {
       const profileMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: profileText }],
-        _isError: true,
+        _isWarning: true,
         _retryProvider: prov,
       };
       messages.push(profileMsg);
@@ -1886,7 +1886,7 @@ function retryProvider(provider: string) {
   streamMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
-  messages = messages.filter((m) => !(m._isError && m._retryProvider === provider));
+  messages = messages.filter((m) => !((m._isError || m._isWarning) && m._retryProvider === provider));
   clearPersistedErrors(sessionKey);
   // Find last user message and resend
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -2273,6 +2273,9 @@ function renderMsg(
         // Render as invisible div that preserves run boundary detection
         if (userText.startsWith("# FRACTAL REFLECTION")) {
           h += `<div class="fractal-boundary" style="display:none" data-msg-idx="${idx}"></div>`;
+        } else if (userText.startsWith("⚠️ Gateway restarted") || userText.startsWith("⚠ Gateway restarted")) {
+          // FORK: Gateway restart resume — orange centered bubble (not a user message)
+          h += `<div class="msg-overload-bubble">${md(userText)}</div>`;
         } else if (SYSTEM_INJECTED_RE.test(userText)) {
           // System-injected messages (runtime context, subagent results) → system style
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
@@ -2282,7 +2285,6 @@ function renderMsg(
       }
     } else if (role === "assistant") {
       const errorClass = msg._isError ? " msg-error" : "";
-      const overloadRetryClass = msg._isOverloadRetry ? (msg._isExhausted ? " msg-overload-exhausted" : " msg-overload-retry") : "";
       const retryBtn =
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
@@ -2291,6 +2293,11 @@ function renderMsg(
       // FORK: Overload retry messages — orange centered bubble
       if (msg._isOverloadRetry) {
         h += `<div class="msg-overload-bubble${msg._isExhausted ? " exhausted" : ""}">${md(text)}</div>`;
+        return h;
+      }
+      // FORK: Warning messages (fallback, profile rotation) — orange centered bubble
+      if (msg._isWarning) {
+        h += `<div class="msg-overload-bubble">${md(text)}</div>`;
         return h;
       }
       // FORK: Detect fractal reflection responses — collapsible green block
