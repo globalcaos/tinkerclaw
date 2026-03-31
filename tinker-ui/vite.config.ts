@@ -29,6 +29,9 @@ function tinkerDevConfig(): Plugin {
 export default defineConfig({
   root: ".",
   base: "/tinker/",
+  define: {
+    __BUNDLED_DEV__: "false", // Vite 8 requires this build-time constant
+  },
   plugins: [tinkerDevConfig()],
   server: {
     port: 18790,
