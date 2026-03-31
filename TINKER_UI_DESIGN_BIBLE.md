@@ -1578,4 +1578,39 @@ These are fork-exclusive backend systems that run server-side. They are not part
   - **Jarvis messages (left):** Agent responses, left-aligned. Fractal reflections collapsed green `<details>`.
   - **Orange centered bubbles (warnings):** Auto-recovering events the user doesn't need to act on. Includes: overload retries (`⏳ Overload retry 3/20 — waiting 1s`), model fallback (`⚠ model failed — jumping to backup`), profile rotation (`↳ model profile — reason`), gateway restart resume (`⚠️ Gateway restarted while processing`). CSS class: `.msg-overload-bubble`.
   - **Red centered bubbles (errors):** Blocking errors requiring user action. Includes: auth expired (needs re-auth via badge click), billing cap hit, all backups exhausted. CSS class: `.msg-error`. Only these should interrupt the user.
+  - **Auto-classified warnings:** Agent errors containing "draining for restart", "overloaded", "temporarily unavailable", "HTTP 502/503/529" are auto-classified as orange warnings (not red). CLI hints like "Logs: openclaw logs --follow" are stripped from webchat error messages.
   - **Design rule:** If the system can recover on its own, it's orange. If the user must do something, it's red.
+
+### 11.13 Session Resume System (2026-03-31)
+
+- **Status:** `DEPLOYED` (bug fix)
+- **What:** Session resume persists in-flight user messages before gateway restart and re-sends them after boot.
+- **How it works:**
+  1. `get-reply.ts` writes `session-resume.json` (v2 multi-session format) at the start of every reply
+  2. On successful completion, `clearSessionResume(sessionKey)` removes only that session's entry
+  3. On gateway boot, `server-startup.ts` reads resume file within 300s TTL and re-sends via `agentCommand`
+- **Bug fixed (2026-03-31):** `clearSessionResume()` was ignoring the `sessionKey` parameter and deleting the ENTIRE file. When Session A completed during drain while Session B was still in-flight, Session B's resume was destroyed. Now filters by sessionKey, keeping other sessions' entries intact.
+- **SIGUSR1 (graceful restart):** Drain waits 90s for tasks to complete. Completed tasks clear their resume. Only force-killed tasks (drain timeout) leave resume entries for the next boot.
+- **SIGTERM (full restart):** No drain — tasks killed immediately. Resume file survives and is consumed on next boot.
+- **Observable:** `[session-resume] resuming N interrupted session(s)` in gateway logs after boot.
+- **Files:** `src/infra/session-resume.ts`, `src/auto-reply/reply/get-reply.ts` (write/clear), `src/gateway/server-startup.ts` (consume)
+
+### 11.14 Fractal Loop Prevention (2026-03-31)
+
+- **Status:** `DEPLOYED` (bug fix)
+- **What:** Fractal fired 8+ times per user turn instead of once.
+- **Root cause:** Two bugs in `fractal-inject.ts`:
+  1. Content block extraction only handled `string` content, not `[{type:"text",text:"..."}]` arrays. The `🌿 FRACTAL:` self-detection got an empty string and never matched.
+  2. No check for whether the run was triggered BY a fractal prompt. The fractal response's `agent_end` event triggered another fractal.
+- **Fix:** Extract text from both string and array content formats. Check LAST assistant message only (not full history — prior turns with `🌿` would cause permanent block). Check user messages for `# FRACTAL REFLECTION` to detect prompt-triggered runs.
+- **Files:** `extensions/tinkerclaw-fractal-reflection/src/fractal-inject.ts`
+
+### 11.15 Overload Retry with UI Feedback (2026-03-31)
+
+- **Status:** `DEPLOYED`
+- **What:** Aggressive 529 overload retry with visible orange bubbles in Tinker UI.
+- **Retry schedule:** 10×1s, 5×2s, 5×escalating 3-8s (20 attempts, ~45s total before model fallback).
+- **Gateway events:** `overload-retry` and `overload-retry-exhausted` lifecycle events emitted on each attempt with attempt count, delay, provider, and model.
+- **UI rendering:** Orange centered bubbles: `⏳ Overload retry 3/20 for anthropic/claude-opus-4-6 — waiting 1s`. Red bubble when exhausted: `⚠ Overload: 20 retries exhausted — falling back`.
+- **Context:** Anthropic deprioritises third-party OAuth clients during peak load. Short retries on the same model are better than jumping to a weaker fallback provider.
+- **Files:** `src/agents/pi-embedded-runner/run.ts` (`overloadDelayMs`, `MAX_OVERLOAD_RETRIES`, event emission), `tinker-ui/src/app.ts` (bubble rendering), `tinker-ui/src/styles/base.css` (`.msg-overload-bubble`)
