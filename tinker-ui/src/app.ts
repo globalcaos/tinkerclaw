@@ -2370,6 +2370,15 @@ function renderMsg(
             ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
             : "";
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
+        // FORK: Overload retry + warning messages — orange centered bubble
+        if (msg._isOverloadRetry) {
+          h += `<div class="msg-overload-bubble${msg._isExhausted ? " exhausted" : ""}">${md(text)}</div>`;
+          return h;
+        }
+        if (msg._isWarning) {
+          h += `<div class="msg-overload-bubble">${md(text)}</div>`;
+          return h;
+        }
         // FORK: Detect fractal reflection responses — collapsible green block
         const isFractal2 = text.trimStart().startsWith("🌿 FRACTAL:");
         const fractalClass2 = isFractal2 ? " msg-fractal" : "";
