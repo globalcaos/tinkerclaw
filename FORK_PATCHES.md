@@ -54,8 +54,8 @@ These files are resolved with `--theirs` (accept upstream version), then
 | extensions/whatsapp/src/auto-reply/monitor/process-message.ts | patchProcessMessage | Thinking reaction + offline recovery hooks |
 | extensions/whatsapp/src/send.ts | patchOutbound | WhatsApp group/edit/delete/reply/sticker wrappers |
 | extensions/whatsapp/src/session.ts | patchWhatsAppSession | Baileys 515 error handling (credsSaveQueues) |
-| src/gateway/server/ws-connection/message-handler.ts | patchMessageHandlerScopes | Extension relay scopes |
-| tsdown.config.ts | patchTsdownConfig | Native addon externals (better-sqlite3, bindings) |
+| src/gateway/server/ws-connection/message-handler.ts | patchMessageHandlerScopes | Extension relay scopes — ⚠️ ALSO MANUAL: scope clearing policy for device-less auth (B014 #5) |
+| tsdown.config.ts | patchTsdownConfig | Native addon externals — ⚠️ `external` replaced by `deps.neverBundle` upstream (B014 #1) |
 | package.json | patchDevDeps | Fork dev dependencies |
 
 ## PRESERVE — Always Keep Fork Version
@@ -92,6 +92,8 @@ These files have fork patches that cannot be auto-applied by regex.
 | src/cli/daemon-cli/restart-health.ts | DEFAULT_RESTART_HEALTH_TIMEOUT_MS | 60s->10s health timeout |
 | src/agents/model-fallback.ts | billing gate | 4 FORK markers: billing gate, fallback notify, profileId tracking |
 | extensions/whatsapp/src/inbound/monitor.ts | whatsmeow | 5 FORK markers: whatsmeow backend, E164 group fix, triggerPrefix |
+| src/agents/auth-profiles/store.ts | resolveRuntimeStoreKey | runtimeKey must be declared — upstream assumes local var (B014 #2) |
+| tinker-ui/vite.config.ts | __BUNDLED_DEV__ | Vite 8 requires define: { __BUNDLED_DEV__: 'false' } (B014 #4) |
 
 ## IGNORE — Skip During Merge
 These files are generated or local-only.
