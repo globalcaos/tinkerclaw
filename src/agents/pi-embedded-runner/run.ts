@@ -108,15 +108,18 @@ type RuntimeAuthState = {
 const RUNTIME_AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const RUNTIME_AUTH_REFRESH_RETRY_MS = 60 * 1000;
 const RUNTIME_AUTH_REFRESH_MIN_DELAY_MS = 5 * 1000;
-// FORK: Increased patience for overload retries — Anthropic deprioritises
+// FORK: Claude Code-style patience for overload retries — Anthropic deprioritises
 // third-party OAuth clients, so transient 529s are common during peak load.
-// With factor 1.5 the sequence is ~300 → 450 → 675 → 1012 → 1518 → 2277 → 3000
-// (7 attempts, ~9s total) before falling through to model fallback.
+// With factor 2.0 the sequence is ~1000 → 2000 → 4000 → 8000 → 16000 → 30000
+// (6 attempts, ~61s total) before falling through to model fallback.
+// This matches Claude Code's behavior: wait longer, retry the SAME provider,
+// because switching to a weaker fallback during a transient overload is worse
+// than waiting 30s for the primary to recover.
 const OVERLOAD_FAILOVER_BACKOFF_POLICY: BackoffPolicy = {
-  initialMs: 300,
-  maxMs: 3_000,
-  factor: 1.5,
-  jitter: 0.25,
+  initialMs: 1_000,
+  maxMs: 30_000,
+  factor: 2.0,
+  jitter: 0.3,
 };
 
 // Avoid Anthropic's refusal test token poisoning session transcripts.
