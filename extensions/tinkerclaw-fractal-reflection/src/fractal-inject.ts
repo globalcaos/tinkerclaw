@@ -125,6 +125,12 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
       if (m.role !== "assistant") continue;
       if (typeof m.content === "string") {
         assistantTexts.push(m.content);
+      } else if (Array.isArray(m.content)) {
+        for (const block of m.content as Array<Record<string, unknown>>) {
+          if (block.type === "text" && typeof block.text === "string") {
+            assistantTexts.push(block.text);
+          }
+        }
       }
     }
   }
@@ -141,8 +147,26 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
     fullResponse.startsWith("\u{1F33F} FRACTAL:") ||
     (fullResponse.includes("\u{1F33F}") && fullResponse.includes("Level 2"))
   ) {
-    log.info("[fractal-reflection] skipped -- response contains fractal markers");
+    log.info("[fractal-reflection] skipped -- response contains fractal markers (self-detection)");
     return false;
+  }
+
+  // Skip if the run was triggered BY a fractal prompt (check user messages for the prompt)
+  if (messages) {
+    for (const msg of messages) {
+      if (!msg || typeof msg !== "object") continue;
+      const m = msg as Record<string, unknown>;
+      if (m.role !== "user") continue;
+      const userText = typeof m.content === "string"
+        ? m.content
+        : Array.isArray(m.content)
+          ? (m.content as Array<Record<string, unknown>>).find((b) => b.type === "text" && typeof b.text === "string")?.text as string ?? ""
+          : "";
+      if (userText.trimStart().startsWith("# FRACTAL REFLECTION")) {
+        log.info("[fractal-reflection] skipped -- run was triggered by fractal prompt (loop prevention)");
+        return false;
+      }
+    }
   }
 
   // Debounce
