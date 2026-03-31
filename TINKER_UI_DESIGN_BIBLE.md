@@ -1523,3 +1523,53 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Threshold:** 180 seconds (`STUCK_SESSION_RECOVERY_MS`). Gives legitimate long-running LLM calls (tool use, extended thinking) room to complete while preventing the 30-minute deadlocks.
 - **Observable:** Log line `[diagnostic] auto-recovered stuck session: sessionKey=... age=...s lane=... laneReset=true` confirms recovery happened.
 - **Files:** `src/process/command-queue.ts` (`resetCommandLane`), `src/logging/diagnostic.ts` (watchdog in heartbeat interval)
+
+### 11.10 Cognitive Extensions Modularization (2026-03-30)
+
+- **Status:** `DEPLOYED`
+- **What:** Extracted 7 cognitive subsystems from inline fork wiring into standalone OpenClaw extensions, installable on vanilla OpenClaw via ClawHub or manual drop-in.
+- **Extensions created:**
+  - `tinkerclaw-round-table` (SYNAPSE) — Multi-model debate via RAAC protocol. Registered as `synapse_debate` tool.
+  - `tinkerclaw-identity-persistence` (CORTEX) — Persona injection from SOUL.md, EWMA SyncScore drift detection, mid-context reinforcement, observation extraction. Hooks: `before_prompt_build` (priority 100), `llm_output`.
+  - `tinkerclaw-fractal-reflection` (FRACTAL) — Post-turn self-reflection with 4-level framework. Hook: `agent_end`. 30s debounce, skips automated sessions.
+  - `tinkerclaw-computational-humor` (LIMBIC) — Humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture. Reads Identity Persistence shared state for persona.humor calibration.
+  - `tinkerclaw-total-recall` (ENGRAM) — Episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation. Hooks: `before_prompt_build` (priority 50), `llm_output`, `before_compaction`. Recall tool + `engram.search` gateway method.
+  - `tinkerclaw-learned-intuition` (AMYGDALA) — Neural safety gate with ONNX graceful degradation (falls back to rule-based heuristics). Hook: `before_tool_call`. Writes personality nudge for Identity Persistence.
+  - `tinkerclaw-proactive-auth` — OAuth refresh via `gateway_start`/`gateway_stop` lifecycle hooks.
+- **Feature flags:** `fork.cognitive` config section gates each subsystem: `"inline"` (default), `"extension"`, or `"disabled"`. Instant rollback via `rollback-extension.sh <codename>`.
+- **Inter-extension communication:** Filesystem convention at `~/.openclaw/cognitive/` — each extension writes a JSON state file, others read it.
+- **Source deleted:** `src/memory/synapse/`, `src/memory/cortex/`, `src/memory/limbic/` removed. Upstream copies in `packages/memory-host-sdk/` untouched.
+- **Merge conflict surface reduction:** Cognitive files no longer in upstream's source tree. Extensions live in `extensions/tinkerclaw-*/` which upstream never touches.
+- **Tests:** 496 tests across 60 test files (scaffold, unit, registration, integration, cross-extension).
+
+### 11.11 Merge Automation Overhaul (2026-03-30)
+
+- **Status:** `DEPLOYED`
+- **What:** Fixed the daily merge pipeline from 29% success rate to automated operation with 6-layer conflict resolution.
+- **Pipeline fixes:**
+  - Tag-based incremental merge (next upstream tag, not HEAD)
+  - Untracked file collision pre-scan + auto-track
+  - Build-failure rollback (`git reset --hard` to pre-merge HEAD)
+  - Death spiral breaker (progressive strategy: 5→20→50→100 conflict threshold based on consecutive failures)
+  - Guardian baseline comparison (only escalate NEW issues, not pre-existing drift)
+  - Path migration detection (`detect-path-migrations.sh`)
+  - Drift alarm (WhatsApp alert after 3+ consecutive failures)
+  - Agent timeout increased to 60min with opus model
+- **6-layer conflict resolution cascade:** TIER1 merge driver (.gitattributes) → git rerere (168 cached resolutions) → PRESERVE paths (--ours) → wiring script (apply-fork-wiring.mjs) → LLM agent (opus, 60min)
+- **FORK_PATCHES.md:** Dynamic patch registry (TIER1/PRESERVE/MANUAL/IGNORE sections). Single source of truth for merge automation paths.
+- **Post-build verification:** `scripts/verify-build.sh` checks dist/ artifact completeness. Wired into safe-cron-merge.sh with auto-fix fallback.
+- **Files:** `safe-cron-merge.sh`, `merge-upstream.sh`, `merge-guardian.sh`, `detect-path-migrations.sh`, `verify-tinkerclaw-extensions.sh`, `rollback-extension.sh`, `FORK_PATCHES.md`, `.gitattributes`, `scripts/merge-drivers/tier1-driver.sh`
+
+### 11.12 Post-Merge Fixes (2026-03-30/31)
+
+- **Status:** `DEPLOYED`
+- **What:** 6 breakages from the 185-commit upstream merge, each fixed:
+  1. **`tsdown external` deprecated** — upstream replaced `external` with `deps.neverBundle`; removed fork's `external` field (redundant).
+  2. **`runtimeKey` ReferenceError** — upstream added runtime snapshot update code in `saveAuthProfileStore()` referencing undeclared variable. Fix: `const runtimeKey = resolveRuntimeStoreKey(agentDir)`.
+  3. **`__BUNDLED_DEV__` undefined** — Vite 8 requires build-time constant. Fix: `define: { __BUNDLED_DEV__: "false" }` in `tinker-ui/vite.config.ts`.
+  4. **WebSocket scope clearing** — upstream's device identity model strips scopes from token-authenticated clients. Fix: preserve scopes when `authOk` is true (local trusted operators). **Less safe than upstream** — acceptable for local-only deployment with `dangerouslyDisableDeviceAuth: true`.
+  5. **Origin validation** — upstream added `gateway.controlUi.allowedOrigins`. Fix: added `http://localhost:18790` (Vite dev server).
+  6. **Exec approval + allowlist** — upstream added exec approval system. Fix: `tools.exec.ask: "off"`, `tools.exec.security: "full"`, `tools.exec.applyPatch.workspaceOnly: false`.
+- **Auth re-auth UI:** Restored popover with 3 options: "Reload from disk" (`auth.reload` RPC), "Paste token" (new `auth.applyToken` RPC), "Re-authenticate" (OAuth popup). Files: `tinker-ui/src/app.ts`, `extensions/auth-reload/index.ts`.
+- **Overload retry:** Aggressive 529 retry — 10×1s, 5×2s, 5×3-8s (20 attempts, ~45s) before model fallback. Old behavior: immediate fallback after 1 attempt.
+- **Fractal rendering:** Excluded fractal responses from `thinkingSet` classification (prevents real answer from collapsing). Made `🌿 FRACTAL:` prefix mandatory in prompt. Summary extraction from prefix line (not just Level 2 match).
