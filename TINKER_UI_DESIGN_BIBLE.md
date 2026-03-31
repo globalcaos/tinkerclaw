@@ -1571,5 +1571,11 @@ These are fork-exclusive backend systems that run server-side. They are not part
   5. **Origin validation** — upstream added `gateway.controlUi.allowedOrigins`. Fix: added `http://localhost:18790` (Vite dev server).
   6. **Exec approval + allowlist** — upstream added exec approval system. Fix: `tools.exec.ask: "off"`, `tools.exec.security: "full"`, `tools.exec.applyPatch.workspaceOnly: false`.
 - **Auth re-auth UI:** Restored popover with 3 options: "Reload from disk" (`auth.reload` RPC), "Paste token" (new `auth.applyToken` RPC), "Re-authenticate" (OAuth popup). Files: `tinker-ui/src/app.ts`, `extensions/auth-reload/index.ts`.
-- **Overload retry:** Aggressive 529 retry — 10×1s, 5×2s, 5×3-8s (20 attempts, ~45s) before model fallback. Old behavior: immediate fallback after 1 attempt.
+- **Overload retry:** Aggressive 529 retry — 10×1s, 5×2s, 5×3-8s (20 attempts, ~45s) before model fallback. Old behavior: immediate fallback after 1 attempt. Each retry emits an `overload-retry` lifecycle event for the UI.
 - **Fractal rendering:** Excluded fractal responses from `thinkingSet` classification (prevents real answer from collapsing). Made `🌿 FRACTAL:` prefix mandatory in prompt. Summary extraction from prefix line (not just Level 2 match).
+- **Message color hierarchy (2026-03-31):**
+  - **User messages (right):** Normal chat input, right-aligned.
+  - **Jarvis messages (left):** Agent responses, left-aligned. Fractal reflections collapsed green `<details>`.
+  - **Orange centered bubbles (warnings):** Auto-recovering events the user doesn't need to act on. Includes: overload retries (`⏳ Overload retry 3/20 — waiting 1s`), model fallback (`⚠ model failed — jumping to backup`), profile rotation (`↳ model profile — reason`), gateway restart resume (`⚠️ Gateway restarted while processing`). CSS class: `.msg-overload-bubble`.
+  - **Red centered bubbles (errors):** Blocking errors requiring user action. Includes: auth expired (needs re-auth via badge click), billing cap hit, all backups exhausted. CSS class: `.msg-error`. Only these should interrupt the user.
+  - **Design rule:** If the system can recover on its own, it's orange. If the user must do something, it's red.
