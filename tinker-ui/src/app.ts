@@ -2277,9 +2277,10 @@ function renderMsg(
         return h;
       }
       if (isFractal) {
-        // Extract first Level 2 line as summary preview
+        // Extract summary: first try the 🌿 FRACTAL: prefix line, then Level 2, then fallback
+        const fractalLineMatch = text.match(/^🌿\s*FRACTAL:\s*(.{0,120})/m);
         const lvl2Match = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
-        const preview = lvl2Match?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
+        const preview = (fractalLineMatch?.[1] || lvl2Match?.[1] || "reflection").replace(/[*_#`]/g, "").trim() || "reflection";
         // Check if this fractal took action (tool calls in surrounding messages)
         const hasAction = content.some(
           (b: any) => b.type === "tool_use" || b.type === "tool_result",
@@ -2345,8 +2346,9 @@ function renderMsg(
           return h;
         }
         if (isFractal2) {
+          const fractalLineMatch2 = text.match(/^🌿\s*FRACTAL:\s*(.{0,120})/m);
           const lvl2Match2 = text.match(/Level 2[:\s]*["""]?\s*(.{0,120})/);
-          const preview2 = lvl2Match2?.[1]?.replace(/[*_#`]/g, "").trim() || "reflection";
+          const preview2 = (fractalLineMatch2?.[1] || lvl2Match2?.[1] || "reflection").replace(/[*_#`]/g, "").trim() || "reflection";
           const hasAction2 = content.some(
             (b: any) => b.type === "tool_use" || b.type === "tool_result",
           );
