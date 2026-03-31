@@ -1492,6 +1492,26 @@ function onEvent(evt: any) {
       persistErrorMsg(sessionKey, profileMsg);
       updateChat();
     }
+    // FORK: Overload retry events — show orange bubble with attempt/delay info
+    if (
+      p?.stream === "lifecycle" &&
+      (p.data?.phase === "overload-retry" || p.data?.phase === "overload-retry-exhausted") &&
+      (!p.data.sessionKey || sessionKeyMatches(p.data.sessionKey))
+    ) {
+      const d = p.data;
+      const isExhausted = d.phase === "overload-retry-exhausted";
+      const text = isExhausted
+        ? `⚠ Overload: ${d.attempts} retries exhausted for ${d.provider}/${d.model} — falling back`
+        : `⏳ Overload retry ${d.attempt}/${d.maxAttempts} for ${d.provider}/${d.model} — waiting ${(d.delayMs / 1000).toFixed(0)}s`;
+      const retryMsg: any = {
+        role: "assistant",
+        content: [{ type: "text", text }],
+        _isOverloadRetry: true,
+        _isExhausted: isExhausted,
+      };
+      messages.push(retryMsg);
+      updateChat();
+    }
     // Overseer periodic chat updates
     // FORK: Only show overseer updates for the active session
     if (
@@ -2262,11 +2282,17 @@ function renderMsg(
       }
     } else if (role === "assistant") {
       const errorClass = msg._isError ? " msg-error" : "";
+      const overloadRetryClass = msg._isOverloadRetry ? (msg._isExhausted ? " msg-overload-exhausted" : " msg-overload-retry") : "";
       const retryBtn =
         msg._isError && msg._retryProvider
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
       const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
+      // FORK: Overload retry messages — orange centered bubble
+      if (msg._isOverloadRetry) {
+        h += `<div class="msg-overload-bubble${msg._isExhausted ? " exhausted" : ""}">${md(text)}</div>`;
+        return h;
+      }
       // FORK: Detect fractal reflection responses — collapsible green block
       const isFractal = text.trimStart().startsWith("🌿 FRACTAL:");
       const fractalClass = isFractal ? " msg-fractal" : "";

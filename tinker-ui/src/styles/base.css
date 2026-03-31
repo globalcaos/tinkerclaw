@@ -587,6 +587,24 @@ body {
   position: relative;
   align-self: center;
 }
+/* FORK: Overload retry orange bubbles — centered, compact */
+.msg-overload-bubble {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+  font-size: 0.82em;
+  padding: 4px 14px;
+  border-radius: 12px;
+  text-align: center;
+  align-self: center;
+  max-width: 80%;
+  margin: 2px auto;
+}
+.msg-overload-bubble.exhausted {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
 .msg.msg-fractal {
   background: rgba(107, 142, 35, 0.1);
   border: 1px solid rgba(107, 142, 35, 0.25);
