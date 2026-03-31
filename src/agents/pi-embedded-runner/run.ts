@@ -1359,6 +1359,21 @@ export async function runEmbeddedPiAgent(
                 log.warn(
                   `overload retry ${overloadFailoverAttempts}/${MAX_OVERLOAD_RETRIES} for ${provider}/${modelId}: waiting ${delayMs}ms`,
                 );
+                // FORK: emit retry event so Tinker UI can show orange bubble
+                emitAgentEvent({
+                  runId: params.runId,
+                  sessionKey: params.sessionKey,
+                  stream: "lifecycle",
+                  data: {
+                    phase: "overload-retry",
+                    attempt: overloadFailoverAttempts,
+                    maxAttempts: MAX_OVERLOAD_RETRIES,
+                    delayMs,
+                    provider,
+                    model: modelId,
+                    reason: errorText?.slice(0, 200) ?? "overloaded",
+                  },
+                });
                 try {
                   await sleepWithAbort(delayMs, params.abortSignal);
                 } catch (err) {
@@ -1372,6 +1387,17 @@ export async function runEmbeddedPiAgent(
                 continue; // Retry the SAME model
               }
               log.warn(`overload retry exhausted (${MAX_OVERLOAD_RETRIES} attempts) for ${provider}/${modelId} — falling back`);
+                emitAgentEvent({
+                  runId: params.runId,
+                  sessionKey: params.sessionKey,
+                  stream: "lifecycle",
+                  data: {
+                    phase: "overload-retry-exhausted",
+                    attempts: MAX_OVERLOAD_RETRIES,
+                    provider,
+                    model: modelId,
+                  },
+                });
             }
             // Throw FailoverError for prompt-side failover reasons when fallbacks
             // are configured so outer model fallback can continue on overload,
