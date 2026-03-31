@@ -157,7 +157,7 @@ export async function processGatewayAllowlist(
     }) ||
     requiresHeredocApproval ||
     requiresInlineEvalApproval ||
-    obfuscation.detected;
+    (obfuscation.detected && !(hostSecurity === "full" && hostAsk === "off"));
   if (requiresHeredocApproval) {
     params.warnings.push(
       "Warning: heredoc execution requires explicit approval in allowlist mode.",

@@ -78,11 +78,39 @@ export async function writeSessionResume(
 }
 
 export async function clearSessionResume(
-  _sessionKey?: string,
+  sessionKey?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const filePath = resolveSessionResumePath(env);
-  await fs.unlink(filePath).catch(() => {});
+
+  // If no sessionKey specified, remove the entire file (legacy behavior)
+  if (!sessionKey) {
+    await fs.unlink(filePath).catch(() => {});
+    return;
+  }
+
+  // Remove only the entry for this sessionKey; keep other sessions' entries.
+  // This prevents a completed session from wiping another in-flight session's resume.
+  try {
+    const raw = await fs.readFile(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed?.version === 2 && Array.isArray(parsed.entries)) {
+      const remaining = (parsed.entries as SessionResumePayload[]).filter(
+        (e) => e.sessionKey !== sessionKey,
+      );
+      if (remaining.length === 0) {
+        await fs.unlink(filePath).catch(() => {});
+      } else {
+        const data: SessionResumeMulti = { version: 2, entries: remaining };
+        await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+      }
+    } else {
+      // v1 or unknown format — just remove the whole file
+      await fs.unlink(filePath).catch(() => {});
+    }
+  } catch {
+    // File doesn't exist or is corrupt — nothing to clear
+  }
 }
 
 /**
