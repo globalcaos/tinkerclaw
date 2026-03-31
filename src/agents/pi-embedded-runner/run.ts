@@ -1351,33 +1351,36 @@ export async function runEmbeddedPiAgent(
               thinkLevel = fallbackThinking;
               continue;
             }
+            // FORK: Retry overloaded errors on the SAME model before falling back.
+            // Anthropic 529s are transient — waiting 1-30s is better than jumping
+            // to a weaker fallback provider. Retry up to 15 times with increasing delay.
+            if (promptFailoverReason === "overloaded") {
+              overloadFailoverAttempts += 1;
+              if (overloadFailoverAttempts <= 15) {
+                const delayMs = computeBackoff(OVERLOAD_FAILOVER_BACKOFF_POLICY, overloadFailoverAttempts);
+                log.warn(
+                  `overload retry ${overloadFailoverAttempts}/15 for ${provider}/${modelId}: waiting ${delayMs}ms`,
+                );
+                try {
+                  await sleepWithAbort(delayMs, params.abortSignal);
+                } catch (err) {
+                  if (params.abortSignal?.aborted) {
+                    const abortErr = new Error("Operation aborted", { cause: err });
+                    abortErr.name = "AbortError";
+                    throw abortErr;
+                  }
+                  throw err;
+                }
+                continue; // Retry the SAME model
+              }
+              log.warn(`overload retry exhausted (15 attempts) for ${provider}/${modelId} — falling back`);
+            }
             // Throw FailoverError for prompt-side failover reasons when fallbacks
             // are configured so outer model fallback can continue on overload,
             // rate-limit, auth, or billing failures.
             if (fallbackConfigured && promptFailoverFailure) {
               const status = resolveFailoverStatus(promptFailoverReason ?? "unknown");
               logPromptFailoverDecision("fallback_model", { status });
-              // FORK: emit per-profile fallback error for overloaded — skips profile rotation
-              // so the rotation-block emit above never fires. Other reasons already emitted there.
-              if (promptFailoverReason === "overloaded") {
-                emitAgentEvent({
-                  runId: params.runId,
-                  sessionKey: params.sessionKey,
-                  stream: "lifecycle",
-                  data: {
-                    phase: "fallback-profile-error",
-                    profileId: profileCandidates[profileIndex],
-                    profileIndex,
-                    totalProfiles: profileCandidates.length,
-                    provider,
-                    model: modelId,
-                    reason: promptFailoverReason,
-                    error: errorText,
-                  },
-                });
-              }
-              // Skip backoff for overloaded: we're already leaving the provider,
-              // adding delay only slows the fallback to qwen3/next model.
               if (promptFailoverReason !== "overloaded") {
                 await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
               }
