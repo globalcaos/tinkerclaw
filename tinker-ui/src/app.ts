@@ -1422,8 +1422,13 @@ function onEvent(evt: any) {
     }
   }
   // FORK: Prefrontal call tree update — broadcast from the prefrontal extension every ~5s
-  if (evt.event === "prefrontal-tree") {
-    const tree = evt.payload?.data as TreeResponse | undefined;
+  // Arrives as agent event with phase "prefrontal-tree" (uses the agent broadcast stream)
+  if (
+    evt.event === "agent" &&
+    evt.payload?.stream === "lifecycle" &&
+    evt.payload?.data?.phase === "prefrontal-tree"
+  ) {
+    const tree = evt.payload.data.tree as TreeResponse | undefined;
     if (tree && prefrontalCtrl) {
       prefrontalCtrl.update(tree);
     }
