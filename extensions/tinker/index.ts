@@ -221,6 +221,17 @@ const plugin = {
 
         // --- Context Anatomy API (proxied through /tinker/api/context-anatomy/) ---
         if (pathname.startsWith(`${PREFIX}/api/context-anatomy/`)) {
+          // Handle CORS preflight
+          if (req.method === "OPTIONS") {
+            res.writeHead(204, {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET, OPTIONS",
+              "Access-Control-Allow-Headers": "Content-Type, Authorization",
+              "Access-Control-Max-Age": "86400",
+            });
+            res.end();
+            return true;
+          }
           const anatomyDb = getAnatomyDb();
           const jsonHeaders = {
             "Content-Type": "application/json",
