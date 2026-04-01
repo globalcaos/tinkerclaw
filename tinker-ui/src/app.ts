@@ -1017,9 +1017,6 @@ function onEvent(evt: any) {
 
   if (evt.event === "agent") {
     const p = evt.payload;
-    if (p?.data?.phase === "prefrontal-tree") {
-      console.log("[prefrontal-ui] INSIDE agent block, got prefrontal-tree phase");
-    }
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
@@ -1431,15 +1428,8 @@ function onEvent(evt: any) {
     evt.payload?.stream === "lifecycle" &&
     evt.payload?.data?.phase === "prefrontal-tree"
   ) {
-    console.log("[prefrontal-ui] tree event received:", evt.payload.data);
     const tree = evt.payload.data.tree as TreeResponse | undefined;
     if (tree && prefrontalCtrl) {
-      console.log(
-        "[prefrontal-ui] updating tree panel, active:",
-        tree.active,
-        "root:",
-        tree.root?.model,
-      );
       prefrontalCtrl.update(tree);
     } else {
       console.log("[prefrontal-ui] skipped: tree=", !!tree, "ctrl=", !!prefrontalCtrl);
@@ -6079,12 +6069,9 @@ setInterval(() => {
   if (!connected || !prefrontalCtrl) return;
   req("prefrontal.tree", {})
     .then((res: any) => {
-      console.log("[prefrontal-poll]", JSON.stringify(res));
       if (res && prefrontalCtrl) {
         prefrontalCtrl.update(res as TreeResponse);
       }
     })
-    .catch((e: any) => {
-      console.log("[prefrontal-poll] error:", e);
-    });
+    .catch(() => {});
 }, 5000);
