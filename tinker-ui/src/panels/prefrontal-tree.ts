@@ -99,10 +99,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     modelName.textContent = shortModel;
     row.appendChild(modelName);
 
-    // Label
-    const label = el("span", "pf-label");
-    label.textContent = node.label;
-    row.appendChild(label);
+    // Label — skip for root node (redundant with panel header)
+    if (isChild) {
+      const label = el("span", "pf-label");
+      label.textContent = node.label;
+      row.appendChild(label);
+    }
 
     // Spacer
     row.appendChild(el("span", "pf-spacer"));
@@ -145,8 +147,8 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const style = document.createElement("style");
     style.id = "prefrontal-tree-styles";
     style.textContent = `
-      .pf-tree-panel { border-radius: 12px; padding: 1rem; border: 1px solid #30363d; margin-bottom: 0.75rem; }
-      .pf-empty { display: flex; align-items: center; justify-content: center; padding: 0.5rem; color: #6b5545; font-size: 0.75rem; font-style: italic; }
+      .pf-tree-panel { border-radius: 12px; padding: 0.75rem; margin-bottom: 0.75rem; }
+      .pf-empty { display: flex; align-items: center; justify-content: center; padding: 0.5rem; color: #a89080; font-size: 0.75rem; font-style: italic; }
       .pf-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; }
       .pf-header-left { display: flex; align-items: center; gap: 0.4rem; }
       .pf-dot { width: 7px; height: 7px; background: #3fb950; border-radius: 50%; box-shadow: 0 0 6px #3fb950; display: inline-block; }
@@ -155,23 +157,23 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       .pf-toggle { display: flex; gap: 0.3rem; }
       .pf-toggle-btn { color: #484f58; font-size: 0.65rem; padding: 0.1rem 0.35rem; border: 1px solid #30363d; border-radius: 3px; cursor: pointer; user-select: none; }
       .pf-toggle-btn.pf-active { color: #3fb950; border-color: #3fb950; }
-      .pf-node { display: flex; align-items: center; gap: 0.4rem; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 0.35rem 0.6rem; position: relative; }
-      .pf-root { border-color: #6e40c9; box-shadow: 0 0 8px rgba(163,113,247,0.1); margin-bottom: 0.35rem; }
-      .pf-children { padding-left: 1rem; border-left: 1px solid #30363d; margin-left: 0.75rem; display: flex; flex-direction: column; gap: 0.3rem; }
+      .pf-node { display: flex; align-items: center; gap: 0.4rem; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.35rem 0.6rem; position: relative; }
+      .pf-root { border-color: rgba(163,113,247,0.3); box-shadow: 0 0 8px rgba(163,113,247,0.1); margin-bottom: 0.35rem; }
+      .pf-children { padding-left: 1rem; border-left: 1px solid rgba(255,255,255,0.1); margin-left: 0.75rem; display: flex; flex-direction: column; gap: 0.3rem; }
       .pf-child { position: relative; }
-      .pf-connector { position: absolute; left: -1.1rem; top: 50%; width: 1rem; height: 1px; background: #30363d; }
+      .pf-connector { position: absolute; left: -1.1rem; top: 50%; width: 1rem; height: 1px; background: rgba(255,255,255,0.1); }
       .pf-completed { opacity: 0.5; }
       .pf-logo { display: flex; align-items: center; flex-shrink: 0; }
       .pf-logo svg { width: 13px; height: 13px; }
       .pf-model { font-size: 0.72rem; font-weight: 600; flex-shrink: 0; }
-      .pf-label { color: #8b949e; font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+      .pf-label { color: #c9b9a9; font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
       .pf-check { color: #3fb950; font-size: 0.72rem; flex-shrink: 0; }
       .pf-spacer { flex: 1; }
       .pf-stall { color: #f85149; font-size: 0.6rem; font-weight: 600; flex-shrink: 0; }
       .pf-progress-bar { width: 40px; height: 3px; background: #21262d; border-radius: 2px; overflow: hidden; flex-shrink: 0; }
       .pf-progress-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
       .pf-pct { font-size: 0.62rem; min-width: 24px; text-align: right; flex-shrink: 0; }
-      .pf-root-status { color: #484f58; font-size: 0.65rem; flex-shrink: 0; }
+      .pf-root-status { color: #a89080; font-size: 0.65rem; flex-shrink: 0; }
     `;
     document.head.appendChild(style);
   }
