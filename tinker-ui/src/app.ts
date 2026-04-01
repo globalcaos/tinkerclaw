@@ -2691,11 +2691,26 @@ function updateChat(skipScroll = false) {
   if (activeRuns.size > 0 || sending) {
     h += renderThinkingIndicator();
   }
+  // FORK: Preserve manually-opened fractal <details> across DOM rebuilds.
+  // Without this, every streaming update collapses fractals the user expanded.
+  const openFractals = new Set<number>();
+  el.querySelectorAll("details.fractal-details[open]").forEach((det) => {
+    const idx = Array.prototype.indexOf.call(el.querySelectorAll("details.fractal-details"), det);
+    if (idx >= 0) openFractals.add(idx);
+  });
+
   // Decide scroll behavior BEFORE replacing DOM content.
   const threshold = 80;
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   const prevScrollTop = el.scrollTop;
   el.innerHTML = h;
+
+  // Restore fractal open state
+  if (openFractals.size > 0) {
+    el.querySelectorAll("details.fractal-details").forEach((det, idx) => {
+      if (openFractals.has(idx)) (det as HTMLDetailsElement).open = true;
+    });
+  }
   if (wasAtBottom) {
     el.scrollTop = el.scrollHeight;
   } else {
