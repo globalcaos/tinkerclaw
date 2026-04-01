@@ -32,12 +32,18 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
   let filterMode: "session" | "all" = "session";
 
   function render(): void {
-    if (!currentData || !currentData.active || !currentData.root) {
-      container.style.display = "none";
-      return;
-    }
     container.style.display = "block";
     container.innerHTML = "";
+
+    if (!currentData || !currentData.active || !currentData.root) {
+      // Show empty bubble when idle
+      const panel = el("div", "pf-tree-panel");
+      const empty = el("div", "pf-empty");
+      empty.textContent = "No active LLM calls";
+      panel.appendChild(empty);
+      container.appendChild(panel);
+      return;
+    }
 
     const panel = el("div", "pf-tree-panel");
 
@@ -139,7 +145,8 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const style = document.createElement("style");
     style.id = "prefrontal-tree-styles";
     style.textContent = `
-      .pf-tree-panel { background: #0d1117; border-radius: 12px; padding: 1rem; border: 1px solid #30363d; margin-bottom: 0.75rem; }
+      .pf-tree-panel { border-radius: 12px; padding: 1rem; border: 1px solid #30363d; margin-bottom: 0.75rem; }
+      .pf-empty { display: flex; align-items: center; justify-content: center; padding: 0.5rem; color: #6b5545; font-size: 0.75rem; font-style: italic; }
       .pf-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; }
       .pf-header-left { display: flex; align-items: center; gap: 0.4rem; }
       .pf-dot { width: 7px; height: 7px; background: #3fb950; border-radius: 50%; box-shadow: 0 0 6px #3fb950; display: inline-block; }

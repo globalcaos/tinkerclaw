@@ -2892,3 +2892,13 @@ body {
   font-weight: 600;
   letter-spacing: 0.5px;
 }
+
+/* ─── Prefrontal Panel ─── */
+.pf-tree-panel {
+  background: url("./wood-panel.jpg") repeat;
+  background-blend-mode: multiply;
+  background-color: #4E3B31;
+  border-radius: 12px;
+  padding: 0.75rem;
+  border: 1px solid #30363d;
+}
