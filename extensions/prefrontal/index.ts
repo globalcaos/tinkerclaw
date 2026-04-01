@@ -195,6 +195,8 @@ export default function register(api: OpenClawPluginApi) {
       model: event.model,
       phase: "thinking",
     });
+    // Immediately broadcast tree so UI shows the node without waiting for interval
+    rebuildAndBroadcastTree();
     log.info?.(
       `[prefrontal] Main activated: ${sessionKey} (${event.provider}/${event.model}) topo.size=${topology.size}`,
     );
@@ -262,6 +264,7 @@ export default function register(api: OpenClawPluginApi) {
     topology.endSession(sessionKey, event.success, event.durationMs);
     // Clear active main — response complete, hide panel
     monitor.setActiveMain(null);
+    rebuildAndBroadcastTree();
   });
 
   api.on("gateway_start", (_event: PluginHookGatewayStartEvent, _ctx: PluginHookGatewayContext) => {
