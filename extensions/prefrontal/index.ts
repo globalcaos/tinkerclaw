@@ -1,19 +1,19 @@
 /**
- * FORK: overseer/index — Plugin entry point for the Prefrontal real-time agent topology tracker
+ * FORK: prefrontal/index — Plugin entry point for the Prefrontal real-time agent topology tracker
  *
- * Registers the Overseer plugin with the OpenClaw plugin API, wiring up hooks
+ * Registers the Prefrontal plugin with the OpenClaw plugin API, wiring up hooks
  * for subagent spawn/end, LLM input/output, tool calls, and agent completion to
  * build a live topology graph of all running agents and the main session.
  * Enriches subagent nodes by polling the gateway session store on a timer, detects
  * stale/stuck agents, and broadcasts markdown status updates to the Tinker UI via
  * `agent` lifecycle events through the ChatEmitter. Persists topology state across
- * gateway restarts. Exposes `overseer.topology`, `overseer.status`, `overseer.tree`,
- * and `overseer.config` gateway methods for external queries. Serves the call tree
- * at `GET /api/overseer/tree` via the HTTP handler. Checks for crash recovery state
+ * gateway restarts. Exposes `prefrontal.topology`, `prefrontal.status`, `prefrontal.tree`,
+ * and `prefrontal.config` gateway methods for external queries. Serves the call tree
+ * at `GET /api/prefrontal/tree` via the HTTP handler. Checks for crash recovery state
  * on startup and clears it after reading. Heartbeat sessions are filtered out at
  * every hook.
  *
- * Wired in by: OpenClaw plugin system via `plugins.entries.overseer` in openclaw.json
+ * Wired in by: OpenClaw plugin system via `plugins.entries.prefrontal` in openclaw.json
  */
 import { join } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
@@ -34,36 +34,36 @@ import type {
   PluginHookToolContext,
 } from "../../src/plugins/types.js";
 import { ChatEmitter } from "./chat-emitter.js";
-import { createOverseerHttpHandler } from "./overseer-http.js";
-import { createOverseerMonitor } from "./overseer-monitor.js";
-import type { SubagentRunInfo } from "./overseer-monitor.js";
-import { readRecoveryState, clearRecoveryState } from "./overseer-recovery.js";
-import { DEFAULT_OVERSEER_CONFIG, OVERSEER_DISPLAY_NAME } from "./overseer-types.js";
 import { saveState, loadState } from "./persistence.js";
+import { createPrefrontalHttpHandler } from "./prefrontal-http.js";
+import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
+import type { SubagentRunInfo } from "./prefrontal-monitor.js";
+import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
+import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
 import { TopologyStore } from "./topology.js";
 
-const PLUGIN_ID = "overseer";
+const PLUGIN_ID = "prefrontal";
 
 export default function register(api: OpenClawPluginApi) {
   const config = api.config as Record<string, any>;
   const pluginConfig = (config.plugins as any)?.entries?.[PLUGIN_ID]?.config ?? {};
 
   // ─── Config: merge plugin config with defaults ───
-  const overseerConfig = {
-    ...DEFAULT_OVERSEER_CONFIG,
-    ...(pluginConfig.overseer ?? {}),
+  const prefrontalConfig = {
+    ...DEFAULT_PREFRONTAL_CONFIG,
+    ...(pluginConfig.prefrontal ?? {}),
   };
 
   const pollIntervalMs = pluginConfig.pollIntervalMs ?? 5000;
   const stalenessThresholdMs = pluginConfig.stalenessThresholdMs ?? 60000;
   const chatMinMs = pluginConfig.chatMinIntervalMs ?? 30000;
   const chatMaxMs = pluginConfig.chatMaxIntervalMs ?? 180000;
-  const monitorIntervalMs = overseerConfig.monitorIntervalMs ?? 5000;
+  const monitorIntervalMs = prefrontalConfig.monitorIntervalMs ?? 5000;
 
   const homeDir = process.env.HOME || "/tmp";
   const persistPath = pluginConfig.persistPath
     ? String(pluginConfig.persistPath).replace("~", homeDir)
-    : join(homeDir, ".openclaw", "overseer-state.json");
+    : join(homeDir, ".openclaw", "prefrontal-state.json");
 
   const log = api.logger ?? { info: console.log, warn: console.warn, error: console.error };
 
@@ -71,45 +71,45 @@ export default function register(api: OpenClawPluginApi) {
   const topology = new TopologyStore();
 
   // ─── Monitor (new call tree builder) ───
-  const monitor = createOverseerMonitor(overseerConfig);
+  const monitor = createPrefrontalMonitor(prefrontalConfig);
 
   // ─── HTTP Handler ───
-  const httpHandler = createOverseerHttpHandler((sessionFilter) =>
+  const httpHandler = createPrefrontalHttpHandler((sessionFilter) =>
     monitor.getTreeState(sessionFilter),
   );
 
-  // Register HTTP route for /api/overseer/tree
+  // Register HTTP route for /api/prefrontal/tree
   try {
-    (api as any).registerHttpRoute?.("/api/overseer/tree", (req: any, res: any) => {
+    (api as any).registerHttpRoute?.("/api/prefrontal/tree", (req: any, res: any) => {
       httpHandler(req, res);
     });
   } catch {
     // Fallback: some API versions use a different registration method
-    log.warn?.(`[overseer] HTTP route registration skipped — registerHttpRoute unavailable`);
+    log.warn?.(`[prefrontal] HTTP route registration skipped — registerHttpRoute unavailable`);
   }
 
   // ─── Subagent run tracking (for monitor tree) ───
   const subagentRuns = new Map<string, SubagentRunInfo>();
   const lastEventTimestamps = new Map<string, number>();
-  let overseerSessionKey: string | null = null;
+  let prefrontalSessionKey: string | null = null;
 
   // ─── Chat Emitter ───
   const chatEmitter = new ChatEmitter({
     minIntervalMs: chatMinMs,
     maxIntervalMs: chatMaxMs,
     emitFn: (markdown: string) => {
-      // Broadcast overseer update as agent event so Tinker UI can display it
+      // Broadcast prefrontal update as agent event so Tinker UI can display it
       try {
         (api as any).broadcast?.("agent", {
           stream: "lifecycle",
           data: {
-            phase: "overseer-update",
+            phase: "prefrontal-update",
             markdown,
             ts: Date.now(),
           },
         });
       } catch {
-        log.warn?.(`[overseer] Failed to broadcast chat update`);
+        log.warn?.(`[prefrontal] Failed to broadcast chat update`);
       }
     },
   });
@@ -122,7 +122,7 @@ export default function register(api: OpenClawPluginApi) {
       const node = topology.getNode(event.childSessionKey);
       if (node) chatEmitter.onSpawned(node);
       log.info?.(
-        `[overseer] Agent spawned: ${event.label || event.agentId} (${event.childSessionKey})`,
+        `[prefrontal] Agent spawned: ${event.label || event.agentId} (${event.childSessionKey})`,
       );
 
       // Track in subagentRuns for monitor tree
@@ -139,9 +139,9 @@ export default function register(api: OpenClawPluginApi) {
       subagentRuns.set(event.runId, run);
       lastEventTimestamps.set(event.runId, Date.now());
 
-      // If the spawning session is main, mark it as overseer session
-      if (!overseerSessionKey && ctx.requesterSessionKey?.includes("main")) {
-        overseerSessionKey = ctx.requesterSessionKey;
+      // If the spawning session is main, mark it as prefrontal session
+      if (!prefrontalSessionKey && ctx.requesterSessionKey?.includes("main")) {
+        prefrontalSessionKey = ctx.requesterSessionKey;
       }
     },
   );
@@ -152,7 +152,7 @@ export default function register(api: OpenClawPluginApi) {
       const removed = topology.removeNode(event);
       if (removed) {
         chatEmitter.onEnded(removed, event.outcome);
-        log.info?.(`[overseer] Agent ended: ${removed.label} (${event.outcome || "ok"})`);
+        log.info?.(`[prefrontal] Agent ended: ${removed.label} (${event.outcome || "ok"})`);
       }
 
       // Update subagentRun record for monitor
@@ -170,7 +170,7 @@ export default function register(api: OpenClawPluginApi) {
   // ─── Main Session Tracking ───
   api.on("llm_input", (event: PluginHookLlmInputEvent, ctx: PluginHookAgentContext) => {
     log.info?.(
-      `[overseer] HOOK llm_input sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} provider=${event.provider} model=${event.model}`,
+      `[prefrontal] HOOK llm_input sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} provider=${event.provider} model=${event.model}`,
     );
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
@@ -182,12 +182,12 @@ export default function register(api: OpenClawPluginApi) {
       trigger: ctx.trigger,
     });
     log.info?.(
-      `[overseer] Main activated: ${sessionKey} (${event.provider}/${event.model}) topo.size=${topology.size}`,
+      `[prefrontal] Main activated: ${sessionKey} (${event.provider}/${event.model}) topo.size=${topology.size}`,
     );
   });
 
   api.on("llm_output", (event: PluginHookLlmOutputEvent, ctx: PluginHookAgentContext) => {
-    log.info?.(`[overseer] HOOK llm_output sessionKey=${ctx.sessionKey} trigger=${ctx.trigger}`);
+    log.info?.(`[prefrontal] HOOK llm_output sessionKey=${ctx.sessionKey} trigger=${ctx.trigger}`);
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.updateUsage(sessionKey, event.usage);
@@ -204,7 +204,7 @@ export default function register(api: OpenClawPluginApi) {
 
   api.on("before_tool_call", (event: PluginHookBeforeToolCallEvent, ctx: PluginHookToolContext) => {
     log.info?.(
-      `[overseer] HOOK before_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
+      `[prefrontal] HOOK before_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
     );
     const sessionKey = ctx.sessionKey || "agent:main:main";
     if (TopologyStore.isHeartbeat(sessionKey)) return;
@@ -221,7 +221,7 @@ export default function register(api: OpenClawPluginApi) {
 
   api.on("after_tool_call", (event: PluginHookAfterToolCallEvent, ctx: PluginHookToolContext) => {
     log.info?.(
-      `[overseer] HOOK after_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
+      `[prefrontal] HOOK after_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
     );
     const sessionKey = ctx.sessionKey || "agent:main:main";
     if (TopologyStore.isHeartbeat(sessionKey)) return;
@@ -230,7 +230,7 @@ export default function register(api: OpenClawPluginApi) {
 
   api.on("agent_end", (event: PluginHookAgentEndEvent, ctx: PluginHookAgentContext) => {
     log.info?.(
-      `[overseer] HOOK agent_end sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} success=${event.success} duration=${event.durationMs}`,
+      `[prefrontal] HOOK agent_end sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} success=${event.success} duration=${event.durationMs}`,
     );
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
@@ -242,7 +242,7 @@ export default function register(api: OpenClawPluginApi) {
     const snap = loadState(persistPath);
     if (snap && snap.nodes.length > 0) {
       topology.restore(snap);
-      log.info?.(`[overseer] Restored ${snap.nodes.length} nodes from ${persistPath}`);
+      log.info?.(`[prefrontal] Restored ${snap.nodes.length} nodes from ${persistPath}`);
     }
 
     // ─── Recovery state check ───
@@ -250,19 +250,19 @@ export default function register(api: OpenClawPluginApi) {
       const recovery = readRecoveryState();
       if (recovery) {
         log.info?.(
-          `[overseer] ${OVERSEER_DISPLAY_NAME} recovery state found from ${recovery.timestamp}: ` +
-            `${recovery.activeSubagents.length} subagents, session=${recovery.overseerSessionKey}`,
+          `[prefrontal] Prefrontal recovery state found from ${recovery.timestamp}: ` +
+            `${recovery.activeSubagents.length} subagents, session=${recovery.prefrontalSessionKey}`,
         );
-        // Restore overseer session key from recovery
-        if (recovery.overseerSessionKey) {
-          overseerSessionKey = recovery.overseerSessionKey;
+        // Restore prefrontal session key from recovery
+        if (recovery.prefrontalSessionKey) {
+          prefrontalSessionKey = recovery.prefrontalSessionKey;
         }
         // Reconstruct subagent runs from recovery
         for (const sub of recovery.activeSubagents) {
           const run: SubagentRunInfo = {
             runId: sub.runId,
             childSessionKey: sub.childSessionKey,
-            requesterSessionKey: recovery.overseerSessionKey,
+            requesterSessionKey: recovery.prefrontalSessionKey,
             task: sub.task,
             model: sub.model,
             createdAt: Date.now(),
@@ -272,10 +272,10 @@ export default function register(api: OpenClawPluginApi) {
           lastEventTimestamps.set(sub.runId, Date.now());
         }
         clearRecoveryState();
-        log.info?.(`[overseer] Recovery state cleared after loading`);
+        log.info?.(`[prefrontal] Recovery state cleared after loading`);
       }
     } catch (e) {
-      log.warn?.(`[overseer] Recovery state read failed: ${e}`);
+      log.warn?.(`[prefrontal] Recovery state read failed: ${e}`);
     }
   });
 
@@ -283,7 +283,7 @@ export default function register(api: OpenClawPluginApi) {
     const snap = topology.snapshot();
     if (snap.nodes.length > 0) {
       saveState(persistPath, snap);
-      log.info?.(`[overseer] Persisted ${snap.nodes.length} nodes to ${persistPath}`);
+      log.info?.(`[prefrontal] Persisted ${snap.nodes.length} nodes to ${persistPath}`);
     }
     chatEmitter.destroy();
     if (pollTimer) clearInterval(pollTimer);
@@ -319,7 +319,7 @@ export default function register(api: OpenClawPluginApi) {
         }
       }
     } catch (e) {
-      log.warn?.(`[overseer] Enrichment failed: ${e}`);
+      log.warn?.(`[prefrontal] Enrichment failed: ${e}`);
     }
   }
 
@@ -334,18 +334,18 @@ export default function register(api: OpenClawPluginApi) {
   function rebuildAndBroadcastTree() {
     try {
       const runs = Array.from(subagentRuns.values());
-      const tree = monitor.buildTree(runs, overseerSessionKey);
+      const tree = monitor.buildTree(runs, prefrontalSessionKey);
       const now = Date.now();
       const stalled = monitor.detectStalls(tree, lastEventTimestamps, now);
 
       if (stalled.length > 0) {
-        log.warn?.(`[overseer] Stalled agents detected: ${stalled.join(", ")}`);
+        log.warn?.(`[prefrontal] Stalled agents detected: ${stalled.join(", ")}`);
       }
 
       // Broadcast tree update to Tinker UI
       try {
-        (api as any).broadcast?.("overseer-tree", {
-          stream: "overseer",
+        (api as any).broadcast?.("prefrontal-tree", {
+          stream: "prefrontal",
           data: tree,
           ts: now,
         });
@@ -353,7 +353,7 @@ export default function register(api: OpenClawPluginApi) {
         // broadcast not available — non-fatal
       }
     } catch (e) {
-      log.warn?.(`[overseer] Monitor rebuild failed: ${e}`);
+      log.warn?.(`[prefrontal] Monitor rebuild failed: ${e}`);
     }
   }
 
@@ -365,16 +365,16 @@ export default function register(api: OpenClawPluginApi) {
   }, 2000);
 
   // ─── Gateway Methods ───
-  api.registerGatewayMethod("overseer.topology", async ({ respond }) => {
+  api.registerGatewayMethod("prefrontal.topology", async ({ respond }) => {
     enrichTopology(); // Freshen data before responding
     const snap = topology.snapshot();
     log.info?.(
-      `[overseer] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
+      `[prefrontal] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
     );
     respond(true, snap);
   });
 
-  api.registerGatewayMethod("overseer.status", async ({ respond }) => {
+  api.registerGatewayMethod("prefrontal.status", async ({ respond }) => {
     respond(true, {
       nodeCount: topology.size,
       changesSinceLastPoll: topology.changes,
@@ -384,20 +384,20 @@ export default function register(api: OpenClawPluginApi) {
     });
   });
 
-  api.registerGatewayMethod("overseer.tree", async ({ respond }) => {
+  api.registerGatewayMethod("prefrontal.tree", async ({ respond }) => {
     const runs = Array.from(subagentRuns.values());
-    const tree = monitor.buildTree(runs, overseerSessionKey);
+    const tree = monitor.buildTree(runs, prefrontalSessionKey);
     log.info?.(
-      `[overseer] tree requested: active=${tree.active} children=${tree.root?.children.length ?? 0}`,
+      `[prefrontal] tree requested: active=${tree.active} children=${tree.root?.children.length ?? 0}`,
     );
     respond(true, tree);
   });
 
-  api.registerGatewayMethod("overseer.config", async ({ respond }) => {
-    respond(true, overseerConfig);
+  api.registerGatewayMethod("prefrontal.config", async ({ respond }) => {
+    respond(true, prefrontalConfig);
   });
 
   log.info?.(
-    `[overseer] ${OVERSEER_DISPLAY_NAME} plugin registered (poll: ${pollIntervalMs}ms, staleness: ${stalenessThresholdMs}ms, monitor: ${monitorIntervalMs}ms)`,
+    `[prefrontal] Prefrontal plugin registered (poll: ${pollIntervalMs}ms, staleness: ${stalenessThresholdMs}ms, monitor: ${monitorIntervalMs}ms)`,
   );
 }

@@ -1,16 +1,16 @@
 /**
- * FORK: overseer/chat-emitter — Rate-limited markdown broadcaster for topology events
+ * FORK: prefrontal/chat-emitter — Rate-limited markdown broadcaster for topology events
  *
  * Buffers agent lifecycle events (spawned, ended, stuck) and flushes them as
  * formatted markdown strings at an adaptive interval that accelerates on activity
  * (down to `minIntervalMs`) and decays back to `maxIntervalMs` during quiet periods.
  * The `emitFn` callback provided by the plugin index broadcasts these updates as
- * `overseer-update` lifecycle events so the Tinker UI can display real-time agent
+ * `prefrontal-update` lifecycle events so the Tinker UI can display real-time agent
  * status without flooding the event stream during high subagent churn.
  *
- * Wired in by: instantiated in `extensions/overseer/index.ts` as `ChatEmitter`
+ * Wired in by: instantiated in `extensions/prefrontal/index.ts` as `ChatEmitter`
  */
-import type { OverseerNode } from "./topology.js";
+import type { PrefrontalNode } from "./topology.js";
 
 interface ChatEvent {
   type: "spawned" | "ended" | "stuck" | "phase";
@@ -41,7 +41,7 @@ export class ChatEmitter {
     this.emitFn = opts.emitFn;
   }
 
-  onSpawned(node: OverseerNode): void {
+  onSpawned(node: PrefrontalNode): void {
     this.pendingEvents.push({
       type: "spawned",
       label: node.label,
@@ -52,7 +52,7 @@ export class ChatEmitter {
     this.accelerate();
   }
 
-  onEnded(node: OverseerNode, outcome?: string): void {
+  onEnded(node: PrefrontalNode, outcome?: string): void {
     this.pendingEvents.push({
       type: "ended",
       label: node.label,
@@ -63,7 +63,7 @@ export class ChatEmitter {
     this.accelerate();
   }
 
-  onStuck(node: OverseerNode): void {
+  onStuck(node: PrefrontalNode): void {
     this.pendingEvents.push({
       type: "stuck",
       label: node.label,
@@ -95,7 +95,7 @@ export class ChatEmitter {
     }
 
     const events = this.pendingEvents.splice(0);
-    const lines: string[] = ["**🔭 Overseer Update**"];
+    const lines: string[] = ["**Prefrontal Update**"];
 
     const spawned = events.filter((e) => e.type === "spawned");
     const ended = events.filter((e) => e.type === "ended");

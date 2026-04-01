@@ -1,6 +1,6 @@
 {
-  "id": "overseer",
-  "name": "Overseer",
+  "id": "prefrontal",
+  "name": "Prefrontal",
   "description": "Real-time agent topology tracking with force-directed graph visualization",
   "version": "0.1.0",
   "configSchema": {
@@ -10,11 +10,11 @@
       "enabled": {
         "type": "boolean",
         "default": true,
-        "description": "Enable or disable the overseer plugin"
+        "description": "Enable or disable the prefrontal plugin"
       },
       "model": {
         "type": "string",
-        "description": "Primary model for overseer analysis"
+        "description": "Primary model for prefrontal analysis"
       },
       "summaryModel": {
         "type": "string",

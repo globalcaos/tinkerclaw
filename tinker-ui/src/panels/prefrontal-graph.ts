@@ -1,9 +1,9 @@
-// tinker-ui/src/panels/overseer-graph.ts
-// Overseer panel — horizontal pill visualization of the model/auth-profile fleet.
+// tinker-ui/src/panels/prefrontal-graph.ts
+// Prefrontal panel — horizontal pill visualization of the model/auth-profile fleet.
 // Each pill = one auth-key row (mirrors the Models section).
 
 // ─── Types ───
-export interface OverseerItem {
+export interface PrefrontalItem {
   id: string; // unique key (authProfileId or modelId)
   provider: string; // anthropic, google, openai, ollama, etc.
   modelName: string; // short model name (e.g., "opus-4-6")
@@ -25,28 +25,28 @@ const PROVIDER_COLORS: Record<string, string> = {
 };
 
 // ─── Mount ───
-export function mountOverseerGraph(
+export function mountPrefrontalGraph(
   container: HTMLElement,
   opts: { providerIcons?: Record<string, string> },
 ): {
-  update(items: OverseerItem[]): void;
+  update(items: PrefrontalItem[]): void;
   destroy(): void;
 } {
   const icons = opts.providerIcons ?? {};
 
   const wrap = document.createElement("div");
-  wrap.className = "overseer-pills";
+  wrap.className = "prefrontal-pills";
   container.appendChild(wrap);
 
   const empty = document.createElement("div");
-  empty.className = "overseer-empty-state";
+  empty.className = "prefrontal-empty-state";
   empty.innerHTML = [
-    '<div class="overseer-empty-icon">\uD83D\uDD2D</div>',
-    '<div class="overseer-empty-text">Overseer watching \u2014 waiting for config</div>',
+    '<div class="prefrontal-empty-icon">\uD83D\uDD2D</div>',
+    '<div class="prefrontal-empty-text">Prefrontal watching \u2014 waiting for config</div>',
   ].join("");
   container.appendChild(empty);
 
-  function update(items: OverseerItem[]): void {
+  function update(items: PrefrontalItem[]): void {
     if (!items.length) {
       wrap.style.display = "none";
       empty.style.display = "";
@@ -60,9 +60,9 @@ export function mountOverseerGraph(
       const color = PROVIDER_COLORS[item.provider] || "#6b7280";
       const active = item.count > 0;
       const cls = [
-        "overseer-pill",
-        active ? "overseer-pill--active" : "",
-        item.error ? "overseer-pill--error" : "",
+        "prefrontal-pill",
+        active ? "prefrontal-pill--active" : "",
+        item.error ? "prefrontal-pill--error" : "",
       ]
         .filter(Boolean)
         .join(" ");
@@ -75,20 +75,20 @@ export function mountOverseerGraph(
       const icon = icons[item.provider] || "";
 
       html += `<div class="${cls}" style="${style}" data-hint="${esc(item.id)}">`;
-      if (icon) html += `<span class="overseer-pill-icon">${icon}</span>`;
-      html += `<span class="overseer-pill-model">${esc(item.modelName)}</span>`;
+      if (icon) html += `<span class="prefrontal-pill-icon">${icon}</span>`;
+      html += `<span class="prefrontal-pill-model">${esc(item.modelName)}</span>`;
       if (item.authLabel) {
-        html += `<span class="overseer-pill-sep">\u00b7</span>`;
-        html += `<span class="overseer-pill-auth">${esc(item.authLabel)}</span>`;
+        html += `<span class="prefrontal-pill-sep">\u00b7</span>`;
+        html += `<span class="prefrontal-pill-auth">${esc(item.authLabel)}</span>`;
       }
       if (item.badge) {
-        html += `<span class="overseer-pill-badge">${item.badge}</span>`;
+        html += `<span class="prefrontal-pill-badge">${item.badge}</span>`;
       }
       if (item.error) {
-        html += `<span class="overseer-pill-error">${esc(shortErr(item.error.reason))}</span>`;
+        html += `<span class="prefrontal-pill-error">${esc(shortErr(item.error.reason))}</span>`;
       }
       if (item.sessionTag) {
-        html += `<span class="overseer-pill-tag">${esc(item.sessionTag)}</span>`;
+        html += `<span class="prefrontal-pill-tag">${esc(item.sessionTag)}</span>`;
       }
       html += "</div>";
     }

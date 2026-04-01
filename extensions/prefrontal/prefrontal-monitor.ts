@@ -1,9 +1,13 @@
-// extensions/overseer/overseer-monitor.ts
-// FORK: Overseer monitoring loop — builds tree state from subagent registry,
+// extensions/prefrontal/prefrontal-monitor.ts
+// FORK: Prefrontal monitoring loop — builds tree state from subagent registry,
 // detects stalls, emits WebSocket updates to Tinker UI.
 
-import type { OverseerTreeNode, OverseerTreeResponse, OverseerConfig } from "./overseer-types.js";
-import { extractProvider, DEFAULT_OVERSEER_CONFIG } from "./overseer-types.js";
+import type {
+  PrefrontalTreeNode,
+  PrefrontalTreeResponse,
+  PrefrontalConfig,
+} from "./prefrontal-types.js";
+import { extractProvider, DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
 
 export interface SubagentRunInfo {
   runId: string;
@@ -18,27 +22,27 @@ export interface SubagentRunInfo {
   outcome?: { status: string; error?: string };
 }
 
-export interface OverseerMonitor {
-  buildTree(runs: SubagentRunInfo[], overseerSessionKey: string | null): OverseerTreeResponse;
+export interface PrefrontalMonitor {
+  buildTree(runs: SubagentRunInfo[], prefrontalSessionKey: string | null): PrefrontalTreeResponse;
   detectStalls(
-    tree: OverseerTreeResponse,
+    tree: PrefrontalTreeResponse,
     lastEventTimestamps: Map<string, number>,
     now: number,
   ): string[];
   updateNodeProgress(runId: string, progress: number, summary: string): void;
-  getTreeState(sessionFilter?: string): OverseerTreeResponse;
+  getTreeState(sessionFilter?: string): PrefrontalTreeResponse;
 }
 
-export function createOverseerMonitor(config: OverseerConfig): OverseerMonitor {
-  let currentTree: OverseerTreeResponse = { active: false, root: null };
+export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMonitor {
+  let currentTree: PrefrontalTreeResponse = { active: false, root: null };
   const nodeProgress = new Map<string, { progress: number; summary: string }>();
 
-  function runToNode(run: SubagentRunInfo, now: number): OverseerTreeNode {
+  function runToNode(run: SubagentRunInfo, now: number): PrefrontalTreeNode {
     const provider = extractProvider(run.model ?? "unknown/unknown");
     const age = run.startedAt ? Math.round((now - run.startedAt) / 1000) : 0;
     const stored = nodeProgress.get(run.runId);
 
-    let status: OverseerTreeNode["status"] = "running";
+    let status: PrefrontalTreeNode["status"] = "running";
     if (run.endedAt) {
       status = run.outcome?.status === "ok" ? "completed" : "failed";
     }
@@ -58,16 +62,16 @@ export function createOverseerMonitor(config: OverseerConfig): OverseerMonitor {
 
   function buildTree(
     runs: SubagentRunInfo[],
-    overseerSessionKey: string | null,
-  ): OverseerTreeResponse {
+    prefrontalSessionKey: string | null,
+  ): PrefrontalTreeResponse {
     const now = Date.now();
 
-    if (!overseerSessionKey || runs.length === 0) {
+    if (!prefrontalSessionKey || runs.length === 0) {
       currentTree = { active: false, root: null };
       return currentTree;
     }
 
-    const directChildren = runs.filter((r) => r.requesterSessionKey === overseerSessionKey);
+    const directChildren = runs.filter((r) => r.requesterSessionKey === prefrontalSessionKey);
     const childNodes = directChildren.map((r) => runToNode(r, now));
 
     childNodes.sort((a, b) => {
@@ -76,8 +80,8 @@ export function createOverseerMonitor(config: OverseerConfig): OverseerMonitor {
       return 0;
     });
 
-    const root: OverseerTreeNode = {
-      runId: "overseer",
+    const root: PrefrontalTreeNode = {
+      runId: "prefrontal",
       model: config.model,
       provider: extractProvider(config.model),
       label: "Prefrontal",
@@ -91,14 +95,14 @@ export function createOverseerMonitor(config: OverseerConfig): OverseerMonitor {
     return currentTree;
   }
 
-  function calculateOverallProgress(nodes: OverseerTreeNode[]): number {
+  function calculateOverallProgress(nodes: PrefrontalTreeNode[]): number {
     if (nodes.length === 0) return 0;
     const total = nodes.reduce((sum, n) => sum + n.progress, 0);
     return Math.round(total / nodes.length);
   }
 
   function detectStalls(
-    tree: OverseerTreeResponse,
+    tree: PrefrontalTreeResponse,
     lastEventTimestamps: Map<string, number>,
     now: number,
   ): string[] {
@@ -134,7 +138,7 @@ export function createOverseerMonitor(config: OverseerConfig): OverseerMonitor {
     }
   }
 
-  function getTreeState(sessionFilter?: string): OverseerTreeResponse {
+  function getTreeState(sessionFilter?: string): PrefrontalTreeResponse {
     if (sessionFilter && currentTree.root) {
       const filtered = currentTree.root.children.filter((c) => c.runId.includes(sessionFilter));
       if (filtered.length === 0 && !currentTree.active) {

@@ -1,10 +1,10 @@
-// extensions/overseer/overseer-http.ts
-// FORK: HTTP handler for Overseer tree API — serves call tree state to Tinker UI.
+// extensions/prefrontal/prefrontal-http.ts
+// FORK: HTTP handler for Prefrontal tree API — serves call tree state to Tinker UI.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { OverseerTreeResponse } from "./overseer-types.js";
+import type { PrefrontalTreeResponse } from "./prefrontal-types.js";
 
-type TreeStateGetter = (sessionFilter?: string) => OverseerTreeResponse;
+type TreeStateGetter = (sessionFilter?: string) => PrefrontalTreeResponse;
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, {
@@ -16,12 +16,12 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-export function createOverseerHttpHandler(getTreeState: TreeStateGetter) {
-  return function handleOverseerRequest(req: IncomingMessage, res: ServerResponse): boolean {
+export function createPrefrontalHttpHandler(getTreeState: TreeStateGetter) {
+  return function handlePrefrontalRequest(req: IncomingMessage, res: ServerResponse): boolean {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const pathname = url.pathname;
 
-    if (!pathname.startsWith("/api/overseer/")) return false;
+    if (!pathname.startsWith("/api/prefrontal/")) return false;
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
@@ -33,7 +33,7 @@ export function createOverseerHttpHandler(getTreeState: TreeStateGetter) {
       return true;
     }
 
-    if (pathname === "/api/overseer/tree" && req.method === "GET") {
+    if (pathname === "/api/prefrontal/tree" && req.method === "GET") {
       const session = url.searchParams.get("session") ?? undefined;
       const tree = getTreeState(session);
       sendJson(res, 200, tree);

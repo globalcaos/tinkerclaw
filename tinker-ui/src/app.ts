@@ -3,10 +3,10 @@ import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
-  mountOverseerTree,
-  type OverseerTreeController,
+  mountPrefrontalTree,
+  type PrefrontalTreeController,
   type TreeResponse,
-} from "./panels/overseer-tree.js";
+} from "./panels/prefrontal-tree.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 
 const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -1259,11 +1259,11 @@ function onEvent(evt: any) {
       messages.push(retryMsg);
       updateChat();
     }
-    // Overseer periodic chat updates
-    // FORK: Only show overseer updates for the active session
+    // Prefrontal periodic chat updates
+    // FORK: Only show prefrontal updates for the active session
     if (
       p?.stream === "lifecycle" &&
-      p.data?.phase === "overseer-update" &&
+      p.data?.phase === "prefrontal-update" &&
       (!p.data.sessionKey || sessionKeyMatches(p.data.sessionKey))
     ) {
       const mdText = p.data.markdown as string;
@@ -1271,7 +1271,7 @@ function onEvent(evt: any) {
         messages.push({
           role: "assistant",
           content: [{ type: "text", text: mdText }],
-          _isOverseer: true,
+          _isPrefrontal: true,
         });
         updateChat();
       }
@@ -1412,11 +1412,11 @@ function onEvent(evt: any) {
       }
     }
   }
-  // FORK: Overseer call tree update — broadcast from the overseer extension every ~5s
-  if (evt.event === "overseer-tree") {
+  // FORK: Prefrontal call tree update — broadcast from the prefrontal extension every ~5s
+  if (evt.event === "prefrontal-tree") {
     const tree = evt.payload?.data as TreeResponse | undefined;
-    if (tree && overseerCtrl) {
-      overseerCtrl.update(tree);
+    if (tree && prefrontalCtrl) {
+      prefrontalCtrl.update(tree);
     }
   }
 }
@@ -3789,9 +3789,9 @@ function init() {
         </div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel" id="overseer-panel">
-        <div class="rpanel-header">🔭 Overseer <span id="overseer-count" class="sessions-count"></span></div>
-        <div id="overseer-graph" class="rpanel-body overseer-graph-container"></div>
+      <div class="rpanel" id="prefrontal-panel">
+        <div class="rpanel-header">Prefrontal <span id="prefrontal-count" class="sessions-count"></span></div>
+        <div id="prefrontal-graph" class="rpanel-body prefrontal-graph-container"></div>
       </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
@@ -6010,16 +6010,16 @@ function init() {
   );
 }
 
-// ─── Overseer Tree ───
-// FORK: Call tree panel fed by WebSocket "overseer-tree" broadcast events from the overseer extension.
-let overseerCtrl: OverseerTreeController | null = null;
+// ─── Prefrontal Tree ───
+// FORK: Call tree panel fed by WebSocket "prefrontal-tree" broadcast events from the prefrontal extension.
+let prefrontalCtrl: PrefrontalTreeController | null = null;
 
 // ─── Boot ───
 init();
-// Mount overseer tree AFTER init() creates the DOM
-const overseerContainer = document.getElementById("overseer-graph");
-if (overseerContainer) {
-  overseerCtrl = mountOverseerTree(overseerContainer);
+// Mount prefrontal tree AFTER init() creates the DOM
+const prefrontalContainer = document.getElementById("prefrontal-graph");
+if (prefrontalContainer) {
+  prefrontalCtrl = mountPrefrontalTree(prefrontalContainer);
 }
 gwConnect();
 setInterval(() => {

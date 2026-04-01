@@ -173,36 +173,36 @@ while IFS= read -r issue_json; do
   
 done <<< "$ISSUES"
 
-# ── Phase 3.5: Prefrontal Overseer Watch ─────────────────────
-# Check if the Overseer agent session has gone stale.
+# ── Phase 3.5: Prefrontal Watch ─────────────────────
+# Check if the Prefrontal agent session has gone stale.
 # If no events for GUARDIAN_STALE_THRESHOLD, kill and relaunch.
 
-OVERSEER_RECOVERY="/tmp/overseer/recovery.json"
-OVERSEER_GUARDIAN_LOG="${LOG_DIR}/overseer-guardian.log"
+PREFRONTAL_RECOVERY="/tmp/prefrontal/recovery.json"
+PREFRONTAL_GUARDIAN_LOG="${LOG_DIR}/prefrontal-guardian.log"
 GUARDIAN_STALE_THRESHOLD=300  # 5 minutes in seconds
 
-if [ -f "$OVERSEER_RECOVERY" ]; then
-  LAST_TS=$(jq -r '.timestamp // empty' "$OVERSEER_RECOVERY" 2>/dev/null)
+if [ -f "$PREFRONTAL_RECOVERY" ]; then
+  LAST_TS=$(jq -r '.timestamp // empty' "$PREFRONTAL_RECOVERY" 2>/dev/null)
   if [ -n "$LAST_TS" ]; then
     LAST_EPOCH=$(date -d "$LAST_TS" +%s 2>/dev/null || echo 0)
     NOW_EPOCH=$(date +%s)
     AGE=$(( NOW_EPOCH - LAST_EPOCH ))
 
     if [ "$AGE" -gt "$GUARDIAN_STALE_THRESHOLD" ]; then
-      echo "[$(date -Is)] PREFRONTAL STALE: last event ${AGE}s ago (threshold: ${GUARDIAN_STALE_THRESHOLD}s)" >> "$OVERSEER_GUARDIAN_LOG"
+      echo "[$(date -Is)] PREFRONTAL STALE: last event ${AGE}s ago (threshold: ${GUARDIAN_STALE_THRESHOLD}s)" >> "$PREFRONTAL_GUARDIAN_LOG"
 
       # Preserve the recovery file (it has the active subagent list)
-      # Kill the overseer session via openclaw CLI
-      OVERSEER_SESSION=$(jq -r '.overseerSessionKey // empty' "$OVERSEER_RECOVERY" 2>/dev/null)
-      if [ -n "$OVERSEER_SESSION" ]; then
-        openclaw sessions delete "$OVERSEER_SESSION" 2>>"$OVERSEER_GUARDIAN_LOG" || true
-        echo "[$(date -Is)] Killed overseer session: $OVERSEER_SESSION" >> "$OVERSEER_GUARDIAN_LOG"
+      # Kill the prefrontal session via openclaw CLI
+      PREFRONTAL_SESSION=$(jq -r '.prefrontalSessionKey // empty' "$PREFRONTAL_RECOVERY" 2>/dev/null)
+      if [ -n "$PREFRONTAL_SESSION" ]; then
+        openclaw sessions delete "$PREFRONTAL_SESSION" 2>>"$PREFRONTAL_GUARDIAN_LOG" || true
+        echo "[$(date -Is)] Killed prefrontal session: $PREFRONTAL_SESSION" >> "$PREFRONTAL_GUARDIAN_LOG"
       fi
 
-      # The overseer extension will detect the recovery file on next gateway poll
+      # The prefrontal extension will detect the recovery file on next gateway poll
       # and resume with the preserved state. No need to explicitly relaunch here —
-      # the next user prompt or heartbeat wake will trigger the overseer.
-      echo "[$(date -Is)] Recovery file preserved for overseer relaunch" >> "$OVERSEER_GUARDIAN_LOG"
+      # the next user prompt or heartbeat wake will trigger prefrontal.
+      echo "[$(date -Is)] Recovery file preserved for prefrontal relaunch" >> "$PREFRONTAL_GUARDIAN_LOG"
     fi
   fi
 fi
