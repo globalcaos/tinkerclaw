@@ -2,7 +2,11 @@ import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
-import { mountOverseerGraph, type OverseerItem } from "./panels/overseer-graph.js";
+import {
+  mountOverseerTree,
+  type OverseerTreeController,
+  type TreeResponse,
+} from "./panels/overseer-tree.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 
 const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -1406,6 +1410,13 @@ function onEvent(evt: any) {
           }
         }, 500);
       }
+    }
+  }
+  // FORK: Overseer call tree update — broadcast from the overseer extension every ~5s
+  if (evt.event === "overseer-tree") {
+    const tree = evt.payload?.data as TreeResponse | undefined;
+    if (tree && overseerCtrl) {
+      overseerCtrl.update(tree);
     }
   }
 }
@@ -3143,9 +3154,6 @@ function updateBudgetPanel() {
       }
     });
   });
-
-  // Sync overseer pills with the same data
-  updateOverseerPanel();
 }
 
 function shortErrorLabel(reason: string): string {
@@ -6002,52 +6010,16 @@ function init() {
   );
 }
 
-// ─── Overseer Graph ───
-let overseerCtrl: ReturnType<typeof mountOverseerGraph> | null = null;
-
-function updateOverseerPanel(): void {
-  if (!overseerCtrl) return;
-  if (activeRuns.size === 0) {
-    overseerCtrl.update([]);
-    const countEl = document.getElementById("overseer-count");
-    if (countEl) countEl.textContent = "";
-    return;
-  }
-
-  const authProfiles = modelConfigData?.authProfiles ?? {};
-  const items: OverseerItem[] = [];
-
-  for (const [runId, info] of activeRuns) {
-    const authLabel = info.authProfileId
-      ? authProfiles[info.authProfileId]?.label ||
-        info.authProfileId.split(":")[1] ||
-        info.authProfileId
-      : "";
-    items.push({
-      id: runId,
-      provider: info.provider,
-      modelName: modelName(info.model),
-      authLabel,
-      badge: "",
-      count: 1,
-    });
-  }
-
-  overseerCtrl.update(items);
-  const countEl = document.getElementById("overseer-count");
-  if (countEl) {
-    countEl.textContent = `(${items.length})`;
-  }
-}
+// ─── Overseer Tree ───
+// FORK: Call tree panel fed by WebSocket "overseer-tree" broadcast events from the overseer extension.
+let overseerCtrl: OverseerTreeController | null = null;
 
 // ─── Boot ───
 init();
-// Mount overseer graph AFTER init() creates the DOM
+// Mount overseer tree AFTER init() creates the DOM
 const overseerContainer = document.getElementById("overseer-graph");
 if (overseerContainer) {
-  overseerCtrl = mountOverseerGraph(overseerContainer, {
-    providerIcons: PROVIDER_ICONS,
-  });
+  overseerCtrl = mountOverseerTree(overseerContainer);
 }
 gwConnect();
 setInterval(() => {
