@@ -80,12 +80,19 @@ export default function register(api: OpenClawPluginApi) {
 
   // Register HTTP route for /api/prefrontal/tree
   try {
-    (api as any).registerHttpRoute?.("/api/prefrontal/tree", (req: any, res: any) => {
-      httpHandler(req, res);
+    api.registerHttpRoute({
+      path: "/api/prefrontal",
+      auth: "none",
+      match: "prefix",
+      handler: (req: any, res: any) => {
+        if (!httpHandler(req, res)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Not found" }));
+        }
+      },
     });
   } catch {
-    // Fallback: some API versions use a different registration method
-    log.warn?.(`[prefrontal] HTTP route registration skipped — registerHttpRoute unavailable`);
+    log.warn?.(`[prefrontal] HTTP route registration failed`);
   }
 
   // ─── Subagent run tracking (for monitor tree) ───
