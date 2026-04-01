@@ -15,12 +15,13 @@ set -euo pipefail
 export PATH="$HOME/.local/share/pnpm:$HOME/.nvm/versions/node/v22.22.0/bin:$PATH"
 
 CRON_STORE="${HOME}/.openclaw/cron/jobs.json"
-LOG_FILE="${HOME}/.openclaw/logs/cron-health-gate.log"
+LOG_DIR="${HOME}/.openclaw/logs"
+LOG_FILE="${LOG_DIR}/cron-health-gate.log"
 LOCK_FILE="/tmp/cron-health-gate.lock"
 COOLDOWN_SECONDS=1800
 COOLDOWN_FILE="/tmp/cron-health-gate.last-alert"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SELF_HEAL_LOG="${HOME}/.openclaw/logs/self-heal.log"
+SELF_HEAL_LOG="${LOG_DIR}/self-heal.log"
 
 log() { echo "$(date -Iseconds) $*" >> "$LOG_FILE"; }
 heal_log() { echo "$(date -Iseconds) HEAL: $*" >> "$SELF_HEAL_LOG"; }
@@ -36,7 +37,7 @@ fi
 echo $$ > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT
 
-mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$SELF_HEAL_LOG")"
+mkdir -p "$LOG_DIR"
 
 # ── Phase 0: Gateway liveness check (P0 — prevents multi-hour outages) ──
 GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
@@ -171,6 +172,40 @@ while IFS= read -r issue_json; do
   fi
   
 done <<< "$ISSUES"
+
+# ── Phase 3.5: Prefrontal Overseer Watch ─────────────────────
+# Check if the Overseer agent session has gone stale.
+# If no events for GUARDIAN_STALE_THRESHOLD, kill and relaunch.
+
+OVERSEER_RECOVERY="/tmp/overseer/recovery.json"
+OVERSEER_GUARDIAN_LOG="${LOG_DIR}/overseer-guardian.log"
+GUARDIAN_STALE_THRESHOLD=300  # 5 minutes in seconds
+
+if [ -f "$OVERSEER_RECOVERY" ]; then
+  LAST_TS=$(jq -r '.timestamp // empty' "$OVERSEER_RECOVERY" 2>/dev/null)
+  if [ -n "$LAST_TS" ]; then
+    LAST_EPOCH=$(date -d "$LAST_TS" +%s 2>/dev/null || echo 0)
+    NOW_EPOCH=$(date +%s)
+    AGE=$(( NOW_EPOCH - LAST_EPOCH ))
+
+    if [ "$AGE" -gt "$GUARDIAN_STALE_THRESHOLD" ]; then
+      echo "[$(date -Is)] PREFRONTAL STALE: last event ${AGE}s ago (threshold: ${GUARDIAN_STALE_THRESHOLD}s)" >> "$OVERSEER_GUARDIAN_LOG"
+
+      # Preserve the recovery file (it has the active subagent list)
+      # Kill the overseer session via openclaw CLI
+      OVERSEER_SESSION=$(jq -r '.overseerSessionKey // empty' "$OVERSEER_RECOVERY" 2>/dev/null)
+      if [ -n "$OVERSEER_SESSION" ]; then
+        openclaw sessions delete "$OVERSEER_SESSION" 2>>"$OVERSEER_GUARDIAN_LOG" || true
+        echo "[$(date -Is)] Killed overseer session: $OVERSEER_SESSION" >> "$OVERSEER_GUARDIAN_LOG"
+      fi
+
+      # The overseer extension will detect the recovery file on next gateway poll
+      # and resume with the preserved state. No need to explicitly relaunch here —
+      # the next user prompt or heartbeat wake will trigger the overseer.
+      echo "[$(date -Is)] Recovery file preserved for overseer relaunch" >> "$OVERSEER_GUARDIAN_LOG"
+    fi
+  fi
+fi
 
 # ── Phase 3: Escalate only what couldn't be self-healed ──
 
