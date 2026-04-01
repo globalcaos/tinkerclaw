@@ -225,14 +225,13 @@ export default function register(api: OpenClawPluginApi) {
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.updateUsage(sessionKey, event.usage);
     topology.updatePhase(sessionKey, "responding");
-    // Update monitor phase to "responding"
-    if (monitor.setActiveMain) {
-      const existing = (monitor as any).activeMain;
-      // Only update phase if main is already set (from llm_input)
+    // Update monitor phase to "responding" — keep existing provider/model from llm_input
+    const current = monitor.getTreeState();
+    if (current.root) {
       monitor.setActiveMain({
         sessionKey,
-        provider: (event as any).provider ?? "unknown",
-        model: (event as any).model ?? "unknown",
+        provider: current.root.provider,
+        model: current.root.model,
         phase: "responding",
       });
     }
