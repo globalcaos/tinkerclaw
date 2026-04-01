@@ -82,7 +82,7 @@ export default function register(api: OpenClawPluginApi) {
   try {
     api.registerHttpRoute({
       path: "/api/prefrontal",
-      auth: "none",
+      auth: "gateway",
       match: "prefix",
       handler: (req: any, res: any) => {
         if (!httpHandler(req, res)) {
