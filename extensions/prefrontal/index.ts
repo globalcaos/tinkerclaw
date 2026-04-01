@@ -39,8 +39,12 @@ import {
   DEFAULT_ANTI_GOLDPLATING_CONFIG,
 } from "./anti-goldplating.js";
 import { ChatEmitter } from "./chat-emitter.js";
+import { shouldTriggerCorf, getCorfDebatePrompt, DEFAULT_CORF_CONFIG } from "./corf-trigger.js";
 import { createDenialTracker } from "./denial-tracking.js";
+import { validateModelAssignment, DEFAULT_EFFORT_ROUTING_CONFIG } from "./effort-router.js";
 import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./exploration-gate.js";
+import { createFaarTracker, classifyTask } from "./faar-tracker.js";
+import { resolveFeatureFlags, isEnabled, type PrefrontalFeatureFlags } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
@@ -57,6 +61,7 @@ const PLUGIN_ID = "prefrontal";
 // The gateway loads this plugin multiple times (gateway + per-agent),
 // but hooks and gateway methods must operate on the SAME state.
 let sharedMonitor: ReturnType<typeof createPrefrontalMonitor> | null = null;
+let sharedFaarTracker: ReturnType<typeof createFaarTracker> | null = null;
 const sharedSubagentRuns = new Map<string, SubagentRunInfo>();
 const sharedLastEventTimestamps = new Map<string, number>();
 let sharedPrefrontalSessionKey: string | null = null;
@@ -71,11 +76,15 @@ export default function register(api: OpenClawPluginApi) {
     ...(pluginConfig.prefrontal ?? {}),
   };
 
+  // ─── WS5: Feature Flags ───
+  const featureFlags = resolveFeatureFlags(pluginConfig.featureFlags ?? {});
+
   // ─── P0: Exploration Gate ───
   const explorationGateConfig = {
     ...DEFAULT_EXPLORATION_GATE_CONFIG,
     ...(pluginConfig.explorationGate ?? {}),
   };
+  explorationGateConfig.enabled = isEnabled(featureFlags, "explorationGate");
   const explorationGate = createExplorationGate(explorationGateConfig);
 
   // ─── P0: Anti-Gold-Plating ───
@@ -83,6 +92,27 @@ export default function register(api: OpenClawPluginApi) {
     ...DEFAULT_ANTI_GOLDPLATING_CONFIG,
     ...(pluginConfig.antiGoldplating ?? {}),
   };
+  antiGoldplatingConfig.enabled = isEnabled(featureFlags, "antiGoldplating");
+
+  // ─── WS3: Effort Routing ───
+  const effortRoutingConfig = {
+    ...DEFAULT_EFFORT_ROUTING_CONFIG,
+    enabled: isEnabled(featureFlags, "effortRouting"),
+    ...(pluginConfig.effortRouting ?? {}),
+  };
+
+  // ─── WS4: CORF Trigger ───
+  const corfConfig = {
+    ...DEFAULT_CORF_CONFIG,
+    enabled: isEnabled(featureFlags, "corfTrigger"),
+    ...(pluginConfig.corf ?? {}),
+  };
+
+  // ─── WS6: FAAR Tracker ───
+  if (!sharedFaarTracker) {
+    sharedFaarTracker = createFaarTracker();
+  }
+  const faarTracker = sharedFaarTracker;
 
   // ─── P3: Forcing Questions ───
   const forcingQuestionsEnabled = pluginConfig.forcingQuestions?.enabled !== false;
@@ -193,6 +223,18 @@ export default function register(api: OpenClawPluginApi) {
       subagentRuns.set(event.runId, run);
       lastEventTimestamps.set(event.runId, Date.now());
 
+      // WS3: Validate model assignment against task complexity
+      if (isEnabled(featureFlags, "effortRouting") && event.label) {
+        const routing = validateModelAssignment(
+          (event as any).model ?? "",
+          event.label,
+          effortRoutingConfig,
+        );
+        if (!routing.approved) {
+          log.warn?.(`[prefrontal] Effort routing: ${routing.reason}`);
+        }
+      }
+
       // If the spawning session is main, mark it as prefrontal session
       if (!getPrefrontalSessionKey() && ctx.requesterSessionKey?.includes("main")) {
         setPrefrontalSessionKey(ctx.requesterSessionKey);
@@ -285,18 +327,20 @@ export default function register(api: OpenClawPluginApi) {
       );
 
       // P0: Exploration gate — block mutating tools before read-only exploration
-      const gateResult = explorationGate.checkTool(event.toolName, {
-        trigger: ctx.trigger,
-        isSubagent: ctx.sessionKey?.includes(":subagent:"),
-      });
-      if (gateResult.blocked) {
-        return { block: true, blockReason: gateResult.message };
+      if (isEnabled(featureFlags, "explorationGate")) {
+        const gateResult = explorationGate.checkTool(event.toolName, {
+          trigger: ctx.trigger,
+          isSubagent: ctx.sessionKey?.includes(":subagent:"),
+        });
+        if (gateResult.blocked) {
+          return { block: true, blockReason: gateResult.message };
+        }
+        // Record the tool call for gate tracking
+        explorationGate.recordToolCall(event.toolName);
       }
-      // Record the tool call for gate tracking
-      explorationGate.recordToolCall(event.toolName);
 
       // P3: Permission hooks — user-defined shell scripts gate tool calls
-      if (hookDefs.length > 0) {
+      if (isEnabled(featureFlags, "permissionHooks") && hookDefs.length > 0) {
         const hookResult = await permissionHooks.check(event.toolName, {
           args: event.params,
           sessionKey: ctx.sessionKey,
@@ -333,12 +377,20 @@ export default function register(api: OpenClawPluginApi) {
       const parts: string[] = [];
 
       // P0: Anti-gold-plating rules
-      if (shouldInjectAntiGoldplating(antiGoldplatingConfig, ctx?.trigger)) {
+      if (
+        isEnabled(featureFlags, "antiGoldplating") &&
+        shouldInjectAntiGoldplating(antiGoldplatingConfig, ctx?.trigger)
+      ) {
         parts.push(loadAntiGoldplatingPrompt());
       }
 
       // P3: Forcing questions for complex tasks
-      if (forcingQuestionsEnabled && ctx?.trigger !== "heartbeat" && ctx?.trigger !== "cron") {
+      if (
+        isEnabled(featureFlags, "forcingQuestions") &&
+        forcingQuestionsEnabled &&
+        ctx?.trigger !== "heartbeat" &&
+        ctx?.trigger !== "cron"
+      ) {
         // We can't access the user message here, so inject forcing questions
         // unconditionally when enabled — the questions are lightweight guidance
         // and won't hurt simple tasks
@@ -385,6 +437,22 @@ export default function register(api: OpenClawPluginApi) {
       monitor.setActiveMain(null);
       rebuildAndBroadcastTree();
     }, 10_000);
+
+    // WS6: Track task outcome for FAAR metrics
+    if (isEnabled(featureFlags, "faarTracking")) {
+      const category = classifyTask(topology.getNode(sessionKey)?.label ?? "unknown");
+      faarTracker.record({
+        timestamp: Date.now(),
+        sessionKey,
+        category,
+        firstAttemptSuccess: event.success,
+        model: topology.getNode(sessionKey)?.model ?? "unknown",
+        provider: topology.getNode(sessionKey)?.provider ?? "unknown",
+        tokensUsed: event.usage?.totalTokens ?? 0,
+        durationMs: event.durationMs ?? 0,
+        retryCount: 0,
+      });
+    }
   });
 
   api.on("gateway_start", (_event: PluginHookGatewayStartEvent, _ctx: PluginHookGatewayContext) => {
@@ -550,6 +618,14 @@ export default function register(api: OpenClawPluginApi) {
 
   api.registerGatewayMethod("prefrontal.config", async ({ respond }) => {
     respond(true, prefrontalConfig);
+  });
+
+  api.registerGatewayMethod("prefrontal.metrics", async ({ respond }) => {
+    respond(true, faarTracker.getMetrics());
+  });
+
+  api.registerGatewayMethod("prefrontal.flags", async ({ respond }) => {
+    respond(true, featureFlags);
   });
 
   log.info?.(
