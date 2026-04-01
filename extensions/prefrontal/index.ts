@@ -262,9 +262,22 @@ export default function register(api: OpenClawPluginApi) {
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.endSession(sessionKey, event.success, event.durationMs);
-    // Clear active main — response complete, hide panel
-    monitor.setActiveMain(null);
-    rebuildAndBroadcastTree();
+    // Clear active main after a short delay so the UI poll catches the completed state.
+    // Mark as completed first, then clear after 10s.
+    const endedModel = topology.getNode(sessionKey);
+    if (endedModel) {
+      monitor.setActiveMain({
+        sessionKey,
+        provider: endedModel.provider ?? "unknown",
+        model: endedModel.model ?? "unknown",
+        phase: "completed",
+      });
+      rebuildAndBroadcastTree();
+    }
+    setTimeout(() => {
+      monitor.setActiveMain(null);
+      rebuildAndBroadcastTree();
+    }, 10_000);
   });
 
   api.on("gateway_start", (_event: PluginHookGatewayStartEvent, _ctx: PluginHookGatewayContext) => {
@@ -424,11 +437,7 @@ export default function register(api: OpenClawPluginApi) {
   });
 
   api.registerGatewayMethod("prefrontal.tree", async ({ respond }) => {
-    const runs = Array.from(subagentRuns.values());
-    const tree = monitor.buildTree(runs, prefrontalSessionKey);
-    log.info?.(
-      `[prefrontal] tree requested: active=${tree.active} children=${tree.root?.children.length ?? 0}`,
-    );
+    const tree = monitor.getTreeState();
     respond(true, tree);
   });
 
