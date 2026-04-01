@@ -66,6 +66,9 @@ export const DEFAULT_OVERSEER_CONFIG: OverseerConfig = {
   },
 };
 
+/** Display name shown in chat and UI. Internal plugin ID remains "overseer". */
+export const OVERSEER_DISPLAY_NAME = "Prefrontal";
+
 export function extractProvider(model: string): string {
   const slash = model.indexOf("/");
   return slash > 0 ? model.slice(0, slash) : "unknown";
