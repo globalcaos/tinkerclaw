@@ -17,7 +17,6 @@
  */
 import { join } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { loadCombinedSessionStoreForGateway } from "../../src/gateway/session-utils.js";
 import type {
   PluginHookSubagentSpawnedEvent,
   PluginHookSubagentEndedEvent,
@@ -32,7 +31,25 @@ import type {
   PluginHookBeforeToolCallEvent,
   PluginHookAfterToolCallEvent,
   PluginHookToolContext,
-} from "../../src/plugins/types.js";
+} from "./hook-types.js";
+
+// Try to load session utils from fork source (available in tinkerclaw fork).
+// Falls back gracefully on vanilla OpenClaw — topology enrichment is skipped.
+let _sessionStoreLoader: ((cfg: any) => any) | null = null;
+let _sessionStoreChecked = false;
+
+function getSessionStoreLoader(): ((cfg: any) => any) | null {
+  if (_sessionStoreChecked) return _sessionStoreLoader;
+  _sessionStoreChecked = true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("../../src/gateway/session-utils.js");
+    _sessionStoreLoader = mod.loadCombinedSessionStoreForGateway ?? null;
+  } catch {
+    _sessionStoreLoader = null;
+  }
+  return _sessionStoreLoader;
+}
 import {
   loadAntiGoldplatingPrompt,
   shouldInjectAntiGoldplating,
@@ -517,8 +534,10 @@ export default function register(api: OpenClawPluginApi) {
   function enrichTopology() {
     // Only enrich non-main nodes (main node gets data from hooks directly)
     if (topology.allNodes().filter((n) => !n.isMain).length === 0) return;
+    const loader = getSessionStoreLoader();
+    if (!loader) return;
     try {
-      const { store } = loadCombinedSessionStoreForGateway(config as any);
+      const { store } = loader(config as any);
       const sessions = Object.entries(store).map(([key, entry]: [string, any]) => ({
         key,
         model: entry.model,
