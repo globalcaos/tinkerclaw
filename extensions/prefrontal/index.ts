@@ -39,7 +39,10 @@ import {
   DEFAULT_ANTI_GOLDPLATING_CONFIG,
 } from "./anti-goldplating.js";
 import { ChatEmitter } from "./chat-emitter.js";
+import { createDenialTracker } from "./denial-tracking.js";
 import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./exploration-gate.js";
+import { getForcingQuestionsPrompt } from "./forcing-questions.js";
+import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
 import { createPrefrontalHttpHandler } from "./prefrontal-http.js";
 import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
@@ -80,6 +83,14 @@ export default function register(api: OpenClawPluginApi) {
     ...DEFAULT_ANTI_GOLDPLATING_CONFIG,
     ...(pluginConfig.antiGoldplating ?? {}),
   };
+
+  // ─── P3: Forcing Questions ───
+  const forcingQuestionsEnabled = pluginConfig.forcingQuestions?.enabled !== false;
+
+  // ─── P3: Permission Hooks + Denial Tracking ───
+  const hookDefs = pluginConfig.hooks?.before_tool ?? [];
+  const permissionHooks = createPermissionHooks(hookDefs);
+  const denialTracker = createDenialTracker({ limit: pluginConfig.hooks?.denialLimit ?? 3 });
 
   // Initialize shared monitor singleton on first registration
   if (!sharedMonitor) {
@@ -266,43 +277,76 @@ export default function register(api: OpenClawPluginApi) {
     }
   });
 
-  api.on("before_tool_call", (event: PluginHookBeforeToolCallEvent, ctx: PluginHookToolContext) => {
-    log.info?.(
-      `[prefrontal] HOOK before_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
-    );
+  api.on(
+    "before_tool_call",
+    async (event: PluginHookBeforeToolCallEvent, ctx: PluginHookToolContext) => {
+      log.info?.(
+        `[prefrontal] HOOK before_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
+      );
 
-    // P0: Exploration gate — block mutating tools before read-only exploration
-    const gateResult = explorationGate.checkTool(event.toolName, {
-      trigger: ctx.trigger,
-      isSubagent: ctx.sessionKey?.includes(":subagent:"),
-    });
-    if (gateResult.blocked) {
-      return { block: true, blockReason: gateResult.message };
-    }
-    // Record the tool call for gate tracking
-    explorationGate.recordToolCall(event.toolName);
-
-    const sessionKey = ctx.sessionKey || "agent:main:main";
-    if (TopologyStore.isHeartbeat(sessionKey)) return;
-    topology.addToolCall(sessionKey, event.toolName);
-
-    // Update last event timestamp for any matching subagent
-    for (const [runId, run] of subagentRuns) {
-      if (run.childSessionKey === sessionKey) {
-        lastEventTimestamps.set(runId, Date.now());
-        break;
+      // P0: Exploration gate — block mutating tools before read-only exploration
+      const gateResult = explorationGate.checkTool(event.toolName, {
+        trigger: ctx.trigger,
+        isSubagent: ctx.sessionKey?.includes(":subagent:"),
+      });
+      if (gateResult.blocked) {
+        return { block: true, blockReason: gateResult.message };
       }
-    }
-  });
+      // Record the tool call for gate tracking
+      explorationGate.recordToolCall(event.toolName);
 
-  // P0: Anti-gold-plating — inject discipline rules into every agent prompt
+      // P3: Permission hooks — user-defined shell scripts gate tool calls
+      if (hookDefs.length > 0) {
+        const hookResult = await permissionHooks.check(event.toolName, {
+          args: event.params,
+          sessionKey: ctx.sessionKey,
+        });
+        if (hookResult.decision === "deny") {
+          denialTracker.recordDenial(event.toolName);
+          if (denialTracker.shouldEscalate(event.toolName)) {
+            return { block: true, blockReason: denialTracker.getEscalationMessage(event.toolName) };
+          }
+          return { block: true, blockReason: hookResult.feedback ?? "Denied by permission hook" };
+        }
+        denialTracker.recordApproval(event.toolName);
+      }
+
+      const sessionKey = ctx.sessionKey || "agent:main:main";
+      if (TopologyStore.isHeartbeat(sessionKey)) return;
+      topology.addToolCall(sessionKey, event.toolName);
+
+      // Update last event timestamp for any matching subagent
+      for (const [runId, run] of subagentRuns) {
+        if (run.childSessionKey === sessionKey) {
+          lastEventTimestamps.set(runId, Date.now());
+          break;
+        }
+      }
+    },
+  );
+
+  // P0: Anti-gold-plating + P3: Forcing questions — inject discipline rules and
+  // structured pre-task thinking prompts into every agent prompt
   api.on(
     "before_prompt_build",
     async (_event: any, ctx: any) => {
+      const parts: string[] = [];
+
+      // P0: Anti-gold-plating rules
       if (shouldInjectAntiGoldplating(antiGoldplatingConfig, ctx?.trigger)) {
-        return {
-          prependSystemContext: loadAntiGoldplatingPrompt(),
-        };
+        parts.push(loadAntiGoldplatingPrompt());
+      }
+
+      // P3: Forcing questions for complex tasks
+      if (forcingQuestionsEnabled && ctx?.trigger !== "heartbeat" && ctx?.trigger !== "cron") {
+        // We can't access the user message here, so inject forcing questions
+        // unconditionally when enabled — the questions are lightweight guidance
+        // and won't hurt simple tasks
+        parts.push(getForcingQuestionsPrompt());
+      }
+
+      if (parts.length > 0) {
+        return { prependSystemContext: parts.join("\n\n") };
       }
       return {};
     },
