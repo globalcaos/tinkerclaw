@@ -511,12 +511,15 @@ function clearPersistedErrors(sk: string) {
 }
 
 // ─── Active Model Tracking ───
+type ActiveRunPhase = "thinking" | "tool" | "responding" | "reflecting" | "completed" | "failed";
 type ActiveRunInfo = {
   model: string;
   provider: string;
   authProfileId?: string;
   startedAt: number;
   sessionKey?: string;
+  phase: ActiveRunPhase;
+  currentTool?: string;
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
@@ -638,12 +641,13 @@ function updatePrefrontalTree() {
 
   for (const { runId, info } of runs) {
     const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
+    const statusLabel = info.currentTool ? `tool: ${info.currentTool}` : info.phase;
     const node: TreeNode = {
       runId,
       model: info.model,
       provider: info.provider,
       label: info.authProfileId ?? info.model,
-      status: "running",
+      status: statusLabel,
       progress: 0,
       lastEventAge: elapsed,
       children: [],
@@ -659,12 +663,13 @@ function updatePrefrontalTree() {
   // If no main session found, use the first run as root
   if (!root && runs.length > 0) {
     const { runId, info } = runs[0];
+    const statusLabel = info.currentTool ? `tool: ${info.currentTool}` : info.phase;
     root = {
       runId,
       model: info.model,
       provider: info.provider,
       label: info.authProfileId ?? info.model,
-      status: "running",
+      status: statusLabel,
       progress: 0,
       lastEventAge: Math.floor((Date.now() - info.startedAt) / 1000),
       children: [],
@@ -932,6 +937,20 @@ function onEvent(evt: any) {
     }
     if (p.state === "delta") {
       streamRunId = p.runId;
+      // Update active run phase based on streaming content
+      const runInfo = activeRuns.get(p.runId);
+      if (runInfo) {
+        const txt = p.message?.content?.[0]?.text ?? "";
+        const isFractal =
+          txt.trimStart().startsWith("🌿 FRACTAL:") ||
+          txt.trimStart().startsWith("# FRACTAL REFLECTION");
+        const newPhase: ActiveRunPhase = isFractal ? "reflecting" : "responding";
+        if (runInfo.phase !== newPhase) {
+          runInfo.phase = newPhase;
+          runInfo.currentTool = undefined;
+          updatePrefrontalTree();
+        }
+      }
       // FORK: Un-queue any queued user messages — LLM absorbed them via steer
       for (const m of messages) {
         if (m._queued) delete m._queued;
@@ -1086,6 +1105,14 @@ function onEvent(evt: any) {
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
+        // Update active run phase to "tool"
+        for (const info of activeRuns.values()) {
+          if (!info.sessionKey || sessionKeyMatches(info.sessionKey)) {
+            info.phase = "tool";
+            info.currentTool = d.name;
+          }
+        }
+        updatePrefrontalTree();
         // Freeze current streaming text — it becomes its own thinking bubble
         frozenTextEnd = lastDeltaLen;
         streamMsgIdx = -1;
@@ -1104,6 +1131,14 @@ function onEvent(evt: any) {
         });
         updateChat();
       } else if (d.phase === "result" && d.toolCallId) {
+        // Tool completed — back to thinking
+        for (const info of activeRuns.values()) {
+          if (!info.sessionKey || sessionKeyMatches(info.sessionKey)) {
+            info.phase = "thinking";
+            info.currentTool = undefined;
+          }
+        }
+        updatePrefrontalTree();
         // Push tool_result as a temporary message so renderMsg can pair it
         messages.push({
           role: "user",
@@ -1385,6 +1420,7 @@ function onEvent(evt: any) {
           authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
+          phase: "thinking",
         });
         // Re-assert sending in case a chat error event cleared it during fallback
         sending = true;
