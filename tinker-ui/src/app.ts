@@ -6114,6 +6114,7 @@ init();
 const prefrontalContainer = document.getElementById("prefrontal-graph");
 if (prefrontalContainer) {
   prefrontalCtrl = mountPrefrontalTree(prefrontalContainer);
+  updatePrefrontalTree(); // Show empty state on boot
 }
 gwConnect();
 setInterval(() => {
