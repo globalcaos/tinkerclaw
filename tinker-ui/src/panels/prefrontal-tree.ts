@@ -41,26 +41,7 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
 
     const panel = el("div", "pf-tree-panel");
 
-    // Header
-    const header = el("div", "pf-header");
-    header.innerHTML = `
-      <div class="pf-header-left">
-        <span class="pf-dot"></span>
-        <span class="pf-title">Prefrontal</span>
-        <span class="pf-count">${currentData.root.children.length} agents</span>
-      </div>
-      <div class="pf-toggle">
-        <span class="pf-toggle-btn ${filterMode === "session" ? "pf-active" : ""}" data-mode="session">Session</span>
-        <span class="pf-toggle-btn ${filterMode === "all" ? "pf-active" : ""}" data-mode="all">All</span>
-      </div>
-    `;
-    header.querySelectorAll(".pf-toggle-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        filterMode = (btn as HTMLElement).dataset.mode as "session" | "all";
-        render();
-      });
-    });
-    panel.appendChild(header);
+    // No inline header — title and toggle live in the rpanel-header (app.ts HTML)
 
     // Root node
     panel.appendChild(renderNode(currentData.root, false));
