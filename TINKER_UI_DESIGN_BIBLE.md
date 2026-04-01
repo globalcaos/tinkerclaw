@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-03-30 (Merge repair, timeline CORS fix, WA trigger rules §11.6a, session delete §5.5, voice mute §5.36 restore, heartbeat fix)
+> Last updated: 2026-04-01 (Prefrontal plugin — compact call tree, provider logos, guardian watchdog, full overseer→prefrontal rename)
 
 ---
 
@@ -29,7 +29,9 @@ tinker-ui/              ← Fork-only, zero merge risk
 │       ├── context-timeline.ts   (772 lines)
 │       ├── context-treemap.ts    (1038 lines)
 │       ├── response-treemap.ts   (703 lines)
-│       └── overseer-graph.ts     (541 lines)
+│       ├── prefrontal-graph.ts   (541 lines, legacy pill panel)
+│       ├── prefrontal-tree.ts   (compact call tree — new)
+│       └── provider-logos.ts    (SVG logos + color maps — new)
 ├── index.html
 ├── package.json
 └── vite.config.ts
@@ -482,18 +484,23 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Same squarified treemap for output token usage. Purple tones. Side-by-side with context treemap via tabs.
 - **Files:** `response-treemap.ts` (703 lines), `app.ts`, `base.css`
 
-### 5.12 Overseer Panel (Pills)
+### 5.12 Prefrontal Panel (Call Tree)
 
 - **Status:** `DEPLOYED-UNTESTED`
 - **Originally deployed:** 2026-03-03 as force-directed SVG graph (commit `98f72f4c1`)
-- **Redesigned:** 2026-03-05 (commit `4885b7bd0`) — replaced 541-line SVG graph with 128-line pill visualization
-- **What:** Horizontal flex-wrap pill layout showing active runs. Each pill = one active run with provider icon, model name, auth label, and provider-colored breathing glow.
-- **Data source:** Driven by `activeRuns` Map (same data as model panel glow), synced via `updateOverseerPanel()` called from `updateBudgetPanel()`. Zero polling — no `overseer.topology` calls.
-- **Empty state:** Telescope icon + "Overseer watching — waiting for config"
-- **Pill states:** Active (breathing glow animation `overseer-pill-breathe`), error (red border, dimmed), inactive (dimmed 40% opacity)
-- **Removed:** Session filter button, `overseerFilterActive` state, 5s polling interval, force-directed physics, SVG rendering
-- **CSS:** `.overseer-pills`, `.overseer-pill`, `.overseer-pill--active`, `.overseer-pill--error`, `.overseer-empty-state`
-- **Files:** `overseer-graph.ts` (128 lines), `app.ts` (`updateOverseerPanel()`), `base.css`
+- **Redesigned:** 2026-03-05 as pill panel, **2026-04-01 rewritten as compact call tree**
+- **Renamed:** 2026-04-01 — "overseer" fully renamed to "prefrontal" (plugin ID, folder, files, all references)
+- **What:** Compact call tree showing the Prefrontal orchestration agent (Opus) at root, with worker subagents as child nodes. Each node = one row: provider logo → model name → task label → progress bar/stall indicator. Hidden when no subagents active (no idle state).
+- **Data source:** WebSocket `prefrontal-tree` events pushed by `extensions/prefrontal/` extension. Extension hooks into `subagent_spawned`, `subagent_ended`, `llm_output`, `tool_call` lifecycle events. Also pollable via `GET /api/prefrontal/tree`.
+- **Node states:** Running (provider-colored progress bar), stalled (red border + "STALLED Xm"), completed (dimmed 50% + checkmark), failed (dimmed)
+- **Progress:** Thin 3px bar, colored by provider. Percentage from Overseer's Sonnet-generated summary parsing.
+- **Session/All toggle:** Filter to current session's tree or show all active sessions.
+- **Provider logos:** Anthropic A-mark (`#d4a574`), Google 4-color dot, OpenAI circle, Ollama llama. Defined in `provider-logos.ts`. Fixes the Gemini-shows-Anthropic-logo bug.
+- **CSS:** `.pf-tree-panel`, `.pf-node`, `.pf-root`, `.pf-child`, `.pf-connector`, `.pf-logo`, `.pf-model`, `.pf-label`, `.pf-progress-bar`, `.pf-stall`, `.pf-completed`
+- **Files:** `prefrontal-tree.ts` (~250 lines), `provider-logos.ts` (~60 lines), `prefrontal-graph.ts` (legacy pill panel, retained)
+- **Gateway extension:** `extensions/prefrontal/` — monitor loop (5s rebuild), stall detection (180s threshold), HTTP API, crash recovery via `/tmp/prefrontal/recovery.json`
+- **Guardian:** Phase 3.5 in `scripts/cron-health-gate.sh` — checks if Prefrontal agent stalls for >5min, kills session, preserves recovery state for relaunch
+- **Config:** `openclaw.json` → `plugins.entries.prefrontal` (model, thresholds, effort routing tiers)
 
 ### 5.13 Models Panel
 
@@ -1286,6 +1293,9 @@ grep -r '__filename' ../dist/ --include='*.js' | grep -v node_modules  # should 
 # 3. Send a message — get a response
 # 4. Model glow appears during response (only active model row, not all)
 # 5. Fallback errors show per-model, NOT per-provider
+# 6. Prefrontal panel hidden when no subagents active
+# 7. Prefrontal tree appears when subagents spawn (correct provider logos)
+# 8. curl http://localhost:18789/api/prefrontal/tree returns JSON
 # 6. Error badges clear when provider recovers
 # 7. Overseer pills show active runs with breathing glow
 # 8. Context timeline populates after response
@@ -1295,20 +1305,28 @@ grep -r '__filename' ../dist/ --include='*.js' | grep -v node_modules  # should 
 
 ## 10. File Quick Reference
 
-| File                                          | Lines | Purpose                                                             |
-| --------------------------------------------- | ----- | ------------------------------------------------------------------- |
-| `tinker-ui/src/app.ts`                        | ~2300 | Entire frontend app                                                 |
-| `tinker-ui/src/styles/base.css`               | ~450  | All styles (earth theme + textures)                                 |
-| `tinker-ui/public/favicon.png`                | —     | Tab favicon (TheTinkerZone icon_rounded, B&W, transparent bg)       |
-| `tinker-ui/public/icon.png`                   | —     | Topbar logo (wood-textured "The Tinker Zone" sign) — DO NOT replace |
-| `tinker-ui/src/panels/context-timeline.ts`    | ~780  | Bottom bar token chart (round-level)                                |
-| `tinker-ui/src/panels/context-treemap.ts`     | 1038  | Token composition treemap                                           |
-| `tinker-ui/src/panels/response-treemap.ts`    | 703   | Output token treemap                                                |
-| `tinker-ui/src/panels/overseer-graph.ts`      | 128   | Overseer pill visualization                                         |
-| `extensions/tinker/index.ts`                  | ~140  | Gateway plugin (serves UI + file-read API)                          |
-| `extensions/tinker/openclaw.plugin.json`      | ~15   | Plugin manifest                                                     |
-| `extensions/hippocampus/index.ts`             | ~22   | Plugin stub (registers ID; code in src/memory/engram/)              |
-| `extensions/hippocampus/openclaw.plugin.json` | ~11   | Plugin manifest                                                     |
+| File                                           | Lines | Purpose                                                             |
+| ---------------------------------------------- | ----- | ------------------------------------------------------------------- |
+| `tinker-ui/src/app.ts`                         | ~2300 | Entire frontend app                                                 |
+| `tinker-ui/src/styles/base.css`                | ~450  | All styles (earth theme + textures)                                 |
+| `tinker-ui/public/favicon.png`                 | —     | Tab favicon (TheTinkerZone icon_rounded, B&W, transparent bg)       |
+| `tinker-ui/public/icon.png`                    | —     | Topbar logo (wood-textured "The Tinker Zone" sign) — DO NOT replace |
+| `tinker-ui/src/panels/context-timeline.ts`     | ~780  | Bottom bar token chart (round-level)                                |
+| `tinker-ui/src/panels/context-treemap.ts`      | 1038  | Token composition treemap                                           |
+| `tinker-ui/src/panels/response-treemap.ts`     | 703   | Output token treemap                                                |
+| `tinker-ui/src/panels/prefrontal-graph.ts`     | 128   | Legacy pill visualization (retained)                                |
+| `tinker-ui/src/panels/prefrontal-tree.ts`      | ~250  | Compact call tree (replaced pills)                                  |
+| `tinker-ui/src/panels/provider-logos.ts`       | ~60   | Provider SVG logos + color maps (Anthropic, Google, OpenAI, Ollama) |
+| `extensions/prefrontal/index.ts`               | ~250  | Prefrontal extension (monitor, HTTP API, lifecycle hooks, recovery) |
+| `extensions/prefrontal/prefrontal-types.ts`    | ~75   | Shared types (PrefrontalTreeNode, PrefrontalConfig, etc.)           |
+| `extensions/prefrontal/prefrontal-monitor.ts`  | ~120  | Tree builder, stall detection, progress tracking                    |
+| `extensions/prefrontal/prefrontal-http.ts`     | ~45   | GET /api/prefrontal/tree endpoint                                   |
+| `extensions/prefrontal/prefrontal-recovery.ts` | ~45   | Crash recovery state writer/reader for guardian                     |
+| `extensions/prefrontal/prefrontal-prompt.md`   | ~85   | Opus orchestrator system prompt (methodology rules, effort routing) |
+| `extensions/tinker/index.ts`                   | ~140  | Gateway plugin (serves UI + file-read API)                          |
+| `extensions/tinker/openclaw.plugin.json`       | ~15   | Plugin manifest                                                     |
+| `extensions/hippocampus/index.ts`              | ~22   | Plugin stub (registers ID; code in src/memory/engram/)              |
+| `extensions/hippocampus/openclaw.plugin.json`  | ~11   | Plugin manifest                                                     |
 
 ---
 
