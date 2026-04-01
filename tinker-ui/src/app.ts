@@ -6079,9 +6079,12 @@ setInterval(() => {
   if (!connected || !prefrontalCtrl) return;
   req("prefrontal.tree", {})
     .then((res: any) => {
+      console.log("[prefrontal-poll]", JSON.stringify(res));
       if (res && prefrontalCtrl) {
         prefrontalCtrl.update(res as TreeResponse);
       }
     })
-    .catch(() => {}); // Silently ignore — plugin may not be loaded
+    .catch((e: any) => {
+      console.log("[prefrontal-poll] error:", e);
+    });
 }, 5000);
