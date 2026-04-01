@@ -84,7 +84,12 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
           model: activeMain.model,
           provider: activeMain.provider,
           label: "Prefrontal",
-          status: activeMain.phase === "responding" ? "running" : "planning",
+          status:
+            activeMain.phase === "completed"
+              ? "completed"
+              : activeMain.phase === "responding"
+                ? "running"
+                : "planning",
           progress: 0,
           lastEventAge: 0,
           children: [],
