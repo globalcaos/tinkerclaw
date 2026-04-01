@@ -44,6 +44,14 @@ import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "prefrontal";
 
+// Module-level singletons — shared across all register() calls.
+// The gateway loads this plugin multiple times (gateway + per-agent),
+// but hooks and gateway methods must operate on the SAME state.
+let sharedMonitor: ReturnType<typeof createPrefrontalMonitor> | null = null;
+const sharedSubagentRuns = new Map<string, SubagentRunInfo>();
+const sharedLastEventTimestamps = new Map<string, number>();
+let sharedPrefrontalSessionKey: string | null = null;
+
 export default function register(api: OpenClawPluginApi) {
   const config = api.config as Record<string, any>;
   const pluginConfig = (config.plugins as any)?.entries?.[PLUGIN_ID]?.config ?? {};
@@ -53,6 +61,11 @@ export default function register(api: OpenClawPluginApi) {
     ...DEFAULT_PREFRONTAL_CONFIG,
     ...(pluginConfig.prefrontal ?? {}),
   };
+
+  // Initialize shared monitor singleton on first registration
+  if (!sharedMonitor) {
+    sharedMonitor = createPrefrontalMonitor(prefrontalConfig);
+  }
 
   const pollIntervalMs = pluginConfig.pollIntervalMs ?? 5000;
   const stalenessThresholdMs = pluginConfig.stalenessThresholdMs ?? 60000;
@@ -71,7 +84,7 @@ export default function register(api: OpenClawPluginApi) {
   const topology = new TopologyStore();
 
   // ─── Monitor (new call tree builder) ───
-  const monitor = createPrefrontalMonitor(prefrontalConfig);
+  const monitor = sharedMonitor!;
 
   // ─── HTTP Handler ───
   const httpHandler = createPrefrontalHttpHandler((sessionFilter) =>
@@ -95,10 +108,14 @@ export default function register(api: OpenClawPluginApi) {
     log.warn?.(`[prefrontal] HTTP route registration failed`);
   }
 
-  // ─── Subagent run tracking (for monitor tree) ───
-  const subagentRuns = new Map<string, SubagentRunInfo>();
-  const lastEventTimestamps = new Map<string, number>();
-  let prefrontalSessionKey: string | null = null;
+  // ─── Subagent run tracking (shared singletons) ───
+  const subagentRuns = sharedSubagentRuns;
+  const lastEventTimestamps = sharedLastEventTimestamps;
+  // Use module-level session key so all register() calls share it
+  const getPrefrontalSessionKey = () => sharedPrefrontalSessionKey;
+  const setPrefrontalSessionKey = (v: string | null) => {
+    sharedPrefrontalSessionKey = v;
+  };
 
   // ─── Chat Emitter ───
   const chatEmitter = new ChatEmitter({
@@ -147,8 +164,8 @@ export default function register(api: OpenClawPluginApi) {
       lastEventTimestamps.set(event.runId, Date.now());
 
       // If the spawning session is main, mark it as prefrontal session
-      if (!prefrontalSessionKey && ctx.requesterSessionKey?.includes("main")) {
-        prefrontalSessionKey = ctx.requesterSessionKey;
+      if (!getPrefrontalSessionKey() && ctx.requesterSessionKey?.includes("main")) {
+        setPrefrontalSessionKey(ctx.requesterSessionKey);
       }
     },
   );
@@ -298,7 +315,7 @@ export default function register(api: OpenClawPluginApi) {
         );
         // Restore prefrontal session key from recovery
         if (recovery.prefrontalSessionKey) {
-          prefrontalSessionKey = recovery.prefrontalSessionKey;
+          setPrefrontalSessionKey(recovery.prefrontalSessionKey);
         }
         // Reconstruct subagent runs from recovery
         for (const sub of recovery.activeSubagents) {
@@ -377,7 +394,7 @@ export default function register(api: OpenClawPluginApi) {
   function rebuildAndBroadcastTree() {
     try {
       const runs = Array.from(subagentRuns.values());
-      const tree = monitor.buildTree(runs, prefrontalSessionKey);
+      const tree = monitor.buildTree(runs, getPrefrontalSessionKey());
       if (tree.active) {
         log.info?.(
           `[prefrontal] Tree active: root=${tree.root?.model} children=${tree.root?.children?.length ?? 0}`,
