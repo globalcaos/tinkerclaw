@@ -1,5 +1,5 @@
-// extensions/overseer/overseer-recovery.ts
-// FORK: Overseer crash recovery — write/read recovery state for guardian relaunch.
+// extensions/prefrontal/prefrontal-recovery.ts
+// FORK: Prefrontal crash recovery — write/read recovery state for guardian relaunch.
 
 import {
   writeFileSync,
@@ -10,21 +10,21 @@ import {
   renameSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import type { OverseerRecoveryState, OverseerTreeResponse } from "./overseer-types.js";
+import type { PrefrontalRecoveryState, PrefrontalTreeResponse } from "./prefrontal-types.js";
 
-const RECOVERY_PATH = "/tmp/overseer/recovery.json";
+const RECOVERY_PATH = "/tmp/prefrontal/recovery.json";
 
 export function writeRecoveryState(
-  overseerSessionKey: string,
-  tree: OverseerTreeResponse,
+  prefrontalSessionKey: string,
+  tree: PrefrontalTreeResponse,
   originalPrompt: string,
 ): void {
   const dir = dirname(RECOVERY_PATH);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  const state: OverseerRecoveryState = {
+  const state: PrefrontalRecoveryState = {
     timestamp: new Date().toISOString(),
-    overseerSessionKey,
+    prefrontalSessionKey,
     activeSubagents: (tree.root?.children ?? [])
       .filter((c) => c.status !== "completed" && c.status !== "failed")
       .map((c) => ({
@@ -43,11 +43,11 @@ export function writeRecoveryState(
   renameSync(tmpPath, RECOVERY_PATH);
 }
 
-export function readRecoveryState(): OverseerRecoveryState | null {
+export function readRecoveryState(): PrefrontalRecoveryState | null {
   if (!existsSync(RECOVERY_PATH)) return null;
   try {
     const raw = readFileSync(RECOVERY_PATH, "utf-8");
-    return JSON.parse(raw) as OverseerRecoveryState;
+    return JSON.parse(raw) as PrefrontalRecoveryState;
   } catch {
     return null;
   }

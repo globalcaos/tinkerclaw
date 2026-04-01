@@ -1,7 +1,7 @@
-// extensions/overseer/overseer-types.ts
-// FORK: Overseer agent types — shared between gateway extension and Tinker UI API responses.
+// extensions/prefrontal/prefrontal-types.ts
+// FORK: Prefrontal agent types — shared between gateway extension and Tinker UI API responses.
 
-export interface OverseerTreeNode {
+export interface PrefrontalTreeNode {
   runId: string;
   model: string;
   provider: string;
@@ -11,16 +11,16 @@ export interface OverseerTreeNode {
   lastEventAge: number;
   skill?: string;
   summary?: string;
-  children: OverseerTreeNode[];
+  children: PrefrontalTreeNode[];
 }
 
-export interface OverseerTreeResponse {
+export interface PrefrontalTreeResponse {
   active: boolean;
   sessionFilter?: string;
-  root: OverseerTreeNode | null;
+  root: PrefrontalTreeNode | null;
 }
 
-export interface OverseerConfig {
+export interface PrefrontalConfig {
   enabled: boolean;
   model: string;
   summaryModel: string;
@@ -36,9 +36,9 @@ export interface OverseerConfig {
   };
 }
 
-export interface OverseerRecoveryState {
+export interface PrefrontalRecoveryState {
   timestamp: string;
-  overseerSessionKey: string;
+  prefrontalSessionKey: string;
   activeSubagents: Array<{
     runId: string;
     childSessionKey: string;
@@ -50,7 +50,7 @@ export interface OverseerRecoveryState {
   originalPrompt: string;
 }
 
-export const DEFAULT_OVERSEER_CONFIG: OverseerConfig = {
+export const DEFAULT_PREFRONTAL_CONFIG: PrefrontalConfig = {
   enabled: false,
   model: "anthropic/claude-opus-4-6",
   summaryModel: "anthropic/claude-sonnet-4-6",
@@ -65,9 +65,6 @@ export const DEFAULT_OVERSEER_CONFIG: OverseerConfig = {
     maximum: ["anthropic/claude-opus-4-6"],
   },
 };
-
-/** Display name shown in chat and UI. Internal plugin ID remains "overseer". */
-export const OVERSEER_DISPLAY_NAME = "Prefrontal";
 
 export function extractProvider(model: string): string {
   const slash = model.indexOf("/");
