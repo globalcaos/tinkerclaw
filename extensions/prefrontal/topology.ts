@@ -16,7 +16,7 @@ import type {
   PluginHookSubagentSpawnedEvent,
   PluginHookSubagentEndedEvent,
   PluginHookSubagentContext,
-} from "../../src/plugins/types.js";
+} from "./hook-types.js";
 
 export type NodeStatus = "working" | "waiting" | "stuck" | "idle";
 
