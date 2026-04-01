@@ -1017,6 +1017,9 @@ function onEvent(evt: any) {
 
   if (evt.event === "agent") {
     const p = evt.payload;
+    if (p?.data?.phase === "prefrontal-tree") {
+      console.log("[prefrontal-ui] INSIDE agent block, got prefrontal-tree phase");
+    }
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages
     if (p?.stream === "tool" && p.sessionKey === sessionKey) {
@@ -1428,9 +1431,18 @@ function onEvent(evt: any) {
     evt.payload?.stream === "lifecycle" &&
     evt.payload?.data?.phase === "prefrontal-tree"
   ) {
+    console.log("[prefrontal-ui] tree event received:", evt.payload.data);
     const tree = evt.payload.data.tree as TreeResponse | undefined;
     if (tree && prefrontalCtrl) {
+      console.log(
+        "[prefrontal-ui] updating tree panel, active:",
+        tree.active,
+        "root:",
+        tree.root?.model,
+      );
       prefrontalCtrl.update(tree);
+    } else {
+      console.log("[prefrontal-ui] skipped: tree=", !!tree, "ctrl=", !!prefrontalCtrl);
     }
   }
 }
@@ -6059,3 +6071,17 @@ setInterval(() => {
     loadBudget();
   }
 }, 300_000);
+
+// FORK: Poll prefrontal.tree gateway method every 5s for call tree updates.
+// Broadcast-based approach didn't work (api.broadcast may not be wired to WebSocket).
+// Polling via req() uses the established RPC mechanism — guaranteed to work.
+setInterval(() => {
+  if (!connected || !prefrontalCtrl) return;
+  req("prefrontal.tree", {})
+    .then((res: any) => {
+      if (res && prefrontalCtrl) {
+        prefrontalCtrl.update(res as TreeResponse);
+      }
+    })
+    .catch(() => {}); // Silently ignore — plugin may not be loaded
+}, 5000);
