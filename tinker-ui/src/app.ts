@@ -1184,13 +1184,18 @@ function onEvent(evt: any) {
       // Show each fallback step as a chat message
       const profileId = (p.data.failedProfileId || "") as string;
       const stepLabel = attempt && total ? `[${attempt}/${total}]` : "";
-      const modelLabel = fm || "unknown";
+      const shortModel = fm && fm.includes("/") ? fm.split("/").pop() : fm || "unknown";
       const profileLabel = profileId ? ` (${profileId})` : "";
       const reasonLabel = describeError(reason, errMsg);
-      // (placeholder removed — real bars inserted on data arrival)
-      const nextLabel =
-        attempt && total && attempt < total ? " — jumping to backup" : " — all backups exhausted";
-      const fallbackText = `⚠ ${stepLabel} ${modelLabel}${profileLabel} failed (${reasonLabel})${nextLabel}`;
+      const nextModel = p.data.nextModel as string | undefined;
+      const nextShort =
+        nextModel && nextModel.includes("/") ? nextModel.split("/").pop() : nextModel;
+      const nextLabel = nextShort
+        ? ` — falling back to ${nextShort}`
+        : attempt && total && attempt >= total
+          ? " — all backups exhausted"
+          : " — jumping to backup";
+      const fallbackText = `⚠ ${shortModel}${profileLabel} ${stepLabel} — ${reasonLabel}${nextLabel}`;
       const fallbackMsg: any = {
         role: "assistant",
         content: [{ type: "text", text: fallbackText }],
@@ -1216,8 +1221,10 @@ function onEvent(evt: any) {
       const pIdx = p.data.profileIndex as number | undefined;
       const pTotal = (p.data.totalProfiles ?? p.data.profileTotal) as number | undefined;
       const reasonLabel = describeError(reason, errMsg);
-      const profileStep = pIdx && pTotal ? ` [profile ${pIdx}/${pTotal}]` : "";
-      const profileText = `↳ ${model} ${pid ? pid : prov}${profileStep} — ${reasonLabel}`;
+      const profileStep = pIdx && pTotal ? ` [${pIdx}/${pTotal}]` : "";
+      const shortModel = model.includes("/") ? model.split("/").pop() : model;
+      const profileLabel = pid ? ` (${pid})` : "";
+      const profileText = `⚠ ${shortModel}${profileLabel}${profileStep} — ${reasonLabel}`;
       // Track per-profile error for model panel red labels
       if (pid) {
         providerErrors.set(pid, {
@@ -1247,9 +1254,11 @@ function onEvent(evt: any) {
     ) {
       const d = p.data;
       const isExhausted = d.phase === "overload-retry-exhausted";
+      const shortModel =
+        d.model && String(d.model).includes("/") ? String(d.model).split("/").pop() : d.model;
       const text = isExhausted
-        ? `⚠ Overload: ${d.attempts} retries exhausted for ${d.provider}/${d.model} — falling back`
-        : `⏳ Overload retry ${d.attempt}/${d.maxAttempts} for ${d.provider}/${d.model} — waiting ${(d.delayMs / 1000).toFixed(0)}s`;
+        ? `🛑 ${shortModel} — ${d.attempts} retries exhausted — falling back`
+        : `⏳ ${shortModel} — overload retry ${d.attempt}/${d.maxAttempts} — waiting ${((d.delayMs as number) / 1000).toFixed(0)}s`;
       const retryMsg: any = {
         role: "assistant",
         content: [{ type: "text", text }],
@@ -2559,6 +2568,9 @@ function updateChat(skipScroll = false) {
         if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) continue;
         // FORK: Fractal prompts are hidden entirely — don't count them
         if ((firstTextBlock as string).trimStart().startsWith("# FRACTAL REFLECTION")) continue;
+        // FORK: System messages (warnings, errors, retries, prefrontal) must NEVER
+        // collapse into reasoning groups — they are user-facing status updates.
+        if (m._isWarning || m._isError || m._isOverloadRetry || m._isPrefrontal) continue;
         assistantTextIndices.push(j);
       }
       // During streaming, render all bubbles as normal assistant (no thinking style).
