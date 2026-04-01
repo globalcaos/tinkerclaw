@@ -188,6 +188,13 @@ export default function register(api: OpenClawPluginApi) {
       runId: event.runId,
       trigger: ctx.trigger,
     });
+    // Tell the monitor about the active main session so it always shows a root node
+    monitor.setActiveMain({
+      sessionKey,
+      provider: event.provider,
+      model: event.model,
+      phase: "thinking",
+    });
     log.info?.(
       `[prefrontal] Main activated: ${sessionKey} (${event.provider}/${event.model}) topo.size=${topology.size}`,
     );
@@ -199,6 +206,17 @@ export default function register(api: OpenClawPluginApi) {
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.updateUsage(sessionKey, event.usage);
     topology.updatePhase(sessionKey, "responding");
+    // Update monitor phase to "responding"
+    if (monitor.setActiveMain) {
+      const existing = (monitor as any).activeMain;
+      // Only update phase if main is already set (from llm_input)
+      monitor.setActiveMain({
+        sessionKey,
+        provider: (event as any).provider ?? "unknown",
+        model: (event as any).model ?? "unknown",
+        phase: "responding",
+      });
+    }
 
     // Update last event timestamp for any matching subagent
     for (const [runId, run] of subagentRuns) {
@@ -242,6 +260,8 @@ export default function register(api: OpenClawPluginApi) {
     if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.endSession(sessionKey, event.success, event.durationMs);
+    // Clear active main — response complete, hide panel
+    monitor.setActiveMain(null);
   });
 
   api.on("gateway_start", (_event: PluginHookGatewayStartEvent, _ctx: PluginHookGatewayContext) => {

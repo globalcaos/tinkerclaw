@@ -22,6 +22,13 @@ export interface SubagentRunInfo {
   outcome?: { status: string; error?: string };
 }
 
+export interface ActiveMainSession {
+  sessionKey: string;
+  provider: string;
+  model: string;
+  phase: string;
+}
+
 export interface PrefrontalMonitor {
   buildTree(runs: SubagentRunInfo[], prefrontalSessionKey: string | null): PrefrontalTreeResponse;
   detectStalls(
@@ -31,11 +38,14 @@ export interface PrefrontalMonitor {
   ): string[];
   updateNodeProgress(runId: string, progress: number, summary: string): void;
   getTreeState(sessionFilter?: string): PrefrontalTreeResponse;
+  /** Set the active main session so we always show a root node when LLM is active. */
+  setActiveMain(info: ActiveMainSession | null): void;
 }
 
 export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMonitor {
   let currentTree: PrefrontalTreeResponse = { active: false, root: null };
   const nodeProgress = new Map<string, { progress: number; summary: string }>();
+  let activeMain: ActiveMainSession | null = null;
 
   function runToNode(run: SubagentRunInfo, now: number): PrefrontalTreeNode {
     const provider = extractProvider(run.model ?? "unknown/unknown");
@@ -66,7 +76,22 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
   ): PrefrontalTreeResponse {
     const now = Date.now();
 
-    if (!prefrontalSessionKey || runs.length === 0) {
+    if (runs.length === 0) {
+      // No subagents, but if there's an active main session, show it as a single root node
+      if (activeMain) {
+        const root: PrefrontalTreeNode = {
+          runId: "main",
+          model: activeMain.model,
+          provider: activeMain.provider,
+          label: "Prefrontal",
+          status: activeMain.phase === "responding" ? "running" : "planning",
+          progress: 0,
+          lastEventAge: 0,
+          children: [],
+        };
+        currentTree = { active: true, root };
+        return currentTree;
+      }
       currentTree = { active: false, root: null };
       return currentTree;
     }
@@ -148,5 +173,9 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
     return currentTree;
   }
 
-  return { buildTree, detectStalls, updateNodeProgress, getTreeState };
+  function setActiveMain(info: ActiveMainSession | null): void {
+    activeMain = info;
+  }
+
+  return { buildTree, detectStalls, updateNodeProgress, getTreeState, setActiveMain };
 }
