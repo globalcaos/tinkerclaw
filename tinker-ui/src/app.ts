@@ -5,6 +5,7 @@ import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
   mountPrefrontalTree,
   type PrefrontalTreeController,
+  type TreeNode,
   type TreeResponse,
 } from "./panels/prefrontal-tree.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
@@ -612,6 +613,69 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
 }
 
 let modelConfigData: any = null;
+
+// FORK: Build Prefrontal tree from activeRuns — unified with thinking indicator + models panel.
+// Called at the same points as updateBudgetPanel/updateChat for instant reactivity.
+function updatePrefrontalTree() {
+  if (!prefrontalCtrl) return;
+
+  // Collect active runs (respecting session scope)
+  const runs: Array<{ runId: string; info: ActiveRunInfo }> = [];
+  for (const [runId, info] of activeRuns) {
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+      continue;
+    runs.push({ runId, info });
+  }
+
+  if (runs.length === 0) {
+    prefrontalCtrl.update({ active: false, root: null });
+    return;
+  }
+
+  // Build tree: first run = root, rest = children (subagents)
+  const children: TreeNode[] = [];
+  let root: TreeNode | null = null;
+
+  for (const { runId, info } of runs) {
+    const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
+    const node: TreeNode = {
+      runId,
+      model: info.model,
+      provider: info.provider,
+      label: info.authProfileId ?? info.model,
+      status: "running",
+      progress: 0,
+      lastEventAge: elapsed,
+      children: [],
+    };
+    // Main session = root, subagents = children
+    if (!info.sessionKey || info.sessionKey.includes(":main:")) {
+      root = node;
+    } else {
+      children.push(node);
+    }
+  }
+
+  // If no main session found, use the first run as root
+  if (!root && runs.length > 0) {
+    const { runId, info } = runs[0];
+    root = {
+      runId,
+      model: info.model,
+      provider: info.provider,
+      label: info.authProfileId ?? info.model,
+      status: "running",
+      progress: 0,
+      lastEventAge: Math.floor((Date.now() - info.startedAt) / 1000),
+      children: [],
+    };
+  }
+
+  if (root) {
+    root.children = children;
+    prefrontalCtrl.update({ active: true, root });
+  }
+}
 
 // ─── Gateway ───
 function uuid() {
@@ -1326,6 +1390,7 @@ function onEvent(evt: any) {
         sending = true;
         saveActiveRuns();
         updateBudgetPanel();
+        updatePrefrontalTree();
         updateChat();
         updateBtn();
         startThinkingTick();
@@ -1385,6 +1450,7 @@ function onEvent(evt: any) {
             sending = false;
           }
           updateBudgetPanel();
+          updatePrefrontalTree();
           updateChat();
           updateBtn();
         }, 3000);
@@ -1421,20 +1487,7 @@ function onEvent(evt: any) {
       }
     }
   }
-  // FORK: Prefrontal call tree update — broadcast from the prefrontal extension every ~5s
-  // Arrives as agent event with phase "prefrontal-tree" (uses the agent broadcast stream)
-  if (
-    evt.event === "agent" &&
-    evt.payload?.stream === "lifecycle" &&
-    evt.payload?.data?.phase === "prefrontal-tree"
-  ) {
-    const tree = evt.payload.data.tree as TreeResponse | undefined;
-    if (tree && prefrontalCtrl) {
-      prefrontalCtrl.update(tree);
-    } else {
-      console.log("[prefrontal-ui] skipped: tree=", !!tree, "ctrl=", !!prefrontalCtrl);
-    }
-  }
+  // Prefrontal tree updates are now reactive (driven by activeRuns, same as thinking indicator)
 }
 
 // ─── API ───
@@ -2296,6 +2349,7 @@ function startThinkingTick() {
       const span = el.querySelector(".thinking-elapsed");
       if (span) span.textContent = `${elapsed}s`;
     });
+    updatePrefrontalTree();
   }, 1000);
 }
 
@@ -6068,16 +6122,5 @@ setInterval(() => {
   }
 }, 300_000);
 
-// FORK: Poll prefrontal.tree gateway method every 5s for call tree updates.
-// Broadcast-based approach didn't work (api.broadcast may not be wired to WebSocket).
-// Polling via req() uses the established RPC mechanism — guaranteed to work.
-setInterval(() => {
-  if (!connected || !prefrontalCtrl) return;
-  req("prefrontal.tree", {})
-    .then((res: any) => {
-      if (res && prefrontalCtrl) {
-        prefrontalCtrl.update(res as TreeResponse);
-      }
-    })
-    .catch(() => {});
-}, 5000);
+// Prefrontal tree is now updated reactively via updatePrefrontalTree()
+// at the same call sites as updateBudgetPanel/updateChat (no polling needed).
