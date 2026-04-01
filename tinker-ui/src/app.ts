@@ -3824,7 +3824,13 @@ function init() {
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="prefrontal-panel">
-        <div class="rpanel-header">Prefrontal <span id="prefrontal-count" class="sessions-count"></span></div>
+        <div class="rpanel-header">Prefrontal <span id="prefrontal-count" class="sessions-count"></span>
+          <span class="ct-switch" id="prefrontal-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
+            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-scope="all">All</span>
+          </span>
+        </div>
         <div id="prefrontal-graph" class="rpanel-body prefrontal-graph-container"></div>
       </div>
     </div>
