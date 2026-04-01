@@ -1,16 +1,16 @@
 /**
- * FORK: overseer/topology — In-memory graph store for agent/subagent hierarchy
+ * FORK: prefrontal/topology — In-memory graph store for agent/subagent hierarchy
  *
- * Maintains a live directed graph of `OverseerNode` entries (main session +
- * subagents) and parent-child `OverseerEdge` connections. Nodes are created on
+ * Maintains a live directed graph of `PrefrontalNode` entries (main session +
+ * subagents) and parent-child `PrefrontalEdge` connections. Nodes are created on
  * subagent spawn or main session LLM activation, enriched with model/provider/token
  * data from gateway session polling, and removed on subagent end. Tracks per-node
  * phase, tool call counts, and staleness detection (marks nodes "stuck" when their
  * `updatedAt` timestamp stops advancing). Exports `TopologySnapshot` for
- * serialization by the persistence layer and for the `overseer.topology` gateway
+ * serialization by the persistence layer and for the `prefrontal.topology` gateway
  * method. Heartbeat sessions are excluded via the static `isHeartbeat()` guard.
  *
- * Wired in by: instantiated in `extensions/overseer/index.ts` as `TopologyStore`
+ * Wired in by: instantiated in `extensions/prefrontal/index.ts` as `TopologyStore`
  */
 import type {
   PluginHookSubagentSpawnedEvent,
@@ -20,7 +20,7 @@ import type {
 
 export type NodeStatus = "working" | "waiting" | "stuck" | "idle";
 
-export interface OverseerNode {
+export interface PrefrontalNode {
   sessionKey: string;
   agentId: string;
   label: string;
@@ -44,20 +44,20 @@ export interface OverseerNode {
   isMain: boolean;
 }
 
-export interface OverseerEdge {
+export interface PrefrontalEdge {
   source: string;
   target: string;
 }
 
 export interface TopologySnapshot {
-  nodes: OverseerNode[];
-  edges: OverseerEdge[];
+  nodes: PrefrontalNode[];
+  edges: PrefrontalEdge[];
   updatedAt: number;
 }
 
 export class TopologyStore {
-  private nodes = new Map<string, OverseerNode>();
-  private edges: OverseerEdge[] = [];
+  private nodes = new Map<string, PrefrontalNode>();
+  private edges: PrefrontalEdge[] = [];
   private changeCount = 0;
 
   addNode(event: PluginHookSubagentSpawnedEvent, ctx: PluginHookSubagentContext): void {
@@ -65,7 +65,7 @@ export class TopologyStore {
     const parentNode = parentKey ? this.nodes.get(parentKey) : null;
     const depth = parentNode ? parentNode.depth + 1 : 1;
 
-    const node: OverseerNode = {
+    const node: PrefrontalNode = {
       sessionKey: event.childSessionKey,
       agentId: event.agentId,
       label: event.label || event.agentId,
@@ -94,7 +94,7 @@ export class TopologyStore {
     this.changeCount++;
   }
 
-  removeNode(event: PluginHookSubagentEndedEvent): OverseerNode | undefined {
+  removeNode(event: PluginHookSubagentEndedEvent): PrefrontalNode | undefined {
     const node = this.nodes.get(event.targetSessionKey);
     if (!node) return undefined;
     this.nodes.delete(event.targetSessionKey);
@@ -186,11 +186,11 @@ export class TopologyStore {
     this.changeCount = 0;
   }
 
-  getNode(key: string): OverseerNode | undefined {
+  getNode(key: string): PrefrontalNode | undefined {
     return this.nodes.get(key);
   }
 
-  allNodes(): OverseerNode[] {
+  allNodes(): PrefrontalNode[] {
     return Array.from(this.nodes.values());
   }
 

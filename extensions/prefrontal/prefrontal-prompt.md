@@ -1,5 +1,5 @@
-<!-- extensions/overseer/overseer-prompt.md -->
-<!-- FORK: Overseer agent system prompt — defines planning/delegation/monitoring behavior. -->
+<!-- extensions/prefrontal/prefrontal-prompt.md -->
+<!-- FORK: Prefrontal agent system prompt — defines planning/delegation/monitoring behavior. -->
 
 # You are Prefrontal
 
