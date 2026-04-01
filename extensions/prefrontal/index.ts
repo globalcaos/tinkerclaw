@@ -362,6 +362,11 @@ export default function register(api: OpenClawPluginApi) {
     try {
       const runs = Array.from(subagentRuns.values());
       const tree = monitor.buildTree(runs, prefrontalSessionKey);
+      if (tree.active) {
+        log.info?.(
+          `[prefrontal] Tree active: root=${tree.root?.model} children=${tree.root?.children?.length ?? 0}`,
+        );
+      }
       const now = Date.now();
       const stalled = monitor.detectStalls(tree, lastEventTimestamps, now);
 
@@ -369,12 +374,16 @@ export default function register(api: OpenClawPluginApi) {
         log.warn?.(`[prefrontal] Stalled agents detected: ${stalled.join(", ")}`);
       }
 
-      // Broadcast tree update to Tinker UI
+      // Broadcast tree update to Tinker UI via the "agent" event stream
+      // (same stream used by lifecycle events — known to work with Tinker UI)
       try {
-        (api as any).broadcast?.("prefrontal-tree", {
-          stream: "prefrontal",
-          data: tree,
-          ts: now,
+        (api as any).broadcast?.("agent", {
+          stream: "lifecycle",
+          data: {
+            phase: "prefrontal-tree",
+            tree,
+            ts: now,
+          },
         });
       } catch {
         // broadcast not available — non-fatal
