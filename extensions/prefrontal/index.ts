@@ -33,7 +33,13 @@ import type {
   PluginHookAfterToolCallEvent,
   PluginHookToolContext,
 } from "../../src/plugins/types.js";
+import {
+  loadAntiGoldplatingPrompt,
+  shouldInjectAntiGoldplating,
+  DEFAULT_ANTI_GOLDPLATING_CONFIG,
+} from "./anti-goldplating.js";
 import { ChatEmitter } from "./chat-emitter.js";
+import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./exploration-gate.js";
 import { saveState, loadState } from "./persistence.js";
 import { createPrefrontalHttpHandler } from "./prefrontal-http.js";
 import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
@@ -60,6 +66,19 @@ export default function register(api: OpenClawPluginApi) {
   const prefrontalConfig = {
     ...DEFAULT_PREFRONTAL_CONFIG,
     ...(pluginConfig.prefrontal ?? {}),
+  };
+
+  // ─── P0: Exploration Gate ───
+  const explorationGateConfig = {
+    ...DEFAULT_EXPLORATION_GATE_CONFIG,
+    ...(pluginConfig.explorationGate ?? {}),
+  };
+  const explorationGate = createExplorationGate(explorationGateConfig);
+
+  // ─── P0: Anti-Gold-Plating ───
+  const antiGoldplatingConfig = {
+    ...DEFAULT_ANTI_GOLDPLATING_CONFIG,
+    ...(pluginConfig.antiGoldplating ?? {}),
   };
 
   // Initialize shared monitor singleton on first registration
@@ -193,6 +212,8 @@ export default function register(api: OpenClawPluginApi) {
 
   // ─── Main Session Tracking ───
   api.on("llm_input", (event: PluginHookLlmInputEvent, ctx: PluginHookAgentContext) => {
+    // P0: Reset exploration gate for each new LLM turn
+    explorationGate.resetTurn();
     log.info?.(
       `[prefrontal] HOOK llm_input sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} provider=${event.provider} model=${event.model}`,
     );
@@ -249,6 +270,18 @@ export default function register(api: OpenClawPluginApi) {
     log.info?.(
       `[prefrontal] HOOK before_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
     );
+
+    // P0: Exploration gate — block mutating tools before read-only exploration
+    const gateResult = explorationGate.checkTool(event.toolName, {
+      trigger: ctx.trigger,
+      isSubagent: ctx.sessionKey?.includes(":subagent:"),
+    });
+    if (gateResult.blocked) {
+      return { block: true, blockReason: gateResult.message };
+    }
+    // Record the tool call for gate tracking
+    explorationGate.recordToolCall(event.toolName);
+
     const sessionKey = ctx.sessionKey || "agent:main:main";
     if (TopologyStore.isHeartbeat(sessionKey)) return;
     topology.addToolCall(sessionKey, event.toolName);
@@ -261,6 +294,20 @@ export default function register(api: OpenClawPluginApi) {
       }
     }
   });
+
+  // P0: Anti-gold-plating — inject discipline rules into every agent prompt
+  api.on(
+    "before_prompt_build",
+    async (_event: any, ctx: any) => {
+      if (shouldInjectAntiGoldplating(antiGoldplatingConfig, ctx?.trigger)) {
+        return {
+          prependSystemContext: loadAntiGoldplatingPrompt(),
+        };
+      }
+      return {};
+    },
+    { priority: 40 },
+  );
 
   api.on("after_tool_call", (event: PluginHookAfterToolCallEvent, ctx: PluginHookToolContext) => {
     log.info?.(
