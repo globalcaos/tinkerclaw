@@ -33,6 +33,7 @@ import { initReflectionRuntime } from "../pi-extensions/reflection-runtime.js";
 import { setRetrievalRuntime } from "../pi-extensions/retrieval-runtime.js";
 import { createSynapseRuntime, setSynapseRuntime } from "../pi-extensions/synapse-runtime.js";
 import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
+import { resolveTranscriptPolicy } from "../transcript-policy.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "./cache-ttl.js";
 
 function resolveContextWindowTokens(params: {
@@ -69,11 +70,17 @@ function buildContextPruningFactory(params: {
   if (!settings) {
     return undefined;
   }
+  const transcriptPolicy = resolveTranscriptPolicy({
+    modelApi: params.model?.api,
+    provider: params.provider,
+    modelId: params.modelId,
+  });
 
   setContextPruningRuntime(params.sessionManager, {
     settings,
     contextWindowTokens: resolveContextWindowTokens(params),
     isToolPrunable: makeToolPrunablePredicate(settings.tools),
+    dropThinkingBlocks: transcriptPolicy.dropThinkingBlocks,
     lastCacheTouchAt: readLastCacheTtlTimestamp(params.sessionManager),
   });
 

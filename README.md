@@ -41,6 +41,51 @@ No other agent has learned to think about its own thinking, developed computatio
 
 - ⏳ **It never freezes. It never forgets.** That spinning cursor everyone hates? That's compaction — your agent tearing pages out of its own textbook 📖 to stay under the token limit. We stopped entirely. Zero compaction events. ([Total Recall](docs/papers/total-recall/total-recall.md) · [Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
 
+<table>
+  <tr>
+    <td align="center" width="20%">
+      <a href="https://openai.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/openai-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/openai.svg" alt="OpenAI" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="20%">
+      <a href="https://www.nvidia.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/nvidia.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/nvidia-dark.svg" alt="NVIDIA" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="20%">
+      <a href="https://vercel.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/vercel-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/vercel.svg" alt="Vercel" height="24">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="20%">
+      <a href="https://blacksmith.sh/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/blacksmith-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/blacksmith.svg" alt="Blacksmith" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="20%">
+      <a href="https://www.convex.dev/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/convex-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/convex.svg" alt="Convex" height="24">
+        </picture>
+      </a>
+    </td>
+  </tr>
+</table>
+
 - 💸 **It shows you exactly where the money goes.** A calorie counter for your AI's diet 🍕 — every token, every cost, in real time. That 40K-token spike? You'll see it and prevent it tomorrow. ([Tinker UI](#-tinker-ui--see-why-sessions-get-expensive))
 
 - 🌙 **It rewrites its own instructions while you sleep.** 15+ overnight crons, each self-improving. 14 autonomous improvements in 30 days, zero human prompts. Day 1 mediocre. Day 30 expert. ([Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
