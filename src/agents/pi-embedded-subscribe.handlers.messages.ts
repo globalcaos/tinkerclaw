@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
@@ -18,6 +19,7 @@ import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
   extractAssistantText,
   extractAssistantThinking,
+  extractAssistantVisibleText,
   extractThinkingFromTaggedStream,
   extractThinkingFromTaggedText,
   formatReasoningMessage,
@@ -39,6 +41,27 @@ const stripTrailingDirective = (text: string): string => {
     return text;
   }
   return text.slice(0, openIndex);
+};
+
+type AssistantPhase = "commentary" | "final_answer";
+
+const normalizeAssistantPhase = (value: unknown): AssistantPhase | undefined => {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
+};
+
+const getAssistantTextSignaturePhase = (value: unknown): AssistantPhase | undefined => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  if (!value.startsWith("{")) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value) as { phase?: unknown; v?: unknown };
+    return parsed.v === 1 ? normalizeAssistantPhase(parsed.phase) : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 const coerceText = (value: unknown): string => {
@@ -322,12 +345,47 @@ export function handleMessageUpdate(
     }
   }
 
+  const partialAssistant =
+    assistantRecord?.partial && typeof assistantRecord.partial === "object"
+      ? (assistantRecord.partial as AssistantMessage)
+      : msg;
+  const phaseAwareVisibleText = coerceText(extractAssistantVisibleText(partialAssistant)).trim();
+  const partialVisiblePhase = normalizeAssistantPhase(
+    (partialAssistant as { phase?: unknown }).phase,
+  );
+  const explicitStructuredPartialPhases = new Set<AssistantPhase>();
+  if (Array.isArray(partialAssistant.content)) {
+    for (const block of partialAssistant.content) {
+      if (!block || typeof block !== "object") {
+        continue;
+      }
+      const record = block as { type?: unknown; textSignature?: unknown };
+      if (record.type !== "text") {
+        continue;
+      }
+      const signaturePhase = getAssistantTextSignaturePhase(record.textSignature);
+      if (signaturePhase) {
+        explicitStructuredPartialPhases.add(signaturePhase);
+      }
+    }
+  }
+  const structuredPartialPhase =
+    explicitStructuredPartialPhases.size === 1
+      ? [...explicitStructuredPartialPhases][0]
+      : undefined;
+  const shouldUsePhaseAwareBlockReply = Boolean(partialVisiblePhase || structuredPartialPhase);
+  const shouldDeferTextEndBlockReply =
+    shouldUsePhaseAwareBlockReply &&
+    (partialVisiblePhase ?? structuredPartialPhase) !== "final_answer";
+
   if (chunk) {
     ctx.state.deltaBuffer += chunk;
-    if (ctx.blockChunker) {
-      ctx.blockChunker.append(chunk);
-    } else {
-      ctx.state.blockBuffer += chunk;
+    if (!shouldUsePhaseAwareBlockReply) {
+      if (ctx.blockChunker) {
+        ctx.blockChunker.append(chunk);
+      } else {
+        ctx.state.blockBuffer += chunk;
+      }
     }
   }
 
@@ -335,14 +393,15 @@ export function handleMessageUpdate(
     // Handle partial <think> tags: stream whatever reasoning is visible so far.
     ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
   }
-
-  const next = ctx
-    .stripBlockTags(ctx.state.deltaBuffer, {
-      thinking: false,
-      final: false,
-      inlineCode: createInlineCodeState(),
-    })
-    .trim();
+  const next =
+    phaseAwareVisibleText ||
+    ctx
+      .stripBlockTags(ctx.state.deltaBuffer, {
+        thinking: false,
+        final: false,
+        inlineCode: createInlineCodeState(),
+      })
+      .trim();
   if (next) {
     const wasThinking = ctx.state.partialBlockState.thinking;
     const visibleDelta = chunk ? ctx.stripBlockTags(chunk, ctx.state.partialBlockState) : "";
@@ -371,6 +430,35 @@ export function handleMessageUpdate(
       shouldEmit = replace
         ? cleanedText !== previousCleaned || hasMedia || hasAudio
         : Boolean(deltaText || hasMedia || hasAudio);
+    }
+
+    if (shouldUsePhaseAwareBlockReply) {
+      if (replace) {
+        ctx.state.blockBuffer = "";
+        ctx.blockChunker?.reset();
+      }
+      const blockReplyChunk = replace ? cleanedText : deltaText;
+      if (!shouldDeferTextEndBlockReply && blockReplyChunk) {
+        if (ctx.blockChunker) {
+          ctx.blockChunker.append(blockReplyChunk);
+        } else {
+          ctx.state.blockBuffer += blockReplyChunk;
+        }
+      }
+
+      if (
+        !shouldDeferTextEndBlockReply &&
+        evtType === "text_end" &&
+        !ctx.state.lastBlockReplyText &&
+        cleanedText
+      ) {
+        if (ctx.blockChunker) {
+          ctx.blockChunker.reset();
+          ctx.blockChunker.append(cleanedText);
+        } else {
+          ctx.state.blockBuffer = cleanedText;
+        }
+      }
     }
 
     ctx.state.lastStreamedAssistant = next;
@@ -405,6 +493,7 @@ export function handleMessageUpdate(
 
   if (
     !ctx.params.silentExpected &&
+    !shouldDeferTextEndBlockReply &&
     ctx.params.onBlockReply &&
     ctx.blockChunking &&
     ctx.state.blockReplyBreak === "text_end"
@@ -414,6 +503,7 @@ export function handleMessageUpdate(
 
   if (
     !ctx.params.silentExpected &&
+    !shouldDeferTextEndBlockReply &&
     evtType === "text_end" &&
     ctx.state.blockReplyBreak === "text_end"
   ) {
@@ -445,6 +535,7 @@ export function handleMessageEnd(
   promoteThinkingTagsToBlocks(assistantMessage);
 
   const rawText = coerceText(extractAssistantText(assistantMessage));
+  const rawVisibleText = coerceText(extractAssistantVisibleText(assistantMessage));
   appendRawStream({
     ts: Date.now(),
     event: "assistant_message_end",
@@ -455,7 +546,7 @@ export function handleMessageEnd(
   });
 
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
+    text: ctx.stripBlockTags(rawVisibleText || rawText, { thinking: false, final: false }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
   const rawThinking =
@@ -497,14 +588,29 @@ export function handleMessageEnd(
     }
   }
 
+  const previousStreamedText = ctx.state.lastStreamedAssistantCleaned ?? "";
+  const shouldReplaceFinalStream = Boolean(
+    previousStreamedText && cleanedText && !cleanedText.startsWith(previousStreamedText),
+  );
+  const didTextChangeWithinCurrentMessage = Boolean(
+    previousStreamedText && cleanedText !== previousStreamedText,
+  );
+  const finalStreamDelta = shouldReplaceFinalStream
+    ? ""
+    : cleanedText.slice(previousStreamedText.length);
+
   if (
     !ctx.params.silentExpected &&
-    !ctx.state.emittedAssistantUpdate &&
-    (cleanedText || hasMedia)
+    (cleanedText || hasMedia) &&
+    (!ctx.state.emittedAssistantUpdate ||
+      shouldReplaceFinalStream ||
+      didTextChangeWithinCurrentMessage ||
+      hasMedia)
   ) {
     const data = buildAssistantStreamData({
       text: cleanedText,
-      delta: cleanedText,
+      delta: finalStreamDelta,
+      replace: shouldReplaceFinalStream,
       mediaUrls,
     });
     emitAgentEvent({
@@ -517,6 +623,7 @@ export function handleMessageEnd(
       data,
     });
     ctx.state.emittedAssistantUpdate = true;
+    ctx.state.lastStreamedAssistantCleaned = cleanedText;
   }
 
   const silentExpectedWithoutSentinel =
@@ -579,14 +686,19 @@ export function handleMessageEnd(
     }
   };
 
+  const hasBufferedBlockReply = ctx.blockChunker
+    ? ctx.blockChunker.hasBuffered()
+    : ctx.state.blockBuffer.length > 0;
+
   if (
     !ctx.params.silentExpected &&
-    (ctx.state.blockReplyBreak === "message_end" ||
-      (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
     text &&
-    onBlockReply
+    onBlockReply &&
+    (ctx.state.blockReplyBreak === "message_end" ||
+      hasBufferedBlockReply ||
+      text !== ctx.state.lastBlockReplyText)
   ) {
-    if (ctx.blockChunker?.hasBuffered()) {
+    if (hasBufferedBlockReply && ctx.blockChunker?.hasBuffered()) {
       ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
       ctx.blockChunker.reset();
     } else if (text !== ctx.state.lastBlockReplyText) {
