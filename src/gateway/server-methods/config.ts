@@ -1,9 +1,6 @@
-import { exec } from "node:child_process";
-import { resolveAuthProfileOrder } from "../../agents/auth-profiles/order.js";
-import { loadAuthProfileStoreForSecretsRuntime } from "../../agents/auth-profiles/store.js";
+import { execFile } from "node:child_process";
 import {
   createConfigIO,
-  loadConfig,
   parseConfigJson5,
   readConfigFileSnapshot,
   readConfigFileSnapshotForWrite,
@@ -14,10 +11,6 @@ import {
 import { formatConfigIssueLines } from "../../config/issue-format.js";
 import { applyLegacyMigrations } from "../../config/legacy.js";
 import { applyMergePatch } from "../../config/merge-patch.js";
-import {
-  resolveAgentModelFallbackValues,
-  resolveAgentModelPrimaryValue,
-} from "../../config/model-input.js";
 import {
   redactConfigObject,
   redactConfigSnapshot,
@@ -33,6 +26,7 @@ import {
   writeRestartSentinel,
 } from "../../infra/restart-sentinel.js";
 import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
+import { prepareSecretsRuntimeSnapshot } from "../../secrets/runtime.js";
 import { diffConfigPaths } from "../config-reload.js";
 import {
   formatControlPlaneActor,
@@ -57,6 +51,11 @@ import type { GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
 const MAX_CONFIG_ISSUES_IN_ERROR_MESSAGE = 3;
+
+type ConfigOpenCommand = {
+  command: string;
+  args: string[];
+};
 
 function requireConfigBaseHash(
   params: unknown,
@@ -132,6 +131,56 @@ function sanitizeLookupPathForLog(path: string): string {
   return sanitized.length > 120 ? `${sanitized.slice(0, 117)}...` : sanitized;
 }
 
+function escapePowerShellSingleQuotedString(value: string): string {
+  return value.replaceAll("'", "''");
+}
+
+export function resolveConfigOpenCommand(
+  configPath: string,
+  platform: NodeJS.Platform = process.platform,
+): ConfigOpenCommand {
+  if (platform === "win32") {
+    // Use a PowerShell string literal so the path stays data, not code.
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Start-Process -LiteralPath '${escapePowerShellSingleQuotedString(configPath)}'`,
+      ],
+    };
+  }
+  return {
+    command: platform === "darwin" ? "open" : "xdg-open",
+    args: [configPath],
+  };
+}
+
+function execConfigOpenCommand(command: ConfigOpenCommand): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(command.command, command.args, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function formatConfigOpenError(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return String(error);
+}
+
 function parseValidateConfigFromRawOrRespond(
   params: unknown,
   requestName: string,
@@ -185,6 +234,30 @@ function summarizeConfigValidationIssues(issues: ReadonlyArray<ConfigValidationI
   }`;
 }
 
+async function ensureResolvableSecretRefsOrRespond(params: {
+  config: OpenClawConfig;
+  respond: RespondFn;
+}): Promise<boolean> {
+  try {
+    await prepareSecretsRuntimeSnapshot({
+      config: params.config,
+      includeAuthStoreRefs: false,
+    });
+    return true;
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        `invalid config: active SecretRef resolution failed (${details})`,
+      ),
+    );
+    return false;
+  }
+}
+
 function resolveConfigRestartRequest(params: unknown): {
   sessionKey: string | undefined;
   note: string | undefined;
@@ -194,8 +267,8 @@ function resolveConfigRestartRequest(params: unknown): {
 } {
   const { sessionKey, note, restartDelayMs } = parseRestartRequestParams(params);
 
-  // Extract deliveryContext + threadId for routing after restart
-  // Supports both :thread: (most channels) and :topic: (Telegram)
+  // Extract deliveryContext + threadId for routing after restart.
+  // Uses generic :thread: parsing plus plugin-owned session grammars.
   const { deliveryContext, threadId } = extractDeliveryInfo(sessionKey);
 
   return {
@@ -251,72 +324,6 @@ function loadSchemaWithPlugins(): ConfigSchemaResponse {
 }
 
 export const configHandlers: GatewayRequestHandlers = {
-  "config.models": ({ respond }) => {
-    try {
-      const cfg = loadConfig();
-      const modelCfg = cfg.agents?.defaults?.model;
-      const primary = resolveAgentModelPrimaryValue(modelCfg) ?? null;
-      const fallbacks = resolveAgentModelFallbackValues(modelCfg);
-
-      const store = loadAuthProfileStoreForSecretsRuntime();
-      const allModelIds = [primary, ...fallbacks].filter(Boolean) as string[];
-      const seenProviders = new Set<string>();
-      const authOrder: Record<string, string[]> = {};
-      const authProfiles: Record<
-        string,
-        { label?: string; mode?: string; disabled?: boolean; disabledReason?: string }
-      > = {};
-      const now = Date.now();
-
-      for (const modelId of allModelIds) {
-        const provider = modelId.split("/")[0];
-        if (!provider || seenProviders.has(provider)) {
-          continue;
-        }
-        seenProviders.add(provider);
-        const order = resolveAuthProfileOrder({ cfg, store, provider });
-        if (order.length > 0) {
-          authOrder[provider] = order;
-          for (const profileId of order) {
-            const cred = store.profiles[profileId];
-            const stats = store.usageStats?.[profileId] as Record<string, unknown> | undefined;
-            const disabledUntil =
-              typeof stats?.disabledUntil === "number" ? (stats.disabledUntil as number) : 0;
-            const isDisabled = disabledUntil > now;
-            // FORK: Also report billing failures even after cooldown expires —
-            // a billing cap is permanent until the billing period resets, not transient.
-            const failureCounts = stats?.failureCounts as Record<string, unknown> | undefined;
-            const hasBillingFailure =
-              !isDisabled &&
-              failureCounts != null &&
-              typeof failureCounts.billing === "number" &&
-              (failureCounts.billing as number) > 0;
-            authProfiles[profileId] = {
-              label: (cred as Record<string, unknown>)?.label as string | undefined,
-              mode: cred?.type,
-              ...(isDisabled
-                ? {
-                    disabled: true,
-                    disabledReason: (stats?.disabledReason as string) || "cooldown",
-                  }
-                : hasBillingFailure
-                  ? {
-                      disabled: true,
-                      disabledReason: "billing",
-                    }
-                  : {}),
-            };
-          }
-        }
-      }
-
-      const models = (cfg.agents?.defaults as Record<string, unknown>)?.models ?? {};
-
-      respond(true, { primary, fallbacks, models, authProfiles, authOrder }, undefined);
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
-    }
-  },
   "config.get": async ({ params, respond }) => {
     if (!assertValidParams(params, validateConfigGetParams, "config.get", respond)) {
       return;
@@ -374,6 +381,9 @@ export const configHandlers: GatewayRequestHandlers = {
     }
     const parsed = parseValidateConfigFromRawOrRespond(params, "config.set", snapshot, respond);
     if (!parsed) {
+      return;
+    }
+    if (!(await ensureResolvableSecretRefsOrRespond({ config: parsed.config, respond }))) {
       return;
     }
     await writeConfigFile(parsed.config, writeOptions);
@@ -461,8 +471,33 @@ export const configHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    if (!(await ensureResolvableSecretRefsOrRespond({ config: validated.config, respond }))) {
+      return;
+    }
     const changedPaths = diffConfigPaths(snapshot.config, validated.config);
     const actor = resolveControlPlaneActor(client);
+
+    // No-op: if the validated config is identical to the current config,
+    // skip the file write and SIGUSR1 restart entirely. This avoids a full
+    // gateway restart (and the resulting connection drop) when a control-plane
+    // client re-sends the same config (e.g. hot-apply with no actual changes).
+    if (changedPaths.length === 0) {
+      context?.logGateway?.info(
+        `config.patch noop ${formatControlPlaneActor(actor)} (no changed paths)`,
+      );
+      respond(
+        true,
+        {
+          ok: true,
+          noop: true,
+          path: createConfigIO().configPath,
+          config: redactConfigObject(validated.config, schemaPatch.uiHints),
+        },
+        undefined,
+      );
+      return;
+    }
+
     context?.logGateway?.info(
       `config.patch write ${formatControlPlaneActor(actor)} changedPaths=${summarizeChangedPaths(changedPaths)} restartReason=config.patch`,
     );
@@ -521,6 +556,9 @@ export const configHandlers: GatewayRequestHandlers = {
     if (!parsed) {
       return;
     }
+    if (!(await ensureResolvableSecretRefsOrRespond({ config: parsed.config, respond }))) {
+      return;
+    }
     const changedPaths = diffConfigPaths(snapshot.config, parsed.config);
     const actor = resolveControlPlaneActor(client);
     context?.logGateway?.info(
@@ -569,19 +607,23 @@ export const configHandlers: GatewayRequestHandlers = {
       undefined,
     );
   },
-  "config.openFile": ({ params, respond }) => {
+  "config.openFile": async ({ params, respond, context }) => {
     if (!assertValidParams(params, validateConfigGetParams, "config.openFile", respond)) {
       return;
     }
     const configPath = createConfigIO().configPath;
-    const platform = process.platform;
-    const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open";
-    exec(`${cmd} ${JSON.stringify(configPath)}`, (err) => {
-      if (err) {
-        respond(true, { ok: false, path: configPath, error: err.message }, undefined);
-        return;
-      }
+    try {
+      await execConfigOpenCommand(resolveConfigOpenCommand(configPath));
       respond(true, { ok: true, path: configPath }, undefined);
-    });
+    } catch (error) {
+      context?.logGateway?.warn(
+        `config.openFile failed path=${sanitizeLookupPathForLog(configPath)}: ${formatConfigOpenError(error)}`,
+      );
+      respond(
+        true,
+        { ok: false, path: configPath, error: "failed to open config file" },
+        undefined,
+      );
+    }
   },
 };

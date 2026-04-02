@@ -69,6 +69,7 @@ const WhatsAppSharedSchema = z.object({
   groups: WhatsAppGroupsSchema,
   ackReaction: WhatsAppAckReactionSchema,
   ackMessage: WhatsAppAckMessageSchema,
+  reactionLevel: z.enum(["off", "ack", "minimal", "extensive"]).optional(),
   debounceMs: z.number().int().nonnegative().optional().default(0),
   heartbeat: ChannelHeartbeatVisibilitySchema,
   healthMonitor: ChannelHealthMonitorSchema,

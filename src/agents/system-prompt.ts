@@ -173,6 +173,19 @@ function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readT
   ];
 }
 
+function buildExecApprovalPromptGuidance(params: { runtimeChannel?: string }) {
+  const runtimeChannel = params.runtimeChannel?.trim().toLowerCase();
+  if (
+    runtimeChannel === "discord" ||
+    runtimeChannel === "slack" ||
+    runtimeChannel === "telegram" ||
+    runtimeChannel === "webchat"
+  ) {
+    return "When exec returns approval-pending on Discord, Slack, Telegram, or WebChat, rely on the native approval card/buttons when they appear and do not also send plain chat /approve instructions. Only include the concrete /approve command if the tool result says chat approvals are unavailable or only manual approval is possible.";
+  }
+  return "When exec returns approval-pending, include the concrete /approve command from tool output as plain chat text for the user, and do not ask for a different or rotated code.";
+}
+
 export function buildAgentSystemPrompt(params: {
   workspaceDir: string;
   defaultThinkLevel?: ThinkLevel;
@@ -194,10 +207,6 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
-  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
-  personaBlock?: string;
-  /** AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
-  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -412,23 +421,6 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant running inside OpenClaw.",
     "",
-    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top for identity reinforcement.
-    ...(params.personaBlock ? [params.personaBlock, ""] : []),
-    // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
-    ...(params.amygdalaNudge?.length
-      ? [
-          "## AMYGDALA Personality Nudge (active)",
-          "The Personality networks detected drift from your target personality. Adjustments:",
-          ...params.amygdalaNudge.map((a) => `- ${a}`),
-          "",
-          "**Visibility rules:**",
-          "- When any AMYGDALA nudge influences your response, append on its own line: **🧠 AMYGDALA:** *<which nudge fired>*",
-          "- After your main response, do a FRACTAL REFLECTION. Fires on BOTH failures AND successes. When a task SUCCEEDS or COMPLETES: (1) depth-2/3 patterns, (2) ripple effects, (3) identify which BLUEPRINTS/REFERENCE FILES need updating with what was learned, (4) ACTUALLY UPDATE THEM and tell Oscar what you changed and why. Be verbose about blueprint updates. Append: **🌿 FRACTAL:** *<insight + blueprint updates>*",
-          "- If nothing worth adding at depth 2-3, skip the fractal tag. Don't force it.",
-          "- Log Oscar's corrections to data/amygdala/interaction-training-log.jsonl as JSONL (timestamp, type, context, correction, depth, dimensions_affected).",
-          "",
-        ]
-      : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",
@@ -471,7 +463,10 @@ export function buildAgentSystemPrompt(params: {
     "Keep narration brief and value-dense; avoid repeating obvious steps.",
     "Use plain human language for narration unless in a technical context.",
     "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
-    "When exec returns approval-pending, include the concrete /approve command from tool output (with allow-once|allow-always|deny) and do not ask for a different or rotated code.",
+    buildExecApprovalPromptGuidance({
+      runtimeChannel: params.runtimeInfo?.channel,
+    }),
+    "Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
     "Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.",
     "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.",
     "",
