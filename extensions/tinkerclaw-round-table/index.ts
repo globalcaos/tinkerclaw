@@ -12,10 +12,12 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
+import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { DEFAULT_PROVIDER_PROFILES, type ProviderProfile } from "./src/cognitive-diversity.js";
+import { createPersistentDeliberation } from "./src/persistent-deliberation.js";
 import {
   runDebate,
   DEFAULT_DEBATE_CONFIG,
@@ -23,8 +25,6 @@ import {
   type DebateParticipant,
   type DebateConfig,
 } from "./src/raac-protocol.js";
-import { DEFAULT_PROVIDER_PROFILES, type ProviderProfile } from "./src/cognitive-diversity.js";
-import { createPersistentDeliberation } from "./src/persistent-deliberation.js";
 
 // -- Constants --
 
@@ -40,10 +40,9 @@ const TOTAL_RECALL_STATE_PATH = join(COGNITIVE_DIR, "total-recall.json");
 const SynapseDebateParams = Type.Object({
   topic: Type.String({ description: "The debate topic or question to deliberate on." }),
   depth: Type.Optional(
-    Type.Union(
-      [Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep")],
-      { description: "Debate depth: quick (1-2 rounds), standard (3-4), deep (5-6)." },
-    ),
+    Type.Union([Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep")], {
+      description: "Debate depth: quick (1-2 rounds), standard (3-4), deep (5-6).",
+    }),
   ),
 });
 
@@ -82,7 +81,11 @@ function createSimulatedParticipant(profile: ProviderProfile): DebateParticipant
     async defend(attacks: string[], role: string): Promise<string> {
       return `[${profile.modelId}/${role}] Defense: Addressing ${attacks.length} challenge(s) -- my approach accounts for these through ${profile.strengths.join(", ")}.`;
     },
-    async synthesize(proposals: string[], challenges: string[], defenses: string[]): Promise<string> {
+    async synthesize(
+      proposals: string[],
+      challenges: string[],
+      defenses: string[],
+    ): Promise<string> {
       return `Synthesis: After ${proposals.length} proposals, ${challenges.length} challenges, and ${defenses.length} defenses, the consensus approach integrates multiple perspectives for a balanced solution.`;
     },
     async ratify(_synthesis: string): Promise<"accept" | "reject" | "amend"> {
@@ -142,8 +145,7 @@ function resolvePersistencePaths(): { tracesPath: string; conclusionsPath: strin
 export default definePluginEntry({
   id: "tinkerclaw-round-table",
   name: "Round Table",
-  description:
-    "SYNAPSE -- Multi-model debate via RAAC protocol with cognitive diversity scoring.",
+  description: "SYNAPSE -- Multi-model debate via RAAC protocol with cognitive diversity scoring.",
   register(api: OpenClawPluginApi) {
     const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
     const defaultDepth = (cfg.defaultDepth as string) ?? "standard";
@@ -169,10 +171,7 @@ export default definePluginEntry({
           "Run a structured multi-model debate on a topic using the RAAC protocol. " +
           "Produces a synthesized consensus with confidence scoring and full debate traces.",
         parameters: SynapseDebateParams,
-        async execute(
-          _toolCallId: string,
-          params: SynapseDebateInput,
-        ) {
+        async execute(_toolCallId: string, params: SynapseDebateInput) {
           const { topic } = params;
           const depth = params.depth ?? defaultDepth;
 
@@ -206,9 +205,7 @@ export default definePluginEntry({
           const acceptCount = lastRound
             ? Object.values(lastRound.ratification).filter((v) => v === "accept").length
             : 0;
-          const totalVoters = lastRound
-            ? Object.values(lastRound.ratification).length
-            : 1;
+          const totalVoters = lastRound ? Object.values(lastRound.ratification).length : 1;
           const confidence = result.converged
             ? 0.7 + 0.3 * (acceptCount / totalVoters)
             : 0.3 + 0.4 * (acceptCount / totalVoters);
@@ -254,8 +251,6 @@ export default definePluginEntry({
       { optional: true },
     );
 
-    api.logger.info(
-      `[round-table] ready (depth=${defaultDepth}, traces=${paths.tracesPath})`,
-    );
+    api.logger.info(`[round-table] ready (depth=${defaultDepth}, traces=${paths.tracesPath})`);
   },
 });

@@ -1,12 +1,16 @@
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * Tests for persona loading from SOUL.md, IDENTITY.md, and persona.json.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { loadPersonaFromFiles, createCortexRuntime } from "../src/cortex-runtime.js";
-import { createDefaultPersonaState, validatePersonaState, PersonaStateValidationError } from "../src/persona-state.js";
+import {
+  createDefaultPersonaState,
+  validatePersonaState,
+  PersonaStateValidationError,
+} from "../src/persona-state.js";
 
 describe("Persona Loader", () => {
   let dir: string;
@@ -64,7 +68,10 @@ A witty AI assistant who serves as an extension of the user.
   });
 
   it("falls through to SOUL.md when persona.json is invalid", () => {
-    writeFileSync(join(dir, ".openclaw", "SOUL.md"), "# FallbackName\n\n## Identity\nFallback identity.");
+    writeFileSync(
+      join(dir, ".openclaw", "SOUL.md"),
+      "# FallbackName\n\n## Identity\nFallback identity.",
+    );
     writeFileSync(join(dir, ".openclaw", "persona.json"), "not-valid-json{{{");
 
     const persona = loadPersonaFromFiles({});

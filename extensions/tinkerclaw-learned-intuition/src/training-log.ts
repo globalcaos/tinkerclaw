@@ -173,14 +173,16 @@ export class TrainingLog {
 
     for (let attempt = 0; attempt <= TrainingLog.MAX_RETRIES; attempt++) {
       try {
-        this.db.prepare(`
+        this.db
+          .prepare(`
           UPDATE amygdala_evaluations
           SET outcome = ?,
               outcome_source = ?,
               outcome_timestamp = datetime('now'),
               outcome_weight = ?
           WHERE id = ?
-        `).run(outcome, source, weight, evaluationId);
+        `)
+          .run(outcome, source, weight, evaluationId);
         return;
       } catch (err: unknown) {
         const sqlErr = err as { code?: string };
@@ -203,12 +205,14 @@ export class TrainingLog {
 
     for (let attempt = 0; attempt <= TrainingLog.MAX_RETRIES; attempt++) {
       try {
-        this.db.prepare(`
+        this.db
+          .prepare(`
           UPDATE amygdala_evaluations
           SET user_override = TRUE,
               user_override_reason = ?
           WHERE id = ?
-        `).run(reason, evaluationId);
+        `)
+          .run(reason, evaluationId);
         return;
       } catch (err: unknown) {
         const sqlErr = err as { code?: string };

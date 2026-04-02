@@ -73,9 +73,7 @@ describe("Computational Humor registration", () => {
     mod.default.register(api as any);
 
     expect(onFn).not.toHaveBeenCalled();
-    expect(api.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("disabled"),
-    );
+    expect(api.logger.info).toHaveBeenCalledWith(expect.stringContaining("disabled"));
   });
 
   it("logs ready message with frequency and sensitivity values", async () => {
@@ -86,11 +84,7 @@ describe("Computational Humor registration", () => {
     const mod = await import("../index.js");
     mod.default.register(api as any);
 
-    expect(api.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("medium"),
-    );
-    expect(api.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("0.6"),
-    );
+    expect(api.logger.info).toHaveBeenCalledWith(expect.stringContaining("medium"));
+    expect(api.logger.info).toHaveBeenCalledWith(expect.stringContaining("0.6"));
   });
 });

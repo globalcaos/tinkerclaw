@@ -1,7 +1,7 @@
-// extensions/tinkerclaw-identity-persistence/__tests__/scaffold.test.ts
-import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+// extensions/tinkerclaw-identity-persistence/__tests__/scaffold.test.ts
+import { describe, it, expect } from "vitest";
 
 const EXT_DIR = join(__dirname, "..");
 

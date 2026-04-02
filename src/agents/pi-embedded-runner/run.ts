@@ -112,8 +112,12 @@ const RUNTIME_AUTH_REFRESH_MIN_DELAY_MS = 5 * 1000;
 // 10x 1s, then 5x 2s, then 5x escalating 3-8s. Total ~20 attempts, ~45s.
 // Transient 529s usually clear within 10-15s. Don't give up early.
 function overloadDelayMs(attempt: number): number {
-  if (attempt <= 10) return 1_000;
-  if (attempt <= 15) return 2_000;
+  if (attempt <= 10) {
+    return 1_000;
+  }
+  if (attempt <= 15) {
+    return 2_000;
+  }
   // Attempts 16-20: 3s, 4s, 5s, 6s, 8s
   const escalation = [3_000, 4_000, 5_000, 6_000, 8_000];
   return escalation[Math.min(attempt - 16, escalation.length - 1)] ?? 8_000;
@@ -547,7 +551,6 @@ export async function runEmbeddedPiAgent(
         }
         lastProfileId = apiKeyInfo.profileId;
       };
-
 
       const MAX_TIMEOUT_COMPACTION_ATTEMPTS = 2;
       const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;
@@ -1386,18 +1389,20 @@ export async function runEmbeddedPiAgent(
                 }
                 continue; // Retry the SAME model
               }
-              log.warn(`overload retry exhausted (${MAX_OVERLOAD_RETRIES} attempts) for ${provider}/${modelId} — falling back`);
-                emitAgentEvent({
-                  runId: params.runId,
-                  sessionKey: params.sessionKey,
-                  stream: "lifecycle",
-                  data: {
-                    phase: "overload-retry-exhausted",
-                    attempts: MAX_OVERLOAD_RETRIES,
-                    provider,
-                    model: modelId,
-                  },
-                });
+              log.warn(
+                `overload retry exhausted (${MAX_OVERLOAD_RETRIES} attempts) for ${provider}/${modelId} — falling back`,
+              );
+              emitAgentEvent({
+                runId: params.runId,
+                sessionKey: params.sessionKey,
+                stream: "lifecycle",
+                data: {
+                  phase: "overload-retry-exhausted",
+                  attempts: MAX_OVERLOAD_RETRIES,
+                  provider,
+                  model: modelId,
+                },
+              });
             }
             // Throw FailoverError for prompt-side failover reasons when fallbacks
             // are configured so outer model fallback can continue on overload,

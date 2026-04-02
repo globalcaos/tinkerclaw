@@ -152,13 +152,14 @@ export class AmygdalaHook {
       decision: ruleResult.decision,
       evaluation: null,
       ruleBasedFallback: true,
-      response: ruleResult.decision !== "allow"
-        ? {
-            gate_decision: ruleResult.decision,
-            reason: ruleResult.explanation,
-            user_action_required: "Action blocked by rule-based safety gate.",
-          }
-        : undefined,
+      response:
+        ruleResult.decision !== "allow"
+          ? {
+              gate_decision: ruleResult.decision,
+              reason: ruleResult.explanation,
+              user_action_required: "Action blocked by rule-based safety gate.",
+            }
+          : undefined,
     };
   }
 

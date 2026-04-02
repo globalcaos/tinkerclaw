@@ -1913,7 +1913,9 @@ body {
 .model-error-badge.auth-clickable {
   cursor: pointer;
   border-color: rgba(255, 60, 60, 0.5);
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 .model-error-badge.auth-clickable:hover {
   background: rgba(255, 60, 60, 0.3);
@@ -2897,7 +2899,7 @@ body {
 .pf-tree-panel {
   background: url("./wood-panel.jpg") repeat;
   background-blend-mode: multiply;
-  background-color: #4E3B31;
+  background-color: #4e3b31;
   border-radius: 12px;
   padding: 0.75rem;
   border: 1px solid #30363d;

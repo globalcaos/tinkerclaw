@@ -15,13 +15,13 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { AmygdalaHook } from "./src/runtime-hook.js";
-import { evaluateRuleBased } from "./src/rule-based-gate.js";
-import { generateTargetVector, DEFAULT_TARGET_DIMENSIONS } from "./src/personality-seed.js";
 import { decodePersonalityNudge } from "./src/personality-decoder.js";
+import { generateTargetVector, DEFAULT_TARGET_DIMENSIONS } from "./src/personality-seed.js";
+import { evaluateRuleBased } from "./src/rule-based-gate.js";
+import { AmygdalaHook } from "./src/runtime-hook.js";
 import type { AmygdalaConfig, PersonalityNudge } from "./src/types.js";
 
 // -- Constants --
@@ -97,7 +97,8 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
     // Use defaults
   }
 
-  const targetVector = (fileConfig.target_vector as number[]) || generateTargetVector(DEFAULT_TARGET_DIMENSIONS);
+  const targetVector =
+    (fileConfig.target_vector as number[]) || generateTargetVector(DEFAULT_TARGET_DIMENSIONS);
 
   return {
     enabled: true,
@@ -196,22 +197,25 @@ export default definePluginEntry((api: OpenClawPluginApi) => {
 
   function ensureInit(): Promise<void> {
     if (!initPromise) {
-      initPromise = hook.initialize().then(() => {
-        hookReady = true;
-        const mode = hook.useRuleBasedFallback ? "rule-based" : "onnx";
-        writeSharedState(mode, !hook.useRuleBasedFallback);
-        log.info(
-          `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}`,
-        );
-        if (hook.useRuleBasedFallback) {
-          log.warn(
-            `[learned-intuition] ONNX models not available at ${modelsDir}. Using rule-based fallback.`,
+      initPromise = hook
+        .initialize()
+        .then(() => {
+          hookReady = true;
+          const mode = hook.useRuleBasedFallback ? "rule-based" : "onnx";
+          writeSharedState(mode, !hook.useRuleBasedFallback);
+          log.info(
+            `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}`,
           );
-        }
-      }).catch((err) => {
-        log.error(`[learned-intuition] initialization failed: ${err}`);
-        hookReady = false;
-      });
+          if (hook.useRuleBasedFallback) {
+            log.warn(
+              `[learned-intuition] ONNX models not available at ${modelsDir}. Using rule-based fallback.`,
+            );
+          }
+        })
+        .catch((err) => {
+          log.error(`[learned-intuition] initialization failed: ${err}`);
+          hookReady = false;
+        });
     }
     return initPromise;
   }
@@ -230,7 +234,8 @@ export default definePluginEntry((api: OpenClawPluginApi) => {
 
       try {
         const argsStr = JSON.stringify(event.args ?? {});
-        const target = (event.args?.path as string) ||
+        const target =
+          (event.args?.path as string) ||
           (event.args?.file_path as string) ||
           (event.args?.command as string) ||
           (event.args?.target as string) ||
@@ -272,9 +277,7 @@ export default definePluginEntry((api: OpenClawPluginApi) => {
             };
           }
         } else {
-          log.debug(
-            `[learned-intuition] ${modeTag} allowed ${event.toolName}(${target})`,
-          );
+          log.debug(`[learned-intuition] ${modeTag} allowed ${event.toolName}(${target})`);
         }
       } catch (err) {
         // Safety gate failures must never block the agent
@@ -298,7 +301,9 @@ export default definePluginEntry((api: OpenClawPluginApi) => {
         // Use a neutral combined embedding as baseline (actual model output
         // would come from the last evaluation, but we generate a fresh nudge
         // based on the target vector drift from neutral)
-        const neutralEmbedding = new Float32Array(amygdalaConfig.personality.embedding_dim).fill(0.5);
+        const neutralEmbedding = new Float32Array(amygdalaConfig.personality.embedding_dim).fill(
+          0.5,
+        );
         const nudge = decodePersonalityNudge(
           neutralEmbedding,
           targetVector,
