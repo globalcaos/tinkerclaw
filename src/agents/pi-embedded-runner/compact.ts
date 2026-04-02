@@ -45,6 +45,7 @@ import { formatUserTime, resolveUserTimeFormat, resolveUserTimezone } from "../d
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { resolveOpenClawDocsPath } from "../docs-path.js";
 import {
+  applyAuthHeaderOverride,
   applyLocalNoAuthHeaderOverride,
   getApiKeyForModel,
   resolveModelAuthMode,
@@ -60,6 +61,10 @@ import {
   validateGeminiTurns,
 } from "../pi-embedded-helpers.js";
 import { createCortexRuntime } from "../pi-extensions/cortex-runtime.js";
+import {
+  consumeCompactionSafeguardCancelReason,
+  setCompactionSafeguardCancelReason,
+} from "../pi-hooks/compaction-safeguard-runtime.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../pi-project-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { registerProviderStreamForModel } from "../provider-stream.js";
@@ -90,6 +95,10 @@ import {
   runPostCompactionSideEffects,
 } from "./compaction-hooks.js";
 import {
+  buildEmbeddedCompactionRuntimeContext,
+  resolveEmbeddedCompactionTarget,
+} from "./compaction-runtime-context.js";
+import {
   compactWithSafetyTimeout,
   resolveCompactionTimeoutMs,
 } from "./compaction-safety-timeout.js";
@@ -99,6 +108,7 @@ import {
   logToolSchemasForGoogle,
   sanitizeSessionHistory,
   sanitizeToolsForGoogle,
+  validateReplayTurns,
 } from "./google.js";
 import { getDmHistoryLimitFromSessionKey, limitHistoryTurns } from "./history.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
@@ -284,31 +294,17 @@ export async function compactEmbeddedPiSessionDirect(
     workspaceDir: resolvedWorkspace,
     allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
   });
-  // Resolve compaction model: prefer config override, then fall back to caller-supplied model
-  const compactionModelOverride = params.config?.agents?.defaults?.compaction?.model?.trim();
-  let provider: string;
-  let modelId: string;
-  // When switching provider via override, drop the primary auth profile to avoid
-  // sending the wrong credentials (e.g. OpenAI profile token to OpenRouter).
-  let authProfileId: string | undefined = params.authProfileId;
-  if (compactionModelOverride) {
-    const slashIdx = compactionModelOverride.indexOf("/");
-    if (slashIdx > 0) {
-      provider = compactionModelOverride.slice(0, slashIdx).trim();
-      modelId = compactionModelOverride.slice(slashIdx + 1).trim() || DEFAULT_MODEL;
-      // Provider changed — drop primary auth profile so getApiKeyForModel
-      // falls back to provider-based key resolution for the override model.
-      if (provider !== (params.provider ?? "").trim()) {
-        authProfileId = undefined;
-      }
-    } else {
-      provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
-      modelId = compactionModelOverride;
-    }
-  } else {
-    provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
-    modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
-  }
+  const resolvedCompactionTarget = resolveEmbeddedCompactionTarget({
+    config: params.config,
+    provider: params.provider,
+    modelId: params.model,
+    authProfileId: params.authProfileId,
+    defaultProvider: DEFAULT_PROVIDER,
+    defaultModel: DEFAULT_MODEL,
+  });
+  const provider = resolvedCompactionTarget.provider ?? DEFAULT_PROVIDER;
+  const modelId = resolvedCompactionTarget.model ?? DEFAULT_MODEL;
+  const authProfileId = resolvedCompactionTarget.authProfileId;
   const fail = (reason: string): EmbeddedPiCompactResult => {
     log.warn(
       `[compaction-diag] end runId=${runId} sessionKey=${params.sessionKey ?? params.sessionId} ` +
@@ -336,6 +332,7 @@ export async function compactEmbeddedPiSessionDirect(
   }
   let runtimeModel = model;
   let apiKeyInfo: Awaited<ReturnType<typeof getApiKeyForModel>> | null = null;
+  let hasRuntimeAuthExchange = false;
   try {
     apiKeyInfo = await getApiKeyForModel({
       model: runtimeModel,
@@ -373,6 +370,7 @@ export async function compactEmbeddedPiSessionDirect(
         runtimeModel = { ...runtimeModel, baseUrl: preparedAuth.baseUrl };
       }
       const runtimeApiKey = preparedAuth?.apiKey ?? apiKeyInfo.apiKey;
+      hasRuntimeAuthExchange = Boolean(preparedAuth?.apiKey);
       if (!runtimeApiKey) {
         throw new Error(`Provider "${runtimeModel.provider}" runtime auth returned no apiKey.`);
       }
@@ -447,11 +445,18 @@ export async function compactEmbeddedPiSessionDirect(
       modelContextWindow: runtimeModel.contextWindow,
       defaultTokens: DEFAULT_CONTEXT_TOKENS,
     });
-    const effectiveModel = applyLocalNoAuthHeaderOverride(
-      ctxInfo.tokens < (runtimeModel.contextWindow ?? Infinity)
-        ? { ...runtimeModel, contextWindow: ctxInfo.tokens }
-        : runtimeModel,
-      apiKeyInfo,
+    const effectiveModel = applyAuthHeaderOverride(
+      applyLocalNoAuthHeaderOverride(
+        ctxInfo.tokens < (runtimeModel.contextWindow ?? Infinity)
+          ? { ...runtimeModel, contextWindow: ctxInfo.tokens }
+          : runtimeModel,
+        apiKeyInfo,
+      ),
+      // Skip header injection when runtime auth exchange produced a
+      // different credential — the SDK reads the exchanged token from
+      // authStorage automatically.
+      hasRuntimeAuthExchange ? null : apiKeyInfo,
+      params.config,
     );
 
     const runAbortController = new AbortController();
@@ -478,6 +483,7 @@ export async function compactEmbeddedPiSessionDirect(
       modelProvider: model.provider,
       modelId,
       modelCompat: effectiveModel.compat,
+      modelApi: model.api,
       modelContextWindowTokens: ctxInfo.tokens,
       modelAuthMode: resolveModelAuthMode(model.provider, params.config),
     });
@@ -485,6 +491,12 @@ export async function compactEmbeddedPiSessionDirect(
     const tools = sanitizeToolsForGoogle({
       tools: toolsEnabled ? toolsRaw : [],
       provider,
+      config: params.config,
+      workspaceDir: effectiveWorkspace,
+      env: process.env,
+      modelId,
+      modelApi: model.api,
+      model,
     });
     const bundleMcpRuntime = toolsEnabled
       ? await createBundleMcpToolRuntime({
@@ -509,7 +521,16 @@ export async function compactEmbeddedPiSessionDirect(
       ...(bundleLspRuntime?.tools ?? []),
     ];
     const allowedToolNames = collectAllowedToolNames({ tools: effectiveTools });
-    logToolSchemasForGoogle({ tools: effectiveTools, provider });
+    logToolSchemasForGoogle({
+      tools: effectiveTools,
+      provider,
+      config: params.config,
+      workspaceDir: effectiveWorkspace,
+      env: process.env,
+      modelId,
+      modelApi: model.api,
+      model,
+    });
     const machineName = await getMachineDisplayName();
     const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
     let runtimeCapabilities = runtimeChannel
@@ -590,7 +611,14 @@ export async function compactEmbeddedPiSessionDirect(
       channelActions,
     };
     const sandboxInfo = buildEmbeddedSandboxInfo(sandbox, params.bashElevated);
-    const reasoningTagHint = isReasoningTagProvider(provider);
+    const reasoningTagHint = isReasoningTagProvider(provider, {
+      config: params.config,
+      workspaceDir: effectiveWorkspace,
+      env: process.env,
+      modelId,
+      modelApi: model.api,
+      model,
+    });
     const userTimezone = resolveUserTimezone(params.config?.agents?.defaults?.userTimezone);
     const userTimeFormat = resolveUserTimeFormat(params.config?.agents?.defaults?.timeFormat);
     const userTime = formatUserTime(new Date(), userTimezone, userTimeFormat);
@@ -669,6 +697,10 @@ export async function compactEmbeddedPiSessionDirect(
         modelApi: model.api,
         provider,
         modelId,
+        config: params.config,
+        workspaceDir: effectiveWorkspace,
+        env: process.env,
+        model,
       });
       const sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
         agentId: sessionAgentId,
@@ -743,16 +775,25 @@ export async function compactEmbeddedPiSessionDirect(
           provider,
           allowedToolNames,
           config: params.config,
+          workspaceDir: effectiveWorkspace,
+          env: process.env,
+          model,
           sessionManager,
           sessionId: params.sessionId,
           policy: transcriptPolicy,
         });
-        const validatedGemini = transcriptPolicy.validateGeminiTurns
-          ? validateGeminiTurns(prior)
-          : prior;
-        const validated = transcriptPolicy.validateAnthropicTurns
-          ? validateAnthropicTurns(validatedGemini)
-          : validatedGemini;
+        const validated = await validateReplayTurns({
+          messages: prior,
+          modelApi: model.api,
+          modelId,
+          provider,
+          config: params.config,
+          workspaceDir: effectiveWorkspace,
+          env: process.env,
+          model,
+          sessionId: params.sessionId,
+          policy: transcriptPolicy,
+        });
         // Apply validated transcript to the live session even when no history limit is configured,
         // so compaction and hook metrics are based on the same message set.
         session.agent.replaceMessages(validated);
@@ -967,12 +1008,19 @@ export async function compactEmbeddedPiSession(
       ensureContextEnginesInitialized();
       const contextEngine = await resolveContextEngine(params.config);
       try {
-        // Resolve token budget from model context window so the context engine
-        // knows the compaction target.  The runner's afterTurn path passes this
-        // automatically, but the /compact command path needs to compute it here.
-        const ceProvider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
-        const ceModelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
         const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
+        const resolvedCompactionTarget = resolveEmbeddedCompactionTarget({
+          config: params.config,
+          provider: params.provider,
+          modelId: params.model,
+          authProfileId: params.authProfileId,
+          defaultProvider: DEFAULT_PROVIDER,
+          defaultModel: DEFAULT_MODEL,
+        });
+        // Resolve token budget from the effective compaction model so engine-
+        // owned /compact implementations see the same target as the runtime.
+        const ceProvider = resolvedCompactionTarget.provider ?? DEFAULT_PROVIDER;
+        const ceModelId = resolvedCompactionTarget.model ?? DEFAULT_MODEL;
         const { model: ceModel } = await resolveModelAsync(
           ceProvider,
           ceModelId,
@@ -1007,6 +1055,32 @@ export async function compactEmbeddedPiSession(
           workspaceDir: resolveUserPath(params.workspaceDir),
           messageProvider: resolvedMessageProvider,
         };
+        const runtimeContext = {
+          ...params,
+          ...buildEmbeddedCompactionRuntimeContext({
+            sessionKey: params.sessionKey,
+            messageChannel: params.messageChannel,
+            messageProvider: params.messageProvider,
+            agentAccountId: params.agentAccountId,
+            currentChannelId: params.currentChannelId,
+            currentThreadTs: params.currentThreadTs,
+            currentMessageId: params.currentMessageId,
+            authProfileId: params.authProfileId,
+            workspaceDir: params.workspaceDir,
+            agentDir,
+            config: params.config,
+            skillsSnapshot: params.skillsSnapshot,
+            senderIsOwner: params.senderIsOwner,
+            senderId: params.senderId,
+            provider: params.provider,
+            modelId: params.model,
+            thinkLevel: params.thinkLevel,
+            reasoningLevel: params.reasoningLevel,
+            bashElevated: params.bashElevated,
+            extraSystemPrompt: params.extraSystemPrompt,
+            ownerNumbers: params.ownerNumbers,
+          }),
+        };
         // Engine-owned compaction doesn't load the transcript at this level, so
         // message counts are unavailable.  We pass sessionFile so hook subscribers
         // can read the transcript themselves if they need exact counts.
@@ -1034,7 +1108,7 @@ export async function compactEmbeddedPiSession(
           compactionTarget: params.trigger === "manual" ? "threshold" : "budget",
           customInstructions: params.customInstructions,
           force: params.trigger === "manual",
-          runtimeContext: params as Record<string, unknown>,
+          runtimeContext,
         });
         if (result.ok && result.compacted) {
           await runContextEngineMaintenance({
@@ -1043,7 +1117,7 @@ export async function compactEmbeddedPiSession(
             sessionKey: params.sessionKey,
             sessionFile: params.sessionFile,
             reason: "compaction",
-            runtimeContext: params as Record<string, unknown>,
+            runtimeContext,
           });
         }
         if (engineOwnsCompaction && result.ok && result.compacted) {

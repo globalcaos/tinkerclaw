@@ -5,11 +5,10 @@ import {
   ensureContextEnginesInitialized,
   resolveContextEngine,
 } from "../../context-engine/index.js";
-import { emitAgentEvent } from "../../infra/agent-events.js"; // FORK: per-profile fallback error events
-import { computeBackoff, sleepWithAbort, type BackoffPolicy } from "../../infra/backoff.js";
-import { generateSecureToken } from "../../infra/secure-random.js";
+import { sleepWithAbort } from "../../infra/backoff.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
+import { sanitizeForLog } from "../../terminal/ansi.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import { hasConfiguredModelFallbacks } from "../agent-scope.js";
@@ -29,11 +28,10 @@ import {
 import {
   hasDifferentLiveSessionModelSelection,
   LiveSessionModelSwitchError,
-  resolveLiveSessionModelSelection,
-  shouldTrackPersistedLiveSessionModelSelection,
   consumeLiveSessionModelSwitch,
 } from "../live-model-switch.js";
 import {
+  applyAuthHeaderOverride,
   applyLocalNoAuthHeaderOverride,
   ensureAuthProfileStore,
   type ResolvedProviderAuth,
@@ -77,9 +75,11 @@ import {
   buildErrorAgentMeta,
   buildUsageAgentMetaFields,
   createCompactionDiagId,
-  OVERLOAD_FAILOVER_BACKOFF_POLICY,
   resolveActiveErrorContext,
   resolveMaxRunRetryIterations,
+  resolveOverloadFailoverBackoffMs,
+  resolveOverloadProfileRotationLimit,
+  resolveRateLimitProfileRotationLimit,
   type RuntimeAuthState,
   scrubAnthropicRefusalMagic,
 } from "./run/helpers.js";
@@ -95,194 +95,6 @@ import { createUsageAccumulator, mergeUsageIntoAccumulator } from "./usage-accum
 import { describeUnknownError } from "./utils.js";
 
 type ApiKeyInfo = ResolvedProviderAuth;
-
-type RuntimeAuthState = {
-  sourceApiKey: string;
-  authMode: string;
-  profileId?: string;
-  expiresAt?: number;
-  refreshTimer?: ReturnType<typeof setTimeout>;
-  refreshInFlight?: Promise<void>;
-};
-
-const RUNTIME_AUTH_REFRESH_MARGIN_MS = 5 * 60 * 1000;
-const RUNTIME_AUTH_REFRESH_RETRY_MS = 60 * 1000;
-const RUNTIME_AUTH_REFRESH_MIN_DELAY_MS = 5 * 1000;
-// FORK: Aggressive overload retry — spam Anthropic with short delays.
-// 10x 1s, then 5x 2s, then 5x escalating 3-8s. Total ~20 attempts, ~45s.
-// Transient 529s usually clear within 10-15s. Don't give up early.
-function overloadDelayMs(attempt: number): number {
-  if (attempt <= 10) {
-    return 1_000;
-  }
-  if (attempt <= 15) {
-    return 2_000;
-  }
-  // Attempts 16-20: 3s, 4s, 5s, 6s, 8s
-  const escalation = [3_000, 4_000, 5_000, 6_000, 8_000];
-  return escalation[Math.min(attempt - 16, escalation.length - 1)] ?? 8_000;
-}
-const MAX_OVERLOAD_RETRIES = 20;
-
-// Avoid Anthropic's refusal test token poisoning session transcripts.
-const ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL = "ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL";
-const ANTHROPIC_MAGIC_STRING_REPLACEMENT = "ANTHROPIC MAGIC STRING TRIGGER REFUSAL (redacted)";
-
-function scrubAnthropicRefusalMagic(prompt: string): string {
-  if (!prompt.includes(ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL)) {
-    return prompt;
-  }
-  return prompt.replaceAll(
-    ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL,
-    ANTHROPIC_MAGIC_STRING_REPLACEMENT,
-  );
-}
-
-type UsageAccumulator = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-  /** Cache fields from the most recent API call (not accumulated). */
-  lastCacheRead: number;
-  lastCacheWrite: number;
-  lastInput: number;
-};
-
-const createUsageAccumulator = (): UsageAccumulator => ({
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  total: 0,
-  lastCacheRead: 0,
-  lastCacheWrite: 0,
-  lastInput: 0,
-});
-
-function createCompactionDiagId(): string {
-  return `ovf-${Date.now().toString(36)}-${generateSecureToken(4)}`;
-}
-
-// Defensive guard for the outer run loop across all retry branches.
-const BASE_RUN_RETRY_ITERATIONS = 24;
-const RUN_RETRY_ITERATIONS_PER_PROFILE = 8;
-const MIN_RUN_RETRY_ITERATIONS = 32;
-const MAX_RUN_RETRY_ITERATIONS = 160;
-
-function resolveMaxRunRetryIterations(profileCandidateCount: number): number {
-  const scaled =
-    BASE_RUN_RETRY_ITERATIONS +
-    Math.max(1, profileCandidateCount) * RUN_RETRY_ITERATIONS_PER_PROFILE;
-  return Math.min(MAX_RUN_RETRY_ITERATIONS, Math.max(MIN_RUN_RETRY_ITERATIONS, scaled));
-}
-
-const hasUsageValues = (
-  usage: ReturnType<typeof normalizeUsage>,
-): usage is NonNullable<ReturnType<typeof normalizeUsage>> =>
-  !!usage &&
-  [usage.input, usage.output, usage.cacheRead, usage.cacheWrite, usage.total].some(
-    (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
-  );
-
-const mergeUsageIntoAccumulator = (
-  target: UsageAccumulator,
-  usage: ReturnType<typeof normalizeUsage>,
-) => {
-  if (!hasUsageValues(usage)) {
-    return;
-  }
-  target.input += usage.input ?? 0;
-  target.output += usage.output ?? 0;
-  target.cacheRead += usage.cacheRead ?? 0;
-  target.cacheWrite += usage.cacheWrite ?? 0;
-  target.total +=
-    usage.total ??
-    (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
-  // Track the most recent API call's cache fields for accurate context-size reporting.
-  // Accumulated cache totals inflate context size when there are multiple tool-call round-trips,
-  // since each call reports cacheRead ≈ current_context_size.
-  target.lastCacheRead = usage.cacheRead ?? 0;
-  target.lastCacheWrite = usage.cacheWrite ?? 0;
-  target.lastInput = usage.input ?? 0;
-};
-
-const toNormalizedUsage = (usage: UsageAccumulator) => {
-  const hasUsage =
-    usage.input > 0 ||
-    usage.output > 0 ||
-    usage.cacheRead > 0 ||
-    usage.cacheWrite > 0 ||
-    usage.total > 0;
-  if (!hasUsage) {
-    return undefined;
-  }
-  // Use the LAST API call's cache fields for context-size calculation.
-  // The accumulated cacheRead/cacheWrite inflate context size because each tool-call
-  // round-trip reports cacheRead ≈ current_context_size, and summing N calls gives
-  // N × context_size which gets clamped to contextWindow (e.g. 200k).
-  // See: https://github.com/openclaw/openclaw/issues/13698
-  //
-  // We use lastInput/lastCacheRead/lastCacheWrite (from the most recent API call) for
-  // cache-related fields, but keep accumulated output (total generated text this turn).
-  const lastPromptTokens = usage.lastInput + usage.lastCacheRead + usage.lastCacheWrite;
-  return {
-    input: usage.lastInput || undefined,
-    output: usage.output || undefined,
-    cacheRead: usage.lastCacheRead || undefined,
-    cacheWrite: usage.lastCacheWrite || undefined,
-    total: lastPromptTokens + usage.output || undefined,
-  };
-};
-
-function resolveActiveErrorContext(params: {
-  lastAssistant: { provider?: string; model?: string } | undefined;
-  provider: string;
-  model: string;
-}): { provider: string; model: string } {
-  return {
-    provider: params.lastAssistant?.provider ?? params.provider,
-    model: params.lastAssistant?.model ?? params.model,
-  };
-}
-
-/**
- * Build agentMeta for error return paths, preserving accumulated usage so that
- * session totalTokens reflects the actual context size rather than going stale.
- * Without this, error returns omit usage and the session keeps whatever
- * totalTokens was set by the previous successful run.
- */
-function buildErrorAgentMeta(params: {
-  sessionId: string;
-  provider: string;
-  model: string;
-  usageAccumulator: UsageAccumulator;
-  lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
-  lastAssistant?: { usage?: unknown } | null;
-  /** API-reported total from the most recent call, mirroring the success path correction. */
-  lastTurnTotal?: number;
-}): EmbeddedPiAgentMeta {
-  const usage = toNormalizedUsage(params.usageAccumulator);
-  // Apply the same lastTurnTotal correction the success path uses so
-  // usage.total reflects the API-reported context size, not accumulated totals.
-  if (usage && params.lastTurnTotal && params.lastTurnTotal > 0) {
-    usage.total = params.lastTurnTotal;
-  }
-  const lastCallUsage = params.lastAssistant
-    ? normalizeUsage(params.lastAssistant.usage as UsageLike)
-    : undefined;
-  const promptTokens = derivePromptTokens(params.lastRunPromptUsage);
-  return {
-    sessionId: params.sessionId,
-    provider: params.provider,
-    model: params.model,
-    // Only include usage fields when we have actual data from prior API calls.
-    ...(usage ? { usage } : {}),
-    ...(lastCallUsage ? { lastCallUsage } : {}),
-    ...(promptTokens ? { promptTokens } : {}),
-  };
-}
 
 export async function runEmbeddedPiAgent(
   params: RunEmbeddedPiAgentParams,
@@ -426,18 +238,6 @@ export async function runEmbeddedPiAgent(
         authProfileId: preferredProfileId,
         authProfileIdSource: params.authProfileIdSource,
       });
-      const resolvePersistedLiveSelection = () =>
-        resolveLiveSessionModelSelection({
-          cfg: params.config,
-          sessionKey: params.sessionKey,
-          agentId: workspaceResolution.agentId,
-          defaultProvider: provider,
-          defaultModel: modelId,
-        });
-      const shouldTrackPersistedLiveSelection = shouldTrackPersistedLiveSessionModelSelection(
-        resolveCurrentLiveSelection(),
-        resolvePersistedLiveSelection(),
-      );
       const {
         advanceAuthProfile,
         initializeAuthProfile,
@@ -489,68 +289,9 @@ export async function runEmbeddedPiAgent(
           thinkLevel = next;
         },
         log,
-        runId: params.runId,
-        sessionKey: params.sessionKey,
       });
 
       await initializeAuthProfile();
-
-      const applyApiKeyInfo = async (candidate?: string): Promise<void> => {
-        apiKeyInfo = await resolveApiKeyForCandidate(candidate);
-        const resolvedProfileId = apiKeyInfo.profileId ?? candidate;
-        if (!apiKeyInfo.apiKey) {
-          if (apiKeyInfo.mode !== "aws-sdk") {
-            throw new Error(
-              `No API key resolved for provider "${runtimeModel.provider}" (auth mode: ${apiKeyInfo.mode}).`,
-            );
-          }
-          lastProfileId = resolvedProfileId;
-          return;
-        }
-        let runtimeAuthHandled = false;
-        const preparedAuth = await prepareProviderRuntimeAuth({
-          provider: runtimeModel.provider,
-          config: params.config,
-          workspaceDir: resolvedWorkspace,
-          env: process.env,
-          context: {
-            config: params.config,
-            agentDir,
-            workspaceDir: resolvedWorkspace,
-            env: process.env,
-            provider: runtimeModel.provider,
-            modelId,
-            model: runtimeModel,
-            apiKey: apiKeyInfo.apiKey,
-            authMode: apiKeyInfo.mode,
-            profileId: apiKeyInfo.profileId,
-          },
-        });
-        if (preparedAuth?.baseUrl) {
-          runtimeModel = { ...runtimeModel, baseUrl: preparedAuth.baseUrl };
-          effectiveModel = { ...effectiveModel, baseUrl: preparedAuth.baseUrl };
-        }
-        if (preparedAuth?.apiKey) {
-          authStorage.setRuntimeApiKey(runtimeModel.provider, preparedAuth.apiKey);
-          runtimeAuthState = {
-            sourceApiKey: apiKeyInfo.apiKey,
-            authMode: apiKeyInfo.mode,
-            profileId: apiKeyInfo.profileId,
-            expiresAt: preparedAuth.expiresAt,
-          };
-          if (preparedAuth.expiresAt) {
-            scheduleRuntimeAuthRefresh();
-          }
-          runtimeAuthHandled = true;
-        }
-        if (runtimeAuthHandled) {
-          // Plugin-owned runtime auth already stored the exchanged credential.
-        } else {
-          authStorage.setRuntimeApiKey(runtimeModel.provider, apiKeyInfo.apiKey);
-          runtimeAuthState = null;
-        }
-        lastProfileId = apiKeyInfo.profileId;
-      };
 
       const MAX_TIMEOUT_COMPACTION_ATTEMPTS = 2;
       const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;
@@ -564,8 +305,37 @@ export async function runEmbeddedPiAgent(
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
       let runLoopIterations = 0;
-      let overloadFailoverAttempts = 0;
+      let overloadProfileRotations = 0;
+      let rateLimitProfileRotations = 0;
       let timeoutCompactionAttempts = 0;
+      const overloadFailoverBackoffMs = resolveOverloadFailoverBackoffMs(params.config);
+      const overloadProfileRotationLimit = resolveOverloadProfileRotationLimit(params.config);
+      const rateLimitProfileRotationLimit = resolveRateLimitProfileRotationLimit(params.config);
+      const maybeEscalateRateLimitProfileFallback = (params: {
+        failoverProvider: string;
+        failoverModel: string;
+        logFallbackDecision: (decision: "fallback_model", extra?: { status?: number }) => void;
+      }) => {
+        rateLimitProfileRotations += 1;
+        if (rateLimitProfileRotations <= rateLimitProfileRotationLimit || !fallbackConfigured) {
+          return;
+        }
+        const status = resolveFailoverStatus("rate_limit");
+        log.warn(
+          `rate-limit profile rotation cap reached for ${sanitizeForLog(provider)}/${sanitizeForLog(modelId)} after ${rateLimitProfileRotations} rotations; escalating to model fallback`,
+        );
+        params.logFallbackDecision("fallback_model", { status });
+        throw new FailoverError(
+          "The AI service is temporarily rate-limited. Please try again in a moment.",
+          {
+            reason: "rate_limit",
+            provider: params.failoverProvider,
+            model: params.failoverModel,
+            profileId: lastProfileId,
+            status,
+          },
+        );
+      };
       const maybeMarkAuthProfileFailure = async (failure: {
         profileId?: string;
         reason?: AuthProfileFailureReason | null;
@@ -598,16 +368,14 @@ export async function runEmbeddedPiAgent(
         return failoverReason;
       };
       const maybeBackoffBeforeOverloadFailover = async (reason: FailoverReason | null) => {
-        if (reason !== "overloaded") {
+        if (reason !== "overloaded" || overloadFailoverBackoffMs <= 0) {
           return;
         }
-        overloadFailoverAttempts += 1;
-        const delayMs = computeBackoff(OVERLOAD_FAILOVER_BACKOFF_POLICY, overloadFailoverAttempts);
         log.warn(
-          `overload backoff before failover for ${provider}/${modelId}: attempt=${overloadFailoverAttempts} delayMs=${delayMs}`,
+          `overload backoff before failover for ${provider}/${modelId}: delayMs=${overloadFailoverBackoffMs}`,
         );
         try {
-          await sleepWithAbort(delayMs, params.abortSignal);
+          await sleepWithAbort(overloadFailoverBackoffMs, params.abortSignal);
         } catch (err) {
           if (params.abortSignal?.aborted) {
             const abortErr = new Error("Operation aborted", { cause: err });
@@ -704,15 +472,6 @@ export async function runEmbeddedPiAgent(
             };
           }
           runLoopIterations += 1;
-          const nextSelection = shouldTrackPersistedLiveSelection
-            ? resolvePersistedLiveSelection()
-            : null;
-          if (hasDifferentLiveSessionModelSelection(resolveCurrentLiveSelection(), nextSelection)) {
-            log.info(
-              `live session model switch detected before attempt for ${params.sessionId}: ${provider}/${modelId} -> ${nextSelection.provider}/${nextSelection.model}`,
-            );
-            throw new LiveSessionModelSwitchError(nextSelection);
-          }
           const runtimeAuthRetry = authRetryPending;
           authRetryPending = false;
           attemptedThinking.add(thinkLevel);
@@ -760,7 +519,15 @@ export async function runEmbeddedPiAgent(
             disableTools: params.disableTools,
             provider,
             modelId,
-            model: applyLocalNoAuthHeaderOverride(effectiveModel, apiKeyInfo),
+            model: applyAuthHeaderOverride(
+              applyLocalNoAuthHeaderOverride(effectiveModel, apiKeyInfo),
+              // When runtime auth exchange produced a different credential
+              // (runtimeAuthState is set), the exchanged token lives in
+              // authStorage and the SDK will pick it up automatically.
+              // Skip header injection to avoid leaking the pre-exchange key.
+              runtimeAuthState ? null : apiKeyInfo,
+              params.config,
+            ),
             authProfileId: lastProfileId,
             authProfileIdSource: lockedProfileId ? "user" : "auto",
             authStorage,
@@ -861,23 +628,6 @@ export async function runEmbeddedPiAgent(
             );
             throw new LiveSessionModelSwitchError(requestedSelection);
           }
-          const failedOrAbortedAttempt =
-            aborted || Boolean(promptError) || Boolean(assistantErrorText) || timedOut;
-          const persistedSelection =
-            failedOrAbortedAttempt && shouldTrackPersistedLiveSelection
-              ? resolvePersistedLiveSelection()
-              : null;
-          if (
-            failedOrAbortedAttempt &&
-            canRestartForLiveSwitch &&
-            hasDifferentLiveSessionModelSelection(resolveCurrentLiveSelection(), persistedSelection)
-          ) {
-            log.info(
-              `live session model switch detected after failed attempt for ${params.sessionId}: ${provider}/${modelId} -> ${persistedSelection.provider}/${persistedSelection.model}`,
-            );
-            throw new LiveSessionModelSwitchError(persistedSelection);
-          }
-
           // ── Timeout-triggered compaction ──────────────────────────────────
           // When the LLM times out with high context usage, compact before
           // retrying to break the death spiral of repeated timeouts.
@@ -1309,32 +1059,16 @@ export async function runEmbeddedPiAgent(
               fallbackConfigured,
               aborted,
             });
-            // FORK: emit per-profile fallback error before rotating to next profile
-            if (
-              promptFailoverFailure &&
-              promptFailoverReason !== "timeout" &&
-              promptFailoverReason !== "overloaded"
-            ) {
-              emitAgentEvent({
-                runId: params.runId,
-                sessionKey: params.sessionKey,
-                stream: "lifecycle",
-                data: {
-                  phase: "fallback-profile-error",
-                  profileId: profileCandidates[profileIndex],
-                  profileIndex,
-                  totalProfiles: profileCandidates.length,
-                  provider,
-                  model: modelId,
-                  reason: promptFailoverReason,
-                  error: errorText,
-                },
+            if (promptFailoverReason === "rate_limit") {
+              maybeEscalateRateLimitProfileFallback({
+                failoverProvider: provider,
+                failoverModel: modelId,
+                logFallbackDecision: logPromptFailoverDecision,
               });
             }
             if (
               promptFailoverFailure &&
               promptFailoverReason !== "timeout" &&
-              promptFailoverReason !== "overloaded" &&
               (await advanceAuthProfile())
             ) {
               logPromptFailoverDecision("rotate_profile");
@@ -1352,67 +1086,13 @@ export async function runEmbeddedPiAgent(
               thinkLevel = fallbackThinking;
               continue;
             }
-            // FORK: Retry overloaded errors on the SAME model before falling back.
-            // Anthropic 529s are transient — waiting 1-30s is better than jumping
-            // to a weaker fallback provider. Retry up to 15 times with increasing delay.
-            if (promptFailoverReason === "overloaded") {
-              overloadFailoverAttempts += 1;
-              if (overloadFailoverAttempts <= MAX_OVERLOAD_RETRIES) {
-                const delayMs = overloadDelayMs(overloadFailoverAttempts);
-                log.warn(
-                  `overload retry ${overloadFailoverAttempts}/${MAX_OVERLOAD_RETRIES} for ${provider}/${modelId}: waiting ${delayMs}ms`,
-                );
-                // FORK: emit retry event so Tinker UI can show orange bubble
-                emitAgentEvent({
-                  runId: params.runId,
-                  sessionKey: params.sessionKey,
-                  stream: "lifecycle",
-                  data: {
-                    phase: "overload-retry",
-                    attempt: overloadFailoverAttempts,
-                    maxAttempts: MAX_OVERLOAD_RETRIES,
-                    delayMs,
-                    provider,
-                    model: modelId,
-                    reason: errorText?.slice(0, 200) ?? "overloaded",
-                  },
-                });
-                try {
-                  await sleepWithAbort(delayMs, params.abortSignal);
-                } catch (err) {
-                  if (params.abortSignal?.aborted) {
-                    const abortErr = new Error("Operation aborted", { cause: err });
-                    abortErr.name = "AbortError";
-                    throw abortErr;
-                  }
-                  throw err;
-                }
-                continue; // Retry the SAME model
-              }
-              log.warn(
-                `overload retry exhausted (${MAX_OVERLOAD_RETRIES} attempts) for ${provider}/${modelId} — falling back`,
-              );
-              emitAgentEvent({
-                runId: params.runId,
-                sessionKey: params.sessionKey,
-                stream: "lifecycle",
-                data: {
-                  phase: "overload-retry-exhausted",
-                  attempts: MAX_OVERLOAD_RETRIES,
-                  provider,
-                  model: modelId,
-                },
-              });
-            }
             // Throw FailoverError for prompt-side failover reasons when fallbacks
             // are configured so outer model fallback can continue on overload,
             // rate-limit, auth, or billing failures.
             if (fallbackConfigured && promptFailoverFailure) {
               const status = resolveFailoverStatus(promptFailoverReason ?? "unknown");
               logPromptFailoverDecision("fallback_model", { status });
-              if (promptFailoverReason !== "overloaded") {
-                await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
-              }
+              await maybeBackoffBeforeOverloadFailover(promptFailoverReason);
               throw (
                 normalizedPromptFailover ??
                 new FailoverError(errorText, {
@@ -1522,29 +1202,47 @@ export async function runEmbeddedPiAgent(
               }
             }
 
-            // FORK: emit per-profile fallback error for all shouldRotate cases
-            // (overloaded skips rotation but still needs a visible red bubble in Tinker UI)
-            emitAgentEvent({
-              runId: params.runId,
-              sessionKey: params.sessionKey,
-              stream: "lifecycle",
-              data: {
-                phase: "fallback-profile-error",
-                profileId: profileCandidates[profileIndex],
-                profileIndex,
-                totalProfiles: profileCandidates.length,
-                provider,
-                model: modelId,
-                reason: timedOut ? "timeout" : (assistantFailoverReason ?? "unknown"),
-                error: lastAssistant?.errorMessage?.trim() ?? "",
-              },
-            });
+            // For overloaded errors, check the configured rotation cap *before*
+            // calling advanceAuthProfile() to avoid a wasted auth-profile setup
+            // cycle. advanceAuthProfile() runs applyApiKeyInfo() which
+            // initializes the next profile — costly work that is pointless when
+            // we already know we will escalate to cross-provider fallback.
+            // See: https://github.com/openclaw/openclaw/issues/58348
+            if (assistantFailoverReason === "overloaded") {
+              overloadProfileRotations += 1;
+              if (overloadProfileRotations > overloadProfileRotationLimit && fallbackConfigured) {
+                const status = resolveFailoverStatus("overloaded");
+                log.warn(
+                  `overload profile rotation cap reached for ${sanitizeForLog(provider)}/${sanitizeForLog(modelId)} after ${overloadProfileRotations} rotations; escalating to model fallback`,
+                );
+                logAssistantFailoverDecision("fallback_model", { status });
+                throw new FailoverError(
+                  "The AI service is temporarily overloaded. Please try again in a moment.",
+                  {
+                    reason: "overloaded",
+                    provider: activeErrorContext.provider,
+                    model: activeErrorContext.model,
+                    profileId: lastProfileId,
+                    status,
+                  },
+                );
+              }
+            }
 
-            // Overloaded means the provider is under stress — rotating to another
-            // key on the same provider won't help and makes the situation worse.
-            // Skip directly to model fallback (e.g. qwen3) instead of retrying profiles.
-            const rotated =
-              assistantFailoverReason !== "overloaded" && (await advanceAuthProfile());
+            // For rate-limit errors, apply the same rotation cap so that
+            // per-model quota exhaustion (e.g. Anthropic Sonnet-only limits)
+            // escalates to cross-provider model fallback instead of spinning
+            // forever across profiles that share the same model quota.
+            // See: https://github.com/openclaw/openclaw/issues/58572
+            if (assistantFailoverReason === "rate_limit") {
+              maybeEscalateRateLimitProfileFallback({
+                failoverProvider: activeErrorContext.provider,
+                failoverModel: activeErrorContext.model,
+                logFallbackDecision: logAssistantFailoverDecision,
+              });
+            }
+
+            const rotated = await advanceAuthProfile();
             if (rotated) {
               logAssistantFailoverDecision("rotate_profile");
               await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
@@ -1552,11 +1250,7 @@ export async function runEmbeddedPiAgent(
             }
 
             if (fallbackConfigured) {
-              // Skip backoff for overloaded: we're already leaving the provider,
-              // adding delay only slows the fallback to qwen3/next model.
-              if (assistantFailoverReason !== "overloaded") {
-                await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
-              }
+              await maybeBackoffBeforeOverloadFailover(assistantFailoverReason);
               // Prefer formatted error message (user-friendly) over raw errorMessage
               const message =
                 (lastAssistant
