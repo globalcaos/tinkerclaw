@@ -18,14 +18,14 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
-import { createIngestionPipeline, type IngestionPipeline } from "./src/ingestion.js";
+import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { createEventStore, type EventStore } from "./src/event-store.js";
-import { assembleRetrievalPack } from "./src/retrieval-integration.js";
+import { createIngestionPipeline, type IngestionPipeline } from "./src/ingestion.js";
 import { recall as recallSearch } from "./src/recall-tool.js";
+import { assembleRetrievalPack } from "./src/retrieval-integration.js";
 
 // -- Constants --
 
@@ -142,8 +142,7 @@ export default definePluginEntry({
           return;
         }
 
-        const query =
-          payload.query ?? payload.userMessage ?? payload.prompt ?? "";
+        const query = payload.query ?? payload.userMessage ?? payload.prompt ?? "";
         if (!query.trim()) {
           return;
         }
@@ -162,8 +161,7 @@ export default definePluginEntry({
           }
 
           return {
-            prependSystemContext:
-              "## Retrieved Memory Context\n\n" + pack + "\n",
+            prependSystemContext: "## Retrieved Memory Context\n\n" + pack + "\n",
           };
         } catch (err) {
           api.logger.warn(`[total-recall] retrieval failed: ${err}`);
@@ -179,10 +177,7 @@ export default definePluginEntry({
     // -------------------------------------------------------------------
     api.on(
       "llm_output",
-      async (
-        payload: { text?: string; content?: string },
-        context: { sessionKey?: string },
-      ) => {
+      async (payload: { text?: string; content?: string }, context: { sessionKey?: string }) => {
         const sessionKey = context.sessionKey ?? "main";
 
         // Skip heartbeat and cron sessions
@@ -251,19 +246,12 @@ export default definePluginEntry({
           "Search ENGRAM episodic memory for relevant past events, conversations, " +
           "and tool results. Returns scored, deduplicated results within a token budget.",
         parameters: RecallParams,
-        async execute(
-          _toolCallId: string,
-          params: RecallInput,
-          context?: { sessionKey?: string },
-        ) {
+        async execute(_toolCallId: string, params: RecallInput, context?: { sessionKey?: string }) {
           const sessionKey = context?.sessionKey ?? "main";
           const store = getOrCreateStore(sessionKey);
           const limit = params.limit ?? 10;
 
-          const result = await recallSearch(
-            { query: params.query, maxTokens: limit * 400 },
-            store,
-          );
+          const result = await recallSearch({ query: params.query, maxTokens: limit * 400 }, store);
 
           const formatted = result.events.map((e) => ({
             id: e.event.id,
@@ -303,7 +291,10 @@ export default definePluginEntry({
     // -------------------------------------------------------------------
     api.registerGatewayMethod(
       "engram.search",
-      async ({ params, respond }: {
+      async ({
+        params,
+        respond,
+      }: {
         params: Record<string, unknown>;
         respond: (data: unknown) => void;
       }) => {
@@ -318,10 +309,7 @@ export default definePluginEntry({
 
         try {
           const store = getOrCreateStore(sessionKey);
-          const result = await recallSearch(
-            { query, maxTokens: limit * 400 },
-            store,
-          );
+          const result = await recallSearch({ query, maxTokens: limit * 400 }, store);
 
           respond({
             results: result.events.map((e) => ({
@@ -341,8 +329,6 @@ export default definePluginEntry({
       },
     );
 
-    api.logger.info(
-      `[total-recall] ready (budget=${budgetTokens}, baseDir=${ENGRAM_BASE_DIR})`,
-    );
+    api.logger.info(`[total-recall] ready (budget=${budgetTokens}, baseDir=${ENGRAM_BASE_DIR})`);
   },
 });

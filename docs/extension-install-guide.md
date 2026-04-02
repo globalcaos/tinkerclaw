@@ -41,6 +41,7 @@ cp -r ./my-extension ~/.openclaw/extensions/my-extension
 ```
 
 The folder must contain at least one of:
+
 - `openclaw.plugin.json` (manifest with `id` and `configSchema`)
 - `package.json` with an `openclaw.extensions` array pointing to entry files
 - An `index.ts` or `index.js` at the root (fallback discovery)
@@ -48,6 +49,7 @@ The folder must contain at least one of:
 Restart the gateway to pick it up.
 
 **Discovery order** (first match wins within each tier):
+
 1. `plugins.load.paths` entries in `openclaw.json` (origin: `config`)
 2. `<workspace>/.openclaw/extensions/` (origin: `workspace`)
 3. Bundled/stock extensions shipped with the gateway binary
@@ -101,10 +103,12 @@ my-extension/
 ```
 
 **Required fields:**
+
 - `id` — unique plugin identifier (used as config key)
 - `configSchema` — JSON Schema for plugin config (can be empty object schema as above)
 
 **Optional but recommended:**
+
 - `name`, `description`, `version`
 - `enabledByDefault: true` if the plugin should auto-activate
 
@@ -159,6 +163,7 @@ Or for manual installs, delete the folder and restart the gateway.
 ## Ignored Directories
 
 The discovery scanner skips directories whose names:
+
 - End with `.bak`
 - Contain `.backup-`
 - Contain `.disabled`
@@ -168,6 +173,7 @@ Use these suffixes to temporarily disable an extension without deleting it.
 ## Reference: Existing Extension
 
 See `~/.openclaw/extensions/whatsapp-fetch-history/` for a working example with:
+
 - `openclaw.plugin.json` (manifest)
 - `package.json` (declares `better-sqlite3` dependency)
 - `index.js` (exports `register(api)` using `api.registerHttpRoute`)

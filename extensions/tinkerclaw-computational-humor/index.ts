@@ -16,11 +16,15 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { createLimbicRuntime, type LimbicRuntime, type HumorCalibration } from "./src/limbic-runtime.js";
 import { createHumorTrigger, type HumorTrigger } from "./src/humor-trigger.js";
+import {
+  createLimbicRuntime,
+  type LimbicRuntime,
+  type HumorCalibration,
+} from "./src/limbic-runtime.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -44,11 +48,16 @@ function ensureDir(dir: string): void {
 /** Frequency enum to numeric mapping. */
 function frequencyToNumber(freq: string): number {
   switch (freq) {
-    case "off": return 0;
-    case "low": return 0.1;
-    case "medium": return 0.25;
-    case "high": return 0.5;
-    default: return 0.1;
+    case "off":
+      return 0;
+    case "low":
+      return 0.1;
+    case "medium":
+      return 0.25;
+    case "high":
+      return 0.5;
+    default:
+      return 0.1;
   }
 }
 
@@ -77,9 +86,15 @@ function readIdentityHumorCalibration(
       return defaults;
     }
     return {
-      humorFrequency: typeof humor.humorFrequency === "number" ? humor.humorFrequency : defaults.humorFrequency,
-      preferredPatterns: Array.isArray(humor.preferredPatterns) ? humor.preferredPatterns : defaults.preferredPatterns,
-      sensitivityThreshold: typeof humor.sensitivityThreshold === "number" ? humor.sensitivityThreshold : defaults.sensitivityThreshold,
+      humorFrequency:
+        typeof humor.humorFrequency === "number" ? humor.humorFrequency : defaults.humorFrequency,
+      preferredPatterns: Array.isArray(humor.preferredPatterns)
+        ? humor.preferredPatterns
+        : defaults.preferredPatterns,
+      sensitivityThreshold:
+        typeof humor.sensitivityThreshold === "number"
+          ? humor.sensitivityThreshold
+          : defaults.sensitivityThreshold,
       audienceModel: humor.audienceModel ?? defaults.audienceModel,
     };
   } catch {
@@ -144,10 +159,7 @@ export default definePluginEntry({
     // -------------------------------------------------------------------
     api.on(
       "before_prompt_build",
-      async (
-        event: { systemPrompt?: string },
-        ctx: { sessionKey?: string },
-      ) => {
+      async (event: { systemPrompt?: string }, ctx: { sessionKey?: string }) => {
         const sessionKey = ctx.sessionKey ?? "";
         // Skip automated sessions
         if (!sessionKey || sessionKey.includes("heartbeat") || sessionKey.includes("cron")) {
@@ -184,7 +196,11 @@ export default definePluginEntry({
     api.on(
       "llm_output",
       async (
-        event: { text?: string; userMessage?: string; messages?: Array<{ role?: string; content?: string }> },
+        event: {
+          text?: string;
+          userMessage?: string;
+          messages?: Array<{ role?: string; content?: string }>;
+        },
         _ctx: { sessionKey?: string },
       ) => {
         // Look for user message to check for reaction

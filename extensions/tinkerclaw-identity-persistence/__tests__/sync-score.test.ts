@@ -1,21 +1,21 @@
+import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * Tests for SyncScore EWMA computation and consistency metric.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import {
-  createCortexRuntime,
-  SYNC_SCORE_ALPHA,
-  SYNC_SCORE_DRIFT_THRESHOLD,
-} from "../src/cortex-runtime.js";
 import {
   computeConsistency,
   computeHardRuleCompliance,
   classifyAction,
   CONSISTENCY_CONFIG,
 } from "../src/consistency-metric.js";
+import {
+  createCortexRuntime,
+  SYNC_SCORE_ALPHA,
+  SYNC_SCORE_DRIFT_THRESHOLD,
+} from "../src/cortex-runtime.js";
 
 describe("SyncScore EWMA", () => {
   let dir: string;

@@ -41,19 +41,13 @@ describe("Plugin Registration", () => {
       (entry as { register: (a: unknown) => void }).register(api);
     }
 
-    const hookNames = onHook.mock.calls.map(
-      ([name]: [string, ...unknown[]]) => name,
-    );
+    const hookNames = onHook.mock.calls.map(([name]: [string, ...unknown[]]) => name);
     expect(hookNames).toContain("before_prompt_build");
     expect(hookNames).toContain("llm_output");
 
     // Should have exactly 1 before_prompt_build and 2 llm_output handlers
-    const promptBuildCount = hookNames.filter(
-      (n: string) => n === "before_prompt_build",
-    ).length;
-    const llmOutputCount = hookNames.filter(
-      (n: string) => n === "llm_output",
-    ).length;
+    const promptBuildCount = hookNames.filter((n: string) => n === "before_prompt_build").length;
+    const llmOutputCount = hookNames.filter((n: string) => n === "llm_output").length;
     expect(promptBuildCount).toBe(1);
     expect(llmOutputCount).toBe(2);
   });
@@ -81,13 +75,11 @@ describe("Plugin Registration", () => {
   it("before_prompt_build returns persona block in prependSystemContext", async () => {
     let promptBuildHandler: Function | null = null;
     const { api } = createMockApi({
-      on: vi.fn(
-        (name: string, handler: Function, _opts?: Record<string, unknown>) => {
-          if (name === "before_prompt_build") {
-            promptBuildHandler = handler;
-          }
-        },
-      ),
+      on: vi.fn((name: string, handler: Function, _opts?: Record<string, unknown>) => {
+        if (name === "before_prompt_build") {
+          promptBuildHandler = handler;
+        }
+      }),
     });
 
     const mod = await import("../index.js");
@@ -113,13 +105,11 @@ describe("Plugin Registration", () => {
   it("llm_output SyncScore handler increments turn counter", async () => {
     const llmOutputHandlers: Function[] = [];
     const { api } = createMockApi({
-      on: vi.fn(
-        (name: string, handler: Function, _opts?: Record<string, unknown>) => {
-          if (name === "llm_output") {
-            llmOutputHandlers.push(handler);
-          }
-        },
-      ),
+      on: vi.fn((name: string, handler: Function, _opts?: Record<string, unknown>) => {
+        if (name === "llm_output") {
+          llmOutputHandlers.push(handler);
+        }
+      }),
     });
 
     const mod = await import("../index.js");
@@ -151,8 +141,7 @@ describe("Plugin Registration", () => {
     }
 
     const readyMsg = infoSpy.mock.calls.find(
-      ([msg]: [string]) =>
-        typeof msg === "string" && msg.includes("[identity-persistence] ready"),
+      ([msg]: [string]) => typeof msg === "string" && msg.includes("[identity-persistence] ready"),
     );
     expect(readyMsg).toBeDefined();
   });

@@ -12,8 +12,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   createCortexRuntime,
@@ -175,8 +175,7 @@ export default definePluginEntry({
     const threshold = (cfg.syncScoreThreshold as number) ?? 0.6;
     const evaluationInterval = (cfg.evaluationInterval as number) ?? 10;
     const agentName =
-      (api.config?.agents?.defaults as Record<string, unknown>)?.name as string ??
-      "JarvisOne";
+      ((api.config?.agents?.defaults as Record<string, unknown>)?.name as string) ?? "JarvisOne";
 
     // -- Initialize cortex runtime --
     const soulPath = resolveSoulPath(cfg, agentName);
@@ -216,10 +215,7 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     api.on(
       "before_prompt_build",
-      async (
-        _payload: { prompt: string },
-        _context: { sessionKey: string },
-      ) => {
+      async (_payload: { prompt: string }, _context: { sessionKey: string }) => {
         // Tier 1 persona block
         const personaBlock = cortex.getPersonaBlock();
 
@@ -246,10 +242,7 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     api.on(
       "llm_output",
-      async (
-        payload: { text?: string; content?: string },
-        _context: { sessionKey: string },
-      ) => {
+      async (payload: { text?: string; content?: string }, _context: { sessionKey: string }) => {
         turnCounter++;
 
         // Only evaluate every N turns
@@ -295,10 +288,7 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     api.on(
       "llm_output",
-      async (
-        payload: { text?: string; content?: string },
-        _context: { sessionKey: string },
-      ) => {
+      async (payload: { text?: string; content?: string }, _context: { sessionKey: string }) => {
         const text = payload.text ?? payload.content ?? "";
         if (!text) {
           return;

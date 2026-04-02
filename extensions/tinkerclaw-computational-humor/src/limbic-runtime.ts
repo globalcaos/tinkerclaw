@@ -22,7 +22,11 @@ import {
   type HumorAssociation,
 } from "./humor-associations.js";
 import { humorPotentialV2, type AnnIndex } from "./humor-potential.js";
-import { sensitivityGate, type SensitivityResult, type HumorCalibration } from "./sensitivity-gate.js";
+import {
+  sensitivityGate,
+  type SensitivityResult,
+  type HumorCalibration,
+} from "./sensitivity-gate.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -186,9 +190,7 @@ const DEFAULT_CALIBRATION: HumorCalibration = {
  * Stores humor associations in-memory (caller is responsible for persisting
  * via getAssociations() to the shared-state file).
  */
-export function createLimbicRuntime(
-  options: LimbicRuntimeOptions = {},
-): LimbicRuntime {
+export function createLimbicRuntime(options: LimbicRuntimeOptions = {}): LimbicRuntime {
   const dim = options.embeddingDim ?? 128;
   const embedProvider = options.embeddingProvider ?? null;
   const calibrationOverride = options.calibration ?? null;

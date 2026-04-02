@@ -78,7 +78,37 @@ A stale reference, outdated instruction, missing entry, better default?
 ## Rules
 
 - **START your response with `🌿 FRACTAL:` followed by a one-line summary.** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat.
+- **Each numbered section (1-5) must start on a new line** with a blank line before the `###` header. This ensures clean rendering in all surfaces (webchat, WhatsApp, Tinker UI). Do not run sections together in one paragraph.
 - **Always respond.** Never NO_REPLY. Even "🌿 FRACTAL: nothing to reflect on" is a valid (if lazy) answer.
 - **ACT before explaining.** If you see something to fix, make the edit, then mention it.
 - **Brief.** 3-10 sentences total. This is a reflection, not an essay.
 - **If you write "should" or "would" and the action is within your power — that's a bug.** Convert it to a tool call.
+
+### 5. PREEMPT — Have you done this same action before? Encode the trigger.
+
+If you performed an action this turn that you've done 2+ times in this session (or that you recognize from prior sessions), this is a **compounding opportunity**:
+
+- **Name the trigger:** What condition caused you to act? (e.g., "new implementation data arrived for a paper I recently edited")
+- **Name the action:** What did you do? (e.g., "updated the paper's implementation section and rebuilt the PDF")
+- **Encode the rule:** Write a trigger→action rule to operational-lessons.md so it fires automatically next time. Format: "When [trigger], do [action] without waiting to be asked."
+
+The test: could a future session's Jarvis, reading only the knowledge files, do this automatically? If the rule is too vague ("update things when they change") it won't fire. If it's too specific ("update J-013 §5.7 when Oscar pastes a Prefrontal session report") it won't generalize. Find the middle: "When new implementation data arrives for a paper with an existing implementation section, update that section and rebuild the PDF."
+
+**If you haven't repeated any action pattern this turn**, say "No patterns to preempt."
+
+**If you HAVE**, write the rule NOW. Don't describe it — encode it.
+
+**Safety constraint — irreversibility gate.** The PREEMPT step encodes rules that make you act *without being asked*. This is powerful but dangerous. Before encoding any preemptive rule, check:
+
+1. **Is the action reversible?** File writes, memory updates, paper edits, PDF rebuilds — reversible. Sending emails, posting to external channels, deleting data, running destructive commands — NOT reversible.
+2. **Reversible actions:** Encode the trigger→action rule freely. Act first, inform Oscar after.
+3. **Irreversible actions:** Encode the trigger as a *recommendation*, not an action. Format: "When [trigger], PROPOSE [action] to Oscar before executing." The rule fires, but it produces a suggestion, not an execution.
+4. **When in doubt:** It's irreversible. Propose, don't act.
+
+Examples:
+- ✅ "When new implementation data arrives for a paper, update the paper and rebuild PDF" — reversible, encode as auto-action
+- ✅ "When Oscar mentions repo work, check the repo for changes" — read-only, encode as auto-action  
+- ⚠️ "When a Todoist task matches a completed email thread, close the task" — external side effect, encode as PROPOSE
+- ⚠️ "When a WhatsApp message needs follow-up, draft and send a reply" — irreversible send, encode as PROPOSE
+- ❌ NEVER encode rules that delete files, restart services, send messages to external contacts, or make financial commitments without explicit approval
+

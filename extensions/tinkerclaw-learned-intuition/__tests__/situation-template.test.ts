@@ -111,7 +111,7 @@ describe("situation-template", () => {
     it("returns hours based on position", () => {
       // 2 steps back * 5 min / 60 = ~0.167h
       const result = getLastHumanReference("foo.ts", ["foo.ts", "other", "more"]);
-      expect(result).toBeCloseTo(2 * 5 / 60, 2);
+      expect(result).toBeCloseTo((2 * 5) / 60, 2);
     });
   });
 
