@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { describe, it, expect } from "vitest";
 
 const EXT_DIR = join(__dirname, "..");
 

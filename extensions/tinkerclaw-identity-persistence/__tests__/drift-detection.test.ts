@@ -2,6 +2,7 @@
  * Tests for drift detection, user correction patterns, and EWMA smoothing.
  */
 import { describe, it, expect } from "vitest";
+import type { ProbeResult } from "../src/behavioral-probes.js";
 import {
   detectUserCorrections,
   aggregateProbeScores,
@@ -10,7 +11,6 @@ import {
   computeDriftScore,
   DRIFT_CONFIG,
 } from "../src/drift-detection.js";
-import type { ProbeResult } from "../src/behavioral-probes.js";
 
 describe("Drift Detection", () => {
   it("detects drift in off-persona responses (user corrections)", () => {

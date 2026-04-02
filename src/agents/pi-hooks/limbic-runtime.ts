@@ -7,8 +7,6 @@
  * Registry pattern mirrors cortex-runtime.ts / ingestion-runtime.ts.
  */
 
-import type { EmbeddingProvider } from "../../memory/embeddings.js";
-import type { EventStore } from "../../memory/engram/event-store.js";
 import {
   discoverBridges as discoverBridgesCascade,
   type BridgeCandidate,
@@ -19,8 +17,16 @@ import {
   recordOutcome,
   serializeAssociation,
 } from "../../../extensions/tinkerclaw-computational-humor/src/humor-associations.js";
-import { humorPotentialV2, type AnnIndex } from "../../../extensions/tinkerclaw-computational-humor/src/humor-potential.js";
-import { sensitivityGate, type SensitivityResult } from "../../../extensions/tinkerclaw-computational-humor/src/sensitivity-gate.js";
+import {
+  humorPotentialV2,
+  type AnnIndex,
+} from "../../../extensions/tinkerclaw-computational-humor/src/humor-potential.js";
+import {
+  sensitivityGate,
+  type SensitivityResult,
+} from "../../../extensions/tinkerclaw-computational-humor/src/sensitivity-gate.js";
+import type { EmbeddingProvider } from "../../memory/embeddings.js";
+import type { EventStore } from "../../memory/engram/event-store.js";
 import type { CortexRuntime } from "./cortex-runtime.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
 

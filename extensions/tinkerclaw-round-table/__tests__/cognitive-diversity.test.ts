@@ -3,11 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  pearsonCorrelation,
-  measureCDI,
-  correlationCI,
-} from "../src/cognitive-diversity.js";
+import { pearsonCorrelation, measureCDI, correlationCI } from "../src/cognitive-diversity.js";
 
 describe("CDI: returns 0 for unanimous proposals", () => {
   it("identical error vectors produce CDI = 0", () => {

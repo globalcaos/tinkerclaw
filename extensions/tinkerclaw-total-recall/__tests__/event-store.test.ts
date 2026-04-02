@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createEventStore, generateULID, estimateTokens } from "../src/event-store.js";
 import type { MemoryEvent } from "../src/event-types.js";
 
@@ -47,9 +47,30 @@ describe("EventStore", () => {
 
   it("reads by kind", () => {
     const store = createEventStore({ baseDir, sessionKey: "test-session" });
-    store.append({ turnId: 1, sessionKey: "test-session", kind: "user_message", content: "hi", tokens: 1, metadata: {} });
-    store.append({ turnId: 1, sessionKey: "test-session", kind: "agent_message", content: "hello", tokens: 2, metadata: {} });
-    store.append({ turnId: 2, sessionKey: "test-session", kind: "user_message", content: "bye", tokens: 1, metadata: {} });
+    store.append({
+      turnId: 1,
+      sessionKey: "test-session",
+      kind: "user_message",
+      content: "hi",
+      tokens: 1,
+      metadata: {},
+    });
+    store.append({
+      turnId: 1,
+      sessionKey: "test-session",
+      kind: "agent_message",
+      content: "hello",
+      tokens: 2,
+      metadata: {},
+    });
+    store.append({
+      turnId: 2,
+      sessionKey: "test-session",
+      kind: "user_message",
+      content: "bye",
+      tokens: 1,
+      metadata: {},
+    });
 
     const userMsgs = store.readByKind("user_message");
     expect(userMsgs).toHaveLength(2);
@@ -60,8 +81,22 @@ describe("EventStore", () => {
     const store1 = createEventStore({ baseDir, sessionKey: "session-a" });
     const store2 = createEventStore({ baseDir, sessionKey: "session-b" });
 
-    store1.append({ turnId: 1, sessionKey: "session-a", kind: "user_message", content: "a", tokens: 1, metadata: {} });
-    store2.append({ turnId: 1, sessionKey: "session-b", kind: "user_message", content: "b", tokens: 1, metadata: {} });
+    store1.append({
+      turnId: 1,
+      sessionKey: "session-a",
+      kind: "user_message",
+      content: "a",
+      tokens: 1,
+      metadata: {},
+    });
+    store2.append({
+      turnId: 1,
+      sessionKey: "session-b",
+      kind: "user_message",
+      content: "b",
+      tokens: 1,
+      metadata: {},
+    });
 
     expect(store1.readAll()).toHaveLength(1);
     expect(store2.readAll()).toHaveLength(1);
@@ -72,7 +107,14 @@ describe("EventStore", () => {
   it("reads by range", () => {
     const store = createEventStore({ baseDir, sessionKey: "test-session" });
     for (let i = 1; i <= 10; i++) {
-      store.append({ turnId: i, sessionKey: "test-session", kind: "user_message", content: `msg ${i}`, tokens: 2, metadata: {} });
+      store.append({
+        turnId: i,
+        sessionKey: "test-session",
+        kind: "user_message",
+        content: `msg ${i}`,
+        tokens: 2,
+        metadata: {},
+      });
     }
 
     const range = store.readRange(3, 7);
@@ -83,7 +125,14 @@ describe("EventStore", () => {
 
   it("reads by id", () => {
     const store = createEventStore({ baseDir, sessionKey: "test-session" });
-    const ev = store.append({ turnId: 1, sessionKey: "test-session", kind: "user_message", content: "find me", tokens: 2, metadata: {} });
+    const ev = store.append({
+      turnId: 1,
+      sessionKey: "test-session",
+      kind: "user_message",
+      content: "find me",
+      tokens: 2,
+      metadata: {},
+    });
 
     const found = store.readById(ev.id);
     expect(found).toBeDefined();
@@ -115,8 +164,22 @@ describe("EventStore", () => {
   it("counts events correctly", () => {
     const store = createEventStore({ baseDir, sessionKey: "test-session" });
     expect(store.count()).toBe(0);
-    store.append({ turnId: 1, sessionKey: "test-session", kind: "user_message", content: "one", tokens: 1, metadata: {} });
-    store.append({ turnId: 2, sessionKey: "test-session", kind: "user_message", content: "two", tokens: 1, metadata: {} });
+    store.append({
+      turnId: 1,
+      sessionKey: "test-session",
+      kind: "user_message",
+      content: "one",
+      tokens: 1,
+      metadata: {},
+    });
+    store.append({
+      turnId: 2,
+      sessionKey: "test-session",
+      kind: "user_message",
+      content: "two",
+      tokens: 1,
+      metadata: {},
+    });
     expect(store.count()).toBe(2);
   });
 });

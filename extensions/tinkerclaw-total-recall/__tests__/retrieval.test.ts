@@ -1,9 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createEventStore, estimateTokens } from "../src/event-store.js";
-import { assembleRetrievalPack, DEFAULT_RETRIEVAL_MAX_TOKENS } from "../src/retrieval-integration.js";
+import {
+  assembleRetrievalPack,
+  DEFAULT_RETRIEVAL_MAX_TOKENS,
+} from "../src/retrieval-integration.js";
 
 describe("Retrieval pack assembly", () => {
   let baseDir: string;
@@ -24,7 +27,14 @@ describe("Retrieval pack assembly", () => {
 
   it("returns empty string when no FTS matches", () => {
     const store = createEventStore({ baseDir, sessionKey: "no-match" });
-    store.append({ turnId: 1, sessionKey: "no-match", kind: "user_message", content: "alpha beta gamma", tokens: 3, metadata: {} });
+    store.append({
+      turnId: 1,
+      sessionKey: "no-match",
+      kind: "user_message",
+      content: "alpha beta gamma",
+      tokens: 3,
+      metadata: {},
+    });
 
     const pack = assembleRetrievalPack("zzzzzzzzz", store);
     expect(pack).toBe("");
@@ -32,9 +42,30 @@ describe("Retrieval pack assembly", () => {
 
   it("assembles a pack when FTS matches exist", () => {
     const store = createEventStore({ baseDir, sessionKey: "match" });
-    store.append({ turnId: 1, sessionKey: "match", kind: "user_message", content: "The deployment pipeline failed with error code 42", tokens: 12, metadata: {} });
-    store.append({ turnId: 2, sessionKey: "match", kind: "agent_message", content: "I fixed the deployment pipeline issue by updating the config", tokens: 14, metadata: {} });
-    store.append({ turnId: 3, sessionKey: "match", kind: "user_message", content: "What happened with the database migration?", tokens: 8, metadata: {} });
+    store.append({
+      turnId: 1,
+      sessionKey: "match",
+      kind: "user_message",
+      content: "The deployment pipeline failed with error code 42",
+      tokens: 12,
+      metadata: {},
+    });
+    store.append({
+      turnId: 2,
+      sessionKey: "match",
+      kind: "agent_message",
+      content: "I fixed the deployment pipeline issue by updating the config",
+      tokens: 14,
+      metadata: {},
+    });
+    store.append({
+      turnId: 3,
+      sessionKey: "match",
+      kind: "user_message",
+      content: "What happened with the database migration?",
+      tokens: 8,
+      metadata: {},
+    });
 
     const pack = assembleRetrievalPack("deployment pipeline", store);
     expect(pack).not.toBe("");

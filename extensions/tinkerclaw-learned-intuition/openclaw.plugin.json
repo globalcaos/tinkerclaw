@@ -6,11 +6,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "phase": { "type": "number", "default": 1, "description": "Deployment phase (1=observe-only, 2+=active blocking)" },
+      "phase": {
+        "type": "number",
+        "default": 1,
+        "description": "Deployment phase (1=observe-only, 2+=active blocking)"
+      },
       "alphaPrudence": { "type": "number", "default": 0.0 },
       "aegisEnabled": { "type": "boolean", "default": false },
       "observeOnly": { "type": "boolean", "default": true },
-      "modelsDir": { "type": "string", "description": "Path to ONNX models directory (defaults to ~/src/tinkerclaw/models/amygdala)" }
+      "modelsDir": {
+        "type": "string",
+        "description": "Path to ONNX models directory (defaults to ~/src/tinkerclaw/models/amygdala)"
+      }
     }
   }
 }

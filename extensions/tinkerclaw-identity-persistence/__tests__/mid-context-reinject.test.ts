@@ -1,12 +1,12 @@
+import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * Tests for mid-context persona re-injection.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { applyMidContextReinject, evaluateTurnSyncScore } from "../src/mid-context-reinject.js";
 import { createCortexRuntime, SYNC_SCORE_DRIFT_THRESHOLD } from "../src/cortex-runtime.js";
+import { applyMidContextReinject, evaluateTurnSyncScore } from "../src/mid-context-reinject.js";
 
 describe("Mid-Context Reinject", () => {
   let dir: string;
@@ -48,8 +48,12 @@ describe("Mid-Context Reinject", () => {
     // Force EWMA below threshold by accessing internal state via the object
     // We'll use a mock approach: create a runtime mock
     const mockRuntime = {
-      get ewmaSyncScore() { return 0.4; },
-      getPersonaBlock() { return "# Persona: Test\n## Identity\nTest persona."; },
+      get ewmaSyncScore() {
+        return 0.4;
+      },
+      getPersonaBlock() {
+        return "# Persona: Test\n## Identity\nTest persona.";
+      },
       persona: rt.persona,
       evaluateSyncScore: rt.evaluateSyncScore,
       detectDrift: rt.detectDrift,
@@ -64,8 +68,12 @@ describe("Mid-Context Reinject", () => {
 
   it("does not reinject if persona block is empty", () => {
     const mockRuntime = {
-      get ewmaSyncScore() { return 0.3; },
-      getPersonaBlock() { return ""; },
+      get ewmaSyncScore() {
+        return 0.3;
+      },
+      getPersonaBlock() {
+        return "";
+      },
       persona: createCortexRuntime().persona,
       evaluateSyncScore: createCortexRuntime().evaluateSyncScore,
       detectDrift: createCortexRuntime().detectDrift,
@@ -107,8 +115,12 @@ describe("evaluateTurnSyncScore", () => {
   it("calls logFn when reinjection is needed", () => {
     const logs: string[] = [];
     const mockRuntime = {
-      get ewmaSyncScore() { return 0.3; },
-      getPersonaBlock() { return "persona"; },
+      get ewmaSyncScore() {
+        return 0.3;
+      },
+      getPersonaBlock() {
+        return "persona";
+      },
       persona: createCortexRuntime().persona,
       evaluateSyncScore(_msgs: string[], _turn?: number) {
         return {

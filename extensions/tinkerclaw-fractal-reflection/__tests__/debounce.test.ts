@@ -95,9 +95,7 @@ describe("Fractal Reflection injection skips", () => {
       log,
     });
     expect(result).toBe(false);
-    expect(log.info).toHaveBeenCalledWith(
-      expect.stringContaining("automated session"),
-    );
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining("automated session"));
   });
 
   it("skips NO_REPLY responses", async () => {
@@ -110,9 +108,7 @@ describe("Fractal Reflection injection skips", () => {
       log,
     });
     expect(result).toBe(false);
-    expect(log.info).toHaveBeenCalledWith(
-      expect.stringContaining("silent reply"),
-    );
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining("silent reply"));
   });
 
   it("skips HEARTBEAT_OK responses", async () => {

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { DEFAULT_PROVIDER_PROFILES, type ProviderProfile } from "../src/cognitive-diversity.js";
 import {
   assignRoles,
   checkConvergence,
@@ -13,7 +14,6 @@ import {
   type DebateParticipant,
   type DebateConfig,
 } from "../src/raac-protocol.js";
-import { DEFAULT_PROVIDER_PROFILES, type ProviderProfile } from "../src/cognitive-diversity.js";
 
 // -- Mock Participants --
 

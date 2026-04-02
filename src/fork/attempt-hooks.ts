@@ -69,7 +69,9 @@ function isInlineMode(subsystem: string): boolean {
  * Called once per run, before buildEmbeddedSystemPrompt.
  */
 export function getPersonaBlock(effectiveWorkspace: string): string | undefined {
-  if (!isInlineMode("cortex")) return undefined;
+  if (!isInlineMode("cortex")) {
+    return undefined;
+  }
   try {
     const soulPath = join(effectiveWorkspace, "SOUL.md");
     const rt = createCortexRuntime({ soulPath });
@@ -99,7 +101,9 @@ const AMYGDALA_NUDGE_PATHS = [
 ];
 
 export function getAmygdalaNudge(): string[] | undefined {
-  if (!isInlineMode("amygdala")) return undefined;
+  if (!isInlineMode("amygdala")) {
+    return undefined;
+  }
   try {
     for (const nudgePath of AMYGDALA_NUDGE_PATHS) {
       try {
@@ -135,7 +139,9 @@ export async function injectRetrievalPack(
   query: string,
   log: { info: (msg: string) => void },
 ): Promise<string> {
-  if (!isInlineMode("engram")) return systemPromptText;
+  if (!isInlineMode("engram")) {
+    return systemPromptText;
+  }
   const rt = getRetrievalRuntime(sessionManager);
   console.log(
     `[ENGRAM] retrieval runtime lookup: ${rt ? "FOUND" : "NULL"}, assemble: ${!!rt?.assemble}`,
@@ -166,7 +172,9 @@ export function applyMidContextReinjectHook(
   systemPromptText: string,
   log: { info: (msg: string) => void },
 ): { systemPromptText: string; reinjected: boolean } {
-  if (!isInlineMode("cortex")) return { systemPromptText, reinjected: false };
+  if (!isInlineMode("cortex")) {
+    return { systemPromptText, reinjected: false };
+  }
   const cortexRuntime = getCortexRuntime(sessionManager);
   const reinjectResult = applyMidContextReinject(cortexRuntime, systemPromptText);
   if (reinjectResult.reinjected) {
@@ -774,7 +782,9 @@ export function maybeTriggerFractalReflection(
   log: { info: (msg: string) => void },
   heartbeatReason?: string,
 ): void {
-  if (!isInlineMode("fractal")) return;
+  if (!isInlineMode("fractal")) {
+    return;
+  }
   if (!sessionKey) {
     return;
   }

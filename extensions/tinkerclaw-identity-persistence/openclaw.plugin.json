@@ -6,9 +6,21 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "syncScoreThreshold": { "type": "number", "default": 0.6, "description": "EWMA SyncScore below which persona is reinforced" },
-      "evaluationInterval": { "type": "number", "default": 10, "description": "Evaluate SyncScore every N turns" },
-      "personaPath": { "type": "string", "default": "~/.openclaw/SOUL.md", "description": "Path to persona markdown file" }
+      "syncScoreThreshold": {
+        "type": "number",
+        "default": 0.6,
+        "description": "EWMA SyncScore below which persona is reinforced"
+      },
+      "evaluationInterval": {
+        "type": "number",
+        "default": 10,
+        "description": "Evaluate SyncScore every N turns"
+      },
+      "personaPath": {
+        "type": "string",
+        "default": "~/.openclaw/SOUL.md",
+        "description": "Path to persona markdown file"
+      }
     }
   }
 }

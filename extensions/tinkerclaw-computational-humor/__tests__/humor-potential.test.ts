@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { humorPotentialV2, bridgeValidity, isInHumorZone, type AnnIndex } from "../src/humor-potential.js";
+import {
+  humorPotentialV2,
+  bridgeValidity,
+  isInHumorZone,
+  type AnnIndex,
+} from "../src/humor-potential.js";
 import { cosineDistance } from "../src/vector-math.js";
 
 /**
@@ -51,7 +56,7 @@ describe("humorPotentialV2", () => {
     // h_v2 = distance * validity * surprise
     // We test the distance component directly: distant pair has larger cosine distance
     const A_close = [0.95, 0.05, 0, 0];
-    const B_close = [0.90, 0.10, 0, 0];
+    const B_close = [0.9, 0.1, 0, 0];
     const A_far = [1, 0, 0, 0];
     const B_far = [0, 1, 0, 0];
 

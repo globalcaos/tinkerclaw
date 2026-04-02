@@ -15,10 +15,7 @@
  */
 
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import {
-  injectFractalReflection,
-  isAutomatedSession,
-} from "./src/fractal-inject.js";
+import { injectFractalReflection, isAutomatedSession } from "./src/fractal-inject.js";
 
 // ---------------------------------------------------------------------------
 // Plugin Entry
@@ -80,8 +77,6 @@ export default definePluginEntry({
       },
     );
 
-    api.logger.info(
-      `[fractal-reflection] ready (debounce=${debounceMs}ms, dir=${extensionDir})`,
-    );
+    api.logger.info(`[fractal-reflection] ready (debounce=${debounceMs}ms, dir=${extensionDir})`);
   },
 });

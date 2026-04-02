@@ -1,6 +1,6 @@
-import { emitAgentEvent } from "../../../infra/agent-events.js"; // FORK: per-profile fallback error events
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
+import { emitAgentEvent } from "../../../infra/agent-events.js"; // FORK: per-profile fallback error events
 import { prepareProviderRuntimeAuth } from "../../../plugins/provider-runtime.js";
 import {
   type AuthProfileStore,
@@ -263,8 +263,8 @@ export function createEmbeddedRunAuthController(params: {
     // FORK: Always throw FailoverError so the model-fallback layer (and Tinker UI)
     // can extract profileId and display error badges on the correct auth row.
     // Previously, non-fallback configs threw plain Error which lost profile context.
-    const currentProfileId = params.profileCandidates[params.getProfileIndex()] ??
-      params.profileCandidates[0];
+    const currentProfileId =
+      params.profileCandidates[params.getProfileIndex()] ?? params.profileCandidates[0];
     throw new FailoverError(message, {
       reason,
       provider,

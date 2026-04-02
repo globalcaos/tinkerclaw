@@ -29,7 +29,9 @@ class BaileysEventBridge extends EventEmitter {
   /** @internal */ wireEvents() {
     // Map whatsmeow "message" → Baileys "messages.upsert"
     this.wmClient.on("message", ({ info, message }) => {
-      console.log(`[wm-adapter] message event received: chat=${info.chat} id=${info.id} fromMe=${info.isFromMe} isGroup=${info.isGroup} sender=${info.sender}`);
+      console.log(
+        `[wm-adapter] message event received: chat=${info.chat} id=${info.id} fromMe=${info.isFromMe} isGroup=${info.isGroup} sender=${info.sender}`,
+      );
       const baileysMsg = {
         key: {
           remoteJid: info.chat,

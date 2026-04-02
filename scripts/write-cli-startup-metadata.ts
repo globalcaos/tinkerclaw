@@ -144,4 +144,8 @@ export async function writeCliStartupMetadata(options?: {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   await writeCliStartupMetadata();
+  // The root-help bundle pulls in the full plugin loader graph which leaves
+  // Sockets and MessagePorts alive (jiti workers, SDK internals).  Explicit
+  // exit prevents the process from hanging indefinitely after the file is written.
+  process.exit(0);
 }

@@ -6,7 +6,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "debounceMs": { "type": "number", "default": 30000, "description": "Minimum ms between reflections per session" },
+      "debounceMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Minimum ms between reflections per session"
+      },
       "enabled": { "type": "boolean", "default": true }
     }
   }
