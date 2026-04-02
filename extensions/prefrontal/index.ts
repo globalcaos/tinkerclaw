@@ -603,12 +603,15 @@ export default function register(api: OpenClawPluginApi) {
     }
   }
 
-  // Start timers after a short delay to let gateway finish booting
-  setTimeout(() => {
-    pollTimer = setInterval(enrichTopology, pollIntervalMs);
-    stalenessTimer = setInterval(checkStaleness, stalenessThresholdMs / 6);
-    monitorTimer = setInterval(rebuildAndBroadcastTree, monitorIntervalMs);
-  }, 2000);
+  // Start timers after a short delay to let gateway finish booting.
+  // Skip during build-time CLI metadata scans — timers keep the process alive forever.
+  if (api.registrationMode === "full") {
+    setTimeout(() => {
+      pollTimer = setInterval(enrichTopology, pollIntervalMs);
+      stalenessTimer = setInterval(checkStaleness, stalenessThresholdMs / 6);
+      monitorTimer = setInterval(rebuildAndBroadcastTree, monitorIntervalMs);
+    }, 2000);
+  }
 
   // ─── Gateway Methods ───
   api.registerGatewayMethod("prefrontal.topology", async ({ respond }) => {

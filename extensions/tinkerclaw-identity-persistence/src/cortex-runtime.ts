@@ -14,10 +14,7 @@
 
 import { readFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import {
-  computeConsistency,
-  type ConsistencyResult,
-} from "./consistency-metric.js";
+import { computeConsistency, type ConsistencyResult } from "./consistency-metric.js";
 import {
   computeDriftScore,
   createDriftState,

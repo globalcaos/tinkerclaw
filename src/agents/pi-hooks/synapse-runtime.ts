@@ -6,7 +6,6 @@
  * gets one SynapseRuntime keyed off the EventStore instance.
  */
 
-import type { EventStore } from "../../memory/engram/event-store.js";
 import {
   measureCDI,
   DEFAULT_PROVIDER_PROFILES,
@@ -19,6 +18,7 @@ import {
   type DebateParticipant,
   type DebateConfig,
 } from "../../../extensions/tinkerclaw-round-table/src/raac-protocol.js";
+import type { EventStore } from "../../memory/engram/event-store.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 

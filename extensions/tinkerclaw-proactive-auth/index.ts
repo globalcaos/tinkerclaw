@@ -38,39 +38,32 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     // Hook: gateway_start — start proactive OAuth token refresh
     // -----------------------------------------------------------------------
-    api.on(
-      "gateway_start",
-      async (_event: { port: number }) => {
-        try {
-          // Dynamic import: proactive-refresh.ts lives in the main source tree
-          // and uses deep internal modules (auth store, config, file locks).
-          // We import it at runtime to avoid bundling issues.
-          const { startProactiveOAuthRefresh } = await import(
-            "../../src/agents/auth-profiles/proactive-refresh.js"
-          );
-          refreshHandle = startProactiveOAuthRefresh();
-          api.logger.info("[proactive-auth] started proactive OAuth refresh");
-        } catch (err) {
-          api.logger.warn(
-            `[proactive-auth] failed to start: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      },
-    );
+    api.on("gateway_start", async (_event: { port: number }) => {
+      try {
+        // Dynamic import: proactive-refresh.ts lives in the main source tree
+        // and uses deep internal modules (auth store, config, file locks).
+        // We import it at runtime to avoid bundling issues.
+        const { startProactiveOAuthRefresh } =
+          await import("../../src/agents/auth-profiles/proactive-refresh.js");
+        refreshHandle = startProactiveOAuthRefresh();
+        api.logger.info("[proactive-auth] started proactive OAuth refresh");
+      } catch (err) {
+        api.logger.warn(
+          `[proactive-auth] failed to start: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    });
 
     // -----------------------------------------------------------------------
     // Hook: gateway_stop — stop proactive OAuth token refresh
     // -----------------------------------------------------------------------
-    api.on(
-      "gateway_stop",
-      async (_event: { reason?: string }) => {
-        if (refreshHandle) {
-          refreshHandle.stop();
-          refreshHandle = null;
-          api.logger.info("[proactive-auth] stopped proactive OAuth refresh");
-        }
-      },
-    );
+    api.on("gateway_stop", async (_event: { reason?: string }) => {
+      if (refreshHandle) {
+        refreshHandle.stop();
+        refreshHandle = null;
+        api.logger.info("[proactive-auth] stopped proactive OAuth refresh");
+      }
+    });
 
     api.logger.info("[proactive-auth] ready");
   },

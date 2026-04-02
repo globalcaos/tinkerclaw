@@ -132,7 +132,9 @@ export function extractFromMessage(message: string): Observation[] {
  * When the accumulated token count crosses the threshold, observations are
  * extracted and optionally persisted as `system_event` entries.
  */
-export function createObservationExtractor(eventStore?: ObservationEventStore): ObservationExtractor {
+export function createObservationExtractor(
+  eventStore?: ObservationEventStore,
+): ObservationExtractor {
   let tokensSinceLastExtraction = 0;
   let totalExtracted = 0;
 
@@ -203,7 +205,10 @@ export function createObservationExtractor(eventStore?: ObservationEventStore): 
 const observationRegistry = new WeakMap<object, ObservationExtractor>();
 
 /** Store an ObservationExtractor for a given session manager instance. */
-export function setObservationRuntime(sessionManager: unknown, value: ObservationExtractor | null): void {
+export function setObservationRuntime(
+  sessionManager: unknown,
+  value: ObservationExtractor | null,
+): void {
   if (!sessionManager || typeof sessionManager !== "object") {
     return;
   }

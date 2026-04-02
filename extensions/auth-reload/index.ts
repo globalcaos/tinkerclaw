@@ -62,18 +62,27 @@ export default function register(api: OpenClawPluginApi) {
     const profileId = p.profileId as string | undefined;
     const accessToken = p.accessToken as string | undefined;
     if (!profileId || !accessToken) {
-      respond(false, undefined, { code: "INVALID_REQUEST", message: "profileId and accessToken are required" });
+      respond(false, undefined, {
+        code: "INVALID_REQUEST",
+        message: "profileId and accessToken are required",
+      });
       return;
     }
     if (!accessToken.startsWith("sk-ant-")) {
-      respond(false, undefined, { code: "INVALID_TOKEN", message: "Token must start with sk-ant-" });
+      respond(false, undefined, {
+        code: "INVALID_TOKEN",
+        message: "Token must start with sk-ant-",
+      });
       return;
     }
     try {
       const store = ensureAuthProfileStore();
       const profile = store.profiles[profileId];
       if (!profile) {
-        respond(false, undefined, { code: "PROFILE_NOT_FOUND", message: `Profile ${profileId} not found` });
+        respond(false, undefined, {
+          code: "PROFILE_NOT_FOUND",
+          message: `Profile ${profileId} not found`,
+        });
         return;
       }
       profile.accessToken = accessToken;
@@ -81,7 +90,11 @@ export default function register(api: OpenClawPluginApi) {
       saveAuthProfileStore(store);
       clearRuntimeAuthProfileStoreSnapshots();
       await clearAuthProfileCooldown({ store: ensureAuthProfileStore(), profileId });
-      context.broadcast("auth.profiles.updated", { source: "rpc", profiles: [profileId], profileId });
+      context.broadcast("auth.profiles.updated", {
+        source: "rpc",
+        profiles: [profileId],
+        profileId,
+      });
       respond(true, { ok: true, profileId });
       console.log(`[auth-reload] token applied for ${profileId}`);
     } catch (err: any) {

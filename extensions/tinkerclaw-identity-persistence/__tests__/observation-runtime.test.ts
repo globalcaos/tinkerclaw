@@ -24,7 +24,9 @@ describe("Observation Extraction", () => {
   });
 
   it("extracts beliefs from user messages", () => {
-    const obs = extractFromMessage("I think TypeScript is better than JavaScript. In my opinion, Rust is the future.");
+    const obs = extractFromMessage(
+      "I think TypeScript is better than JavaScript. In my opinion, Rust is the future.",
+    );
     const beliefs = obs.filter((o) => o.type === "belief");
     expect(beliefs.length).toBeGreaterThan(0);
     expect(beliefs[0].confidence).toBe(0.75);
@@ -107,10 +109,7 @@ describe("ObservationExtractor (threshold-based batch)", () => {
 
   it("works without event store (no persistence)", () => {
     const extractor = createObservationExtractor();
-    const result = extractor.extractObservations(
-      ["I believe in test-driven development."],
-      1,
-    );
+    const result = extractor.extractObservations(["I believe in test-driven development."], 1);
     expect(result.length).toBeGreaterThan(0);
     // No crash, no event store needed
   });

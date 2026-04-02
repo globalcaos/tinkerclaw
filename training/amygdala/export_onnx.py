@@ -38,7 +38,7 @@ from .architectures import (
     PersonalityD_DualEncoder, PersonalityE_EnsembleMLP,
 )
 
-OPSET     = 17
+OPSET     = 18
 K         = 32     # temporal window
 DIM       = 512    # embedding dimension
 EMB_DIM   = 64     # personality embedding dimension

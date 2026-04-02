@@ -96,7 +96,13 @@ describe("sensitivityGate", () => {
       humorReceptivity: 0.8,
       reactions: { positive: 5, negative: 0, neutral: 2 },
     };
-    const result = sensitivityGate("programming", "typescript", "code", DEFAULT_CALIBRATION, audience);
+    const result = sensitivityGate(
+      "programming",
+      "typescript",
+      "code",
+      DEFAULT_CALIBRATION,
+      audience,
+    );
     expect(result.allowed).toBe(true);
   });
 });

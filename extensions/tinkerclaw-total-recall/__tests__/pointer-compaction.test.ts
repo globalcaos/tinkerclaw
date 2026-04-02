@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createEventStore, estimateTokens } from "../src/event-store.js";
 import type { MemoryEvent } from "../src/event-types.js";
 import { NON_EVICTABLE_KINDS } from "../src/event-types.js";
@@ -13,13 +13,17 @@ import {
 } from "../src/pointer-compaction.js";
 import type { TimeRangeMarker } from "../src/time-range-marker.js";
 
-function makeEvent(overrides: Partial<MemoryEvent> & { turnId: number; kind: MemoryEvent["kind"] }): MemoryEvent {
+function makeEvent(
+  overrides: Partial<MemoryEvent> & { turnId: number; kind: MemoryEvent["kind"] },
+): MemoryEvent {
   return {
     id: `evt-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
     sessionKey: "test",
     content: overrides.content ?? `Content for turn ${overrides.turnId}`,
-    tokens: overrides.tokens ?? estimateTokens(overrides.content ?? `Content for turn ${overrides.turnId}`),
+    tokens:
+      overrides.tokens ??
+      estimateTokens(overrides.content ?? `Content for turn ${overrides.turnId}`),
     metadata: overrides.metadata ?? {},
     ...overrides,
   };

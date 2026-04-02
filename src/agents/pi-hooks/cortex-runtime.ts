@@ -24,7 +24,10 @@ import {
   type DriftScore,
   type DriftState,
 } from "../../../extensions/tinkerclaw-identity-persistence/src/drift-detection.js";
-import { createDefaultPersonaState, type PersonaState } from "../../../extensions/tinkerclaw-identity-persistence/src/persona-state.js";
+import {
+  createDefaultPersonaState,
+  type PersonaState,
+} from "../../../extensions/tinkerclaw-identity-persistence/src/persona-state.js";
 import { renderTier1A } from "../../../extensions/tinkerclaw-identity-persistence/src/priority-injection.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
 

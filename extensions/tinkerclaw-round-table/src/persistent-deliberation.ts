@@ -113,9 +113,7 @@ export interface PersistentDeliberation {
   updateDeliberationMemory(result: DebateResult, architecture: ArchitectureType): void;
 }
 
-export function createPersistentDeliberation(
-  options: JsonlStoreOptions,
-): PersistentDeliberation {
+export function createPersistentDeliberation(options: JsonlStoreOptions): PersistentDeliberation {
   const { tracesPath, conclusionsPath } = options;
 
   function storeDebateTraces(debateId: string, round: DebateRound): void {

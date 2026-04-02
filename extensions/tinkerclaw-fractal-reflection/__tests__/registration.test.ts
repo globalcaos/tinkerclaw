@@ -105,9 +105,7 @@ describe("Fractal Reflection registration", () => {
     mod.default.register(mockApi as any);
 
     expect(onFn).not.toHaveBeenCalled();
-    expect(mockApi.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("disabled"),
-    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("disabled"));
   });
 
   it("logs ready message with debounce value", async () => {
@@ -138,8 +136,6 @@ describe("Fractal Reflection registration", () => {
     const mod = await import("../index.js");
     mod.default.register(mockApi as any);
 
-    expect(mockApi.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("15000ms"),
-    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("15000ms"));
   });
 });

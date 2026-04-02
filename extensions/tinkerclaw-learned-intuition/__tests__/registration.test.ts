@@ -74,7 +74,9 @@ describe("Learned Intuition registration", () => {
     mod.default.register(api as any);
 
     const infoMessages = api.logger.info.mock.calls.map((c: any[]) => c[0]);
-    expect(infoMessages.some((m: string) => m.includes("[learned-intuition] registered"))).toBe(true);
+    expect(infoMessages.some((m: string) => m.includes("[learned-intuition] registered"))).toBe(
+      true,
+    );
     expect(infoMessages.some((m: string) => m.includes("phase=1"))).toBe(true);
     expect(infoMessages.some((m: string) => m.includes("observeOnly=true"))).toBe(true);
   });

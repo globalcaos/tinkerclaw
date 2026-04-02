@@ -75,9 +75,7 @@ describe("Proactive Auth registration", () => {
     mod.default.register(mockApi as any);
 
     expect(mockApi.on).not.toHaveBeenCalled();
-    expect(mockApi.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("disabled"),
-    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("disabled"));
   });
 
   it("logs ready message when enabled", async () => {
@@ -85,8 +83,6 @@ describe("Proactive Auth registration", () => {
     const mod = await import("../index.js");
     mod.default.register(mockApi as any);
 
-    expect(mockApi.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("ready"),
-    );
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("ready"));
   });
 });
