@@ -691,6 +691,7 @@ export async function runHeartbeatOnce(opts: {
     MessageThreadId: delivery.threadId,
     Provider: hasExecCompletion ? "exec-event" : hasCronEvents ? "cron-event" : "heartbeat",
     SessionKey: runSessionKey,
+    ForceSenderIsOwnerFalse: hasExecCompletion,
   };
   // FORK: For fractal hooks, override the context to route through webchat
   // so the response appears in the same session as the original conversation.

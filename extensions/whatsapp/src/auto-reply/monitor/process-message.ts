@@ -5,9 +5,9 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { formatInboundEnvelope } from "openclaw/plugin-sdk/channel-inbound";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
-import { shouldComputeCommandAuthorized } from "openclaw/plugin-sdk/command-auth";
+import { shouldComputeCommandAuthorized } from "openclaw/plugin-sdk/command-detection";
 import type { loadConfig } from "openclaw/plugin-sdk/config-runtime";
-import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/config-runtime";
+import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import { recordSessionMetaFromInbound } from "openclaw/plugin-sdk/config-runtime";
 import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-runtime";
 import {
@@ -32,10 +32,6 @@ import {
   resolveDmGroupAccessWithCommandGate,
 } from "openclaw/plugin-sdk/security-runtime";
 import { jidToE164, normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
-import {
-  annotateOfflineRecovery as _annotateOfflineRecovery,
-  createThinkingReaction as _createThinkingReaction,
-} from "../../../../../src/fork/process-message-hooks.js"; // FORK: used by fork hooks
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import {
   getPrimaryIdentityId,
@@ -205,13 +201,6 @@ export async function processMessage(params: {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
-  // FORK: annotate offline recovery messages for agent awareness
-  combinedBody = _annotateOfflineRecovery(
-    combinedBody,
-    params.msg.isOfflineRecovery,
-    params.msg.timestamp,
-  );
-
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
     sessionKey: params.route.sessionKey,
@@ -335,6 +324,7 @@ export async function processMessage(params: {
     MediaUrl: params.msg.mediaUrl,
     MediaType: params.msg.mediaType,
     ChatType: params.msg.chatType,
+    Timestamp: params.msg.timestamp,
     ConversationLabel: params.msg.chatType === "group" ? conversationId : params.msg.from,
     GroupSubject: params.msg.groupSubject,
     GroupMembers: formatGroupMembers({
@@ -409,15 +399,6 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
-  // FORK: thinking reaction (WhatsApp progress indicator)
-  const thinkingReaction = _createThinkingReaction({
-    messageId: params.msg.id,
-    chatId: conversationId,
-    senderJid: params.msg.senderJid,
-    accountId: params.route.accountId,
-  });
-  thinkingReaction.start();
-
   const { queuedFinal } = await dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: params.cfg,
@@ -487,9 +468,6 @@ export async function processMessage(params: {
       onModelSelected,
     },
   });
-
-  // FORK: stop thinking reaction after dispatch completes
-  thinkingReaction.stop();
 
   if (!queuedFinal) {
     if (shouldClearGroupHistory) {

@@ -27,10 +27,53 @@ import {
   listNormalizedMatrixAccountIds,
 } from "../account-config.js";
 import { resolveMatrixConfigFieldPath } from "../config-update.js";
-import { credentialsMatchConfig, loadMatrixCredentials } from "../credentials-read.js";
-import { MatrixClient } from "../sdk.js";
-import { ensureMatrixSdkLoggingConfigured } from "./logging.js";
 import type { MatrixAuth, MatrixResolvedConfig } from "./types.js";
+
+type MatrixAuthClientDeps = {
+  MatrixClient: typeof import("../sdk.js").MatrixClient;
+  ensureMatrixSdkLoggingConfigured: typeof import("./logging.js").ensureMatrixSdkLoggingConfigured;
+};
+
+type MatrixCredentialsReadDeps = {
+  loadMatrixCredentials: typeof import("../credentials-read.js").loadMatrixCredentials;
+  credentialsMatchConfig: typeof import("../credentials-read.js").credentialsMatchConfig;
+};
+
+let matrixAuthClientDepsPromise: Promise<MatrixAuthClientDeps> | undefined;
+let matrixCredentialsReadDepsPromise: Promise<MatrixCredentialsReadDeps> | undefined;
+let matrixAuthClientDepsForTest: MatrixAuthClientDeps | undefined;
+
+export function setMatrixAuthClientDepsForTest(
+  deps?: {
+    MatrixClient: typeof import("../sdk.js").MatrixClient;
+    ensureMatrixSdkLoggingConfigured: typeof import("./logging.js").ensureMatrixSdkLoggingConfigured;
+  } | undefined,
+): void {
+  matrixAuthClientDepsForTest = deps;
+}
+
+async function loadMatrixAuthClientDeps(): Promise<MatrixAuthClientDeps> {
+  if (matrixAuthClientDepsForTest) {
+    return matrixAuthClientDepsForTest;
+  }
+  matrixAuthClientDepsPromise ??= Promise.all([import("../sdk.js"), import("./logging.js")]).then(
+    ([sdkModule, loggingModule]) => ({
+      MatrixClient: sdkModule.MatrixClient,
+      ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
+    }),
+  );
+  return await matrixAuthClientDepsPromise;
+}
+
+async function loadMatrixCredentialsReadDeps(): Promise<MatrixCredentialsReadDeps> {
+  matrixCredentialsReadDepsPromise ??= import("../credentials-read.js").then(
+    (credentialsReadModule) => ({
+      loadMatrixCredentials: credentialsReadModule.loadMatrixCredentials,
+      credentialsMatchConfig: credentialsReadModule.credentialsMatchConfig,
+    }),
+  );
+  return await matrixCredentialsReadDepsPromise;
+}
 
 function readEnvSecretRefFallback(params: {
   value: unknown;
@@ -579,12 +622,12 @@ export function resolveMatrixConfigForAccount(
 
 export function resolveImplicitMatrixAccountId(
   cfg: CoreConfig,
-  _env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  if (requiresExplicitMatrixDefaultAccount(cfg)) {
+  if (requiresExplicitMatrixDefaultAccount(cfg, env)) {
     return null;
   }
-  return normalizeAccountId(resolveMatrixDefaultOrOnlyAccountId(cfg));
+  return normalizeAccountId(resolveMatrixDefaultOrOnlyAccountId(cfg, env));
 }
 
 export function resolveMatrixAuthContext(params?: {
@@ -649,6 +692,7 @@ export async function resolveMatrixAuth(params?: {
     return credentialsWriter;
   };
 
+  const { loadMatrixCredentials, credentialsMatchConfig } = await loadMatrixCredentialsReadDeps();
   const cached = loadMatrixCredentials(env, accountId);
   const cachedCredentials =
     cached &&
@@ -670,6 +714,7 @@ export async function resolveMatrixAuth(params?: {
 
     if (!userId || !knownDeviceId) {
       // Fetch whoami when we need to resolve userId and/or deviceId from token auth.
+      const { MatrixClient, ensureMatrixSdkLoggingConfigured } = await loadMatrixAuthClientDeps();
       ensureMatrixSdkLoggingConfigured();
       const tempClient = new MatrixClient(homeserver, accessToken, {
         ssrfPolicy: resolved.ssrfPolicy,
@@ -767,6 +812,7 @@ export async function resolveMatrixAuth(params?: {
   }
 
   // Login with password using the same hardened request path as other Matrix HTTP calls.
+  const { MatrixClient, ensureMatrixSdkLoggingConfigured } = await loadMatrixAuthClientDeps();
   ensureMatrixSdkLoggingConfigured();
   const loginClient = new MatrixClient(homeserver, "", {
     ssrfPolicy: resolved.ssrfPolicy,
