@@ -79,6 +79,7 @@ function nodeBuildConfig(config: UserConfig): UserConfig {
     env,
     fixedExtension: false,
     platform: "node",
+    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
     inputOptions: buildInputOptions,
   };
 }
