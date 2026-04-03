@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-03 (Error badge vocabulary overhaul, model name display, error clearing on success, rate limit header capture, WS scope fix, fractal prompt hiding fix, budget-panel staleness guard)
+> Last updated: 2026-04-03 (Error badges, rate limit headers, orange shimmer unification, exploration gate fix, FORK_SETUP.md, 23 commits)
 
 ---
 
@@ -1035,6 +1035,40 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Behavior:** If the usage data timestamp is older than 7 days, `getModelUsage()` returns `{ fiveHour: 0, sevenDay: 0, disconnected: true }` — same as the disconnected/no-data path. Amber dashed bars render instead of stale percentages.
 - **Rationale:** Usage data > 7 days old is from a previous billing period and misleading — the bars would show high historical utilization as if it were current.
 - **Files:** `app.ts` (`getModelUsage()` staleness check), `extensions/budget-panel/index.ts` (timestamp included in usage response)
+
+### 5.57 Unified Orange Shimmer Across All Surfaces (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** All four "thinking" indicators now share the same 1s radial gradient + right-to-left sweep animation in warm orange (`#D97757`, Anthropic provider color from prefrontal tree). Replaced the old 2s `model-breathe` box-shadow pulse and disconnected green (`#6b8e23`) color.
+- **Surfaces:** Chat thinking bubble (`.thinking-run` / `thinking-shimmer`), model panel active row (`.model-row.model-live` / `model-shimmer`), session panel active row (`.session-row.session-live` / `session-shimmer`), prefrontal tree active node (`.pf-node.pf-active` / `pf-shimmer`).
+- **CSS pattern:** `@keyframes *-shimmer { 0% { background-position: 150% 0, center; } 100% { background-position: -150% 0, center; } }` with `background-image: linear-gradient(90deg, ...) + radial-gradient(ellipse at center, ...)` and `background-size: 150% 100%, 100% 100%`.
+- **Provider-colored:** Each surface receives CSS custom properties (`--*-glow`, `--*-glow-bg`, `--*-glow-bg2`) set from `PROVIDER_COLORS[provider]` in JS, with `#D97757` fallback defaults in CSS.
+- **Session panel fix:** Added `sessionHasActiveRuns()` helper + `session-live` class in `renderSessionRow()`. Added `updateSessionsPanel()` to lifecycle start/end handlers so sessions re-render when runs change.
+- **Model panel fix:** Single-key count fallback — `counts.get(keyId || modelId) || counts.get(modelId)` (lifecycle events often lack `authProfileId`).
+- **Prefrontal tree:** Active nodes get `pf-active` class with shimmer. Completed nodes get `animation: none !important`.
+- **Files:** `base.css` (4 `@keyframes` + shimmer rules), `app.ts` (PROVIDER_COLORS, thinking indicator CSS vars, sessionHasActiveRuns, updateSessionsPanel calls), `panels/prefrontal-tree.ts` (pf-active class + CSS vars)
+
+### 5.58 Configured Models Collapsed by Default (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** The "CONFIGURED" section in the model panel loads collapsed. Fallback chain stays open.
+- **Implementation:** `collapsedModelSections` initialized with `["configured"]` instead of empty set.
+- **Files:** `app.ts` (line ~556)
+
+### 5.59 Exploration Gate Fix (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** The prefrontal exploration gate was blocking ALL OpenClaw native tools because of PascalCase/lowercase mismatch and fail-closed default. `Read` was in the allowlist but `read` was not — and any unknown tool was treated as mutating.
+- **Fix:** Added lowercase tool names (`read`, `exec`, `web_search`, etc.) to both `READ_ONLY_TOOLS` and `MUTATING_TOOLS` sets. Changed `isMutating()` from fail-closed (`!READ_ONLY_TOOLS.has(name)`) to explicit-only (`MUTATING_TOOLS.has(name)`).
+- **Files:** `extensions/prefrontal/exploration-gate.ts`
+
+### 5.60 FORK_SETUP.md — Onboarding Guide (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Agent-readable onboarding document for new tinkerclaw fork users. 385 lines covering all 8 setup steps, troubleshooting, architecture reference (port map, key directories), and fork extension inventory.
+- **Location:** Repo root: `FORK_SETUP.md`
+- **Audience:** New users' AI agents — written for step-by-step execution, not human reading.
+- **Planned automation:** `scripts/fork-setup.sh` (one-command setup), auto-detect Ollama, auto-patch config. Plan at `jarvis-icu/docs/superpowers/plans/2026-04-03-fork-onboarding-automation.md`.
 
 ---
 
