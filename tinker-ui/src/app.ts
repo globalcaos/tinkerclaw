@@ -30,6 +30,8 @@ let messages: any[] = [];
 /** Index into messages[] of the current streaming temporary message, or -1 if none. */
 let streamMsgIdx = -1;
 let streamRunId: string | null = null;
+let streamProvider = "";
+let streamProfileId = "";
 /** Tracks how much of the server's accumulated text is already shown in frozen temp messages. */
 let frozenTextEnd = 0;
 /** Length of the last full delta text received (used to set frozenTextEnd on tool freeze). */
@@ -936,6 +938,10 @@ function onEvent(evt: any) {
       return;
     }
     if (p.state === "delta") {
+      if (!streamRunId) {
+        streamProvider = "";
+        streamProfileId = "";
+      }
       streamRunId = p.runId;
       // Update active run phase based on streaming content
       const runInfo = activeRuns.get(p.runId);
@@ -1063,6 +1069,31 @@ function onEvent(evt: any) {
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
+        // Clear provider error badges for the provider that just succeeded
+        if (streamProvider || streamProfileId) {
+          let cleared = false;
+          if (streamProfileId) {
+            providerErrors.delete(streamProfileId);
+            cleared = true;
+          }
+          // Clear all keys matching this provider (provider:*, provider/*)
+          if (streamProvider) {
+            for (const key of [...providerErrors.keys()]) {
+              if (
+                key === streamProvider ||
+                key.startsWith(streamProvider + ":") ||
+                key.startsWith(streamProvider + "/")
+              ) {
+                providerErrors.delete(key);
+                cleared = true;
+              }
+            }
+          }
+          if (cleared) {
+            persistProviderErrors();
+            updateBudgetPanel();
+          }
+        }
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
@@ -1397,6 +1428,9 @@ function onEvent(evt: any) {
         return;
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
+      // Track the provider/profile that's actively responding
+      if (p.data?.provider) streamProvider = String(p.data.provider);
+      if (p.data?.profileId) streamProfileId = String(p.data.profileId);
       if (p.data.phase === "start") {
         const startProvider = p.data.modelProvider || providerOf(p.data.model);
         // Cancel any pending deletion for this runId (fallback reuses the same runId)
