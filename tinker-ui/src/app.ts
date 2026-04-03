@@ -553,7 +553,7 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-const collapsedModelSections = new Set<string>();
+const collapsedModelSections = new Set<string>(["configured"]);
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 const DRAFT_STORAGE_KEY = "tinker-draft";
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
@@ -615,6 +615,16 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts;
+}
+
+// FORK: Check if a session has active LLM runs (for session-live glow)
+function sessionHasActiveRuns(sessionKey: string): { live: boolean; provider?: string } {
+  for (const info of activeRuns.values()) {
+    if (info.sessionKey && sessionKeyMatches(info.sessionKey, sessionKey)) {
+      return { live: true, provider: info.provider };
+    }
+  }
+  return { live: false };
 }
 
 let modelConfigData: any = null;
@@ -2404,7 +2414,7 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color}">
+      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
   <span class="thinking-elapsed">${elapsed}s</span>
@@ -2414,7 +2424,7 @@ function renderThinkingIndicator(): string {
     if (rows) return `<div class="thinking-indicator">${rows}</div>`;
   }
   if (sending) {
-    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23">
+    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23;--thinking-glow:#6b8e2340;--thinking-glow-bg:#6b8e2320;--thinking-glow-bg2:#6b8e2330">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
   <span class="thinking-stop">Stop</span>
@@ -3267,13 +3277,16 @@ function updateBudgetPanel() {
       const shortProfileLabel = simplifyProfileLabel(keyLabel, mode);
       const showSuffix = shortProfileLabel.length > 0;
       const suffix = showSuffix ? ` \u00b7 ${shortProfileLabel}` : "";
+      // FORK: Lifecycle events may lack authProfileId, so count is stored under
+      // modelId instead of keyId. Fall back to model-level count.
+      const singleKeyCount = counts.get(keyId || modelId) || counts.get(modelId) || 0;
       html += renderModelRow(
         modelId,
         provider,
         name,
         badge,
         suffix,
-        counts.get(keyId || modelId) || 0,
+        singleKeyCount,
         providerErrors.get(keyId || modelId),
         keyId,
       );
@@ -3812,7 +3825,14 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
-  return `<div class="session-row${isActive ? " session-active" : ""}" data-session-key="${esc(s.key)}">
+  // FORK: Session glow — shimmer when an LLM run is active for this session
+  const liveInfo = sessionHasActiveRuns(s.key);
+  const liveClass = liveInfo.live ? " session-live" : "";
+  const liveColor = liveInfo.provider ? PROVIDER_COLORS[liveInfo.provider] || "#6b8f3a" : "#6b8f3a";
+  const liveStyle = liveInfo.live
+    ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
+    : "";
+  return `<div class="session-row${isActive ? " session-active" : ""}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
     <span class="session-label" data-hint="${esc(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
