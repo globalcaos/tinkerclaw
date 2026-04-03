@@ -495,9 +495,14 @@ export default function register(api: OpenClawPluginApi) {
 
     // Backwards-compatible "claude" key: use first available profile or file fallback
     const firstLive = Object.values(liveProfiles).find(Boolean);
+    // If file data is older than 7 days, zero out utilization (window has fully rolled over)
+    const STALE_FILE_MS = 7 * 24 * 60 * 60 * 1000;
+    const fileIsStale =
+      claudeFileData?.fetchedAt &&
+      Date.now() - new Date(claudeFileData.fetchedAt).getTime() > STALE_FILE_MS;
     const claudeResult =
       buildClaudeProfile(firstLive) ??
-      (claudeFileData
+      (claudeFileData && !fileIsStale
         ? {
             mode: claudeFileData.mode || "subscription",
             plan: claudeFileData.plan || "max",
