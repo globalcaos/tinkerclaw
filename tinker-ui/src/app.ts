@@ -948,8 +948,7 @@ function onEvent(evt: any) {
       if (runInfo) {
         const txt = p.message?.content?.[0]?.text ?? "";
         const isFractal =
-          txt.trimStart().startsWith("🌿 FRACTAL:") ||
-          txt.trimStart().startsWith("# FRACTAL REFLECTION");
+          txt.trimStart().startsWith("🌿 FRACTAL:") || txt.includes("# FRACTAL REFLECTION");
         const newPhase: ActiveRunPhase = isFractal ? "reflecting" : "responding";
         if (runInfo.phase !== newPhase) {
           runInfo.phase = newPhase;
@@ -2150,7 +2149,7 @@ function renderMsg(
   const _allMsgTexts =
     content.map((b: any) => b.text ?? "").join(" ") +
     (typeof msg.content === "string" ? msg.content : "");
-  if (_allMsgTexts.trimStart().startsWith("# FRACTAL REFLECTION")) return h;
+  if (_allMsgTexts.includes("# FRACTAL REFLECTION")) return h;
   let blockIdx = 0;
   let hasNonToolContent = false;
 
@@ -2188,7 +2187,7 @@ function renderMsg(
       if (userText) {
         // FORK: Hide fractal reflection prompts (injected via sessions.send)
         // Render as invisible div that preserves run boundary detection
-        if (userText.startsWith("# FRACTAL REFLECTION")) {
+        if (userText.includes("# FRACTAL REFLECTION")) {
           h += `<div class="fractal-boundary" style="display:none" data-msg-idx="${idx}"></div>`;
         } else if (
           userText.startsWith("⚠️ Gateway restarted") ||
@@ -2230,7 +2229,7 @@ function renderMsg(
       const isFractal = text.trimStart().startsWith("🌿 FRACTAL:");
       const fractalClass = isFractal ? " msg-fractal" : "";
       // FORK: Hide the fractal instruction prompt (it's injected via sessions.send as assistant msg)
-      const isFractalPrompt = text.trimStart().startsWith("# FRACTAL REFLECTION");
+      const isFractalPrompt = text.includes("# FRACTAL REFLECTION");
       if (isFractalPrompt) {
         // Don't render the instruction prompt at all
         return h;
@@ -2327,7 +2326,7 @@ function renderMsg(
         const isFractal2 = text.trimStart().startsWith("🌿 FRACTAL:");
         const fractalClass2 = isFractal2 ? " msg-fractal" : "";
         // FORK: Hide the fractal instruction prompt
-        const isFractalPrompt2 = text.trimStart().startsWith("# FRACTAL REFLECTION");
+        const isFractalPrompt2 = text.includes("# FRACTAL REFLECTION");
         if (isFractalPrompt2) {
           return h;
         }
@@ -2720,7 +2719,7 @@ function updateChat(skipScroll = false) {
           c.find((b: any) => b.type === "text" && b.text)?.text ?? (plainText || "");
         if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) continue;
         // FORK: Fractal prompts are hidden entirely — don't count them
-        if ((firstTextBlock as string).trimStart().startsWith("# FRACTAL REFLECTION")) continue;
+        if ((firstTextBlock as string).includes("# FRACTAL REFLECTION")) continue;
         // FORK: System messages (warnings, errors, retries, prefrontal) must NEVER
         // collapse into reasoning groups — they are user-facing status updates.
         if (m._isWarning || m._isError || m._isOverloadRetry || m._isPrefrontal) continue;
