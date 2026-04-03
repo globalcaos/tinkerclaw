@@ -117,6 +117,7 @@ export function resolveWhatsAppAccount(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
 }): ResolvedWhatsAppAccount {
+  const rootCfg = params.cfg.channels?.whatsapp;
   const merged = resolveMergedWhatsAppAccountConfig({
     cfg: params.cfg,
     accountId: params.accountId?.trim() || resolveDefaultWhatsAppAccountId(params.cfg),
