@@ -166,163 +166,170 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
 
 // -- Plugin definition --
 
-export default definePluginEntry((api: OpenClawPluginApi) => {
-  const cfg = api.pluginConfig as {
-    phase?: number;
-    alphaPrudence?: number;
-    aegisEnabled?: boolean;
-    observeOnly?: boolean;
-    modelsDir?: string;
-  };
-  const log = api.logger;
+export default definePluginEntry({
+  id: "tinkerclaw-learned-intuition",
+  name: "Learned Intuition",
+  description:
+    "AMYGDALA safety gate — ONNX neural networks evaluate tool calls, " +
+    "rule-based fallback when models unavailable, personality nudge generation.",
+  register(api: OpenClawPluginApi) {
+    const cfg = api.pluginConfig as {
+      phase?: number;
+      alphaPrudence?: number;
+      aegisEnabled?: boolean;
+      observeOnly?: boolean;
+      modelsDir?: string;
+    };
+    const log = api.logger;
 
-  const phase = cfg.phase ?? 1;
-  const observeOnly = cfg.observeOnly ?? true;
-  const modelsDir = cfg.modelsDir ?? join(homedir(), "src", "tinkerclaw", "models", "amygdala");
+    const phase = cfg.phase ?? 1;
+    const observeOnly = cfg.observeOnly ?? true;
+    const modelsDir = cfg.modelsDir ?? join(homedir(), "src", "tinkerclaw", "models", "amygdala");
 
-  // Ensure data directory exists
-  ensureDir(join(DATA_DIR, "amygdala"));
+    // Ensure data directory exists
+    ensureDir(join(DATA_DIR, "amygdala"));
 
-  // Build full config
-  const amygdalaConfig = loadAmygdalaConfig(modelsDir);
-  amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.0;
-  amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
+    // Build full config
+    const amygdalaConfig = loadAmygdalaConfig(modelsDir);
+    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.0;
+    amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
 
-  // Create hook instance
-  const hook = new AmygdalaHook(amygdalaConfig);
+    // Create hook instance
+    const hook = new AmygdalaHook(amygdalaConfig);
 
-  // Initialize asynchronously (non-blocking)
-  let initPromise: Promise<void> | null = null;
-  let hookReady = false;
+    // Initialize asynchronously (non-blocking)
+    let initPromise: Promise<void> | null = null;
+    let hookReady = false;
 
-  function ensureInit(): Promise<void> {
-    if (!initPromise) {
-      initPromise = hook
-        .initialize()
-        .then(() => {
-          hookReady = true;
-          const mode = hook.useRuleBasedFallback ? "rule-based" : "onnx";
-          writeSharedState(mode, !hook.useRuleBasedFallback);
-          log.info(
-            `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}`,
-          );
-          if (hook.useRuleBasedFallback) {
-            log.warn(
-              `[learned-intuition] ONNX models not available at ${modelsDir}. Using rule-based fallback.`,
+    function ensureInit(): Promise<void> {
+      if (!initPromise) {
+        initPromise = hook
+          .initialize()
+          .then(() => {
+            hookReady = true;
+            const mode = hook.useRuleBasedFallback ? "rule-based" : "onnx";
+            writeSharedState(mode, !hook.useRuleBasedFallback);
+            log.info(
+              `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}`,
             );
-          }
-        })
-        .catch((err) => {
-          log.error(`[learned-intuition] initialization failed: ${err}`);
-          hookReady = false;
-        });
+            if (hook.useRuleBasedFallback) {
+              log.warn(
+                `[learned-intuition] ONNX models not available at ${modelsDir}. Using rule-based fallback.`,
+              );
+            }
+          })
+          .catch((err) => {
+            log.error(`[learned-intuition] initialization failed: ${err}`);
+            hookReady = false;
+          });
+      }
+      return initPromise;
     }
-    return initPromise;
-  }
 
-  // Kick off init immediately
-  ensureInit();
+    // Kick off init immediately
+    ensureInit();
 
-  // -- Hook: before_tool_call --
-  api.on(
-    "before_tool_call",
-    async (event: { toolName: string; args: Record<string, unknown> }) => {
+    // -- Hook: before_tool_call --
+    api.on(
+      "before_tool_call",
+      async (event: { toolName: string; args: Record<string, unknown> }) => {
+        await ensureInit();
+        if (!hookReady) {
+          return; // Initialization failed -- allow everything
+        }
+
+        try {
+          const argsStr = JSON.stringify(event.args ?? {});
+          const target =
+            (event.args?.path as string) ||
+            (event.args?.file_path as string) ||
+            (event.args?.command as string) ||
+            (event.args?.target as string) ||
+            event.toolName;
+
+          const result = await hook.evaluate(
+            { type: event.toolName, target, metadata: event.args },
+            {
+              topic: "active-session",
+              emotionalState: "calm",
+              effortHoursEstimate: 0.5,
+              correctionCount24h: 0,
+              automationDepth: 1,
+              confirmationEnabled: false,
+              confirmationLevel: "none",
+              sessionDuration: 0,
+              actionCount: 0,
+              topicCentroid: null,
+              recentTranscripts: [],
+            },
+          );
+
+          const modeTag = result.ruleBasedFallback ? "[rules]" : "[onnx]";
+
+          if (result.blocked) {
+            if (observeOnly || phase === 1) {
+              // Phase 1: observe-only -- log but never block
+              log.info(
+                `[learned-intuition] ${modeTag} WOULD block ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"} (observe-only, not blocking)`,
+              );
+            } else {
+              // Phase 2+: active blocking
+              log.warn(
+                `[learned-intuition] ${modeTag} BLOCKED ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
+              );
+              return {
+                abort: true,
+                message: result.response?.reason ?? "Action blocked by safety gate.",
+              };
+            }
+          } else {
+            log.debug(`[learned-intuition] ${modeTag} allowed ${event.toolName}(${target})`);
+          }
+        } catch (err) {
+          // Safety gate failures must never block the agent
+          log.error(`[learned-intuition] evaluation error (allowing action): ${err}`);
+        }
+      },
+      { priority: 10 }, // High priority -- safety should evaluate early
+    );
+
+    // -- Hook: llm_output --
+    api.on("llm_output", async (_event: { text: string }) => {
       await ensureInit();
-      if (!hookReady) {
-        return; // Initialization failed -- allow everything
+      if (!hookReady || hook.useRuleBasedFallback) {
+        return; // No personality nudge without ONNX models
       }
 
       try {
-        const argsStr = JSON.stringify(event.args ?? {});
-        const target =
-          (event.args?.path as string) ||
-          (event.args?.file_path as string) ||
-          (event.args?.command as string) ||
-          (event.args?.target as string) ||
-          event.toolName;
+        // Generate personality nudge from target vector
+        const targetVector = amygdalaConfig.personality.target_vector;
+        if (targetVector.length > 0) {
+          // Use a neutral combined embedding as baseline (actual model output
+          // would come from the last evaluation, but we generate a fresh nudge
+          // based on the target vector drift from neutral)
+          const neutralEmbedding = new Float32Array(amygdalaConfig.personality.embedding_dim).fill(
+            0.5,
+          );
+          const nudge = decodePersonalityNudge(
+            neutralEmbedding,
+            targetVector,
+            amygdalaConfig.trust.alpha_personality,
+          );
 
-        const result = await hook.evaluate(
-          { type: event.toolName, target, metadata: event.args },
-          {
-            topic: "active-session",
-            emotionalState: "calm",
-            effortHoursEstimate: 0.5,
-            correctionCount24h: 0,
-            automationDepth: 1,
-            confirmationEnabled: false,
-            confirmationLevel: "none",
-            sessionDuration: 0,
-            actionCount: 0,
-            topicCentroid: null,
-            recentTranscripts: [],
-          },
-        );
-
-        const modeTag = result.ruleBasedFallback ? "[rules]" : "[onnx]";
-
-        if (result.blocked) {
-          if (observeOnly || phase === 1) {
-            // Phase 1: observe-only -- log but never block
-            log.info(
-              `[learned-intuition] ${modeTag} WOULD block ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"} (observe-only, not blocking)`,
+          if (nudge.adjustments.length > 0) {
+            writePersonalityNudge(nudge);
+            log.debug(
+              `[learned-intuition] personality nudge written: ${nudge.adjustments.length} adjustments`,
             );
-          } else {
-            // Phase 2+: active blocking
-            log.warn(
-              `[learned-intuition] ${modeTag} BLOCKED ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
-            );
-            return {
-              abort: true,
-              message: result.response?.reason ?? "Action blocked by safety gate.",
-            };
           }
-        } else {
-          log.debug(`[learned-intuition] ${modeTag} allowed ${event.toolName}(${target})`);
         }
       } catch (err) {
-        // Safety gate failures must never block the agent
-        log.error(`[learned-intuition] evaluation error (allowing action): ${err}`);
+        log.error(`[learned-intuition] personality nudge error: ${err}`);
       }
-    },
-    { priority: 10 }, // High priority -- safety should evaluate early
-  );
+    });
 
-  // -- Hook: llm_output --
-  api.on("llm_output", async (_event: { text: string }) => {
-    await ensureInit();
-    if (!hookReady || hook.useRuleBasedFallback) {
-      return; // No personality nudge without ONNX models
-    }
-
-    try {
-      // Generate personality nudge from target vector
-      const targetVector = amygdalaConfig.personality.target_vector;
-      if (targetVector.length > 0) {
-        // Use a neutral combined embedding as baseline (actual model output
-        // would come from the last evaluation, but we generate a fresh nudge
-        // based on the target vector drift from neutral)
-        const neutralEmbedding = new Float32Array(amygdalaConfig.personality.embedding_dim).fill(
-          0.5,
-        );
-        const nudge = decodePersonalityNudge(
-          neutralEmbedding,
-          targetVector,
-          amygdalaConfig.trust.alpha_personality,
-        );
-
-        if (nudge.adjustments.length > 0) {
-          writePersonalityNudge(nudge);
-          log.debug(
-            `[learned-intuition] personality nudge written: ${nudge.adjustments.length} adjustments`,
-          );
-        }
-      }
-    } catch (err) {
-      log.error(`[learned-intuition] personality nudge error: ${err}`);
-    }
-  });
-
-  log.info(
-    `[learned-intuition] registered — phase=${phase}, observeOnly=${observeOnly}, modelsDir=${modelsDir}`,
-  );
+    log.info(
+      `[learned-intuition] registered — phase=${phase}, observeOnly=${observeOnly}, modelsDir=${modelsDir}`,
+    );
+  },
 });
