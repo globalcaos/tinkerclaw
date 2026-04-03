@@ -211,6 +211,11 @@ function rejectWebchatSessionMutation(params: {
   if (params.client.connect.client.id === GATEWAY_CLIENT_IDS.CONTROL_UI) {
     return false;
   }
+  // Allow webchat delete — handler already prevents deleting the main session
+  if (params.action === "delete") {
+    return false;
+  }
+
   params.respond(
     false,
     undefined,
