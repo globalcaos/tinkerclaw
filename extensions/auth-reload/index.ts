@@ -85,8 +85,16 @@ export default function register(api: OpenClawPluginApi) {
         });
         return;
       }
-      profile.accessToken = accessToken;
-      profile.expires = Date.now() + 3600_000; // 1 hour from now
+      // FORK: sk-ant-* tokens are API keys; write to `key` field on the credential
+      if (profile.type === "api_key") {
+        profile.key = accessToken;
+      } else if (profile.type === "token") {
+        profile.token = accessToken;
+        profile.expires = Date.now() + 3600_000; // 1 hour from now
+      } else if (profile.type === "oauth") {
+        profile.access = accessToken;
+        profile.expires = Date.now() + 3600_000; // 1 hour from now
+      }
       saveAuthProfileStore(store);
       clearRuntimeAuthProfileStoreSnapshots();
       await clearAuthProfileCooldown({ store: ensureAuthProfileStore(), profileId });
