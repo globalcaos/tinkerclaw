@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-01 (Prefrontal plugin — compact call tree, provider logos, guardian watchdog, full overseer→prefrontal rename)
+> Last updated: 2026-04-03 (Error badge vocabulary overhaul, model name display, error clearing on success, rate limit header capture, WS scope fix, fractal prompt hiding fix, budget-panel staleness guard)
 
 ---
 
@@ -954,6 +954,88 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Detection:** Checks final reply text for "draining for restart" substring.
 - **Files:** `app.ts` (drain detection + auto-retry in `onEvent` final handler)
 
+### 5.50 Error Badge Vocabulary Overhaul (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Provider error badges on model rows replaced with a compact single-word vocabulary. All badges are now clickable (underline + `↗` arrow + brightness on hover). Anthropic OAuth badges click directly to the re-auth flow (removed the 3-option popover).
+- **Badge vocabulary:**
+  - `AUTH` — OAuth token expired or revoked
+  - `KEY` — API key invalid
+  - `B-CAP` — Billing cap reached (monthly spend limit)
+  - `LIMIT` — Rate limited (token or request quota)
+  - `BUSY` — Provider overloaded (529)
+  - `SLOW` — High latency / timeout
+  - `404` — Model not found
+  - `WAIT` — Cooling down (temporary block)
+  - `EXPIRED` — Token/session expired
+  - `FORMAT` — Response format error
+  - `FAIL` — Generic uncategorized failure
+- **Tooltips:** Each badge has an actionable tooltip (e.g., `AUTH: OAuth token expired — click to re-authenticate`, `B-CAP: Monthly billing cap reached — check usage`).
+- **Click behavior:** All badges get `cursor: pointer`, `text-decoration: underline`, `filter: brightness(1.3)` on hover, and `↗` suffix. Anthropic `cli-*` profile badges go directly to `startOAuthReauthFlow()` — no intermediate popover.
+- **CSS:** `.error-badge` hover rules (underline + brightness), `.error-badge-clickable` (pointer cursor)
+- **Files:** `app.ts` (`describeError()` vocabulary mapping, badge click handlers), `base.css` (hover effects)
+
+### 5.51 Model Name Display Update (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Model name compression labels and profile display labels updated for clarity.
+- **Model name compression (Anthropic):**
+  - `opus4.6` (was `op-4-6`)
+  - `sonnet4.6` (was `sn-4-6`)
+  - `haiku4.5` (was `hk-4-5`)
+- **Profile labels:**
+  - `cli-gm` → `oauth` (reflects what the profile actually is: an OAuth subscription)
+  - `default` → `api` (reflects API key auth)
+- **Files:** `app.ts` (`compressModelName()`, `authKeyLabel()`)
+
+### 5.52 Error Clearing on Successful Response (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Provider error badges now clear immediately when a successful LLM response arrives from that provider. Previously, clearing only happened via the 60s health poll (`provider.health` check). A successful `final` event with `phase === "end"` is definitive proof the provider is working — no reason to wait for the poll.
+- **Mechanism:** The `phase === "end"` lifecycle event handler in `onEvent()` clears `providerErrors` entries for both the completed `authProfileId` and the `startModel` key. This is the same clearing logic already in the `start` handler, now also applied on completion.
+- **Effect:** Badge disappears the moment the response completes — zero lag, no poll window.
+- **Files:** `app.ts` (lifecycle `end` handler)
+
+### 5.53 Rate Limit Header Capture — Usage Bars from API Headers (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Anthropic 5h and 7d utilization bars now update from HTTP response headers on every API call, instead of depending on the OAuth usage endpoint (`api.anthropic.com/api/oauth/usage`) which Anthropic disabled in January 2026. Custom `fetch` wrapper in `anthropic-vertex-stream.ts` intercepts Anthropic API responses, extracts rate limit headers, stores them, and emits a lifecycle event that the UI consumes.
+- **Headers captured:**
+  - `anthropic-ratelimit-unified-5h-utilization` → 5h bar
+  - `anthropic-ratelimit-unified-7d-utilization` → 7d bar
+- **Pipeline:**
+  1. `anthropic-vertex-stream.ts` — custom fetch wrapper reads `anthropic-ratelimit-*` headers from each API response, writes to `ratelimit-store.ts` singleton
+  2. `ratelimit-store.ts` — in-memory store keyed by `authProfileId` with timestamps
+  3. Lifecycle event `ratelimit-update` emitted via `emitAgentEvent` after each successful API call
+  4. Tinker UI `onEvent()` handler reads `ratelimit-update` events, calls `renderUsageBarsOnly()` to update the bars
+- **Fallback:** OAuth usage endpoint still attempted on budget panel load — headers are supplementary (more frequent, no separate API call needed).
+- **Files:** `anthropic-vertex-stream.ts` (fetch wrapper), `ratelimit-store.ts` (new singleton), `attempt-hooks.ts` (event emission), `app.ts` (event handler + bar update)
+
+### 5.54 WebSocket Scope Fix — webchat-ui as Operator (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Added `webchat-ui` to `isOperatorUiClient()` in the gateway auth layer so Tinker UI WebSocket connections receive `operator.admin` scope. Previously, `webchat-ui` was not in the recognized operator client list, so the WS connection was treated as an unprivileged client — causing failures in usage graphs, session lists, chat send, and provider health calls, all of which require operator-level access.
+- **Root cause:** Upstream's `isOperatorUiClient()` only recognized specific client identity strings. The upstream merge (2026-03-30, commit `541df66197`) added a stricter scope gate; `webchat-ui` wasn't listed.
+- **Fix:** Added `clientIdentity === "webchat-ui"` check to `isOperatorUiClient()`.
+- **Guardian check:** `webchat-ui` in `isOperatorUiClient` in `server-ws.ts` (or equivalent).
+- **Files:** `src/gateway/server-ws.ts` (or `src/gateway/auth-ws.ts`), `merge-guardian.sh` (new check)
+
+### 5.55 Fractal Prompt Hiding Fix (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Changed `startsWith` to `includes` for FRACTAL REFLECTION detection in `isOperatorMessage()` (or equivalent message classification). The FRACTAL prompt text (`# FRACTAL REFLECTION`) was not being detected when it arrived embedded after system event lines (e.g., "WhatsApp gateway connected\n\n# FRACTAL REFLECTION…"). The `startsWith` check required the fractal header at the very start of the message string — but system events prepend their own lines first.
+- **Effect:** Fractal prompts now correctly classified as internal/operator-generated and hidden from the chat message list. Previously they appeared as user messages in Tinker UI.
+- **Files:** `app.ts` (message classification check), `extensions/tinkerclaw-fractal-reflection/src/fractal-inject.ts` (prompt detection)
+
+### 5.56 Budget-Panel Staleness Guard (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Usage file data older than 7 days is now ignored in the budget panel — returns zeros instead of stale percentages. Prevents months-old cached usage data from showing as current utilization after extended periods of inactivity or credential outages.
+- **Threshold:** 7 days (`USAGE_STALENESS_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000`)
+- **Behavior:** If the usage data timestamp is older than 7 days, `getModelUsage()` returns `{ fiveHour: 0, sevenDay: 0, disconnected: true }` — same as the disconnected/no-data path. Amber dashed bars render instead of stale percentages.
+- **Rationale:** Usage data > 7 days old is from a previous billing period and misleading — the bars would show high historical utilization as if it were current.
+- **Files:** `app.ts` (`getModelUsage()` staleness check), `extensions/budget-panel/index.ts` (timestamp included in usage response)
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
@@ -986,6 +1068,27 @@ These are upstream files modified to support Tinker features. They require re-ap
 ---
 
 ## 7. Bug Fix Log
+
+### FIXED: Usage Bars Showing Stale Data from Disabled OAuth Endpoint (2026-04-03)
+
+- **Symptom:** Anthropic 5h/7d usage bars showed stale or zeroed data regardless of actual usage. The bars hadn't updated since January 2026.
+- **Root cause:** The `api.anthropic.com/api/oauth/usage` endpoint was disabled by Anthropic in January 2026. The budget-panel extension was silently failing to fetch usage data — returning null, which rendered as disconnected bars. No alternative data source existed.
+- **Fix:** Rate limit headers (`anthropic-ratelimit-unified-5h-utilization`, `anthropic-ratelimit-unified-7d-utilization`) piggybacked on every API call via custom fetch wrapper in `anthropic-vertex-stream.ts`. Bars now update live on every LLM response with no additional API calls. See §5.53.
+- **Files:** `anthropic-vertex-stream.ts`, `ratelimit-store.ts`, `attempt-hooks.ts`, `app.ts`
+
+### FIXED: Tinker UI Missing Operator Scopes After Upstream Merge (2026-04-03)
+
+- **Symptom:** Usage graphs not loading, session list empty, chat send failing, provider health unavailable — all silently after the 2026-03-30 upstream merge.
+- **Root cause:** Upstream's stricter scope gate in `isOperatorUiClient()` didn't include `webchat-ui` (Tinker's client identity). WS connections downgraded to unprivileged scope.
+- **Fix:** Added `webchat-ui` to `isOperatorUiClient()`. See §5.54.
+- **Files:** `src/gateway/server-ws.ts`, `merge-guardian.sh`
+
+### FIXED: Fractal Prompts Appearing as User Messages in Chat (2026-04-03)
+
+- **Symptom:** FRACTAL REFLECTION system prompts appeared as blue user chat bubbles in Tinker UI, making it look like the user had sent a multi-paragraph system message.
+- **Root cause:** `startsWith("# FRACTAL REFLECTION")` detection failed when the WhatsApp gateway-connected system event was prepended to the same message string. The reflection header was no longer the first character.
+- **Fix:** Changed to `includes("# FRACTAL REFLECTION")`. See §5.55.
+- **Files:** `app.ts`, `extensions/tinkerclaw-fractal-reflection/src/fractal-inject.ts`
 
 ### FIXED: Gateway Crash Loop — Missing dist/index.js (2026-03-26)
 
@@ -1632,3 +1735,11 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **UI rendering:** Orange centered bubbles: `⏳ Overload retry 3/20 for anthropic/claude-opus-4-6 — waiting 1s`. Red bubble when exhausted: `⚠ Overload: 20 retries exhausted — falling back`.
 - **Context:** Anthropic deprioritises third-party OAuth clients during peak load. Short retries on the same model are better than jumping to a weaker fallback provider.
 - **Files:** `src/agents/pi-embedded-runner/run.ts` (`overloadDelayMs`, `MAX_OVERLOAD_RETRIES`, event emission), `tinker-ui/src/app.ts` (bubble rendering), `tinker-ui/src/styles/base.css` (`.msg-overload-bubble`)
+
+### 11.16 Rate Limit Header Capture (2026-04-03)
+
+- **Status:** `DEPLOYED`
+- **What:** Anthropic API response headers are captured for real-time usage bar updates in Tinker UI, replacing the now-defunct OAuth usage endpoint. A custom `fetch` wrapper in `anthropic-vertex-stream.ts` reads rate limit utilization headers and stores them for the UI to consume via lifecycle events.
+- **Why:** Anthropic disabled the `api.anthropic.com/api/oauth/usage` endpoint in January 2026. All budget-panel Anthropic usage data went to zero/null. Rate limit headers (`anthropic-ratelimit-unified-5h-utilization`, `7d-utilization`) are returned on every API response and contain the same utilization percentages.
+- **Pipeline:** `anthropic-vertex-stream.ts` (fetch wrapper) → `ratelimit-store.ts` (in-memory keyed by authProfileId) → `emitAgentEvent("ratelimit-update")` → Tinker UI `onEvent()` → `renderUsageBarsOnly()`
+- **Files:** `src/agents/pi-embedded-runner/anthropic-vertex-stream.ts`, `src/agents/auth-profiles/ratelimit-store.ts` (new), `src/agents/pi-embedded-runner/attempt-hooks.ts`, `tinker-ui/src/app.ts`
