@@ -5,6 +5,7 @@ import {
   resolveAnthropicVertexClientRegion,
   resolveAnthropicVertexProjectId,
 } from "../plugin-sdk/anthropic-vertex.js";
+import { updateRateLimitSnapshot } from "./anthropic-ratelimit-store.js";
 
 type AnthropicVertexEffort = NonNullable<AnthropicOptions["effort"]>;
 
@@ -32,6 +33,34 @@ function resolveAnthropicVertexMaxTokens(params: {
 }
 
 /**
+ * FORK: Wraps the global fetch to capture Anthropic rate limit headers
+ * from every API response and store them in the shared snapshot store.
+ * Injected into the AnthropicVertex client via its `fetch` option.
+ */
+function createRateLimitCapturingFetch(): typeof globalThis.fetch {
+  return async (input, init) => {
+    const response = await globalThis.fetch(input, init);
+    const h5Raw = response.headers.get("anthropic-ratelimit-unified-5h-utilization");
+    const d7Raw = response.headers.get("anthropic-ratelimit-unified-7d-utilization");
+    if (h5Raw != null || d7Raw != null) {
+      const h5 = h5Raw != null ? parseFloat(h5Raw) : 0;
+      const d7 = d7Raw != null ? parseFloat(d7Raw) : 0;
+      const d7SonnetRaw = response.headers.get("anthropic-ratelimit-unified-7d-sonnet-utilization");
+      const claim =
+        response.headers.get("anthropic-ratelimit-unified-representative-claim") || "five_hour";
+      updateRateLimitSnapshot({
+        h5: Number.isFinite(h5) ? h5 : 0,
+        d7: Number.isFinite(d7) ? d7 : 0,
+        d7Sonnet: d7SonnetRaw != null ? parseFloat(d7SonnetRaw) || 0 : undefined,
+        claim,
+        ts: Date.now(),
+      });
+    }
+    return response;
+  };
+}
+
+/**
  * Create a StreamFn that routes through pi-ai's `streamAnthropic` with an
  * injected `AnthropicVertex` client.  All streaming, message conversion, and
  * event handling is handled by pi-ai — we only supply the GCP-authenticated
@@ -44,6 +73,7 @@ export function createAnthropicVertexStreamFn(
 ): StreamFn {
   const client = new AnthropicVertex({
     region,
+    fetch: createRateLimitCapturingFetch(),
     ...(baseURL ? { baseURL } : {}),
     ...(projectId ? { projectId } : {}),
   });
