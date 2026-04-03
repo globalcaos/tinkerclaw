@@ -1510,6 +1510,28 @@ function onEvent(evt: any) {
             }
           }
         }
+        // Update usage bars from Anthropic rate limit response headers
+        if (p.data.rateLimit && budgetUsageData?.claude) {
+          const rl = p.data.rateLimit as { h5: number; d7: number; d7Sonnet?: number };
+          if (!budgetUsageData.claude.limits) {
+            budgetUsageData.claude.limits = {} as any;
+          }
+          budgetUsageData.claude.limits.five_hour = {
+            utilization: rl.h5,
+            resets_at: budgetUsageData.claude.limits.five_hour?.resets_at ?? null,
+          };
+          budgetUsageData.claude.limits.seven_day = {
+            utilization: rl.d7,
+            resets_at: budgetUsageData.claude.limits.seven_day?.resets_at ?? null,
+          };
+          if (rl.d7Sonnet != null) {
+            budgetUsageData.claude.limits.seven_day_sonnet = {
+              utilization: rl.d7Sonnet,
+              resets_at: budgetUsageData.claude.limits.seven_day_sonnet?.resets_at ?? null,
+            };
+          }
+          updateBudgetPanel();
+        }
         const endRunId = p.runId;
         const timeoutId = setTimeout(() => {
           pendingRunDeletes.delete(endRunId);
