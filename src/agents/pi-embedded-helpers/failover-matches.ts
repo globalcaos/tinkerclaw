@@ -77,6 +77,8 @@ const ERROR_PATTERNS = {
     "credit balance",
     "plans & billing",
     "insufficient balance",
+    /regain access/i, // FORK: Anthropic spending cap message
+    /specified.*usage limits/i, // FORK: Anthropic API usage limit message
     "insufficient usd or diem balance",
     /requires?\s+more\s+credits/i,
   ],
