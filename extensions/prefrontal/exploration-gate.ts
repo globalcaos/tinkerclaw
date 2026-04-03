@@ -3,24 +3,40 @@
 // Forces agents to explore the codebase before writing code.
 
 const READ_ONLY_TOOLS = new Set([
+  // PascalCase (Claude Code / external tools)
   "Read",
   "Grep",
   "Glob",
   "WebSearch",
   "WebFetch",
-  "memory_search",
-  "recall",
   "TaskGet",
   "TaskList",
+  // lowercase (OpenClaw native tools)
+  "read",
+  "grep",
+  "glob",
+  "web_search",
+  "web_fetch",
+  "memory_search",
+  "recall",
+  "session_status",
+  "sessions_list",
+  "cron",
 ]);
 const MUTATING_TOOLS = new Set([
+  // PascalCase (Claude Code / external tools)
   "Edit",
   "Write",
   "Bash",
   "NotebookEdit",
-  "exec",
   "TaskCreate",
   "TaskUpdate",
+  // lowercase (OpenClaw native tools)
+  "edit",
+  "write",
+  "exec",
+  "apply_patch",
+  "sessions_send",
 ]);
 
 export interface ExplorationGateConfig {
@@ -62,8 +78,8 @@ export function createExplorationGate(config: ExplorationGateConfig): Exploratio
   }
 
   function isMutating(toolName: string): boolean {
-    // If explicitly mutating OR not in the read-only set, treat as mutating (fail-closed)
-    return MUTATING_TOOLS.has(toolName) || !READ_ONLY_TOOLS.has(toolName);
+    // Only block tools explicitly listed as mutating — unknown tools pass through
+    return MUTATING_TOOLS.has(toolName);
   }
 
   function checkTool(toolName: string, ctx?: ExplorationGateCheckContext): ExplorationGateResult {
