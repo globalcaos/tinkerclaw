@@ -66,11 +66,20 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const row = el("div", `pf-node ${isChild ? "pf-child" : "pf-root"}`);
     const color = getProviderColor(node.provider);
     const borderColor = getProviderBorderColor(node.provider);
+    const isActive =
+      node.status !== "completed" && node.status !== "failed" && node.status !== "stalled";
+
+    if (isActive) {
+      row.classList.add("pf-active");
+      row.style.setProperty("--pf-glow", color + "40");
+      row.style.setProperty("--pf-glow-bg", color + "20");
+      row.style.setProperty("--pf-glow-bg2", color + "30");
+    }
 
     if (node.status === "completed") row.classList.add("pf-completed");
     if (node.status === "stalled") {
       row.style.borderColor = "#f85149";
-    } else if (isChild) {
+    } else if (isChild && !isActive) {
       row.style.borderColor = borderColor;
     }
 
@@ -157,12 +166,25 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       .pf-toggle { display: flex; gap: 0.3rem; }
       .pf-toggle-btn { color: #484f58; font-size: 0.65rem; padding: 0.1rem 0.35rem; border: 1px solid #30363d; border-radius: 3px; cursor: pointer; user-select: none; }
       .pf-toggle-btn.pf-active { color: #3fb950; border-color: #3fb950; }
+      @keyframes pf-shimmer {
+        0%   { background-position: 150% 0, center; }
+        100% { background-position: -150% 0, center; }
+      }
       .pf-node { display: flex; align-items: center; gap: 0.4rem; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.35rem 0.6rem; position: relative; }
-      .pf-root { border-color: rgba(163,113,247,0.3); box-shadow: 0 0 8px rgba(163,113,247,0.1); margin-bottom: 0.35rem; }
+      .pf-node.pf-active {
+        border: none;
+        background-image:
+          linear-gradient(90deg, transparent 0%, var(--pf-glow-bg, rgba(107,142,35,0.15)) 47%, var(--pf-glow-bg2, rgba(107,142,35,0.45)) 50%, var(--pf-glow-bg, rgba(107,142,35,0.15)) 53%, transparent 100%),
+          radial-gradient(ellipse at center, var(--pf-glow, rgba(107,142,35,0.2)) 0%, transparent 70%);
+        background-size: 150% 100%, 100% 100%;
+        animation: pf-shimmer 1s ease-in-out infinite;
+      }
+      .pf-root { margin-bottom: 0.35rem; }
+      .pf-root:not(.pf-active) { border-color: rgba(163,113,247,0.3); box-shadow: 0 0 8px rgba(163,113,247,0.1); }
       .pf-children { padding-left: 1rem; border-left: 1px solid rgba(255,255,255,0.1); margin-left: 0.75rem; display: flex; flex-direction: column; gap: 0.3rem; }
       .pf-child { position: relative; }
       .pf-connector { position: absolute; left: -1.1rem; top: 50%; width: 1rem; height: 1px; background: rgba(255,255,255,0.1); }
-      .pf-completed { opacity: 0.5; }
+      .pf-completed { opacity: 0.5; animation: none !important; }
       .pf-logo { display: flex; align-items: center; flex-shrink: 0; }
       .pf-logo svg { width: 13px; height: 13px; }
       .pf-model { font-size: 0.72rem; font-weight: 600; flex-shrink: 0; }
