@@ -419,7 +419,7 @@ const app = $("app")!;
 
 // ─── Provider Colors ───
 const PROVIDER_COLORS: Record<string, string> = {
-  anthropic: "#6b8e23",
+  anthropic: "#D97757",
   google: "#16a34a",
   openai: "#6b7280",
   ollama: "#ca8a04",
@@ -2424,7 +2424,7 @@ function renderThinkingIndicator(): string {
     if (rows) return `<div class="thinking-indicator">${rows}</div>`;
   }
   if (sending) {
-    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#6b8e23;--thinking-glow:#6b8e2340;--thinking-glow-bg:#6b8e2320;--thinking-glow-bg2:#6b8e2330">
+    return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#D97757;--thinking-glow:#D9775740;--thinking-glow-bg:#D9775720;--thinking-glow-bg2:#D9775730">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
   <span class="thinking-stop">Stop</span>
@@ -3828,7 +3828,7 @@ function renderSessionRow(s: any, shortLabel: string): string {
   // FORK: Session glow — shimmer when an LLM run is active for this session
   const liveInfo = sessionHasActiveRuns(s.key);
   const liveClass = liveInfo.live ? " session-live" : "";
-  const liveColor = liveInfo.provider ? PROVIDER_COLORS[liveInfo.provider] || "#6b8f3a" : "#6b8f3a";
+  const liveColor = liveInfo.provider ? PROVIDER_COLORS[liveInfo.provider] || "#D97757" : "#D97757";
   const liveStyle = liveInfo.live
     ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
     : "";
@@ -3862,7 +3862,7 @@ function init() {
   restoreProviderErrors();
   app.innerHTML = `
     <nav class="sidebar">
-      <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#6b8e23"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+      <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#D97757"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
       <div class="nav-sep"></div>
       <button class="nav-btn" data-tab="overview" data-hint="Overview"><svg viewBox="0 0 24 24" style="stroke:#4ade80"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg></button>
       <button class="nav-btn" data-tab="channels" data-hint="Channels"><svg viewBox="0 0 24 24" style="stroke:#60a5fa"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>

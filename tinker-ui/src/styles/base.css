@@ -1050,13 +1050,13 @@ body {
     linear-gradient(
       90deg,
       transparent 0%,
-      var(--thinking-glow-bg, rgba(107, 142, 35, 0.15)) 47%,
-      var(--thinking-glow-bg2, rgba(107, 142, 35, 0.45)) 50%,
-      var(--thinking-glow-bg, rgba(107, 142, 35, 0.15)) 53%,
+      var(--thinking-glow-bg, rgba(217, 119, 87, 0.15)) 47%,
+      var(--thinking-glow-bg2, rgba(217, 119, 87, 0.45)) 50%,
+      var(--thinking-glow-bg, rgba(217, 119, 87, 0.15)) 53%,
       transparent 100%
     ),
     radial-gradient(ellipse at center,
-      var(--thinking-glow, rgba(107, 142, 35, 0.2)) 0%,
+      var(--thinking-glow, rgba(217, 119, 87, 0.2)) 0%,
       transparent 70%
     );
   background-size: 150% 100%, 100% 100%;
@@ -1837,13 +1837,13 @@ body {
     linear-gradient(
       90deg,
       transparent 0%,
-      var(--glow-bg, rgba(107, 142, 35, 0.15)) 47%,
-      var(--glow-bg2, rgba(107, 142, 35, 0.45)) 50%,
-      var(--glow-bg, rgba(107, 142, 35, 0.15)) 53%,
+      var(--glow-bg, rgba(217, 119, 87, 0.15)) 47%,
+      var(--glow-bg2, rgba(217, 119, 87, 0.45)) 50%,
+      var(--glow-bg, rgba(217, 119, 87, 0.15)) 53%,
       transparent 100%
     ),
     radial-gradient(ellipse at center,
-      var(--glow-color, rgba(107, 142, 35, 0.2)) 0%,
+      var(--glow-color, rgba(217, 119, 87, 0.2)) 0%,
       transparent 70%
     );
   background-size: 150% 100%, 100% 100%;
@@ -2500,13 +2500,13 @@ body {
     linear-gradient(
       90deg,
       transparent 0%,
-      var(--session-glow-bg, rgba(107, 142, 35, 0.15)) 47%,
-      var(--session-glow-bg, rgba(107, 142, 35, 0.45)) 50%,
-      var(--session-glow-bg, rgba(107, 142, 35, 0.15)) 53%,
+      var(--session-glow-bg, rgba(217, 119, 87, 0.15)) 47%,
+      var(--session-glow-bg, rgba(217, 119, 87, 0.45)) 50%,
+      var(--session-glow-bg, rgba(217, 119, 87, 0.15)) 53%,
       transparent 100%
     ),
     radial-gradient(ellipse at center,
-      var(--session-glow, rgba(107, 142, 35, 0.2)) 0%,
+      var(--session-glow, rgba(217, 119, 87, 0.2)) 0%,
       transparent 70%
     );
   background-size: 150% 100%, 100% 100%;
