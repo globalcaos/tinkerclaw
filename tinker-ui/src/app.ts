@@ -3071,49 +3071,56 @@ function describeError(reason: string, errMsg: string): string {
   const e = errMsg.toLowerCase();
 
   if (reason === "billing") {
-    // Extract reset date from "regain access on 2026-04-01 at 00:00 UTC"
     const resetMatch = errMsg.match(/regain access on (\d{4}-\d{2}-\d{2}(?: at [^.]+)?)/i);
-    if (resetMatch) return `billing cap — resets ${resetMatch[1]}`;
-    if (/credit|payment/i.test(errMsg)) return "billing — no credits";
-    return "billing cap reached";
+    if (resetMatch) return `Spending cap reached — resets ${resetMatch[1]}`;
+    if (/credit|payment/i.test(errMsg)) return "No credits remaining";
+    return "Spending cap reached";
   }
 
   if (reason === "auth" || reason === "auth_permanent") {
+    if (/OAuth authentication.*not.*supported/i.test(errMsg))
+      return "OAuth API access disabled — click to re-authenticate";
     if (/refresh token.*(?:not found|invalid|revoked|expired)/i.test(errMsg))
-      return "OAuth token revoked — needs re-login";
-    if (/OAuth token refresh failed/i.test(errMsg)) return "OAuth refresh failed — needs re-login";
-    if (/token.*expired/i.test(errMsg)) return "token expired";
-    if (/invalid.*key|invalid.*api/i.test(errMsg)) return "invalid API key";
-    if (/unauthorized|forbidden|permission/i.test(errMsg)) return "access denied";
-    return reason === "auth_permanent" ? "auth permanently failed" : "auth error";
+      return "OAuth token revoked — click to re-authenticate";
+    if (/OAuth token refresh failed/i.test(errMsg))
+      return "OAuth refresh failed — click to re-authenticate";
+    if (/token.*expired/i.test(errMsg)) return "Token expired — click to re-authenticate";
+    if (/invalid.*key|invalid.*api/i.test(errMsg)) return "Invalid API key";
+    if (/unauthorized|forbidden|permission/i.test(errMsg)) return "Access denied";
+    return reason === "auth_permanent"
+      ? "Auth permanently failed — click to re-authenticate"
+      : "Auth error — click to re-authenticate";
+  }
+
+  if (reason === "api_key") {
+    return "API key invalid or revoked";
   }
 
   if (reason === "rate_limit") {
     if (/retry.after.*(\d+)/i.test(errMsg)) {
       const secs = errMsg.match(/retry.after.*?(\d+)/i);
-      return secs ? `rate limited — retry in ${secs[1]}s` : "rate limited";
+      return secs ? `Rate limited — retry in ${secs[1]}s` : "Rate limited";
     }
     if (/tokens? per minute|tpm/i.test(errMsg)) return "TPM limit hit";
     if (/requests? per minute|rpm/i.test(errMsg)) return "RPM limit hit";
-    if (/quota/i.test(errMsg)) return "quota exceeded";
-    return "rate limited";
+    if (/quota/i.test(errMsg)) return "Quota exceeded";
+    return "Rate limited";
   }
 
-  if (reason === "timeout") return "timeout";
-  if (reason === "model_not_found") return "model not found";
-  if (reason === "session_expired") return "session expired";
-  if (reason === "format") return "request format rejected";
-  if (reason === "cooldown") return "in cooldown";
-  if (reason === "overloaded" || /overloaded|503|capacity/i.test(e)) return "overloaded";
+  if (reason === "timeout") return "Request timed out — server didn't respond";
+  if (reason === "model_not_found") return "Model not available on this provider";
+  if (reason === "session_expired") return "Session ended";
+  if (reason === "format") return "Request format rejected by provider";
+  if (reason === "cooldown") return "Cooling down after repeated failures";
+  if (reason === "overloaded" || /overloaded|503|capacity/i.test(e))
+    return "Server overloaded — retrying";
 
-  // Fallback: show truncated raw message if we have one, otherwise the reason code
   if (errMsg && errMsg.length > 0) {
-    // Try to extract just the message field from JSON error responses
     const msgMatch = errMsg.match(/"message"\s*:\s*"([^"]{1,80})"/);
     if (msgMatch) return msgMatch[1];
     return errMsg.slice(0, 80);
   }
-  return reason || "unknown error";
+  return reason || "Unknown error";
 }
 
 const SHORT_NAMES: Record<string, string> = {
@@ -3283,18 +3290,28 @@ function updateBudgetPanel() {
 function shortErrorLabel(reason: string): string {
   switch (reason) {
     case "billing":
-      return "billing cap";
+      return "B-CAP";
     case "rate_limit":
-      return "rate limited";
+      return "LIMIT";
     case "overloaded":
-      return "overloaded";
+      return "BUSY";
     case "auth":
     case "auth_permanent":
-      return "auth error";
+      return "AUTH";
+    case "api_key":
+      return "KEY";
     case "timeout":
-      return "timeout";
+      return "SLOW";
+    case "model_not_found":
+      return "404";
+    case "cooldown":
+      return "WAIT";
+    case "session_expired":
+      return "EXPIRED";
+    case "format":
+      return "FORMAT";
     default:
-      return "error";
+      return "FAIL";
   }
 }
 
