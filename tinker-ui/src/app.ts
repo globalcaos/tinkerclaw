@@ -1469,6 +1469,7 @@ function onEvent(evt: any) {
         sending = true;
         saveActiveRuns();
         updateBudgetPanel();
+        updateSessionsPanel();
         updatePrefrontalTree();
         updateChat();
         updateBtn();
@@ -1551,6 +1552,7 @@ function onEvent(evt: any) {
             sending = false;
           }
           updateBudgetPanel();
+          updateSessionsPanel();
           updatePrefrontalTree();
           updateChat();
           updateBtn();
