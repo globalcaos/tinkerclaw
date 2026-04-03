@@ -3139,8 +3139,22 @@ function modelName(id: string): string {
   const name = id.split("/").slice(1).join("/") || id;
   const clean = name.replace(/^claude-/, "");
   let short = SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
-  short = short.replace("opus", "op").replace("sonnet", "sn").replace("haiku", "hk");
+  // Anthropic model names: opus-4-6 → opus4.6, sonnet-4-6 → sonnet4.6, haiku-4-5 → haiku4.5
+  short = short.replace(/^(opus|sonnet|haiku)-(\d+)-(\d+).*$/, "$1$2.$3");
   return short;
+}
+
+function simplifyProfileLabel(label: string, mode: string): string {
+  // "default" with api_key mode → "api"
+  if (label === "default") return mode === "api_key" ? "api" : "";
+  // cli-gm / oauth-gm → oauth (GM is primary, no suffix needed)
+  if (/^(?:cli|oauth)-gm$/i.test(label)) return "oauth";
+  // cli-sv / oauth-sv → oauth-sv
+  if (/^(?:cli|oauth)-sv$/i.test(label)) return "oauth-sv";
+  // Other cli-*/oauth-* → oauth-{suffix}
+  const oauthMatch = label.match(/^(?:cli|oauth)-(.+)$/i);
+  if (oauthMatch) return `oauth-${oauthMatch[1]}`;
+  return label;
 }
 
 function providerOf(id: string): string {
@@ -3194,14 +3208,10 @@ function updateBudgetPanel() {
       const keyId = keys[0];
       const keyLabel = keyId ? authProfiles?.[keyId]?.label || keyId.split(":")[1] || keyId : "";
       const mode = keyId ? authProfiles?.[keyId]?.mode || "" : "";
-      // Hide redundant "default(api_key)" tags — only show meaningful labels
-      const showSuffix = keyLabel && keyLabel !== "default";
-      const suffix =
-        showSuffix && mode && mode !== "api_key"
-          ? ` \u00b7 ${keyLabel} (${mode})`
-          : showSuffix
-            ? ` \u00b7 ${keyLabel}`
-            : "";
+      // Simplify profile labels: cli-gm/oauth-gm → oauth, cli-sv/oauth-sv → oauth-sv, default → api
+      const shortProfileLabel = simplifyProfileLabel(keyLabel, mode);
+      const showSuffix = shortProfileLabel.length > 0;
+      const suffix = showSuffix ? ` \u00b7 ${shortProfileLabel}` : "";
       html += renderModelRow(
         modelId,
         provider,
@@ -3220,7 +3230,8 @@ function updateBudgetPanel() {
       for (let ki = 0; ki < keys.length; ki++) {
         const keyId = keys[ki];
         const prof = authProfiles?.[keyId] || {};
-        const keyLabel = prof.label || keyId.split(":")[1] || keyId;
+        const rawKeyLabel = prof.label || keyId.split(":")[1] || keyId;
+        const keyLabel = simplifyProfileLabel(rawKeyLabel, prof.mode || "");
         html += renderAuthKeyRow(
           keyId,
           keyLabel,
