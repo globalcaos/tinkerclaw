@@ -16,6 +16,14 @@ Tinkerclaw is a personal AI assistant fork of OpenClaw with cognitive extensions
 - **Budget Panel** — live token usage tracking with rate limit header capture
 - **Tinker UI** — custom webchat with model panel, session management, thinking indicators
 
+## Step 0: Clone the Repo
+
+```bash
+git clone https://github.com/globalcaos/tinkerclaw.git ~/src/tinkerclaw
+cd ~/src/tinkerclaw
+git remote add upstream https://github.com/openclaw/openclaw.git
+```
+
 ## Prerequisites
 
 ### Required
@@ -35,7 +43,7 @@ Tinkerclaw is a personal AI assistant fork of OpenClaw with cognitive extensions
 ## Step 1: Install Dependencies
 
 ```bash
-cd ~/src/tinkerclaw   # or wherever you cloned the repo
+cd ~/src/tinkerclaw
 pnpm install
 ```
 
@@ -47,6 +55,20 @@ ls node_modules/better-sqlite3/build/Release/better_sqlite3.node
 
 If missing: `pnpm rebuild better-sqlite3 opusscript`
 
+Install the `openclaw` CLI globally:
+
+```bash
+pnpm link --global
+```
+
+Verify: `which openclaw` should point to your repo's `openclaw.mjs`.
+
+Install Tinker UI dependencies:
+
+```bash
+cd tinker-ui && pnpm install && cd ..
+```
+
 ## Step 2: Apply Fork Wiring
 
 After every `git pull` from upstream, the fork patches must be re-applied:
@@ -55,13 +77,13 @@ After every `git pull` from upstream, the fork patches must be re-applied:
 node ~/.openclaw/fork-scripts/apply-fork-wiring.mjs
 ```
 
-If the script doesn't exist yet, copy it from the workspace:
+If `~/.openclaw/fork-scripts/` doesn't exist yet, bootstrap it:
 
 ```bash
 mkdir -p ~/.openclaw/fork-scripts
-cp scripts/apply-fork-wiring.mjs ~/.openclaw/fork-scripts/
-cp scripts/merge-guardian.sh ~/.openclaw/fork-scripts/
-cp scripts/safe-cron-merge.sh ~/.openclaw/fork-scripts/
+# The scripts live in ~/.openclaw/fork-scripts/, not in the repo's scripts/ dir.
+# Copy from an existing install, or ask the fork maintainer for the latest versions.
+# Required files: apply-fork-wiring.mjs, merge-guardian.sh, safe-cron-merge.sh
 ```
 
 Then verify:
@@ -276,14 +298,24 @@ systemctl --user enable --now openclaw-gateway tinker-ui
 
 ## Step 8: Verify Everything
 
+**If using systemd (Step 7):**
+
 ```bash
-# Check gateway starts
-openclaw-gateway &
-
-# Wait for startup (~30s), then check
+systemctl --user start openclaw-gateway
 journalctl --user -u openclaw-gateway --since '1 min ago' | grep -E 'listening|error|missing'
-
 # Expected: "listening on ws://127.0.0.1:18789"
+```
+
+**If running manually (no systemd):**
+
+```bash
+openclaw gateway start
+# Wait ~30s for startup
+```
+
+**Then verify:**
+
+```bash
 # Check plugins loaded
 journalctl --user -u openclaw-gateway --since '1 min ago' | grep -E 'ready|loaded|registered'
 
@@ -306,7 +338,7 @@ bash ~/.openclaw/fork-scripts/merge-guardian.sh         # Verify wiring
 pnpm install                                            # Install new deps
 node scripts/tsdown-build.mjs && node scripts/runtime-postbuild.mjs && node scripts/build-stamp.mjs
 pnpm rebuild better-sqlite3 opusscript                  # Rebuild native deps if needed
-openclaw-restart --full                                 # Restart gateway
+openclaw gateway restart                                # Restart gateway
 ```
 
 ## Troubleshooting
