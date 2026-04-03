@@ -1,5 +1,6 @@
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
+import { getRateLimitSnapshot } from "./anthropic-ratelimit-store.js";
 import {
   buildApiErrorObservationFields,
   buildTextObservationFields,
@@ -95,6 +96,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
     });
   } else {
     ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId} isError=${isError}`);
+    const rateLimit = ctx.params.modelProvider === "anthropic" ? getRateLimitSnapshot() : undefined;
     emitAgentEvent({
       runId: ctx.params.runId,
       stream: "lifecycle",
@@ -105,6 +107,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
         model: ctx.params.modelId,
         modelProvider: ctx.params.modelProvider,
         sessionKey: ctx.params.sessionKey,
+        ...(rateLimit ? { rateLimit } : {}),
       },
     });
     void ctx.params.onAgentEvent?.({
