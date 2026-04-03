@@ -96,6 +96,7 @@ const ERROR_PATTERNS = {
     "invalid token",
     "authentication",
     "re-authenticate",
+    /oauth.*(?:not supported|disabled|rejected)/i,
     "oauth token refresh failed",
     "unauthorized",
     "forbidden",
