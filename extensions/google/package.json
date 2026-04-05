@@ -4,6 +4,9 @@
   "private": true,
   "description": "OpenClaw Google plugin",
   "type": "module",
+  "dependencies": {
+    "@google/genai": "^1.48.0"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
