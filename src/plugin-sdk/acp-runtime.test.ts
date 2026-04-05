@@ -16,7 +16,9 @@ import { tryDispatchAcpReplyHook } from "./acp-runtime.js";
 const event = {
   ctx: buildTestCtx({
     SessionKey: "agent:test:session",
-    BodyForAgent: "hello",
+    CommandBody: "/acp cancel",
+    BodyForCommands: "/acp cancel",
+    BodyForAgent: "/acp cancel",
   }),
   runId: "run-1",
   sessionKey: "agent:test:session",
