@@ -35,6 +35,18 @@ export type MemoryWikiStatus = {
   warnings: MemoryWikiStatusWarning[];
 };
 
+export type MemoryWikiDoctorFix = {
+  code: MemoryWikiStatusWarning["code"];
+  message: string;
+};
+
+export type MemoryWikiDoctorReport = {
+  healthy: boolean;
+  warningCount: number;
+  status: MemoryWikiStatus;
+  fixes: MemoryWikiDoctorFix[];
+};
+
 type ResolveMemoryWikiStatusDeps = {
   pathExists?: (inputPath: string) => Promise<boolean>;
   resolveCommand?: (command: string) => Promise<string | null>;
@@ -172,6 +184,30 @@ export async function resolveMemoryWikiStatus(
   };
 }
 
+export function buildMemoryWikiDoctorReport(status: MemoryWikiStatus): MemoryWikiDoctorReport {
+  const fixes = status.warnings.map((warning) => ({
+    code: warning.code,
+    message:
+      warning.code === "vault-missing"
+        ? "Run `openclaw wiki init` to create the vault layout."
+        : warning.code === "obsidian-cli-missing"
+          ? "Install the official Obsidian CLI or disable `obsidian.useOfficialCli`."
+          : warning.code === "bridge-disabled"
+            ? "Enable `plugins.entries.memory-wiki.config.bridge.enabled` or switch vaultMode away from `bridge`."
+            : warning.code === "unsafe-local-disabled"
+              ? "Enable `unsafeLocal.allowPrivateMemoryCoreAccess` or switch vaultMode away from `unsafe-local`."
+              : warning.code === "unsafe-local-paths-missing"
+                ? "Add explicit `unsafeLocal.paths` entries before running unsafe-local imports."
+                : "Disable private memory-core access unless you explicitly want unsafe-local mode.",
+  }));
+  return {
+    healthy: status.warnings.length === 0,
+    warningCount: status.warnings.length,
+    status,
+    fixes,
+  };
+}
+
 export function renderMemoryWikiStatus(status: MemoryWikiStatus): string {
   const lines = [
     `Wiki vault mode: ${status.vaultMode}`,
@@ -187,6 +223,23 @@ export function renderMemoryWikiStatus(status: MemoryWikiStatus): string {
     lines.push("", "Warnings:");
     for (const warning of status.warnings) {
       lines.push(`- ${warning.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function renderMemoryWikiDoctor(report: MemoryWikiDoctorReport): string {
+  const lines = [
+    report.healthy ? "Wiki doctor: healthy" : `Wiki doctor: ${report.warningCount} issue(s) found`,
+    "",
+    renderMemoryWikiStatus(report.status),
+  ];
+
+  if (report.fixes.length > 0) {
+    lines.push("", "Suggested fixes:");
+    for (const fix of report.fixes) {
+      lines.push(`- ${fix.message}`);
     }
   }
 

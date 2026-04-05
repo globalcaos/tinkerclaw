@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { resolveMemoryWikiConfig } from "./config.js";
-import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
+import {
+  buildMemoryWikiDoctorReport,
+  renderMemoryWikiDoctor,
+  renderMemoryWikiStatus,
+  resolveMemoryWikiStatus,
+} from "./status.js";
 
 describe("resolveMemoryWikiStatus", () => {
   it("reports missing vault and missing requested obsidian cli", async () => {
@@ -81,5 +86,30 @@ describe("renderMemoryWikiStatus", () => {
     expect(rendered).toContain("Pages: 0 sources, 0 entities, 0 concepts, 0 syntheses, 0 reports");
     expect(rendered).toContain("Warnings:");
     expect(rendered).toContain("Wiki vault has not been initialized yet.");
+  });
+});
+
+describe("memory wiki doctor", () => {
+  it("builds actionable fixes from status warnings", async () => {
+    const config = resolveMemoryWikiConfig(
+      {
+        vault: { path: "/tmp/wiki" },
+        obsidian: { enabled: true, useOfficialCli: true },
+      },
+      { homedir: "/Users/tester" },
+    );
+
+    const status = await resolveMemoryWikiStatus(config, {
+      pathExists: async () => false,
+      resolveCommand: async () => null,
+    });
+    const report = buildMemoryWikiDoctorReport(status);
+    const rendered = renderMemoryWikiDoctor(report);
+
+    expect(report.healthy).toBe(false);
+    expect(report.warningCount).toBe(2);
+    expect(report.fixes.map((fix) => fix.code)).toEqual(["vault-missing", "obsidian-cli-missing"]);
+    expect(rendered).toContain("Suggested fixes:");
+    expect(rendered).toContain("openclaw wiki init");
   });
 });

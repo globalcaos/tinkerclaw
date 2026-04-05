@@ -19,10 +19,12 @@ describe("memory-wiki cli", () => {
     vi.spyOn(process.stdout, "write").mockImplementation(
       (() => true) as typeof process.stdout.write,
     );
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.exitCode = undefined;
   });
 
   it("registers apply synthesis and writes a synthesis page", async () => {
@@ -122,5 +124,25 @@ cli note
     });
     expect(parsed.frontmatter).not.toHaveProperty("confidence");
     expect(parsed.body).toContain("cli note");
+  });
+
+  it("runs wiki doctor and sets a non-zero exit code when warnings exist", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-cli-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      {
+        vault: { path: rootDir },
+        obsidian: { enabled: true, useOfficialCli: true },
+      },
+      { homedir: "/Users/tester" },
+    );
+    const program = new Command();
+    program.name("test");
+    registerWikiCli(program, config);
+    await fs.rm(rootDir, { recursive: true, force: true });
+
+    await program.parseAsync(["wiki", "doctor", "--json"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
   });
 });
