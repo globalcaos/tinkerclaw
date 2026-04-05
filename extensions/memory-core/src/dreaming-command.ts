@@ -1,12 +1,12 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/memory-core";
 import {
-  resolveMemoryLightSleepConfig,
-  resolveMemoryRemSleepConfig,
-  resolveMemorySleepConfig,
+  resolveMemoryLightDreamingConfig,
+  resolveMemoryRemDreamingConfig,
+  resolveMemoryDreamingConfig,
 } from "openclaw/plugin-sdk/memory-core-host-status";
 import { resolveShortTermPromotionDreamingConfig } from "./dreaming.js";
 
-type SleepPhaseName = "light" | "deep" | "rem";
+type DreamingPhaseName = "light" | "deep" | "rem";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -15,7 +15,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function normalizeSleepPhase(value: unknown): SleepPhaseName | null {
+function normalizeDreamingPhase(value: unknown): DreamingPhaseName | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -31,16 +31,16 @@ function resolveMemoryCorePluginConfig(cfg: OpenClawConfig): Record<string, unkn
   return asRecord(entry?.config) ?? {};
 }
 
-function updateSleepEnabledInConfig(cfg: OpenClawConfig, enabled: boolean): OpenClawConfig {
+function updateDreamingEnabledInConfig(cfg: OpenClawConfig, enabled: boolean): OpenClawConfig {
   const entries = { ...(cfg.plugins?.entries ?? {}) };
   const existingEntry = asRecord(entries["memory-core"]) ?? {};
   const existingConfig = asRecord(existingEntry.config) ?? {};
-  const existingSleep = asRecord(existingConfig.sleep) ?? {};
+  const existingSleep = asRecord(existingConfig.dreaming) ?? {};
   entries["memory-core"] = {
     ...existingEntry,
     config: {
       ...existingConfig,
-      sleep: {
+      dreaming: {
         ...existingSleep,
         enabled,
       },
@@ -56,22 +56,22 @@ function updateSleepEnabledInConfig(cfg: OpenClawConfig, enabled: boolean): Open
   };
 }
 
-function updateSleepPhaseEnabledInConfig(
+function updateDreamingPhaseEnabledInConfig(
   cfg: OpenClawConfig,
-  phase: SleepPhaseName,
+  phase: DreamingPhaseName,
   enabled: boolean,
 ): OpenClawConfig {
   const entries = { ...(cfg.plugins?.entries ?? {}) };
   const existingEntry = asRecord(entries["memory-core"]) ?? {};
   const existingConfig = asRecord(existingEntry.config) ?? {};
-  const existingSleep = asRecord(existingConfig.sleep) ?? {};
+  const existingSleep = asRecord(existingConfig.dreaming) ?? {};
   const existingPhases = asRecord(existingSleep.phases) ?? {};
   const existingPhase = asRecord(existingPhases[phase]) ?? {};
   entries["memory-core"] = {
     ...existingEntry,
     config: {
       ...existingConfig,
-      sleep: {
+      dreaming: {
         ...existingSleep,
         phases: {
           ...existingPhases,
@@ -107,20 +107,20 @@ function formatPhaseGuide(): string {
 
 function formatStatus(cfg: OpenClawConfig): string {
   const pluginConfig = resolveMemoryCorePluginConfig(cfg);
-  const sleep = resolveMemorySleepConfig({
+  const dreaming = resolveMemoryDreamingConfig({
     pluginConfig,
     cfg,
   });
   const deep = resolveShortTermPromotionDreamingConfig({ pluginConfig, cfg });
-  const light = resolveMemoryLightSleepConfig({ pluginConfig, cfg });
-  const rem = resolveMemoryRemSleepConfig({ pluginConfig, cfg });
-  const timezone = sleep.timezone ? ` (${sleep.timezone})` : "";
+  const light = resolveMemoryLightDreamingConfig({ pluginConfig, cfg });
+  const rem = resolveMemoryRemDreamingConfig({ pluginConfig, cfg });
+  const timezone = dreaming.timezone ? ` (${dreaming.timezone})` : "";
 
   return [
-    "Sleep status:",
-    `- enabled: ${formatEnabled(sleep.enabled)}${timezone}`,
-    `- storage: ${sleep.storage.mode}${sleep.storage.separateReports ? " + reports" : ""}`,
-    `- verboseLogging: ${formatEnabled(sleep.verboseLogging)}`,
+    "Dreaming status:",
+    `- enabled: ${formatEnabled(dreaming.enabled)}${timezone}`,
+    `- storage: ${dreaming.storage.mode}${dreaming.storage.separateReports ? " + reports" : ""}`,
+    `- verboseLogging: ${formatEnabled(dreaming.verboseLogging)}`,
     `- light: ${formatEnabled(light.enabled)} · cadence=${light.enabled ? light.cron : "disabled"} · lookbackDays=${light.lookbackDays} · limit=${light.limit}`,
     `- deep: ${formatEnabled(deep.enabled)} · cadence=${deep.enabled ? deep.cron : "disabled"} · limit=${deep.limit} · minScore=${deep.minScore} · minRecallCount=${deep.minRecallCount} · minUniqueQueries=${deep.minUniqueQueries} · recencyHalfLifeDays=${deep.recencyHalfLifeDays} · maxAgeDays=${deep.maxAgeDays ?? "none"}`,
     `- rem: ${formatEnabled(rem.enabled)} · cadence=${rem.enabled ? rem.cron : "disabled"} · lookbackDays=${rem.lookbackDays} · limit=${rem.limit} · minPatternStrength=${rem.minPatternStrength}`,
@@ -129,10 +129,10 @@ function formatStatus(cfg: OpenClawConfig): string {
 
 function formatUsage(includeStatus: string): string {
   return [
-    "Usage: /sleep status",
-    "Usage: /sleep on|off",
-    "Usage: /sleep enable light|deep|rem",
-    "Usage: /sleep disable light|deep|rem",
+    "Usage: /dreaming status",
+    "Usage: /dreaming on|off",
+    "Usage: /dreaming enable light|deep|rem",
+    "Usage: /dreaming disable light|deep|rem",
     "",
     includeStatus,
     "",
@@ -141,10 +141,10 @@ function formatUsage(includeStatus: string): string {
   ].join("\n");
 }
 
-export function registerSleepCommand(api: OpenClawPluginApi): void {
+export function registerDreamingCommand(api: OpenClawPluginApi): void {
   api.registerCommand({
-    name: "sleep",
-    description: "Configure memory sleep phases and durable promotion behavior.",
+    name: "dreaming",
+    description: "Configure memory dreaming phases and durable promotion behavior.",
     acceptsArgs: true,
     handler: async (ctx) => {
       const args = ctx.args?.trim() ?? "";
@@ -169,23 +169,25 @@ export function registerSleepCommand(api: OpenClawPluginApi): void {
 
       if (firstToken === "on" || firstToken === "off") {
         const enabled = firstToken === "on";
-        const nextConfig = updateSleepEnabledInConfig(currentConfig, enabled);
-        await api.runtime.config.writeConfigFile(nextConfig);
-        return {
-          text: [`Sleep ${enabled ? "enabled" : "disabled"}.`, "", formatStatus(nextConfig)].join(
-            "\n",
-          ),
-        };
-      }
-
-      const phase = normalizeSleepPhase(secondToken);
-      if ((firstToken === "enable" || firstToken === "disable") && phase) {
-        const enabled = firstToken === "enable";
-        const nextConfig = updateSleepPhaseEnabledInConfig(currentConfig, phase, enabled);
+        const nextConfig = updateDreamingEnabledInConfig(currentConfig, enabled);
         await api.runtime.config.writeConfigFile(nextConfig);
         return {
           text: [
-            `${phase.toUpperCase()} sleep ${enabled ? "enabled" : "disabled"}.`,
+            `Dreaming ${enabled ? "enabled" : "disabled"}.`,
+            "",
+            formatStatus(nextConfig),
+          ].join("\n"),
+        };
+      }
+
+      const phase = normalizeDreamingPhase(secondToken);
+      if ((firstToken === "enable" || firstToken === "disable") && phase) {
+        const enabled = firstToken === "enable";
+        const nextConfig = updateDreamingPhaseEnabledInConfig(currentConfig, phase, enabled);
+        await api.runtime.config.writeConfigFile(nextConfig);
+        return {
+          text: [
+            `${phase.toUpperCase()} phase ${enabled ? "enabled" : "disabled"}.`,
             "",
             formatStatus(nextConfig),
           ].join("\n"),
@@ -196,5 +198,3 @@ export function registerSleepCommand(api: OpenClawPluginApi): void {
     },
   });
 }
-
-export const registerDreamingCommand = registerSleepCommand;

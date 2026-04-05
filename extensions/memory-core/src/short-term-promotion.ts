@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
-import { formatMemorySleepDay } from "openclaw/plugin-sdk/memory-core-host-status";
+import { formatMemoryDreamingDay } from "openclaw/plugin-sdk/memory-core-host-status";
 import {
   deriveConceptTags,
   MAX_CONCEPT_TAGS,
@@ -605,7 +605,7 @@ export async function recordShortTermRecalls(params: {
       const queryHashes = mergeQueryHashes(existing?.queryHashes ?? [], queryHash);
       const recallDays = mergeRecentDistinct(
         existing?.recallDays ?? [],
-        formatMemorySleepDay(nowMs, params.timezone),
+        formatMemoryDreamingDay(nowMs, params.timezone),
         MAX_RECALL_DAYS,
       );
       const conceptTags = deriveConceptTags({ path: normalizedPath, snippet });
@@ -929,7 +929,7 @@ function buildPromotionSection(
   nowMs: number,
   timezone?: string,
 ): string {
-  const sectionDate = formatMemorySleepDay(nowMs, timezone);
+  const sectionDate = formatMemoryDreamingDay(nowMs, timezone);
   const lines = ["", `## Promoted From Short-Term Memory (${sectionDate})`, ""];
 
   for (const candidate of candidates) {

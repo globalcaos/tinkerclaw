@@ -1,21 +1,21 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/memory-core";
 import {
-  DEFAULT_MEMORY_DEEP_SLEEP_CRON_EXPR as DEFAULT_MEMORY_DREAMING_CRON_EXPR,
-  DEFAULT_MEMORY_DEEP_SLEEP_LIMIT as DEFAULT_MEMORY_DREAMING_LIMIT,
-  DEFAULT_MEMORY_DEEP_SLEEP_MIN_RECALL_COUNT as DEFAULT_MEMORY_DREAMING_MIN_RECALL_COUNT,
-  DEFAULT_MEMORY_DEEP_SLEEP_MIN_SCORE as DEFAULT_MEMORY_DREAMING_MIN_SCORE,
-  DEFAULT_MEMORY_DEEP_SLEEP_MIN_UNIQUE_QUERIES as DEFAULT_MEMORY_DREAMING_MIN_UNIQUE_QUERIES,
-  DEFAULT_MEMORY_DEEP_SLEEP_RECENCY_HALF_LIFE_DAYS as DEFAULT_MEMORY_DREAMING_RECENCY_HALF_LIFE_DAYS,
+  DEFAULT_MEMORY_DEEP_DREAMING_CRON_EXPR as DEFAULT_MEMORY_DREAMING_CRON_EXPR,
+  DEFAULT_MEMORY_DEEP_DREAMING_LIMIT as DEFAULT_MEMORY_DREAMING_LIMIT,
+  DEFAULT_MEMORY_DEEP_DREAMING_MIN_RECALL_COUNT as DEFAULT_MEMORY_DREAMING_MIN_RECALL_COUNT,
+  DEFAULT_MEMORY_DEEP_DREAMING_MIN_SCORE as DEFAULT_MEMORY_DREAMING_MIN_SCORE,
+  DEFAULT_MEMORY_DEEP_DREAMING_MIN_UNIQUE_QUERIES as DEFAULT_MEMORY_DREAMING_MIN_UNIQUE_QUERIES,
+  DEFAULT_MEMORY_DEEP_DREAMING_RECENCY_HALF_LIFE_DAYS as DEFAULT_MEMORY_DREAMING_RECENCY_HALF_LIFE_DAYS,
   resolveMemoryCorePluginConfig,
-  resolveMemoryDeepSleepConfig,
-  resolveMemorySleepWorkspaces,
+  resolveMemoryDeepDreamingConfig,
+  resolveMemoryDreamingWorkspaces,
 } from "openclaw/plugin-sdk/memory-core-host-status";
+import { writeDeepDreamingReport } from "./dreaming-markdown.js";
 import {
   applyShortTermPromotions,
   repairShortTermPromotionArtifacts,
   rankShortTermPromotionCandidates,
 } from "./short-term-promotion.js";
-import { writeDeepSleepReport } from "./sleep-markdown.js";
 
 const MANAGED_DREAMING_CRON_NAME = "Memory Dreaming Promotion";
 const MANAGED_DREAMING_CRON_TAG = "[managed-by=memory-core.short-term-promotion]";
@@ -267,7 +267,7 @@ export function resolveShortTermPromotionDreamingConfig(params: {
   pluginConfig?: Record<string, unknown>;
   cfg?: OpenClawConfig;
 }): ShortTermPromotionDreamingConfig {
-  const resolved = resolveMemoryDeepSleepConfig(params);
+  const resolved = resolveMemoryDeepDreamingConfig(params);
   return {
     enabled: resolved.enabled,
     cron: resolved.cron,
@@ -372,7 +372,7 @@ export async function runShortTermDreamingPromotionIfTriggered(params: {
   const recencyHalfLifeDays =
     params.config.recencyHalfLifeDays ?? DEFAULT_MEMORY_DREAMING_RECENCY_HALF_LIFE_DAYS;
   const workspaceCandidates = params.cfg
-    ? resolveMemorySleepWorkspaces(params.cfg).map((entry) => entry.workspaceDir)
+    ? resolveMemoryDreamingWorkspaces(params.cfg).map((entry) => entry.workspaceDir)
     : [];
   const seenWorkspaces = new Set<string>();
   const workspaces = workspaceCandidates.filter((workspaceDir) => {
@@ -467,7 +467,7 @@ export async function runShortTermDreamingPromotionIfTriggered(params: {
           `memory-core: dreaming applied details [workspace=${workspaceDir}] ${appliedSummary}`,
         );
       }
-      await writeDeepSleepReport({
+      await writeDeepDreamingReport({
         workspaceDir,
         bodyLines: reportLines,
         timezone: params.config.timezone,

@@ -48,11 +48,11 @@ export {
 } from "./memory-core-host-runtime-cli.js";
 export {
   resolveMemoryCorePluginConfig,
-  formatMemorySleepDay,
-  isSameMemorySleepDay,
-  resolveMemoryDeepSleepConfig,
-  resolveMemorySleepConfig,
-  resolveMemorySleepWorkspaces,
+  formatMemoryDreamingDay,
+  isSameMemoryDreamingDay,
+  resolveMemoryDeepDreamingConfig,
+  resolveMemoryDreamingConfig,
+  resolveMemoryDreamingWorkspaces,
 } from "./memory-core-host-status.js";
 export {
   listMemoryFiles,
