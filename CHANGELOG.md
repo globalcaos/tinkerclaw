@@ -78,6 +78,7 @@ Docs: https://docs.openclaw.ai
 - MS Teams: download inline DM images via Graph API and preserve channel reply threading in proactive fallback. (#52212, #55198) Thanks @Ted-developer and @hyojin.
 - MS Teams: replace the deprecated Teams SDK HttpPlugin stub with `httpServerAdapter` so recurring gateway deprecation warnings stop firing and the Express 5 compatibility workaround stays on the supported SDK path. (#60939) Thanks @coolramukaka-sys.
 - Control UI/chat: add a per-session thinking-level picker in the chat header and mobile chat settings, and keep the browser bundle on UI-local thinking/session-key helpers so Safari no longer crashes on Node-only imports before rendering chat controls.
+- Sandbox/SSH: reject hardlinked files during cross-device rename fallback so EXDEV file copies preserve the same pinned file-boundary checks as direct reads.
 - Control UI: keep Stop visible during tool-only execution, preserve pending-send busy state, and clear stale ClawHub search results as soon as the query changes. (#54528, #59800, #60267) Thanks @chziyue and @frankekn.
 - Control UI/avatar: honor `ui.assistant.avatar` when serving `/avatar/:agentId` so Appearance UI avatar paths stop falling back to initials placeholders. (#60778) Thanks @hannasdev.
 - Control UI/cron: highlight the Cron refresh button while refresh is in flight so the page's loading state stays visible even when prior data remains on screen. (#60394) Thanks @coder-zhuzm.
