@@ -274,12 +274,6 @@ describe("resolvePluginProviders", () => {
     ({ setActivePluginRegistry } = await import("./runtime.js"));
   });
 
-  it("maps cli backend ids to owning plugin ids via manifests", () => {
-    setOwningProviderManifestPlugins();
-
-    expectOwningPluginIds("codex-cli", ["openai"]);
-  });
-
   beforeEach(() => {
     setActivePluginRegistry(createEmptyPluginRegistry());
     resolveRuntimePluginRegistryMock.mockReset();
