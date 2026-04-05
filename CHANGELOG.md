@@ -50,6 +50,7 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Security: preserve restrictive plugin-only tool allowlists, require owner access for `/allowlist add` and `/allowlist remove`, fail closed when `before_tool_call` hooks crash, block browser SSRF redirect bypasses earlier, and keep non-interactive auth-choice inference scoped to bundled and already-trusted plugins. (#58476, #59836, #59822, #58771, #59120) Thanks @eleqtrizit and @pgondhi987.
+- Gateway/pairing: keep silent local first-pair compatibility, but seed new operator device tokens from a bounded server-owned baseline instead of persisting requested admin scopes, so shared-auth localhost connects cannot silently self-upgrade into paired admin. Thanks @smaeljaish771.
 - Providers/OpenAI: make GPT-5 and Codex runs act sooner with lower-verbosity defaults, visible progress during tool work, and a one-shot retry when a turn only narrates the plan instead of taking action.
 - Providers/OpenAI: preserve native `reasoning.effort: “none”` and strict tool schemas on direct OpenAI-family endpoints, keep compat routes on compat shaping, fix Responses WebSocket warm-up behavior, keep stable session and turn metadata, and fall back more gracefully after early WebSocket failures.
 - Providers/OpenAI: support GPT-5.4 assistant `phase` metadata across OpenAI-family Responses replay and the Gateway `/v1/responses` compatibility layer, including `commentary` tool preambles and `final_answer` replies.
