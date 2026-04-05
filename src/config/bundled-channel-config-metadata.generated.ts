@@ -6819,6 +6819,10 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
                 ],
               },
             },
+            sessionScope: {
+              type: "string",
+              enum: ["per-user", "per-room"],
+            },
             threadReplies: {
               type: "string",
               enum: ["off", "inbound", "always"],
