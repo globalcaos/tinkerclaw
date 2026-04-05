@@ -67,6 +67,7 @@ describe("syncMemoryWikiBridgeSources", () => {
     expect(first.importedCount).toBe(3);
     expect(first.updatedCount).toBe(0);
     expect(first.skippedCount).toBe(0);
+    expect(first.removedCount).toBe(0);
     expect(first.pagePaths).toHaveLength(3);
 
     const sourcePages = await fs.readdir(path.join(vaultDir, "sources"));
@@ -81,6 +82,7 @@ describe("syncMemoryWikiBridgeSources", () => {
     expect(second.importedCount).toBe(0);
     expect(second.updatedCount).toBe(0);
     expect(second.skippedCount).toBe(3);
+    expect(second.removedCount).toBe(0);
 
     const logLines = (await fs.readFile(path.join(vaultDir, ".openclaw-wiki", "log.jsonl"), "utf8"))
       .trim()
@@ -102,6 +104,7 @@ describe("syncMemoryWikiBridgeSources", () => {
       importedCount: 0,
       updatedCount: 0,
       skippedCount: 0,
+      removedCount: 0,
       artifactCount: 0,
       workspaces: 0,
       pagePaths: [],
@@ -157,8 +160,58 @@ describe("syncMemoryWikiBridgeSources", () => {
 
     expect(result.artifactCount).toBe(1);
     expect(result.importedCount).toBe(1);
+    expect(result.removedCount).toBe(0);
     const page = await fs.readFile(path.join(vaultDir, result.pagePaths[0] ?? ""), "utf8");
     expect(page).toContain("sourceType: memory-bridge-events");
     expect(page).toContain('"type":"memory.recall.recorded"');
+  });
+
+  it("prunes stale bridge pages when the source artifact disappears", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-bridge-prune-ws-"));
+    const vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-bridge-prune-vault-"));
+    tempDirs.push(workspaceDir, vaultDir);
+
+    await fs.writeFile(path.join(workspaceDir, "MEMORY.md"), "# Durable Memory\n", "utf8");
+
+    const config = resolveMemoryWikiConfig(
+      {
+        vaultMode: "bridge",
+        vault: { path: vaultDir },
+        bridge: {
+          enabled: true,
+          indexMemoryRoot: true,
+          indexDailyNotes: false,
+          indexDreamReports: false,
+          followMemoryEvents: false,
+        },
+      },
+      { homedir: "/Users/tester" },
+    );
+    const appConfig: OpenClawConfig = {
+      plugins: {
+        entries: {
+          "memory-core": {
+            enabled: true,
+            config: {},
+          },
+        },
+      },
+      agents: {
+        list: [{ id: "main", default: true, workspace: workspaceDir }],
+      },
+    };
+
+    const first = await syncMemoryWikiBridgeSources({ config, appConfig });
+    const firstPagePath = first.pagePaths[0] ?? "";
+    await expect(fs.stat(path.join(vaultDir, firstPagePath))).resolves.toBeTruthy();
+
+    await fs.rm(path.join(workspaceDir, "MEMORY.md"));
+    const second = await syncMemoryWikiBridgeSources({ config, appConfig });
+
+    expect(second.artifactCount).toBe(0);
+    expect(second.removedCount).toBe(1);
+    await expect(fs.stat(path.join(vaultDir, firstPagePath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

@@ -17,6 +17,7 @@ export async function syncMemoryWikiImportedSources(params: {
     importedCount: 0,
     updatedCount: 0,
     skippedCount: 0,
+    removedCount: 0,
     artifactCount: 0,
     workspaces: 0,
     pagePaths: [],
