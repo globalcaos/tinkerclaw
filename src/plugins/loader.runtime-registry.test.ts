@@ -8,6 +8,8 @@ import {
 import {
   buildMemoryPromptSection,
   getMemoryRuntime,
+  listMemoryCorpusSupplements,
+  registerMemoryCorpusSupplement,
   registerMemoryFlushPlanResolver,
   registerMemoryPromptSupplement,
   registerMemoryPromptSection,
@@ -156,6 +158,10 @@ describe("clearPluginLoaderCache", () => {
       id: "stale",
       create: async () => ({ provider: null }),
     });
+    registerMemoryCorpusSupplement("memory-wiki", {
+      search: async () => [],
+      get: async () => null,
+    });
     registerMemoryPromptSection(() => ["stale memory section"]);
     registerMemoryPromptSupplement("memory-wiki", () => ["stale wiki supplement"]);
     registerMemoryFlushPlanResolver(() => ({
@@ -178,6 +184,7 @@ describe("clearPluginLoaderCache", () => {
       "stale memory section",
       "stale wiki supplement",
     ]);
+    expect(listMemoryCorpusSupplements()).toHaveLength(1);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/stale.md");
     expect(getMemoryRuntime()).toBeDefined();
     expect(getMemoryEmbeddingProvider("stale")).toBeDefined();
@@ -185,6 +192,7 @@ describe("clearPluginLoaderCache", () => {
     clearPluginLoaderCache();
 
     expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([]);
+    expect(listMemoryCorpusSupplements()).toEqual([]);
     expect(resolveMemoryFlushPlan({})).toBeNull();
     expect(getMemoryRuntime()).toBeUndefined();
     expect(getMemoryEmbeddingProvider("stale")).toBeUndefined();

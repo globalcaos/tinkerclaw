@@ -1,6 +1,7 @@
 import { definePluginEntry } from "./api.js";
 import { registerWikiCli } from "./src/cli.js";
 import { memoryWikiConfigSchema, resolveMemoryWikiConfig } from "./src/config.js";
+import { createWikiCorpusSupplement } from "./src/corpus-supplement.js";
 import { registerMemoryWikiGatewayMethods } from "./src/gateway.js";
 import { buildWikiPromptSection } from "./src/prompt-section.js";
 import {
@@ -20,6 +21,9 @@ export default definePluginEntry({
     const config = resolveMemoryWikiConfig(api.pluginConfig);
 
     api.registerMemoryPromptSupplement(buildWikiPromptSection);
+    api.registerMemoryCorpusSupplement(
+      createWikiCorpusSupplement({ config, appConfig: api.config }),
+    );
     registerMemoryWikiGatewayMethods({ api, config, appConfig: api.config });
     api.registerTool(createWikiStatusTool(config, api.config), { name: "wiki_status" });
     api.registerTool(createWikiLintTool(config, api.config), { name: "wiki_lint" });

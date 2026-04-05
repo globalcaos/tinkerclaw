@@ -6,6 +6,7 @@ import plugin from "./index.js";
 function createApi() {
   const registerCli = vi.fn();
   const registerGatewayMethod = vi.fn();
+  const registerMemoryCorpusSupplement = vi.fn();
   const registerMemoryPromptSupplement = vi.fn();
   const registerTool = vi.fn();
   const api = createTestPluginApi({
@@ -16,6 +17,7 @@ function createApi() {
     runtime: {} as OpenClawPluginApi["runtime"],
     registerCli,
     registerGatewayMethod,
+    registerMemoryCorpusSupplement,
     registerMemoryPromptSupplement,
     registerTool,
   }) as OpenClawPluginApi;
@@ -23,6 +25,7 @@ function createApi() {
     api,
     registerCli,
     registerGatewayMethod,
+    registerMemoryCorpusSupplement,
     registerMemoryPromptSupplement,
     registerTool,
   };
@@ -34,12 +37,14 @@ describe("memory-wiki plugin", () => {
       api,
       registerCli,
       registerGatewayMethod,
+      registerMemoryCorpusSupplement,
       registerMemoryPromptSupplement,
       registerTool,
     } = createApi();
 
     await plugin.register(api);
 
+    expect(registerMemoryCorpusSupplement).toHaveBeenCalledTimes(1);
     expect(registerMemoryPromptSupplement).toHaveBeenCalledTimes(1);
     expect(registerGatewayMethod.mock.calls.map((call) => call[0])).toEqual([
       "wiki.status",
