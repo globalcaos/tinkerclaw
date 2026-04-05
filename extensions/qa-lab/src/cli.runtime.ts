@@ -1,4 +1,7 @@
+import path from "node:path";
+import { buildQaDockerHarnessImage, writeQaDockerHarnessFiles } from "./docker-harness.js";
 import { startQaLabServer } from "./lab-server.js";
+import { startQaMockOpenAiServer } from "./mock-openai-server.js";
 
 export async function runQaLabSelfCheckCommand(opts: { output?: string }) {
   const server = await startQaLabServer({
@@ -12,12 +15,84 @@ export async function runQaLabSelfCheckCommand(opts: { output?: string }) {
   }
 }
 
-export async function runQaLabUiCommand(opts: { host?: string; port?: number }) {
+export async function runQaLabUiCommand(opts: {
+  host?: string;
+  port?: number;
+  advertiseHost?: string;
+  advertisePort?: number;
+  controlUiUrl?: string;
+  controlUiToken?: string;
+  controlUiProxyTarget?: string;
+  autoKickoffTarget?: string;
+  embeddedGateway?: string;
+  sendKickoffOnStart?: boolean;
+}) {
   const server = await startQaLabServer({
     host: opts.host,
     port: Number.isFinite(opts.port) ? opts.port : undefined,
+    advertiseHost: opts.advertiseHost,
+    advertisePort: Number.isFinite(opts.advertisePort) ? opts.advertisePort : undefined,
+    controlUiUrl: opts.controlUiUrl,
+    controlUiToken: opts.controlUiToken,
+    controlUiProxyTarget: opts.controlUiProxyTarget,
+    autoKickoffTarget: opts.autoKickoffTarget,
+    embeddedGateway: opts.embeddedGateway,
+    sendKickoffOnStart: opts.sendKickoffOnStart,
   });
   process.stdout.write(`QA Lab UI: ${server.baseUrl}\n`);
+  process.stdout.write("Press Ctrl+C to stop.\n");
+
+  const shutdown = async () => {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await server.stop();
+    process.exit(0);
+  };
+
+  const onSignal = () => {
+    void shutdown();
+  };
+
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  await new Promise(() => undefined);
+}
+
+export async function runQaDockerScaffoldCommand(opts: {
+  outputDir: string;
+  gatewayPort?: number;
+  qaLabPort?: number;
+  providerBaseUrl?: string;
+  image?: string;
+  usePrebuiltImage?: boolean;
+}) {
+  const outputDir = path.resolve(opts.outputDir);
+  const result = await writeQaDockerHarnessFiles({
+    outputDir,
+    repoRoot: process.cwd(),
+    gatewayPort: Number.isFinite(opts.gatewayPort) ? opts.gatewayPort : undefined,
+    qaLabPort: Number.isFinite(opts.qaLabPort) ? opts.qaLabPort : undefined,
+    providerBaseUrl: opts.providerBaseUrl,
+    imageName: opts.image,
+    usePrebuiltImage: opts.usePrebuiltImage,
+  });
+  process.stdout.write(`QA docker scaffold: ${result.outputDir}\n`);
+}
+
+export async function runQaDockerBuildImageCommand(opts: { image?: string }) {
+  const result = await buildQaDockerHarnessImage({
+    repoRoot: process.cwd(),
+    imageName: opts.image,
+  });
+  process.stdout.write(`QA docker image: ${result.imageName}\n`);
+}
+
+export async function runQaMockOpenAiCommand(opts: { host?: string; port?: number }) {
+  const server = await startQaMockOpenAiServer({
+    host: opts.host,
+    port: Number.isFinite(opts.port) ? opts.port : undefined,
+  });
+  process.stdout.write(`QA mock OpenAI: ${server.baseUrl}\n`);
   process.stdout.write("Press Ctrl+C to stop.\n");
 
   const shutdown = async () => {

@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,6 +25,8 @@ describe("qa-lab server", () => {
       host: "127.0.0.1",
       port: 0,
       outputPath,
+      controlUiUrl: "http://127.0.0.1:18789/",
+      controlUiToken: "qa-token",
     });
     cleanups.push(async () => {
       await lab.stop();
@@ -32,10 +35,19 @@ describe("qa-lab server", () => {
     const bootstrapResponse = await fetch(`${lab.baseUrl}/api/bootstrap`);
     expect(bootstrapResponse.status).toBe(200);
     const bootstrap = (await bootstrapResponse.json()) as {
+      controlUiUrl: string | null;
+      controlUiEmbeddedUrl: string | null;
+      kickoffTask: string;
+      scenarios: Array<{ id: string; title: string }>;
       defaults: { conversationId: string; senderId: string };
     };
-    expect(bootstrap.defaults.conversationId).toBe("alice");
-    expect(bootstrap.defaults.senderId).toBe("alice");
+    expect(bootstrap.defaults.conversationId).toBe("qa-operator");
+    expect(bootstrap.defaults.senderId).toBe("qa-operator");
+    expect(bootstrap.controlUiUrl).toBe("http://127.0.0.1:18789/");
+    expect(bootstrap.controlUiEmbeddedUrl).toBe("http://127.0.0.1:18789/#token=qa-token");
+    expect(bootstrap.kickoffTask).toContain("Lobster Invaders");
+    expect(bootstrap.scenarios.length).toBeGreaterThanOrEqual(10);
+    expect(bootstrap.scenarios.some((scenario) => scenario.id === "dm-chat-baseline")).toBe(true);
 
     const messageResponse = await fetch(`${lab.baseUrl}/api/inbound/message`, {
       method: "POST",
@@ -63,5 +75,115 @@ describe("qa-lab server", () => {
     const markdown = await readFile(outputPath, "utf8");
     expect(markdown).toContain("Synthetic Slack-class roundtrip");
     expect(markdown).toContain("- Status: pass");
+  });
+
+  it("injects the kickoff task on demand and on startup", async () => {
+    const autoKickoffLab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+      sendKickoffOnStart: true,
+    });
+    cleanups.push(async () => {
+      await autoKickoffLab.stop();
+    });
+
+    const autoSnapshot = (await (await fetch(`${autoKickoffLab.baseUrl}/api/state`)).json()) as {
+      messages: Array<{ text: string }>;
+    };
+    expect(autoSnapshot.messages.some((message) => message.text.includes("QA mission:"))).toBe(
+      true,
+    );
+
+    const manualLab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+    });
+    cleanups.push(async () => {
+      await manualLab.stop();
+    });
+
+    const kickoffResponse = await fetch(`${manualLab.baseUrl}/api/kickoff`, {
+      method: "POST",
+    });
+    expect(kickoffResponse.status).toBe(200);
+
+    const manualSnapshot = (await (await fetch(`${manualLab.baseUrl}/api/state`)).json()) as {
+      messages: Array<{ text: string }>;
+    };
+    expect(
+      manualSnapshot.messages.some((message) => message.text.includes("Lobster Invaders")),
+    ).toBe(true);
+  });
+
+  it("proxies control-ui paths through /control-ui", async () => {
+    const upstream = createServer((req, res) => {
+      if ((req.url ?? "/") === "/healthz") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, status: "live" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><title>control-ui</title><h1>Control UI</h1>");
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstream.once("error", reject);
+      upstream.listen(0, "127.0.0.1", () => resolve());
+    });
+    cleanups.push(
+      async () =>
+        await new Promise<void>((resolve, reject) =>
+          upstream.close((error) => (error ? reject(error) : resolve())),
+        ),
+    );
+
+    const address = upstream.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected upstream address");
+    }
+
+    const lab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+      advertiseHost: "127.0.0.1",
+      advertisePort: 43124,
+      controlUiProxyTarget: `http://127.0.0.1:${address.port}/`,
+      controlUiToken: "proxy-token",
+    });
+    cleanups.push(async () => {
+      await lab.stop();
+    });
+
+    const bootstrap = (await (await fetch(`${lab.listenUrl}/api/bootstrap`)).json()) as {
+      controlUiUrl: string | null;
+      controlUiEmbeddedUrl: string | null;
+    };
+    expect(bootstrap.controlUiUrl).toBe("http://127.0.0.1:43124/control-ui/");
+    expect(bootstrap.controlUiEmbeddedUrl).toBe(
+      "http://127.0.0.1:43124/control-ui/#token=proxy-token",
+    );
+
+    const healthResponse = await fetch(`${lab.listenUrl}/control-ui/healthz`);
+    expect(healthResponse.status).toBe(200);
+    expect(await healthResponse.json()).toEqual({ ok: true, status: "live" });
+
+    const rootResponse = await fetch(`${lab.listenUrl}/control-ui/`);
+    expect(rootResponse.status).toBe(200);
+    expect(await rootResponse.text()).toContain("Control UI");
+  });
+
+  it("serves the built QA UI bundle when available", async () => {
+    const lab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+    });
+    cleanups.push(async () => {
+      await lab.stop();
+    });
+
+    const rootResponse = await fetch(`${lab.baseUrl}/`);
+    expect(rootResponse.status).toBe(200);
+    const html = await rootResponse.text();
+    expect(html).not.toContain("QA Lab UI not built");
+    expect(html).toContain("<title>");
   });
 });
