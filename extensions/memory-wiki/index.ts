@@ -11,12 +11,12 @@ export default definePluginEntry({
   register(api) {
     const config = resolveMemoryWikiConfig(api.pluginConfig);
 
-    api.registerTool(createWikiStatusTool(config), { name: "wiki_status" });
-    api.registerTool(createWikiSearchTool(config), { name: "wiki_search" });
-    api.registerTool(createWikiGetTool(config), { name: "wiki_get" });
+    api.registerTool(createWikiStatusTool(config, api.config), { name: "wiki_status" });
+    api.registerTool(createWikiSearchTool(config, api.config), { name: "wiki_search" });
+    api.registerTool(createWikiGetTool(config, api.config), { name: "wiki_get" });
     api.registerCli(
       ({ program }) => {
-        registerWikiCli(program, config);
+        registerWikiCli(program, config, api.config);
       },
       {
         descriptors: [
