@@ -715,6 +715,10 @@
       "types": "./dist/plugin-sdk/memory-host-markdown.d.ts",
       "default": "./dist/plugin-sdk/memory-host-markdown.js"
     },
+    "./plugin-sdk/memory-host-search": {
+      "types": "./dist/plugin-sdk/memory-host-search.d.ts",
+      "default": "./dist/plugin-sdk/memory-host-search.js"
+    },
     "./plugin-sdk/memory-host-status": {
       "types": "./dist/plugin-sdk/memory-host-status.d.ts",
       "default": "./dist/plugin-sdk/memory-host-status.js"

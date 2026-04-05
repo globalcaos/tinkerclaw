@@ -168,6 +168,7 @@
   "memory-host-events",
   "memory-host-files",
   "memory-host-markdown",
+  "memory-host-search",
   "memory-host-status",
   "memory-lancedb",
   "msteams",
