@@ -12,6 +12,8 @@ Docs: https://docs.openclaw.ai
 
 - Providers/Amazon Bedrock Mantle: add a bundled OpenAI-compatible Mantle provider with bearer-token discovery, automatic OSS model catalog loading, and Bedrock Mantle region detection for hosted GPT-OSS, Qwen, Kimi, GLM, and similar routes. (#61296) Thanks @wirjo.
 - Providers/Amazon Bedrock: discover regional and global inference profiles, inherit their backing model capabilities, and inject the Bedrock request region automatically so cross-region Claude profiles work without manual provider overrides. (#61299) Thanks @wirjo.
+- Providers/Anthropic: remove the Claude CLI backend, have `openclaw doctor` convert stale `anthropic:claude-cli` state back to Anthropic token/OAuth when stored credential bytes still exist (or delete the stale Claude CLI config when they do not), and steer Anthropic setup to API keys or legacy setup-token with the correct Extra Usage billing guidance.
+- Providers/Anthropic: remove setup-token from new onboarding and auth-command setup paths, keep existing configured legacy token profiles runnable, and steer new Anthropic setup to API keys.
 - Providers/Fireworks: add a bundled Fireworks AI provider plugin with `FIREWORKS_API_KEY` onboarding, Fire Pass Kimi defaults, and dynamic Fireworks model-id support.
 - Providers/Qwen: add a bundled Qwen provider plugin with dedicated onboarding, media understanding, and video generation support.
 - Providers/StepFun: add the bundled StepFun provider plugin with standard and Step Plan endpoints, China/global onboarding choices, `step-3.5-flash` on both catalogs, and `step-3.5-flash-2603` currently exposed on Step Plan. (#60032) Thanks @hengm3467.
@@ -38,7 +40,6 @@ Docs: https://docs.openclaw.ai
 - Agents/cache: stabilize cache-relevant system prompt fingerprints by normalizing equivalent structured prompt whitespace, line endings, hook-added system context, and runtime capability ordering so semantically unchanged prompts reuse KV/cache more reliably. Thanks @vincentkoc.
 - Providers/OpenAI Codex: add forward-compat `openai-codex/gpt-5.4-mini` synthesis across provider runtime, model catalog, and model listing so Codex mini works before bundled Pi catalog updates land.
 - Providers/OpenAI: add an opt-in GPT personality and move GPT-5 prompt tuning onto provider-owned system-prompt contributions so cache-stable guidance stays above the prompt cache boundary and embedded runner paths reuse the same provider-specific prompt behavior.
-- Providers/Anthropic: remove setup-token from new onboarding and auth-command setup paths, keep existing configured legacy token profiles runnable, and steer new Anthropic setup to Claude CLI or API keys.
 - Docs/IRC: replace public IRC hostname examples with `irc.example.com` and recommend private servers for bot coordination while listing common public networks for intentional use.
 - Memory/dreaming: add configurable aging controls (`recencyHalfLifeDays`, `maxAgeDays`) plus optional verbose logging so operators can tune recall decay and inspect promotion decisions more easily.
 - Plugins/reply dispatch: add a generic `reply_dispatch` hook so bundled plugins like ACPX can own reply interception without hardcoded ACP paths in core auto-reply routing.
