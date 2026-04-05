@@ -410,6 +410,7 @@ export const ja_JP: TranslationMap = {
     ko: "한국어 (Korean)",
     fr: "Français (French)",
     tr: "Türkçe (Turkish)",
+    uk: "Українська（ウクライナ語）",
     id: "Bahasa Indonesia (Indonesian)",
     pl: "Polski (Polish)",
   },
