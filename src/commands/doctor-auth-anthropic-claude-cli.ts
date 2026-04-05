@@ -10,6 +10,7 @@ import type { DoctorPrompter } from "./doctor-prompter.js";
 const ANTHROPIC_PROVIDER_ID = "anthropic";
 const CLAUDE_CLI_PROVIDER_ID = "claude-cli";
 const CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli";
+type AgentDefaultsConfig = NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>;
 
 function trimOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -334,10 +335,9 @@ function rewriteAnthropicClaudeCliConfig(params: {
 
   const nextProfiles = rewrittenProfiles.value;
   const nextOrder = rewrittenOrder.value;
-  const nextModel = rewrittenModel.value as OpenClawConfig["agents"]["defaults"]["model"];
-  const nextModels = rewrittenModels.value as OpenClawConfig["agents"]["defaults"]["models"];
-  const nextCliBackendsTyped =
-    nextCliBackends as OpenClawConfig["agents"]["defaults"]["cliBackends"];
+  const nextModel = rewrittenModel.value as AgentDefaultsConfig["model"];
+  const nextModels = rewrittenModels.value as AgentDefaultsConfig["models"];
+  const nextCliBackendsTyped: AgentDefaultsConfig["cliBackends"] = nextCliBackends;
 
   const nextAuth =
     nextProfiles || nextOrder || params.cfg.auth?.cooldowns
