@@ -1,5 +1,27 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
+const DISABLED_BUNDLED_CHANNELS = Object.freeze({
+  bluebubbles: { enabled: false },
+  discord: { enabled: false },
+  feishu: { enabled: false },
+  googlechat: { enabled: false },
+  imessage: { enabled: false },
+  irc: { enabled: false },
+  line: { enabled: false },
+  mattermost: { enabled: false },
+  matrix: { enabled: false },
+  msteams: { enabled: false },
+  qqbot: { enabled: false },
+  signal: { enabled: false },
+  slack: { enabled: false },
+  "synology-chat": { enabled: false },
+  telegram: { enabled: false },
+  tlon: { enabled: false },
+  whatsapp: { enabled: false },
+  zalo: { enabled: false },
+  zalouser: { enabled: false },
+} satisfies Record<string, { enabled: false }>);
+
 export function buildQaGatewayConfig(params: {
   bind: "loopback" | "lan";
   gatewayPort: number;
@@ -135,6 +157,7 @@ export function buildQaGatewayConfig(params: {
       },
     },
     channels: {
+      ...DISABLED_BUNDLED_CHANNELS,
       "qa-channel": {
         enabled: true,
         baseUrl: params.qaBusBaseUrl,
