@@ -547,20 +547,9 @@ let runEmbeddedAttemptPromise:
 const ATTEMPT_SPAWN_WORKSPACE_TEST_SPECIFIER = "./attempt.ts?spawn-workspace-test";
 
 async function loadRunEmbeddedAttempt() {
-<<<<<<< HEAD
   runEmbeddedAttemptPromise ??= (
     import(ATTEMPT_SPAWN_WORKSPACE_TEST_SPECIFIER) as Promise<typeof import("./attempt.js")>
   ).then((mod) => mod.runEmbeddedAttempt);
-||||||| parent of 1ec7503535 (fix: resolve repo check drift)
-  runEmbeddedAttemptPromise ??= import("./attempt.ts?spawn-workspace-test").then(
-    (mod) => mod.runEmbeddedAttempt,
-  );
-=======
-  const attemptModulePath = "./attempt.ts?spawn-workspace-test";
-  runEmbeddedAttemptPromise ??= import(attemptModulePath).then(
-    (mod) => (mod as typeof import("./attempt.js")).runEmbeddedAttempt,
-  );
->>>>>>> 1ec7503535 (fix: resolve repo check drift)
   return await runEmbeddedAttemptPromise;
 }
 
