@@ -695,6 +695,22 @@
       "types": "./dist/plugin-sdk/memory-core-host-runtime-files.d.ts",
       "default": "./dist/plugin-sdk/memory-core-host-runtime-files.js"
     },
+    "./plugin-sdk/memory-host-core": {
+      "types": "./dist/plugin-sdk/memory-host-core.d.ts",
+      "default": "./dist/plugin-sdk/memory-host-core.js"
+    },
+    "./plugin-sdk/memory-host-files": {
+      "types": "./dist/plugin-sdk/memory-host-files.d.ts",
+      "default": "./dist/plugin-sdk/memory-host-files.js"
+    },
+    "./plugin-sdk/memory-host-markdown": {
+      "types": "./dist/plugin-sdk/memory-host-markdown.d.ts",
+      "default": "./dist/plugin-sdk/memory-host-markdown.js"
+    },
+    "./plugin-sdk/memory-host-status": {
+      "types": "./dist/plugin-sdk/memory-host-status.d.ts",
+      "default": "./dist/plugin-sdk/memory-host-status.js"
+    },
     "./plugin-sdk/memory-lancedb": {
       "types": "./dist/plugin-sdk/memory-lancedb.d.ts",
       "default": "./dist/plugin-sdk/memory-lancedb.js"

@@ -5,6 +5,10 @@ import {
   type MemoryDreamingPhaseName,
   type MemoryDreamingStorageConfig,
 } from "openclaw/plugin-sdk/memory-core-host-status";
+import {
+  replaceManagedMarkdownBlock,
+  withTrailingNewline,
+} from "openclaw/plugin-sdk/memory-host-markdown";
 
 const DAILY_PHASE_HEADINGS: Record<Exclude<MemoryDreamingPhaseName, "deep">, string> = {
   light: "## Light Sleep",
@@ -25,36 +29,6 @@ function resolvePhaseMarkers(phase: Exclude<MemoryDreamingPhaseName, "deep">): {
     start: `<!-- openclaw:dreaming:${label}:start -->`,
     end: `<!-- openclaw:dreaming:${label}:end -->`,
   };
-}
-
-function withTrailingNewline(content: string): string {
-  return content.endsWith("\n") ? content : `${content}\n`;
-}
-
-function replaceManagedBlock(params: {
-  original: string;
-  heading: string;
-  startMarker: string;
-  endMarker: string;
-  body: string;
-}): string {
-  const managedBlock = `${params.heading}\n${params.startMarker}\n${params.body}\n${params.endMarker}`;
-  const existingPattern = new RegExp(
-    `${escapeRegex(params.heading)}\\n${escapeRegex(params.startMarker)}[\\s\\S]*?${escapeRegex(params.endMarker)}`,
-    "m",
-  );
-  if (existingPattern.test(params.original)) {
-    return params.original.replace(existingPattern, managedBlock);
-  }
-  const trimmed = params.original.trimEnd();
-  if (trimmed.length === 0) {
-    return `${managedBlock}\n`;
-  }
-  return `${trimmed}\n\n${managedBlock}\n`;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function resolveDailyMemoryPath(workspaceDir: string, epochMs: number, timezone?: string): string {
@@ -103,7 +77,7 @@ export async function writeDailyDreamingPhaseBlock(params: {
       throw err;
     });
     const markers = resolvePhaseMarkers(params.phase);
-    const updated = replaceManagedBlock({
+    const updated = replaceManagedMarkdownBlock({
       original,
       heading: DAILY_PHASE_HEADINGS[params.phase],
       startMarker: markers.start,
