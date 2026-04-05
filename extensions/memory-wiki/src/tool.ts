@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
-import type { AnyAgentTool } from "../api.js";
+import type { AnyAgentTool, OpenClawConfig } from "../api.js";
+import { syncMemoryWikiBridgeSources } from "./bridge.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
@@ -21,7 +22,14 @@ const WikiGetSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export function createWikiStatusTool(config: ResolvedMemoryWikiConfig): AnyAgentTool {
+async function syncBridgeIfNeeded(config: ResolvedMemoryWikiConfig, appConfig?: OpenClawConfig) {
+  await syncMemoryWikiBridgeSources({ config, appConfig });
+}
+
+export function createWikiStatusTool(
+  config: ResolvedMemoryWikiConfig,
+  appConfig?: OpenClawConfig,
+): AnyAgentTool {
   return {
     name: "wiki_status",
     label: "Wiki Status",
@@ -29,6 +37,7 @@ export function createWikiStatusTool(config: ResolvedMemoryWikiConfig): AnyAgent
       "Inspect the current memory wiki vault mode, health, and Obsidian CLI availability.",
     parameters: WikiStatusSchema,
     execute: async () => {
+      await syncBridgeIfNeeded(config, appConfig);
       const status = await resolveMemoryWikiStatus(config);
       return {
         content: [{ type: "text", text: renderMemoryWikiStatus(status) }],
@@ -38,7 +47,10 @@ export function createWikiStatusTool(config: ResolvedMemoryWikiConfig): AnyAgent
   };
 }
 
-export function createWikiSearchTool(config: ResolvedMemoryWikiConfig): AnyAgentTool {
+export function createWikiSearchTool(
+  config: ResolvedMemoryWikiConfig,
+  appConfig?: OpenClawConfig,
+): AnyAgentTool {
   return {
     name: "wiki_search",
     label: "Wiki Search",
@@ -46,6 +58,7 @@ export function createWikiSearchTool(config: ResolvedMemoryWikiConfig): AnyAgent
     parameters: WikiSearchSchema,
     execute: async (_toolCallId, rawParams) => {
       const params = rawParams as { query: string; maxResults?: number };
+      await syncBridgeIfNeeded(config, appConfig);
       const results = await searchMemoryWiki({
         config,
         query: params.query,
@@ -68,7 +81,10 @@ export function createWikiSearchTool(config: ResolvedMemoryWikiConfig): AnyAgent
   };
 }
 
-export function createWikiGetTool(config: ResolvedMemoryWikiConfig): AnyAgentTool {
+export function createWikiGetTool(
+  config: ResolvedMemoryWikiConfig,
+  appConfig?: OpenClawConfig,
+): AnyAgentTool {
   return {
     name: "wiki_get",
     label: "Wiki Get",
@@ -76,6 +92,7 @@ export function createWikiGetTool(config: ResolvedMemoryWikiConfig): AnyAgentToo
     parameters: WikiGetSchema,
     execute: async (_toolCallId, rawParams) => {
       const params = rawParams as { lookup: string; fromLine?: number; lineCount?: number };
+      await syncBridgeIfNeeded(config, appConfig);
       const result = await getMemoryWikiPage({
         config,
         lookup: params.lookup,

@@ -8,6 +8,7 @@ Use this skill when working inside a memory-wiki vault.
 - Prefer `wiki_status` first when you need to understand the vault mode, path, or Obsidian CLI availability.
 - Use `wiki_search` to discover candidate pages, then `wiki_get` to inspect the exact page before editing or citing it.
 - Use `openclaw wiki ingest`, `openclaw wiki compile`, and `openclaw wiki lint` as the default maintenance loop.
+- In `bridge` mode, run `openclaw wiki bridge import` before relying on search results if you need the latest public memory-core artifacts pulled in.
 - Keep generated sections inside managed markers. Do not overwrite human note blocks.
 - Treat raw sources, memory artifacts, and daily notes as evidence. Do not let wiki pages become the only source of truth for new claims.
 - Keep page identity stable. Favor updating existing entities and concepts over spawning duplicates with slightly different names.

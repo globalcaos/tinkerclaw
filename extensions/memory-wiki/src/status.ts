@@ -1,8 +1,8 @@
-import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { inferWikiPageKind, type WikiPageKind } from "./markdown.js";
+import { probeObsidianCli } from "./obsidian.js";
 
 export type MemoryWikiStatusWarning = {
   code:
@@ -47,39 +47,6 @@ async function pathExists(inputPath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function isExecutableFile(inputPath: string): Promise<boolean> {
-  try {
-    await fs.access(inputPath, process.platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveCommandOnPath(command: string): Promise<string | null> {
-  const pathValue = process.env.PATH ?? "";
-  const pathEntries = pathValue.split(path.delimiter).filter(Boolean);
-  const windowsExts =
-    process.platform === "win32"
-      ? (process.env.PATHEXT?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT"])
-      : [""];
-
-  if (command.includes(path.sep)) {
-    return (await isExecutableFile(command)) ? command : null;
-  }
-
-  for (const dir of pathEntries) {
-    for (const extension of windowsExts) {
-      const candidate = path.join(dir, extension ? `${command}${extension}` : command);
-      if (await isExecutableFile(candidate)) {
-        return candidate;
-      }
-    }
-  }
-
-  return null;
 }
 
 async function collectPageCounts(vaultPath: string): Promise<Record<WikiPageKind, number>> {
@@ -172,9 +139,8 @@ export async function resolveMemoryWikiStatus(
   deps?: ResolveMemoryWikiStatusDeps,
 ): Promise<MemoryWikiStatus> {
   const exists = deps?.pathExists ?? pathExists;
-  const resolveCommand = deps?.resolveCommand ?? resolveCommandOnPath;
   const vaultExists = await exists(config.vault.path);
-  const obsidianCommand = await resolveCommand("obsidian");
+  const obsidianProbe = await probeObsidianCli({ resolveCommand: deps?.resolveCommand });
   const pageCounts = vaultExists
     ? await collectPageCounts(config.vault.path)
     : {
@@ -194,15 +160,15 @@ export async function resolveMemoryWikiStatus(
     obsidianCli: {
       enabled: config.obsidian.enabled,
       requested: config.obsidian.enabled && config.obsidian.useOfficialCli,
-      available: obsidianCommand !== null,
-      command: obsidianCommand,
+      available: obsidianProbe.available,
+      command: obsidianProbe.command,
     },
     unsafeLocal: {
       allowPrivateMemoryCoreAccess: config.unsafeLocal.allowPrivateMemoryCoreAccess,
       pathCount: config.unsafeLocal.paths.length,
     },
     pageCounts,
-    warnings: buildWarnings({ config, vaultExists, obsidianCommand }),
+    warnings: buildWarnings({ config, vaultExists, obsidianCommand: obsidianProbe.command }),
   };
 }
 
