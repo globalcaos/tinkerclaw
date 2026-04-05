@@ -5,6 +5,7 @@ import plugin from "./index.js";
 
 function createApi() {
   const registerCli = vi.fn();
+  const registerGatewayMethod = vi.fn();
   const registerTool = vi.fn();
   const api = createTestPluginApi({
     id: "memory-wiki",
@@ -13,17 +14,27 @@ function createApi() {
     config: {},
     runtime: {} as OpenClawPluginApi["runtime"],
     registerCli,
+    registerGatewayMethod,
     registerTool,
   }) as OpenClawPluginApi;
-  return { api, registerCli, registerTool };
+  return { api, registerCli, registerGatewayMethod, registerTool };
 }
 
 describe("memory-wiki plugin", () => {
-  it("registers the status tool and wiki cli surface", async () => {
-    const { api, registerCli, registerTool } = createApi();
+  it("registers gateway methods, tools, and wiki cli surface", async () => {
+    const { api, registerCli, registerGatewayMethod, registerTool } = createApi();
 
     await plugin.register(api);
 
+    expect(registerGatewayMethod.mock.calls.map((call) => call[0])).toEqual([
+      "wiki.status",
+      "wiki.doctor",
+      "wiki.compile",
+      "wiki.lint",
+      "wiki.search",
+      "wiki.get",
+      "wiki.obsidian.status",
+    ]);
     expect(registerTool).toHaveBeenCalledTimes(5);
     expect(registerTool.mock.calls.map((call) => call[1]?.name)).toEqual([
       "wiki_status",
