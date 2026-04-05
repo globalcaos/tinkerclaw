@@ -150,6 +150,22 @@ function rewriteControlUiProxyPath(pathname: string, search: string) {
   return `${stripped}${search}`;
 }
 
+function rewriteEmbeddedControlUiHeaders(
+  headers: IncomingMessage["headers"],
+): Record<string, string | string[] | number | undefined> {
+  const rewritten: Record<string, string | string[] | number | undefined> = { ...headers };
+  delete rewritten["x-frame-options"];
+
+  const csp = headers["content-security-policy"];
+  if (typeof csp === "string") {
+    rewritten["content-security-policy"] = csp.includes("frame-ancestors")
+      ? csp.replace(/frame-ancestors\s+[^;]+/i, "frame-ancestors 'self'")
+      : `${csp}; frame-ancestors 'self'`;
+  }
+
+  return rewritten;
+}
+
 async function proxyHttpRequest(params: {
   req: IncomingMessage;
   res: ServerResponse;
@@ -171,7 +187,10 @@ async function proxyHttpRequest(params: {
       },
     },
     (upstreamRes) => {
-      params.res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      params.res.writeHead(
+        upstreamRes.statusCode ?? 502,
+        rewriteEmbeddedControlUiHeaders(upstreamRes.headers),
+      );
       upstreamRes.pipe(params.res);
     },
   );
