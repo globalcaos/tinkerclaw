@@ -29,6 +29,12 @@ export type CompileMemoryWikiResult = {
   updatedFiles: string[];
 };
 
+export type RefreshMemoryWikiIndexesResult = {
+  refreshed: boolean;
+  reason: "auto-compile-disabled" | "no-import-changes" | "missing-indexes" | "import-changed";
+  compile?: CompileMemoryWikiResult;
+};
+
 async function collectMarkdownFiles(rootDir: string, relativeDir: string): Promise<string[]> {
   const dirPath = path.join(rootDir, relativeDir);
   const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
@@ -93,7 +99,7 @@ async function writeManagedMarkdownFile(params: {
   startMarker: string;
   endMarker: string;
   body: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const original = await fs.readFile(params.filePath, "utf8").catch(() => `# ${params.title}\n`);
   const updated = replaceManagedMarkdownBlock({
     original,
@@ -102,7 +108,12 @@ async function writeManagedMarkdownFile(params: {
     endMarker: params.endMarker,
     body: params.body,
   });
-  await fs.writeFile(params.filePath, withTrailingNewline(updated), "utf8");
+  const rendered = withTrailingNewline(updated);
+  if (rendered === original) {
+    return false;
+  }
+  await fs.writeFile(params.filePath, rendered, "utf8");
+  return true;
 }
 
 function buildRootIndexBody(params: {
@@ -156,40 +167,95 @@ export async function compileMemoryWikiVault(
   const updatedFiles: string[] = [];
 
   const rootIndexPath = path.join(rootDir, "index.md");
-  await writeManagedMarkdownFile({
-    filePath: rootIndexPath,
-    title: "Wiki Index",
-    startMarker: "<!-- openclaw:wiki:index:start -->",
-    endMarker: "<!-- openclaw:wiki:index:end -->",
-    body: buildRootIndexBody({ config, pages, counts }),
-  });
-  updatedFiles.push(rootIndexPath);
+  if (
+    await writeManagedMarkdownFile({
+      filePath: rootIndexPath,
+      title: "Wiki Index",
+      startMarker: "<!-- openclaw:wiki:index:start -->",
+      endMarker: "<!-- openclaw:wiki:index:end -->",
+      body: buildRootIndexBody({ config, pages, counts }),
+    })
+  ) {
+    updatedFiles.push(rootIndexPath);
+  }
 
   for (const group of COMPILE_PAGE_GROUPS) {
     const filePath = path.join(rootDir, group.dir, "index.md");
-    await writeManagedMarkdownFile({
-      filePath,
-      title: group.heading,
-      startMarker: `<!-- openclaw:wiki:${group.dir}:index:start -->`,
-      endMarker: `<!-- openclaw:wiki:${group.dir}:index:end -->`,
-      body: buildDirectoryIndexBody({ config, pages, group }),
-    });
-    updatedFiles.push(filePath);
+    if (
+      await writeManagedMarkdownFile({
+        filePath,
+        title: group.heading,
+        startMarker: `<!-- openclaw:wiki:${group.dir}:index:start -->`,
+        endMarker: `<!-- openclaw:wiki:${group.dir}:index:end -->`,
+        body: buildDirectoryIndexBody({ config, pages, group }),
+      })
+    ) {
+      updatedFiles.push(filePath);
+    }
   }
 
-  await appendMemoryWikiLog(rootDir, {
-    type: "compile",
-    timestamp: new Date().toISOString(),
-    details: {
-      pageCounts: counts,
-      updatedFiles: updatedFiles.map((filePath) => path.relative(rootDir, filePath)),
-    },
-  });
+  if (updatedFiles.length > 0) {
+    await appendMemoryWikiLog(rootDir, {
+      type: "compile",
+      timestamp: new Date().toISOString(),
+      details: {
+        pageCounts: counts,
+        updatedFiles: updatedFiles.map((filePath) => path.relative(rootDir, filePath)),
+      },
+    });
+  }
 
   return {
     vaultRoot: rootDir,
     pageCounts: counts,
     pages,
     updatedFiles,
+  };
+}
+
+async function hasMissingWikiIndexes(rootDir: string): Promise<boolean> {
+  const required = [
+    path.join(rootDir, "index.md"),
+    ...COMPILE_PAGE_GROUPS.map((group) => path.join(rootDir, group.dir, "index.md")),
+  ];
+  for (const filePath of required) {
+    const exists = await fs
+      .access(filePath)
+      .then(() => true)
+      .catch(() => false);
+    if (!exists) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function refreshMemoryWikiIndexesAfterImport(params: {
+  config: ResolvedMemoryWikiConfig;
+  syncResult: { importedCount: number; updatedCount: number; removedCount: number };
+}): Promise<RefreshMemoryWikiIndexesResult> {
+  await initializeMemoryWikiVault(params.config);
+  if (!params.config.ingest.autoCompile) {
+    return {
+      refreshed: false,
+      reason: "auto-compile-disabled",
+    };
+  }
+  const importChanged =
+    params.syncResult.importedCount > 0 ||
+    params.syncResult.updatedCount > 0 ||
+    params.syncResult.removedCount > 0;
+  const missingIndexes = await hasMissingWikiIndexes(params.config.vault.path);
+  if (!importChanged && !missingIndexes) {
+    return {
+      refreshed: false,
+      reason: "no-import-changes",
+    };
+  }
+  const compile = await compileMemoryWikiVault(params.config);
+  return {
+    refreshed: true,
+    reason: missingIndexes && !importChanged ? "missing-indexes" : "import-changed",
+    compile,
   };
 }

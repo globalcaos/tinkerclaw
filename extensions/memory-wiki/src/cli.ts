@@ -230,7 +230,7 @@ export async function runWikiBridgeImport(params: {
   });
   const summary = params.json
     ? JSON.stringify(result, null, 2)
-    : `Bridge import synced ${result.artifactCount} artifacts across ${result.workspaces} workspaces (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged, ${result.removedCount} removed).`;
+    : `Bridge import synced ${result.artifactCount} artifacts across ${result.workspaces} workspaces (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged, ${result.removedCount} removed). Indexes ${result.indexesRefreshed ? `refreshed (${result.indexUpdatedFiles.length} files)` : `not refreshed (${result.indexRefreshReason})`}.`;
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -247,7 +247,7 @@ export async function runWikiUnsafeLocalImport(params: {
   });
   const summary = params.json
     ? JSON.stringify(result, null, 2)
-    : `Unsafe-local import synced ${result.artifactCount} artifacts (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged, ${result.removedCount} removed).`;
+    : `Unsafe-local import synced ${result.artifactCount} artifacts (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged, ${result.removedCount} removed). Indexes ${result.indexesRefreshed ? `refreshed (${result.indexUpdatedFiles.length} files)` : `not refreshed (${result.indexRefreshReason})`}.`;
   writeOutput(summary, params.stdout);
   return result;
 }
