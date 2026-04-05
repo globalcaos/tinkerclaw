@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { resolveMemoryHostEventLogPath } from "openclaw/plugin-sdk/memory-host-events";
 import {
   resolveMemoryCorePluginConfig,
   resolveMemoryDreamingWorkspaces,
 } from "openclaw/plugin-sdk/memory-host-status";
+import type { OpenClawConfig } from "../api.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { appendMemoryWikiLog } from "./log.js";
 import { renderMarkdownFence, renderWikiMarkdown, slugifyWikiSegment } from "./markdown.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
 type BridgeArtifact = {
+  artifactType: "markdown" | "memory-events";
   workspaceDir: string;
   relativePath: string;
   absolutePath: string;
@@ -65,6 +68,7 @@ async function collectWorkspaceArtifacts(
       const absolutePath = path.join(workspaceDir, relPath);
       if (await pathExists(absolutePath)) {
         artifacts.push({
+          artifactType: "markdown",
           workspaceDir,
           relativePath: relPath,
           absolutePath,
@@ -80,6 +84,7 @@ async function collectWorkspaceArtifacts(
       const relativePath = path.relative(workspaceDir, absolutePath).replace(/\\/g, "/");
       if (!relativePath.startsWith("memory/dreaming/")) {
         artifacts.push({
+          artifactType: "markdown",
           workspaceDir,
           relativePath,
           absolutePath,
@@ -94,9 +99,22 @@ async function collectWorkspaceArtifacts(
     for (const absolutePath of files) {
       const relativePath = path.relative(workspaceDir, absolutePath).replace(/\\/g, "/");
       artifacts.push({
+        artifactType: "markdown",
         workspaceDir,
         relativePath,
         absolutePath,
+      });
+    }
+  }
+
+  if (bridgeConfig.followMemoryEvents) {
+    const eventLogPath = resolveMemoryHostEventLogPath(workspaceDir);
+    if (await pathExists(eventLogPath)) {
+      artifacts.push({
+        artifactType: "memory-events",
+        workspaceDir,
+        relativePath: path.relative(workspaceDir, eventLogPath).replace(/\\/g, "/"),
+        absolutePath: eventLogPath,
       });
     }
   }
@@ -108,8 +126,14 @@ async function collectWorkspaceArtifacts(
   return [...deduped.values()];
 }
 
-function resolveBridgeTitle(relativePath: string, agentIds: string[]): string {
-  const base = relativePath
+function resolveBridgeTitle(artifact: BridgeArtifact, agentIds: string[]): string {
+  if (artifact.artifactType === "memory-events") {
+    if (agentIds.length === 0) {
+      return "Memory Bridge: event journal";
+    }
+    return `Memory Bridge (${agentIds.join(", ")}): event journal`;
+  }
+  const base = artifact.relativePath
     .replace(/\.md$/i, "")
     .replace(/^memory\//, "")
     .replace(/\//g, " / ");
@@ -152,18 +176,20 @@ async function writeBridgeSourcePage(params: {
     workspaceDir: params.artifact.workspaceDir,
     relativePath: params.artifact.relativePath,
   });
-  const title = resolveBridgeTitle(params.artifact.relativePath, params.agentIds);
+  const title = resolveBridgeTitle(params.artifact, params.agentIds);
   const pageAbsPath = path.join(params.config.vault.path, pagePath);
   const created = !(await pathExists(pageAbsPath));
   const raw = await fs.readFile(params.artifact.absolutePath, "utf8");
   const stats = await fs.stat(params.artifact.absolutePath);
   const sourceUpdatedAt = stats.mtime.toISOString();
+  const contentLanguage = params.artifact.artifactType === "memory-events" ? "json" : "markdown";
   const rendered = renderWikiMarkdown({
     frontmatter: {
       pageType: "source",
       id: pageId,
       title,
-      sourceType: "memory-bridge",
+      sourceType:
+        params.artifact.artifactType === "memory-events" ? "memory-bridge-events" : "memory-bridge",
       sourcePath: params.artifact.absolutePath,
       bridgeRelativePath: params.artifact.relativePath,
       bridgeWorkspaceDir: params.artifact.workspaceDir,
@@ -177,11 +203,12 @@ async function writeBridgeSourcePage(params: {
       "## Bridge Source",
       `- Workspace: \`${params.artifact.workspaceDir}\``,
       `- Relative path: \`${params.artifact.relativePath}\``,
+      `- Kind: \`${params.artifact.artifactType}\``,
       `- Agents: ${params.agentIds.length > 0 ? params.agentIds.join(", ") : "unknown"}`,
       `- Updated: ${sourceUpdatedAt}`,
       "",
       "## Content",
-      renderMarkdownFence(raw, "markdown"),
+      renderMarkdownFence(raw, contentLanguage),
       "",
       "## Notes",
       "<!-- openclaw:human:start -->",
