@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawConfig } from "../api.js";
+import { applyMemoryWikiMutation, type ApplyMemoryWikiMutation } from "./apply.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { lintMemoryWikiVault } from "./lint.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
@@ -23,12 +24,73 @@ const WikiGetSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+const WikiApplySchema = Type.Object(
+  {
+    op: Type.Union([Type.Literal("create_synthesis"), Type.Literal("update_metadata")]),
+    title: Type.Optional(Type.String({ minLength: 1 })),
+    body: Type.Optional(Type.String({ minLength: 1 })),
+    lookup: Type.Optional(Type.String({ minLength: 1 })),
+    sourceIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    contradictions: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    questions: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    confidence: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Null()])),
+    status: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
 
 async function syncImportedSourcesIfNeeded(
   config: ResolvedMemoryWikiConfig,
   appConfig?: OpenClawConfig,
 ) {
   await syncMemoryWikiImportedSources({ config, appConfig });
+}
+
+function normalizeWikiApplyMutation(rawParams: unknown): ApplyMemoryWikiMutation {
+  const params = rawParams as {
+    op: ApplyMemoryWikiMutation["op"];
+    title?: string;
+    body?: string;
+    lookup?: string;
+    sourceIds?: string[];
+    contradictions?: string[];
+    questions?: string[];
+    confidence?: number | null;
+    status?: string;
+  };
+  if (params.op === "create_synthesis") {
+    if (!params.title?.trim()) {
+      throw new Error("wiki_apply requires title for create_synthesis.");
+    }
+    if (!params.body?.trim()) {
+      throw new Error("wiki_apply requires body for create_synthesis.");
+    }
+    if (!params.sourceIds || params.sourceIds.length === 0) {
+      throw new Error("wiki_apply requires at least one sourceId for create_synthesis.");
+    }
+    return {
+      op: "create_synthesis",
+      title: params.title,
+      body: params.body,
+      sourceIds: params.sourceIds,
+      ...(params.contradictions ? { contradictions: params.contradictions } : {}),
+      ...(params.questions ? { questions: params.questions } : {}),
+      ...(typeof params.confidence === "number" ? { confidence: params.confidence } : {}),
+      ...(params.status ? { status: params.status } : {}),
+    };
+  }
+  if (!params.lookup?.trim()) {
+    throw new Error("wiki_apply requires lookup for update_metadata.");
+  }
+  return {
+    op: "update_metadata",
+    lookup: params.lookup,
+    ...(params.sourceIds ? { sourceIds: params.sourceIds } : {}),
+    ...(params.contradictions ? { contradictions: params.contradictions } : {}),
+    ...(params.questions ? { questions: params.questions } : {}),
+    ...(params.confidence !== undefined ? { confidence: params.confidence } : {}),
+    ...(params.status ? { status: params.status } : {}),
+  };
 }
 
 export function createWikiStatusTool(
@@ -116,6 +178,38 @@ export function createWikiLintTool(
             ].join("\n");
       return {
         content: [{ type: "text", text: summary }],
+        details: result,
+      };
+    },
+  };
+}
+
+export function createWikiApplyTool(
+  config: ResolvedMemoryWikiConfig,
+  appConfig?: OpenClawConfig,
+): AnyAgentTool {
+  return {
+    name: "wiki_apply",
+    label: "Wiki Apply",
+    description:
+      "Apply narrow wiki mutations for syntheses and page metadata without freeform markdown surgery.",
+    parameters: WikiApplySchema,
+    execute: async (_toolCallId, rawParams) => {
+      const mutation = normalizeWikiApplyMutation(rawParams);
+      await syncImportedSourcesIfNeeded(config, appConfig);
+      const result = await applyMemoryWikiMutation({ config, mutation });
+      const action = result.changed ? "Updated" : "No changes for";
+      const compileSummary =
+        result.compile.updatedFiles.length > 0
+          ? `Refreshed ${result.compile.updatedFiles.length} index file${result.compile.updatedFiles.length === 1 ? "" : "s"}.`
+          : "Indexes unchanged.";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${action} ${result.pagePath} via ${result.operation}. ${compileSummary}`,
+          },
+        ],
         details: result,
       };
     },
