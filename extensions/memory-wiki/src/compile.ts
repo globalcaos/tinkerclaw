@@ -11,6 +11,8 @@ import {
   toWikiPageSummary,
   type WikiPageKind,
   type WikiPageSummary,
+  WIKI_RELATED_END_MARKER,
+  WIKI_RELATED_START_MARKER,
 } from "./markdown.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
@@ -71,6 +73,162 @@ function buildPageCounts(pages: WikiPageSummary[]): Record<WikiPageKind, number>
     synthesis: pages.filter((page) => page.kind === "synthesis").length,
     report: pages.filter((page) => page.kind === "report").length,
   };
+}
+
+function normalizeComparableTarget(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\.md$/i, "")
+    .replace(/^\.\/+/, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+function uniquePages(pages: WikiPageSummary[]): WikiPageSummary[] {
+  const seen = new Set<string>();
+  const unique: WikiPageSummary[] = [];
+  for (const page of pages) {
+    const key = page.id ?? page.relativePath;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(page);
+  }
+  return unique;
+}
+
+function buildPageLookupKeys(page: WikiPageSummary): Set<string> {
+  const keys = new Set<string>();
+  keys.add(normalizeComparableTarget(page.relativePath));
+  keys.add(normalizeComparableTarget(page.relativePath.replace(/\.md$/i, "")));
+  keys.add(normalizeComparableTarget(page.title));
+  if (page.id) {
+    keys.add(normalizeComparableTarget(page.id));
+  }
+  return keys;
+}
+
+function renderWikiPageLinks(params: {
+  config: ResolvedMemoryWikiConfig;
+  pages: WikiPageSummary[];
+}): string {
+  return params.pages
+    .map(
+      (page) =>
+        `- ${formatWikiLink({
+          renderMode: params.config.vault.renderMode,
+          relativePath: page.relativePath,
+          title: page.title,
+        })}`,
+    )
+    .join("\n");
+}
+
+function buildRelatedBlockBody(params: {
+  config: ResolvedMemoryWikiConfig;
+  page: WikiPageSummary;
+  allPages: WikiPageSummary[];
+}): string {
+  const pagesById = new Map(
+    params.allPages.flatMap((candidate) =>
+      candidate.id ? [[candidate.id, candidate] as const] : [],
+    ),
+  );
+  const sourcePages = uniquePages(
+    params.page.sourceIds.flatMap((sourceId) => {
+      const page = pagesById.get(sourceId);
+      return page ? [page] : [];
+    }),
+  );
+  const backlinkKeys = buildPageLookupKeys(params.page);
+  const backlinks = uniquePages(
+    params.allPages.filter((candidate) => {
+      if (candidate.relativePath === params.page.relativePath) {
+        return false;
+      }
+      if (candidate.sourceIds.includes(params.page.id ?? "")) {
+        return true;
+      }
+      return candidate.linkTargets.some((target) =>
+        backlinkKeys.has(normalizeComparableTarget(target)),
+      );
+    }),
+  );
+  const relatedPages = uniquePages(
+    params.allPages.filter((candidate) => {
+      if (candidate.relativePath === params.page.relativePath) {
+        return false;
+      }
+      if (sourcePages.some((sourcePage) => sourcePage.relativePath === candidate.relativePath)) {
+        return false;
+      }
+      if (backlinks.some((backlink) => backlink.relativePath === candidate.relativePath)) {
+        return false;
+      }
+      if (params.page.sourceIds.length === 0 || candidate.sourceIds.length === 0) {
+        return false;
+      }
+      return params.page.sourceIds.some((sourceId) => candidate.sourceIds.includes(sourceId));
+    }),
+  );
+
+  const sections: string[] = [];
+  if (sourcePages.length > 0) {
+    sections.push(
+      "### Sources",
+      renderWikiPageLinks({ config: params.config, pages: sourcePages }),
+    );
+  }
+  if (backlinks.length > 0) {
+    sections.push(
+      "### Referenced By",
+      renderWikiPageLinks({ config: params.config, pages: backlinks }),
+    );
+  }
+  if (relatedPages.length > 0) {
+    sections.push(
+      "### Related Pages",
+      renderWikiPageLinks({ config: params.config, pages: relatedPages }),
+    );
+  }
+  if (sections.length === 0) {
+    return "- No related pages yet.";
+  }
+  return sections.join("\n\n");
+}
+
+async function refreshPageRelatedBlocks(params: {
+  config: ResolvedMemoryWikiConfig;
+  pages: WikiPageSummary[];
+}): Promise<string[]> {
+  if (!params.config.render.createBacklinks) {
+    return [];
+  }
+  const updatedFiles: string[] = [];
+  for (const page of params.pages) {
+    const original = await fs.readFile(page.absolutePath, "utf8");
+    const updated = withTrailingNewline(
+      replaceManagedMarkdownBlock({
+        original,
+        heading: "## Related",
+        startMarker: WIKI_RELATED_START_MARKER,
+        endMarker: WIKI_RELATED_END_MARKER,
+        body: buildRelatedBlockBody({
+          config: params.config,
+          page,
+          allPages: params.pages,
+        }),
+      }),
+    );
+    if (updated === original) {
+      continue;
+    }
+    await fs.writeFile(page.absolutePath, updated, "utf8");
+    updatedFiles.push(page.absolutePath);
+  }
+  return updatedFiles;
 }
 
 function renderSectionList(params: {
@@ -162,9 +320,12 @@ export async function compileMemoryWikiVault(
 ): Promise<CompileMemoryWikiResult> {
   await initializeMemoryWikiVault(config);
   const rootDir = config.vault.path;
-  const pages = await readPageSummaries(rootDir);
+  let pages = await readPageSummaries(rootDir);
+  const updatedFiles = await refreshPageRelatedBlocks({ config, pages });
+  if (updatedFiles.length > 0) {
+    pages = await readPageSummaries(rootDir);
+  }
   const counts = buildPageCounts(pages);
-  const updatedFiles: string[] = [];
 
   const rootIndexPath = path.join(rootDir, "index.md");
   if (
