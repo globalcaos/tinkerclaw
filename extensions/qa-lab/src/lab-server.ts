@@ -1,11 +1,21 @@
 import fs from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import { request as httpsRequest } from "node:https";
+import net from "node:net";
 import path from "node:path";
+import type { Duplex } from "node:stream";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { handleQaBusRequest, writeError, writeJson } from "./bus-server.js";
 import { createQaBusState, type QaBusState } from "./bus-state.js";
 import { createQaRunnerRuntime } from "./harness-runtime.js";
 import { qaChannelPlugin, setQaChannelRuntime, type OpenClawConfig } from "./runtime-api.js";
+import { readQaBootstrapScenarioCatalog } from "./scenario-catalog.js";
 import { runQaSelfCheckAgainstState, type QaSelfCheckResult } from "./self-check.js";
 
 type QaLabLatestReport = {
@@ -13,6 +23,32 @@ type QaLabLatestReport = {
   markdown: string;
   generatedAt: string;
 };
+
+type QaLabBootstrapDefaults = {
+  conversationKind: "direct" | "channel";
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+};
+
+function injectKickoffMessage(params: {
+  state: QaBusState;
+  defaults: QaLabBootstrapDefaults;
+  kickoffTask: string;
+}) {
+  return params.state.addInboundMessage({
+    conversation: {
+      id: params.defaults.conversationId,
+      kind: params.defaults.conversationKind,
+      ...(params.defaults.conversationKind === "channel"
+        ? { title: params.defaults.conversationId }
+        : {}),
+    },
+    senderId: params.defaults.senderId,
+    senderName: params.defaults.senderName,
+    text: params.kickoffTask,
+  });
+}
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -64,7 +100,160 @@ function missingUiHtml() {
 }
 
 function resolveUiDistDir() {
-  return fileURLToPath(new URL("../web/dist", import.meta.url));
+  const candidates = [
+    fileURLToPath(new URL("../web/dist", import.meta.url)),
+    path.resolve(process.cwd(), "extensions/qa-lab/web/dist"),
+    path.resolve(process.cwd(), "dist/extensions/qa-lab/web/dist"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+function resolveAdvertisedBaseUrl(params: {
+  bindHost?: string;
+  bindPort: number;
+  advertiseHost?: string;
+  advertisePort?: number;
+}) {
+  const advertisedHost =
+    params.advertiseHost?.trim() ||
+    (params.bindHost && params.bindHost !== "0.0.0.0" ? params.bindHost : "127.0.0.1");
+  const advertisedPort =
+    typeof params.advertisePort === "number" && Number.isFinite(params.advertisePort)
+      ? params.advertisePort
+      : params.bindPort;
+  return `http://${advertisedHost}:${advertisedPort}`;
+}
+
+function createBootstrapDefaults(autoKickoffTarget?: string): QaLabBootstrapDefaults {
+  if (autoKickoffTarget === "channel") {
+    return {
+      conversationKind: "channel",
+      conversationId: "qa-lab",
+      senderId: "qa-operator",
+      senderName: "QA Operator",
+    };
+  }
+  return {
+    conversationKind: "direct",
+    conversationId: "qa-operator",
+    senderId: "qa-operator",
+    senderName: "QA Operator",
+  };
+}
+
+function isControlUiProxyPath(pathname: string) {
+  return pathname === "/control-ui" || pathname.startsWith("/control-ui/");
+}
+
+function rewriteControlUiProxyPath(pathname: string, search: string) {
+  const stripped = pathname === "/control-ui" ? "/" : pathname.slice("/control-ui".length) || "/";
+  return `${stripped}${search}`;
+}
+
+async function proxyHttpRequest(params: {
+  req: IncomingMessage;
+  res: ServerResponse;
+  target: URL;
+  pathname: string;
+  search: string;
+}) {
+  const client = params.target.protocol === "https:" ? httpsRequest : httpRequest;
+  const upstreamReq = client(
+    {
+      protocol: params.target.protocol,
+      hostname: params.target.hostname,
+      port: params.target.port || (params.target.protocol === "https:" ? 443 : 80),
+      method: params.req.method,
+      path: rewriteControlUiProxyPath(params.pathname, params.search),
+      headers: {
+        ...params.req.headers,
+        host: params.target.host,
+      },
+    },
+    (upstreamRes) => {
+      params.res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      upstreamRes.pipe(params.res);
+    },
+  );
+
+  upstreamReq.on("error", (error) => {
+    if (!params.res.headersSent) {
+      writeError(params.res, 502, error);
+      return;
+    }
+    params.res.destroy(error);
+  });
+
+  if (params.req.method === "GET" || params.req.method === "HEAD") {
+    upstreamReq.end();
+    return;
+  }
+  params.req.pipe(upstreamReq);
+}
+
+function proxyUpgradeRequest(params: {
+  req: IncomingMessage;
+  socket: Duplex;
+  head: Buffer;
+  target: URL;
+}) {
+  const requestUrl = new URL(params.req.url ?? "/", "http://127.0.0.1");
+  const port = Number(params.target.port || (params.target.protocol === "https:" ? 443 : 80));
+  const upstream =
+    params.target.protocol === "https:"
+      ? tls.connect({
+          host: params.target.hostname,
+          port,
+          servername: params.target.hostname,
+        })
+      : net.connect({
+          host: params.target.hostname,
+          port,
+        });
+
+  const headerLines: string[] = [];
+  for (let index = 0; index < params.req.rawHeaders.length; index += 2) {
+    const name = params.req.rawHeaders[index];
+    const value = params.req.rawHeaders[index + 1] ?? "";
+    if (name.toLowerCase() === "host") {
+      continue;
+    }
+    headerLines.push(`${name}: ${value}`);
+  }
+
+  upstream.once("connect", () => {
+    const requestText = [
+      `${params.req.method ?? "GET"} ${rewriteControlUiProxyPath(requestUrl.pathname, requestUrl.search)} HTTP/${params.req.httpVersion}`,
+      `Host: ${params.target.host}`,
+      ...headerLines,
+      "",
+      "",
+    ].join("\r\n");
+    upstream.write(requestText);
+    if (params.head.length > 0) {
+      upstream.write(params.head);
+    }
+    upstream.pipe(params.socket);
+    params.socket.pipe(upstream);
+  });
+
+  const closeBoth = () => {
+    if (!params.socket.destroyed) {
+      params.socket.destroy();
+    }
+    if (!upstream.destroyed) {
+      upstream.destroy();
+    }
+  };
+
+  upstream.on("error", () => {
+    if (!params.socket.destroyed) {
+      params.socket.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    }
+    closeBoth();
+  });
+  params.socket.on("error", closeBoth);
+  params.socket.on("close", closeBoth);
 }
 
 function tryResolveUiAsset(pathname: string): string | null {
@@ -142,9 +331,22 @@ export async function startQaLabServer(params?: {
   host?: string;
   port?: number;
   outputPath?: string;
+  advertiseHost?: string;
+  advertisePort?: number;
+  controlUiUrl?: string;
+  controlUiToken?: string;
+  controlUiProxyTarget?: string;
+  autoKickoffTarget?: string;
+  embeddedGateway?: string;
+  sendKickoffOnStart?: boolean;
 }) {
   const state = createQaBusState();
   let latestReport: QaLabLatestReport | null = null;
+  const scenarioCatalog = readQaBootstrapScenarioCatalog();
+  const bootstrapDefaults = createBootstrapDefaults(params?.autoKickoffTarget);
+  const controlUiProxyTarget = params?.controlUiProxyTarget?.trim()
+    ? new URL(params.controlUiProxyTarget)
+    : null;
   let gateway:
     | {
         cfg: OpenClawConfig;
@@ -152,6 +354,7 @@ export async function startQaLabServer(params?: {
       }
     | undefined;
 
+  let publicBaseUrl = "";
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
@@ -160,17 +363,38 @@ export async function startQaLabServer(params?: {
     }
 
     try {
-      if (req.method === "GET" && url.pathname === "/api/bootstrap") {
-        writeJson(res, 200, {
-          baseUrl,
-          latestReport,
-          defaults: {
-            conversationKind: "direct",
-            conversationId: "alice",
-            senderId: "alice",
-            senderName: "Alice",
-          },
+      if (controlUiProxyTarget && isControlUiProxyPath(url.pathname)) {
+        await proxyHttpRequest({
+          req,
+          res,
+          target: controlUiProxyTarget,
+          pathname: url.pathname,
+          search: url.search,
         });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/bootstrap") {
+        const controlUiUrl = controlUiProxyTarget
+          ? `${publicBaseUrl}/control-ui/`
+          : params?.controlUiUrl?.trim() || null;
+        const controlUiEmbeddedUrl =
+          controlUiUrl && params?.controlUiToken
+            ? `${controlUiUrl.replace(/\/?$/, "/")}#token=${encodeURIComponent(params.controlUiToken)}`
+            : controlUiUrl;
+        writeJson(res, 200, {
+          baseUrl: publicBaseUrl,
+          latestReport,
+          controlUiUrl,
+          controlUiEmbeddedUrl,
+          kickoffTask: scenarioCatalog.kickoffTask,
+          scenarios: scenarioCatalog.scenarios,
+          defaults: bootstrapDefaults,
+        });
+        return;
+      }
+      if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
+        writeJson(res, 200, { ok: true, status: "live" });
         return;
       }
       if (req.method === "GET" && url.pathname === "/api/state") {
@@ -193,10 +417,20 @@ export async function startQaLabServer(params?: {
         });
         return;
       }
+      if (req.method === "POST" && url.pathname === "/api/kickoff") {
+        writeJson(res, 200, {
+          message: injectKickoffMessage({
+            state,
+            defaults: bootstrapDefaults,
+            kickoffTask: scenarioCatalog.kickoffTask,
+          }),
+        });
+        return;
+      }
       if (req.method === "POST" && url.pathname === "/api/scenario/self-check") {
         const result = await runQaSelfCheckAgainstState({
           state,
-          cfg: gateway?.cfg ?? createQaLabConfig(baseUrl),
+          cfg: gateway?.cfg ?? createQaLabConfig(listenUrl),
           outputPath: params?.outputPath,
         });
         latestReport = {
@@ -251,11 +485,42 @@ export async function startQaLabServer(params?: {
   if (!address || typeof address === "string") {
     throw new Error("qa-lab failed to bind");
   }
-  const baseUrl = `http://${params?.host ?? "127.0.0.1"}:${address.port}`;
-  gateway = await startQaGatewayLoop({ state, baseUrl });
+  const listenUrl = resolveAdvertisedBaseUrl({
+    bindHost: params?.host ?? "127.0.0.1",
+    bindPort: address.port,
+  });
+  publicBaseUrl = resolveAdvertisedBaseUrl({
+    bindHost: params?.host ?? "127.0.0.1",
+    bindPort: address.port,
+    advertiseHost: params?.advertiseHost,
+    advertisePort: params?.advertisePort,
+  });
+  gateway = await startQaGatewayLoop({ state, baseUrl: listenUrl });
+  if (params?.sendKickoffOnStart) {
+    injectKickoffMessage({
+      state,
+      defaults: bootstrapDefaults,
+      kickoffTask: scenarioCatalog.kickoffTask,
+    });
+  }
+
+  server.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (!controlUiProxyTarget || !isControlUiProxyPath(url.pathname)) {
+      socket.destroy();
+      return;
+    }
+    proxyUpgradeRequest({
+      req,
+      socket,
+      head,
+      target: controlUiProxyTarget,
+    });
+  });
 
   return {
-    baseUrl,
+    baseUrl: publicBaseUrl,
+    listenUrl,
     state,
     async runSelfCheck() {
       const result = await runQaSelfCheckAgainstState({

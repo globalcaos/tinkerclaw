@@ -79,6 +79,21 @@ textarea {
   padding: 1.2rem;
 }
 
+.dashboard {
+  min-height: 100vh;
+}
+
+.split-dashboard {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.05fr) minmax(680px, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.qa-column {
+  min-width: 0;
+}
+
 .topbar,
 .statusbar,
 .workspace {
@@ -165,6 +180,34 @@ textarea {
   min-height: 0;
 }
 
+.control-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 2rem);
+  position: sticky;
+  top: 1rem;
+}
+
+.control-frame {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #0b0f14;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .panel-header {
   display: flex;
   justify-content: space-between;
@@ -209,6 +252,34 @@ textarea {
   min-height: 0;
   max-height: 46vh;
   overflow: auto;
+}
+
+.scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  max-height: 28vh;
+  overflow: auto;
+}
+
+.scenario-card {
+  padding: 0.8rem;
+  border-radius: 16px;
+  background: var(--panel-strong);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.scenario-card header,
+.scenario-card footer {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scenario-card p {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
 }
 
 .message {
@@ -257,6 +328,17 @@ label span {
 .textarea-label {
   display: block;
   margin-top: 0.85rem;
+}
+
+@media (max-width: 1280px) {
+  .split-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .control-pane {
+    min-height: 70vh;
+    position: static;
+  }
 }
 
 .lower {

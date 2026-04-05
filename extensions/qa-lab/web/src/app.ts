@@ -44,9 +44,23 @@ type ReportEnvelope = {
   };
 };
 
+type SeedScenario = {
+  id: string;
+  title: string;
+  surface: string;
+  objective: string;
+  successCriteria: string[];
+  docsRefs?: string[];
+  codeRefs?: string[];
+};
+
 type Bootstrap = {
   baseUrl: string;
   latestReport: ReportEnvelope["report"];
+  controlUiUrl: string | null;
+  controlUiEmbeddedUrl: string | null;
+  kickoffTask: string;
+  scenarios: SeedScenario[];
   defaults: {
     conversationKind: "direct" | "channel";
     conversationId: string;
@@ -136,6 +150,27 @@ function deriveSelectedThread(state: UiState): string | null {
     return state.selectedThreadId;
   }
   return null;
+}
+
+function renderScenarioList(scenarios: SeedScenario[]) {
+  if (scenarios.length === 0) {
+    return '<p class="empty">No repo-backed scenarios yet.</p>';
+  }
+  return scenarios
+    .map(
+      (scenario) => `
+        <article class="scenario-card">
+          <header>
+            <strong>${escapeHtml(scenario.title)}</strong>
+            <span>${escapeHtml(scenario.surface)}</span>
+          </header>
+          <p>${escapeHtml(scenario.objective)}</p>
+          <footer>
+            <code>${escapeHtml(scenario.id)}</code>
+          </footer>
+        </article>`,
+    )
+    .join("");
 }
 
 export async function createQaLabApp(root: HTMLDivElement) {
@@ -336,29 +371,55 @@ export async function createQaLabApp(root: HTMLDivElement) {
       selectedThreadId,
     });
     const events = (state.snapshot?.events ?? []).slice(-20).reverse();
+    const scenarios = state.bootstrap?.scenarios ?? [];
+    const hasControlUi = Boolean(state.bootstrap?.controlUiEmbeddedUrl);
+    const kickoffTask = state.bootstrap?.kickoffTask ?? "";
+    const dashboardShellClass = hasControlUi ? "dashboard split-dashboard" : "dashboard";
 
     root.innerHTML = `
-      <div class="shell">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Private QA Workspace</p>
-            <h1>QA Lab</h1>
-            <p class="subtle">Synthetic Slack-style debugger for qa-channel.</p>
-          </div>
-          <div class="toolbar">
-            <button data-action="refresh"${state.busy ? " disabled" : ""}>Refresh</button>
-            <button data-action="reset"${state.busy ? " disabled" : ""}>Reset</button>
-            <button class="accent" data-action="self-check"${state.busy ? " disabled" : ""}>Run Self-Check</button>
-          </div>
-        </header>
-        <section class="statusbar">
-          <span class="pill">Bus ${state.bootstrap ? "online" : "booting"}</span>
-          <span class="pill">Conversation ${selectedConversationId ?? "none"}</span>
-          <span class="pill">Thread ${selectedThreadId ?? "root"}</span>
-          ${state.latestReport ? `<span class="pill success">Report ${escapeHtml(state.latestReport.outputPath)}</span>` : '<span class="pill">No report yet</span>'}
-          ${state.error ? `<span class="pill error">${escapeHtml(state.error)}</span>` : ""}
-        </section>
-        <main class="workspace">
+      <div class="${dashboardShellClass}">
+        ${
+          hasControlUi
+            ? `
+          <section class="control-pane panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Agent Control</p>
+                <h2>Control UI</h2>
+              </div>
+              ${
+                state.bootstrap?.controlUiUrl
+                  ? `<a class="button-link" href="${escapeHtml(state.bootstrap.controlUiUrl)}" target="_blank" rel="noreferrer">Open full tab</a>`
+                  : ""
+              }
+            </div>
+            <iframe class="control-frame" src="${escapeHtml(state.bootstrap?.controlUiEmbeddedUrl ?? "")}" title="OpenClaw Control UI"></iframe>
+          </section>`
+            : ""
+        }
+        <div class="shell qa-column">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Private QA Workspace</p>
+              <h1>QA Lab</h1>
+              <p class="subtle">Slack-ish QA surface, repo-backed scenario plan, protocol report.</p>
+            </div>
+            <div class="toolbar">
+              <button data-action="refresh"${state.busy ? " disabled" : ""}>Refresh</button>
+              <button data-action="reset"${state.busy ? " disabled" : ""}>Reset</button>
+              <button class="accent" data-action="self-check"${state.busy ? " disabled" : ""}>Run Self-Check</button>
+            </div>
+          </header>
+          <section class="statusbar">
+            <span class="pill">Bus ${state.bootstrap ? "online" : "booting"}</span>
+            <span class="pill">${hasControlUi ? "Control UI linked" : "Control UI external"}</span>
+            <span class="pill">Scenarios ${scenarios.length}</span>
+            <span class="pill">Conversation ${selectedConversationId ?? "none"}</span>
+            <span class="pill">Thread ${selectedThreadId ?? "root"}</span>
+            ${state.latestReport ? `<span class="pill success">Report ${escapeHtml(state.latestReport.outputPath)}</span>` : '<span class="pill">No report yet</span>'}
+            ${state.error ? `<span class="pill error">${escapeHtml(state.error)}</span>` : ""}
+          </section>
+          <main class="workspace">
           <aside class="rail">
             <section class="panel">
               <h2>Conversations</h2>
@@ -457,6 +518,16 @@ export async function createQaLabApp(root: HTMLDivElement) {
           </section>
           <aside class="rail right">
             <section class="panel">
+              <h2>Kickoff task</h2>
+              <pre class="report">${escapeHtml(kickoffTask || "No kickoff task loaded.")}</pre>
+            </section>
+            <section class="panel">
+              <h2>Seed scenarios</h2>
+              <div class="scenario-list">
+                ${renderScenarioList(scenarios)}
+              </div>
+            </section>
+            <section class="panel">
               <div class="panel-header">
                 <h2>Latest report</h2>
                 <button data-action="download-report"${state.latestReport ? "" : " disabled"}>Export</button>
@@ -485,7 +556,8 @@ export async function createQaLabApp(root: HTMLDivElement) {
               </div>
             </section>
           </aside>
-        </main>
+          </main>
+        </div>
       </div>`;
     bindEvents();
   }
