@@ -22,6 +22,11 @@ export type WikiSearchResult = {
   endLine?: number;
   citation?: string;
   memorySource?: MemorySearchResult["source"];
+  sourceType?: string;
+  provenanceMode?: string;
+  sourcePath?: string;
+  provenanceLabel?: string;
+  updatedAt?: string;
 };
 
 export type WikiGetResult = {
@@ -33,6 +38,11 @@ export type WikiGetResult = {
   fromLine: number;
   lineCount: number;
   id?: string;
+  sourceType?: string;
+  provenanceMode?: string;
+  sourcePath?: string;
+  provenanceLabel?: string;
+  updatedAt?: string;
 };
 
 export type QueryableWikiPage = WikiPageSummary & {
@@ -164,6 +174,28 @@ function buildMemorySearchTitle(resultPath: string): string {
   return basename.length > 0 ? basename : resultPath;
 }
 
+function buildWikiProvenanceLabel(
+  page: Pick<
+    WikiPageSummary,
+    | "sourceType"
+    | "provenanceMode"
+    | "bridgeRelativePath"
+    | "unsafeLocalRelativePath"
+    | "relativePath"
+  >,
+): string | undefined {
+  if (page.sourceType === "memory-bridge-events") {
+    return `bridge events: ${page.bridgeRelativePath ?? page.relativePath}`;
+  }
+  if (page.sourceType === "memory-bridge") {
+    return `bridge: ${page.bridgeRelativePath ?? page.relativePath}`;
+  }
+  if (page.provenanceMode === "unsafe-local" || page.sourceType === "memory-unsafe-local") {
+    return `unsafe-local: ${page.unsafeLocalRelativePath ?? page.relativePath}`;
+  }
+  return undefined;
+}
+
 function toWikiSearchResult(page: QueryableWikiPage, query: string): WikiSearchResult {
   return {
     corpus: "wiki",
@@ -173,6 +205,11 @@ function toWikiSearchResult(page: QueryableWikiPage, query: string): WikiSearchR
     score: scorePage(page, query),
     snippet: buildSnippet(page.raw, query),
     ...(page.id ? { id: page.id } : {}),
+    ...(page.sourceType ? { sourceType: page.sourceType } : {}),
+    ...(page.provenanceMode ? { provenanceMode: page.provenanceMode } : {}),
+    ...(page.sourcePath ? { sourcePath: page.sourcePath } : {}),
+    ...(buildWikiProvenanceLabel(page) ? { provenanceLabel: buildWikiProvenanceLabel(page) } : {}),
+    ...(page.updatedAt ? { updatedAt: page.updatedAt } : {}),
   };
 }
 
@@ -269,6 +306,13 @@ export async function getMemoryWikiPage(params: {
         fromLine,
         lineCount,
         ...(page.id ? { id: page.id } : {}),
+        ...(page.sourceType ? { sourceType: page.sourceType } : {}),
+        ...(page.provenanceMode ? { provenanceMode: page.provenanceMode } : {}),
+        ...(page.sourcePath ? { sourcePath: page.sourcePath } : {}),
+        ...(buildWikiProvenanceLabel(page)
+          ? { provenanceLabel: buildWikiProvenanceLabel(page) }
+          : {}),
+        ...(page.updatedAt ? { updatedAt: page.updatedAt } : {}),
       };
     }
   }

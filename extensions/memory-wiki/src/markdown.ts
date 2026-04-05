@@ -22,7 +22,19 @@ export type WikiPageSummary = {
   contradictions: string[];
   questions: string[];
   confidence?: number;
+  sourceType?: string;
+  provenanceMode?: string;
+  sourcePath?: string;
+  bridgeRelativePath?: string;
+  bridgeWorkspaceDir?: string;
+  unsafeLocalConfiguredPath?: string;
+  unsafeLocalRelativePath?: string;
+  updatedAt?: string;
 };
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
 const FRONTMATTER_PATTERN = /^---\n([\s\S]*?)\n---\n?/;
 const OBSIDIAN_LINK_PATTERN = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
@@ -156,14 +168,8 @@ export function toWikiPageSummary(params: {
     relativePath: params.relativePath.split(path.sep).join("/"),
     kind,
     title,
-    id:
-      typeof parsed.frontmatter.id === "string" && parsed.frontmatter.id.trim()
-        ? parsed.frontmatter.id.trim()
-        : undefined,
-    pageType:
-      typeof parsed.frontmatter.pageType === "string" && parsed.frontmatter.pageType.trim()
-        ? parsed.frontmatter.pageType.trim()
-        : undefined,
+    id: normalizeOptionalString(parsed.frontmatter.id),
+    pageType: normalizeOptionalString(parsed.frontmatter.pageType),
     sourceIds: normalizeSourceIds(parsed.frontmatter.sourceIds),
     linkTargets: extractWikiLinks(params.raw),
     contradictions: normalizeStringList(parsed.frontmatter.contradictions),
@@ -173,5 +179,15 @@ export function toWikiPageSummary(params: {
       Number.isFinite(parsed.frontmatter.confidence)
         ? parsed.frontmatter.confidence
         : undefined,
+    sourceType: normalizeOptionalString(parsed.frontmatter.sourceType),
+    provenanceMode: normalizeOptionalString(parsed.frontmatter.provenanceMode),
+    sourcePath: normalizeOptionalString(parsed.frontmatter.sourcePath),
+    bridgeRelativePath: normalizeOptionalString(parsed.frontmatter.bridgeRelativePath),
+    bridgeWorkspaceDir: normalizeOptionalString(parsed.frontmatter.bridgeWorkspaceDir),
+    unsafeLocalConfiguredPath: normalizeOptionalString(
+      parsed.frontmatter.unsafeLocalConfiguredPath,
+    ),
+    unsafeLocalRelativePath: normalizeOptionalString(parsed.frontmatter.unsafeLocalRelativePath),
+    updatedAt: normalizeOptionalString(parsed.frontmatter.updatedAt),
   };
 }

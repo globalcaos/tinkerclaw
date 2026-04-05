@@ -88,6 +88,44 @@ describe("searchMemoryWiki", () => {
     expect(getActiveMemorySearchManagerMock).not.toHaveBeenCalled();
   });
 
+  it("surfaces bridge provenance for imported source pages", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+    await fs.writeFile(
+      path.join(rootDir, "sources", "bridge-alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "source",
+          id: "source.bridge.alpha",
+          title: "Bridge Alpha",
+          sourceType: "memory-bridge",
+          sourcePath: "/tmp/workspace/MEMORY.md",
+          bridgeRelativePath: "MEMORY.md",
+          bridgeWorkspaceDir: "/tmp/workspace",
+          updatedAt: "2026-04-05T12:00:00.000Z",
+        },
+        body: "# Bridge Alpha\n\nalpha bridge body\n",
+      }),
+      "utf8",
+    );
+
+    const results = await searchMemoryWiki({ config, query: "alpha" });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      corpus: "wiki",
+      sourceType: "memory-bridge",
+      sourcePath: "/tmp/workspace/MEMORY.md",
+      provenanceLabel: "bridge: MEMORY.md",
+      updatedAt: "2026-04-05T12:00:00.000Z",
+    });
+  });
+
   it("includes active memory results when shared search and all corpora are enabled", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
     tempDirs.push(rootDir);
@@ -210,6 +248,49 @@ describe("getMemoryWikiPage", () => {
     expect(result?.content).toContain("line one");
     expect(result?.content).toContain("line two");
     expect(result?.content).not.toContain("line three");
+  });
+
+  it("returns provenance for imported wiki source pages", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+    await fs.writeFile(
+      path.join(rootDir, "sources", "unsafe-alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "source",
+          id: "source.unsafe.alpha",
+          title: "Unsafe Alpha",
+          sourceType: "memory-unsafe-local",
+          provenanceMode: "unsafe-local",
+          sourcePath: "/tmp/private/alpha.md",
+          unsafeLocalConfiguredPath: "/tmp/private",
+          unsafeLocalRelativePath: "alpha.md",
+          updatedAt: "2026-04-05T13:00:00.000Z",
+        },
+        body: "# Unsafe Alpha\n\nsecret alpha\n",
+      }),
+      "utf8",
+    );
+
+    const result = await getMemoryWikiPage({
+      config,
+      lookup: "sources/unsafe-alpha.md",
+    });
+
+    expect(result).toMatchObject({
+      corpus: "wiki",
+      path: "sources/unsafe-alpha.md",
+      sourceType: "memory-unsafe-local",
+      provenanceMode: "unsafe-local",
+      sourcePath: "/tmp/private/alpha.md",
+      provenanceLabel: "unsafe-local: alpha.md",
+      updatedAt: "2026-04-05T13:00:00.000Z",
+    });
   });
 
   it("falls back to active memory reads when memory corpus is selected", async () => {
