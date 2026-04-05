@@ -43,6 +43,7 @@ Docs: https://docs.openclaw.ai
 - Docs/IRC: replace public IRC hostname examples with `irc.example.com` and recommend private servers for bot coordination while listing common public networks for intentional use.
 - Memory/dreaming: add configurable aging controls (`recencyHalfLifeDays`, `maxAgeDays`) plus optional verbose logging so operators can tune recall decay and inspect promotion decisions more easily.
 - Plugins/reply dispatch: add a generic `reply_dispatch` hook so bundled plugins like ACPX can own reply interception without hardcoded ACP paths in core auto-reply routing.
+- Memory/dreaming: refactor dreaming from competing modes (`off|core|rem|deep`) to three cooperative phases (light, deep, REM) with independent schedules, per-phase enable/disable, deep-only `MEMORY.md` writes, light/REM daily-note staging, deep recovery, and per-phase execution overrides.
 
 ### Fixes
 
