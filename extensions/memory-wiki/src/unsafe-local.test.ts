@@ -42,6 +42,7 @@ describe("syncMemoryWikiUnsafeLocalSources", () => {
     expect(first.importedCount).toBe(3);
     expect(first.updatedCount).toBe(0);
     expect(first.skippedCount).toBe(0);
+    expect(first.removedCount).toBe(0);
 
     const page = await fs.readFile(path.join(vaultDir, first.pagePaths[0] ?? ""), "utf8");
     expect(page).toContain("sourceType: memory-unsafe-local");
@@ -52,5 +53,40 @@ describe("syncMemoryWikiUnsafeLocalSources", () => {
     expect(second.importedCount).toBe(0);
     expect(second.updatedCount).toBe(0);
     expect(second.skippedCount).toBe(3);
+    expect(second.removedCount).toBe(0);
+  });
+
+  it("prunes stale unsafe-local pages when configured files disappear", async () => {
+    const privateDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-private-prune-"));
+    const vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-unsafe-prune-vault-"));
+    tempDirs.push(privateDir, vaultDir);
+
+    const secretPath = path.join(privateDir, "secret.md");
+    await fs.writeFile(secretPath, "# private\n", "utf8");
+
+    const config = resolveMemoryWikiConfig(
+      {
+        vaultMode: "unsafe-local",
+        vault: { path: vaultDir },
+        unsafeLocal: {
+          allowPrivateMemoryCoreAccess: true,
+          paths: [secretPath],
+        },
+      },
+      { homedir: "/Users/tester" },
+    );
+
+    const first = await syncMemoryWikiUnsafeLocalSources(config);
+    const firstPagePath = first.pagePaths[0] ?? "";
+    await expect(fs.stat(path.join(vaultDir, firstPagePath))).resolves.toBeTruthy();
+
+    await fs.rm(secretPath);
+    const second = await syncMemoryWikiUnsafeLocalSources(config);
+
+    expect(second.artifactCount).toBe(0);
+    expect(second.removedCount).toBe(1);
+    await expect(fs.stat(path.join(vaultDir, firstPagePath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

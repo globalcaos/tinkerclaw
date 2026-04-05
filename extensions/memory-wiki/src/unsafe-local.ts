@@ -5,9 +5,17 @@ import type { BridgeMemoryWikiResult } from "./bridge.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { appendMemoryWikiLog } from "./log.js";
 import { renderMarkdownFence, renderWikiMarkdown, slugifyWikiSegment } from "./markdown.js";
+import {
+  pruneImportedSourceEntries,
+  readMemoryWikiSourceSyncState,
+  setImportedSourceEntry,
+  shouldSkipImportedSourceWrite,
+  writeMemoryWikiSourceSyncState,
+} from "./source-sync-state.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
 type UnsafeLocalArtifact = {
+  syncKey: string;
   configuredPath: string;
   absolutePath: string;
   relativePath: string;
@@ -73,6 +81,7 @@ async function collectUnsafeLocalArtifacts(
       const files = await listAllowedFilesRecursive(absoluteConfiguredPath);
       for (const absolutePath of files) {
         artifacts.push({
+          syncKey: await resolveArtifactKey(absolutePath),
           configuredPath: absoluteConfiguredPath,
           absolutePath,
           relativePath: path.relative(absoluteConfiguredPath, absolutePath).replace(/\\/g, "/"),
@@ -82,6 +91,7 @@ async function collectUnsafeLocalArtifacts(
     }
     if (stat.isFile()) {
       artifacts.push({
+        syncKey: await resolveArtifactKey(absoluteConfiguredPath),
         configuredPath: absoluteConfiguredPath,
         absolutePath: absoluteConfiguredPath,
         relativePath: path.basename(absoluteConfiguredPath),
@@ -91,7 +101,7 @@ async function collectUnsafeLocalArtifacts(
 
   const deduped = new Map<string, UnsafeLocalArtifact>();
   for (const artifact of artifacts) {
-    deduped.set(await resolveArtifactKey(artifact.absolutePath), artifact);
+    deduped.set(artifact.syncKey, artifact);
   }
   return [...deduped.values()];
 }
@@ -124,6 +134,9 @@ function resolveUnsafeLocalTitle(artifact: UnsafeLocalArtifact): string {
 async function writeUnsafeLocalSourcePage(params: {
   config: ResolvedMemoryWikiConfig;
   artifact: UnsafeLocalArtifact;
+  sourceUpdatedAtMs: number;
+  sourceSize: number;
+  state: Awaited<ReturnType<typeof readMemoryWikiSourceSyncState>>;
 }): Promise<{ pagePath: string; changed: boolean; created: boolean }> {
   const { pageId, pagePath } = resolveUnsafeLocalPagePath({
     configuredPath: params.artifact.configuredPath,
@@ -131,10 +144,30 @@ async function writeUnsafeLocalSourcePage(params: {
   });
   const pageAbsPath = path.join(params.config.vault.path, pagePath);
   const created = !(await pathExists(pageAbsPath));
-  const raw = await fs.readFile(params.artifact.absolutePath, "utf8");
-  const stats = await fs.stat(params.artifact.absolutePath);
-  const updatedAt = stats.mtime.toISOString();
+  const updatedAt = new Date(params.sourceUpdatedAtMs).toISOString();
   const title = resolveUnsafeLocalTitle(params.artifact);
+  const renderFingerprint = createHash("sha1")
+    .update(
+      JSON.stringify({
+        configuredPath: params.artifact.configuredPath,
+        relativePath: params.artifact.relativePath,
+      }),
+    )
+    .digest("hex");
+  const shouldSkip = await shouldSkipImportedSourceWrite({
+    vaultRoot: params.config.vault.path,
+    syncKey: params.artifact.syncKey,
+    expectedPagePath: pagePath,
+    expectedSourcePath: params.artifact.absolutePath,
+    sourceUpdatedAtMs: params.sourceUpdatedAtMs,
+    sourceSize: params.sourceSize,
+    renderFingerprint,
+    state: params.state,
+  });
+  if (shouldSkip) {
+    return { pagePath, changed: false, created };
+  }
+  const raw = await fs.readFile(params.artifact.absolutePath, "utf8");
   const rendered = renderWikiMarkdown({
     frontmatter: {
       pageType: "source",
@@ -166,11 +199,22 @@ async function writeUnsafeLocalSourcePage(params: {
     ].join("\n"),
   });
   const existing = await fs.readFile(pageAbsPath, "utf8").catch(() => "");
-  if (existing === rendered) {
-    return { pagePath, changed: false, created };
+  if (existing !== rendered) {
+    await fs.writeFile(pageAbsPath, rendered, "utf8");
   }
-  await fs.writeFile(pageAbsPath, rendered, "utf8");
-  return { pagePath, changed: true, created };
+  setImportedSourceEntry({
+    syncKey: params.artifact.syncKey,
+    state: params.state,
+    entry: {
+      group: "unsafe-local",
+      pagePath,
+      sourcePath: params.artifact.absolutePath,
+      sourceUpdatedAtMs: params.sourceUpdatedAtMs,
+      sourceSize: params.sourceSize,
+      renderFingerprint,
+    },
+  });
+  return { pagePath, changed: existing !== rendered, created };
 }
 
 export async function syncMemoryWikiUnsafeLocalSources(
@@ -186,6 +230,7 @@ export async function syncMemoryWikiUnsafeLocalSources(
       importedCount: 0,
       updatedCount: 0,
       skippedCount: 0,
+      removedCount: 0,
       artifactCount: 0,
       workspaces: 0,
       pagePaths: [],
@@ -193,10 +238,29 @@ export async function syncMemoryWikiUnsafeLocalSources(
   }
 
   const artifacts = await collectUnsafeLocalArtifacts(config.unsafeLocal.paths);
+  const state = await readMemoryWikiSourceSyncState(config.vault.path);
+  const activeKeys = new Set<string>();
   const results = await Promise.all(
-    artifacts.map((artifact) => writeUnsafeLocalSourcePage({ config, artifact })),
+    artifacts.map(async (artifact) => {
+      const stats = await fs.stat(artifact.absolutePath);
+      activeKeys.add(artifact.syncKey);
+      return await writeUnsafeLocalSourcePage({
+        config,
+        artifact,
+        sourceUpdatedAtMs: stats.mtimeMs,
+        sourceSize: stats.size,
+        state,
+      });
+    }),
   );
 
+  const removedCount = await pruneImportedSourceEntries({
+    vaultRoot: config.vault.path,
+    group: "unsafe-local",
+    activeKeys,
+    state,
+  });
+  await writeMemoryWikiSourceSyncState(config.vault.path, state);
   const importedCount = results.filter((result) => result.changed && result.created).length;
   const updatedCount = results.filter((result) => result.changed && !result.created).length;
   const skippedCount = results.filter((result) => !result.changed).length;
@@ -204,7 +268,7 @@ export async function syncMemoryWikiUnsafeLocalSources(
     .map((result) => result.pagePath)
     .toSorted((left, right) => left.localeCompare(right));
 
-  if (importedCount > 0 || updatedCount > 0) {
+  if (importedCount > 0 || updatedCount > 0 || removedCount > 0) {
     await appendMemoryWikiLog(config.vault.path, {
       type: "ingest",
       timestamp: new Date().toISOString(),
@@ -215,6 +279,7 @@ export async function syncMemoryWikiUnsafeLocalSources(
         importedCount,
         updatedCount,
         skippedCount,
+        removedCount,
       },
     });
   }
@@ -223,6 +288,7 @@ export async function syncMemoryWikiUnsafeLocalSources(
     importedCount,
     updatedCount,
     skippedCount,
+    removedCount,
     artifactCount: artifacts.length,
     workspaces: 0,
     pagePaths,
