@@ -26,7 +26,7 @@ const providerFilter = parseCsvFilter(process.env.OPENCLAW_LIVE_VIDEO_GENERATION
 const envModelMap = parseProviderModelMap(process.env.OPENCLAW_LIVE_VIDEO_GENERATION_MODELS);
 
 type LiveProviderCase = {
-  plugin: { register: (api: unknown) => void | Promise<void> };
+  plugin: Parameters<typeof registerProviderPlugin>[0]["plugin"];
   pluginId: string;
   pluginName: string;
   providerId: string;
