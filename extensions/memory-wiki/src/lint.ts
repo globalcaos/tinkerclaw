@@ -19,6 +19,7 @@ export type MemoryWikiLintIssue = {
     | "page-type-mismatch"
     | "missing-title"
     | "missing-source-ids"
+    | "missing-import-provenance"
     | "broken-wikilink"
     | "contradiction-present"
     | "open-question"
@@ -118,6 +119,34 @@ function collectPageIssues(pages: WikiPageSummary[]): MemoryWikiLintIssue[] {
         code: "missing-source-ids",
         path: page.relativePath,
         message: "Non-source page is missing `sourceIds` provenance.",
+      });
+    }
+
+    if (
+      (page.sourceType === "memory-bridge" || page.sourceType === "memory-bridge-events") &&
+      (!page.sourcePath || !page.bridgeRelativePath || !page.bridgeWorkspaceDir)
+    ) {
+      issues.push({
+        severity: "warning",
+        category: "provenance",
+        code: "missing-import-provenance",
+        path: page.relativePath,
+        message:
+          "Bridge-imported source page is missing `sourcePath`, `bridgeRelativePath`, or `bridgeWorkspaceDir` provenance.",
+      });
+    }
+
+    if (
+      (page.provenanceMode === "unsafe-local" || page.sourceType === "memory-unsafe-local") &&
+      (!page.sourcePath || !page.unsafeLocalConfiguredPath || !page.unsafeLocalRelativePath)
+    ) {
+      issues.push({
+        severity: "warning",
+        category: "provenance",
+        code: "missing-import-provenance",
+        path: page.relativePath,
+        message:
+          "Unsafe-local source page is missing `sourcePath`, `unsafeLocalConfiguredPath`, or `unsafeLocalRelativePath` provenance.",
       });
     }
 
