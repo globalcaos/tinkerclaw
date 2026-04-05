@@ -262,6 +262,7 @@ explicitly promotes one as public.
     | `plugin-sdk/memory-host-events` | Vendor-neutral alias for memory host event journal helpers |
     | `plugin-sdk/memory-host-files` | Vendor-neutral alias for memory host file/runtime helpers |
     | `plugin-sdk/memory-host-markdown` | Shared managed-markdown helpers for memory-adjacent plugins |
+    | `plugin-sdk/memory-host-search` | Active memory runtime facade for search-manager access |
     | `plugin-sdk/memory-host-status` | Vendor-neutral alias for memory host status helpers |
     | `plugin-sdk/memory-lancedb` | Bundled memory-lancedb helper surface |
   </Accordion>

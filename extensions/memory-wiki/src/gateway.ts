@@ -207,6 +207,7 @@ export function registerMemoryWikiGatewayMethods(params: {
           true,
           await searchMemoryWiki({
             config,
+            appConfig,
             query,
             maxResults,
           }),
@@ -249,6 +250,7 @@ export function registerMemoryWikiGatewayMethods(params: {
           true,
           await getMemoryWikiPage({
             config,
+            appConfig,
             lookup,
             fromLine,
             lineCount,

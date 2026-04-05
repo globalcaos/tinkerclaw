@@ -1,10 +1,6 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
-import type {
-  MemoryEmbeddingProbeResult,
-  MemoryProviderStatus,
-  MemorySyncProgressUpdate,
-} from "../memory-host-sdk/engine-storage.js";
+import type { MemorySearchManager } from "../memory-host-sdk/runtime-files.js";
 
 export type MemoryPromptSectionBuilder = (params: {
   availableTools: Set<string>;
@@ -25,18 +21,7 @@ export type MemoryFlushPlanResolver = (params: {
   nowMs?: number;
 }) => MemoryFlushPlan | null;
 
-export type RegisteredMemorySearchManager = {
-  status(): MemoryProviderStatus;
-  probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult>;
-  probeVectorAvailability(): Promise<boolean>;
-  sync?(params?: {
-    reason?: string;
-    force?: boolean;
-    sessionFiles?: string[];
-    progress?: (update: MemorySyncProgressUpdate) => void;
-  }): Promise<void>;
-  close?(): Promise<void>;
-};
+export type RegisteredMemorySearchManager = MemorySearchManager;
 
 export type MemoryRuntimeQmdConfig = {
   command?: string;

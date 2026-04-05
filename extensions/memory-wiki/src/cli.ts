@@ -249,17 +249,18 @@ export async function runWikiSearch(params: {
   await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const results = await searchMemoryWiki({
     config: params.config,
+    appConfig: params.appConfig,
     query: params.query,
     maxResults: params.maxResults,
   });
   const summary = params.json
     ? JSON.stringify(results, null, 2)
     : results.length === 0
-      ? "No wiki results."
+      ? "No wiki or memory results."
       : results
           .map(
             (result, index) =>
-              `${index + 1}. ${result.title} (${result.kind})\nPath: ${result.path}\nSnippet: ${result.snippet}`,
+              `${index + 1}. ${result.title} (${result.corpus}/${result.kind})\nPath: ${result.path}${typeof result.startLine === "number" && typeof result.endLine === "number" ? `\nLines: ${result.startLine}-${result.endLine}` : ""}\nSnippet: ${result.snippet}`,
           )
           .join("\n\n");
   writeOutput(summary, params.stdout);
@@ -278,6 +279,7 @@ export async function runWikiGet(params: {
   await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const result = await getMemoryWikiPage({
     config: params.config,
+    appConfig: params.appConfig,
     lookup: params.lookup,
     fromLine: params.fromLine,
     lineCount: params.lineCount,
@@ -540,7 +542,7 @@ export function registerWikiCli(
 
   wiki
     .command("search")
-    .description("Search wiki pages")
+    .description("Search wiki pages and, when configured, the active memory corpus")
     .argument("<query>", "Search query")
     .option("--max-results <n>", "Maximum results", (value: string) => Number(value))
     .option("--json", "Print JSON")
@@ -556,7 +558,7 @@ export function registerWikiCli(
 
   wiki
     .command("get")
-    .description("Read a wiki page by id or relative path")
+    .description("Read a wiki page by id or relative path, with optional active-memory fallback")
     .argument("<lookup>", "Relative path or page id")
     .option("--from <n>", "Start line", (value: string) => Number(value))
     .option("--lines <n>", "Number of lines", (value: string) => Number(value))

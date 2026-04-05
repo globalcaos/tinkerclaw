@@ -1,11 +1,20 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../api.js";
 import { resolveMemoryWikiConfig } from "./config.js";
 import { renderWikiMarkdown } from "./markdown.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { initializeMemoryWikiVault } from "./vault.js";
+
+const { getActiveMemorySearchManagerMock } = vi.hoisted(() => ({
+  getActiveMemorySearchManagerMock: vi.fn(),
+}));
+
+vi.mock("openclaw/plugin-sdk/memory-host-search", () => ({
+  getActiveMemorySearchManager: getActiveMemorySearchManagerMock,
+}));
 
 const tempDirs: string[] = [];
 
@@ -13,8 +22,48 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
+beforeEach(() => {
+  getActiveMemorySearchManagerMock.mockReset();
+  getActiveMemorySearchManagerMock.mockResolvedValue({ manager: null, error: "unavailable" });
+});
+
+function createAppConfig(): OpenClawConfig {
+  return {
+    agents: {
+      list: [{ id: "main", default: true }],
+    },
+  } as OpenClawConfig;
+}
+
+function createMemoryManager(overrides?: {
+  searchResults?: Array<{
+    path: string;
+    startLine: number;
+    endLine: number;
+    score: number;
+    snippet: string;
+    source: "memory" | "sessions";
+    citation?: string;
+  }>;
+  readResult?: { text: string; path: string };
+}) {
+  return {
+    search: vi.fn().mockResolvedValue(overrides?.searchResults ?? []),
+    readFile: vi.fn().mockImplementation(async () => {
+      if (!overrides?.readResult) {
+        throw new Error("missing");
+      }
+      return overrides.readResult;
+    }),
+    status: vi.fn().mockReturnValue({ backend: "builtin", provider: "builtin" }),
+    probeEmbeddingAvailability: vi.fn().mockResolvedValue({ ok: true }),
+    probeVectorAvailability: vi.fn().mockResolvedValue(false),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe("searchMemoryWiki", () => {
-  it("finds pages by title and body", async () => {
+  it("finds wiki pages by title and body", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
     tempDirs.push(rootDir);
     const config = resolveMemoryWikiConfig(
@@ -34,12 +83,105 @@ describe("searchMemoryWiki", () => {
     const results = await searchMemoryWiki({ config, query: "alpha" });
 
     expect(results).toHaveLength(1);
+    expect(results[0]?.corpus).toBe("wiki");
     expect(results[0]?.path).toBe("sources/alpha.md");
+    expect(getActiveMemorySearchManagerMock).not.toHaveBeenCalled();
+  });
+
+  it("includes active memory results when shared search and all corpora are enabled", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      {
+        vault: { path: rootDir },
+        search: { backend: "shared", corpus: "all" },
+      },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+    await fs.writeFile(
+      path.join(rootDir, "sources", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "source", id: "source.alpha", title: "Alpha Source" },
+        body: "# Alpha Source\n\nalpha body text\n",
+      }),
+      "utf8",
+    );
+    const manager = createMemoryManager({
+      searchResults: [
+        {
+          path: "MEMORY.md",
+          startLine: 4,
+          endLine: 8,
+          score: 42,
+          snippet: "alpha durable memory",
+          source: "memory",
+          citation: "MEMORY.md#L4-L8",
+        },
+      ],
+    });
+    getActiveMemorySearchManagerMock.mockResolvedValue({ manager });
+
+    const results = await searchMemoryWiki({
+      config,
+      appConfig: createAppConfig(),
+      query: "alpha",
+      maxResults: 5,
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results.some((result) => result.corpus === "wiki")).toBe(true);
+    expect(results.some((result) => result.corpus === "memory")).toBe(true);
+    expect(manager.search).toHaveBeenCalledWith("alpha", { maxResults: 5 });
+  });
+
+  it("keeps memory search disabled when the backend is local", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      {
+        vault: { path: rootDir },
+        search: { backend: "local", corpus: "all" },
+      },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+    await fs.writeFile(
+      path.join(rootDir, "sources", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "source", id: "source.alpha", title: "Alpha Source" },
+        body: "# Alpha Source\n\nalpha only wiki\n",
+      }),
+      "utf8",
+    );
+    const manager = createMemoryManager({
+      searchResults: [
+        {
+          path: "MEMORY.md",
+          startLine: 1,
+          endLine: 2,
+          score: 50,
+          snippet: "alpha memory",
+          source: "memory",
+        },
+      ],
+    });
+    getActiveMemorySearchManagerMock.mockResolvedValue({ manager });
+
+    const results = await searchMemoryWiki({
+      config,
+      appConfig: createAppConfig(),
+      query: "alpha",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.corpus).toBe("wiki");
+    expect(manager.search).not.toHaveBeenCalled();
   });
 });
 
 describe("getMemoryWikiPage", () => {
-  it("reads pages by relative path and slices line ranges", async () => {
+  it("reads wiki pages by relative path and slices line ranges", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
     tempDirs.push(rootDir);
     const config = resolveMemoryWikiConfig(
@@ -63,9 +205,53 @@ describe("getMemoryWikiPage", () => {
       lineCount: 2,
     });
 
+    expect(result?.corpus).toBe("wiki");
     expect(result?.path).toBe("sources/alpha.md");
     expect(result?.content).toContain("line one");
     expect(result?.content).toContain("line two");
     expect(result?.content).not.toContain("line three");
+  });
+
+  it("falls back to active memory reads when memory corpus is selected", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-query-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      {
+        vault: { path: rootDir },
+        search: { backend: "shared", corpus: "memory" },
+      },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+    const manager = createMemoryManager({
+      readResult: {
+        path: "MEMORY.md",
+        text: "durable alpha memory\nline two",
+      },
+    });
+    getActiveMemorySearchManagerMock.mockResolvedValue({ manager });
+
+    const result = await getMemoryWikiPage({
+      config,
+      appConfig: createAppConfig(),
+      lookup: "MEMORY.md",
+      fromLine: 2,
+      lineCount: 2,
+    });
+
+    expect(result).toEqual({
+      corpus: "memory",
+      path: "MEMORY.md",
+      title: "MEMORY",
+      kind: "memory",
+      content: "durable alpha memory\nline two",
+      fromLine: 2,
+      lineCount: 2,
+    });
+    expect(manager.readFile).toHaveBeenCalledWith({
+      relPath: "MEMORY.md",
+      from: 2,
+      lines: 2,
+    });
   });
 });
