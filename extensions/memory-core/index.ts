@@ -1,6 +1,6 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { registerMemoryCli } from "./src/cli.js";
-import { registerDreamingCommand } from "./src/dreaming-command.js";
+import { registerSleepCommand } from "./src/dreaming-command.js";
 import { registerShortTermPromotionDreaming } from "./src/dreaming.js";
 import {
   buildMemoryFlushPlan,
@@ -11,6 +11,7 @@ import {
 import { registerBuiltInMemoryEmbeddingProviders } from "./src/memory/provider-adapters.js";
 import { buildPromptSection } from "./src/prompt-section.js";
 import { memoryRuntime } from "./src/runtime-provider.js";
+import { registerMemorySleepPhases } from "./src/sleep.js";
 import { createMemoryGetTool, createMemorySearchTool } from "./src/tools.js";
 export {
   buildMemoryFlushPlan,
@@ -28,7 +29,8 @@ export default definePluginEntry({
   register(api) {
     registerBuiltInMemoryEmbeddingProviders(api);
     registerShortTermPromotionDreaming(api);
-    registerDreamingCommand(api);
+    registerMemorySleepPhases(api);
+    registerSleepCommand(api);
     api.registerMemoryPromptSection(buildPromptSection);
     api.registerMemoryFlushPlan(buildMemoryFlushPlan);
     api.registerMemoryRuntime(memoryRuntime);

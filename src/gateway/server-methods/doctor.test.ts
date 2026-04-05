@@ -10,7 +10,7 @@ const resolveAgentWorkspaceDir = vi.hoisted(() =>
   vi.fn((_cfg: OpenClawConfig, _agentId: string) => "/tmp/openclaw"),
 );
 const resolveMemorySearchConfig = vi.hoisted(() =>
-  vi.fn<(_cfg: OpenClawConfig, _agentId: string) => { enabled: boolean } | undefined>(() => ({
+  vi.fn<(_cfg: OpenClawConfig, _agentId: string) => { enabled: boolean } | null>(() => ({
     enabled: true,
   })),
 );
@@ -105,13 +105,16 @@ describe("doctor.memory.status", () => {
         agentId: "main",
         provider: "gemini",
         embedding: { ok: true },
-        dreaming: expect.objectContaining({
-          mode: "off",
-          enabled: false,
+        sleep: expect.objectContaining({
+          enabled: true,
           shortTermCount: 0,
           promotedTotal: 0,
           promotedToday: 0,
-          managedCronPresent: false,
+          phases: expect.objectContaining({
+            deep: expect.objectContaining({
+              managedCronPresent: false,
+            }),
+          }),
         }),
       }),
       undefined,
@@ -237,11 +240,14 @@ describe("doctor.memory.status", () => {
         entries: {
           "memory-core": {
             config: {
-              dreaming: {
-                mode: "rem",
-                cron: "0 */4 * * *",
-                recencyHalfLifeDays: 21,
-                maxAgeDays: 30,
+              sleep: {
+                phases: {
+                  deep: {
+                    cron: "0 */4 * * *",
+                    recencyHalfLifeDays: 21,
+                    maxAgeDays: 30,
+                  },
+                },
               },
             },
           },
@@ -286,18 +292,21 @@ describe("doctor.memory.status", () => {
           agentId: "main",
           provider: "gemini",
           embedding: { ok: true },
-          dreaming: expect.objectContaining({
-            mode: "rem",
+          sleep: expect.objectContaining({
             enabled: true,
-            frequency: "0 */4 * * *",
             timezone: "America/Los_Angeles",
-            recencyHalfLifeDays: 21,
-            maxAgeDays: 30,
             shortTermCount: 1,
             promotedTotal: 3,
             promotedToday: 2,
-            managedCronPresent: true,
-            nextRunAtMs: now + 60_000,
+            phases: expect.objectContaining({
+              deep: expect.objectContaining({
+                cron: "0 */4 * * *",
+                recencyHalfLifeDays: 21,
+                maxAgeDays: 30,
+                managedCronPresent: true,
+                nextRunAtMs: now + 60_000,
+              }),
+            }),
           }),
         }),
         undefined,
@@ -332,15 +341,13 @@ describe("doctor.memory.status", () => {
       )}\n`,
       "utf-8",
     );
-    resolveMemorySearchConfig.mockReturnValue(undefined);
+    resolveMemorySearchConfig.mockReturnValue(null);
     loadConfig.mockReturnValue({
       plugins: {
         entries: {
           "memory-core": {
             config: {
-              dreaming: {
-                mode: "core",
-              },
+              sleep: {},
             },
           },
         },
@@ -362,11 +369,15 @@ describe("doctor.memory.status", () => {
       expect(respond).toHaveBeenCalledWith(
         true,
         expect.objectContaining({
-          dreaming: expect.objectContaining({
+          sleep: expect.objectContaining({
             shortTermCount: 0,
             promotedTotal: 1,
-            managedCronPresent: false,
             storePath,
+            phases: expect.objectContaining({
+              deep: expect.objectContaining({
+                managedCronPresent: false,
+              }),
+            }),
           }),
         }),
         undefined,
@@ -418,9 +429,7 @@ describe("doctor.memory.status", () => {
         entries: {
           "memory-core": {
             config: {
-              dreaming: {
-                mode: "core",
-              },
+              sleep: {},
             },
           },
         },
@@ -466,10 +475,10 @@ describe("doctor.memory.status", () => {
       expect(respond).toHaveBeenCalledWith(
         true,
         expect.objectContaining({
-          dreaming: expect.objectContaining({
+          sleep: expect.objectContaining({
             shortTermCount: 0,
             promotedTotal: 0,
-            storeError: "2 dreaming stores had read errors.",
+            storeError: "2 sleep stores had read errors.",
           }),
         }),
         undefined,

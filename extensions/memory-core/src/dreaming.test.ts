@@ -120,7 +120,7 @@ describe("short-term dreaming config", () => {
       cfg,
     });
     expect(resolved).toEqual({
-      enabled: false,
+      enabled: true,
       cron: constants.DEFAULT_DREAMING_CRON_EXPR,
       timezone: "America/Los_Angeles",
       limit: constants.DEFAULT_DREAMING_LIMIT,
@@ -128,24 +128,32 @@ describe("short-term dreaming config", () => {
       minRecallCount: constants.DEFAULT_DREAMING_MIN_RECALL_COUNT,
       minUniqueQueries: constants.DEFAULT_DREAMING_MIN_UNIQUE_QUERIES,
       recencyHalfLifeDays: constants.DEFAULT_DREAMING_RECENCY_HALF_LIFE_DAYS,
+      maxAgeDays: 30,
       verboseLogging: false,
+      storage: {
+        mode: "inline",
+        separateReports: false,
+      },
     });
   });
 
   it("reads explicit dreaming config values", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "deep",
-          frequency: "15 2 * * *",
+        sleep: {
           timezone: "UTC",
-          limit: 7,
-          minScore: 0.4,
-          minRecallCount: 2,
-          minUniqueQueries: 3,
-          recencyHalfLifeDays: 21,
-          maxAgeDays: 30,
           verboseLogging: true,
+          phases: {
+            deep: {
+              cron: "15 2 * * *",
+              limit: 7,
+              minScore: 0.4,
+              minRecallCount: 2,
+              minUniqueQueries: 3,
+              recencyHalfLifeDays: 21,
+              maxAgeDays: 30,
+            },
+          },
         },
       },
     });
@@ -160,21 +168,28 @@ describe("short-term dreaming config", () => {
       recencyHalfLifeDays: 21,
       maxAgeDays: 30,
       verboseLogging: true,
+      storage: {
+        mode: "inline",
+        separateReports: false,
+      },
     });
   });
 
   it("accepts cron alias and numeric string thresholds", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "deep",
-          cron: "5 1 * * *",
-          limit: "4",
-          minScore: "0.6",
-          minRecallCount: "2",
-          minUniqueQueries: "3",
-          recencyHalfLifeDays: "9",
-          maxAgeDays: "45",
+        sleep: {
+          phases: {
+            deep: {
+              cron: "5 1 * * *",
+              limit: "4",
+              minScore: "0.6",
+              minRecallCount: "2",
+              minUniqueQueries: "3",
+              recencyHalfLifeDays: "9",
+              maxAgeDays: "45",
+            },
+          },
         },
       },
     });
@@ -188,41 +203,56 @@ describe("short-term dreaming config", () => {
       recencyHalfLifeDays: 9,
       maxAgeDays: 45,
       verboseLogging: false,
+      storage: {
+        mode: "inline",
+        separateReports: false,
+      },
     });
   });
 
   it("treats blank numeric strings as unset and keeps preset defaults", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "deep",
-          limit: " ",
-          minScore: "",
-          minRecallCount: "  ",
-          minUniqueQueries: "",
-          recencyHalfLifeDays: "",
-          maxAgeDays: " ",
+        sleep: {
+          phases: {
+            deep: {
+              limit: " ",
+              minScore: "",
+              minRecallCount: "  ",
+              minUniqueQueries: "",
+              recencyHalfLifeDays: "",
+              maxAgeDays: " ",
+            },
+          },
         },
       },
     });
     expect(resolved).toEqual({
       enabled: true,
-      cron: constants.DREAMING_PRESET_DEFAULTS.deep.cron,
-      limit: constants.DREAMING_PRESET_DEFAULTS.deep.limit,
-      minScore: constants.DREAMING_PRESET_DEFAULTS.deep.minScore,
-      minRecallCount: constants.DREAMING_PRESET_DEFAULTS.deep.minRecallCount,
-      minUniqueQueries: constants.DREAMING_PRESET_DEFAULTS.deep.minUniqueQueries,
-      recencyHalfLifeDays: constants.DREAMING_PRESET_DEFAULTS.deep.recencyHalfLifeDays,
+      cron: constants.DEFAULT_DREAMING_CRON_EXPR,
+      limit: constants.DEFAULT_DREAMING_LIMIT,
+      minScore: constants.DEFAULT_DREAMING_MIN_SCORE,
+      minRecallCount: constants.DEFAULT_DREAMING_MIN_RECALL_COUNT,
+      minUniqueQueries: constants.DEFAULT_DREAMING_MIN_UNIQUE_QUERIES,
+      recencyHalfLifeDays: constants.DEFAULT_DREAMING_RECENCY_HALF_LIFE_DAYS,
+      maxAgeDays: 30,
       verboseLogging: false,
+      storage: {
+        mode: "inline",
+        separateReports: false,
+      },
     });
   });
 
   it("accepts limit=0 as an explicit no-op promotion cap", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "core",
-          limit: 0,
+        sleep: {
+          phases: {
+            deep: {
+              limit: 0,
+            },
+          },
         },
       },
     });
@@ -232,16 +262,14 @@ describe("short-term dreaming config", () => {
   it("accepts verboseLogging as a boolean or boolean string", () => {
     const enabled = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "core",
+        sleep: {
           verboseLogging: true,
         },
       },
     });
     const disabled = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "core",
+        sleep: {
           verboseLogging: "false",
         },
       },
@@ -254,31 +282,38 @@ describe("short-term dreaming config", () => {
   it("falls back to defaults when thresholds are negative", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "rem",
-          minScore: -0.2,
-          minRecallCount: -2,
-          minUniqueQueries: -4,
-          recencyHalfLifeDays: -10,
-          maxAgeDays: -5,
+        sleep: {
+          phases: {
+            deep: {
+              minScore: -0.2,
+              minRecallCount: -2,
+              minUniqueQueries: -4,
+              recencyHalfLifeDays: -10,
+              maxAgeDays: -5,
+            },
+          },
         },
       },
     });
     expect(resolved).toMatchObject({
       enabled: true,
-      minScore: constants.DREAMING_PRESET_DEFAULTS.rem.minScore,
-      minRecallCount: constants.DREAMING_PRESET_DEFAULTS.rem.minRecallCount,
-      minUniqueQueries: constants.DREAMING_PRESET_DEFAULTS.rem.minUniqueQueries,
-      recencyHalfLifeDays: constants.DREAMING_PRESET_DEFAULTS.rem.recencyHalfLifeDays,
+      minScore: constants.DEFAULT_DREAMING_MIN_SCORE,
+      minRecallCount: constants.DEFAULT_DREAMING_MIN_RECALL_COUNT,
+      minUniqueQueries: constants.DEFAULT_DREAMING_MIN_UNIQUE_QUERIES,
+      recencyHalfLifeDays: constants.DEFAULT_DREAMING_RECENCY_HALF_LIFE_DAYS,
     });
-    expect(resolved.maxAgeDays).toBeUndefined();
+    expect(resolved.maxAgeDays).toBe(30);
   });
 
-  it("keeps dreaming disabled when mode is off", () => {
+  it("keeps deep sleep disabled when the phase is off", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        dreaming: {
-          mode: "off",
+        sleep: {
+          phases: {
+            deep: {
+              enabled: false,
+            },
+          },
         },
       },
     });
