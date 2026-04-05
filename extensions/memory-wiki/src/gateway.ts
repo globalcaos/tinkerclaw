@@ -1,7 +1,11 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "../api.js";
 import { applyMemoryWikiMutation, normalizeMemoryWikiMutationInput } from "./apply.js";
 import { compileMemoryWikiVault } from "./compile.js";
-import type { ResolvedMemoryWikiConfig } from "./config.js";
+import {
+  WIKI_SEARCH_BACKENDS,
+  WIKI_SEARCH_CORPORA,
+  type ResolvedMemoryWikiConfig,
+} from "./config.js";
 import { ingestMemoryWikiSource } from "./ingest.js";
 import { lintMemoryWikiVault } from "./lint.js";
 import {
@@ -46,6 +50,21 @@ function readNumberParam(params: Record<string, unknown>, key: string): number |
     }
   }
   return undefined;
+}
+
+function readEnumParam<T extends string>(
+  params: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const value = readStringParam(params, key);
+  if (!value) {
+    return undefined;
+  }
+  if ((allowed as readonly string[]).includes(value)) {
+    return value as T;
+  }
+  throw new Error(`${key} must be one of: ${allowed.join(", ")}.`);
 }
 
 function respondError(
@@ -203,6 +222,8 @@ export function registerMemoryWikiGatewayMethods(params: {
         await syncImportedSourcesIfNeeded(config, appConfig);
         const query = readStringParam(requestParams, "query", { required: true });
         const maxResults = readNumberParam(requestParams, "maxResults");
+        const searchBackend = readEnumParam(requestParams, "backend", WIKI_SEARCH_BACKENDS);
+        const searchCorpus = readEnumParam(requestParams, "corpus", WIKI_SEARCH_CORPORA);
         respond(
           true,
           await searchMemoryWiki({
@@ -210,6 +231,8 @@ export function registerMemoryWikiGatewayMethods(params: {
             appConfig,
             query,
             maxResults,
+            searchBackend,
+            searchCorpus,
           }),
         );
       } catch (error) {
@@ -246,6 +269,8 @@ export function registerMemoryWikiGatewayMethods(params: {
         const lookup = readStringParam(requestParams, "lookup", { required: true });
         const fromLine = readNumberParam(requestParams, "fromLine");
         const lineCount = readNumberParam(requestParams, "lineCount");
+        const searchBackend = readEnumParam(requestParams, "backend", WIKI_SEARCH_BACKENDS);
+        const searchCorpus = readEnumParam(requestParams, "corpus", WIKI_SEARCH_CORPORA);
         respond(
           true,
           await getMemoryWikiPage({
@@ -254,6 +279,8 @@ export function registerMemoryWikiGatewayMethods(params: {
             lookup,
             fromLine,
             lineCount,
+            searchBackend,
+            searchCorpus,
           }),
         );
       } catch (error) {

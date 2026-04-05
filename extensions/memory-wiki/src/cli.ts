@@ -3,8 +3,13 @@ import type { Command } from "commander";
 import type { OpenClawConfig } from "../api.js";
 import { applyMemoryWikiMutation } from "./apply.js";
 import { compileMemoryWikiVault } from "./compile.js";
-import type { MemoryWikiPluginConfig, ResolvedMemoryWikiConfig } from "./config.js";
-import { resolveMemoryWikiConfig } from "./config.js";
+import {
+  resolveMemoryWikiConfig,
+  WIKI_SEARCH_BACKENDS,
+  WIKI_SEARCH_CORPORA,
+  type MemoryWikiPluginConfig,
+  type ResolvedMemoryWikiConfig,
+} from "./config.js";
 import { ingestMemoryWikiSource } from "./ingest.js";
 import { lintMemoryWikiVault } from "./lint.js";
 import {
@@ -52,12 +57,16 @@ type WikiIngestCommandOptions = {
 type WikiSearchCommandOptions = {
   json?: boolean;
   maxResults?: number;
+  backend?: ResolvedMemoryWikiConfig["search"]["backend"];
+  corpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
 };
 
 type WikiGetCommandOptions = {
   json?: boolean;
   from?: number;
   lines?: number;
+  backend?: ResolvedMemoryWikiConfig["search"]["backend"];
+  corpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
 };
 
 type WikiApplySynthesisCommandOptions = {
@@ -131,6 +140,17 @@ function normalizeCliStringList(values?: string[]): string[] | undefined {
     .filter(Boolean)
     .filter((value, index, all) => all.indexOf(value) === index);
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseWikiSearchEnumOption<T extends string>(
+  value: string,
+  allowed: readonly T[],
+  label: string,
+): T {
+  if ((allowed as readonly string[]).includes(value)) {
+    return value as T;
+  }
+  throw new Error(`Invalid ${label}: ${value}. Expected one of: ${allowed.join(", ")}`);
 }
 
 async function resolveWikiApplyBody(params: { body?: string; bodyFile?: string }): Promise<string> {
@@ -243,6 +263,8 @@ export async function runWikiSearch(params: {
   appConfig?: OpenClawConfig;
   query: string;
   maxResults?: number;
+  searchBackend?: ResolvedMemoryWikiConfig["search"]["backend"];
+  searchCorpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
@@ -252,6 +274,8 @@ export async function runWikiSearch(params: {
     appConfig: params.appConfig,
     query: params.query,
     maxResults: params.maxResults,
+    searchBackend: params.searchBackend,
+    searchCorpus: params.searchCorpus,
   });
   const summary = params.json
     ? JSON.stringify(results, null, 2)
@@ -273,6 +297,8 @@ export async function runWikiGet(params: {
   lookup: string;
   fromLine?: number;
   lineCount?: number;
+  searchBackend?: ResolvedMemoryWikiConfig["search"]["backend"];
+  searchCorpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
@@ -283,6 +309,8 @@ export async function runWikiGet(params: {
     lookup: params.lookup,
     fromLine: params.fromLine,
     lineCount: params.lineCount,
+    searchBackend: params.searchBackend,
+    searchCorpus: params.searchCorpus,
   });
   const summary = params.json
     ? JSON.stringify(result, null, 2)
@@ -545,6 +573,16 @@ export function registerWikiCli(
     .description("Search wiki pages and, when configured, the active memory corpus")
     .argument("<query>", "Search query")
     .option("--max-results <n>", "Maximum results", (value: string) => Number(value))
+    .option(
+      "--backend <backend>",
+      `Search backend (${WIKI_SEARCH_BACKENDS.join(", ")})`,
+      (value: string) => parseWikiSearchEnumOption(value, WIKI_SEARCH_BACKENDS, "backend"),
+    )
+    .option(
+      "--corpus <corpus>",
+      `Search corpus (${WIKI_SEARCH_CORPORA.join(", ")})`,
+      (value: string) => parseWikiSearchEnumOption(value, WIKI_SEARCH_CORPORA, "corpus"),
+    )
     .option("--json", "Print JSON")
     .action(async (query: string, opts: WikiSearchCommandOptions) => {
       await runWikiSearch({
@@ -552,6 +590,8 @@ export function registerWikiCli(
         appConfig,
         query,
         maxResults: opts.maxResults,
+        searchBackend: opts.backend,
+        searchCorpus: opts.corpus,
         json: opts.json,
       });
     });
@@ -562,6 +602,16 @@ export function registerWikiCli(
     .argument("<lookup>", "Relative path or page id")
     .option("--from <n>", "Start line", (value: string) => Number(value))
     .option("--lines <n>", "Number of lines", (value: string) => Number(value))
+    .option(
+      "--backend <backend>",
+      `Search backend (${WIKI_SEARCH_BACKENDS.join(", ")})`,
+      (value: string) => parseWikiSearchEnumOption(value, WIKI_SEARCH_BACKENDS, "backend"),
+    )
+    .option(
+      "--corpus <corpus>",
+      `Search corpus (${WIKI_SEARCH_CORPORA.join(", ")})`,
+      (value: string) => parseWikiSearchEnumOption(value, WIKI_SEARCH_CORPORA, "corpus"),
+    )
     .option("--json", "Print JSON")
     .action(async (lookup: string, opts: WikiGetCommandOptions) => {
       await runWikiGet({
@@ -570,6 +620,8 @@ export function registerWikiCli(
         lookup,
         fromLine: opts.from,
         lineCount: opts.lines,
+        searchBackend: opts.backend,
+        searchCorpus: opts.corpus,
         json: opts.json,
       });
     });
