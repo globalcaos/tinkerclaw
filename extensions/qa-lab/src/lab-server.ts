@@ -372,6 +372,7 @@ export async function startQaLabServer(params?: {
         stop: () => Promise<void>;
       }
     | undefined;
+  const embeddedGatewayEnabled = params?.embeddedGateway !== "disabled";
 
   let publicBaseUrl = "";
   const server = createServer(async (req, res) => {
@@ -514,7 +515,9 @@ export async function startQaLabServer(params?: {
     advertiseHost: params?.advertiseHost,
     advertisePort: params?.advertisePort,
   });
-  gateway = await startQaGatewayLoop({ state, baseUrl: listenUrl });
+  if (embeddedGatewayEnabled) {
+    gateway = await startQaGatewayLoop({ state, baseUrl: listenUrl });
+  }
   if (params?.sendKickoffOnStart) {
     injectKickoffMessage({
       state,
@@ -544,7 +547,7 @@ export async function startQaLabServer(params?: {
     async runSelfCheck() {
       const result = await runQaSelfCheckAgainstState({
         state,
-        cfg: gateway!.cfg,
+        cfg: gateway?.cfg ?? createQaLabConfig(listenUrl),
         outputPath: params?.outputPath,
       });
       latestReport = {

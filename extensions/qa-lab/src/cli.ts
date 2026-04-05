@@ -14,6 +14,11 @@ async function runQaSelfCheck(opts: { output?: string }) {
   await runtime.runQaLabSelfCheckCommand(opts);
 }
 
+async function runQaSuite(opts: { outputDir?: string }) {
+  const runtime = await loadQaLabCliRuntime();
+  await runtime.runQaSuiteCommand(opts);
+}
+
 async function runQaUi(opts: {
   host?: string;
   port?: number;
@@ -61,6 +66,13 @@ export function registerQaLabCli(program: Command) {
     .option("--output <path>", "Report output path")
     .action(async (opts: { output?: string }) => {
       await runQaSelfCheck(opts);
+    });
+
+  qa.command("suite")
+    .description("Run all repo-backed QA scenarios against the real QA gateway lane")
+    .option("--output-dir <path>", "Suite artifact directory")
+    .action(async (opts: { outputDir?: string }) => {
+      await runQaSuite(opts);
     });
 
   qa.command("ui")
