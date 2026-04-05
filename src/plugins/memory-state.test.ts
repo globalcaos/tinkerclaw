@@ -6,7 +6,9 @@ import {
   getMemoryFlushPlanResolver,
   getMemoryPromptSectionBuilder,
   getMemoryRuntime,
+  listMemoryPromptSupplements,
   registerMemoryFlushPlanResolver,
+  registerMemoryPromptSupplement,
   registerMemoryPromptSection,
   registerMemoryRuntime,
   resolveMemoryFlushPlan,
@@ -44,6 +46,7 @@ function expectClearedMemoryState() {
 function createMemoryStateSnapshot() {
   return {
     promptBuilder: getMemoryPromptSectionBuilder(),
+    promptSupplements: listMemoryPromptSupplements(),
     flushPlanResolver: getMemoryFlushPlanResolver(),
     runtime: getMemoryRuntime(),
   };
@@ -103,6 +106,18 @@ describe("memory plugin state", () => {
     ).toEqual(["citations: off"]);
   });
 
+  it("appends prompt supplements in plugin-id order", () => {
+    registerMemoryPromptSection(() => ["primary"]);
+    registerMemoryPromptSupplement("memory-wiki", () => ["wiki"]);
+    registerMemoryPromptSupplement("alpha-helper", () => ["alpha"]);
+
+    expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([
+      "primary",
+      "alpha",
+      "wiki",
+    ]);
+  });
+
   it("uses the registered flush plan resolver", () => {
     registerMemoryFlushPlanResolver(() => ({
       softThresholdTokens: 1,
@@ -137,13 +152,17 @@ describe("memory plugin state", () => {
       relativePath: "memory/first.md",
       runtime,
     });
+    registerMemoryPromptSupplement("memory-wiki", () => ["wiki supplement"]);
     const snapshot = createMemoryStateSnapshot();
 
     _resetMemoryPluginState();
     expectClearedMemoryState();
 
     restoreMemoryPluginState(snapshot);
-    expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual(["first"]);
+    expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([
+      "first",
+      "wiki supplement",
+    ]);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/first.md");
     expect(getMemoryRuntime()).toBe(runtime);
   });
