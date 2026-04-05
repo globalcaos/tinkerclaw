@@ -6,6 +6,10 @@ import {
   buildFalVideoGenerationProvider,
 } from "./video-generation-provider.js";
 
+function createMockRequestConfig() {
+  return {} as ReturnType<typeof providerHttp.resolveProviderHttpRequestConfig>["requestConfig"];
+}
+
 describe("fal video generation provider", () => {
   const fetchGuardMock = vi.fn();
 
@@ -19,6 +23,7 @@ describe("fal video generation provider", () => {
     vi.spyOn(providerAuth, "resolveApiKeyForProvider").mockResolvedValue({
       apiKey: "fal-key",
       source: "env",
+      mode: "api-key",
     });
     vi.spyOn(providerHttp, "resolveProviderHttpRequestConfig").mockReturnValue({
       baseUrl: "https://fal.run",
@@ -28,6 +33,7 @@ describe("fal video generation provider", () => {
         "Content-Type": "application/json",
       }),
       dispatcherPolicy: undefined,
+      requestConfig: createMockRequestConfig(),
     });
     vi.spyOn(providerHttp, "assertOkOrThrowHttpError").mockResolvedValue(undefined);
     _setFalVideoFetchGuardForTesting(fetchGuardMock as never);

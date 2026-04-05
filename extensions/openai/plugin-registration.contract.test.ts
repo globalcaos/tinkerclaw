@@ -9,7 +9,6 @@ describePluginRegistrationContract({
   mediaUnderstandingProviderIds: ["openai", "openai-codex"],
   imageGenerationProviderIds: ["openai"],
   videoGenerationProviderIds: ["openai"],
-  cliBackendIds: ["codex-cli"],
   requireGenerateImage: true,
   requireGenerateVideo: true,
 });

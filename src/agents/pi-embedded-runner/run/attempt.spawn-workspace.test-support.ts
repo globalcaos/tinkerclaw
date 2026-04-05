@@ -540,11 +540,12 @@ export function createSubscriptionMock(): SubscriptionMock {
 let runEmbeddedAttemptPromise:
   | Promise<typeof import("./attempt.js").runEmbeddedAttempt>
   | undefined;
+const ATTEMPT_SPAWN_WORKSPACE_TEST_SPECIFIER = "./attempt.ts?spawn-workspace-test";
 
 async function loadRunEmbeddedAttempt() {
-  runEmbeddedAttemptPromise ??= import("./attempt.ts?spawn-workspace-test").then(
-    (mod) => mod.runEmbeddedAttempt,
-  );
+  runEmbeddedAttemptPromise ??= (
+    import(ATTEMPT_SPAWN_WORKSPACE_TEST_SPECIFIER) as Promise<typeof import("./attempt.js")>
+  ).then((mod) => mod.runEmbeddedAttempt);
   return await runEmbeddedAttemptPromise;
 }
 

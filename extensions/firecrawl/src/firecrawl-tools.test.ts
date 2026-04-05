@@ -197,7 +197,9 @@ describe("firecrawl tools", () => {
       async () => "ok",
     );
 
-    const init = fetchSpy.mock.calls[0]?.[1];
+    const init = (
+      fetchSpy.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>
+    )[0]?.[1];
     const authHeader = new Headers(init?.headers).get("Authorization");
     expect(authHeader).toBe("Bearer firecrawl-test-key");
   });
