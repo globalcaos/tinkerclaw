@@ -16,10 +16,19 @@ import {
 } from "./obsidian.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { syncMemoryWikiImportedSources } from "./source-sync.js";
-import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
+import {
+  buildMemoryWikiDoctorReport,
+  renderMemoryWikiDoctor,
+  renderMemoryWikiStatus,
+  resolveMemoryWikiStatus,
+} from "./status.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
 type WikiStatusCommandOptions = {
+  json?: boolean;
+};
+
+type WikiDoctorCommandOptions = {
   json?: boolean;
 };
 
@@ -147,6 +156,24 @@ export async function runWikiStatus(params: {
     params.stdout,
   );
   return status;
+}
+
+export async function runWikiDoctor(params: {
+  config: ResolvedMemoryWikiConfig;
+  appConfig?: OpenClawConfig;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
+  const report = buildMemoryWikiDoctorReport(await resolveMemoryWikiStatus(params.config));
+  if (!report.healthy) {
+    process.exitCode = 1;
+  }
+  writeOutput(
+    params.json ? JSON.stringify(report, null, 2) : renderMemoryWikiDoctor(report),
+    params.stdout,
+  );
+  return report;
 }
 
 export async function runWikiInit(params: {
@@ -467,6 +494,14 @@ export function registerWikiCli(
     .option("--json", "Print JSON")
     .action(async (opts: WikiStatusCommandOptions) => {
       await runWikiStatus({ config, appConfig, json: opts.json });
+    });
+
+  wiki
+    .command("doctor")
+    .description("Audit wiki vault setup and report actionable fixes")
+    .option("--json", "Print JSON")
+    .action(async (opts: WikiDoctorCommandOptions) => {
+      await runWikiDoctor({ config, appConfig, json: opts.json });
     });
 
   wiki
