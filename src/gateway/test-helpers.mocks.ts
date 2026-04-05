@@ -258,11 +258,11 @@ const createStubPluginRegistry = (): PluginRegistry => ({
       }),
     },
     {
-      pluginId: "elevenlabs",
+      pluginId: "acme-speech",
       source: "test",
       provider: createStubSpeechProvider({
-        id: "elevenlabs",
-        label: "ElevenLabs",
+        id: "acme-speech",
+        label: "Acme Speech",
         voices: ["stub-default-voice", "stub-alt-voice"],
         resolveTalkOverrides: ({ params }) => ({
           ...(trimString(params.voiceId) == null ? {} : { voiceId: trimString(params.voiceId) }),

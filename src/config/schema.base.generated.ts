@@ -20171,7 +20171,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
           provider: {
             type: "string",
             title: "Talk Active Provider",
-            description: 'Active Talk provider id (for example "elevenlabs").',
+            description: 'Active Talk provider id (for example "acme-speech").',
           },
           providers: {
             type: "object",
@@ -26111,7 +26111,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "talk.provider": {
       label: "Talk Active Provider",
-      help: 'Active Talk provider id (for example "elevenlabs").',
+      help: 'Active Talk provider id (for example "acme-speech").',
       tags: ["media"],
     },
     "talk.providers": {
