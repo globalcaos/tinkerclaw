@@ -4,6 +4,7 @@ import type { MemoryWikiPluginConfig, ResolvedMemoryWikiConfig } from "./config.
 import { resolveMemoryWikiConfig } from "./config.js";
 import { ingestMemoryWikiSource } from "./ingest.js";
 import { lintMemoryWikiVault } from "./lint.js";
+import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
@@ -26,6 +27,17 @@ type WikiLintCommandOptions = {
 type WikiIngestCommandOptions = {
   json?: boolean;
   title?: string;
+};
+
+type WikiSearchCommandOptions = {
+  json?: boolean;
+  maxResults?: number;
+};
+
+type WikiGetCommandOptions = {
+  json?: boolean;
+  from?: number;
+  lines?: number;
 };
 
 function writeOutput(output: string, writer: Pick<NodeJS.WriteStream, "write"> = process.stdout) {
@@ -103,6 +115,53 @@ export async function runWikiIngest(params: {
   return result;
 }
 
+export async function runWikiSearch(params: {
+  config: ResolvedMemoryWikiConfig;
+  query: string;
+  maxResults?: number;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  const results = await searchMemoryWiki({
+    config: params.config,
+    query: params.query,
+    maxResults: params.maxResults,
+  });
+  const summary = params.json
+    ? JSON.stringify(results, null, 2)
+    : results.length === 0
+      ? "No wiki results."
+      : results
+          .map(
+            (result, index) =>
+              `${index + 1}. ${result.title} (${result.kind})\nPath: ${result.path}\nSnippet: ${result.snippet}`,
+          )
+          .join("\n\n");
+  writeOutput(summary, params.stdout);
+  return results;
+}
+
+export async function runWikiGet(params: {
+  config: ResolvedMemoryWikiConfig;
+  lookup: string;
+  fromLine?: number;
+  lineCount?: number;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  const result = await getMemoryWikiPage({
+    config: params.config,
+    lookup: params.lookup,
+    fromLine: params.fromLine,
+    lineCount: params.lineCount,
+  });
+  const summary = params.json
+    ? JSON.stringify(result, null, 2)
+    : (result?.content ?? `Wiki page not found: ${params.lookup}`);
+  writeOutput(summary, params.stdout);
+  return result;
+}
+
 export function registerWikiCli(program: Command, pluginConfig?: MemoryWikiPluginConfig) {
   const config = resolveMemoryWikiConfig(pluginConfig);
   const wiki = program.command("wiki").description("Inspect and initialize the memory wiki vault");
@@ -147,5 +206,37 @@ export function registerWikiCli(program: Command, pluginConfig?: MemoryWikiPlugi
     .option("--json", "Print JSON")
     .action(async (inputPath: string, opts: WikiIngestCommandOptions) => {
       await runWikiIngest({ config, inputPath, title: opts.title, json: opts.json });
+    });
+
+  wiki
+    .command("search")
+    .description("Search wiki pages")
+    .argument("<query>", "Search query")
+    .option("--max-results <n>", "Maximum results", (value: string) => Number(value))
+    .option("--json", "Print JSON")
+    .action(async (query: string, opts: WikiSearchCommandOptions) => {
+      await runWikiSearch({
+        config,
+        query,
+        maxResults: opts.maxResults,
+        json: opts.json,
+      });
+    });
+
+  wiki
+    .command("get")
+    .description("Read a wiki page by id or relative path")
+    .argument("<lookup>", "Relative path or page id")
+    .option("--from <n>", "Start line", (value: string) => Number(value))
+    .option("--lines <n>", "Number of lines", (value: string) => Number(value))
+    .option("--json", "Print JSON")
+    .action(async (lookup: string, opts: WikiGetCommandOptions) => {
+      await runWikiGet({
+        config,
+        lookup,
+        fromLine: opts.from,
+        lineCount: opts.lines,
+        json: opts.json,
+      });
     });
 }
