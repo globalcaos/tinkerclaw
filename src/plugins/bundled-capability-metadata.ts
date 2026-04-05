@@ -1,5 +1,8 @@
 import { listBundledPluginMetadata } from "./bundled-plugin-metadata.js";
 
+// Build/test inventory only.
+// Runtime code should prefer manifest/runtime registry queries instead of these snapshots.
+
 export type BundledPluginContractSnapshot = {
   pluginId: string;
   providerIds: string[];
