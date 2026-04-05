@@ -5,6 +5,12 @@ import { createJiti } from "jiti";
 import { buildChannelConfigSchema } from "../channels/plugins/config-schema.js";
 import type { ChannelConfigRuntimeSchema } from "../channels/plugins/types.plugin.js";
 import {
+  collectBundledPluginPublicSurfaceArtifacts,
+  collectBundledPluginRuntimeSidecarArtifacts,
+  deriveBundledPluginIdHint,
+  resolveBundledPluginScanDir,
+} from "./bundled-plugin-scan.js";
+import {
   getPackageManifestMetadata,
   loadPluginManifest,
   type OpenClawPackageManifest,
@@ -30,12 +36,6 @@ const RUNNING_FROM_BUILT_ARTIFACT =
   CURRENT_MODULE_PATH.includes(`${path.sep}dist${path.sep}`) ||
   CURRENT_MODULE_PATH.includes(`${path.sep}dist-runtime${path.sep}`);
 const PUBLIC_SURFACE_SOURCE_EXTENSIONS = [".ts", ".mts", ".js", ".mjs", ".cts", ".cjs"] as const;
-const RUNTIME_SIDECAR_ARTIFACTS = new Set([
-  "helper-api.js",
-  "light-runtime-api.js",
-  "runtime-api.js",
-  "thread-bindings-runtime.js",
-]);
 const SOURCE_CONFIG_SCHEMA_CANDIDATES = [
   path.join("src", "config-schema.ts"),
   path.join("src", "config-schema.js"),
@@ -107,110 +107,6 @@ function readPackageManifest(pluginDir: string): PackageManifest | undefined {
   } catch {
     return undefined;
   }
-}
-
-function deriveIdHint(params: {
-  entryPath: string;
-  manifestId: string;
-  packageName?: string;
-  hasMultipleExtensions: boolean;
-}): string {
-  const base = path.basename(params.entryPath, path.extname(params.entryPath));
-  if (!params.hasMultipleExtensions) {
-    return params.manifestId;
-  }
-  const packageName = trimString(params.packageName);
-  if (!packageName) {
-    return `${params.manifestId}/${base}`;
-  }
-  const unscoped = packageName.includes("/")
-    ? (packageName.split("/").pop() ?? packageName)
-    : packageName;
-  return `${unscoped}/${base}`;
-}
-
-function isTopLevelPublicSurfaceSource(name: string): boolean {
-  if (
-    !PUBLIC_SURFACE_SOURCE_EXTENSIONS.includes(
-      path.extname(name) as (typeof PUBLIC_SURFACE_SOURCE_EXTENSIONS)[number],
-    )
-  ) {
-    return false;
-  }
-  if (name.startsWith(".")) {
-    return false;
-  }
-  if (name.startsWith("test-")) {
-    return false;
-  }
-  if (name.includes(".test-")) {
-    return false;
-  }
-  if (name.endsWith(".d.ts")) {
-    return false;
-  }
-  if (/^config-api(\.[cm]?[jt]s)$/u.test(name)) {
-    return false;
-  }
-  return !/(\.test|\.spec)(\.[cm]?[jt]s)$/u.test(name);
-}
-
-function collectTopLevelPublicSurfaceArtifacts(params: {
-  pluginDir: string;
-  sourceEntry: string;
-  setupEntry?: string;
-}): readonly string[] | undefined {
-  const excluded = new Set(
-    [params.sourceEntry, params.setupEntry]
-      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-      .map((entry) => path.basename(entry)),
-  );
-  const artifacts = fs
-    .readdirSync(params.pluginDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .filter(isTopLevelPublicSurfaceSource)
-    .filter((entry) => !excluded.has(entry))
-    .map((entry) => rewriteEntryToBuiltPath(entry))
-    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-    .toSorted((left, right) => left.localeCompare(right));
-  return artifacts.length > 0 ? artifacts : undefined;
-}
-
-function collectRuntimeSidecarArtifacts(
-  publicSurfaceArtifacts: readonly string[] | undefined,
-): readonly string[] | undefined {
-  if (!publicSurfaceArtifacts) {
-    return undefined;
-  }
-  const artifacts = publicSurfaceArtifacts.filter((artifact) =>
-    RUNTIME_SIDECAR_ARTIFACTS.has(artifact),
-  );
-  return artifacts.length > 0 ? artifacts : undefined;
-}
-
-function resolveBundledPluginScanDir(packageRoot: string): string | undefined {
-  const sourceDir = path.join(packageRoot, "extensions");
-  const runtimeDir = path.join(packageRoot, "dist-runtime", "extensions");
-  const builtDir = path.join(packageRoot, "dist", "extensions");
-  if (RUNNING_FROM_BUILT_ARTIFACT) {
-    if (fs.existsSync(builtDir)) {
-      return builtDir;
-    }
-    if (fs.existsSync(runtimeDir)) {
-      return runtimeDir;
-    }
-  }
-  if (fs.existsSync(sourceDir)) {
-    return sourceDir;
-  }
-  if (fs.existsSync(runtimeDir) && fs.existsSync(builtDir)) {
-    return runtimeDir;
-  }
-  if (fs.existsSync(builtDir)) {
-    return builtDir;
-  }
-  return undefined;
 }
 
 function isBuiltChannelConfigSchema(value: unknown): value is ChannelConfigSurface {
@@ -369,7 +265,10 @@ function collectBundledPluginMetadataForPackageRoot(
   includeChannelConfigs: boolean,
   includeSyntheticChannelConfigs: boolean,
 ): readonly BundledPluginMetadata[] {
-  const scanDir = resolveBundledPluginScanDir(packageRoot);
+  const scanDir = resolveBundledPluginScanDir({
+    packageRoot,
+    runningFromBuiltArtifact: RUNNING_FROM_BUILT_ARTIFACT,
+  });
   if (!scanDir || !fs.existsSync(scanDir)) {
     return [];
   }
@@ -406,12 +305,13 @@ function collectBundledPluginMetadataForPackageRoot(
             built: rewriteEntryToBuiltPath(setupSourcePath)!,
           }
         : undefined;
-    const publicSurfaceArtifacts = collectTopLevelPublicSurfaceArtifacts({
+    const publicSurfaceArtifacts = collectBundledPluginPublicSurfaceArtifacts({
       pluginDir,
       sourceEntry,
       ...(setupSourcePath ? { setupEntry: setupSourcePath } : {}),
     });
-    const runtimeSidecarArtifacts = collectRuntimeSidecarArtifacts(publicSurfaceArtifacts);
+    const runtimeSidecarArtifacts =
+      collectBundledPluginRuntimeSidecarArtifacts(publicSurfaceArtifacts);
     const channelConfigs =
       includeChannelConfigs && includeSyntheticChannelConfigs
         ? collectBundledChannelConfigs({
@@ -423,7 +323,7 @@ function collectBundledPluginMetadataForPackageRoot(
 
     entries.push({
       dirName,
-      idHint: deriveIdHint({
+      idHint: deriveBundledPluginIdHint({
         entryPath: sourceEntry,
         manifestId: manifestResult.manifest.id,
         packageName: trimString(packageJson?.name),
