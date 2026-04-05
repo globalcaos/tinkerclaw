@@ -91,6 +91,8 @@ Generated content stays inside managed blocks. Human note blocks are preserved.
 
 When `render.createBacklinks` is enabled, compile adds deterministic `## Related` blocks to pages. Those blocks list source pages, pages that reference the current page, and nearby pages that share the same source ids.
 
+When `render.createDashboards` is enabled, compile also maintains report dashboards under `reports/` for open questions, contradictions, low-confidence pages, and stale pages.
+
 ## CLI
 
 ```bash
