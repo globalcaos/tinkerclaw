@@ -74,23 +74,25 @@ export function createWikiSearchTool(
   return {
     name: "wiki_search",
     label: "Wiki Search",
-    description: "Search wiki pages by title, path, id, or body text.",
+    description:
+      "Search wiki pages and, when shared search is enabled, the active memory corpus by title, path, id, or body text.",
     parameters: WikiSearchSchema,
     execute: async (_toolCallId, rawParams) => {
       const params = rawParams as { query: string; maxResults?: number };
       await syncImportedSourcesIfNeeded(config, appConfig);
       const results = await searchMemoryWiki({
         config,
+        appConfig,
         query: params.query,
         maxResults: params.maxResults,
       });
       const text =
         results.length === 0
-          ? "No wiki results."
+          ? "No wiki or memory results."
           : results
               .map(
                 (result, index) =>
-                  `${index + 1}. ${result.title} (${result.kind})\nPath: ${result.path}\nSnippet: ${result.snippet}`,
+                  `${index + 1}. ${result.title} (${result.corpus}/${result.kind})\nPath: ${result.path}${typeof result.startLine === "number" && typeof result.endLine === "number" ? `\nLines: ${result.startLine}-${result.endLine}` : ""}\nSnippet: ${result.snippet}`,
               )
               .join("\n\n");
       return {
@@ -176,13 +178,15 @@ export function createWikiGetTool(
   return {
     name: "wiki_get",
     label: "Wiki Get",
-    description: "Read a wiki page by id or relative path.",
+    description:
+      "Read a wiki page by id or relative path, or fall back to the active memory corpus when shared search is enabled.",
     parameters: WikiGetSchema,
     execute: async (_toolCallId, rawParams) => {
       const params = rawParams as { lookup: string; fromLine?: number; lineCount?: number };
       await syncImportedSourcesIfNeeded(config, appConfig);
       const result = await getMemoryWikiPage({
         config,
+        appConfig,
         lookup: params.lookup,
         fromLine: params.fromLine,
         lineCount: params.lineCount,
