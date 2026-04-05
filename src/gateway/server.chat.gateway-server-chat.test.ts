@@ -18,7 +18,7 @@ import {
   withGatewayServer,
   writeSessionStore,
 } from "./test-helpers.js";
-import { agentCommand } from "./test-helpers.mocks.js";
+import { agentCommand } from "./test-helpers.runtime-state.js";
 import { installConnectedControlUiServerSuite } from "./test-with-server.js";
 
 installGatewayTestHooks({ scope: "suite" });
