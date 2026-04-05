@@ -128,7 +128,6 @@ The bundled Qwen provider supports text-to-video plus image/video reference mode
 - [MiniMax](/providers/minimax) — Hailuo provider setup
 - [OpenAI](/providers/openai) — Sora provider setup
 - [Qwen](/providers/qwen) — Qwen-specific setup and limits
-- [Qwen / Model Studio](/providers/qwen_modelstudio) — endpoint-level DashScope detail
 - [Together AI](/providers/together) — Together Wan provider setup
 - [xAI](/providers/xai) — Grok video provider setup
 - [Configuration Reference](/gateway/configuration-reference#agent-defaults) — `videoGenerationModel` config
