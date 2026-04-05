@@ -114,7 +114,7 @@ function resolveMemoryPluginConfig(cfg: OpenClawConfig): Record<string, unknown>
   return asRecord(entry?.config) ?? {};
 }
 
-function formatDreamingSummary(cfg: OpenClawConfig): string {
+function formatSleepSummary(cfg: OpenClawConfig): string {
   const pluginConfig = resolveMemoryPluginConfig(cfg);
   const dreaming = resolveShortTermPromotionDreamingConfig({ pluginConfig, cfg });
   if (!dreaming.enabled) {
@@ -577,7 +577,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       `${label("Dirty")} ${status.dirty ? warn("yes") : muted("no")}`,
       `${label("Store")} ${info(storePath)}`,
       `${label("Workspace")} ${info(workspacePath)}`,
-      `${label("Dreaming")} ${info(formatDreamingSummary(cfg))}`,
+      `${label("Sleep")} ${info(formatSleepSummary(cfg))}`,
     ].filter(Boolean) as string[];
     if (embeddingProbe) {
       const state = embeddingProbe.ok ? "ready" : "unavailable";
