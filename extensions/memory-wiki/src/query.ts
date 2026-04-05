@@ -4,7 +4,7 @@ import { resolveDefaultAgentId } from "openclaw/plugin-sdk/config-runtime";
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-host-files";
 import { getActiveMemorySearchManager } from "openclaw/plugin-sdk/memory-host-search";
 import type { OpenClawConfig } from "../api.js";
-import type { ResolvedMemoryWikiConfig } from "./config.js";
+import type { ResolvedMemoryWikiConfig, WikiSearchBackend, WikiSearchCorpus } from "./config.js";
 import { parseWikiMarkdown, toWikiPageSummary, type WikiPageSummary } from "./markdown.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
@@ -47,6 +47,11 @@ export type WikiGetResult = {
 
 export type QueryableWikiPage = WikiPageSummary & {
   raw: string;
+};
+
+type QuerySearchOverrides = {
+  searchBackend?: WikiSearchBackend;
+  searchCorpus?: WikiSearchCorpus;
 };
 
 async function listWikiMarkdownFiles(rootDir: string): Promise<string[]> {
@@ -174,6 +179,22 @@ function buildMemorySearchTitle(resultPath: string): string {
   return basename.length > 0 ? basename : resultPath;
 }
 
+function applySearchOverrides(
+  config: ResolvedMemoryWikiConfig,
+  overrides?: QuerySearchOverrides,
+): ResolvedMemoryWikiConfig {
+  if (!overrides?.searchBackend && !overrides?.searchCorpus) {
+    return config;
+  }
+  return {
+    ...config,
+    search: {
+      backend: overrides.searchBackend ?? config.search.backend,
+      corpus: overrides.searchCorpus ?? config.search.corpus,
+    },
+  };
+}
+
 function buildWikiProvenanceLabel(
   page: Pick<
     WikiPageSummary,
@@ -249,17 +270,20 @@ export async function searchMemoryWiki(params: {
   appConfig?: OpenClawConfig;
   query: string;
   maxResults?: number;
+  searchBackend?: WikiSearchBackend;
+  searchCorpus?: WikiSearchCorpus;
 }): Promise<WikiSearchResult[]> {
-  await initializeMemoryWikiVault(params.config);
+  const effectiveConfig = applySearchOverrides(params.config, params);
+  await initializeMemoryWikiVault(effectiveConfig);
   const maxResults = Math.max(1, params.maxResults ?? 10);
 
-  const wikiResults = shouldSearchWiki(params.config)
-    ? (await readQueryableWikiPages(params.config.vault.path))
+  const wikiResults = shouldSearchWiki(effectiveConfig)
+    ? (await readQueryableWikiPages(effectiveConfig.vault.path))
         .map((page) => toWikiSearchResult(page, params.query))
         .filter((page) => page.score > 0)
     : [];
 
-  const sharedMemoryManager = shouldSearchSharedMemory(params.config, params.appConfig)
+  const sharedMemoryManager = shouldSearchSharedMemory(effectiveConfig, params.appConfig)
     ? await resolveActiveMemoryManager(params.appConfig)
     : null;
   const memoryResults = sharedMemoryManager
@@ -284,13 +308,16 @@ export async function getMemoryWikiPage(params: {
   lookup: string;
   fromLine?: number;
   lineCount?: number;
+  searchBackend?: WikiSearchBackend;
+  searchCorpus?: WikiSearchCorpus;
 }): Promise<WikiGetResult | null> {
-  await initializeMemoryWikiVault(params.config);
+  const effectiveConfig = applySearchOverrides(params.config, params);
+  await initializeMemoryWikiVault(effectiveConfig);
   const fromLine = Math.max(1, params.fromLine ?? 1);
   const lineCount = Math.max(1, params.lineCount ?? 200);
 
-  if (shouldSearchWiki(params.config)) {
-    const pages = await readQueryableWikiPages(params.config.vault.path);
+  if (shouldSearchWiki(effectiveConfig)) {
+    const pages = await readQueryableWikiPages(effectiveConfig.vault.path);
     const page = resolveQueryableWikiPageByLookup(pages, params.lookup);
     if (page) {
       const parsed = parseWikiMarkdown(page.raw);
@@ -317,7 +344,7 @@ export async function getMemoryWikiPage(params: {
     }
   }
 
-  if (!shouldSearchSharedMemory(params.config, params.appConfig)) {
+  if (!shouldSearchSharedMemory(effectiveConfig, params.appConfig)) {
     return null;
   }
 
