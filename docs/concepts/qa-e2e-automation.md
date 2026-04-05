@@ -100,7 +100,7 @@ Discord, Teams, and similar channels.
 
 ## System overview
 
-The system has five pieces.
+The system has six pieces.
 
 1. `qa-channel` plugin
 
@@ -143,6 +143,14 @@ The system has five pieces.
 The auto-fix worker should start outside the container. It needs direct repo
 and GitHub access, clean worktree control, and better isolation from the
 runtime under test.
+
+6. `qa-lab` extension
+
+- Bundled extension under `extensions/qa-lab`
+- Owns the QA harness, Markdown report flow, and private debugger UI
+- Registers hidden CLI entrypoints such as `openclaw qa run` and
+  `openclaw qa ui`
+- Stays separate from the shipped Control UI bundle
 
 ## High-level flow
 
@@ -221,6 +229,29 @@ That is enough to build a first QA controller for:
 
 This should be Phase 0 because it de-risks the scenario protocol before the
 full channel lands.
+
+## `qa-lab` extension design
+
+`qa-lab` is the private operator-facing half of this system.
+
+Suggested package:
+
+- `extensions/qa-lab/`
+
+Suggested responsibilities:
+
+- host the synthetic bus state machine
+- host the scenario runner
+- write Markdown reports
+- serve a private debugger UI on a separate local server
+- keep that UI entirely outside the shipped Control UI bundle
+
+Suggested UI shape:
+
+- left rail for conversations and threads
+- center transcript pane
+- right rail for event stream and report inspection
+- bottom inject-composer for inbound QA traffic
 
 ## `qa-channel` plugin design
 
