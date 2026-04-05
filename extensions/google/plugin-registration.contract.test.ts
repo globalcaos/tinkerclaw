@@ -7,7 +7,6 @@ describePluginRegistrationContract({
   imageGenerationProviderIds: ["google"],
   videoGenerationProviderIds: ["google"],
   webSearchProviderIds: ["gemini"],
-  cliBackendIds: ["google-gemini-cli"],
   requireDescribeImages: true,
   requireGenerateImage: true,
   requireGenerateVideo: true,
