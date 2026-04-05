@@ -1,5 +1,7 @@
+import fs from "node:fs/promises";
 import type { Command } from "commander";
 import type { OpenClawConfig } from "../api.js";
+import { applyMemoryWikiMutation } from "./apply.js";
 import { compileMemoryWikiVault } from "./compile.js";
 import type { MemoryWikiPluginConfig, ResolvedMemoryWikiConfig } from "./config.js";
 import { resolveMemoryWikiConfig } from "./config.js";
@@ -49,6 +51,27 @@ type WikiGetCommandOptions = {
   lines?: number;
 };
 
+type WikiApplySynthesisCommandOptions = {
+  json?: boolean;
+  body?: string;
+  bodyFile?: string;
+  sourceId?: string[];
+  contradiction?: string[];
+  question?: string[];
+  confidence?: number;
+  status?: string;
+};
+
+type WikiApplyMetadataCommandOptions = {
+  json?: boolean;
+  sourceId?: string[];
+  contradiction?: string[];
+  question?: string[];
+  confidence?: number;
+  clearConfidence?: boolean;
+  status?: string;
+};
+
 type WikiBridgeImportCommandOptions = {
   json?: boolean;
 };
@@ -88,6 +111,27 @@ function isResolvedMemoryWikiConfig(
 
 function writeOutput(output: string, writer: Pick<NodeJS.WriteStream, "write"> = process.stdout) {
   writer.write(output.endsWith("\n") ? output : `${output}\n`);
+}
+
+function normalizeCliStringList(values?: string[]): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+  const normalized = values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+async function resolveWikiApplyBody(params: { body?: string; bodyFile?: string }): Promise<string> {
+  if (params.body?.trim()) {
+    return params.body;
+  }
+  if (params.bodyFile?.trim()) {
+    return await fs.readFile(params.bodyFile, "utf8");
+  }
+  throw new Error("wiki apply synthesis requires --body or --body-file.");
 }
 
 export async function runWikiStatus(params: {
@@ -214,6 +258,93 @@ export async function runWikiGet(params: {
   const summary = params.json
     ? JSON.stringify(result, null, 2)
     : (result?.content ?? `Wiki page not found: ${params.lookup}`);
+  writeOutput(summary, params.stdout);
+  return result;
+}
+
+export async function runWikiApplySynthesis(params: {
+  config: ResolvedMemoryWikiConfig;
+  appConfig?: OpenClawConfig;
+  title: string;
+  body?: string;
+  bodyFile?: string;
+  sourceIds?: string[];
+  contradictions?: string[];
+  questions?: string[];
+  confidence?: number;
+  status?: string;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  const sourceIds = normalizeCliStringList(params.sourceIds);
+  if (!sourceIds) {
+    throw new Error("wiki apply synthesis requires at least one --source-id.");
+  }
+  const body = await resolveWikiApplyBody({ body: params.body, bodyFile: params.bodyFile });
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
+  const result = await applyMemoryWikiMutation({
+    config: params.config,
+    mutation: {
+      op: "create_synthesis",
+      title: params.title,
+      body,
+      sourceIds,
+      ...(normalizeCliStringList(params.contradictions)
+        ? { contradictions: normalizeCliStringList(params.contradictions) }
+        : {}),
+      ...(normalizeCliStringList(params.questions)
+        ? { questions: normalizeCliStringList(params.questions) }
+        : {}),
+      ...(typeof params.confidence === "number" ? { confidence: params.confidence } : {}),
+      ...(params.status?.trim() ? { status: params.status.trim() } : {}),
+    },
+  });
+  const summary = params.json
+    ? JSON.stringify(result, null, 2)
+    : `${result.changed ? "Updated" : "No changes for"} ${result.pagePath} via ${result.operation}. ${result.compile.updatedFiles.length > 0 ? `Refreshed ${result.compile.updatedFiles.length} index file${result.compile.updatedFiles.length === 1 ? "" : "s"}.` : "Indexes unchanged."}`;
+  writeOutput(summary, params.stdout);
+  return result;
+}
+
+export async function runWikiApplyMetadata(params: {
+  config: ResolvedMemoryWikiConfig;
+  appConfig?: OpenClawConfig;
+  lookup: string;
+  sourceIds?: string[];
+  contradictions?: string[];
+  questions?: string[];
+  confidence?: number;
+  clearConfidence?: boolean;
+  status?: string;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
+  const result = await applyMemoryWikiMutation({
+    config: params.config,
+    mutation: {
+      op: "update_metadata",
+      lookup: params.lookup,
+      ...(normalizeCliStringList(params.sourceIds)
+        ? { sourceIds: normalizeCliStringList(params.sourceIds) }
+        : {}),
+      ...(normalizeCliStringList(params.contradictions)
+        ? { contradictions: normalizeCliStringList(params.contradictions) }
+        : {}),
+      ...(normalizeCliStringList(params.questions)
+        ? { questions: normalizeCliStringList(params.questions) }
+        : {}),
+      ...(params.clearConfidence
+        ? { confidence: null }
+        : typeof params.confidence === "number"
+          ? { confidence: params.confidence }
+          : {}),
+      ...(params.status?.trim() ? { status: params.status.trim() } : {}),
+    },
+  });
+  const summary = params.json
+    ? JSON.stringify(result, null, 2)
+    : `${result.changed ? "Updated" : "No changes for"} ${result.pagePath} via ${result.operation}. ${result.compile.updatedFiles.length > 0 ? `Refreshed ${result.compile.updatedFiles.length} index file${result.compile.updatedFiles.length === 1 ? "" : "s"}.` : "Indexes unchanged."}`;
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -402,6 +533,82 @@ export function registerWikiCli(
         lookup,
         fromLine: opts.from,
         lineCount: opts.lines,
+        json: opts.json,
+      });
+    });
+
+  const apply = wiki.command("apply").description("Apply narrow wiki mutations");
+  apply
+    .command("synthesis")
+    .description("Create or refresh a synthesis page with managed summary content")
+    .argument("<title>", "Synthesis title")
+    .option("--body <text>", "Summary body text")
+    .option("--body-file <path>", "Read summary body text from a file")
+    .option("--source-id <id>", "Source id", (value: string, acc: string[] = []) => {
+      acc.push(value);
+      return acc;
+    })
+    .option("--contradiction <text>", "Contradiction note", (value: string, acc: string[] = []) => {
+      acc.push(value);
+      return acc;
+    })
+    .option("--question <text>", "Open question", (value: string, acc: string[] = []) => {
+      acc.push(value);
+      return acc;
+    })
+    .option("--confidence <n>", "Confidence score between 0 and 1", (value: string) =>
+      Number(value),
+    )
+    .option("--status <status>", "Page status")
+    .option("--json", "Print JSON")
+    .action(async (title: string, opts: WikiApplySynthesisCommandOptions) => {
+      await runWikiApplySynthesis({
+        config,
+        appConfig,
+        title,
+        body: opts.body,
+        bodyFile: opts.bodyFile,
+        sourceIds: opts.sourceId,
+        contradictions: opts.contradiction,
+        questions: opts.question,
+        confidence: opts.confidence,
+        status: opts.status,
+        json: opts.json,
+      });
+    });
+  apply
+    .command("metadata")
+    .description("Update metadata on an existing page")
+    .argument("<lookup>", "Relative path or page id")
+    .option("--source-id <id>", "Source id", (value: string, acc: string[] = []) => {
+      acc.push(value);
+      return acc;
+    })
+    .option("--contradiction <text>", "Contradiction note", (value: string, acc: string[] = []) => {
+      acc.push(value);
+      return acc;
+    })
+    .option("--question <text>", "Open question", (value: string, acc: string[] = []) => {
+      acc.push(value);
+      return acc;
+    })
+    .option("--confidence <n>", "Confidence score between 0 and 1", (value: string) =>
+      Number(value),
+    )
+    .option("--clear-confidence", "Remove any stored confidence value")
+    .option("--status <status>", "Page status")
+    .option("--json", "Print JSON")
+    .action(async (lookup: string, opts: WikiApplyMetadataCommandOptions) => {
+      await runWikiApplyMetadata({
+        config,
+        appConfig,
+        lookup,
+        sourceIds: opts.sourceId,
+        contradictions: opts.contradiction,
+        questions: opts.question,
+        confidence: opts.confidence,
+        clearConfidence: opts.clearConfidence,
+        status: opts.status,
         json: opts.json,
       });
     });
