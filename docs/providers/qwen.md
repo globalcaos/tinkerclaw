@@ -1,10 +1,9 @@
+---
 summary: "Use Qwen Cloud via OpenClaw's bundled qwen provider"
 read_when:
-
-- You want to use Qwen with OpenClaw
-- You previously used Qwen OAuth
-  title: "Qwen"
-
+  - You want to use Qwen with OpenClaw
+  - You previously used Qwen OAuth
+title: "Qwen"
 ---
 
 # Qwen
@@ -126,6 +125,9 @@ Current bundled Qwen video-generation limits:
 - Reference image/video mode currently requires **remote http(s) URLs**. Local
   file paths are rejected up front because the DashScope video endpoint does not
   accept uploaded local buffers for those references.
+
+See [Video Generation](/tools/video-generation) for the shared tool
+parameters, provider selection, and failover behavior.
 
 See [Qwen / Model Studio](/providers/qwen_modelstudio) for endpoint-level detail
 and compatibility notes.
