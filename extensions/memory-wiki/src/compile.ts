@@ -8,6 +8,8 @@ import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { appendMemoryWikiLog } from "./log.js";
 import {
   formatWikiLink,
+  parseWikiMarkdown,
+  renderWikiMarkdown,
   toWikiPageSummary,
   type WikiPageKind,
   type WikiPageSummary,
@@ -22,6 +24,128 @@ const COMPILE_PAGE_GROUPS: Array<{ kind: WikiPageKind; dir: string; heading: str
   { kind: "concept", dir: "concepts", heading: "Concepts" },
   { kind: "synthesis", dir: "syntheses", heading: "Syntheses" },
   { kind: "report", dir: "reports", heading: "Reports" },
+];
+const DASHBOARD_STALE_PAGE_DAYS = 30;
+
+type DashboardPageDefinition = {
+  id: string;
+  title: string;
+  relativePath: string;
+  buildBody: (params: {
+    config: ResolvedMemoryWikiConfig;
+    pages: WikiPageSummary[];
+    now: Date;
+  }) => string;
+};
+
+const DASHBOARD_PAGES: DashboardPageDefinition[] = [
+  {
+    id: "report.open-questions",
+    title: "Open Questions",
+    relativePath: "reports/open-questions.md",
+    buildBody: ({ config, pages }) => {
+      const matches = pages.filter((page) => page.questions.length > 0);
+      if (matches.length === 0) {
+        return "- No open questions right now.";
+      }
+      return [
+        `- Pages with open questions: ${matches.length}`,
+        "",
+        ...matches.map(
+          (page) =>
+            `- ${formatWikiLink({
+              renderMode: config.vault.renderMode,
+              relativePath: page.relativePath,
+              title: page.title,
+            })}: ${page.questions.join(" | ")}`,
+        ),
+      ].join("\n");
+    },
+  },
+  {
+    id: "report.contradictions",
+    title: "Contradictions",
+    relativePath: "reports/contradictions.md",
+    buildBody: ({ config, pages }) => {
+      const matches = pages.filter((page) => page.contradictions.length > 0);
+      if (matches.length === 0) {
+        return "- No contradictions flagged right now.";
+      }
+      return [
+        `- Pages with contradictions: ${matches.length}`,
+        "",
+        ...matches.map(
+          (page) =>
+            `- ${formatWikiLink({
+              renderMode: config.vault.renderMode,
+              relativePath: page.relativePath,
+              title: page.title,
+            })}: ${page.contradictions.join(" | ")}`,
+        ),
+      ].join("\n");
+    },
+  },
+  {
+    id: "report.low-confidence",
+    title: "Low Confidence",
+    relativePath: "reports/low-confidence.md",
+    buildBody: ({ config, pages }) => {
+      const matches = pages
+        .filter((page) => typeof page.confidence === "number" && page.confidence < 0.5)
+        .toSorted((left, right) => (left.confidence ?? 1) - (right.confidence ?? 1));
+      if (matches.length === 0) {
+        return "- No low-confidence pages right now.";
+      }
+      return [
+        `- Low-confidence pages: ${matches.length}`,
+        "",
+        ...matches.map(
+          (page) =>
+            `- ${formatWikiLink({
+              renderMode: config.vault.renderMode,
+              relativePath: page.relativePath,
+              title: page.title,
+            })}: confidence ${(page.confidence ?? 0).toFixed(2)}`,
+        ),
+      ].join("\n");
+    },
+  },
+  {
+    id: "report.stale-pages",
+    title: "Stale Pages",
+    relativePath: "reports/stale-pages.md",
+    buildBody: ({ config, pages, now }) => {
+      const staleBeforeMs = now.getTime() - DASHBOARD_STALE_PAGE_DAYS * 24 * 60 * 60 * 1000;
+      const matches = pages
+        .filter((page) => page.kind !== "report")
+        .flatMap((page) => {
+          if (!page.updatedAt) {
+            return [{ page, reason: "missing updatedAt" }];
+          }
+          const updatedAtMs = Date.parse(page.updatedAt);
+          if (!Number.isFinite(updatedAtMs) || updatedAtMs > staleBeforeMs) {
+            return [];
+          }
+          return [{ page, reason: `updated ${page.updatedAt}` }];
+        })
+        .toSorted((left, right) => left.page.title.localeCompare(right.page.title));
+      if (matches.length === 0) {
+        return `- No stale pages older than ${DASHBOARD_STALE_PAGE_DAYS} days.`;
+      }
+      return [
+        `- Stale pages: ${matches.length}`,
+        "",
+        ...matches.map(
+          ({ page, reason }) =>
+            `- ${formatWikiLink({
+              renderMode: config.vault.renderMode,
+              relativePath: page.relativePath,
+              title: page.title,
+            })}: ${reason}`,
+        ),
+      ].join("\n");
+    },
+  },
 ];
 
 export type CompileMemoryWikiResult = {
@@ -131,8 +255,9 @@ function buildRelatedBlockBody(params: {
   page: WikiPageSummary;
   allPages: WikiPageSummary[];
 }): string {
+  const candidatePages = params.allPages.filter((candidate) => candidate.kind !== "report");
   const pagesById = new Map(
-    params.allPages.flatMap((candidate) =>
+    candidatePages.flatMap((candidate) =>
       candidate.id ? [[candidate.id, candidate] as const] : [],
     ),
   );
@@ -144,7 +269,7 @@ function buildRelatedBlockBody(params: {
   );
   const backlinkKeys = buildPageLookupKeys(params.page);
   const backlinks = uniquePages(
-    params.allPages.filter((candidate) => {
+    candidatePages.filter((candidate) => {
       if (candidate.relativePath === params.page.relativePath) {
         return false;
       }
@@ -157,7 +282,7 @@ function buildRelatedBlockBody(params: {
     }),
   );
   const relatedPages = uniquePages(
-    params.allPages.filter((candidate) => {
+    candidatePages.filter((candidate) => {
       if (candidate.relativePath === params.page.relativePath) {
         return false;
       }
@@ -208,6 +333,9 @@ async function refreshPageRelatedBlocks(params: {
   }
   const updatedFiles: string[] = [];
   for (const page of params.pages) {
+    if (page.kind === "report") {
+      continue;
+    }
     const original = await fs.readFile(page.absolutePath, "utf8");
     const updated = withTrailingNewline(
       replaceManagedMarkdownBlock({
@@ -274,6 +402,108 @@ async function writeManagedMarkdownFile(params: {
   return true;
 }
 
+async function writeDashboardPage(params: {
+  config: ResolvedMemoryWikiConfig;
+  rootDir: string;
+  definition: DashboardPageDefinition;
+  pages: WikiPageSummary[];
+  now: Date;
+}): Promise<boolean> {
+  const filePath = path.join(params.rootDir, params.definition.relativePath);
+  const original = await fs.readFile(filePath, "utf8").catch(() =>
+    renderWikiMarkdown({
+      frontmatter: {
+        pageType: "report",
+        id: params.definition.id,
+        title: params.definition.title,
+        status: "active",
+      },
+      body: `# ${params.definition.title}\n`,
+    }),
+  );
+  const parsed = parseWikiMarkdown(original);
+  const originalBody =
+    parsed.body.trim().length > 0 ? parsed.body : `# ${params.definition.title}\n`;
+  const updatedBody = replaceManagedMarkdownBlock({
+    original: originalBody,
+    heading: "## Generated",
+    startMarker: `<!-- openclaw:wiki:${path.basename(params.definition.relativePath, ".md")}:start -->`,
+    endMarker: `<!-- openclaw:wiki:${path.basename(params.definition.relativePath, ".md")}:end -->`,
+    body: params.definition.buildBody({
+      config: params.config,
+      pages: params.pages,
+      now: params.now,
+    }),
+  });
+  const preservedUpdatedAt =
+    typeof parsed.frontmatter.updatedAt === "string" && parsed.frontmatter.updatedAt.trim()
+      ? parsed.frontmatter.updatedAt
+      : params.now.toISOString();
+  const stableRendered = withTrailingNewline(
+    renderWikiMarkdown({
+      frontmatter: {
+        ...parsed.frontmatter,
+        pageType: "report",
+        id: params.definition.id,
+        title: params.definition.title,
+        status:
+          typeof parsed.frontmatter.status === "string" && parsed.frontmatter.status.trim()
+            ? parsed.frontmatter.status
+            : "active",
+        updatedAt: preservedUpdatedAt,
+      },
+      body: updatedBody,
+    }),
+  );
+  if (stableRendered === original) {
+    return false;
+  }
+  const rendered = withTrailingNewline(
+    renderWikiMarkdown({
+      frontmatter: {
+        ...parsed.frontmatter,
+        pageType: "report",
+        id: params.definition.id,
+        title: params.definition.title,
+        status:
+          typeof parsed.frontmatter.status === "string" && parsed.frontmatter.status.trim()
+            ? parsed.frontmatter.status
+            : "active",
+        updatedAt: params.now.toISOString(),
+      },
+      body: updatedBody,
+    }),
+  );
+  await fs.writeFile(filePath, rendered, "utf8");
+  return true;
+}
+
+async function refreshDashboardPages(params: {
+  config: ResolvedMemoryWikiConfig;
+  rootDir: string;
+  pages: WikiPageSummary[];
+}): Promise<string[]> {
+  if (!params.config.render.createDashboards) {
+    return [];
+  }
+  const now = new Date();
+  const updatedFiles: string[] = [];
+  for (const definition of DASHBOARD_PAGES) {
+    if (
+      await writeDashboardPage({
+        config: params.config,
+        rootDir: params.rootDir,
+        definition,
+        pages: params.pages,
+        now,
+      })
+    ) {
+      updatedFiles.push(path.join(params.rootDir, definition.relativePath));
+    }
+  }
+  return updatedFiles;
+}
+
 function buildRootIndexBody(params: {
   config: ResolvedMemoryWikiConfig;
   pages: WikiPageSummary[];
@@ -323,6 +553,11 @@ export async function compileMemoryWikiVault(
   let pages = await readPageSummaries(rootDir);
   const updatedFiles = await refreshPageRelatedBlocks({ config, pages });
   if (updatedFiles.length > 0) {
+    pages = await readPageSummaries(rootDir);
+  }
+  const dashboardUpdatedFiles = await refreshDashboardPages({ config, rootDir, pages });
+  updatedFiles.push(...dashboardUpdatedFiles);
+  if (dashboardUpdatedFiles.length > 0) {
     pages = await readPageSummaries(rootDir);
   }
   const counts = buildPageCounts(pages);

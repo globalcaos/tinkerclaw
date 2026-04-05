@@ -131,6 +131,94 @@ describe("compileMemoryWikiVault", () => {
     );
   });
 
+  it("writes dashboard report pages when createDashboards is enabled", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-compile-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha",
+          title: "Alpha",
+          sourceIds: ["source.alpha"],
+          questions: ["What changed after launch?"],
+          contradictions: ["Conflicts with source.beta"],
+          confidence: 0.3,
+        },
+        body: "# Alpha\n",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(rootDir, "sources", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "source",
+          id: "source.alpha",
+          title: "Alpha Source",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        body: "# Alpha Source\n",
+      }),
+      "utf8",
+    );
+
+    const result = await compileMemoryWikiVault(config);
+
+    expect(result.pageCounts.report).toBeGreaterThanOrEqual(4);
+    await expect(
+      fs.readFile(path.join(rootDir, "reports", "open-questions.md"), "utf8"),
+    ).resolves.toContain("[Alpha](entities/alpha.md): What changed after launch?");
+    await expect(
+      fs.readFile(path.join(rootDir, "reports", "contradictions.md"), "utf8"),
+    ).resolves.toContain("[Alpha](entities/alpha.md): Conflicts with source.beta");
+    await expect(
+      fs.readFile(path.join(rootDir, "reports", "low-confidence.md"), "utf8"),
+    ).resolves.toContain("[Alpha](entities/alpha.md): confidence 0.30");
+    await expect(
+      fs.readFile(path.join(rootDir, "reports", "stale-pages.md"), "utf8"),
+    ).resolves.toContain("[Alpha](entities/alpha.md): missing updatedAt");
+  });
+
+  it("skips dashboard report pages when createDashboards is disabled", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-compile-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      {
+        vault: { path: rootDir },
+        render: { createDashboards: false },
+      },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha",
+          title: "Alpha",
+          sourceIds: ["source.alpha"],
+          questions: ["What changed after launch?"],
+        },
+        body: "# Alpha\n",
+      }),
+      "utf8",
+    );
+
+    await compileMemoryWikiVault(config);
+
+    await expect(fs.access(path.join(rootDir, "reports", "open-questions.md"))).rejects.toThrow();
+  });
+
   it("ignores generated related links when computing backlinks on repeated compile", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-compile-"));
     tempDirs.push(rootDir);
