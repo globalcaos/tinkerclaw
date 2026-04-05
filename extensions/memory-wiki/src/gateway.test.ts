@@ -1,0 +1,111 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTestPluginApi } from "../../../test/helpers/plugins/plugin-api.js";
+import type { OpenClawPluginApi } from "../api.js";
+import { resolveMemoryWikiConfig } from "./config.js";
+import { registerMemoryWikiGatewayMethods } from "./gateway.js";
+import { renderWikiMarkdown } from "./markdown.js";
+import { initializeMemoryWikiVault } from "./vault.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+});
+
+function createGatewayApi() {
+  const registerGatewayMethod = vi.fn();
+  const api = createTestPluginApi({
+    id: "memory-wiki",
+    name: "Memory Wiki",
+    source: "test",
+    config: {},
+    runtime: {} as OpenClawPluginApi["runtime"],
+    registerGatewayMethod,
+  }) as OpenClawPluginApi;
+  return { api, registerGatewayMethod };
+}
+
+function findGatewayHandler(
+  registerGatewayMethod: ReturnType<typeof vi.fn>,
+  method: string,
+):
+  | ((ctx: {
+      params: Record<string, unknown>;
+      respond: (ok: boolean, payload?: unknown, error?: unknown) => void;
+    }) => Promise<void>)
+  | undefined {
+  return registerGatewayMethod.mock.calls.find((call) => call[0] === method)?.[1];
+}
+
+describe("memory-wiki gateway methods", () => {
+  it("returns wiki status over the gateway", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-gateway-"));
+    tempDirs.push(rootDir);
+    const { api, registerGatewayMethod } = createGatewayApi();
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+
+    registerMemoryWikiGatewayMethods({ api, config });
+    const handler = findGatewayHandler(registerGatewayMethod, "wiki.status");
+    if (!handler) {
+      throw new Error("wiki.status handler missing");
+    }
+    const respond = vi.fn();
+
+    await handler({
+      params: {},
+      respond,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        vaultMode: "isolated",
+        vaultExists: true,
+      }),
+    );
+  });
+
+  it("validates required query params for wiki.search", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-gateway-"));
+    tempDirs.push(rootDir);
+    const { api, registerGatewayMethod } = createGatewayApi();
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+    await fs.writeFile(
+      path.join(rootDir, "sources", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "source", id: "source.alpha", title: "Alpha" },
+        body: "# Alpha\n",
+      }),
+      "utf8",
+    );
+
+    registerMemoryWikiGatewayMethods({ api, config });
+    const handler = findGatewayHandler(registerGatewayMethod, "wiki.search");
+    if (!handler) {
+      throw new Error("wiki.search handler missing");
+    }
+    const respond = vi.fn();
+
+    await handler({
+      params: {},
+      respond,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: "query is required." }),
+    );
+  });
+});
