@@ -4,6 +4,8 @@ Persistent wiki compiler and Obsidian-friendly knowledge vault for **OpenClaw**.
 
 This plugin is separate from the active memory plugin. `memory-core` still handles recall, promotion, and dreaming. `memory-wiki` compiles durable knowledge into a navigable markdown vault with deterministic indexes, provenance, and optional Obsidian CLI workflows.
 
+When the active memory plugin exposes shared recall, agents can use `memory_search` with `corpus=all` to search durable memory and the compiled wiki in one pass, then fall back to `wiki_search` / `wiki_get` when wiki-specific ranking or provenance matters.
+
 ## Modes
 
 - `isolated`: own vault, own sources, no dependency on `memory-core`
@@ -59,7 +61,7 @@ Put config under `plugins.entries.memory-wiki.config`:
 
   render: {
     preserveHumanBlocks: true,
-    createBacklinks: true,
+    createBacklinks: true, // writes managed ## Related blocks with sources, backlinks, and related pages
     createDashboards: true,
   },
 }
@@ -86,6 +88,8 @@ The plugin initializes a vault like this:
 ```
 
 Generated content stays inside managed blocks. Human note blocks are preserved.
+
+When `render.createBacklinks` is enabled, compile adds deterministic `## Related` blocks to pages. Those blocks list source pages, pages that reference the current page, and nearby pages that share the same source ids.
 
 ## CLI
 
@@ -125,6 +129,8 @@ openclaw wiki obsidian daily
 - `wiki_apply`
 - `wiki_search`
 - `wiki_get`
+
+The plugin also registers a non-exclusive memory corpus supplement, so shared `memory_search` / `memory_get` flows can reach the wiki when the active memory plugin supports corpus selection.
 
 ## Gateway RPC
 
