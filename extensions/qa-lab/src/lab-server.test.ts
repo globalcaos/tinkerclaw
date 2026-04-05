@@ -122,7 +122,11 @@ describe("qa-lab server", () => {
         res.end(JSON.stringify({ ok: true, status: "live" }));
         return;
       }
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "x-frame-options": "DENY",
+        "content-security-policy": "default-src 'self'; frame-ancestors 'none';",
+      });
       res.end("<!doctype html><title>control-ui</title><h1>Control UI</h1>");
     });
     await new Promise<void>((resolve, reject) => {
@@ -168,6 +172,8 @@ describe("qa-lab server", () => {
 
     const rootResponse = await fetch(`${lab.listenUrl}/control-ui/`);
     expect(rootResponse.status).toBe(200);
+    expect(rootResponse.headers.get("x-frame-options")).toBeNull();
+    expect(rootResponse.headers.get("content-security-policy")).toContain("frame-ancestors 'self'");
     expect(await rootResponse.text()).toContain("Control UI");
   });
 
