@@ -122,6 +122,7 @@ Docs: https://docs.openclaw.ai
 - Providers/OpenAI Codex: split native `contextWindow` from runtime `contextTokens`, keep the default effective cap at `272000`, and expose a per-model `contextTokens` override on `models.providers.*.models[]`.
 - Providers/OpenAI-compatible WS: compute fallback token totals from normalized usage when providers omit or zero `total_tokens`, so DashScope-compatible sessions stop storing zero totals after alias normalization. (#54940) Thanks @lyfuci.
 - Agents/OpenAI: mark Claude-compatible file tool schemas as `additionalProperties: false` so direct OpenAI GPT-5 routes stop rejecting the `read` tool with invalid strict-schema errors.
+- Agents/OpenAI: fall back to `strict: false` for native OpenAI tool calls when a tool schema is not strict-compatible, and normalize empty-object tool schemas to include `required: []`, so direct GPT-5 routes stop failing with invalid strict-schema errors like missing `path` in `required`.
 - Agents/GPT: add explicit work-item lifecycle events for embedded runs, use them to surface real progress more reliably, and stop counting tool-started turns as planning-only retries.
 - Plugins/OpenAI: enable `gpt-image-1` reference-image edits through `/images/edits` multipart uploads, and stop inferring unsupported resolution overrides when no explicit `size` or `resolution` is provided.
 - Agents/replay: remove the malformed assistant-content canonicalization repair from replay history sanitization instead of extending that legacy repair path into replay validation.
