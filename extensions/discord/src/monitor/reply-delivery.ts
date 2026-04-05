@@ -9,6 +9,7 @@ import {
   resolveTextChunksWithFallback,
   sendMediaWithLeadingCaption,
 } from "openclaw/plugin-sdk/reply-payload";
+import { isSingleUseReplyToMode } from "openclaw/plugin-sdk/reply-reference";
 import {
   resolveRetryConfig,
   retryAsync,
@@ -263,8 +264,7 @@ export async function deliverDiscordReply(params: {
   const chunkLimit = Math.min(params.textLimit, 2000);
   const replyTo = params.replyToId?.trim() || undefined;
   const replyToMode = params.replyToMode ?? "all";
-  // replyToMode=first should only apply to the first physical send.
-  const replyOnce = replyToMode === "first" || replyToMode === "batched";
+  const replyOnce = isSingleUseReplyToMode(replyToMode);
   let replyUsed = false;
   const resolveReplyTo = () => {
     if (!replyTo) {
