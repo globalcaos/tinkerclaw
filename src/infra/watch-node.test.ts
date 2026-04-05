@@ -64,6 +64,9 @@ describe("watch-node script", () => {
     expect(watchOptions.ignored("src/infra")).toBe(false);
     expect(watchOptions.ignored("extensions")).toBe(false);
     expect(watchOptions.ignored("extensions/voice-call")).toBe(false);
+    expect(watchOptions.ignored("extensions/voice-call/dist")).toBe(true);
+    expect(watchOptions.ignored("extensions/voice-call/node_modules")).toBe(true);
+    expect(watchOptions.ignored("extensions/voice-call/node_modules/chokidar/index.js")).toBe(true);
     expect(watchOptions.ignored("src/infra/watch-node.test.ts")).toBe(true);
     expect(watchOptions.ignored("src/infra/watch-node.test.tsx")).toBe(true);
     expect(watchOptions.ignored("src/infra/watch-node-test-helpers.ts")).toBe(true);

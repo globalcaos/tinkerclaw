@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -11,6 +10,7 @@ const WATCH_NODE_RUNNER = "scripts/run-node.mjs";
 const WATCH_RESTART_SIGNAL = "SIGTERM";
 const WATCH_RESTARTABLE_CHILD_EXIT_CODES = new Set([143]);
 const WATCH_RESTARTABLE_CHILD_SIGNALS = new Set(["SIGTERM"]);
+const WATCH_IGNORED_PATH_SEGMENTS = new Set([".git", "dist", "node_modules"]);
 
 const buildRunnerArgs = (args) => [WATCH_NODE_RUNNER, ...args];
 
@@ -27,6 +27,13 @@ const resolveRepoPath = (filePath, cwd) => {
   return normalizePath(rawPath);
 };
 
+const hasIgnoredPathSegment = (repoPath) =>
+  normalizePath(repoPath)
+    .split("/")
+    .some((segment) => WATCH_IGNORED_PATH_SEGMENTS.has(segment));
+
+const looksLikeDirectoryPath = (repoPath) => path.posix.extname(normalizePath(repoPath)) === "";
+
 const isDirectoryLikeWatchedPath = (repoPath, watchPaths) => {
   const normalizedRepoPath = normalizePath(repoPath).replace(/\/$/, "");
   return watchPaths.some((watchPath) => {
@@ -41,17 +48,15 @@ const isDirectoryLikeWatchedPath = (repoPath, watchPaths) => {
   });
 };
 
-const isIgnoredWatchPath = (filePath, cwd, watchPaths) => {
+const isIgnoredWatchPath = (filePath, cwd, watchPaths, stats) => {
   const repoPath = resolveRepoPath(filePath, cwd);
-  const statPath = path.isAbsolute(String(filePath ?? ""))
-    ? String(filePath ?? "")
-    : path.join(cwd, String(filePath ?? ""));
-  try {
-    if (fs.statSync(statPath).isDirectory() && isDirectoryLikeWatchedPath(repoPath, watchPaths)) {
+  if (hasIgnoredPathSegment(repoPath)) {
+    return true;
+  }
+  if (isDirectoryLikeWatchedPath(repoPath, watchPaths)) {
+    if (stats?.isDirectory?.() || looksLikeDirectoryPath(repoPath)) {
       return false;
     }
-  } catch {
-    // Fall through to path-based filtering for deleted paths and other transient races.
   }
   return !isRestartRelevantRunNodePath(repoPath);
 };
@@ -109,7 +114,8 @@ export async function runWatchMain(params = {}) {
 
     const watcher = deps.createWatcher(deps.watchPaths, {
       ignoreInitial: true,
-      ignored: (watchPath) => isIgnoredWatchPath(watchPath, deps.cwd, deps.watchPaths),
+      ignored: (watchPath, stats) =>
+        isIgnoredWatchPath(watchPath, deps.cwd, deps.watchPaths, stats),
     });
 
     const settle = (code) => {
