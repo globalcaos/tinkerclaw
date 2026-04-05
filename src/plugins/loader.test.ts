@@ -29,6 +29,7 @@ import {
   buildMemoryPromptSection,
   getMemoryRuntime,
   registerMemoryFlushPlanResolver,
+  registerMemoryPromptSupplement,
   registerMemoryPromptSection,
   registerMemoryRuntime,
   resolveMemoryFlushPlan,
@@ -1382,6 +1383,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
       create: async () => ({ provider: null }),
     });
     registerMemoryPromptSection(() => ["active memory section"]);
+    registerMemoryPromptSupplement("memory-wiki", () => ["active wiki supplement"]);
     registerMemoryFlushPlanResolver(() => ({
       softThresholdTokens: 1,
       forceFlushTranscriptBytes: 2,
@@ -1448,6 +1450,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
     expect(scoped.plugins.find((entry) => entry.id === "snapshot-memory")?.status).toBe("loaded");
     expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([
       "active memory section",
+      "active wiki supplement",
     ]);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/active.md");
     expect(getMemoryRuntime()).toBe(activeRuntime);
@@ -1468,6 +1471,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
             create: async () => ({ provider: null }),
           });
           api.registerMemoryPromptSection(() => ["stale failure section"]);
+          api.registerMemoryPromptSupplement(() => ["stale failure supplement"]);
           api.registerMemoryFlushPlan(() => ({
             softThresholdTokens: 10,
             forceFlushTranscriptBytes: 20,
