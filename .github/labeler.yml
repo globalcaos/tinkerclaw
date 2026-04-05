@@ -69,6 +69,12 @@
       - any-glob-to-any-file:
           - "extensions/qa-channel/**"
           - "docs/channels/qa-channel.md"
+"extensions: qa-lab":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/qa-lab/**"
+          - "docs/concepts/qa-e2e-automation.md"
+          - "docs/channels/qa-channel.md"
 "channel: signal":
   - changed-files:
       - any-glob-to-any-file:

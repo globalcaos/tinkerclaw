@@ -68,9 +68,19 @@ Current vertical slice:
 pnpm qa:e2e
 ```
 
-This starts the in-repo QA bus, boots the bundled `qa-channel` runtime slice,
-runs a deterministic self-check, and writes a Markdown report under
-`.artifacts/qa-e2e/`.
+This now routes through the bundled `qa-lab` extension. It starts the in-repo
+QA bus, boots the bundled `qa-channel` runtime slice, runs a deterministic
+self-check, and writes a Markdown report under `.artifacts/qa-e2e/`.
+
+Private debugger UI:
+
+```bash
+pnpm qa:lab:build
+pnpm openclaw qa ui
+```
+
+That launches the private QA debugger at a local URL, separate from the
+shipped Control UI bundle.
 
 ## Scope
 
