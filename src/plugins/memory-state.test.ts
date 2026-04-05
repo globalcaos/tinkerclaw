@@ -6,7 +6,9 @@ import {
   getMemoryFlushPlanResolver,
   getMemoryPromptSectionBuilder,
   getMemoryRuntime,
+  listMemoryCorpusSupplements,
   listMemoryPromptSupplements,
+  registerMemoryCorpusSupplement,
   registerMemoryFlushPlanResolver,
   registerMemoryPromptSupplement,
   registerMemoryPromptSection,
@@ -40,11 +42,13 @@ function createMemoryFlushPlan(relativePath: string) {
 function expectClearedMemoryState() {
   expect(resolveMemoryFlushPlan({})).toBeNull();
   expect(buildMemoryPromptSection({ availableTools: new Set(["memory_search"]) })).toEqual([]);
+  expect(listMemoryCorpusSupplements()).toEqual([]);
   expect(getMemoryRuntime()).toBeUndefined();
 }
 
 function createMemoryStateSnapshot() {
   return {
+    corpusSupplements: listMemoryCorpusSupplements(),
     promptBuilder: getMemoryPromptSectionBuilder(),
     promptSupplements: listMemoryPromptSupplements(),
     flushPlanResolver: getMemoryFlushPlanResolver(),
@@ -118,6 +122,20 @@ describe("memory plugin state", () => {
     ]);
   });
 
+  it("stores memory corpus supplements", async () => {
+    const supplement = {
+      search: async () => [{ corpus: "wiki", path: "sources/alpha.md", score: 1, snippet: "x" }],
+      get: async () => null,
+    };
+
+    registerMemoryCorpusSupplement("memory-wiki", supplement);
+
+    expect(listMemoryCorpusSupplements()).toHaveLength(1);
+    await expect(
+      listMemoryCorpusSupplements()[0]?.supplement.search({ query: "alpha" }),
+    ).resolves.toEqual([{ corpus: "wiki", path: "sources/alpha.md", score: 1, snippet: "x" }]);
+  });
+
   it("uses the registered flush plan resolver", () => {
     registerMemoryFlushPlanResolver(() => ({
       softThresholdTokens: 1,
@@ -153,6 +171,10 @@ describe("memory plugin state", () => {
       runtime,
     });
     registerMemoryPromptSupplement("memory-wiki", () => ["wiki supplement"]);
+    registerMemoryCorpusSupplement("memory-wiki", {
+      search: async () => [{ corpus: "wiki", path: "sources/alpha.md", score: 1, snippet: "x" }],
+      get: async () => null,
+    });
     const snapshot = createMemoryStateSnapshot();
 
     _resetMemoryPluginState();
@@ -164,6 +186,7 @@ describe("memory plugin state", () => {
       "wiki supplement",
     ]);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/first.md");
+    expect(listMemoryCorpusSupplements()).toHaveLength(1);
     expect(getMemoryRuntime()).toBe(runtime);
   });
 

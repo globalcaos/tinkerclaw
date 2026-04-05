@@ -28,6 +28,8 @@ import {
 import {
   buildMemoryPromptSection,
   getMemoryRuntime,
+  listMemoryCorpusSupplements,
+  registerMemoryCorpusSupplement,
   registerMemoryFlushPlanResolver,
   registerMemoryPromptSupplement,
   registerMemoryPromptSection,
@@ -1382,6 +1384,10 @@ module.exports = { id: "throws-after-import", register() {} };`,
       id: "active",
       create: async () => ({ provider: null }),
     });
+    registerMemoryCorpusSupplement("memory-wiki", {
+      search: async () => [],
+      get: async () => null,
+    });
     registerMemoryPromptSection(() => ["active memory section"]);
     registerMemoryPromptSupplement("memory-wiki", () => ["active wiki supplement"]);
     registerMemoryFlushPlanResolver(() => ({
@@ -1452,6 +1458,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
       "active memory section",
       "active wiki supplement",
     ]);
+    expect(listMemoryCorpusSupplements()).toHaveLength(1);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/active.md");
     expect(getMemoryRuntime()).toBe(activeRuntime);
     expect(listMemoryEmbeddingProviders().map((adapter) => adapter.id)).toEqual(["active"]);
@@ -1472,6 +1479,10 @@ module.exports = { id: "throws-after-import", register() {} };`,
           });
           api.registerMemoryPromptSection(() => ["stale failure section"]);
           api.registerMemoryPromptSupplement(() => ["stale failure supplement"]);
+          api.registerMemoryCorpusSupplement({
+            search: async () => [],
+            get: async () => null,
+          });
           api.registerMemoryFlushPlan(() => ({
             softThresholdTokens: 10,
             forceFlushTranscriptBytes: 20,
@@ -1508,6 +1519,7 @@ module.exports = { id: "throws-after-import", register() {} };`,
 
     expect(registry.plugins.find((entry) => entry.id === "failing-memory")?.status).toBe("error");
     expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([]);
+    expect(listMemoryCorpusSupplements()).toEqual([]);
     expect(resolveMemoryFlushPlan({})).toBeNull();
     expect(getMemoryRuntime()).toBeUndefined();
     expect(listMemoryEmbeddingProviders()).toEqual([]);
