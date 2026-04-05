@@ -25,6 +25,7 @@ type MockOpenAiRequestSnapshot = {
   body: Record<string, unknown>;
   prompt: string;
   toolOutput: string;
+  model: string;
 };
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -91,6 +92,30 @@ function extractToolOutput(input: ResponsesInputItem[]) {
   return "";
 }
 
+function extractAllUserTexts(input: ResponsesInputItem[]) {
+  const texts: string[] = [];
+  for (const item of input) {
+    if (item.role !== "user" || !Array.isArray(item.content)) {
+      continue;
+    }
+    const text = item.content
+      .filter(
+        (entry): entry is { type: "input_text"; text: string } =>
+          !!entry &&
+          typeof entry === "object" &&
+          (entry as { type?: unknown }).type === "input_text" &&
+          typeof (entry as { text?: unknown }).text === "string",
+      )
+      .map((entry) => entry.text)
+      .join("\n")
+      .trim();
+    if (text) {
+      texts.push(text);
+    }
+  }
+  return texts;
+}
+
 function normalizePromptPathCandidate(candidate: string) {
   const trimmed = candidate.trim().replace(/^`+|`+$/g, "");
   if (!trimmed) {
@@ -135,9 +160,95 @@ function readTargetFromPrompt(prompt: string) {
   return "repo/package.json";
 }
 
-function buildAssistantText(input: ResponsesInputItem[]) {
+function buildToolCallEventsWithArgs(name: string, args: Record<string, unknown>): StreamEvent[] {
+  const callId = `call_mock_${name}_1`;
+  const serialized = JSON.stringify(args);
+  return [
+    {
+      type: "response.output_item.added",
+      item: {
+        type: "function_call",
+        id: `fc_mock_${name}_1`,
+        call_id: callId,
+        name,
+        arguments: "",
+      },
+    },
+    { type: "response.function_call_arguments.delta", delta: serialized },
+    {
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        id: `fc_mock_${name}_1`,
+        call_id: callId,
+        name,
+        arguments: serialized,
+      },
+    },
+    {
+      type: "response.completed",
+      response: {
+        id: `resp_mock_${name}_1`,
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            id: `fc_mock_${name}_1`,
+            call_id: callId,
+            name,
+            arguments: serialized,
+          },
+        ],
+        usage: { input_tokens: 64, output_tokens: 16, total_tokens: 80 },
+      },
+    },
+  ];
+}
+
+function extractRememberedFact(userTexts: string[]) {
+  for (const text of userTexts) {
+    const qaCanaryMatch = /\bqa canary code is\s+([A-Za-z0-9-]+)/i.exec(text);
+    if (qaCanaryMatch?.[1]) {
+      return qaCanaryMatch[1];
+    }
+  }
+  for (const text of userTexts) {
+    const match = /remember(?: this fact for later)?:\s*([A-Za-z0-9-]+)/i.exec(text);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function buildAssistantText(input: ResponsesInputItem[], body: Record<string, unknown>) {
   const prompt = extractLastUserText(input);
   const toolOutput = extractToolOutput(input);
+  const userTexts = extractAllUserTexts(input);
+  const rememberedFact = extractRememberedFact(userTexts);
+  const model = typeof body.model === "string" ? body.model : "";
+
+  if (/what was the qa canary code/i.test(prompt) && rememberedFact) {
+    return `Protocol note: the QA canary code was ${rememberedFact}.`;
+  }
+  if (/remember this fact/i.test(prompt) && rememberedFact) {
+    return `Protocol note: acknowledged. I will remember ${rememberedFact}.`;
+  }
+  if (/switch(?:ing)? models?/i.test(prompt)) {
+    return `Protocol note: model switch acknowledged. Continuing on ${model || "the requested model"}.`;
+  }
+  if (toolOutput && /delegate|subagent/i.test(prompt)) {
+    return `Protocol note: delegated result acknowledged. The bounded subagent task returned and is folded back into the main thread.`;
+  }
+  if (toolOutput && /worked, failed, blocked|worked\/failed\/blocked|follow-up/i.test(prompt)) {
+    return `Worked:\n- Read seeded QA material.\n- Expanded the report structure.\nFailed:\n- None observed in mock mode.\nBlocked:\n- No live provider evidence in this lane.\nFollow-up:\n- Re-run with a real model for qualitative coverage.`;
+  }
+  if (toolOutput && /lobster invaders/i.test(prompt)) {
+    if (toolOutput.includes("QA mission") || toolOutput.includes("Testing")) {
+      return "";
+    }
+    return `Protocol note: Lobster Invaders built at lobster-invaders.html.`;
+  }
   if (toolOutput) {
     const snippet = toolOutput.replace(/\s+/g, " ").trim().slice(0, 220);
     return `Protocol note: I reviewed the requested material. Evidence snippet: ${snippet || "no content"}`;
@@ -150,48 +261,7 @@ function buildAssistantText(input: ResponsesInputItem[]) {
 
 function buildToolCallEvents(prompt: string): StreamEvent[] {
   const targetPath = readTargetFromPrompt(prompt);
-  const callId = "call_mock_read_1";
-  const args = JSON.stringify({ path: targetPath });
-  return [
-    {
-      type: "response.output_item.added",
-      item: {
-        type: "function_call",
-        id: "fc_mock_read_1",
-        call_id: callId,
-        name: "read",
-        arguments: "",
-      },
-    },
-    { type: "response.function_call_arguments.delta", delta: args },
-    {
-      type: "response.output_item.done",
-      item: {
-        type: "function_call",
-        id: "fc_mock_read_1",
-        call_id: callId,
-        name: "read",
-        arguments: args,
-      },
-    },
-    {
-      type: "response.completed",
-      response: {
-        id: "resp_mock_tool_1",
-        status: "completed",
-        output: [
-          {
-            type: "function_call",
-            id: "fc_mock_read_1",
-            call_id: callId,
-            name: "read",
-            arguments: args,
-          },
-        ],
-        usage: { input_tokens: 64, output_tokens: 16, total_tokens: 80 },
-      },
-    },
-  ];
+  return buildToolCallEventsWithArgs("read", { path: targetPath });
 }
 
 function buildAssistantEvents(text: string): StreamEvent[] {
@@ -229,18 +299,48 @@ function buildAssistantEvents(text: string): StreamEvent[] {
   ];
 }
 
-function buildResponsesPayload(input: ResponsesInputItem[]) {
+function buildResponsesPayload(body: Record<string, unknown>) {
+  const input = Array.isArray(body.input) ? (body.input as ResponsesInputItem[]) : [];
   const prompt = extractLastUserText(input);
   const toolOutput = extractToolOutput(input);
+  if (/lobster invaders/i.test(prompt)) {
+    if (!toolOutput) {
+      return buildToolCallEventsWithArgs("read", { path: "QA_KICKOFF_TASK.md" });
+    }
+    if (toolOutput.includes("QA mission") || toolOutput.includes("Testing")) {
+      return buildToolCallEventsWithArgs("write", {
+        path: "lobster-invaders.html",
+        content: `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Lobster Invaders</title></head>
+  <body><h1>Lobster Invaders</h1><p>Tiny playable stub.</p></body>
+</html>`,
+      });
+    }
+  }
+  if (/delegate|subagent/i.test(prompt) && !toolOutput) {
+    return buildToolCallEventsWithArgs("sessions_spawn", {
+      task: "Inspect the QA workspace and return one concise protocol note.",
+      label: "qa-sidecar",
+      thread: false,
+    });
+  }
+  if (
+    /(worked, failed, blocked|worked\/failed\/blocked|source and docs)/i.test(prompt) &&
+    !toolOutput
+  ) {
+    return buildToolCallEventsWithArgs("read", { path: "QA_SCENARIO_PLAN.md" });
+  }
   if (!toolOutput && /\b(read|inspect|repo|docs|scenario|kickoff)\b/i.test(prompt)) {
     return buildToolCallEvents(prompt);
   }
-  return buildAssistantEvents(buildAssistantText(input));
+  return buildAssistantEvents(buildAssistantText(input, body));
 }
 
 export async function startQaMockOpenAiServer(params?: { host?: string; port?: number }) {
   const host = params?.host ?? "127.0.0.1";
   let lastRequest: MockOpenAiRequestSnapshot | null = null;
+  const requests: MockOpenAiRequestSnapshot[] = [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
@@ -260,6 +360,10 @@ export async function startQaMockOpenAiServer(params?: { host?: string; port?: n
       writeJson(res, 200, lastRequest ?? { ok: false, error: "no request recorded" });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/debug/requests") {
+      writeJson(res, 200, requests);
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/v1/responses") {
       const raw = await readBody(req);
       const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
@@ -269,8 +373,13 @@ export async function startQaMockOpenAiServer(params?: { host?: string; port?: n
         body,
         prompt: extractLastUserText(input),
         toolOutput: extractToolOutput(input),
+        model: typeof body.model === "string" ? body.model : "",
       };
-      const events = buildResponsesPayload(input);
+      requests.push(lastRequest);
+      if (requests.length > 50) {
+        requests.splice(0, requests.length - 50);
+      }
+      const events = buildResponsesPayload(body);
       if (body.stream === false) {
         const completion = events.at(-1);
         if (!completion || completion.type !== "response.completed") {
