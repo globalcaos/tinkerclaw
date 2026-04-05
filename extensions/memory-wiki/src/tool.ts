@@ -1,7 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawConfig } from "../api.js";
 import { applyMemoryWikiMutation, normalizeMemoryWikiMutationInput } from "./apply.js";
-import type { ResolvedMemoryWikiConfig } from "./config.js";
+import {
+  WIKI_SEARCH_BACKENDS,
+  WIKI_SEARCH_CORPORA,
+  type ResolvedMemoryWikiConfig,
+} from "./config.js";
 import { lintMemoryWikiVault } from "./lint.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { syncMemoryWikiImportedSources } from "./source-sync.js";
@@ -9,10 +13,16 @@ import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
 
 const WikiStatusSchema = Type.Object({}, { additionalProperties: false });
 const WikiLintSchema = Type.Object({}, { additionalProperties: false });
+const WikiSearchBackendSchema = Type.Union(
+  WIKI_SEARCH_BACKENDS.map((value) => Type.Literal(value)),
+);
+const WikiSearchCorpusSchema = Type.Union(WIKI_SEARCH_CORPORA.map((value) => Type.Literal(value)));
 const WikiSearchSchema = Type.Object(
   {
     query: Type.String({ minLength: 1 }),
     maxResults: Type.Optional(Type.Number({ minimum: 1 })),
+    backend: Type.Optional(WikiSearchBackendSchema),
+    corpus: Type.Optional(WikiSearchCorpusSchema),
   },
   { additionalProperties: false },
 );
@@ -21,6 +31,8 @@ const WikiGetSchema = Type.Object(
     lookup: Type.String({ minLength: 1 }),
     fromLine: Type.Optional(Type.Number({ minimum: 1 })),
     lineCount: Type.Optional(Type.Number({ minimum: 1 })),
+    backend: Type.Optional(WikiSearchBackendSchema),
+    corpus: Type.Optional(WikiSearchCorpusSchema),
   },
   { additionalProperties: false },
 );
@@ -78,13 +90,20 @@ export function createWikiSearchTool(
       "Search wiki pages and, when shared search is enabled, the active memory corpus by title, path, id, or body text.",
     parameters: WikiSearchSchema,
     execute: async (_toolCallId, rawParams) => {
-      const params = rawParams as { query: string; maxResults?: number };
+      const params = rawParams as {
+        query: string;
+        maxResults?: number;
+        backend?: ResolvedMemoryWikiConfig["search"]["backend"];
+        corpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
+      };
       await syncImportedSourcesIfNeeded(config, appConfig);
       const results = await searchMemoryWiki({
         config,
         appConfig,
         query: params.query,
         maxResults: params.maxResults,
+        ...(params.backend ? { searchBackend: params.backend } : {}),
+        ...(params.corpus ? { searchCorpus: params.corpus } : {}),
       });
       const text =
         results.length === 0
@@ -182,7 +201,13 @@ export function createWikiGetTool(
       "Read a wiki page by id or relative path, or fall back to the active memory corpus when shared search is enabled.",
     parameters: WikiGetSchema,
     execute: async (_toolCallId, rawParams) => {
-      const params = rawParams as { lookup: string; fromLine?: number; lineCount?: number };
+      const params = rawParams as {
+        lookup: string;
+        fromLine?: number;
+        lineCount?: number;
+        backend?: ResolvedMemoryWikiConfig["search"]["backend"];
+        corpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
+      };
       await syncImportedSourcesIfNeeded(config, appConfig);
       const result = await getMemoryWikiPage({
         config,
@@ -190,6 +215,8 @@ export function createWikiGetTool(
         lookup: params.lookup,
         fromLine: params.fromLine,
         lineCount: params.lineCount,
+        ...(params.backend ? { searchBackend: params.backend } : {}),
+        ...(params.corpus ? { searchCorpus: params.corpus } : {}),
       });
       if (!result) {
         return {
