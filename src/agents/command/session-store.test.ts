@@ -20,7 +20,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("persists cli session bindings when the provider is configured as a CLI backend", async () => {
+  it("persists the runtime provider/model used by the completed run", async () => {
     const cfg = {
       agents: {
         defaults: {
@@ -47,9 +47,6 @@ describe("updateSessionStoreAfterAgentRun", () => {
           sessionId: "cli-session-123",
           provider: "codex-cli",
           model: "gpt-5.4",
-          cliSessionBinding: {
-            sessionId: "cli-session-123",
-          },
         },
       },
     };
@@ -65,15 +62,11 @@ describe("updateSessionStoreAfterAgentRun", () => {
       result,
     });
 
-    expect(sessionStore[sessionKey]?.cliSessionBindings?.["codex-cli"]).toEqual({
-      sessionId: "cli-session-123",
-    });
-    expect(sessionStore[sessionKey]?.cliSessionIds?.["codex-cli"]).toBe("cli-session-123");
+    expect(sessionStore[sessionKey]?.modelProvider).toBe("codex-cli");
+    expect(sessionStore[sessionKey]?.model).toBe("gpt-5.4");
 
     const persisted = loadSessionStore(storePath);
-    expect(persisted[sessionKey]?.cliSessionBindings?.["codex-cli"]).toEqual({
-      sessionId: "cli-session-123",
-    });
-    expect(persisted[sessionKey]?.cliSessionIds?.["codex-cli"]).toBe("cli-session-123");
+    expect(persisted[sessionKey]?.modelProvider).toBe("codex-cli");
+    expect(persisted[sessionKey]?.model).toBe("gpt-5.4");
   });
 });

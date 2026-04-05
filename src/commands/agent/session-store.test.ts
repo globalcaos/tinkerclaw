@@ -126,7 +126,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
     );
   });
 
-  it("stores and reloads CLI bindings for explicit session-id-only runs", async () => {
+  it("stores and reloads the runtime model for explicit session-id-only runs", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-session-store-"));
     const storePath = path.join(dir, "sessions.json");
     const cfg = {
@@ -165,10 +165,6 @@ describe("updateSessionStoreAfterAgentRun", () => {
             provider: "codex-cli",
             model: "gpt-5.4",
             sessionId: "codex-cli-session-1",
-            cliSessionBinding: {
-              sessionId: "codex-cli-session-1",
-              authEpoch: "auth-epoch-1",
-            },
           },
         },
       } as never,
@@ -180,15 +176,11 @@ describe("updateSessionStoreAfterAgentRun", () => {
     });
 
     expect(second.sessionKey).toBe(first.sessionKey);
-    expect(second.sessionEntry?.cliSessionBindings?.["codex-cli"]).toEqual({
-      sessionId: "codex-cli-session-1",
-      authEpoch: "auth-epoch-1",
-    });
+    expect(second.sessionEntry?.modelProvider).toBe("codex-cli");
+    expect(second.sessionEntry?.model).toBe("gpt-5.4");
 
     const persisted = loadSessionStore(storePath, { skipCache: true })[first.sessionKey!];
-    expect(persisted?.cliSessionBindings?.["codex-cli"]).toEqual({
-      sessionId: "codex-cli-session-1",
-      authEpoch: "auth-epoch-1",
-    });
+    expect(persisted?.modelProvider).toBe("codex-cli");
+    expect(persisted?.model).toBe("gpt-5.4");
   });
 });

@@ -31,14 +31,6 @@ vi.mock("../../agents/model-selection.js", () => ({
   isCliProvider: () => false,
 }));
 
-vi.mock("../../agents/cli-runner.js", () => ({
-  runCliAgent: vi.fn(),
-}));
-
-vi.mock("../../agents/cli-session.js", () => ({
-  getCliSessionId: vi.fn(),
-}));
-
 vi.mock("../../agents/bootstrap-budget.js", () => ({
   resolveBootstrapWarningSignaturesSeen: () => [],
 }));

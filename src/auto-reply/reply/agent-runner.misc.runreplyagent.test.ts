@@ -37,7 +37,6 @@ function createCliBackendTestConfig() {
 }
 
 const runEmbeddedPiAgentMock = vi.fn();
-const runCliAgentMock = vi.fn();
 const runWithModelFallbackMock = vi.fn();
 const runtimeErrorMock = vi.fn();
 const compactState = vi.hoisted(() => ({
@@ -83,16 +82,6 @@ vi.mock("../../agents/pi-embedded.js", async () => {
   };
 });
 
-vi.mock("../../agents/cli-runner.js", async () => {
-  const actual = await vi.importActual<typeof import("../../agents/cli-runner.js")>(
-    "../../agents/cli-runner.js",
-  );
-  return {
-    ...actual,
-    runCliAgent: (params: unknown) => runCliAgentMock(params),
-  };
-});
-
 vi.mock("../../runtime.js", async () => {
   const actual = await vi.importActual<typeof import("../../runtime.js")>("../../runtime.js");
   return {
@@ -134,7 +123,6 @@ type RunWithModelFallbackParams = {
 
 beforeEach(() => {
   runEmbeddedPiAgentMock.mockClear();
-  runCliAgentMock.mockClear();
   runWithModelFallbackMock.mockClear();
   runtimeErrorMock.mockClear();
   loadCronStoreMock.mockClear();
@@ -242,8 +230,8 @@ describe("runReplyAgent onAgentRunStart", () => {
     });
   });
 
-  it("emits start callback when cli runner starts", async () => {
-    runCliAgentMock.mockResolvedValueOnce({
+  it("emits start callback when the embedded runner starts", async () => {
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
       payloads: [{ text: "ok" }],
       meta: {
         agentMeta: {
@@ -1576,7 +1564,7 @@ describe("runReplyAgent cli routing", () => {
     });
   }
 
-  it("uses the CLI runner for codex-cli providers", async () => {
+  it("uses the embedded runner for codex-cli providers", async () => {
     const runId = "00000000-0000-0000-0000-000000000001";
     const randomSpy = vi.spyOn(crypto, "randomUUID").mockReturnValue(runId);
     const lifecyclePhases: string[] = [];
@@ -1592,7 +1580,7 @@ describe("runReplyAgent cli routing", () => {
         lifecyclePhases.push(phase);
       }
     });
-    runCliAgentMock.mockResolvedValueOnce({
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
       payloads: [{ text: "ok" }],
       meta: {
         agentMeta: {
@@ -1606,8 +1594,7 @@ describe("runReplyAgent cli routing", () => {
     unsubscribe();
     randomSpy.mockRestore();
 
-    expect(runCliAgentMock).toHaveBeenCalledTimes(1);
-    expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
+    expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(1);
     expect(lifecyclePhases).toEqual(["start", "end"]);
     expect(result).toMatchObject({ text: "ok" });
   });
