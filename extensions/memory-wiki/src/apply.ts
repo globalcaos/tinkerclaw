@@ -57,6 +57,53 @@ export type ApplyMemoryWikiMutationResult = {
   compile: CompileMemoryWikiResult;
 };
 
+export function normalizeMemoryWikiMutationInput(rawParams: unknown): ApplyMemoryWikiMutation {
+  const params = rawParams as {
+    op: ApplyMemoryWikiMutation["op"];
+    title?: string;
+    body?: string;
+    lookup?: string;
+    sourceIds?: string[];
+    contradictions?: string[];
+    questions?: string[];
+    confidence?: number | null;
+    status?: string;
+  };
+  if (params.op === "create_synthesis") {
+    if (!params.title?.trim()) {
+      throw new Error("wiki mutation requires title for create_synthesis.");
+    }
+    if (!params.body?.trim()) {
+      throw new Error("wiki mutation requires body for create_synthesis.");
+    }
+    if (!params.sourceIds || params.sourceIds.length === 0) {
+      throw new Error("wiki mutation requires at least one sourceId for create_synthesis.");
+    }
+    return {
+      op: "create_synthesis",
+      title: params.title,
+      body: params.body,
+      sourceIds: params.sourceIds,
+      ...(params.contradictions ? { contradictions: params.contradictions } : {}),
+      ...(params.questions ? { questions: params.questions } : {}),
+      ...(typeof params.confidence === "number" ? { confidence: params.confidence } : {}),
+      ...(params.status ? { status: params.status } : {}),
+    };
+  }
+  if (!params.lookup?.trim()) {
+    throw new Error("wiki mutation requires lookup for update_metadata.");
+  }
+  return {
+    op: "update_metadata",
+    lookup: params.lookup,
+    ...(params.sourceIds ? { sourceIds: params.sourceIds } : {}),
+    ...(params.contradictions ? { contradictions: params.contradictions } : {}),
+    ...(params.questions ? { questions: params.questions } : {}),
+    ...(params.confidence !== undefined ? { confidence: params.confidence } : {}),
+    ...(params.status ? { status: params.status } : {}),
+  };
+}
+
 function normalizeUniqueStrings(values: string[] | undefined): string[] | undefined {
   if (!values) {
     return undefined;

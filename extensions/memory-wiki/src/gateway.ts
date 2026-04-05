@@ -1,8 +1,15 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "../api.js";
+import { applyMemoryWikiMutation, normalizeMemoryWikiMutationInput } from "./apply.js";
 import { compileMemoryWikiVault } from "./compile.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { lintMemoryWikiVault } from "./lint.js";
-import { probeObsidianCli } from "./obsidian.js";
+import {
+  probeObsidianCli,
+  runObsidianCommand,
+  runObsidianDaily,
+  runObsidianOpen,
+  runObsidianSearch,
+} from "./obsidian.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { syncMemoryWikiImportedSources } from "./source-sync.js";
 import { buildMemoryWikiDoctorReport, resolveMemoryWikiStatus } from "./status.js";
@@ -141,6 +148,25 @@ export function registerMemoryWikiGatewayMethods(params: {
   );
 
   api.registerGatewayMethod(
+    "wiki.apply",
+    async ({ params: requestParams, respond }) => {
+      try {
+        await syncImportedSourcesIfNeeded(config, appConfig);
+        respond(
+          true,
+          await applyMemoryWikiMutation({
+            config,
+            mutation: normalizeMemoryWikiMutationInput(requestParams),
+          }),
+        );
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
     "wiki.get",
     async ({ params: requestParams, respond }) => {
       try {
@@ -174,5 +200,56 @@ export function registerMemoryWikiGatewayMethods(params: {
       }
     },
     { scope: READ_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.obsidian.search",
+    async ({ params: requestParams, respond }) => {
+      try {
+        const query = readStringParam(requestParams, "query", { required: true });
+        respond(true, await runObsidianSearch({ config, query }));
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: READ_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.obsidian.open",
+    async ({ params: requestParams, respond }) => {
+      try {
+        const vaultPath = readStringParam(requestParams, "path", { required: true });
+        respond(true, await runObsidianOpen({ config, vaultPath }));
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.obsidian.command",
+    async ({ params: requestParams, respond }) => {
+      try {
+        const id = readStringParam(requestParams, "id", { required: true });
+        respond(true, await runObsidianCommand({ config, id }));
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.obsidian.daily",
+    async ({ respond }) => {
+      try {
+        respond(true, await runObsidianDaily({ config }));
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
   );
 }
