@@ -27,10 +27,6 @@ vi.mock("../../agents/model-fallback.js", () => ({
     Array.isArray((err as { attempts?: unknown[] }).attempts),
 }));
 
-vi.mock("../../agents/model-selection.js", () => ({
-  isCliProvider: () => false,
-}));
-
 vi.mock("../../agents/bootstrap-budget.js", () => ({
   resolveBootstrapWarningSignaturesSeen: () => [],
 }));
