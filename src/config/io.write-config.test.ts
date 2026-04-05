@@ -37,7 +37,6 @@ describe("config io write", () => {
       origin: "bundled",
       channels: ["bluebubbles"],
       providers: [],
-      cliBackends: [],
       skills: [],
       hooks: [],
       rootDir: "/virtual/plugins/bluebubbles",
@@ -593,7 +592,19 @@ describe("config io write", () => {
       const snapshot = await io.readConfigFileSnapshot();
       expect(snapshot.valid).toBe(true);
 
-      const next = structuredClone(snapshot.config);
+      const next = structuredClone(snapshot.config) as {
+        agents?: {
+          defaults?: {
+            cliBackends?: Record<
+              string,
+              {
+                command?: string;
+                args?: string[];
+              }
+            >;
+          };
+        };
+      };
       const codexBackend = next.agents?.defaults?.cliBackends?.codex;
       const args = Array.isArray(codexBackend?.args) ? codexBackend?.args : [];
       next.agents = {
@@ -611,7 +622,7 @@ describe("config io write", () => {
         },
       };
 
-      await io.writeConfigFile(next);
+      await io.writeConfigFile(next as OpenClawConfig);
 
       const persisted = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
         agents: {
