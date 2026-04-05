@@ -9,6 +9,7 @@ import {
   buildMemoryPromptSection,
   getMemoryRuntime,
   registerMemoryFlushPlanResolver,
+  registerMemoryPromptSupplement,
   registerMemoryPromptSection,
   registerMemoryRuntime,
   resolveMemoryFlushPlan,
@@ -156,6 +157,7 @@ describe("clearPluginLoaderCache", () => {
       create: async () => ({ provider: null }),
     });
     registerMemoryPromptSection(() => ["stale memory section"]);
+    registerMemoryPromptSupplement("memory-wiki", () => ["stale wiki supplement"]);
     registerMemoryFlushPlanResolver(() => ({
       softThresholdTokens: 1,
       forceFlushTranscriptBytes: 2,
@@ -174,6 +176,7 @@ describe("clearPluginLoaderCache", () => {
     });
     expect(buildMemoryPromptSection({ availableTools: new Set() })).toEqual([
       "stale memory section",
+      "stale wiki supplement",
     ]);
     expect(resolveMemoryFlushPlan({})?.relativePath).toBe("memory/stale.md");
     expect(getMemoryRuntime()).toBeDefined();

@@ -7,6 +7,11 @@ export type MemoryPromptSectionBuilder = (params: {
   citationsMode?: MemoryCitationsMode;
 }) => string[];
 
+export type MemoryPromptSupplementRegistration = {
+  pluginId: string;
+  builder: MemoryPromptSectionBuilder;
+};
+
 export type MemoryFlushPlan = {
   softThresholdTokens: number;
   forceFlushTranscriptBytes: number;
@@ -54,25 +59,48 @@ export type MemoryPluginRuntime = {
 
 type MemoryPluginState = {
   promptBuilder?: MemoryPromptSectionBuilder;
+  promptSupplements: MemoryPromptSupplementRegistration[];
   flushPlanResolver?: MemoryFlushPlanResolver;
   runtime?: MemoryPluginRuntime;
 };
 
-const memoryPluginState: MemoryPluginState = {};
+const memoryPluginState: MemoryPluginState = {
+  promptSupplements: [],
+};
 
 export function registerMemoryPromptSection(builder: MemoryPromptSectionBuilder): void {
   memoryPluginState.promptBuilder = builder;
+}
+
+export function registerMemoryPromptSupplement(
+  pluginId: string,
+  builder: MemoryPromptSectionBuilder,
+): void {
+  const next = memoryPluginState.promptSupplements.filter(
+    (registration) => registration.pluginId !== pluginId,
+  );
+  next.push({ pluginId, builder });
+  memoryPluginState.promptSupplements = next;
 }
 
 export function buildMemoryPromptSection(params: {
   availableTools: Set<string>;
   citationsMode?: MemoryCitationsMode;
 }): string[] {
-  return memoryPluginState.promptBuilder?.(params) ?? [];
+  const primary = memoryPluginState.promptBuilder?.(params) ?? [];
+  const supplements = memoryPluginState.promptSupplements
+    // Keep supplement order stable even if plugin registration order changes.
+    .toSorted((left, right) => left.pluginId.localeCompare(right.pluginId))
+    .flatMap((registration) => registration.builder(params));
+  return [...primary, ...supplements];
 }
 
 export function getMemoryPromptSectionBuilder(): MemoryPromptSectionBuilder | undefined {
   return memoryPluginState.promptBuilder;
+}
+
+export function listMemoryPromptSupplements(): MemoryPromptSupplementRegistration[] {
+  return [...memoryPluginState.promptSupplements];
 }
 
 export function registerMemoryFlushPlanResolver(resolver: MemoryFlushPlanResolver): void {
@@ -104,12 +132,14 @@ export function hasMemoryRuntime(): boolean {
 
 export function restoreMemoryPluginState(state: MemoryPluginState): void {
   memoryPluginState.promptBuilder = state.promptBuilder;
+  memoryPluginState.promptSupplements = [...state.promptSupplements];
   memoryPluginState.flushPlanResolver = state.flushPlanResolver;
   memoryPluginState.runtime = state.runtime;
 }
 
 export function clearMemoryPluginState(): void {
   memoryPluginState.promptBuilder = undefined;
+  memoryPluginState.promptSupplements = [];
   memoryPluginState.flushPlanResolver = undefined;
   memoryPluginState.runtime = undefined;
 }
