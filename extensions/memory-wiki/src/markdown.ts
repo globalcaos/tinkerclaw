@@ -19,6 +19,9 @@ export type WikiPageSummary = {
   pageType?: string;
   sourceIds: string[];
   linkTargets: string[];
+  contradictions: string[];
+  questions: string[];
+  confidence?: number;
 };
 
 const FRONTMATTER_PATTERN = /^---\n([\s\S]*?)\n---\n?/;
@@ -63,6 +66,16 @@ export function extractTitleFromMarkdown(body: string): string | undefined {
 }
 
 export function normalizeSourceIds(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+function normalizeStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
   }
@@ -153,5 +166,12 @@ export function toWikiPageSummary(params: {
         : undefined,
     sourceIds: normalizeSourceIds(parsed.frontmatter.sourceIds),
     linkTargets: extractWikiLinks(params.raw),
+    contradictions: normalizeStringList(parsed.frontmatter.contradictions),
+    questions: normalizeStringList(parsed.frontmatter.questions),
+    confidence:
+      typeof parsed.frontmatter.confidence === "number" &&
+      Number.isFinite(parsed.frontmatter.confidence)
+        ? parsed.frontmatter.confidence
+        : undefined,
   };
 }

@@ -1,7 +1,12 @@
 import { definePluginEntry } from "./api.js";
 import { registerWikiCli } from "./src/cli.js";
 import { memoryWikiConfigSchema, resolveMemoryWikiConfig } from "./src/config.js";
-import { createWikiGetTool, createWikiSearchTool, createWikiStatusTool } from "./src/tool.js";
+import {
+  createWikiGetTool,
+  createWikiLintTool,
+  createWikiSearchTool,
+  createWikiStatusTool,
+} from "./src/tool.js";
 
 export default definePluginEntry({
   id: "memory-wiki",
@@ -12,6 +17,7 @@ export default definePluginEntry({
     const config = resolveMemoryWikiConfig(api.pluginConfig);
 
     api.registerTool(createWikiStatusTool(config, api.config), { name: "wiki_status" });
+    api.registerTool(createWikiLintTool(config, api.config), { name: "wiki_lint" });
     api.registerTool(createWikiSearchTool(config, api.config), { name: "wiki_search" });
     api.registerTool(createWikiGetTool(config, api.config), { name: "wiki_get" });
     api.registerCli(

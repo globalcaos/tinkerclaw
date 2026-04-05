@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 describe("lintMemoryWikiVault", () => {
-  it("detects duplicate ids and missing sourceIds", async () => {
+  it("detects duplicate ids, provenance gaps, contradictions, and open questions", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-lint-"));
     tempDirs.push(rootDir);
     const config = resolveMemoryWikiConfig(
@@ -28,6 +28,9 @@ describe("lintMemoryWikiVault", () => {
         pageType: "entity",
         id: "entity.alpha",
         title: "Alpha",
+        contradictions: ["Conflicts with source.beta"],
+        questions: ["Is Alpha still active?"],
+        confidence: 0.2,
       },
       body: "# Alpha\n\n[[missing-page]]\n",
     });
@@ -40,6 +43,13 @@ describe("lintMemoryWikiVault", () => {
     expect(result.issues.map((issue) => issue.code)).toContain("duplicate-id");
     expect(result.issues.map((issue) => issue.code)).toContain("missing-source-ids");
     expect(result.issues.map((issue) => issue.code)).toContain("broken-wikilink");
+    expect(result.issues.map((issue) => issue.code)).toContain("contradiction-present");
+    expect(result.issues.map((issue) => issue.code)).toContain("open-question");
+    expect(result.issues.map((issue) => issue.code)).toContain("low-confidence");
+    expect(result.issuesByCategory.contradictions).toHaveLength(2);
+    expect(result.issuesByCategory["open-questions"]).toHaveLength(2);
     await expect(fs.readFile(result.reportPath, "utf8")).resolves.toContain("### Errors");
+    await expect(fs.readFile(result.reportPath, "utf8")).resolves.toContain("### Contradictions");
+    await expect(fs.readFile(result.reportPath, "utf8")).resolves.toContain("### Open Questions");
   });
 });

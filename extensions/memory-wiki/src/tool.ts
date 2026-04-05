@@ -1,11 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawConfig } from "../api.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
+import { lintMemoryWikiVault } from "./lint.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { syncMemoryWikiImportedSources } from "./source-sync.js";
 import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
 
 const WikiStatusSchema = Type.Object({}, { additionalProperties: false });
+const WikiLintSchema = Type.Object({}, { additionalProperties: false });
 const WikiSearchSchema = Type.Object(
   {
     query: Type.String({ minLength: 1 }),
@@ -79,6 +81,42 @@ export function createWikiSearchTool(
       return {
         content: [{ type: "text", text }],
         details: { results },
+      };
+    },
+  };
+}
+
+export function createWikiLintTool(
+  config: ResolvedMemoryWikiConfig,
+  appConfig?: OpenClawConfig,
+): AnyAgentTool {
+  return {
+    name: "wiki_lint",
+    label: "Wiki Lint",
+    description:
+      "Lint the wiki vault and surface structural issues, provenance gaps, contradictions, and open questions.",
+    parameters: WikiLintSchema,
+    execute: async () => {
+      await syncImportedSourcesIfNeeded(config, appConfig);
+      const result = await lintMemoryWikiVault(config);
+      const contradictions = result.issuesByCategory.contradictions.length;
+      const openQuestions = result.issuesByCategory["open-questions"].length;
+      const provenance = result.issuesByCategory.provenance.length;
+      const errors = result.issues.filter((issue) => issue.severity === "error").length;
+      const warnings = result.issues.filter((issue) => issue.severity === "warning").length;
+      const summary =
+        result.issueCount === 0
+          ? "No wiki lint issues."
+          : [
+              `Issues: ${result.issueCount} total (${errors} errors, ${warnings} warnings)`,
+              `Contradictions: ${contradictions}`,
+              `Open questions: ${openQuestions}`,
+              `Provenance gaps: ${provenance}`,
+              `Report: ${result.reportPath}`,
+            ].join("\n");
+      return {
+        content: [{ type: "text", text: summary }],
+        details: result,
       };
     },
   };
