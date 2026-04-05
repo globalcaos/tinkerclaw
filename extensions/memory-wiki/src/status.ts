@@ -2,6 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
+import { inferWikiPageKind, type WikiPageKind } from "./markdown.js";
 
 export type MemoryWikiStatusWarning = {
   code:
@@ -30,6 +31,7 @@ export type MemoryWikiStatus = {
     allowPrivateMemoryCoreAccess: boolean;
     pathCount: number;
   };
+  pageCounts: Record<WikiPageKind, number>;
   warnings: MemoryWikiStatusWarning[];
 };
 
@@ -78,6 +80,32 @@ async function resolveCommandOnPath(command: string): Promise<string | null> {
   }
 
   return null;
+}
+
+async function collectPageCounts(vaultPath: string): Promise<Record<WikiPageKind, number>> {
+  const counts: Record<WikiPageKind, number> = {
+    entity: 0,
+    concept: 0,
+    source: 0,
+    synthesis: 0,
+    report: 0,
+  };
+  const dirs = ["entities", "concepts", "sources", "syntheses", "reports"] as const;
+  for (const dir of dirs) {
+    const entries = await fs
+      .readdir(path.join(vaultPath, dir), { withFileTypes: true })
+      .catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "index.md") {
+        continue;
+      }
+      const kind = inferWikiPageKind(path.join(dir, entry.name));
+      if (kind) {
+        counts[kind] += 1;
+      }
+    }
+  }
+  return counts;
 }
 
 function buildWarnings(params: {
@@ -147,6 +175,15 @@ export async function resolveMemoryWikiStatus(
   const resolveCommand = deps?.resolveCommand ?? resolveCommandOnPath;
   const vaultExists = await exists(config.vault.path);
   const obsidianCommand = await resolveCommand("obsidian");
+  const pageCounts = vaultExists
+    ? await collectPageCounts(config.vault.path)
+    : {
+        entity: 0,
+        concept: 0,
+        source: 0,
+        synthesis: 0,
+        report: 0,
+      };
 
   return {
     vaultMode: config.vaultMode,
@@ -164,6 +201,7 @@ export async function resolveMemoryWikiStatus(
       allowPrivateMemoryCoreAccess: config.unsafeLocal.allowPrivateMemoryCoreAccess,
       pathCount: config.unsafeLocal.paths.length,
     },
+    pageCounts,
     warnings: buildWarnings({ config, vaultExists, obsidianCommand }),
   };
 }
@@ -176,6 +214,7 @@ export function renderMemoryWikiStatus(status: MemoryWikiStatus): string {
     `Obsidian CLI: ${status.obsidianCli.available ? "available" : "missing"}${status.obsidianCli.requested ? " (requested)" : ""}`,
     `Bridge: ${status.bridge.enabled ? "enabled" : "disabled"}`,
     `Unsafe local: ${status.unsafeLocal.allowPrivateMemoryCoreAccess ? `enabled (${status.unsafeLocal.pathCount} paths)` : "disabled"}`,
+    `Pages: ${status.pageCounts.source} sources, ${status.pageCounts.entity} entities, ${status.pageCounts.concept} concepts, ${status.pageCounts.synthesis} syntheses, ${status.pageCounts.report} reports`,
   ];
 
   if (status.warnings.length > 0) {

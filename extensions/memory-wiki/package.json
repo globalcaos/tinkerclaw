@@ -4,6 +4,9 @@
   "private": true,
   "description": "OpenClaw persistent wiki plugin",
   "type": "module",
+  "dependencies": {
+    "yaml": "^2.8.3"
+  },
   "devDependencies": {
     "openclaw": "workspace:*"
   },
