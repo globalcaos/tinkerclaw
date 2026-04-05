@@ -67,4 +67,105 @@ describe("compileMemoryWikiVault", () => {
       "[[sources/alpha|Alpha]]",
     );
   });
+
+  it("writes related blocks from source ids and shared sources", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-compile-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+
+    await fs.writeFile(
+      path.join(rootDir, "sources", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "source", id: "source.alpha", title: "Alpha" },
+        body: "# Alpha\n",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(rootDir, "entities", "beta.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.beta",
+          title: "Beta",
+          sourceIds: ["source.alpha"],
+        },
+        body: "# Beta\n",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(rootDir, "concepts", "gamma.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "concept",
+          id: "concept.gamma",
+          title: "Gamma",
+          sourceIds: ["source.alpha"],
+        },
+        body: "# Gamma\n",
+      }),
+      "utf8",
+    );
+
+    await compileMemoryWikiVault(config);
+
+    await expect(fs.readFile(path.join(rootDir, "entities", "beta.md"), "utf8")).resolves.toContain(
+      "## Related",
+    );
+    await expect(fs.readFile(path.join(rootDir, "entities", "beta.md"), "utf8")).resolves.toContain(
+      "[Alpha](sources/alpha.md)",
+    );
+    await expect(fs.readFile(path.join(rootDir, "entities", "beta.md"), "utf8")).resolves.toContain(
+      "[Gamma](concepts/gamma.md)",
+    );
+    await expect(fs.readFile(path.join(rootDir, "sources", "alpha.md"), "utf8")).resolves.toContain(
+      "[Beta](entities/beta.md)",
+    );
+    await expect(fs.readFile(path.join(rootDir, "sources", "alpha.md"), "utf8")).resolves.toContain(
+      "[Gamma](concepts/gamma.md)",
+    );
+  });
+
+  it("ignores generated related links when computing backlinks on repeated compile", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-compile-"));
+    tempDirs.push(rootDir);
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+    await initializeMemoryWikiVault(config);
+
+    await fs.writeFile(
+      path.join(rootDir, "entities", "beta.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "entity", id: "entity.beta", title: "Beta" },
+        body: "# Beta\n",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(rootDir, "concepts", "gamma.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "concept", id: "concept.gamma", title: "Gamma" },
+        body: "# Gamma\n\nSee [Beta](entities/beta.md).\n",
+      }),
+      "utf8",
+    );
+
+    await compileMemoryWikiVault(config);
+    const second = await compileMemoryWikiVault(config);
+
+    expect(second.updatedFiles).toEqual([]);
+    await expect(fs.readFile(path.join(rootDir, "entities", "beta.md"), "utf8")).resolves.toContain(
+      "[Gamma](concepts/gamma.md)",
+    );
+    await expect(
+      fs.readFile(path.join(rootDir, "concepts", "gamma.md"), "utf8"),
+    ).resolves.not.toContain("### Referenced By");
+  });
 });

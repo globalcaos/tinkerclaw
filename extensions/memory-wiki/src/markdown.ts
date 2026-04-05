@@ -2,6 +2,8 @@ import path from "node:path";
 import YAML from "yaml";
 
 export const WIKI_PAGE_KINDS = ["entity", "concept", "source", "synthesis", "report"] as const;
+export const WIKI_RELATED_START_MARKER = "<!-- openclaw:wiki:related:start -->";
+export const WIKI_RELATED_END_MARKER = "<!-- openclaw:wiki:related:end -->";
 
 export type WikiPageKind = (typeof WIKI_PAGE_KINDS)[number];
 
@@ -38,6 +40,11 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
 const FRONTMATTER_PATTERN = /^---\n([\s\S]*?)\n---\n?/;
 const OBSIDIAN_LINK_PATTERN = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+const MARKDOWN_LINK_PATTERN = /\[[^\]]+\]\(([^)]+)\)/g;
+const RELATED_BLOCK_PATTERN = new RegExp(
+  `${WIKI_RELATED_START_MARKER}[\\s\\S]*?${WIKI_RELATED_END_MARKER}`,
+  "g",
+);
 
 export function slugifyWikiSegment(raw: string): string {
   const slug = raw
@@ -98,9 +105,20 @@ function normalizeStringList(value: unknown): string[] {
 }
 
 export function extractWikiLinks(markdown: string): string[] {
+  const searchable = markdown.replace(RELATED_BLOCK_PATTERN, "");
   const links: string[] = [];
-  for (const match of markdown.matchAll(OBSIDIAN_LINK_PATTERN)) {
+  for (const match of searchable.matchAll(OBSIDIAN_LINK_PATTERN)) {
     const target = match[1]?.trim();
+    if (target) {
+      links.push(target);
+    }
+  }
+  for (const match of searchable.matchAll(MARKDOWN_LINK_PATTERN)) {
+    const rawTarget = match[1]?.trim();
+    if (!rawTarget || rawTarget.startsWith("#") || /^[a-z]+:/i.test(rawTarget)) {
+      continue;
+    }
+    const target = rawTarget.split("#")[0]?.split("?")[0]?.replace(/\\/g, "/").trim();
     if (target) {
       links.push(target);
     }
