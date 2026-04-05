@@ -62,4 +62,38 @@ describe("qa-bus state", () => {
     });
     expect("id" in waited && waited.id).toBe(thread.id);
   });
+
+  it("replays fresh events after a reset rewinds the cursor", () => {
+    const state = createQaBusState();
+
+    state.addInboundMessage({
+      conversation: { id: "alice", kind: "direct" },
+      senderId: "alice",
+      text: "before reset",
+    });
+    const beforeReset = state.poll({
+      accountId: "default",
+      cursor: 0,
+    });
+    expect(beforeReset.events).toHaveLength(1);
+
+    state.reset();
+    state.addInboundMessage({
+      conversation: { id: "alice", kind: "direct" },
+      senderId: "alice",
+      text: "after reset",
+    });
+
+    const afterReset = state.poll({
+      accountId: "default",
+      cursor: beforeReset.cursor,
+    });
+    expect(afterReset.events).toHaveLength(1);
+    expect(afterReset.events[0]?.kind).toBe("inbound-message");
+    expect(
+      afterReset.events[0] &&
+        "message" in afterReset.events[0] &&
+        afterReset.events[0].message.text,
+    ).toBe("after reset");
+  });
 });
