@@ -1,5 +1,5 @@
 import "./styles.css";
-import { createQaLabApp } from "./app";
+import { createQaLabApp } from "./app.js";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 
