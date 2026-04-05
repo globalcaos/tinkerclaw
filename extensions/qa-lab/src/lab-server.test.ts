@@ -192,4 +192,34 @@ describe("qa-lab server", () => {
     expect(html).not.toContain("QA Lab UI not built");
     expect(html).toContain("<title>");
   });
+
+  it("can disable the embedded echo gateway for real-suite runs", async () => {
+    const lab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+      embeddedGateway: "disabled",
+    });
+    cleanups.push(async () => {
+      await lab.stop();
+    });
+
+    await fetch(`${lab.baseUrl}/api/inbound/message`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        conversation: { id: "bob", kind: "direct" },
+        senderId: "bob",
+        senderName: "Bob",
+        text: "hello from suite",
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const snapshot = (await (await fetch(`${lab.baseUrl}/api/state`)).json()) as {
+      messages: Array<{ direction: string }>;
+    };
+    expect(snapshot.messages.filter((message) => message.direction === "outbound")).toHaveLength(0);
+  });
 });
