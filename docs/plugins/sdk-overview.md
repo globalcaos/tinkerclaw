@@ -253,11 +253,13 @@ explicitly promotes one as public.
     | `plugin-sdk/memory-core-host-multimodal` | Memory host multimodal helpers |
     | `plugin-sdk/memory-core-host-query` | Memory host query helpers |
     | `plugin-sdk/memory-core-host-secret` | Memory host secret helpers |
+    | `plugin-sdk/memory-core-host-events` | Memory host event journal helpers |
     | `plugin-sdk/memory-core-host-status` | Memory host status helpers |
     | `plugin-sdk/memory-core-host-runtime-cli` | Memory host CLI runtime helpers |
     | `plugin-sdk/memory-core-host-runtime-core` | Memory host core runtime helpers |
     | `plugin-sdk/memory-core-host-runtime-files` | Memory host file/runtime helpers |
     | `plugin-sdk/memory-host-core` | Vendor-neutral alias for memory host core runtime helpers |
+    | `plugin-sdk/memory-host-events` | Vendor-neutral alias for memory host event journal helpers |
     | `plugin-sdk/memory-host-files` | Vendor-neutral alias for memory host file/runtime helpers |
     | `plugin-sdk/memory-host-markdown` | Shared managed-markdown helpers for memory-adjacent plugins |
     | `plugin-sdk/memory-host-status` | Vendor-neutral alias for memory host status helpers |

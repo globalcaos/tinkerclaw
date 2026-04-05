@@ -679,6 +679,10 @@
       "types": "./dist/plugin-sdk/memory-core-host-secret.d.ts",
       "default": "./dist/plugin-sdk/memory-core-host-secret.js"
     },
+    "./plugin-sdk/memory-core-host-events": {
+      "types": "./dist/plugin-sdk/memory-core-host-events.d.ts",
+      "default": "./dist/plugin-sdk/memory-core-host-events.js"
+    },
     "./plugin-sdk/memory-core-host-status": {
       "types": "./dist/plugin-sdk/memory-core-host-status.d.ts",
       "default": "./dist/plugin-sdk/memory-core-host-status.js"
@@ -698,6 +702,10 @@
     "./plugin-sdk/memory-host-core": {
       "types": "./dist/plugin-sdk/memory-host-core.d.ts",
       "default": "./dist/plugin-sdk/memory-host-core.js"
+    },
+    "./plugin-sdk/memory-host-events": {
+      "types": "./dist/plugin-sdk/memory-host-events.d.ts",
+      "default": "./dist/plugin-sdk/memory-host-events.js"
     },
     "./plugin-sdk/memory-host-files": {
       "types": "./dist/plugin-sdk/memory-host-files.d.ts",

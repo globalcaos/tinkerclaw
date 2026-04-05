@@ -5,6 +5,7 @@ import {
   type MemoryDreamingPhaseName,
   type MemoryDreamingStorageConfig,
 } from "openclaw/plugin-sdk/memory-core-host-status";
+import { appendMemoryHostEvent } from "openclaw/plugin-sdk/memory-host-events";
 import {
   replaceManagedMarkdownBlock,
   withTrailingNewline,
@@ -104,6 +105,16 @@ export async function writeDailyDreamingPhaseBlock(params: {
     await fs.writeFile(reportPath, report, "utf-8");
   }
 
+  await appendMemoryHostEvent(params.workspaceDir, {
+    type: "memory.dream.completed",
+    timestamp: new Date(nowMs).toISOString(),
+    phase: params.phase,
+    ...(inlinePath ? { inlinePath } : {}),
+    ...(reportPath ? { reportPath } : {}),
+    lineCount: params.bodyLines.length,
+    storageMode: params.storage.mode,
+  });
+
   return {
     ...(inlinePath ? { inlinePath } : {}),
     ...(reportPath ? { reportPath } : {}),
@@ -125,5 +136,13 @@ export async function writeDeepDreamingReport(params: {
   await fs.mkdir(path.dirname(reportPath), { recursive: true });
   const body = params.bodyLines.length > 0 ? params.bodyLines.join("\n") : "- No durable changes.";
   await fs.writeFile(reportPath, `# Deep Sleep\n\n${body}\n`, "utf-8");
+  await appendMemoryHostEvent(params.workspaceDir, {
+    type: "memory.dream.completed",
+    timestamp: new Date(nowMs).toISOString(),
+    phase: "deep",
+    reportPath,
+    lineCount: params.bodyLines.length,
+    storageMode: params.storage.mode,
+  });
   return reportPath;
 }
