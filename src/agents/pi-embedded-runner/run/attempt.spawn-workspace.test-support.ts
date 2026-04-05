@@ -34,6 +34,8 @@ type SessionManagerMocks = {
   resetLeaf: UnknownMock;
   buildSessionContext: Mock<() => { messages: AgentMessage[] }>;
   appendCustomEntry: UnknownMock;
+  flushPendingToolResults: UnknownMock;
+  clearPendingToolResults: UnknownMock;
 };
 type AttemptSpawnWorkspaceHoisted = {
   spawnSubagentDirectMock: UnknownMock;
@@ -97,6 +99,8 @@ const hoisted = vi.hoisted((): AttemptSpawnWorkspaceHoisted => {
     resetLeaf: vi.fn(),
     buildSessionContext: vi.fn<() => { messages: AgentMessage[] }>(() => ({ messages: [] })),
     appendCustomEntry: vi.fn(),
+    flushPendingToolResults: vi.fn(),
+    clearPendingToolResults: vi.fn(),
   };
   return {
     spawnSubagentDirectMock,
@@ -543,9 +547,20 @@ let runEmbeddedAttemptPromise:
 const ATTEMPT_SPAWN_WORKSPACE_TEST_SPECIFIER = "./attempt.ts?spawn-workspace-test";
 
 async function loadRunEmbeddedAttempt() {
+<<<<<<< HEAD
   runEmbeddedAttemptPromise ??= (
     import(ATTEMPT_SPAWN_WORKSPACE_TEST_SPECIFIER) as Promise<typeof import("./attempt.js")>
   ).then((mod) => mod.runEmbeddedAttempt);
+||||||| parent of 1ec7503535 (fix: resolve repo check drift)
+  runEmbeddedAttemptPromise ??= import("./attempt.ts?spawn-workspace-test").then(
+    (mod) => mod.runEmbeddedAttempt,
+  );
+=======
+  const attemptModulePath = "./attempt.ts?spawn-workspace-test";
+  runEmbeddedAttemptPromise ??= import(attemptModulePath).then(
+    (mod) => (mod as typeof import("./attempt.js")).runEmbeddedAttempt,
+  );
+>>>>>>> 1ec7503535 (fix: resolve repo check drift)
   return await runEmbeddedAttemptPromise;
 }
 

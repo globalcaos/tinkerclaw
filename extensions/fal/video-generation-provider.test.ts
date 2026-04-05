@@ -9,7 +9,6 @@ import {
 function createMockRequestConfig() {
   return {} as ReturnType<typeof providerHttp.resolveProviderHttpRequestConfig>["requestConfig"];
 }
-
 describe("fal video generation provider", () => {
   const fetchGuardMock = vi.fn();
 
