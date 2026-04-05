@@ -1,6 +1,5 @@
 import type { Command } from "commander";
 import type { OpenClawConfig } from "../api.js";
-import { syncMemoryWikiBridgeSources } from "./bridge.js";
 import { compileMemoryWikiVault } from "./compile.js";
 import type { MemoryWikiPluginConfig, ResolvedMemoryWikiConfig } from "./config.js";
 import { resolveMemoryWikiConfig } from "./config.js";
@@ -14,6 +13,7 @@ import {
   runObsidianSearch,
 } from "./obsidian.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
+import { syncMemoryWikiImportedSources } from "./source-sync.js";
 import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
@@ -50,6 +50,10 @@ type WikiGetCommandOptions = {
 };
 
 type WikiBridgeImportCommandOptions = {
+  json?: boolean;
+};
+
+type WikiUnsafeLocalImportCommandOptions = {
   json?: boolean;
 };
 
@@ -92,7 +96,7 @@ export async function runWikiStatus(params: {
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
-  await syncMemoryWikiBridgeSources({ config: params.config, appConfig: params.appConfig });
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const status = await resolveMemoryWikiStatus(params.config);
   writeOutput(
     params.json ? JSON.stringify(status, null, 2) : renderMemoryWikiStatus(status),
@@ -120,7 +124,7 @@ export async function runWikiCompile(params: {
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
-  await syncMemoryWikiBridgeSources({ config: params.config, appConfig: params.appConfig });
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const result = await compileMemoryWikiVault(params.config);
   const summary = params.json
     ? JSON.stringify(result, null, 2)
@@ -135,7 +139,7 @@ export async function runWikiLint(params: {
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
-  await syncMemoryWikiBridgeSources({ config: params.config, appConfig: params.appConfig });
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const result = await lintMemoryWikiVault(params.config);
   const summary = params.json
     ? JSON.stringify(result, null, 2)
@@ -171,7 +175,7 @@ export async function runWikiSearch(params: {
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
-  await syncMemoryWikiBridgeSources({ config: params.config, appConfig: params.appConfig });
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const results = await searchMemoryWiki({
     config: params.config,
     query: params.query,
@@ -200,7 +204,7 @@ export async function runWikiGet(params: {
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
-  await syncMemoryWikiBridgeSources({ config: params.config, appConfig: params.appConfig });
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const result = await getMemoryWikiPage({
     config: params.config,
     lookup: params.lookup,
@@ -220,13 +224,30 @@ export async function runWikiBridgeImport(params: {
   json?: boolean;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
-  const result = await syncMemoryWikiBridgeSources({
+  const result = await syncMemoryWikiImportedSources({
     config: params.config,
     appConfig: params.appConfig,
   });
   const summary = params.json
     ? JSON.stringify(result, null, 2)
     : `Bridge import synced ${result.artifactCount} artifacts across ${result.workspaces} workspaces (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged).`;
+  writeOutput(summary, params.stdout);
+  return result;
+}
+
+export async function runWikiUnsafeLocalImport(params: {
+  config: ResolvedMemoryWikiConfig;
+  appConfig?: OpenClawConfig;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  const result = await syncMemoryWikiImportedSources({
+    config: params.config,
+    appConfig: params.appConfig,
+  });
+  const summary = params.json
+    ? JSON.stringify(result, null, 2)
+    : `Unsafe-local import synced ${result.artifactCount} artifacts (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged).`;
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -394,6 +415,17 @@ export function registerWikiCli(
     .option("--json", "Print JSON")
     .action(async (opts: WikiBridgeImportCommandOptions) => {
       await runWikiBridgeImport({ config, appConfig, json: opts.json });
+    });
+
+  const unsafeLocal = wiki
+    .command("unsafe-local")
+    .description("Import explicitly configured private local paths into wiki source pages");
+  unsafeLocal
+    .command("import")
+    .description("Sync unsafe-local configured paths into wiki source pages")
+    .option("--json", "Print JSON")
+    .action(async (opts: WikiUnsafeLocalImportCommandOptions) => {
+      await runWikiUnsafeLocalImport({ config, appConfig, json: opts.json });
     });
 
   const obsidian = wiki.command("obsidian").description("Run official Obsidian CLI helpers");

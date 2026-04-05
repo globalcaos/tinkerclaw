@@ -1,8 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawConfig } from "../api.js";
-import { syncMemoryWikiBridgeSources } from "./bridge.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
+import { syncMemoryWikiImportedSources } from "./source-sync.js";
 import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
 
 const WikiStatusSchema = Type.Object({}, { additionalProperties: false });
@@ -22,8 +22,11 @@ const WikiGetSchema = Type.Object(
   { additionalProperties: false },
 );
 
-async function syncBridgeIfNeeded(config: ResolvedMemoryWikiConfig, appConfig?: OpenClawConfig) {
-  await syncMemoryWikiBridgeSources({ config, appConfig });
+async function syncImportedSourcesIfNeeded(
+  config: ResolvedMemoryWikiConfig,
+  appConfig?: OpenClawConfig,
+) {
+  await syncMemoryWikiImportedSources({ config, appConfig });
 }
 
 export function createWikiStatusTool(
@@ -37,7 +40,7 @@ export function createWikiStatusTool(
       "Inspect the current memory wiki vault mode, health, and Obsidian CLI availability.",
     parameters: WikiStatusSchema,
     execute: async () => {
-      await syncBridgeIfNeeded(config, appConfig);
+      await syncImportedSourcesIfNeeded(config, appConfig);
       const status = await resolveMemoryWikiStatus(config);
       return {
         content: [{ type: "text", text: renderMemoryWikiStatus(status) }],
@@ -58,7 +61,7 @@ export function createWikiSearchTool(
     parameters: WikiSearchSchema,
     execute: async (_toolCallId, rawParams) => {
       const params = rawParams as { query: string; maxResults?: number };
-      await syncBridgeIfNeeded(config, appConfig);
+      await syncImportedSourcesIfNeeded(config, appConfig);
       const results = await searchMemoryWiki({
         config,
         query: params.query,
@@ -92,7 +95,7 @@ export function createWikiGetTool(
     parameters: WikiGetSchema,
     execute: async (_toolCallId, rawParams) => {
       const params = rawParams as { lookup: string; fromLine?: number; lineCount?: number };
-      await syncBridgeIfNeeded(config, appConfig);
+      await syncImportedSourcesIfNeeded(config, appConfig);
       const result = await getMemoryWikiPage({
         config,
         lookup: params.lookup,
