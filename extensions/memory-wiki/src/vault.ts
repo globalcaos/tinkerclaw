@@ -5,6 +5,7 @@ import {
   withTrailingNewline,
 } from "openclaw/plugin-sdk/memory-host-markdown";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
+import { appendMemoryWikiLog } from "./log.js";
 
 export const WIKI_VAULT_DIRECTORIES = [
   "entities",
@@ -134,6 +135,17 @@ export async function initializeMemoryWikiVault(
     createdFiles,
   );
   await writeFileIfMissing(path.join(rootDir, ".openclaw-wiki", "log.jsonl"), "", createdFiles);
+
+  if (createdDirectories.length > 0 || createdFiles.length > 0) {
+    await appendMemoryWikiLog(rootDir, {
+      type: "init",
+      timestamp: new Date(options?.nowMs ?? Date.now()).toISOString(),
+      details: {
+        createdDirectories: createdDirectories.map((dir) => path.relative(rootDir, dir) || "."),
+        createdFiles: createdFiles.map((file) => path.relative(rootDir, file)),
+      },
+    });
+  }
 
   return {
     rootDir,
