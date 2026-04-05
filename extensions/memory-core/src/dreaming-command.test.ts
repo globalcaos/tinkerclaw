@@ -4,7 +4,7 @@ import type {
 } from "openclaw/plugin-sdk/core";
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/memory-core";
 import { describe, expect, it, vi } from "vitest";
-import { registerSleepCommand } from "./dreaming-command.js";
+import { registerDreamingCommand } from "./dreaming-command.js";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -13,10 +13,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function resolveStoredSleep(config: OpenClawConfig): Record<string, unknown> {
+function resolveStoredDreaming(config: OpenClawConfig): Record<string, unknown> {
   const entry = asRecord(config.plugins?.entries?.["memory-core"]);
   const pluginConfig = asRecord(entry?.config);
-  return asRecord(pluginConfig?.sleep) ?? {};
+  return asRecord(pluginConfig?.dreaming) ?? {};
 }
 
 function createHarness(initialConfig: OpenClawConfig = {}) {
@@ -39,10 +39,10 @@ function createHarness(initialConfig: OpenClawConfig = {}) {
     }),
   } as unknown as OpenClawPluginApi;
 
-  registerSleepCommand(api);
+  registerDreamingCommand(api);
 
   if (!command) {
-    throw new Error("memory-core did not register /sleep");
+    throw new Error("memory-core did not register /dreaming");
   }
 
   return {
@@ -56,7 +56,7 @@ function createCommandContext(args?: string): PluginCommandContext {
   return {
     channel: "webchat",
     isAuthorizedSender: true,
-    commandBody: args ? `/sleep ${args}` : "/sleep",
+    commandBody: args ? `/dreaming ${args}` : "/dreaming",
     args,
     config: {},
     requestConversationBinding: async () => ({ status: "error", message: "unsupported" }),
@@ -65,20 +65,20 @@ function createCommandContext(args?: string): PluginCommandContext {
   };
 }
 
-describe("memory-core /sleep command", () => {
+describe("memory-core /dreaming command", () => {
   it("registers with a phase-oriented description", () => {
     const { command } = createHarness();
-    expect(command.name).toBe("sleep");
+    expect(command.name).toBe("dreaming");
     expect(command.acceptsArgs).toBe(true);
-    expect(command.description).toContain("sleep phases");
+    expect(command.description).toContain("dreaming phases");
   });
 
   it("shows phase explanations when invoked without args", async () => {
     const { command } = createHarness();
     const result = await command.handler(createCommandContext());
 
-    expect(result.text).toContain("Usage: /sleep status");
-    expect(result.text).toContain("Sleep status:");
+    expect(result.text).toContain("Usage: /dreaming status");
+    expect(result.text).toContain("Dreaming status:");
     expect(result.text).toContain("- light: sorts recent memory traces into the daily note.");
     expect(result.text).toContain(
       "- deep: promotes durable memories into MEMORY.md and handles recovery when memory is thin.",
@@ -88,13 +88,13 @@ describe("memory-core /sleep command", () => {
     );
   });
 
-  it("persists global enablement under plugins.entries.memory-core.config.sleep.enabled", async () => {
+  it("persists global enablement under plugins.entries.memory-core.config.dreaming.enabled", async () => {
     const { command, runtime, getRuntimeConfig } = createHarness({
       plugins: {
         entries: {
           "memory-core": {
             config: {
-              sleep: {
+              dreaming: {
                 phases: {
                   deep: {
                     minScore: 0.9,
@@ -110,7 +110,7 @@ describe("memory-core /sleep command", () => {
     const result = await command.handler(createCommandContext("off"));
 
     expect(runtime.config.writeConfigFile).toHaveBeenCalledTimes(1);
-    expect(resolveStoredSleep(getRuntimeConfig())).toMatchObject({
+    expect(resolveStoredDreaming(getRuntimeConfig())).toMatchObject({
       enabled: false,
       phases: {
         deep: {
@@ -118,23 +118,23 @@ describe("memory-core /sleep command", () => {
         },
       },
     });
-    expect(result.text).toContain("Sleep disabled.");
+    expect(result.text).toContain("Dreaming disabled.");
   });
 
-  it("persists phase changes under plugins.entries.memory-core.config.sleep.phases", async () => {
+  it("persists phase changes under plugins.entries.memory-core.config.dreaming.phases", async () => {
     const { command, runtime, getRuntimeConfig } = createHarness();
 
     const result = await command.handler(createCommandContext("disable rem"));
 
     expect(runtime.config.writeConfigFile).toHaveBeenCalledTimes(1);
-    expect(resolveStoredSleep(getRuntimeConfig())).toMatchObject({
+    expect(resolveStoredDreaming(getRuntimeConfig())).toMatchObject({
       phases: {
         rem: {
           enabled: false,
         },
       },
     });
-    expect(result.text).toContain("REM sleep disabled.");
+    expect(result.text).toContain("REM phase disabled.");
   });
 
   it("returns status without mutating config", async () => {
@@ -143,7 +143,7 @@ describe("memory-core /sleep command", () => {
         entries: {
           "memory-core": {
             config: {
-              sleep: {
+              dreaming: {
                 timezone: "America/Los_Angeles",
                 storage: {
                   mode: "both",
@@ -164,7 +164,7 @@ describe("memory-core /sleep command", () => {
 
     const result = await command.handler(createCommandContext("status"));
 
-    expect(result.text).toContain("Sleep status:");
+    expect(result.text).toContain("Dreaming status:");
     expect(result.text).toContain("- enabled: on (America/Los_Angeles)");
     expect(result.text).toContain("- storage: both + reports");
     expect(result.text).toContain("recencyHalfLifeDays=21");
@@ -176,7 +176,7 @@ describe("memory-core /sleep command", () => {
     const { command, runtime } = createHarness();
     const result = await command.handler(createCommandContext("unknown-mode"));
 
-    expect(result.text).toContain("Usage: /sleep status");
+    expect(result.text).toContain("Usage: /dreaming status");
     expect(runtime.config.writeConfigFile).not.toHaveBeenCalled();
   });
 });

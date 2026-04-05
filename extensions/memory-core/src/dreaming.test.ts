@@ -140,7 +140,7 @@ describe("short-term dreaming config", () => {
   it("reads explicit dreaming config values", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           timezone: "UTC",
           verboseLogging: true,
           phases: {
@@ -178,7 +178,7 @@ describe("short-term dreaming config", () => {
   it("accepts cron alias and numeric string thresholds", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           phases: {
             deep: {
               cron: "5 1 * * *",
@@ -213,7 +213,7 @@ describe("short-term dreaming config", () => {
   it("treats blank numeric strings as unset and keeps preset defaults", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           phases: {
             deep: {
               limit: " ",
@@ -247,7 +247,7 @@ describe("short-term dreaming config", () => {
   it("accepts limit=0 as an explicit no-op promotion cap", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           phases: {
             deep: {
               limit: 0,
@@ -262,14 +262,14 @@ describe("short-term dreaming config", () => {
   it("accepts verboseLogging as a boolean or boolean string", () => {
     const enabled = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           verboseLogging: true,
         },
       },
     });
     const disabled = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           verboseLogging: "false",
         },
       },
@@ -282,7 +282,7 @@ describe("short-term dreaming config", () => {
   it("falls back to defaults when thresholds are negative", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           phases: {
             deep: {
               minScore: -0.2,
@@ -308,7 +308,7 @@ describe("short-term dreaming config", () => {
   it("keeps deep sleep disabled when the phase is off", () => {
     const resolved = resolveShortTermPromotionDreamingConfig({
       pluginConfig: {
-        sleep: {
+        dreaming: {
           phases: {
             deep: {
               enabled: false,

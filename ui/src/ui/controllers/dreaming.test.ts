@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   loadDreamingStatus,
-  updateSleepEnabled,
-  updateSleepPhaseEnabled,
+  updateDreamingEnabled,
+  updateDreamingPhaseEnabled,
   type DreamingState,
 } from "./dreaming.ts";
 
@@ -24,11 +24,11 @@ function createState(): { state: DreamingState; request: ReturnType<typeof vi.fn
   return { state, request };
 }
 
-describe("sleep controller", () => {
-  it("loads and normalizes sleep status from doctor.memory.status", async () => {
+describe("dreaming controller", () => {
+  it("loads and normalizes dreaming status from doctor.memory.status", async () => {
     const { state, request } = createState();
     request.mockResolvedValue({
-      sleep: {
+      dreaming: {
         enabled: true,
         timezone: "America/Los_Angeles",
         verboseLogging: false,
@@ -91,11 +91,11 @@ describe("sleep controller", () => {
     expect(state.dreamingStatusError).toBeNull();
   });
 
-  it("patches config to update global sleep enablement", async () => {
+  it("patches config to update global dreaming enablement", async () => {
     const { state, request } = createState();
     request.mockResolvedValue({ ok: true });
 
-    const ok = await updateSleepEnabled(state, false);
+    const ok = await updateDreamingEnabled(state, false);
 
     expect(ok).toBe(true);
     expect(request).toHaveBeenCalledWith(
@@ -113,7 +113,7 @@ describe("sleep controller", () => {
     const { state, request } = createState();
     request.mockResolvedValue({ ok: true });
 
-    const ok = await updateSleepPhaseEnabled(state, "rem", false);
+    const ok = await updateDreamingPhaseEnabled(state, "rem", false);
 
     expect(ok).toBe(true);
     expect(request).toHaveBeenCalledWith(
@@ -128,7 +128,7 @@ describe("sleep controller", () => {
     const { state, request } = createState();
     state.configSnapshot = {};
 
-    const ok = await updateSleepEnabled(state, true);
+    const ok = await updateDreamingEnabled(state, true);
 
     expect(ok).toBe(false);
     expect(request).not.toHaveBeenCalled();

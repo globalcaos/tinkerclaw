@@ -105,7 +105,7 @@ describe("doctor.memory.status", () => {
         agentId: "main",
         provider: "gemini",
         embedding: { ok: true },
-        sleep: expect.objectContaining({
+        dreaming: expect.objectContaining({
           enabled: true,
           shortTermCount: 0,
           promotedTotal: 0,
@@ -240,7 +240,7 @@ describe("doctor.memory.status", () => {
         entries: {
           "memory-core": {
             config: {
-              sleep: {
+              dreaming: {
                 phases: {
                   deep: {
                     cron: "0 */4 * * *",
@@ -292,7 +292,7 @@ describe("doctor.memory.status", () => {
           agentId: "main",
           provider: "gemini",
           embedding: { ok: true },
-          sleep: expect.objectContaining({
+          dreaming: expect.objectContaining({
             enabled: true,
             timezone: "America/Los_Angeles",
             shortTermCount: 1,
@@ -347,7 +347,7 @@ describe("doctor.memory.status", () => {
         entries: {
           "memory-core": {
             config: {
-              sleep: {},
+              dreaming: {},
             },
           },
         },
@@ -369,7 +369,7 @@ describe("doctor.memory.status", () => {
       expect(respond).toHaveBeenCalledWith(
         true,
         expect.objectContaining({
-          sleep: expect.objectContaining({
+          dreaming: expect.objectContaining({
             shortTermCount: 0,
             promotedTotal: 1,
             storePath,
@@ -429,7 +429,7 @@ describe("doctor.memory.status", () => {
         entries: {
           "memory-core": {
             config: {
-              sleep: {},
+              dreaming: {},
             },
           },
         },
@@ -475,10 +475,10 @@ describe("doctor.memory.status", () => {
       expect(respond).toHaveBeenCalledWith(
         true,
         expect.objectContaining({
-          sleep: expect.objectContaining({
+          dreaming: expect.objectContaining({
             shortTermCount: 0,
             promotedTotal: 0,
-            storeError: "2 sleep stores had read errors.",
+            storeError: "2 dreaming stores had read errors.",
           }),
         }),
         undefined,

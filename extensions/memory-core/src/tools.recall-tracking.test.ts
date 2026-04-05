@@ -137,7 +137,7 @@ describe("memory_search recall tracking", () => {
     }
   });
 
-  it("passes the resolved sleep timezone into recall tracking", async () => {
+  it("passes the resolved dreaming timezone into recall tracking", async () => {
     setMemorySearchImpl(async () => [
       {
         path: "memory/2026-04-03.md",
@@ -161,7 +161,7 @@ describe("memory_search recall tracking", () => {
           entries: {
             "memory-core": {
               config: {
-                sleep: {
+                dreaming: {
                   timezone: "Europe/London",
                 },
               },
