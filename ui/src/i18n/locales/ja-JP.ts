@@ -46,7 +46,7 @@ export const ja_JP: TranslationMap = {
     aiAgents: "AI とエージェント",
     debug: "デバッグ",
     logs: "ログ",
-    dreams: "Dreams",
+    dreams: "Dreaming",
   },
   subtitles: {
     agents: "ワークスペース、ツール、ID。",
