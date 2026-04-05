@@ -24,10 +24,11 @@ describe("memory-wiki plugin", () => {
 
     await plugin.register(api);
 
-    expect(registerTool).toHaveBeenCalledTimes(4);
+    expect(registerTool).toHaveBeenCalledTimes(5);
     expect(registerTool.mock.calls.map((call) => call[1]?.name)).toEqual([
       "wiki_status",
       "wiki_lint",
+      "wiki_apply",
       "wiki_search",
       "wiki_get",
     ]);

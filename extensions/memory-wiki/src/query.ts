@@ -25,7 +25,7 @@ export type WikiGetResult = {
   id?: string;
 };
 
-type QueryableWikiPage = WikiPageSummary & {
+export type QueryableWikiPage = WikiPageSummary & {
   raw: string;
 };
 
@@ -46,7 +46,7 @@ async function listWikiMarkdownFiles(rootDir: string): Promise<string[]> {
   return files.toSorted((left, right) => left.localeCompare(right));
 }
 
-async function readQueryablePages(rootDir: string): Promise<QueryableWikiPage[]> {
+export async function readQueryableWikiPages(rootDir: string): Promise<QueryableWikiPage[]> {
   const files = await listWikiMarkdownFiles(rootDir);
   const pages = await Promise.all(
     files.map(async (relativePath) => {
@@ -113,7 +113,10 @@ function normalizeLookupKey(value: string): string {
   return normalized.endsWith(".md") ? normalized : normalized.replace(/\/+$/, "");
 }
 
-function resolvePageByLookup(pages: QueryableWikiPage[], lookup: string): QueryableWikiPage | null {
+export function resolveQueryableWikiPageByLookup(
+  pages: QueryableWikiPage[],
+  lookup: string,
+): QueryableWikiPage | null {
   const key = normalizeLookupKey(lookup);
   const withExtension = key.endsWith(".md") ? key : `${key}.md`;
   return (
@@ -132,7 +135,7 @@ export async function searchMemoryWiki(params: {
   maxResults?: number;
 }): Promise<WikiSearchResult[]> {
   await initializeMemoryWikiVault(params.config);
-  const pages = await readQueryablePages(params.config.vault.path);
+  const pages = await readQueryableWikiPages(params.config.vault.path);
   const maxResults = Math.max(1, params.maxResults ?? 10);
   return pages
     .map((page) => ({
@@ -160,8 +163,8 @@ export async function getMemoryWikiPage(params: {
   lineCount?: number;
 }): Promise<WikiGetResult | null> {
   await initializeMemoryWikiVault(params.config);
-  const pages = await readQueryablePages(params.config.vault.path);
-  const page = resolvePageByLookup(pages, params.lookup);
+  const pages = await readQueryableWikiPages(params.config.vault.path);
+  const page = resolveQueryableWikiPageByLookup(pages, params.lookup);
   if (!page) {
     return null;
   }
