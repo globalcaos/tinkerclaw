@@ -67,10 +67,18 @@ describe("renderMemoryWikiStatus", () => {
         allowPrivateMemoryCoreAccess: false,
         pathCount: 0,
       },
+      pageCounts: {
+        source: 0,
+        entity: 0,
+        concept: 0,
+        synthesis: 0,
+        report: 0,
+      },
       warnings: [{ code: "vault-missing", message: "Wiki vault has not been initialized yet." }],
     });
 
     expect(rendered).toContain("Wiki vault mode: isolated");
+    expect(rendered).toContain("Pages: 0 sources, 0 entities, 0 concepts, 0 syntheses, 0 reports");
     expect(rendered).toContain("Warnings:");
     expect(rendered).toContain("Wiki vault has not been initialized yet.");
   });
