@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
 import { buildSystemRunPreparePayload } from "../test-utils/system-run-prepare-payload.js";
 
@@ -232,12 +232,14 @@ describe("exec approvals", () => {
   let previousHome: string | undefined;
   let previousUserProfile: string | undefined;
 
-  beforeEach(async () => {
-    vi.resetModules();
+  beforeAll(async () => {
     ({ callGatewayTool } = await import("./tools/gateway.js"));
     ({ createExecTool } = await import("./bash-tools.exec.js"));
     ({ getExecApprovalApproverDmNoticeText } = await import("../infra/exec-approval-reply.js"));
     ({ sendMessage } = await import("../infra/outbound/message.js"));
+  });
+
+  beforeEach(async () => {
     previousHome = process.env.HOME;
     previousUserProfile = process.env.USERPROFILE;
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-test-"));
@@ -245,11 +247,11 @@ describe("exec approvals", () => {
     // Windows uses USERPROFILE for os.homedir()
     process.env.USERPROFILE = tempDir;
     vi.mocked(callGatewayTool).mockReset();
-    vi.mocked(sendMessage).mockReset();
+    vi.mocked(sendMessage).mockClear();
   });
 
   afterEach(() => {
-    vi.resetAllMocks();
+    vi.clearAllMocks();
     clearRuntimeConfigSnapshot();
     clearConfigCache();
     if (previousHome === undefined) {
