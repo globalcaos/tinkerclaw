@@ -20,6 +20,13 @@ type StreamEvent =
       };
     };
 
+type MockOpenAiRequestSnapshot = {
+  raw: string;
+  body: Record<string, unknown>;
+  prompt: string;
+  toolOutput: string;
+};
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -84,11 +91,41 @@ function extractToolOutput(input: ResponsesInputItem[]) {
   return "";
 }
 
-function readTargetFromPrompt(prompt: string) {
-  const quoted = /"([^"]+)"/.exec(prompt)?.[1]?.trim();
-  if (quoted) {
-    return quoted;
+function normalizePromptPathCandidate(candidate: string) {
+  const trimmed = candidate.trim().replace(/^`+|`+$/g, "");
+  if (!trimmed) {
+    return null;
   }
+  const normalized = trimmed.replace(/^\.\//, "");
+  if (
+    normalized.includes("/") ||
+    /\.(?:md|json|ts|tsx|js|mjs|cjs|txt|yaml|yml)$/i.test(normalized)
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function readTargetFromPrompt(prompt: string) {
+  const backtickedMatches = Array.from(prompt.matchAll(/`([^`]+)`/g))
+    .map((match) => normalizePromptPathCandidate(match[1] ?? ""))
+    .filter((value): value is string => !!value);
+  if (backtickedMatches.length > 0) {
+    return backtickedMatches[0];
+  }
+
+  const quotedMatches = Array.from(prompt.matchAll(/"([^"]+)"/g))
+    .map((match) => normalizePromptPathCandidate(match[1] ?? ""))
+    .filter((value): value is string => !!value);
+  if (quotedMatches.length > 0) {
+    return quotedMatches[0];
+  }
+
+  const repoScoped = /\b(?:repo\/[^\s`",)]+|QA_[A-Z_]+\.md)\b/.exec(prompt)?.[0]?.trim();
+  if (repoScoped) {
+    return repoScoped;
+  }
+
   if (/\bdocs?\b/i.test(prompt)) {
     return "repo/docs/help/testing.md";
   }
@@ -203,6 +240,7 @@ function buildResponsesPayload(input: ResponsesInputItem[]) {
 
 export async function startQaMockOpenAiServer(params?: { host?: string; port?: number }) {
   const host = params?.host ?? "127.0.0.1";
+  let lastRequest: MockOpenAiRequestSnapshot | null = null;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/readyz")) {
@@ -218,10 +256,20 @@ export async function startQaMockOpenAiServer(params?: { host?: string; port?: n
       });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/debug/last-request") {
+      writeJson(res, 200, lastRequest ?? { ok: false, error: "no request recorded" });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/v1/responses") {
       const raw = await readBody(req);
       const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
       const input = Array.isArray(body.input) ? (body.input as ResponsesInputItem[]) : [];
+      lastRequest = {
+        raw,
+        body,
+        prompt: extractLastUserText(input),
+        toolOutput: extractToolOutput(input),
+      };
       const events = buildResponsesPayload(input);
       if (body.stream === false) {
         const completion = events.at(-1);
