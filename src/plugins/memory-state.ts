@@ -7,6 +7,58 @@ export type MemoryPromptSectionBuilder = (params: {
   citationsMode?: MemoryCitationsMode;
 }) => string[];
 
+export type MemoryCorpusSearchResult = {
+  corpus: string;
+  path: string;
+  title?: string;
+  kind?: string;
+  score: number;
+  snippet: string;
+  id?: string;
+  startLine?: number;
+  endLine?: number;
+  citation?: string;
+  source?: string;
+  provenanceLabel?: string;
+  sourceType?: string;
+  sourcePath?: string;
+  updatedAt?: string;
+};
+
+export type MemoryCorpusGetResult = {
+  corpus: string;
+  path: string;
+  title?: string;
+  kind?: string;
+  content: string;
+  fromLine: number;
+  lineCount: number;
+  id?: string;
+  provenanceLabel?: string;
+  sourceType?: string;
+  sourcePath?: string;
+  updatedAt?: string;
+};
+
+export type MemoryCorpusSupplement = {
+  search(params: {
+    query: string;
+    maxResults?: number;
+    agentSessionKey?: string;
+  }): Promise<MemoryCorpusSearchResult[]>;
+  get(params: {
+    lookup: string;
+    fromLine?: number;
+    lineCount?: number;
+    agentSessionKey?: string;
+  }): Promise<MemoryCorpusGetResult | null>;
+};
+
+export type MemoryCorpusSupplementRegistration = {
+  pluginId: string;
+  supplement: MemoryCorpusSupplement;
+};
+
 export type MemoryPromptSupplementRegistration = {
   pluginId: string;
   builder: MemoryPromptSectionBuilder;
@@ -58,6 +110,7 @@ export type MemoryPluginRuntime = {
 };
 
 type MemoryPluginState = {
+  corpusSupplements: MemoryCorpusSupplementRegistration[];
   promptBuilder?: MemoryPromptSectionBuilder;
   promptSupplements: MemoryPromptSupplementRegistration[];
   flushPlanResolver?: MemoryFlushPlanResolver;
@@ -65,8 +118,24 @@ type MemoryPluginState = {
 };
 
 const memoryPluginState: MemoryPluginState = {
+  corpusSupplements: [],
   promptSupplements: [],
 };
+
+export function registerMemoryCorpusSupplement(
+  pluginId: string,
+  supplement: MemoryCorpusSupplement,
+): void {
+  const next = memoryPluginState.corpusSupplements.filter(
+    (registration) => registration.pluginId !== pluginId,
+  );
+  next.push({ pluginId, supplement });
+  memoryPluginState.corpusSupplements = next;
+}
+
+export function listMemoryCorpusSupplements(): MemoryCorpusSupplementRegistration[] {
+  return [...memoryPluginState.corpusSupplements];
+}
 
 export function registerMemoryPromptSection(builder: MemoryPromptSectionBuilder): void {
   memoryPluginState.promptBuilder = builder;
@@ -131,6 +200,7 @@ export function hasMemoryRuntime(): boolean {
 }
 
 export function restoreMemoryPluginState(state: MemoryPluginState): void {
+  memoryPluginState.corpusSupplements = [...state.corpusSupplements];
   memoryPluginState.promptBuilder = state.promptBuilder;
   memoryPluginState.promptSupplements = [...state.promptSupplements];
   memoryPluginState.flushPlanResolver = state.flushPlanResolver;
@@ -138,6 +208,7 @@ export function restoreMemoryPluginState(state: MemoryPluginState): void {
 }
 
 export function clearMemoryPluginState(): void {
+  memoryPluginState.corpusSupplements = [];
   memoryPluginState.promptBuilder = undefined;
   memoryPluginState.promptSupplements = [];
   memoryPluginState.flushPlanResolver = undefined;
