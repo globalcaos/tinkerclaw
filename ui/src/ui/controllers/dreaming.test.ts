@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadDreamingStatus, updateDreamingMode, type DreamingState } from "./dreaming.ts";
+import {
+  loadDreamingStatus,
+  updateSleepEnabled,
+  updateSleepPhaseEnabled,
+  type DreamingState,
+} from "./dreaming.ts";
 
 function createState(): { state: DreamingState; request: ReturnType<typeof vi.fn> } {
   const request = vi.fn();
@@ -19,24 +24,50 @@ function createState(): { state: DreamingState; request: ReturnType<typeof vi.fn
   return { state, request };
 }
 
-describe("dreaming controller", () => {
-  it("loads and normalizes dreaming status from doctor.memory.status", async () => {
+describe("sleep controller", () => {
+  it("loads and normalizes sleep status from doctor.memory.status", async () => {
     const { state, request } = createState();
     request.mockResolvedValue({
-      dreaming: {
-        mode: "rem",
+      sleep: {
         enabled: true,
-        frequency: "0 */6 * * *",
         timezone: "America/Los_Angeles",
-        limit: 10,
-        minScore: 0.85,
-        minRecallCount: 4,
-        minUniqueQueries: 3,
+        verboseLogging: false,
+        storageMode: "inline",
+        separateReports: false,
         shortTermCount: 8,
         promotedTotal: 21,
         promotedToday: 2,
-        managedCronPresent: true,
-        nextRunAtMs: 12345,
+        phases: {
+          light: {
+            enabled: true,
+            cron: "0 */6 * * *",
+            lookbackDays: 2,
+            limit: 100,
+            managedCronPresent: true,
+            nextRunAtMs: 12345,
+          },
+          deep: {
+            enabled: true,
+            cron: "0 3 * * *",
+            limit: 10,
+            minScore: 0.8,
+            minRecallCount: 3,
+            minUniqueQueries: 3,
+            recencyHalfLifeDays: 14,
+            maxAgeDays: 30,
+            managedCronPresent: true,
+            nextRunAtMs: 23456,
+          },
+          rem: {
+            enabled: true,
+            cron: "0 5 * * 0",
+            lookbackDays: 7,
+            limit: 10,
+            minPatternStrength: 0.75,
+            managedCronPresent: true,
+            nextRunAtMs: 34567,
+          },
+        },
       },
     });
 
@@ -45,23 +76,26 @@ describe("dreaming controller", () => {
     expect(request).toHaveBeenCalledWith("doctor.memory.status", {});
     expect(state.dreamingStatus).toEqual(
       expect.objectContaining({
-        mode: "rem",
         enabled: true,
         shortTermCount: 8,
         promotedToday: 2,
-        managedCronPresent: true,
-        nextRunAtMs: 12345,
+        phases: expect.objectContaining({
+          deep: expect.objectContaining({
+            minScore: 0.8,
+            nextRunAtMs: 23456,
+          }),
+        }),
       }),
     );
     expect(state.dreamingStatusLoading).toBe(false);
     expect(state.dreamingStatusError).toBeNull();
   });
 
-  it("patches config to update dreaming mode", async () => {
+  it("patches config to update global sleep enablement", async () => {
     const { state, request } = createState();
     request.mockResolvedValue({ ok: true });
 
-    const ok = await updateDreamingMode(state, "deep");
+    const ok = await updateSleepEnabled(state, false);
 
     expect(ok).toBe(true);
     expect(request).toHaveBeenCalledWith(
@@ -75,11 +109,26 @@ describe("dreaming controller", () => {
     expect(state.dreamingStatusError).toBeNull();
   });
 
+  it("patches config to update phase enablement", async () => {
+    const { state, request } = createState();
+    request.mockResolvedValue({ ok: true });
+
+    const ok = await updateSleepPhaseEnabled(state, "rem", false);
+
+    expect(ok).toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      "config.patch",
+      expect.objectContaining({
+        raw: expect.stringContaining('"rem":{"enabled":false}'),
+      }),
+    );
+  });
+
   it("fails gracefully when config hash is missing", async () => {
     const { state, request } = createState();
     state.configSnapshot = {};
 
-    const ok = await updateDreamingMode(state, "core");
+    const ok = await updateSleepEnabled(state, true);
 
     expect(ok).toBe(false);
     expect(request).not.toHaveBeenCalled();

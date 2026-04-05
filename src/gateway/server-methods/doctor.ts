@@ -4,40 +4,73 @@ import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
-  isSameMemoryDreamingDay,
+  isSameMemorySleepDay,
   resolveMemoryCorePluginConfig,
-  resolveMemoryDreamingConfig,
-  resolveMemoryDreamingWorkspaces,
-  type MemoryDreamingMode,
-} from "../../memory-host-sdk/dreaming.js";
+  resolveMemoryDeepSleepConfig,
+  resolveMemoryLightSleepConfig,
+  resolveMemoryRemSleepConfig,
+  resolveMemorySleepConfig,
+  resolveMemorySleepWorkspaces,
+} from "../../memory-host-sdk/sleep.js";
 import { getActiveMemorySearchManager } from "../../plugins/memory-runtime.js";
 import { formatError } from "../server-utils.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 const SHORT_TERM_STORE_RELATIVE_PATH = path.join("memory", ".dreams", "short-term-recall.json");
-const MANAGED_DREAMING_CRON_NAME = "Memory Dreaming Promotion";
-const MANAGED_DREAMING_CRON_TAG = "[managed-by=memory-core.short-term-promotion]";
-const DREAMING_SYSTEM_EVENT_TEXT = "__openclaw_memory_core_short_term_promotion_dream__";
+const MANAGED_LIGHT_SLEEP_CRON_NAME = "Memory Light Sleep";
+const MANAGED_LIGHT_SLEEP_CRON_TAG = "[managed-by=memory-core.sleep.light]";
+const LIGHT_SLEEP_SYSTEM_EVENT_TEXT = "__openclaw_memory_core_light_sleep__";
+const MANAGED_DEEP_SLEEP_CRON_NAME = "Memory Dreaming Promotion";
+const MANAGED_DEEP_SLEEP_CRON_TAG = "[managed-by=memory-core.short-term-promotion]";
+const DEEP_SLEEP_SYSTEM_EVENT_TEXT = "__openclaw_memory_core_short_term_promotion_dream__";
+const MANAGED_REM_SLEEP_CRON_NAME = "Memory REM Sleep";
+const MANAGED_REM_SLEEP_CRON_TAG = "[managed-by=memory-core.sleep.rem]";
+const REM_SLEEP_SYSTEM_EVENT_TEXT = "__openclaw_memory_core_rem_sleep__";
 
-type DoctorMemoryDreamingPayload = {
-  mode: MemoryDreamingMode;
+type DoctorMemorySleepPhasePayload = {
   enabled: boolean;
-  frequency: string;
-  timezone?: string;
+  cron: string;
+  managedCronPresent: boolean;
+  nextRunAtMs?: number;
+};
+
+type DoctorMemoryLightSleepPayload = DoctorMemorySleepPhasePayload & {
+  lookbackDays: number;
   limit: number;
+};
+
+type DoctorMemoryDeepSleepPayload = DoctorMemorySleepPhasePayload & {
   minScore: number;
   minRecallCount: number;
   minUniqueQueries: number;
   recencyHalfLifeDays: number;
   maxAgeDays?: number;
+  limit: number;
+};
+
+type DoctorMemoryRemSleepPayload = DoctorMemorySleepPhasePayload & {
+  lookbackDays: number;
+  limit: number;
+  minPatternStrength: number;
+};
+
+type DoctorMemorySleepPayload = {
+  enabled: boolean;
+  timezone?: string;
+  verboseLogging: boolean;
+  storageMode: "inline" | "separate" | "both";
+  separateReports: boolean;
   shortTermCount: number;
   promotedTotal: number;
   promotedToday: number;
   storePath?: string;
   lastPromotedAt?: string;
-  nextRunAtMs?: number;
-  managedCronPresent: boolean;
   storeError?: string;
+  phases: {
+    light: DoctorMemoryLightSleepPayload;
+    deep: DoctorMemoryDeepSleepPayload;
+    rem: DoctorMemoryRemSleepPayload;
+  };
 };
 
 export type DoctorMemoryStatusPayload = {
@@ -47,7 +80,7 @@ export type DoctorMemoryStatusPayload = {
     ok: boolean;
     error?: string;
   };
-  dreaming?: DoctorMemoryDreamingPayload;
+  sleep?: DoctorMemorySleepPayload;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -65,34 +98,67 @@ function normalizeTrimmedString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function resolveDreamingConfig(
+function resolveSleepConfig(
   cfg: OpenClawConfig,
 ): Omit<
-  DoctorMemoryDreamingPayload,
+  DoctorMemorySleepPayload,
   | "shortTermCount"
   | "promotedTotal"
   | "promotedToday"
   | "storePath"
   | "lastPromotedAt"
-  | "nextRunAtMs"
-  | "managedCronPresent"
   | "storeError"
 > {
-  const resolved = resolveMemoryDreamingConfig({
+  const resolved = resolveMemorySleepConfig({
+    pluginConfig: resolveMemoryCorePluginConfig(cfg),
+    cfg,
+  });
+  const light = resolveMemoryLightSleepConfig({
+    pluginConfig: resolveMemoryCorePluginConfig(cfg),
+    cfg,
+  });
+  const deep = resolveMemoryDeepSleepConfig({
+    pluginConfig: resolveMemoryCorePluginConfig(cfg),
+    cfg,
+  });
+  const rem = resolveMemoryRemSleepConfig({
     pluginConfig: resolveMemoryCorePluginConfig(cfg),
     cfg,
   });
   return {
-    mode: resolved.mode,
     enabled: resolved.enabled,
-    frequency: resolved.cron,
     ...(resolved.timezone ? { timezone: resolved.timezone } : {}),
-    limit: resolved.limit,
-    minScore: resolved.minScore,
-    minRecallCount: resolved.minRecallCount,
-    minUniqueQueries: resolved.minUniqueQueries,
-    recencyHalfLifeDays: resolved.recencyHalfLifeDays,
-    ...(typeof resolved.maxAgeDays === "number" ? { maxAgeDays: resolved.maxAgeDays } : {}),
+    verboseLogging: resolved.verboseLogging,
+    storageMode: resolved.storage.mode,
+    separateReports: resolved.storage.separateReports,
+    phases: {
+      light: {
+        enabled: light.enabled,
+        cron: light.cron,
+        lookbackDays: light.lookbackDays,
+        limit: light.limit,
+        managedCronPresent: false,
+      },
+      deep: {
+        enabled: deep.enabled,
+        cron: deep.cron,
+        limit: deep.limit,
+        minScore: deep.minScore,
+        minRecallCount: deep.minRecallCount,
+        minUniqueQueries: deep.minUniqueQueries,
+        recencyHalfLifeDays: deep.recencyHalfLifeDays,
+        managedCronPresent: false,
+        ...(typeof deep.maxAgeDays === "number" ? { maxAgeDays: deep.maxAgeDays } : {}),
+      },
+      rem: {
+        enabled: rem.enabled,
+        cron: rem.cron,
+        lookbackDays: rem.lookbackDays,
+        limit: rem.limit,
+        minPatternStrength: rem.minPatternStrength,
+        managedCronPresent: false,
+      },
+    },
   };
 }
 
@@ -108,8 +174,8 @@ function isShortTermMemoryPath(filePath: string): boolean {
   return /^(\d{4})-(\d{2})-(\d{2})\.md$/.test(normalized);
 }
 
-type DreamingStoreStats = Pick<
-  DoctorMemoryDreamingPayload,
+type SleepStoreStats = Pick<
+  DoctorMemorySleepPayload,
   | "shortTermCount"
   | "promotedTotal"
   | "promotedToday"
@@ -118,11 +184,11 @@ type DreamingStoreStats = Pick<
   | "storeError"
 >;
 
-async function loadDreamingStoreStats(
+async function loadSleepStoreStats(
   workspaceDir: string,
   nowMs: number,
   timezone?: string,
-): Promise<DreamingStoreStats> {
+): Promise<SleepStoreStats> {
   const storePath = path.join(workspaceDir, SHORT_TERM_STORE_RELATIVE_PATH);
   try {
     const raw = await fs.readFile(storePath, "utf-8");
@@ -152,7 +218,7 @@ async function loadDreamingStoreStats(
       }
       promotedTotal += 1;
       const promotedAtMs = Date.parse(promotedAt);
-      if (Number.isFinite(promotedAtMs) && isSameMemoryDreamingDay(promotedAtMs, nowMs, timezone)) {
+      if (Number.isFinite(promotedAtMs) && isSameMemorySleepDay(promotedAtMs, nowMs, timezone)) {
         promotedToday += 1;
       }
       if (Number.isFinite(promotedAtMs) && promotedAtMs > latestPromotedAtMs) {
@@ -188,7 +254,7 @@ async function loadDreamingStoreStats(
   }
 }
 
-function mergeDreamingStoreStats(stats: DreamingStoreStats[]): DreamingStoreStats {
+function mergeSleepStoreStats(stats: SleepStoreStats[]): SleepStoreStats {
   let shortTermCount = 0;
   let promotedTotal = 0;
   let promotedToday = 0;
@@ -223,12 +289,12 @@ function mergeDreamingStoreStats(stats: DreamingStoreStats[]): DreamingStoreStat
     ...(storeErrors.length === 1
       ? { storeError: storeErrors[0] }
       : storeErrors.length > 1
-        ? { storeError: `${storeErrors.length} dreaming stores had read errors.` }
+        ? { storeError: `${storeErrors.length} sleep stores had read errors.` }
         : {}),
   };
 }
 
-type ManagedDreamingCronStatus = {
+type ManagedSleepCronStatus = {
   managedCronPresent: boolean;
   nextRunAtMs?: number;
 };
@@ -241,32 +307,40 @@ type ManagedCronJobLike = {
   state?: { nextRunAtMs?: number };
 };
 
-function isManagedDreamingJob(job: ManagedCronJobLike): boolean {
+function isManagedSleepJob(
+  job: ManagedCronJobLike,
+  params: { name: string; tag: string; payloadText: string },
+): boolean {
   const description = normalizeTrimmedString(job.description);
-  if (description?.includes(MANAGED_DREAMING_CRON_TAG)) {
+  if (description?.includes(params.tag)) {
     return true;
   }
   const name = normalizeTrimmedString(job.name);
   const payloadKind = normalizeTrimmedString(job.payload?.kind)?.toLowerCase();
   const payloadText = normalizeTrimmedString(job.payload?.text);
   return (
-    name === MANAGED_DREAMING_CRON_NAME &&
-    payloadKind === "systemevent" &&
-    payloadText === DREAMING_SYSTEM_EVENT_TEXT
+    name === params.name && payloadKind === "systemevent" && payloadText === params.payloadText
   );
 }
 
-async function resolveManagedDreamingCronStatus(context: {
-  cron?: { list?: (opts?: { includeDisabled?: boolean }) => Promise<unknown[]> };
-}): Promise<ManagedDreamingCronStatus> {
-  if (!context.cron || typeof context.cron.list !== "function") {
+async function resolveManagedSleepCronStatus(params: {
+  context: {
+    cron?: { list?: (opts?: { includeDisabled?: boolean }) => Promise<unknown[]> };
+  };
+  match: {
+    name: string;
+    tag: string;
+    payloadText: string;
+  };
+}): Promise<ManagedSleepCronStatus> {
+  if (!params.context.cron || typeof params.context.cron.list !== "function") {
     return { managedCronPresent: false };
   }
   try {
-    const jobs = await context.cron.list({ includeDisabled: true });
+    const jobs = await params.context.cron.list({ includeDisabled: true });
     const managed = jobs
       .filter((job): job is ManagedCronJobLike => typeof job === "object" && job !== null)
-      .filter(isManagedDreamingJob);
+      .filter((job) => isManagedSleepJob(job, params.match));
     let nextRunAtMs: number | undefined;
     for (const job of managed) {
       if (job.enabled !== true) {
@@ -287,6 +361,37 @@ async function resolveManagedDreamingCronStatus(context: {
   } catch {
     return { managedCronPresent: false };
   }
+}
+
+async function resolveAllManagedSleepCronStatuses(context: {
+  cron?: { list?: (opts?: { includeDisabled?: boolean }) => Promise<unknown[]> };
+}): Promise<Record<"light" | "deep" | "rem", ManagedSleepCronStatus>> {
+  return {
+    light: await resolveManagedSleepCronStatus({
+      context,
+      match: {
+        name: MANAGED_LIGHT_SLEEP_CRON_NAME,
+        tag: MANAGED_LIGHT_SLEEP_CRON_TAG,
+        payloadText: LIGHT_SLEEP_SYSTEM_EVENT_TEXT,
+      },
+    }),
+    deep: await resolveManagedSleepCronStatus({
+      context,
+      match: {
+        name: MANAGED_DEEP_SLEEP_CRON_NAME,
+        tag: MANAGED_DEEP_SLEEP_CRON_TAG,
+        payloadText: DEEP_SLEEP_SYSTEM_EVENT_TEXT,
+      },
+    }),
+    rem: await resolveManagedSleepCronStatus({
+      context,
+      match: {
+        name: MANAGED_REM_SLEEP_CRON_NAME,
+        tag: MANAGED_REM_SLEEP_CRON_TAG,
+        payloadText: REM_SLEEP_SYSTEM_EVENT_TEXT,
+      },
+    }),
+  };
 }
 
 export const doctorHandlers: GatewayRequestHandlers = {
@@ -317,19 +422,19 @@ export const doctorHandlers: GatewayRequestHandlers = {
         embedding = { ok: false, error: "memory embeddings unavailable" };
       }
       const nowMs = Date.now();
-      const dreamingConfig = resolveDreamingConfig(cfg);
+      const sleepConfig = resolveSleepConfig(cfg);
       const workspaceDir = normalizeTrimmedString((status as Record<string, unknown>).workspaceDir);
-      const configuredWorkspaces = resolveMemoryDreamingWorkspaces(cfg).map(
+      const configuredWorkspaces = resolveMemorySleepWorkspaces(cfg).map(
         (entry) => entry.workspaceDir,
       );
       const allWorkspaces =
         configuredWorkspaces.length > 0 ? configuredWorkspaces : workspaceDir ? [workspaceDir] : [];
       const storeStats =
         allWorkspaces.length > 0
-          ? mergeDreamingStoreStats(
+          ? mergeSleepStoreStats(
               await Promise.all(
                 allWorkspaces.map((entry) =>
-                  loadDreamingStoreStats(entry, nowMs, dreamingConfig.timezone),
+                  loadSleepStoreStats(entry, nowMs, sleepConfig.timezone),
                 ),
               ),
             )
@@ -338,15 +443,28 @@ export const doctorHandlers: GatewayRequestHandlers = {
               promotedTotal: 0,
               promotedToday: 0,
             };
-      const cronStatus = await resolveManagedDreamingCronStatus(context);
+      const cronStatuses = await resolveAllManagedSleepCronStatuses(context);
       const payload: DoctorMemoryStatusPayload = {
         agentId,
         provider: status.provider,
         embedding,
-        dreaming: {
-          ...dreamingConfig,
+        sleep: {
+          ...sleepConfig,
           ...storeStats,
-          ...cronStatus,
+          phases: {
+            light: {
+              ...sleepConfig.phases.light,
+              ...cronStatuses.light,
+            },
+            deep: {
+              ...sleepConfig.phases.deep,
+              ...cronStatuses.deep,
+            },
+            rem: {
+              ...sleepConfig.phases.rem,
+              ...cronStatuses.rem,
+            },
+          },
         },
       };
       respond(true, payload, undefined);

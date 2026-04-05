@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
-import { formatMemoryDreamingDay } from "openclaw/plugin-sdk/memory-core-host-status";
+import { formatMemorySleepDay } from "openclaw/plugin-sdk/memory-core-host-status";
 import {
   deriveConceptTags,
   MAX_CONCEPT_TAGS,
@@ -605,7 +605,7 @@ export async function recordShortTermRecalls(params: {
       const queryHashes = mergeQueryHashes(existing?.queryHashes ?? [], queryHash);
       const recallDays = mergeRecentDistinct(
         existing?.recallDays ?? [],
-        formatMemoryDreamingDay(nowMs, params.timezone),
+        formatMemorySleepDay(nowMs, params.timezone),
         MAX_RECALL_DAYS,
       );
       const conceptTags = deriveConceptTags({ path: normalizedPath, snippet });
@@ -753,6 +753,23 @@ export async function rankShortTermPromotionCandidates(
     ? Math.max(0, Math.floor(options.limit as number))
     : sorted.length;
   return sorted.slice(0, limit);
+}
+
+export async function readShortTermRecallEntries(params: {
+  workspaceDir: string;
+  nowMs?: number;
+}): Promise<ShortTermRecallEntry[]> {
+  const workspaceDir = params.workspaceDir.trim();
+  if (!workspaceDir) {
+    return [];
+  }
+  const nowMs = Number.isFinite(params.nowMs) ? (params.nowMs as number) : Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const store = await readStore(workspaceDir, nowIso);
+  return Object.values(store.entries).filter(
+    (entry): entry is ShortTermRecallEntry =>
+      Boolean(entry) && entry.source === "memory" && isShortTermMemoryPath(entry.path),
+  );
 }
 
 function resolveShortTermSourcePathCandidates(
@@ -912,7 +929,7 @@ function buildPromotionSection(
   nowMs: number,
   timezone?: string,
 ): string {
-  const sectionDate = formatMemoryDreamingDay(nowMs, timezone);
+  const sectionDate = formatMemorySleepDay(nowMs, timezone);
   const lines = ["", `## Promoted From Short-Term Memory (${sectionDate})`, ""];
 
   for (const candidate of candidates) {
