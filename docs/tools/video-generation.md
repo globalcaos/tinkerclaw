@@ -24,7 +24,9 @@ The tool only appears when at least one video-generation provider is available. 
 {
   agents: {
     defaults: {
-      videoGenerationModel: "qwen/wan2.6-t2v",
+      videoGenerationModel: {
+        primary: "qwen/wan2.6-t2v",
+      },
     },
   },
 }
@@ -121,6 +123,13 @@ The bundled Qwen provider supports text-to-video plus image/video reference mode
 ## Related
 
 - [Tools Overview](/tools) — all available agent tools
+- [Alibaba Model Studio](/providers/alibaba) — direct Wan provider setup
+- [Google (Gemini)](/providers/google) — Veo provider setup
+- [MiniMax](/providers/minimax) — Hailuo provider setup
+- [OpenAI](/providers/openai) — Sora provider setup
 - [Qwen](/providers/qwen) — Qwen-specific setup and limits
+- [Qwen / Model Studio](/providers/qwen_modelstudio) — endpoint-level DashScope detail
+- [Together AI](/providers/together) — Together Wan provider setup
+- [xAI](/providers/xai) — Grok video provider setup
 - [Configuration Reference](/gateway/configuration-reference#agent-defaults) — `videoGenerationModel` config
 - [Models](/concepts/models) — model configuration and failover
