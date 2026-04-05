@@ -233,7 +233,7 @@ export async function runWikiIngest(params: {
   });
   const summary = params.json
     ? JSON.stringify(result, null, 2)
-    : `Ingested ${result.sourcePath} into ${result.pagePath}.`;
+    : `Ingested ${result.sourcePath} into ${result.pagePath}. Refreshed ${result.indexUpdatedFiles.length} index file${result.indexUpdatedFiles.length === 1 ? "" : "s"}.`;
   writeOutput(summary, params.stdout);
   return result;
 }

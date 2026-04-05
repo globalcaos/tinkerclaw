@@ -139,8 +139,12 @@ Read methods:
 
 Write methods:
 
+- `wiki.init`
 - `wiki.compile`
+- `wiki.ingest`
 - `wiki.lint`
+- `wiki.bridge.import`
+- `wiki.unsafeLocal.import`
 - `wiki.apply`
 - `wiki.obsidian.open`
 - `wiki.obsidian.command`
