@@ -1,11 +1,10 @@
+---
 title: "Qwen / Model Studio"
 summary: "Endpoint detail for the bundled qwen provider and its legacy modelstudio compatibility surface"
 read_when:
-
-- You want endpoint-level detail for Qwen Cloud / Alibaba DashScope
-- You need the env var compatibility story for the qwen provider
-- You want to use the Standard (pay-as-you-go) or Coding Plan endpoint
-
+  - You want endpoint-level detail for Qwen Cloud / Alibaba DashScope
+  - You need the env var compatibility story for the qwen provider
+  - You want to use the Standard (pay-as-you-go) or Coding Plan endpoint
 ---
 
 # Qwen / Model Studio (Alibaba Cloud)
@@ -135,3 +134,34 @@ endpoint/key pair.
 If the Gateway runs as a daemon (launchd/systemd), make sure
 `QWEN_API_KEY` is available to that process (for example, in
 `~/.openclaw/.env` or via `env.shellEnv`).
+
+## Wan video generation
+
+The Standard DashScope surface also backs the bundled Wan video-generation
+providers.
+
+You can address the same Wan family through either prefix:
+
+- canonical Qwen refs:
+  - `qwen/wan2.6-t2v`
+  - `qwen/wan2.6-i2v`
+  - `qwen/wan2.6-r2v`
+  - `qwen/wan2.6-r2v-flash`
+  - `qwen/wan2.7-r2v`
+- direct Alibaba refs:
+  - `alibaba/wan2.6-t2v`
+  - `alibaba/wan2.6-i2v`
+  - `alibaba/wan2.6-r2v`
+  - `alibaba/wan2.6-r2v-flash`
+  - `alibaba/wan2.7-r2v`
+
+All Wan reference modes currently require **remote http(s) URLs** for image or
+video references. Local file paths are rejected before upload because the
+DashScope video endpoint does not accept local-buffer reference assets for
+those modes.
+
+## Related
+
+- [Qwen](/providers/qwen)
+- [Alibaba Model Studio](/providers/alibaba)
+- [Video Generation](/tools/video-generation)
