@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
-import { inferWikiPageKind, type WikiPageKind } from "./markdown.js";
+import { inferWikiPageKind, toWikiPageSummary, type WikiPageKind } from "./markdown.js";
 import { probeObsidianCli } from "./obsidian.js";
 
 export type MemoryWikiStatusWarning = {
@@ -32,6 +32,13 @@ export type MemoryWikiStatus = {
     pathCount: number;
   };
   pageCounts: Record<WikiPageKind, number>;
+  sourceCounts: {
+    native: number;
+    bridge: number;
+    bridgeEvents: number;
+    unsafeLocal: number;
+    other: number;
+  };
   warnings: MemoryWikiStatusWarning[];
 };
 
@@ -61,13 +68,23 @@ async function pathExists(inputPath: string): Promise<boolean> {
   }
 }
 
-async function collectPageCounts(vaultPath: string): Promise<Record<WikiPageKind, number>> {
-  const counts: Record<WikiPageKind, number> = {
+async function collectVaultCounts(vaultPath: string): Promise<{
+  pageCounts: Record<WikiPageKind, number>;
+  sourceCounts: MemoryWikiStatus["sourceCounts"];
+}> {
+  const pageCounts: Record<WikiPageKind, number> = {
     entity: 0,
     concept: 0,
     source: 0,
     synthesis: 0,
     report: 0,
+  };
+  const sourceCounts: MemoryWikiStatus["sourceCounts"] = {
+    native: 0,
+    bridge: 0,
+    bridgeEvents: 0,
+    unsafeLocal: 0,
+    other: 0,
   };
   const dirs = ["entities", "concepts", "sources", "syntheses", "reports"] as const;
   for (const dir of dirs) {
@@ -80,11 +97,40 @@ async function collectPageCounts(vaultPath: string): Promise<Record<WikiPageKind
       }
       const kind = inferWikiPageKind(path.join(dir, entry.name));
       if (kind) {
-        counts[kind] += 1;
+        pageCounts[kind] += 1;
+      }
+      if (dir === "sources") {
+        const absolutePath = path.join(vaultPath, dir, entry.name);
+        const raw = await fs.readFile(absolutePath, "utf8").catch(() => null);
+        if (!raw) {
+          continue;
+        }
+        const page = toWikiPageSummary({
+          absolutePath,
+          relativePath: path.join(dir, entry.name),
+          raw,
+        });
+        if (!page) {
+          continue;
+        }
+        if (page.sourceType === "memory-bridge-events") {
+          sourceCounts.bridgeEvents += 1;
+        } else if (page.sourceType === "memory-bridge") {
+          sourceCounts.bridge += 1;
+        } else if (
+          page.provenanceMode === "unsafe-local" ||
+          page.sourceType === "memory-unsafe-local"
+        ) {
+          sourceCounts.unsafeLocal += 1;
+        } else if (!page.sourceType) {
+          sourceCounts.native += 1;
+        } else {
+          sourceCounts.other += 1;
+        }
       }
     }
   }
-  return counts;
+  return { pageCounts, sourceCounts };
 }
 
 function buildWarnings(params: {
@@ -153,14 +199,23 @@ export async function resolveMemoryWikiStatus(
   const exists = deps?.pathExists ?? pathExists;
   const vaultExists = await exists(config.vault.path);
   const obsidianProbe = await probeObsidianCli({ resolveCommand: deps?.resolveCommand });
-  const pageCounts = vaultExists
-    ? await collectPageCounts(config.vault.path)
+  const counts = vaultExists
+    ? await collectVaultCounts(config.vault.path)
     : {
-        entity: 0,
-        concept: 0,
-        source: 0,
-        synthesis: 0,
-        report: 0,
+        pageCounts: {
+          entity: 0,
+          concept: 0,
+          source: 0,
+          synthesis: 0,
+          report: 0,
+        },
+        sourceCounts: {
+          native: 0,
+          bridge: 0,
+          bridgeEvents: 0,
+          unsafeLocal: 0,
+          other: 0,
+        },
       };
 
   return {
@@ -179,7 +234,8 @@ export async function resolveMemoryWikiStatus(
       allowPrivateMemoryCoreAccess: config.unsafeLocal.allowPrivateMemoryCoreAccess,
       pathCount: config.unsafeLocal.paths.length,
     },
-    pageCounts,
+    pageCounts: counts.pageCounts,
+    sourceCounts: counts.sourceCounts,
     warnings: buildWarnings({ config, vaultExists, obsidianCommand: obsidianProbe.command }),
   };
 }
@@ -217,6 +273,7 @@ export function renderMemoryWikiStatus(status: MemoryWikiStatus): string {
     `Bridge: ${status.bridge.enabled ? "enabled" : "disabled"}`,
     `Unsafe local: ${status.unsafeLocal.allowPrivateMemoryCoreAccess ? `enabled (${status.unsafeLocal.pathCount} paths)` : "disabled"}`,
     `Pages: ${status.pageCounts.source} sources, ${status.pageCounts.entity} entities, ${status.pageCounts.concept} concepts, ${status.pageCounts.synthesis} syntheses, ${status.pageCounts.report} reports`,
+    `Source provenance: ${status.sourceCounts.native} native, ${status.sourceCounts.bridge} bridge, ${status.sourceCounts.bridgeEvents} bridge-events, ${status.sourceCounts.unsafeLocal} unsafe-local, ${status.sourceCounts.other} other`,
   ];
 
   if (status.warnings.length > 0) {
