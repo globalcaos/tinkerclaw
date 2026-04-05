@@ -1,6 +1,7 @@
 import { definePluginEntry } from "./api.js";
 import { registerWikiCli } from "./src/cli.js";
 import { memoryWikiConfigSchema, resolveMemoryWikiConfig } from "./src/config.js";
+import { registerMemoryWikiGatewayMethods } from "./src/gateway.js";
 import {
   createWikiApplyTool,
   createWikiGetTool,
@@ -17,6 +18,7 @@ export default definePluginEntry({
   register(api) {
     const config = resolveMemoryWikiConfig(api.pluginConfig);
 
+    registerMemoryWikiGatewayMethods({ api, config, appConfig: api.config });
     api.registerTool(createWikiStatusTool(config, api.config), { name: "wiki_status" });
     api.registerTool(createWikiLintTool(config, api.config), { name: "wiki_lint" });
     api.registerTool(createWikiApplyTool(config, api.config), { name: "wiki_apply" });
