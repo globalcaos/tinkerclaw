@@ -7,6 +7,7 @@ Use this skill when working inside a memory-wiki vault.
 
 - Prefer `wiki_status` first when you need to understand the vault mode, path, or Obsidian CLI availability.
 - Use `wiki_search` to discover candidate pages, then `wiki_get` to inspect the exact page before editing or citing it.
+- Run `wiki_lint` after meaningful wiki updates so contradictions, provenance gaps, and open questions get surfaced before you trust the vault.
 - Use `openclaw wiki ingest`, `openclaw wiki compile`, and `openclaw wiki lint` as the default maintenance loop.
 - In `bridge` mode, run `openclaw wiki bridge import` before relying on search results if you need the latest public memory-core artifacts pulled in.
 - In `unsafe-local` mode, use `openclaw wiki unsafe-local import` only when the user explicitly opted into private local path access.
