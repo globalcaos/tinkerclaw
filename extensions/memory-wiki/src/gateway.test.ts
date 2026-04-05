@@ -109,6 +109,42 @@ describe("memory-wiki gateway methods", () => {
     );
   });
 
+  it("ingests local files over the gateway and refreshes indexes", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-gateway-"));
+    tempDirs.push(rootDir);
+    const inputPath = path.join(rootDir, "alpha-notes.txt");
+    await fs.writeFile(inputPath, "alpha over gateway\n", "utf8");
+    const { api, registerGatewayMethod } = createGatewayApi();
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: path.join(rootDir, "vault") } },
+      { homedir: "/Users/tester" },
+    );
+
+    registerMemoryWikiGatewayMethods({ api, config });
+    const handler = findGatewayHandler(registerGatewayMethod, "wiki.ingest");
+    if (!handler) {
+      throw new Error("wiki.ingest handler missing");
+    }
+    const respond = vi.fn();
+
+    await handler({
+      params: {
+        inputPath,
+      },
+      respond,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        pagePath: "sources/alpha-notes.md",
+      }),
+    );
+    await expect(fs.readFile(path.join(config.vault.path, "index.md"), "utf8")).resolves.toContain(
+      "[alpha notes](sources/alpha-notes.md)",
+    );
+  });
+
   it("applies wiki mutations over the gateway", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-gateway-"));
     tempDirs.push(rootDir);

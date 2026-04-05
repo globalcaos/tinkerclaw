@@ -2,6 +2,7 @@ import type { OpenClawConfig, OpenClawPluginApi } from "../api.js";
 import { applyMemoryWikiMutation, normalizeMemoryWikiMutationInput } from "./apply.js";
 import { compileMemoryWikiVault } from "./compile.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
+import { ingestMemoryWikiSource } from "./ingest.js";
 import { lintMemoryWikiVault } from "./lint.js";
 import {
   probeObsidianCli,
@@ -13,6 +14,7 @@ import {
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { syncMemoryWikiImportedSources } from "./source-sync.js";
 import { buildMemoryWikiDoctorReport, resolveMemoryWikiStatus } from "./status.js";
+import { initializeMemoryWikiVault } from "./vault.js";
 
 const READ_SCOPE = "operator.read" as const;
 const WRITE_SCOPE = "operator.write" as const;
@@ -86,6 +88,18 @@ export function registerMemoryWikiGatewayMethods(params: {
   );
 
   api.registerGatewayMethod(
+    "wiki.init",
+    async ({ respond }) => {
+      try {
+        respond(true, await initializeMemoryWikiVault(config));
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
     "wiki.doctor",
     async ({ respond }) => {
       try {
@@ -113,11 +127,68 @@ export function registerMemoryWikiGatewayMethods(params: {
   );
 
   api.registerGatewayMethod(
+    "wiki.ingest",
+    async ({ params: requestParams, respond }) => {
+      try {
+        const inputPath = readStringParam(requestParams, "inputPath", { required: true });
+        const title = readStringParam(requestParams, "title");
+        respond(
+          true,
+          await ingestMemoryWikiSource({
+            config,
+            inputPath,
+            ...(title ? { title } : {}),
+          }),
+        );
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
     "wiki.lint",
     async ({ respond }) => {
       try {
         await syncImportedSourcesIfNeeded(config, appConfig);
         respond(true, await lintMemoryWikiVault(config));
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.bridge.import",
+    async ({ respond }) => {
+      try {
+        respond(
+          true,
+          await syncMemoryWikiImportedSources({
+            config: { ...config, vaultMode: "bridge" },
+            appConfig,
+          }),
+        );
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.unsafeLocal.import",
+    async ({ respond }) => {
+      try {
+        respond(
+          true,
+          await syncMemoryWikiImportedSources({
+            config: { ...config, vaultMode: "unsafe-local" },
+            appConfig,
+          }),
+        );
       } catch (error) {
         respondError(respond, error);
       }

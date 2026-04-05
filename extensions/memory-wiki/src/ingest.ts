@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { compileMemoryWikiVault } from "./compile.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { appendMemoryWikiLog } from "./log.js";
 import { renderMarkdownFence, renderWikiMarkdown, slugifyWikiSegment } from "./markdown.js";
@@ -12,6 +13,7 @@ export type IngestMemoryWikiSourceResult = {
   title: string;
   bytes: number;
   created: boolean;
+  indexUpdatedFiles: string[];
 };
 
 function pathExists(filePath: string): Promise<boolean> {
@@ -96,6 +98,7 @@ export async function ingestMemoryWikiSource(params: {
       created,
     },
   });
+  const compile = await compileMemoryWikiVault(params.config);
 
   return {
     sourcePath,
@@ -104,5 +107,6 @@ export async function ingestMemoryWikiSource(params: {
     title,
     bytes: buffer.byteLength,
     created,
+    indexUpdatedFiles: compile.updatedFiles,
   };
 }
