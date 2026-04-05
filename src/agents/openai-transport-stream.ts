@@ -345,9 +345,55 @@ function convertResponsesTools(
     type: "function",
     name: tool.name,
     description: tool.description,
-    parameters: tool.parameters,
+    parameters: normalizeOpenAIStrictToolParameters(tool.parameters, strict),
     strict,
   }));
+}
+
+function normalizeOpenAIStrictToolParameters<T>(schema: T, strict: boolean): T {
+  if (!strict) {
+    return schema;
+  }
+  return normalizeStrictOpenAIJsonSchema(schema) as T;
+}
+
+function normalizeStrictOpenAIJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) {
+    let changed = false;
+    const normalized = schema.map((entry) => {
+      const next = normalizeStrictOpenAIJsonSchema(entry);
+      changed ||= next !== entry;
+      return next;
+    });
+    return changed ? normalized : schema;
+  }
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+
+  const record = schema as Record<string, unknown>;
+  let changed = false;
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    const next = normalizeStrictOpenAIJsonSchema(value);
+    normalized[key] = next;
+    changed ||= next !== value;
+  }
+
+  if (normalized.type === "object") {
+    const properties =
+      normalized.properties &&
+      typeof normalized.properties === "object" &&
+      !Array.isArray(normalized.properties)
+        ? (normalized.properties as Record<string, unknown>)
+        : undefined;
+    if (properties && Object.keys(properties).length === 0 && !Array.isArray(normalized.required)) {
+      normalized.required = [];
+      changed = true;
+    }
+  }
+
+  return changed ? normalized : schema;
 }
 
 function isStrictOpenAIJsonSchemaCompatible(schema: unknown): boolean {
@@ -368,6 +414,24 @@ function isStrictOpenAIJsonSchemaCompatible(schema: unknown): boolean {
   if (record.type === "object" && record.additionalProperties !== false) {
     return false;
   }
+  if (record.type === "object") {
+    const properties =
+      record.properties &&
+      typeof record.properties === "object" &&
+      !Array.isArray(record.properties)
+        ? (record.properties as Record<string, unknown>)
+        : {};
+    const required = Array.isArray(record.required)
+      ? record.required.filter((entry): entry is string => typeof entry === "string")
+      : undefined;
+    if (!required) {
+      return false;
+    }
+    const requiredSet = new Set(required);
+    if (Object.keys(properties).some((key) => !requiredSet.has(key))) {
+      return false;
+    }
+  }
 
   return Object.values(record).every((entry) => isStrictOpenAIJsonSchemaCompatible(entry));
 }
@@ -379,9 +443,9 @@ function resolveStrictToolFlagForInventory(
   if (strict !== true) {
     return strict === false ? false : undefined;
   }
-  return tools.every((tool) => isStrictOpenAIJsonSchemaCompatible(tool.parameters))
-    ? true
-    : undefined;
+  return tools.every((tool) =>
+    isStrictOpenAIJsonSchemaCompatible(normalizeStrictOpenAIJsonSchema(tool.parameters)),
+  );
 }
 
 async function processResponsesStream(
@@ -1305,7 +1369,7 @@ function convertTools(
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      parameters: normalizeOpenAIStrictToolParameters(tool.parameters, strict === true),
       ...(strict === undefined ? {} : { strict }),
     },
   }));
