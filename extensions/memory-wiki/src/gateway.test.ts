@@ -108,4 +108,39 @@ describe("memory-wiki gateway methods", () => {
       expect.objectContaining({ message: "query is required." }),
     );
   });
+
+  it("applies wiki mutations over the gateway", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-wiki-gateway-"));
+    tempDirs.push(rootDir);
+    const { api, registerGatewayMethod } = createGatewayApi();
+    const config = resolveMemoryWikiConfig(
+      { vault: { path: rootDir } },
+      { homedir: "/Users/tester" },
+    );
+
+    registerMemoryWikiGatewayMethods({ api, config });
+    const handler = findGatewayHandler(registerGatewayMethod, "wiki.apply");
+    if (!handler) {
+      throw new Error("wiki.apply handler missing");
+    }
+    const respond = vi.fn();
+
+    await handler({
+      params: {
+        op: "create_synthesis",
+        title: "Gateway Alpha",
+        body: "Gateway summary.",
+        sourceIds: ["source.alpha"],
+      },
+      respond,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        operation: "create_synthesis",
+        pagePath: "syntheses/gateway-alpha.md",
+      }),
+    );
+  });
 });
