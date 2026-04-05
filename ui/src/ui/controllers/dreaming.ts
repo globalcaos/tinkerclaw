@@ -1,21 +1,21 @@
 import type { GatewayBrowserClient } from "../gateway.ts";
 import type { ConfigSnapshot } from "../types.ts";
 
-export type SleepPhaseId = "light" | "deep" | "rem";
+export type DreamingPhaseId = "light" | "deep" | "rem";
 
-type SleepPhaseStatusBase = {
+type DreamingPhaseStatusBase = {
   enabled: boolean;
   cron: string;
   managedCronPresent: boolean;
   nextRunAtMs?: number;
 };
 
-type LightSleepStatus = SleepPhaseStatusBase & {
+type LightDreamingStatus = DreamingPhaseStatusBase & {
   lookbackDays: number;
   limit: number;
 };
 
-type DeepSleepStatus = SleepPhaseStatusBase & {
+type DeepDreamingStatus = DreamingPhaseStatusBase & {
   limit: number;
   minScore: number;
   minRecallCount: number;
@@ -24,13 +24,13 @@ type DeepSleepStatus = SleepPhaseStatusBase & {
   maxAgeDays?: number;
 };
 
-type RemSleepStatus = SleepPhaseStatusBase & {
+type RemDreamingStatus = DreamingPhaseStatusBase & {
   lookbackDays: number;
   limit: number;
   minPatternStrength: number;
 };
 
-export type SleepStatus = {
+export type DreamingStatus = {
   enabled: boolean;
   timezone?: string;
   verboseLogging: boolean;
@@ -42,14 +42,14 @@ export type SleepStatus = {
   storePath?: string;
   storeError?: string;
   phases: {
-    light: LightSleepStatus;
-    deep: DeepSleepStatus;
-    rem: RemSleepStatus;
+    light: LightDreamingStatus;
+    deep: DeepDreamingStatus;
+    rem: RemDreamingStatus;
   };
 };
 
 type DoctorMemoryStatusPayload = {
-  sleep?: unknown;
+  dreaming?: unknown;
 };
 
 export type DreamingState = {
@@ -59,7 +59,7 @@ export type DreamingState = {
   applySessionKey: string;
   dreamingStatusLoading: boolean;
   dreamingStatusError: string | null;
-  dreamingStatus: SleepStatus | null;
+  dreamingStatus: DreamingStatus | null;
   dreamingModeSaving: boolean;
   lastError: string | null;
 };
@@ -97,7 +97,7 @@ function normalizeFiniteScore(value: unknown, fallback = 0): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function normalizeStorageMode(value: unknown): SleepStatus["storageMode"] {
+function normalizeStorageMode(value: unknown): DreamingStatus["storageMode"] {
   const normalized = normalizeTrimmedString(value)?.toLowerCase();
   if (normalized === "inline" || normalized === "separate" || normalized === "both") {
     return normalized;
@@ -109,7 +109,7 @@ function normalizeNextRun(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function normalizePhaseStatusBase(record: Record<string, unknown> | null): SleepPhaseStatusBase {
+function normalizePhaseStatusBase(record: Record<string, unknown> | null): DreamingPhaseStatusBase {
   return {
     enabled: normalizeBoolean(record?.enabled, false),
     cron: normalizeTrimmedString(record?.cron) ?? "",
@@ -120,7 +120,7 @@ function normalizePhaseStatusBase(record: Record<string, unknown> | null): Sleep
   };
 }
 
-function normalizeSleepStatus(raw: unknown): SleepStatus | null {
+function normalizeDreamingStatus(raw: unknown): DreamingStatus | null {
   const record = asRecord(raw);
   if (!record) {
     return null;
@@ -182,7 +182,7 @@ export async function loadDreamingStatus(state: DreamingState): Promise<void> {
       "doctor.memory.status",
       {},
     );
-    state.dreamingStatus = normalizeSleepStatus(payload?.sleep);
+    state.dreamingStatus = normalizeDreamingStatus(payload?.dreaming);
   } catch (err) {
     state.dreamingStatusError = String(err);
   } finally {
@@ -190,7 +190,7 @@ export async function loadDreamingStatus(state: DreamingState): Promise<void> {
   }
 }
 
-async function writeSleepPatch(
+async function writeDreamingPatch(
   state: DreamingState,
   patch: Record<string, unknown>,
 ): Promise<boolean> {
@@ -213,7 +213,7 @@ async function writeSleepPatch(
       baseHash,
       raw: JSON.stringify(patch),
       sessionKey: state.applySessionKey,
-      note: "Sleep settings updated from Dreams tab.",
+      note: "Dreaming settings updated from the Dreaming tab.",
     });
     return true;
   } catch (err) {
@@ -226,13 +226,16 @@ async function writeSleepPatch(
   }
 }
 
-export async function updateSleepEnabled(state: DreamingState, enabled: boolean): Promise<boolean> {
-  const ok = await writeSleepPatch(state, {
+export async function updateDreamingEnabled(
+  state: DreamingState,
+  enabled: boolean,
+): Promise<boolean> {
+  const ok = await writeDreamingPatch(state, {
     plugins: {
       entries: {
         "memory-core": {
           config: {
-            sleep: {
+            dreaming: {
               enabled,
             },
           },
@@ -249,17 +252,17 @@ export async function updateSleepEnabled(state: DreamingState, enabled: boolean)
   return ok;
 }
 
-export async function updateSleepPhaseEnabled(
+export async function updateDreamingPhaseEnabled(
   state: DreamingState,
-  phase: SleepPhaseId,
+  phase: DreamingPhaseId,
   enabled: boolean,
 ): Promise<boolean> {
-  const ok = await writeSleepPatch(state, {
+  const ok = await writeDreamingPatch(state, {
     plugins: {
       entries: {
         "memory-core": {
           config: {
-            sleep: {
+            dreaming: {
               phases: {
                 [phase]: {
                   enabled,
@@ -285,5 +288,3 @@ export async function updateSleepPhaseEnabled(
   }
   return ok;
 }
-
-export type DreamingStatus = SleepStatus;
