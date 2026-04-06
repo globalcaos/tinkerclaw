@@ -13,7 +13,11 @@ import { resolveBundledWebFetchResolutionConfig } from "./web-fetch-providers.sh
 import { resolveManifestDeclaredWebProviderCandidatePluginIds } from "./web-provider-resolution-shared.js";
 import { resolveBundledWebSearchResolutionConfig } from "./web-search-providers.shared.js";
 
-const WEB_SEARCH_ARTIFACT_CANDIDATES = ["web-search-provider.js", "web-search.js"] as const;
+const WEB_SEARCH_ARTIFACT_CANDIDATES = [
+  "web-search-contract-api.js",
+  "web-search-provider.js",
+  "web-search.js",
+] as const;
 const WEB_FETCH_ARTIFACT_CANDIDATES = ["web-fetch-provider.js", "web-fetch.js"] as const;
 
 type BundledWebProviderPublicArtifactParams = {
