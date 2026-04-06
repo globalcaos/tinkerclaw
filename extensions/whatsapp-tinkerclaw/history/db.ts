@@ -215,7 +215,7 @@ export interface SearchResult {
 
 /**
  * Resolve a chat filter string to a list of chat JIDs, handling both
- * phone-based JIDs (34689771571@s.whatsapp.net) and LIDs (94167325782196@lid).
+ * phone-based JIDs (34600000000@s.whatsapp.net) and LIDs (94167325782196@lid).
  *
  * WhatsApp now uses LIDs alongside traditional JIDs for the same contact.
  * This function queries the contacts and chats tables to find all JIDs
