@@ -4,11 +4,17 @@ const createAndRegisterDefaultExecApprovalRequestMock = vi.hoisted(() => vi.fn()
 const buildExecApprovalPendingToolResultMock = vi.hoisted(() => vi.fn());
 const buildExecApprovalFollowupTargetMock = vi.hoisted(() => vi.fn(() => null));
 const createExecApprovalDecisionStateMock = vi.hoisted(() =>
-  vi.fn(() => ({
-    baseDecision: { timedOut: false },
-    approvedByAsk: false,
-    deniedReason: "approval-required",
-  })),
+  vi.fn(
+    (): {
+      baseDecision: { timedOut: boolean };
+      approvedByAsk: boolean;
+      deniedReason: string | null;
+    } => ({
+      baseDecision: { timedOut: false },
+      approvedByAsk: false,
+      deniedReason: "approval-required",
+    }),
+  ),
 );
 const evaluateShellAllowlistMock = vi.hoisted(() =>
   vi.fn(() => ({
@@ -27,7 +33,9 @@ const buildEnforcedShellCommandMock = vi.hoisted(() =>
   })),
 );
 const recordAllowlistMatchesUseMock = vi.hoisted(() => vi.fn());
-const resolveApprovalDecisionOrUndefinedMock = vi.hoisted(() => vi.fn(async () => undefined));
+const resolveApprovalDecisionOrUndefinedMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<string | null | undefined> => undefined),
+);
 const resolveExecHostApprovalContextMock = vi.hoisted(() =>
   vi.fn(() => ({
     approvals: { allowlist: [], file: { version: 1, agents: {} } },
@@ -39,9 +47,19 @@ const resolveExecHostApprovalContextMock = vi.hoisted(() =>
 const runExecProcessMock = vi.hoisted(() => vi.fn());
 const sendExecApprovalFollowupResultMock = vi.hoisted(() => vi.fn(async () => undefined));
 const enforceStrictInlineEvalApprovalBoundaryMock = vi.hoisted(() =>
-  vi.fn((value: { approvedByAsk: boolean; deniedReason: string | null }) => value),
+  vi.fn(
+    (value: {
+      approvedByAsk: boolean;
+      deniedReason: string | null;
+    }): {
+      approvedByAsk: boolean;
+      deniedReason: string | null;
+    } => value,
+  ),
 );
-const detectInterpreterInlineEvalArgvMock = vi.hoisted(() => vi.fn(() => null));
+const detectInterpreterInlineEvalArgvMock = vi.hoisted(() =>
+  vi.fn((): { kind: string } | null => null),
+);
 
 vi.mock("../infra/exec-approvals.js", () => ({
   evaluateShellAllowlist: evaluateShellAllowlistMock,
