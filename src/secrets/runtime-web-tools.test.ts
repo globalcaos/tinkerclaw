@@ -855,6 +855,46 @@ describe("runtime web tools resolution", () => {
     expect(runtimeWebFetchProviders.resolvePluginWebFetchProviders).not.toHaveBeenCalled();
   });
 
+  it("uses bundled public artifacts for bundled web search provider discovery", async () => {
+    const { metadata } = await runRuntimeWebTools({
+      config: asConfig({
+        tools: {
+          web: {
+            search: {
+              provider: "brave",
+            },
+          },
+        },
+      }),
+      env: {
+        BRAVE_API_KEY: "brave-key", // pragma: allowlist secret
+      },
+    });
+
+    expect(metadata.search.selectedProvider).toBe("brave");
+    expect(runtimeWebSearchProviders.resolvePluginWebSearchProviders).not.toHaveBeenCalled();
+  });
+
+  it("uses bundled public artifacts for bundled web fetch provider discovery", async () => {
+    const { metadata } = await runRuntimeWebTools({
+      config: asConfig({
+        tools: {
+          web: {
+            fetch: {
+              provider: "firecrawl",
+            },
+          },
+        },
+      }),
+      env: {
+        FIRECRAWL_API_KEY: "firecrawl-key", // pragma: allowlist secret
+      },
+    });
+
+    expect(metadata.fetch.selectedProvider).toBe("firecrawl");
+    expect(runtimeWebFetchProviders.resolvePluginWebFetchProviders).not.toHaveBeenCalled();
+  });
+
   it("uses env fallback for unresolved web fetch provider SecretRef when active", async () => {
     const { metadata, resolvedConfig, context } = await runRuntimeWebTools({
       config: asConfig({
