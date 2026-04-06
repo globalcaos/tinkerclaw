@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
 import { readSecretFromFile } from "../../acp/secret-file.js";
-import type { GatewayAuthMode, GatewayTailscaleMode } from "../../config/config.js";
+import type {
+  GatewayAuthMode,
+  GatewayBindMode,
+  GatewayTailscaleMode,
+} from "../../config/config.js";
 import {
   CONFIG_PATH,
   loadConfig,
@@ -12,26 +16,22 @@ import {
 } from "../../config/config.js";
 import { hasConfiguredSecretInput } from "../../config/types.secrets.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
-import { startGatewayServer } from "../../gateway/server.js";
+import { defaultGatewayBindMode, isContainerEnvironment } from "../../gateway/net.js";
 import type { GatewayWsLogStyle } from "../../gateway/ws-logging.js";
 import { setGatewayWsLogStyle } from "../../gateway/ws-logging.js";
 import { setVerbose } from "../../globals.js";
+import { resolveControlUiRootSync } from "../../infra/control-ui-assets.js";
 import { GatewayLockError } from "../../infra/gateway-lock.js";
 import { formatPortDiagnostics, inspectPortUsage } from "../../infra/ports.js";
 import { cleanStaleGatewayProcessesSync } from "../../infra/restart-stale-pids.js";
+import { detectRespawnSupervisor } from "../../infra/supervisor-markers.js";
 import { setConsoleSubsystemFilter, setConsoleTimestampPrefix } from "../../logging/console.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { defaultRuntime } from "../../runtime.js";
-import {
-  startGatewayContainer,
-  stopGatewayContainer,
-  isGatewayContainerRunning,
-  getGatewayContainerLogs,
-} from "../../security/gateway-container.js";
-import { startSecretsProxy } from "../../security/secrets-proxy.js";
 import { formatCliCommand } from "../command-format.js";
 import { inheritOptionFromParent } from "../command-options.js";
 import { forceFreePortAndWait, waitForPortBindable } from "../ports.js";
+import { withProgress } from "../progress.js";
 import { ensureDevGatewayConfig } from "./dev.js";
 import { runGatewayLoop } from "./run-loop.js";
 import {
@@ -62,7 +62,6 @@ type GatewayRunOpts = {
   rawStreamPath?: unknown;
   dev?: boolean;
   reset?: boolean;
-  secure?: boolean;
 };
 
 const gatewayLog = createSubsystemLogger("gateway");
@@ -91,6 +90,8 @@ const GATEWAY_RUN_BOOLEAN_KEYS = [
   "compact",
   "rawStream",
 ] as const;
+
+const SUPERVISED_GATEWAY_LOCK_RETRY_MS = 5000;
 
 const GATEWAY_AUTH_MODES: readonly GatewayAuthMode[] = [
   "none",
@@ -146,6 +147,57 @@ function formatModeErrorList<T extends string>(modes: readonly T[]): string {
   return `${quoted.slice(0, -1).join(", ")}, or ${quoted[quoted.length - 1]}`;
 }
 
+function maybeLogPendingControlUiBuild(cfg: ReturnType<typeof loadConfig>): void {
+  if (cfg.gateway?.controlUi?.enabled === false) {
+    return;
+  }
+  if (toOptionString(cfg.gateway?.controlUi?.root)) {
+    return;
+  }
+  if (
+    resolveControlUiRootSync({
+      moduleUrl: import.meta.url,
+      argv1: process.argv[1],
+      cwd: process.cwd(),
+    })
+  ) {
+    return;
+  }
+  gatewayLog.info(
+    "Control UI assets are missing; first startup may spend a few seconds building them before the gateway binds. Prebuild with `pnpm ui:build` for a faster first boot.",
+  );
+}
+
+function getGatewayStartGuardErrors(params: {
+  allowUnconfigured?: boolean;
+  configExists: boolean;
+  configAuditPath: string;
+  mode: string | undefined;
+}): string[] {
+  if (params.allowUnconfigured || params.mode === "local") {
+    return [];
+  }
+  if (!params.configExists) {
+    return [
+      `Missing config. Run \`${formatCliCommand("openclaw setup")}\` or set gateway.mode=local (or pass --allow-unconfigured).`,
+    ];
+  }
+  if (params.mode === undefined) {
+    return [
+      [
+        "Gateway start blocked: existing config is missing gateway.mode.",
+        "Treat this as suspicious or clobbered config.",
+        `Re-run \`${formatCliCommand("openclaw onboard --mode local")}\` or \`${formatCliCommand("openclaw setup")}\`, set gateway.mode=local manually, or pass --allow-unconfigured.`,
+      ].join(" "),
+      `Config write audit: ${params.configAuditPath}`,
+    ];
+  }
+  return [
+    `Gateway start blocked: set gateway.mode=local (current: ${params.mode}) or pass --allow-unconfigured.`,
+    `Config write audit: ${params.configAuditPath}`,
+  ];
+}
+
 function resolveGatewayRunOptions(opts: GatewayRunOpts, command?: Command): GatewayRunOpts {
   const resolved: GatewayRunOpts = { ...opts };
 
@@ -167,6 +219,23 @@ function resolveGatewayRunOptions(opts: GatewayRunOpts, command?: Command): Gate
   return resolved;
 }
 
+function isGatewayLockError(err: unknown): err is GatewayLockError {
+  return (
+    err instanceof GatewayLockError ||
+    (!!err && typeof err === "object" && (err as { name?: string }).name === "GatewayLockError")
+  );
+}
+
+function isHealthyGatewayLockError(err: unknown): boolean {
+  if (!isGatewayLockError(err) || typeof err.message !== "string") {
+    return false;
+  }
+  return (
+    err.message.includes("gateway already running") ||
+    err.message.includes("another gateway instance is already listening")
+  );
+}
+
 async function runGatewayCommand(opts: GatewayRunOpts) {
   const isDevProfile = process.env.OPENCLAW_PROFILE?.trim().toLowerCase() === "dev";
   const devMode = Boolean(opts.dev) || isDevProfile;
@@ -176,7 +245,6 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     return;
   }
 
-  setConsoleTimestampPrefix(true);
   setVerbose(Boolean(opts.verbose));
   if (opts.cliBackendLogs || opts.claudeCliLogs) {
     setConsoleSubsystemFilter(["agent/cli-backend"]);
@@ -204,11 +272,23 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     process.env.OPENCLAW_RAW_STREAM_PATH = rawStreamPath;
   }
 
+  // The heaviest part of gateway startup is loading the server module tree
+  // (channels, plugins, HTTP stack, etc.). Show a spinner so the user sees
+  // progress instead of a silent 15-20 s pause (especially on Windows/NTFS).
+  const { startGatewayServer } = await withProgress(
+    { label: "Loading gateway modules…", indeterminate: true },
+    async () => import("../../gateway/server.js"),
+  );
+
+  setConsoleTimestampPrefix(true);
+
   if (devMode) {
     await ensureDevGatewayConfig({ reset: Boolean(opts.reset) });
   }
 
+  gatewayLog.info("loading configuration…");
   const cfg = loadConfig();
+  maybeLogPendingControlUiBuild(cfg);
   const portOverride = parsePort(opts.port);
   if (opts.port !== undefined && portOverride === null) {
     defaultRuntime.error("Invalid port");
@@ -219,20 +299,17 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.error("Invalid port");
     defaultRuntime.exit(1);
   }
-  const bindRaw = toOptionString(opts.bind) ?? cfg.gateway?.bind ?? "loopback";
-  const bind =
-    bindRaw === "loopback" ||
-    bindRaw === "lan" ||
-    bindRaw === "auto" ||
-    bindRaw === "custom" ||
-    bindRaw === "tailnet"
-      ? bindRaw
-      : null;
-  if (!bind) {
+  // Only capture the *explicit* bind value here.  The container-aware
+  // default is deferred until after Tailscale mode is known (see below)
+  // so that Tailscale's loopback constraint is respected.
+  const VALID_BIND_MODES = new Set<string>(["loopback", "lan", "auto", "custom", "tailnet"]);
+  const bindExplicitRawStr = (toOptionString(opts.bind) ?? cfg.gateway?.bind)?.trim() || undefined;
+  if (bindExplicitRawStr !== undefined && !VALID_BIND_MODES.has(bindExplicitRawStr)) {
     defaultRuntime.error('Invalid --bind (use "loopback", "lan", "tailnet", "auto", or "custom")');
     defaultRuntime.exit(1);
     return;
   }
+  const bindExplicitRaw = bindExplicitRawStr as GatewayBindMode | undefined;
   if (process.env.OPENCLAW_SERVICE_MARKER?.trim()) {
     const stale = cleanStaleGatewayProcessesSync(port);
     if (stale.length > 0) {
@@ -265,11 +342,11 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
       }
       // After killing, verify the port is actually bindable (handles TIME_WAIT).
       const bindProbeHost =
-        bind === "loopback"
+        bindExplicitRaw === "loopback"
           ? "127.0.0.1"
-          : bind === "lan"
+          : bindExplicitRaw === "lan"
             ? "0.0.0.0"
-            : bind === "custom"
+            : bindExplicitRaw === "custom"
               ? toOptionString(cfg.gateway?.customBindHost)
               : undefined;
       const bindWaitMs = await waitForPortBindable(port, {
@@ -308,6 +385,15 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.exit(1);
     return;
   }
+  // Now that Tailscale mode is known, compute the effective bind mode.
+  const effectiveTailscaleMode = tailscaleMode ?? cfg.gateway?.tailscale?.mode ?? "off";
+  const bind = (bindExplicitRaw ?? defaultGatewayBindMode(effectiveTailscaleMode)) as
+    | "loopback"
+    | "lan"
+    | "auto"
+    | "custom"
+    | "tailnet";
+
   let passwordRaw: string | undefined;
   try {
     passwordRaw = resolveGatewayPasswordOption(opts);
@@ -321,21 +407,21 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   }
   const tokenRaw = toOptionString(opts.token);
 
+  gatewayLog.info("resolving authentication…");
   const snapshot = await readConfigFileSnapshot().catch(() => null);
   const configExists = snapshot?.exists ?? fs.existsSync(CONFIG_PATH);
   const configAuditPath = path.join(resolveStateDir(process.env), "logs", "config-audit.jsonl");
   const effectiveCfg = snapshot?.valid ? snapshot.config : cfg;
   const mode = effectiveCfg.gateway?.mode;
-  if (!opts.allowUnconfigured && mode !== "local") {
-    if (!configExists) {
-      defaultRuntime.error(
-        `Missing config. Run \`${formatCliCommand("openclaw setup")}\` or set gateway.mode=local (or pass --allow-unconfigured).`,
-      );
-    } else {
-      defaultRuntime.error(
-        `Gateway start blocked: set gateway.mode=local (current: ${mode ?? "unset"}) or pass --allow-unconfigured.`,
-      );
-      defaultRuntime.error(`Config write audit: ${configAuditPath}`);
+  const guardErrors = getGatewayStartGuardErrors({
+    allowUnconfigured: opts.allowUnconfigured,
+    configExists,
+    configAuditPath,
+    mode,
+  });
+  if (guardErrors.length > 0) {
+    for (const error of guardErrors) {
+      defaultRuntime.error(error);
     }
     defaultRuntime.exit(1);
     return;
@@ -412,7 +498,14 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
     defaultRuntime.error(
       [
         `Refusing to bind gateway to ${bind} without auth.`,
-        "Set gateway.auth.token/password (or OPENCLAW_GATEWAY_TOKEN/OPENCLAW_GATEWAY_PASSWORD) or pass --token/--password.",
+        ...(isContainerEnvironment()
+          ? [
+              "Container environment detected \u2014 the gateway defaults to bind=auto (0.0.0.0) for port-forwarding compatibility.",
+              "Set OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD, or pass --token/--password to start with auth.",
+            ]
+          : [
+              "Set gateway.auth.token/password (or OPENCLAW_GATEWAY_TOKEN/OPENCLAW_GATEWAY_PASSWORD) or pass --token/--password.",
+            ]),
         ...authHints,
       ]
         .filter(Boolean)
@@ -429,132 +522,42 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         }
       : undefined;
 
-  if (opts.secure) {
-    gatewayLog.info("Starting in SECURE mode (Docker + Secrets Proxy)");
-
-    // Set secure mode environment variable for this process
-    process.env.OPENCLAW_SECURE_MODE = "1";
-
-    const proxyPort = 8080;
-    const proxyUrl = `http://host.docker.internal:${proxyPort}`;
-
-    // Start secrets proxy first
-    let proxyServer: Awaited<ReturnType<typeof startSecretsProxy>>;
-    try {
-      proxyServer = await startSecretsProxy({ port: proxyPort });
-      gatewayLog.info(`Secrets proxy started on port ${proxyPort}`);
-    } catch (err) {
-      gatewayLog.error(`Failed to start secrets proxy: ${String(err)}`);
-      defaultRuntime.exit(1);
-      return;
-    }
-
-    // Start gateway container
-    let containerName: string;
-    try {
-      containerName = await startGatewayContainer({
-        proxyUrl,
-        env: process.env,
-        // TODO: Read bind mounts from config
-        // binds: config?.gateway?.secretsProxy?.binds || [],
-      });
-      gatewayLog.info(`Gateway container started: ${containerName}`);
-    } catch (err) {
-      gatewayLog.error(`Failed to start gateway container: ${String(err)}`);
-      proxyServer.close();
-      defaultRuntime.exit(1);
-      return;
-    }
-
-    // P1 Fix: Wait for container to be ready with timeout
-    const HEALTH_CHECK_INTERVAL = 1000;
-    const HEALTH_CHECK_TIMEOUT = 30000;
-    const startTime = Date.now();
-    let containerReady = false;
-
-    while (Date.now() - startTime < HEALTH_CHECK_TIMEOUT) {
-      const isRunning = await isGatewayContainerRunning();
-      if (isRunning) {
-        containerReady = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
-    }
-
-    if (!containerReady) {
-      gatewayLog.error("Gateway container failed to start within timeout");
-      const logs = await getGatewayContainerLogs(20);
-      gatewayLog.error(`Container logs:\n${logs}`);
-      await stopGatewayContainer();
-      proxyServer.close();
-      defaultRuntime.exit(1);
-      return;
-    }
-
-    gatewayLog.info("Gateway container is ready and healthy");
-
-    // Set up graceful shutdown handlers
-    const shutdown = async () => {
-      gatewayLog.info("Shutting down secure gateway...");
-      try {
-        await stopGatewayContainer();
-        gatewayLog.info("Gateway container stopped");
-      } catch (err) {
-        gatewayLog.error(`Error stopping container: ${String(err)}`);
-      }
-      try {
-        proxyServer.close();
-        gatewayLog.info("Secrets proxy stopped");
-      } catch (err) {
-        gatewayLog.error(`Error stopping proxy: ${String(err)}`);
-      }
-      defaultRuntime.exit(0);
-    };
-
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
-
-    gatewayLog.info("Secure mode running. Press Ctrl+C to stop.");
-
-    // P1 Fix: Monitor container health periodically
-    const healthCheckLoop = async () => {
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 10000)); // Check every 10s
-        const isRunning = await isGatewayContainerRunning();
-        if (!isRunning) {
-          gatewayLog.error("Gateway container stopped unexpectedly");
-          const logs = await getGatewayContainerLogs(50);
-          gatewayLog.error(`Final container logs:\n${logs}`);
-          await shutdown();
-          return;
-        }
-      }
-    };
-
-    // Run health check loop (non-blocking)
-    void healthCheckLoop();
-
-    // Keep process alive
-    await new Promise(() => {});
-    return;
-  }
-
-  try {
+  gatewayLog.info("starting...");
+  const startLoop = async () =>
     await runGatewayLoop({
       runtime: defaultRuntime,
       lockPort: port,
-      start: async () =>
+      start: async ({ startupStartedAt } = {}) =>
         await startGatewayServer(port, {
           bind,
           auth: authOverride,
           tailscale: tailscaleOverride,
+          startupStartedAt,
         }),
     });
+
+  try {
+    const supervisor = detectRespawnSupervisor(process.env);
+    while (true) {
+      try {
+        await startLoop();
+        break;
+      } catch (err) {
+        const isGatewayAlreadyRunning =
+          err instanceof GatewayLockError &&
+          typeof err.message === "string" &&
+          err.message.includes("gateway already running");
+        if (!supervisor || !isGatewayAlreadyRunning) {
+          throw err;
+        }
+        gatewayLog.warn(
+          `gateway already running under ${supervisor}; waiting ${SUPERVISED_GATEWAY_LOCK_RETRY_MS}ms before retrying startup`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, SUPERVISED_GATEWAY_LOCK_RETRY_MS));
+      }
+    }
   } catch (err) {
-    if (
-      err instanceof GatewayLockError ||
-      (err && typeof err === "object" && (err as { name?: string }).name === "GatewayLockError")
-    ) {
+    if (isGatewayLockError(err)) {
       const errMessage = describeUnknownError(err);
       defaultRuntime.error(
         `Gateway failed to start: ${errMessage}\nIf the gateway is supervised, stop it with: ${formatCliCommand("openclaw gateway stop")}`,
@@ -570,7 +573,7 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
         // ignore diagnostics failures
       }
       await maybeExplainGatewayServiceStop();
-      defaultRuntime.exit(1);
+      defaultRuntime.exit(isHealthyGatewayLockError(err) ? 0 : 1);
       return;
     }
     defaultRuntime.error(`Gateway failed to start: ${String(err)}`);
@@ -603,7 +606,7 @@ export function addGatewayRunCommand(cmd: Command): Command {
     )
     .option(
       "--allow-unconfigured",
-      "Allow gateway start without gateway.mode=local in config",
+      "Allow gateway start without enforcing gateway.mode=local in config (does not repair config)",
       false,
     )
     .option("--dev", "Create a dev config + workspace if missing (no BOOTSTRAP.md)", false)
@@ -624,7 +627,6 @@ export function addGatewayRunCommand(cmd: Command): Command {
     .option("--compact", 'Alias for "--ws-log compact"', false)
     .option("--raw-stream", "Log raw model stream events to jsonl", false)
     .option("--raw-stream-path <path>", "Raw stream jsonl path")
-    .option("--secure", "Run gateway inside a secure Docker container with secrets proxy", false)
     .action(async (opts, command) => {
       await runGatewayCommand(resolveGatewayRunOptions(opts, command));
     });

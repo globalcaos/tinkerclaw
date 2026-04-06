@@ -54,7 +54,7 @@ const NUL_MARKER_RE = /(?:\^@|\\0|\\x00|\\u0000|null\s*byte|nul\s*byte)/i;
 const QMD_EMBED_BACKOFF_BASE_MS = 60_000;
 const QMD_EMBED_BACKOFF_MAX_MS = 60 * 60 * 1000;
 const HAN_SCRIPT_RE = /[\u3400-\u9fff]/u;
-const QMD_BM25_HAN_KEYWORD_LIMIT = 12;
+const _QMD_BM25_HAN_KEYWORD_LIMIT = 12;
 const MCPORTER_TIMEOUT_BUFFER_MS = 2_000;
 const QMD_UPDATE_RETRY_BASE_DELAY_MS = 500;
 const QMD_EMBED_LOCK_MIN_WAIT_MS = 15 * 60 * 1000;
@@ -98,7 +98,7 @@ function getQmdEmbedQueueState(): QmdEmbedQueueState {
   }));
 }
 
-function hasHanScript(value: string): boolean {
+function _hasHanScript(value: string): boolean {
   return HAN_SCRIPT_RE.test(value);
 }
 
