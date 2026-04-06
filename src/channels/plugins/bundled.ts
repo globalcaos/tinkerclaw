@@ -6,10 +6,10 @@ import type {
   BundledChannelSetupEntryContract,
 } from "../../plugin-sdk/channel-entry-contract.js";
 import {
-  listBundledPluginMetadata,
-  resolveBundledPluginGeneratedPath,
-  type BundledPluginMetadata,
-} from "../../plugins/bundled-plugin-metadata.js";
+  listBundledChannelPluginMetadata,
+  resolveBundledChannelGeneratedPath,
+  type BundledChannelPluginMetadata,
+} from "../../plugins/bundled-channel-runtime.js";
 import type { PluginRuntime } from "../../plugins/runtime/types.js";
 import { isJavaScriptModulePath, loadChannelPluginModule } from "./module-loader.js";
 import type { ChannelId, ChannelPlugin } from "./types.js";
@@ -74,7 +74,7 @@ function resolveChannelSetupModuleEntry(
 }
 
 function resolveBundledChannelBoundaryRoot(params: {
-  metadata: BundledPluginMetadata;
+  metadata: BundledChannelPluginMetadata;
   modulePath: string;
 }): string {
   const distRoot = path.resolve(
@@ -90,10 +90,10 @@ function resolveBundledChannelBoundaryRoot(params: {
 }
 
 function loadGeneratedBundledChannelModule(params: {
-  metadata: BundledPluginMetadata;
-  entry: BundledPluginMetadata["source"] | BundledPluginMetadata["setupSource"];
+  metadata: BundledChannelPluginMetadata;
+  entry: BundledChannelPluginMetadata["source"] | BundledChannelPluginMetadata["setupSource"];
 }): unknown {
-  const modulePath = resolveBundledPluginGeneratedPath(
+  const modulePath = resolveBundledChannelGeneratedPath(
     OPENCLAW_PACKAGE_ROOT,
     params.entry,
     params.metadata.dirName,
@@ -119,7 +119,7 @@ function loadGeneratedBundledChannelModule(params: {
 function loadGeneratedBundledChannelEntries(): readonly GeneratedBundledChannelEntry[] {
   const entries: GeneratedBundledChannelEntry[] = [];
 
-  for (const metadata of listBundledPluginMetadata({
+  for (const metadata of listBundledChannelPluginMetadata({
     includeChannelConfigs: false,
     includeSyntheticChannelConfigs: false,
   })) {
