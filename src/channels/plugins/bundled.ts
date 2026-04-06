@@ -1,5 +1,5 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveOpenClawPackageRootSync } from "../../infra/openclaw-root.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type {
   BundledChannelEntryContract,
@@ -21,7 +21,12 @@ type GeneratedBundledChannelEntry = {
 };
 
 const log = createSubsystemLogger("channels");
-const OPENCLAW_PACKAGE_ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+const OPENCLAW_PACKAGE_ROOT =
+  resolveOpenClawPackageRootSync({
+    cwd: process.cwd(),
+    moduleUrl: import.meta.url,
+    argv1: process.argv[1],
+  }) ?? process.cwd();
 
 function resolveChannelPluginModuleEntry(
   moduleExport: unknown,
