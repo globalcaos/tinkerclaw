@@ -95,6 +95,9 @@ export function phaseSalience(phase: TaskPhase, kind: EventKind): number {
   return PHASE_SALIENCE[phase]?.[kind] ?? 1.0;
 }
 
+/** Boost multiplier for events sourced from curated knowledge files. */
+const KNOWLEDGE_BOOST = 1.5;
+
 /**
  * Compute the task-conditioned modifier for an event given the current task state.
  * This multiplies the base retrieval score.
@@ -121,6 +124,11 @@ export function taskConditionedModifier(event: MemoryEvent, taskState: TaskState
   // Constraint protection — floor at CONSTRAINT_FLOOR
   if (event.metadata.tags?.includes("constraint")) {
     m = Math.max(m, CONSTRAINT_FLOOR);
+  }
+
+  // Knowledge file boost — curated entries are more relevant
+  if (event.content?.includes("/knowledge/")) {
+    m *= KNOWLEDGE_BOOST;
   }
 
   return Math.min(m, M_MAX);

@@ -21,11 +21,14 @@ import {
 } from "./episode-detection.js";
 import type { EventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
+import { compileKnowledge } from "./knowledge-compiler.js";
 
 export interface SleepConsolidationConfig {
   episodeDetection?: Partial<EpisodeDetectionConfig>;
   /** Generate a summary for an episode. LLM-backed in production, simple in tests. */
   summarizeEpisode?: (episode: Episode, events: MemoryEvent[]) => string | Promise<string>;
+  /** Directory for structured knowledge files. If set, triggers knowledge compilation. */
+  knowledgeDir?: string;
 }
 
 export interface ConsolidationResult {
@@ -91,12 +94,50 @@ export async function runSleepConsolidation(
 
   // 3. Generate & store summaries
   let summariesGenerated = 0;
+  const episodeSummaries: Array<{
+    summary: string;
+    episodeId: string;
+    timestamp: number;
+    tags: string[];
+  }> = [];
+
   for (const episode of episodes) {
     const episodeEvents = unprocessed.filter((e) => episode.sourceEventIds.includes(e.id));
     const summary = await summarize(episode, episodeEvents);
 
     artifactStore.store(summary, "text");
     summariesGenerated++;
+
+    // Collect tags from all events in the episode for knowledge classification
+    const tags = new Set<string>();
+    for (const ev of episodeEvents) {
+      for (const tag of ev.metadata.tags ?? []) {
+        tags.add(tag);
+      }
+    }
+
+    episodeSummaries.push({
+      summary,
+      episodeId: episode.id,
+      timestamp: new Date(episode.startTime).getTime(),
+      tags: [...tags],
+    });
+  }
+
+  // 3.5. Knowledge compilation — group summaries into structured knowledge files
+  if (config.knowledgeDir && episodeSummaries.length > 0) {
+    const knowledgeResult = await compileKnowledge({
+      summaries: episodeSummaries.map((s) => ({
+        text: s.summary,
+        id: s.episodeId,
+        timestamp: s.timestamp,
+        tags: s.tags,
+      })),
+      knowledgeDir: config.knowledgeDir,
+    });
+    console.log(
+      `[ENGRAM] Knowledge compiled: ${knowledgeResult.added} added, ${knowledgeResult.skipped} skipped`,
+    );
   }
 
   // 4. Update state
