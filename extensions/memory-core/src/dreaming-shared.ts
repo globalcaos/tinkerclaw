@@ -1,9 +1,4 @@
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
+export { asNullableRecord as asRecord } from "openclaw/plugin-sdk/text-runtime";
 
 export function normalizeTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {

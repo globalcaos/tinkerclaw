@@ -1,10 +1,6 @@
-import { isRecord } from "openclaw/plugin-sdk/text-runtime";
+import { asNullableRecord, isRecord } from "openclaw/plugin-sdk/text-runtime";
 
-export { isRecord };
-
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return isRecord(value) ? value : null;
-}
+export { asNullableRecord as asRecord, isRecord };
 
 export function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
