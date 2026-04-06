@@ -18,10 +18,10 @@ import {
 import {
   buildMSTeamsAttachmentPlaceholder,
   buildMSTeamsMediaPayload,
-  isRecord,
   type MSTeamsAttachmentLike,
   summarizeMSTeamsHtmlAttachments,
 } from "../attachments.js";
+import { isRecord } from "../attachments/shared.js";
 import type { StoredConversationReference } from "../conversation-store.js";
 import { formatUnknownError } from "../errors.js";
 import {
