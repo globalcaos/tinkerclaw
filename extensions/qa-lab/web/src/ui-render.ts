@@ -209,6 +209,23 @@ const AVATAR_COLORS = [
   "#e879f9",
 ];
 
+const MOCK_MODELS: RunnerModelOption[] = [
+  {
+    key: "mock-openai/gpt-5.4",
+    name: "GPT-5.4 (mock)",
+    provider: "mock-openai",
+    input: "text",
+    preferred: true,
+  },
+  {
+    key: "mock-openai/gpt-5.4-alt",
+    name: "GPT-5.4 Alt (mock)",
+    provider: "mock-openai",
+    input: "text",
+    preferred: false,
+  },
+];
+
 function avatarColor(name: string): string {
   let h = 0;
   for (const ch of name) {
@@ -330,7 +347,8 @@ function renderSidebar(state: UiState): string {
   const run = state.scenarioRun;
   const isRunning = runner?.status === "running";
   const realModels = state.bootstrap?.runnerCatalog.real ?? [];
-  const usesRealCatalog = selection?.providerMode === "live-openai" && realModels.length > 0;
+  const modelOptions =
+    selection?.providerMode === "live-openai" && realModels.length > 0 ? realModels : MOCK_MODELS;
   const selectedIds = new Set(selection?.scenarioIds ?? []);
 
   return `
@@ -345,34 +363,20 @@ function renderSidebar(state: UiState): string {
             <option value="live-openai"${selection?.providerMode === "live-openai" ? " selected" : ""}>Real providers</option>
           </select>
         </div>
-        ${
-          usesRealCatalog
-            ? renderModelSelect({
-                id: "primary-model",
-                label: "Primary model",
-                value: selection?.primaryModel ?? "",
-                options: realModels,
-                disabled: isRunning,
-              })
-            : `<div class="config-field">
-                <span class="config-label">Primary model</span>
-                <input id="primary-model" value="${esc(selection?.primaryModel ?? "")}"${isRunning ? " disabled" : ""} />
-              </div>`
-        }
-        ${
-          usesRealCatalog
-            ? renderModelSelect({
-                id: "alternate-model",
-                label: "Alternate model",
-                value: selection?.alternateModel ?? "",
-                options: realModels,
-                disabled: isRunning,
-              })
-            : `<div class="config-field">
-                <span class="config-label">Alternate model</span>
-                <input id="alternate-model" value="${esc(selection?.alternateModel ?? "")}"${isRunning ? " disabled" : ""} />
-              </div>`
-        }
+        ${renderModelSelect({
+          id: "primary-model",
+          label: "Primary model",
+          value: selection?.primaryModel ?? "",
+          options: modelOptions,
+          disabled: isRunning,
+        })}
+        ${renderModelSelect({
+          id: "alternate-model",
+          label: "Alternate model",
+          value: selection?.alternateModel ?? "",
+          options: modelOptions,
+          disabled: isRunning,
+        })}
         <div class="config-row">
           <label><input id="fast-mode" type="checkbox"${selection?.fastMode ? " checked" : ""}${isRunning ? " disabled" : ""} /> Fast mode</label>
         </div>
