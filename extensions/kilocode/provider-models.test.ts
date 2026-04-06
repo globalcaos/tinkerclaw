@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { discoverKilocodeModels, KILOCODE_MODELS_URL } from "./kilocode-models.js";
-
-// discoverKilocodeModels checks for VITEST env and returns static catalog,
-// so we need to temporarily unset it to test the fetch path.
+import { discoverKilocodeModels, KILOCODE_MODELS_URL } from "./provider-models.js";
 
 function makeGatewayModel(overrides: Record<string, unknown> = {}) {
   return {
@@ -84,7 +81,6 @@ async function withFetchPathTest(
 
 describe("discoverKilocodeModels", () => {
   it("returns static catalog in test environment", async () => {
-    // Default vitest env — should return static catalog without fetching
     const models = await discoverKilocodeModels();
     expect(models.length).toBeGreaterThan(0);
     expect(models.some((m) => m.id === "kilo/auto")).toBe(true);
@@ -115,7 +111,6 @@ describe("discoverKilocodeModels (fetch path)", () => {
     await withFetchPathTest(mockFetch, async () => {
       const models = await discoverKilocodeModels();
 
-      // Should have fetched from the gateway URL
       expect(mockFetch).toHaveBeenCalledWith(
         KILOCODE_MODELS_URL,
         expect.objectContaining({
@@ -123,24 +118,16 @@ describe("discoverKilocodeModels (fetch path)", () => {
         }),
       );
 
-      // Should have both models
       expect(models.length).toBe(2);
 
-      // Verify the sonnet model pricing (per-token * 1_000_000 = per-1M-token)
       const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
       expect(sonnet).toBeDefined();
-      expect(sonnet?.cost.input).toBeCloseTo(3.0); // 0.000003 * 1_000_000
-      expect(sonnet?.cost.output).toBeCloseTo(15.0); // 0.000015 * 1_000_000
-      expect(sonnet?.cost.cacheRead).toBeCloseTo(0.3); // 0.0000003 * 1_000_000
-      expect(sonnet?.cost.cacheWrite).toBeCloseTo(3.75); // 0.00000375 * 1_000_000
-
-      // Verify modality
+      expect(sonnet?.cost.input).toBeCloseTo(3.0);
+      expect(sonnet?.cost.output).toBeCloseTo(15.0);
+      expect(sonnet?.cost.cacheRead).toBeCloseTo(0.3);
+      expect(sonnet?.cost.cacheWrite).toBeCloseTo(3.75);
       expect(sonnet?.input).toEqual(["text", "image"]);
-
-      // Verify reasoning detection
       expect(sonnet?.reasoning).toBe(true);
-
-      // Verify context/tokens
       expect(sonnet?.contextWindow).toBe(200000);
       expect(sonnet?.maxTokens).toBe(8192);
     });
@@ -172,7 +159,7 @@ describe("discoverKilocodeModels (fetch path)", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          data: [makeGatewayModel()], // no kilo/auto
+          data: [makeGatewayModel()],
         }),
     });
     await withFetchPathTest(mockFetch, async () => {

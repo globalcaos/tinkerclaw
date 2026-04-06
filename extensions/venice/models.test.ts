@@ -3,7 +3,7 @@ import {
   buildVeniceModelDefinition,
   discoverVeniceModels,
   VENICE_MODEL_CATALOG,
-} from "./venice-models.js";
+} from "./models.js";
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_VITEST = process.env.VITEST;
