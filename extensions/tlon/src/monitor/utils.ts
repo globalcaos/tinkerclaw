@@ -1,5 +1,5 @@
 import { formatErrorMessage as sharedFormatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { asNullableObjectRecord } from "openclaw/plugin-sdk/text-runtime";
+import { asNullableObjectRecord, readStringField } from "openclaw/plugin-sdk/text-runtime";
 import { normalizeShip } from "../targets.js";
 
 // Cite types for message references
@@ -185,14 +185,7 @@ export async function resolveAuthorizedMessageText(params: {
 
 export const asRecord = asNullableObjectRecord;
 export const formatErrorMessage = sharedFormatErrorMessage;
-
-export function readString(
-  record: Record<string, unknown> | null,
-  key: string,
-): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" ? value : undefined;
-}
+export const readString = readStringField;
 
 // Helper to recursively extract text from inline content
 function renderInlineItem(
