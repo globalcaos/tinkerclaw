@@ -14,6 +14,15 @@ const { resolvePluginWebSearchProvidersMock } = vi.hoisted(() => ({
 const { resolvePluginWebFetchProvidersMock } = vi.hoisted(() => ({
   resolvePluginWebFetchProvidersMock: vi.fn(() => buildTestWebFetchProviders()),
 }));
+const {
+  resolveBundledWebSearchProvidersFromPublicArtifactsMock,
+  resolveBundledWebFetchProvidersFromPublicArtifactsMock,
+} = vi.hoisted(() => ({
+  resolveBundledWebSearchProvidersFromPublicArtifactsMock: vi.fn(() =>
+    buildTestWebSearchProviders(),
+  ),
+  resolveBundledWebFetchProvidersFromPublicArtifactsMock: vi.fn(() => buildTestWebFetchProviders()),
+}));
 let runtimeWebSearchProviders: typeof import("../plugins/web-search-providers.runtime.js");
 let runtimeWebFetchProviders: typeof import("../plugins/web-fetch-providers.runtime.js");
 let secretResolve: typeof import("./resolve.js");
@@ -39,6 +48,13 @@ vi.mock("../plugins/web-fetch-providers.runtime.js", async () => {
     resolvePluginWebFetchProviders: resolvePluginWebFetchProvidersMock,
   };
 });
+
+vi.mock("../plugins/web-provider-public-artifacts.js", () => ({
+  resolveBundledWebSearchProvidersFromPublicArtifacts:
+    resolveBundledWebSearchProvidersFromPublicArtifactsMock,
+  resolveBundledWebFetchProvidersFromPublicArtifacts:
+    resolveBundledWebFetchProvidersFromPublicArtifactsMock,
+}));
 
 function asConfig(value: unknown): OpenClawConfig {
   return value as OpenClawConfig;
@@ -256,6 +272,8 @@ describe("runtime web tools resolution", () => {
     runtimeWebSearchProviders.__testing.resetWebSearchProviderSnapshotCacheForTests();
     vi.mocked(runtimeWebSearchProviders.resolvePluginWebSearchProviders).mockClear();
     vi.mocked(runtimeWebFetchProviders.resolvePluginWebFetchProviders).mockClear();
+    resolveBundledWebSearchProvidersFromPublicArtifactsMock.mockClear();
+    resolveBundledWebFetchProvidersFromPublicArtifactsMock.mockClear();
   });
 
   afterEach(() => {
@@ -685,8 +703,6 @@ describe("runtime web tools resolution", () => {
   });
 
   it("uses bundled-only runtime provider resolution for configured bundled providers", async () => {
-    const runtimeSpy = vi.mocked(runtimeWebSearchProviders.resolvePluginWebSearchProviders);
-
     const { metadata } = await runRuntimeWebTools({
       config: asConfig({
         tools: {
@@ -716,13 +732,13 @@ describe("runtime web tools resolution", () => {
     });
 
     expect(metadata.search.selectedProvider).toBe("gemini");
-    expect(runtimeSpy).toHaveBeenCalledWith(
+    expect(resolveBundledWebSearchProvidersFromPublicArtifactsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         bundledAllowlistCompat: true,
         onlyPluginIds: ["google"],
-        origin: "bundled",
       }),
     );
+    expect(runtimeWebSearchProviders.resolvePluginWebSearchProviders).not.toHaveBeenCalled();
   });
 
   it("does not resolve web fetch provider SecretRef when web fetch is inactive", async () => {
@@ -1067,8 +1083,6 @@ describe("runtime web tools resolution", () => {
   });
 
   it("keeps web fetch provider discovery bundled-only during runtime secret resolution", async () => {
-    const runtimeSpy = vi.mocked(runtimeWebFetchProviders.resolvePluginWebFetchProviders);
-
     const { metadata } = await runRuntimeWebTools({
       config: asConfig({
         plugins: {
@@ -1097,11 +1111,11 @@ describe("runtime web tools resolution", () => {
     });
 
     expect(metadata.fetch.selectedProvider).toBe("firecrawl");
-    expect(runtimeSpy).toHaveBeenCalledWith(
+    expect(resolveBundledWebFetchProvidersFromPublicArtifactsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         bundledAllowlistCompat: true,
-        origin: "bundled",
       }),
     );
+    expect(runtimeWebFetchProviders.resolvePluginWebFetchProviders).not.toHaveBeenCalled();
   });
 });
