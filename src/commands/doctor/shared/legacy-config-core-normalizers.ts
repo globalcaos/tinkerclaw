@@ -6,10 +6,7 @@ import { resolveNormalizedProviderModelMaxTokens } from "../../../config/default
 import { normalizeTalkSection } from "../../../config/talk.js";
 import { DEFAULT_GOOGLE_API_BASE_URL } from "../../../infra/google-api-base-url.js";
 import { DEFAULT_ACCOUNT_ID } from "../../../routing/session-key.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
+import { isRecord } from "./legacy-config-record-shared.js";
 
 function buildLegacyTalkProviderCompat(
   talk: Record<string, unknown>,
