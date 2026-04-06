@@ -1,8 +1,6 @@
-export function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
+import { asOptionalObjectRecord } from "openclaw/plugin-sdk/text-runtime";
+
+export const asRecord = asOptionalObjectRecord;
 
 export function readString(
   record: Record<string, unknown> | undefined,
