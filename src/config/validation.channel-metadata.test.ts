@@ -143,7 +143,7 @@ describe("validateConfigObjectRawWithPlugins channel metadata", () => {
 });
 
 describe("validateConfigObjectRawWithPlugins plugin config defaults", () => {
-  it("does not inject plugin AJV defaults in raw mode for required defaulted fields", async () => {
+  it("still injects plugin AJV defaults in raw mode for required defaulted fields", async () => {
     setupPluginSchemaWithRequiredDefault();
     await loadValidationModule();
 
@@ -159,7 +159,9 @@ describe("validateConfigObjectRawWithPlugins plugin config defaults", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.plugins?.entries?.opik?.config).toBeUndefined();
+      expect(result.config.plugins?.entries?.opik?.config).toEqual({
+        workspace: "default-workspace",
+      });
     }
   });
 });
