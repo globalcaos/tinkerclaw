@@ -592,6 +592,10 @@
       "types": "./dist/plugin-sdk/video-generation.d.ts",
       "default": "./dist/plugin-sdk/video-generation.js"
     },
+    "./plugin-sdk/video-generation-runtime": {
+      "types": "./dist/plugin-sdk/video-generation-runtime.d.ts",
+      "default": "./dist/plugin-sdk/video-generation-runtime.js"
+    },
     "./plugin-sdk/video-generation-core": {
       "types": "./dist/plugin-sdk/video-generation-core.d.ts",
       "default": "./dist/plugin-sdk/video-generation-core.js"
