@@ -1,10 +1,6 @@
 import type { RuntimeEnv } from "../../api.js";
 import type { Foreigns } from "../urbit/foreigns.js";
-import { formatChangesDate } from "./utils.js";
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
+import { asRecord, formatChangesDate } from "./utils.js";
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
