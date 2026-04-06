@@ -1,8 +1,8 @@
 import { withActivatedPluginIds } from "./activation-context.js";
 import { resolveBundledPluginCompatibleActivationInputs } from "./activation-context.js";
 import {
+  isPluginRegistryLoadInFlight,
   loadOpenClawPlugins,
-  resolvePluginRegistryLoadCacheKey,
   resolveRuntimePluginRegistry,
   type PluginLoadOptions,
 } from "./loader.js";
@@ -20,8 +20,6 @@ import {
   createPluginRuntimeLoaderLogger,
 } from "./runtime/load-context.js";
 import type { ProviderPlugin } from "./types.js";
-
-const inFlightProviderPluginLoadKeys = new Set<string>();
 
 function resolvePluginProviderLoadBase(params: {
   config?: PluginLoadOptions["config"];
@@ -177,9 +175,7 @@ export function isPluginProvidersLoadInFlight(
   if (!loadState) {
     return false;
   }
-  return inFlightProviderPluginLoadKeys.has(
-    resolvePluginRegistryLoadCacheKey(loadState.loadOptions),
-  );
+  return isPluginRegistryLoadInFlight(loadState.loadOptions);
 }
 
 export function resolvePluginProviders(params: {
@@ -203,32 +199,20 @@ export function resolvePluginProviders(params: {
     if (!loadState) {
       return [];
     }
-    const loadKey = resolvePluginRegistryLoadCacheKey(loadState.loadOptions);
-    inFlightProviderPluginLoadKeys.add(loadKey);
-    try {
-      const registry = loadOpenClawPlugins(loadState.loadOptions);
-      return registry.providers.map((entry) => ({
-        ...entry.provider,
-        pluginId: entry.pluginId,
-      }));
-    } finally {
-      inFlightProviderPluginLoadKeys.delete(loadKey);
-    }
-  }
-  const loadState = resolveRuntimeProviderPluginLoadState(params, base);
-  const loadKey = resolvePluginRegistryLoadCacheKey(loadState.loadOptions);
-  inFlightProviderPluginLoadKeys.add(loadKey);
-  try {
-    const registry = resolveRuntimePluginRegistry(loadState.loadOptions);
-    if (!registry) {
-      return [];
-    }
-
+    const registry = loadOpenClawPlugins(loadState.loadOptions);
     return registry.providers.map((entry) => ({
       ...entry.provider,
       pluginId: entry.pluginId,
     }));
-  } finally {
-    inFlightProviderPluginLoadKeys.delete(loadKey);
   }
+  const loadState = resolveRuntimeProviderPluginLoadState(params, base);
+  const registry = resolveRuntimePluginRegistry(loadState.loadOptions);
+  if (!registry) {
+    return [];
+  }
+
+  return registry.providers.map((entry) => ({
+    ...entry.provider,
+    pluginId: entry.pluginId,
+  }));
 }
