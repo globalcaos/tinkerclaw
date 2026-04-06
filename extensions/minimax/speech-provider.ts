@@ -5,6 +5,7 @@ import type {
   SpeechProviderOverrides,
   SpeechProviderPlugin,
 } from "openclaw/plugin-sdk/speech-core";
+import { asObject, trimToUndefined } from "openclaw/plugin-sdk/speech-core";
 import {
   DEFAULT_MINIMAX_TTS_BASE_URL,
   MINIMAX_TTS_MODELS,
@@ -31,18 +32,8 @@ type MinimaxTtsProviderOverrides = {
   pitch?: number;
 };
 
-function trimToUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function normalizeMinimaxProviderConfig(
