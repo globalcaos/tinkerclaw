@@ -3,7 +3,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import {
   BUNDLED_LEGACY_PLUGIN_ID_ALIASES,
   BUNDLED_PROVIDER_PLUGIN_ID_ALIASES,
-} from "./bundled-capability-metadata.js";
+} from "./contracts/inventory/bundled-capability-metadata.js";
 import type { PluginRecord } from "./registry.js";
 import { defaultSlotIdForKey, hasKind } from "./slots.js";
 import type { PluginKind } from "./types.js";
@@ -71,7 +71,7 @@ export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
   "zai",
 ]);
 
-const PLUGIN_ID_ALIASES: Readonly<Record<string, string>> = {
+const _PLUGIN_ID_ALIASES: Readonly<Record<string, string>> = {
   "openai-codex": "openai",
   "kimi-coding": "kimi",
   "minimax-portal-auth": "minimax",

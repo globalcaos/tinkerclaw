@@ -22,6 +22,7 @@ const COMMON_AUTH_ERROR_PATTERNS = [
   "invalid token",
   "authentication",
   "re-authenticate",
+  /oauth.*(?:not supported|disabled|rejected)/i, // FORK: OAuth API rejection
   "oauth token refresh failed",
   "unauthorized",
   "forbidden",
