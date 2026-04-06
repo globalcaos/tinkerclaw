@@ -7,6 +7,8 @@ import type {
   SpeechVoiceOption,
 } from "openclaw/plugin-sdk/speech";
 import {
+  asBoolean,
+  asFiniteNumber,
   asObject,
   normalizeApplyTextNormalization,
   normalizeLanguageCode,
@@ -51,14 +53,6 @@ type ElevenLabsProviderConfig = {
   };
 };
 
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
 function parseBooleanValue(value: string): boolean | undefined {
   const normalized = value.trim().toLowerCase();
   if (["true", "1", "yes", "on"].includes(normalized)) {
@@ -98,7 +92,7 @@ function normalizeElevenLabsProviderConfig(
     baseUrl: normalizeElevenLabsBaseUrl(trimToUndefined(raw?.baseUrl)),
     voiceId: trimToUndefined(raw?.voiceId) ?? DEFAULT_ELEVENLABS_VOICE_ID,
     modelId: trimToUndefined(raw?.modelId) ?? DEFAULT_ELEVENLABS_MODEL_ID,
-    seed: asNumber(raw?.seed),
+    seed: asFiniteNumber(raw?.seed),
     applyTextNormalization: trimToUndefined(raw?.applyTextNormalization) as
       | "auto"
       | "on"
@@ -107,15 +101,15 @@ function normalizeElevenLabsProviderConfig(
     languageCode: trimToUndefined(raw?.languageCode),
     voiceSettings: {
       stability:
-        asNumber(rawVoiceSettings?.stability) ?? DEFAULT_ELEVENLABS_VOICE_SETTINGS.stability,
+        asFiniteNumber(rawVoiceSettings?.stability) ?? DEFAULT_ELEVENLABS_VOICE_SETTINGS.stability,
       similarityBoost:
-        asNumber(rawVoiceSettings?.similarityBoost) ??
+        asFiniteNumber(rawVoiceSettings?.similarityBoost) ??
         DEFAULT_ELEVENLABS_VOICE_SETTINGS.similarityBoost,
-      style: asNumber(rawVoiceSettings?.style) ?? DEFAULT_ELEVENLABS_VOICE_SETTINGS.style,
+      style: asFiniteNumber(rawVoiceSettings?.style) ?? DEFAULT_ELEVENLABS_VOICE_SETTINGS.style,
       useSpeakerBoost:
         asBoolean(rawVoiceSettings?.useSpeakerBoost) ??
         DEFAULT_ELEVENLABS_VOICE_SETTINGS.useSpeakerBoost,
-      speed: asNumber(rawVoiceSettings?.speed) ?? DEFAULT_ELEVENLABS_VOICE_SETTINGS.speed,
+      speed: asFiniteNumber(rawVoiceSettings?.speed) ?? DEFAULT_ELEVENLABS_VOICE_SETTINGS.speed,
     },
   };
 }
@@ -128,19 +122,19 @@ function readElevenLabsProviderConfig(config: SpeechProviderConfig): ElevenLabsP
     baseUrl: normalizeElevenLabsBaseUrl(trimToUndefined(config.baseUrl) ?? defaults.baseUrl),
     voiceId: trimToUndefined(config.voiceId) ?? defaults.voiceId,
     modelId: trimToUndefined(config.modelId) ?? defaults.modelId,
-    seed: asNumber(config.seed) ?? defaults.seed,
+    seed: asFiniteNumber(config.seed) ?? defaults.seed,
     applyTextNormalization:
       (trimToUndefined(config.applyTextNormalization) as "auto" | "on" | "off" | undefined) ??
       defaults.applyTextNormalization,
     languageCode: trimToUndefined(config.languageCode) ?? defaults.languageCode,
     voiceSettings: {
-      stability: asNumber(voiceSettings?.stability) ?? defaults.voiceSettings.stability,
+      stability: asFiniteNumber(voiceSettings?.stability) ?? defaults.voiceSettings.stability,
       similarityBoost:
-        asNumber(voiceSettings?.similarityBoost) ?? defaults.voiceSettings.similarityBoost,
-      style: asNumber(voiceSettings?.style) ?? defaults.voiceSettings.style,
+        asFiniteNumber(voiceSettings?.similarityBoost) ?? defaults.voiceSettings.similarityBoost,
+      style: asFiniteNumber(voiceSettings?.style) ?? defaults.voiceSettings.style,
       useSpeakerBoost:
         asBoolean(voiceSettings?.useSpeakerBoost) ?? defaults.voiceSettings.useSpeakerBoost,
-      speed: asNumber(voiceSettings?.speed) ?? defaults.voiceSettings.speed,
+      speed: asFiniteNumber(voiceSettings?.speed) ?? defaults.voiceSettings.speed,
     },
   };
 }
