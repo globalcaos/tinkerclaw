@@ -11,6 +11,13 @@ export function toEnableStateResult<TState extends EnableStateLike>(
   return state.enabled ? { enabled: true } : { enabled: false, reason: state.reason };
 }
 
+export function resolveEnableStateResult<TParams, TState extends EnableStateLike>(
+  params: TParams,
+  resolveState: (params: TParams) => TState,
+): { enabled: boolean; reason?: string } {
+  return toEnableStateResult(resolveState(params));
+}
+
 function hasKind(kind: PluginKindLike, target: string): boolean {
   if (!kind) {
     return false;
