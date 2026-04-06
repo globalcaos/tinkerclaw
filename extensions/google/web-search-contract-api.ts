@@ -4,7 +4,7 @@ import {
   setProviderWebSearchPluginConfigValue,
   setScopedCredentialValue,
   type WebSearchProviderPlugin,
-} from "openclaw/plugin-sdk/provider-web-search";
+} from "openclaw/plugin-sdk/provider-web-search-contract";
 
 export function createGeminiWebSearchProvider(): WebSearchProviderPlugin {
   return {
