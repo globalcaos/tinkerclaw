@@ -27,23 +27,41 @@ const resolveExecHostApprovalContextMock = vi.hoisted(() =>
   })),
 );
 const createAndRegisterDefaultExecApprovalRequestMock = vi.hoisted(() => vi.fn());
-const resolveApprovalDecisionOrUndefinedMock = vi.hoisted(() => vi.fn(async () => "allow-once"));
+const resolveApprovalDecisionOrUndefinedMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<string | null | undefined> => "allow-once"),
+);
 const createExecApprovalDecisionStateMock = vi.hoisted(() =>
-  vi.fn(() => ({
-    baseDecision: { timedOut: false },
-    approvedByAsk: false,
-    deniedReason: null,
-  })),
+  vi.fn(
+    (): {
+      baseDecision: { timedOut: boolean };
+      approvedByAsk: boolean;
+      deniedReason: string | null;
+    } => ({
+      baseDecision: { timedOut: false },
+      approvedByAsk: false,
+      deniedReason: null,
+    }),
+  ),
 );
 const buildExecApprovalPendingToolResultMock = vi.hoisted(() => vi.fn());
 const sendExecApprovalFollowupResultMock = vi.hoisted(() => vi.fn(async () => undefined));
 const enforceStrictInlineEvalApprovalBoundaryMock = vi.hoisted(() =>
-  vi.fn((value: { approvedByAsk: boolean; deniedReason: string | null }) => value),
+  vi.fn(
+    (value: {
+      approvedByAsk: boolean;
+      deniedReason: string | null;
+    }): {
+      approvedByAsk: boolean;
+      deniedReason: string | null;
+    } => value,
+  ),
 );
 const registerExecApprovalRequestForHostOrThrowMock = vi.hoisted(() =>
   vi.fn(async () => undefined),
 );
-const detectInterpreterInlineEvalArgvMock = vi.hoisted(() => vi.fn(() => null));
+const detectInterpreterInlineEvalArgvMock = vi.hoisted(() =>
+  vi.fn((): { kind: string } | null => null),
+);
 
 vi.mock("../infra/exec-approvals.js", () => ({
   evaluateShellAllowlist: vi.fn(() => ({
