@@ -10,7 +10,10 @@ import {
   resolveMatrixChannelConfig,
   resolveMatrixDefaultOrOnlyAccountId,
 } from "./account-selection.js";
-import { getMatrixScopedEnvVarNames } from "./env-vars.js";
+import {
+  resolveGlobalMatrixEnvConfig,
+  resolveScopedMatrixEnvConfig,
+} from "./matrix/client/env-auth.js";
 import { resolveMatrixAccountStorageRoot, resolveMatrixCredentialsPath } from "./storage-paths.js";
 
 export type MatrixStoredCredentials = {
@@ -97,34 +100,6 @@ function resolveMatrixAccountStringValues(params: {
   }
 
   return resolved;
-}
-
-function resolveScopedMatrixEnvConfig(
-  accountId: string,
-  env: NodeJS.ProcessEnv,
-): {
-  homeserver: string;
-  userId: string;
-  accessToken: string;
-} {
-  const keys = getMatrixScopedEnvVarNames(accountId);
-  return {
-    homeserver: clean(env[keys.homeserver]),
-    userId: clean(env[keys.userId]),
-    accessToken: clean(env[keys.accessToken]),
-  };
-}
-
-function resolveGlobalMatrixEnvConfig(env: NodeJS.ProcessEnv): {
-  homeserver: string;
-  userId: string;
-  accessToken: string;
-} {
-  return {
-    homeserver: clean(env.MATRIX_HOMESERVER),
-    userId: clean(env.MATRIX_USER_ID),
-    accessToken: clean(env.MATRIX_ACCESS_TOKEN),
-  };
 }
 
 function resolveMatrixAccountConfigEntry(
