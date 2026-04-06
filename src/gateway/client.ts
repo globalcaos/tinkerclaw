@@ -248,15 +248,15 @@ export class GatewayClient {
         );
         const expected = normalizeFingerprint(this.opts.tlsFingerprint ?? "");
         if (!expected) {
-          return new Error("gateway tls fingerprint missing");
+          return false;
         }
         if (!fingerprint) {
-          return new Error("gateway tls fingerprint unavailable");
+          return false;
         }
         if (fingerprint !== expected) {
-          return new Error("gateway tls fingerprint mismatch");
+          return false;
         }
-        return undefined;
+        return true;
       };
     }
     const ws = new WebSocket(url, wsOptions as ClientOptions);

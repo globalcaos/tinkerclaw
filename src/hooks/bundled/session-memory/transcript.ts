@@ -34,9 +34,9 @@ export async function getRecentSessionContent(
       try {
         const entry = JSON.parse(line);
         if (entry.type === "message" && entry.message) {
-          const msg = entry.message;
+          const msg = entry.message as AgentMessage & { content?: unknown };
           const role = msg.role;
-          if ((role === "user" || role === "assistant") && msg.content) {
+          if ((role === "user" || role === "assistant") && "content" in msg && msg.content) {
             if (role === "user" && hasInterSessionUserProvenance(msg)) {
               continue;
             }
