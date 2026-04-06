@@ -1,25 +1,19 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getLogger, resetLogger, setLoggerOverride } from "../logging.js";
-import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
+import { createSuiteLogPathTracker } from "./log-test-helpers.js";
 
-const logRootTracker = createSuiteTempRootTracker({
-  prefix: "openclaw-log-ts-",
-});
+const logPathTracker = createSuiteLogPathTracker("openclaw-log-ts-");
 
 describe("logger timestamp format", () => {
   let logPath = "";
-  let logRoot = "";
 
   beforeAll(async () => {
-    await logRootTracker.setup();
-    logRoot = await logRootTracker.make("case");
+    await logPathTracker.setup();
   });
 
   beforeEach(() => {
-    logPath = path.join(logRoot, `${crypto.randomUUID()}.log`);
+    logPath = logPathTracker.nextPath();
     resetLogger();
     setLoggerOverride(null);
   });
@@ -35,8 +29,7 @@ describe("logger timestamp format", () => {
   });
 
   afterAll(async () => {
-    await logRootTracker.cleanup();
-    logRoot = "";
+    await logPathTracker.cleanup();
   });
 
   it("uses local time format in file logs (not UTC)", () => {
