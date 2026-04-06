@@ -15,10 +15,6 @@ function hasLegacyTelegramStreamingAliases(value: unknown): boolean {
   return hasLegacyStreamingAliases(value, { includePreviewChunk: true });
 }
 
-function hasLegacyTelegramAccountStreamingAliases(value: unknown): boolean {
-  return hasLegacyAccountStreamingAliases(value, hasLegacyTelegramStreamingAliases);
-}
-
 function resolveCompatibleDefaultGroupEntry(section: Record<string, unknown>): {
   groups: Record<string, unknown>;
   entry: Record<string, unknown>;
@@ -53,7 +49,7 @@ export const legacyConfigRules: ChannelDoctorLegacyConfigRule[] = [
     path: ["channels", "telegram", "accounts"],
     message:
       "channels.telegram.accounts.<id>.streamMode, streaming (scalar), chunkMode, blockStreaming, draftChunk, and blockStreamingCoalesce are legacy; use channels.telegram.accounts.<id>.streaming.{mode,chunkMode,preview.chunk,block.enabled,block.coalesce}.",
-    match: hasLegacyTelegramAccountStreamingAliases,
+    match: (value) => hasLegacyAccountStreamingAliases(value, hasLegacyTelegramStreamingAliases),
   },
 ];
 
