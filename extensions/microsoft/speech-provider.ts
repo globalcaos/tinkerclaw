@@ -11,7 +11,7 @@ import type {
   SpeechProviderPlugin,
   SpeechVoiceOption,
 } from "openclaw/plugin-sdk/speech";
-import { asObject, trimToUndefined } from "openclaw/plugin-sdk/speech";
+import { asBoolean, asFiniteNumber, asObject, trimToUndefined } from "openclaw/plugin-sdk/speech";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { edgeTTS, inferEdgeExtension } from "./tts.js";
 
@@ -44,14 +44,6 @@ type MicrosoftVoiceListEntry = {
   };
 };
 
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function normalizeMicrosoftProviderConfig(
   rawConfig: Record<string, unknown>,
 ): MicrosoftProviderConfig {
@@ -72,7 +64,7 @@ function normalizeMicrosoftProviderConfig(
     volume: trimToUndefined(raw.volume),
     saveSubtitles: asBoolean(raw.saveSubtitles) ?? false,
     proxy: trimToUndefined(raw.proxy),
-    timeoutMs: asNumber(raw.timeoutMs),
+    timeoutMs: asFiniteNumber(raw.timeoutMs),
   };
 }
 
@@ -90,7 +82,7 @@ function readMicrosoftProviderConfig(config: SpeechProviderConfig): MicrosoftPro
     volume: trimToUndefined(config.volume) ?? defaults.volume,
     saveSubtitles: asBoolean(config.saveSubtitles) ?? defaults.saveSubtitles,
     proxy: trimToUndefined(config.proxy) ?? defaults.proxy,
-    timeoutMs: asNumber(config.timeoutMs) ?? defaults.timeoutMs,
+    timeoutMs: asFiniteNumber(config.timeoutMs) ?? defaults.timeoutMs,
   };
 }
 
@@ -198,9 +190,9 @@ export function buildMicrosoftSpeechProvider(): SpeechProviderPlugin {
         ...(trimToUndefined(talkProviderConfig.proxy) == null
           ? {}
           : { proxy: trimToUndefined(talkProviderConfig.proxy) }),
-        ...(asNumber(talkProviderConfig.timeoutMs) == null
+        ...(asFiniteNumber(talkProviderConfig.timeoutMs) == null
           ? {}
-          : { timeoutMs: asNumber(talkProviderConfig.timeoutMs) }),
+          : { timeoutMs: asFiniteNumber(talkProviderConfig.timeoutMs) }),
       };
     },
     resolveTalkOverrides: ({ params }) => ({
