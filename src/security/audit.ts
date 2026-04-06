@@ -128,6 +128,7 @@ let gatewayProbeDepsPromise:
   | Promise<{
       buildGatewayConnectionDetails: typeof import("../gateway/call.js").buildGatewayConnectionDetails;
       resolveGatewayProbeAuthSafe: typeof import("../gateway/probe-auth.js").resolveGatewayProbeAuthSafe;
+      resolveGatewayProbeTarget: typeof import("../gateway/probe-auth.js").resolveGatewayProbeTarget;
       probeGateway: typeof import("../gateway/probe.js").probeGateway;
     }>
   | undefined;
@@ -171,6 +172,7 @@ async function loadGatewayProbeDeps() {
   ]).then(([callModule, probeAuthModule, probeModule]) => ({
     buildGatewayConnectionDetails: callModule.buildGatewayConnectionDetails,
     resolveGatewayProbeAuthSafe: probeAuthModule.resolveGatewayProbeAuthSafe,
+    resolveGatewayProbeTarget: probeAuthModule.resolveGatewayProbeTarget,
     probeGateway: probeModule.probeGateway,
   }));
   return await gatewayProbeDepsPromise;
@@ -1214,29 +1216,18 @@ async function maybeProbeGateway(params: {
   deep: SecurityAuditReport["deep"];
   authWarning?: string;
 }> {
-  const { buildGatewayConnectionDetails, resolveGatewayProbeAuthSafe } =
+  const { buildGatewayConnectionDetails, resolveGatewayProbeAuthSafe, resolveGatewayProbeTarget } =
     await loadGatewayProbeDeps();
   const connection = buildGatewayConnectionDetails({ config: params.cfg });
   const url = connection.url;
-  const isRemoteMode = params.cfg.gateway?.mode === "remote";
-  const remoteUrlRaw =
-    typeof params.cfg.gateway?.remote?.url === "string" ? params.cfg.gateway.remote.url.trim() : "";
-  const remoteUrlMissing = isRemoteMode && !remoteUrlRaw;
+  const probeTarget = resolveGatewayProbeTarget(params.cfg);
 
-  const authResolution =
-    !isRemoteMode || remoteUrlMissing
-      ? resolveGatewayProbeAuthSafe({
-          cfg: params.cfg,
-          env: params.env,
-          mode: "local",
-          explicitAuth: params.explicitAuth,
-        })
-      : resolveGatewayProbeAuthSafe({
-          cfg: params.cfg,
-          env: params.env,
-          mode: "remote",
-          explicitAuth: params.explicitAuth,
-        });
+  const authResolution = resolveGatewayProbeAuthSafe({
+    cfg: params.cfg,
+    env: params.env,
+    mode: probeTarget.mode,
+    explicitAuth: params.explicitAuth,
+  });
   const res = await params
     .probe({ url, auth: authResolution.auth, timeoutMs: params.timeoutMs })
     .catch((err) => ({
