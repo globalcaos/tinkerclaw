@@ -979,7 +979,7 @@ export abstract class MemoryManagerSyncOps {
         meta,
         // Also detects provider→FTS-only transitions so orphaned old-model FTS rows are cleaned up.
         provider: this.provider ? { id: this.provider.id, model: this.provider.model } : null,
-        providerKey: this.providerKey,
+        providerKey: this.providerKey ?? undefined,
         configuredSources,
         configuredScopeHash,
         chunkTokens: this.settings.chunking.tokens,
