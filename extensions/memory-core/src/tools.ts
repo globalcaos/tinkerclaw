@@ -94,6 +94,30 @@ async function getSupplementMemoryReadResult(params: {
   };
 }
 
+async function resolveMemoryReadFailureResult(params: {
+  error: unknown;
+  requestedCorpus?: "memory" | "wiki" | "all";
+  relPath: string;
+  from?: number;
+  lines?: number;
+  agentSessionKey?: string;
+}) {
+  if (params.requestedCorpus === "all") {
+    const supplement = await getSupplementMemoryReadResult({
+      relPath: params.relPath,
+      from: params.from,
+      lines: params.lines,
+      agentSessionKey: params.agentSessionKey,
+      corpus: params.requestedCorpus,
+    });
+    if (supplement) {
+      return jsonResult(supplement);
+    }
+  }
+  const message = params.error instanceof Error ? params.error.message : String(params.error);
+  return jsonResult({ path: params.relPath, text: "", disabled: true, error: message });
+}
+
 export function createMemorySearchTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
@@ -252,20 +276,14 @@ export function createMemoryGetTool(options: {
             });
             return jsonResult(result);
           } catch (err) {
-            if (requestedCorpus === "all") {
-              const supplement = await getSupplementMemoryReadResult({
-                relPath,
-                from: from ?? undefined,
-                lines: lines ?? undefined,
-                agentSessionKey: options.agentSessionKey,
-                corpus: requestedCorpus,
-              });
-              if (supplement) {
-                return jsonResult(supplement);
-              }
-            }
-            const message = err instanceof Error ? err.message : String(err);
-            return jsonResult({ path: relPath, text: "", disabled: true, error: message });
+            return await resolveMemoryReadFailureResult({
+              error: err,
+              requestedCorpus,
+              relPath,
+              from: from ?? undefined,
+              lines: lines ?? undefined,
+              agentSessionKey: options.agentSessionKey,
+            });
           }
         }
         const memory = await getMemoryManagerContextWithPurpose({
@@ -284,20 +302,14 @@ export function createMemoryGetTool(options: {
           });
           return jsonResult(result);
         } catch (err) {
-          if (requestedCorpus === "all") {
-            const supplement = await getSupplementMemoryReadResult({
-              relPath,
-              from: from ?? undefined,
-              lines: lines ?? undefined,
-              agentSessionKey: options.agentSessionKey,
-              corpus: requestedCorpus,
-            });
-            if (supplement) {
-              return jsonResult(supplement);
-            }
-          }
-          const message = err instanceof Error ? err.message : String(err);
-          return jsonResult({ path: relPath, text: "", disabled: true, error: message });
+          return await resolveMemoryReadFailureResult({
+            error: err,
+            requestedCorpus,
+            relPath,
+            from: from ?? undefined,
+            lines: lines ?? undefined,
+            agentSessionKey: options.agentSessionKey,
+          });
         }
       },
   });
