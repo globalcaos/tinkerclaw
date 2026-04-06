@@ -443,6 +443,30 @@ function decodeMediaPath(raw: string, log: DeliverAccountContext["log"], prefix:
 }
 
 /** Shared helper for sending chunked text replies. */
+async function sendQQBotTextChunk(params: {
+  account: ResolvedQQBotAccount;
+  event: DeliverEventContext;
+  token: string;
+  text: string;
+  consumeQuoteRef: ConsumeQuoteRefFn;
+  allowDm: boolean;
+}): Promise<unknown> {
+  const { account, event, token, text, consumeQuoteRef, allowDm } = params;
+  const ref = consumeQuoteRef();
+  if (event.type === "c2c") {
+    return await sendC2CMessage(account.appId, token, event.senderId, text, event.messageId, ref);
+  }
+  if (event.type === "group" && event.groupOpenid) {
+    return await sendGroupMessage(account.appId, token, event.groupOpenid, text, event.messageId);
+  }
+  if (allowDm && event.type === "dm" && event.guildId) {
+    return await sendDmMessage(token, event.guildId, text, event.messageId);
+  }
+  if (event.channelId) {
+    return await sendChannelMessage(token, event.channelId, text, event.messageId);
+  }
+}
+
 async function sendTextChunks(
   text: string,
   event: DeliverEventContext,
@@ -455,31 +479,16 @@ async function sendTextChunks(
   const chunks = getQQBotRuntime().channel.text.chunkMarkdownText(text, TEXT_CHUNK_LIMIT);
   for (const chunk of chunks) {
     try {
-      await sendWithRetry(async (token) => {
-        const ref = consumeQuoteRef();
-        if (event.type === "c2c") {
-          return await sendC2CMessage(
-            account.appId,
-            token,
-            event.senderId,
-            chunk,
-            event.messageId,
-            ref,
-          );
-        } else if (event.type === "group" && event.groupOpenid) {
-          return await sendGroupMessage(
-            account.appId,
-            token,
-            event.groupOpenid,
-            chunk,
-            event.messageId,
-          );
-        } else if (event.type === "dm" && event.guildId) {
-          return await sendDmMessage(token, event.guildId, chunk, event.messageId);
-        } else if (event.channelId) {
-          return await sendChannelMessage(token, event.channelId, chunk, event.messageId);
-        }
-      });
+      await sendWithRetry((token) =>
+        sendQQBotTextChunk({
+          account,
+          event,
+          token,
+          text: chunk,
+          consumeQuoteRef,
+          allowDm: true,
+        }),
+      );
       log?.info(
         `${prefix} Sent text chunk (${chunk.length}/${text.length} chars): ${chunk.slice(0, 50)}...`,
       );
@@ -652,31 +661,16 @@ async function sendMarkdownReply(
     const mdChunks = chunkText(result, TEXT_CHUNK_LIMIT);
     for (const chunk of mdChunks) {
       try {
-        await sendWithRetry(async (token) => {
-          const ref = consumeQuoteRef();
-          if (event.type === "c2c") {
-            return await sendC2CMessage(
-              account.appId,
-              token,
-              event.senderId,
-              chunk,
-              event.messageId,
-              ref,
-            );
-          } else if (event.type === "group" && event.groupOpenid) {
-            return await sendGroupMessage(
-              account.appId,
-              token,
-              event.groupOpenid,
-              chunk,
-              event.messageId,
-            );
-          } else if (event.type === "dm" && event.guildId) {
-            return await sendDmMessage(token, event.guildId, chunk, event.messageId);
-          } else if (event.channelId) {
-            return await sendChannelMessage(token, event.channelId, chunk, event.messageId);
-          }
-        });
+        await sendWithRetry((token) =>
+          sendQQBotTextChunk({
+            account,
+            event,
+            token,
+            text: chunk,
+            consumeQuoteRef,
+            allowDm: true,
+          }),
+        );
         log?.info(
           `${prefix} Sent markdown chunk (${chunk.length}/${result.length} chars) with ${httpImageUrls.length} HTTP images (${event.type})`,
         );
@@ -753,29 +747,16 @@ async function sendPlainTextReply(
     if (result.trim()) {
       const plainChunks = chunkText(result, TEXT_CHUNK_LIMIT);
       for (const chunk of plainChunks) {
-        await sendWithRetry(async (token) => {
-          const ref = consumeQuoteRef();
-          if (event.type === "c2c") {
-            return await sendC2CMessage(
-              account.appId,
-              token,
-              event.senderId,
-              chunk,
-              event.messageId,
-              ref,
-            );
-          } else if (event.type === "group" && event.groupOpenid) {
-            return await sendGroupMessage(
-              account.appId,
-              token,
-              event.groupOpenid,
-              chunk,
-              event.messageId,
-            );
-          } else if (event.channelId) {
-            return await sendChannelMessage(token, event.channelId, chunk, event.messageId);
-          }
-        });
+        await sendWithRetry((token) =>
+          sendQQBotTextChunk({
+            account,
+            event,
+            token,
+            text: chunk,
+            consumeQuoteRef,
+            allowDm: false,
+          }),
+        );
         log?.info(
           `${prefix} Sent text chunk (${chunk.length}/${result.length} chars) (${event.type})`,
         );
