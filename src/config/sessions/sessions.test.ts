@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { upsertAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import * as jsonFiles from "../../infra/json-files.js";
+import { createSuiteTempRootTracker, withTempDirSync } from "../../test-helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config.js";
 import type { SessionConfig } from "../types.base.js";
 import {
@@ -56,10 +56,9 @@ describe("session path safety", () => {
     if (process.platform === "win32") {
       return;
     }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-symlink-session-"));
-    const realRoot = path.join(tmpDir, "real-state");
-    const aliasRoot = path.join(tmpDir, "alias-state");
-    try {
+    withTempDirSync({ prefix: "openclaw-symlink-session-" }, (tmpDir) => {
+      const realRoot = path.join(tmpDir, "real-state");
+      const aliasRoot = path.join(tmpDir, "alias-state");
       const sessionsDir = path.join(realRoot, "agents", "main", "sessions");
       fs.mkdirSync(sessionsDir, { recursive: true });
       fs.symlinkSync(realRoot, aliasRoot, "dir");
@@ -69,19 +68,16 @@ describe("session path safety", () => {
       expect(fs.realpathSync(resolved)).toBe(
         fs.realpathSync(path.join(sessionsDir, "sess-1.jsonl")),
       );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    });
   });
 
   it("falls back when sessionFile is a symlink that escapes sessions dir", () => {
     if (process.platform === "win32") {
       return;
     }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-symlink-escape-"));
-    const sessionsDir = path.join(tmpDir, "agents", "main", "sessions");
-    const outsideDir = path.join(tmpDir, "outside");
-    try {
+    withTempDirSync({ prefix: "openclaw-symlink-escape-" }, (tmpDir) => {
+      const sessionsDir = path.join(tmpDir, "agents", "main", "sessions");
+      const outsideDir = path.join(tmpDir, "outside");
       fs.mkdirSync(sessionsDir, { recursive: true });
       fs.mkdirSync(outsideDir, { recursive: true });
       const outsideFile = path.join(outsideDir, "escaped.jsonl");
@@ -96,9 +92,7 @@ describe("session path safety", () => {
       );
       expect(fs.realpathSync(path.dirname(resolved))).toBe(fs.realpathSync(sessionsDir));
       expect(path.basename(resolved)).toBe("sess-1.jsonl");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    });
   });
 });
 
@@ -151,15 +145,13 @@ describe("resolveSessionResetPolicy", () => {
 });
 
 describe("session store lock (Promise chain mutex)", () => {
-  let lockFixtureRoot = "";
-  let lockCaseId = 0;
+  const lockFixtureRootTracker = createSuiteTempRootTracker({ prefix: "openclaw-lock-test-" });
   let lockTmpDirs: string[] = [];
 
   async function makeTmpStore(
     initial: Record<string, unknown> = {},
   ): Promise<{ dir: string; storePath: string }> {
-    const dir = path.join(lockFixtureRoot, `case-${lockCaseId++}`);
-    await fsPromises.mkdir(dir);
+    const dir = await lockFixtureRootTracker.make("case");
     lockTmpDirs.push(dir);
     const storePath = path.join(dir, "sessions.json");
     if (Object.keys(initial).length > 0) {
@@ -169,13 +161,11 @@ describe("session store lock (Promise chain mutex)", () => {
   }
 
   beforeAll(async () => {
-    lockFixtureRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-test-"));
+    await lockFixtureRootTracker.setup();
   });
 
   afterAll(async () => {
-    if (lockFixtureRoot) {
-      await fsPromises.rm(lockFixtureRoot, { recursive: true, force: true }).catch(() => undefined);
-    }
+    await lockFixtureRootTracker.cleanup();
   });
 
   afterEach(async () => {
