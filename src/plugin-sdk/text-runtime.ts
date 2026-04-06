@@ -11,6 +11,7 @@ export * from "../markdown/render.js";
 export * from "../markdown/tables.js";
 export * from "../shared/global-singleton.js";
 export * from "../shared/scoped-expiring-id-cache.js";
+export * from "../shared/string-coerce.js";
 export * from "../shared/string-normalization.js";
 export * from "../shared/string-sample.js";
 export * from "../shared/text/assistant-visible-text.js";
