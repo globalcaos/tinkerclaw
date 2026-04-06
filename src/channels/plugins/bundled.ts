@@ -1,16 +1,17 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type {
   BundledChannelEntryContract,
   BundledChannelSetupEntryContract,
 } from "../../plugin-sdk/channel-entry-contract.js";
-import { loadPluginManifestRegistry } from "../../plugins/manifest-registry.js";
-import type { PluginRuntime } from "../../plugins/runtime/types.js";
 import {
-  isJavaScriptModulePath,
-  loadChannelPluginModule,
-  resolveCompiledBundledModulePath,
-} from "./module-loader.js";
+  listBundledPluginMetadata,
+  resolveBundledPluginGeneratedPath,
+  type BundledPluginMetadata,
+} from "../../plugins/bundled-plugin-metadata.js";
+import type { PluginRuntime } from "../../plugins/runtime/types.js";
+import { isJavaScriptModulePath, loadChannelPluginModule } from "./module-loader.js";
 import type { ChannelId, ChannelPlugin } from "./types.js";
 
 type GeneratedBundledChannelEntry = {
@@ -20,6 +21,7 @@ type GeneratedBundledChannelEntry = {
 };
 
 const log = createSubsystemLogger("channels");
+const OPENCLAW_PACKAGE_ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
 function resolveChannelPluginModuleEntry(
   moduleExport: unknown,
@@ -71,53 +73,85 @@ function resolveChannelSetupModuleEntry(
   return record as BundledChannelSetupEntryContract;
 }
 
+function resolveBundledChannelBoundaryRoot(params: {
+  metadata: BundledPluginMetadata;
+  modulePath: string;
+}): string {
+  const distRoot = path.resolve(
+    OPENCLAW_PACKAGE_ROOT,
+    "dist",
+    "extensions",
+    params.metadata.dirName,
+  );
+  if (params.modulePath === distRoot || params.modulePath.startsWith(`${distRoot}${path.sep}`)) {
+    return distRoot;
+  }
+  return path.resolve(OPENCLAW_PACKAGE_ROOT, "extensions", params.metadata.dirName);
+}
+
+function loadGeneratedBundledChannelModule(params: {
+  metadata: BundledPluginMetadata;
+  entry: BundledPluginMetadata["source"] | BundledPluginMetadata["setupSource"];
+}): unknown {
+  const modulePath = resolveBundledPluginGeneratedPath(OPENCLAW_PACKAGE_ROOT, params.entry);
+  if (!modulePath) {
+    throw new Error(`missing generated module for bundled channel ${params.metadata.manifest.id}`);
+  }
+  return loadChannelPluginModule({
+    modulePath,
+    rootDir: resolveBundledChannelBoundaryRoot({
+      metadata: params.metadata,
+      modulePath,
+    }),
+    boundaryRootDir: resolveBundledChannelBoundaryRoot({
+      metadata: params.metadata,
+      modulePath,
+    }),
+    shouldTryNativeRequire: (safePath) =>
+      safePath.includes(`${path.sep}dist${path.sep}`) && isJavaScriptModulePath(safePath),
+  });
+}
+
 function loadGeneratedBundledChannelEntries(): readonly GeneratedBundledChannelEntry[] {
-  const manifestRegistry = loadPluginManifestRegistry({ cache: false, config: {} });
   const entries: GeneratedBundledChannelEntry[] = [];
 
-  for (const manifest of manifestRegistry.plugins) {
-    if (manifest.origin !== "bundled" || manifest.channels.length === 0) {
+  for (const metadata of listBundledPluginMetadata({
+    includeChannelConfigs: false,
+    includeSyntheticChannelConfigs: false,
+  })) {
+    if ((metadata.manifest.channels?.length ?? 0) === 0) {
       continue;
     }
 
     try {
-      const sourcePath = resolveCompiledBundledModulePath(manifest.source);
       const entry = resolveChannelPluginModuleEntry(
-        loadChannelPluginModule({
-          modulePath: sourcePath,
-          rootDir: manifest.rootDir,
-          boundaryRootDir: resolveCompiledBundledModulePath(manifest.rootDir),
-          shouldTryNativeRequire: (safePath) =>
-            safePath.includes(`${path.sep}dist${path.sep}`) && isJavaScriptModulePath(safePath),
+        loadGeneratedBundledChannelModule({
+          metadata,
+          entry: metadata.source,
         }),
       );
       if (!entry) {
         log.warn(
-          `[channels] bundled channel entry ${manifest.id} missing bundled-channel-entry contract from ${sourcePath}; skipping`,
+          `[channels] bundled channel entry ${metadata.manifest.id} missing bundled-channel-entry contract; skipping`,
         );
         continue;
       }
-      const setupEntry = manifest.setupSource
+      const setupEntry = metadata.setupSource
         ? resolveChannelSetupModuleEntry(
-            loadChannelPluginModule({
-              modulePath: resolveCompiledBundledModulePath(manifest.setupSource),
-              rootDir: manifest.rootDir,
-              boundaryRootDir: resolveCompiledBundledModulePath(manifest.rootDir),
-              shouldTryNativeRequire: (safePath) =>
-                safePath.includes(`${path.sep}dist${path.sep}`) && isJavaScriptModulePath(safePath),
+            loadGeneratedBundledChannelModule({
+              metadata,
+              entry: metadata.setupSource,
             }),
           )
         : null;
       entries.push({
-        id: manifest.id,
+        id: metadata.manifest.id,
         entry,
         ...(setupEntry ? { setupEntry } : {}),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      log.warn(
-        `[channels] failed to load bundled channel ${manifest.id} from ${manifest.source}: ${detail}`,
-      );
+      log.warn(`[channels] failed to load bundled channel ${metadata.manifest.id}: ${detail}`);
     }
   }
 
