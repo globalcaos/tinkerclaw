@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createServer } from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeQaDockerHarnessFiles } from "./docker-harness.js";
@@ -31,19 +32,80 @@ function describeError(error: unknown) {
   return JSON.stringify(error);
 }
 
-async function execCommand(command: string, args: string[], cwd: string) {
-  return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    execFile(command, args, { cwd, encoding: "utf8" }, (error, stdout, stderr) => {
-      if (error) {
-        reject(
-          new Error(
-            stderr.trim() || stdout.trim() || `Command failed: ${[command, ...args].join(" ")}`,
-          ),
-        );
+async function isPortFree(port: number) {
+  return await new Promise<boolean>((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function findFreePort() {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("failed to find free port"));
         return;
       }
-      resolve({ stdout, stderr });
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(address.port);
+      });
     });
+  });
+}
+
+async function resolveHostPort(preferredPort: number, pinned: boolean) {
+  if (pinned || (await isPortFree(preferredPort))) {
+    return preferredPort;
+  }
+  return await findFreePort();
+}
+
+function trimCommandOutput(output: string) {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const lines = trimmed.split("\n");
+  return lines.length <= 120 ? trimmed : lines.slice(-120).join("\n");
+}
+
+async function execCommand(command: string, args: string[], cwd: string) {
+  return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    execFile(
+      command,
+      args,
+      { cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          const renderedStdout = trimCommandOutput(stdout);
+          const renderedStderr = trimCommandOutput(stderr);
+          reject(
+            new Error(
+              [
+                `Command failed: ${[command, ...args].join(" ")}`,
+                renderedStderr ? `stderr:\n${renderedStderr}` : "",
+                renderedStdout ? `stdout:\n${renderedStdout}` : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            ),
+          );
+          return;
+        }
+        resolve({ stdout, stderr });
+      },
+    );
   });
 }
 
@@ -98,8 +160,11 @@ export async function runQaDockerUp(
 ): Promise<QaDockerUpResult> {
   const repoRoot = path.resolve(params.repoRoot ?? process.cwd());
   const outputDir = path.resolve(params.outputDir ?? DEFAULT_QA_DOCKER_DIR);
-  const gatewayPort = params.gatewayPort ?? 18789;
-  const qaLabPort = params.qaLabPort ?? 43124;
+  const gatewayPort = await resolveHostPort(
+    params.gatewayPort ?? 18789,
+    params.gatewayPort != null,
+  );
+  const qaLabPort = await resolveHostPort(params.qaLabPort ?? 43124, params.qaLabPort != null);
   const runCommand = deps?.runCommand ?? execCommand;
   const fetchImpl =
     deps?.fetchImpl ??
