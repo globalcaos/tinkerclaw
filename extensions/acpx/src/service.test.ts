@@ -37,6 +37,7 @@ async function makeTempDir(): Promise<string> {
 
 afterEach(async () => {
   runtimeRegistry.clear();
+  delete process.env.OPENCLAW_SKIP_ACPX_RUNTIME_PROBE;
   for (const dir of tempDirs.splice(0)) {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -137,6 +138,32 @@ describe("createAcpxRuntimeService", () => {
         "embedded acpx runtime ignores legacy compatibility config: queueOwnerTtlSeconds, strictWindowsCmdWrapper=false",
       ),
     );
+
+    await service.stop?.(ctx);
+  });
+
+  it("can skip the embedded runtime probe via env", async () => {
+    process.env.OPENCLAW_SKIP_ACPX_RUNTIME_PROBE = "1";
+    const workspaceDir = await makeTempDir();
+    const ctx = createServiceContext(workspaceDir);
+    const probeAvailability = vi.fn(async () => {});
+    const service = createAcpxRuntimeService({
+      runtimeFactory: () =>
+        ({
+          ensureSession: vi.fn(),
+          runTurn: vi.fn(),
+          cancel: vi.fn(),
+          close: vi.fn(),
+          probeAvailability,
+          isHealthy: () => false,
+          doctor: async () => ({ ok: false, message: "nope" }),
+        }) as never,
+    });
+
+    await service.start(ctx);
+
+    expect(probeAvailability).not.toHaveBeenCalled();
+    expect(getAcpRuntimeBackend("acpx")).toBeTruthy();
 
     await service.stop?.(ctx);
   });
