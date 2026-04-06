@@ -183,7 +183,6 @@ function buildAnthropicCliBackendFixture(): CliBackendPlugin {
     "OTEL_SDK_DISABLED",
     "OTEL_TRACES_EXPORTER",
   ] as const;
-  const blockedEnvKeys = new Set(clearEnv);
   return {
     id: "claude-cli",
     bundleMcp: true,
@@ -242,12 +241,6 @@ function buildAnthropicCliBackendFixture(): CliBackendPlugin {
       },
       serialize: true,
     },
-    normalizeConfig: (config) => ({
-      ...config,
-      env: Object.fromEntries(
-        Object.entries(config.env ?? {}).filter(([key]) => !blockedEnvKeys.has(key)),
-      ),
-    }),
   };
 }
 
