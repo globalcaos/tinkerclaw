@@ -1,24 +1,24 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { buildGroupChatContext, buildGroupIntro } from "../auto-reply/reply/groups.js";
-import {
-  buildInboundMetaSystemPrompt,
-  buildInboundUserContextPrefix,
-} from "../auto-reply/reply/inbound-meta.js";
-import type { TemplateContext } from "../auto-reply/templating.js";
-import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
-import type { OpenClawConfig } from "../config/config.js";
-import { makeTempWorkspace, writeWorkspaceFile } from "../test-helpers/workspace.js";
 import {
   appendBootstrapPromptWarning,
   analyzeBootstrapBudget,
   buildBootstrapInjectionStats,
   buildBootstrapPromptWarning,
-} from "./bootstrap-budget.js";
-import { resolveBootstrapContextForRun } from "./bootstrap-files.js";
-import { buildEmbeddedSystemPrompt } from "./pi-embedded-runner/system-prompt.js";
-import { buildAgentSystemPrompt } from "./system-prompt.js";
-import { createStubTool } from "./test-helpers/pi-tool-stubs.js";
+} from "../../../src/agents/bootstrap-budget.js";
+import { resolveBootstrapContextForRun } from "../../../src/agents/bootstrap-files.js";
+import { buildEmbeddedSystemPrompt } from "../../../src/agents/pi-embedded-runner/system-prompt.js";
+import { buildAgentSystemPrompt } from "../../../src/agents/system-prompt.js";
+import { createStubTool } from "../../../src/agents/test-helpers/pi-tool-stubs.js";
+import { buildGroupChatContext, buildGroupIntro } from "../../../src/auto-reply/reply/groups.js";
+import {
+  buildInboundMetaSystemPrompt,
+  buildInboundUserContextPrefix,
+} from "../../../src/auto-reply/reply/inbound-meta.js";
+import type { TemplateContext } from "../../../src/auto-reply/templating.js";
+import { SILENT_REPLY_TOKEN } from "../../../src/auto-reply/tokens.js";
+import type { OpenClawConfig } from "../../../src/config/config.js";
+import { makeTempWorkspace, writeWorkspaceFile } from "../../../src/test-helpers/workspace.js";
 
 export type PromptScenarioTurn = {
   id: string;
