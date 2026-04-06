@@ -1,3 +1,5 @@
+import { asFiniteNumber } from "../shared/number-coercion.js";
+
 export type UsageLike = {
   input?: number;
   output?: number;
@@ -67,16 +69,6 @@ export function makeZeroUsageSnapshot(): AssistantUsageSnapshot {
     },
   };
 }
-
-const asFiniteNumber = (value: unknown): number | undefined => {
-  if (typeof value !== "number") {
-    return undefined;
-  }
-  if (!Number.isFinite(value)) {
-    return undefined;
-  }
-  return value;
-};
 
 export function hasNonzeroUsage(usage?: NormalizedUsage | null): usage is NormalizedUsage {
   if (!usage) {
