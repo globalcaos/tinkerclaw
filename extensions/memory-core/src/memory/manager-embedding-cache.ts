@@ -1,14 +1,10 @@
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   parseEmbedding,
   type MemoryChunk,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
-type EmbeddingCacheDb = {
-  prepare: (sql: string) => {
-    all: (...args: unknown[]) => Array<{ hash: string; embedding: string }>;
-    run: (...args: unknown[]) => unknown;
-  };
-};
+type EmbeddingCacheDb = Pick<DatabaseSync, "prepare">;
 
 type EmbeddingProviderRef = {
   id: string;
@@ -19,11 +15,12 @@ export function loadMemoryEmbeddingCache(params: {
   db: EmbeddingCacheDb;
   enabled: boolean;
   provider: EmbeddingProviderRef | null;
-  providerKey: string;
+  providerKey: string | null;
   hashes: string[];
   tableName?: string;
 }): Map<string, number[]> {
-  if (!params.enabled || !params.provider || params.hashes.length === 0) {
+  const provider = params.provider;
+  if (!params.enabled || !provider || !params.providerKey || params.hashes.length === 0) {
     return new Map();
   }
   const unique: string[] = [];
@@ -41,7 +38,7 @@ export function loadMemoryEmbeddingCache(params: {
 
   const tableName = params.tableName ?? "embedding_cache";
   const out = new Map<string, number[]>();
-  const baseParams = [params.provider.id, params.provider.model, params.providerKey];
+  const baseParams: SQLInputValue[] = [provider.id, provider.model, params.providerKey];
   const batchSize = 400;
   for (let start = 0; start < unique.length; start += batchSize) {
     const batch = unique.slice(start, start + batchSize);
@@ -51,7 +48,7 @@ export function loadMemoryEmbeddingCache(params: {
         `SELECT hash, embedding FROM ${tableName}\n` +
           ` WHERE provider = ? AND model = ? AND provider_key = ? AND hash IN (${placeholders})`,
       )
-      .all(...baseParams, ...batch);
+      .all(...baseParams, ...batch) as Array<{ hash: string; embedding: string }>;
     for (const row of rows) {
       out.set(row.hash, parseEmbedding(row.embedding));
     }
@@ -63,12 +60,13 @@ export function upsertMemoryEmbeddingCache(params: {
   db: EmbeddingCacheDb;
   enabled: boolean;
   provider: EmbeddingProviderRef | null;
-  providerKey: string;
+  providerKey: string | null;
   entries: Array<{ hash: string; embedding: number[] }>;
   now?: number;
   tableName?: string;
 }): void {
-  if (!params.enabled || !params.provider || params.entries.length === 0) {
+  const provider = params.provider;
+  if (!params.enabled || !provider || !params.providerKey || params.entries.length === 0) {
     return;
   }
   const tableName = params.tableName ?? "embedding_cache";
@@ -84,8 +82,8 @@ export function upsertMemoryEmbeddingCache(params: {
   for (const entry of params.entries) {
     const embedding = entry.embedding ?? [];
     stmt.run(
-      params.provider.id,
-      params.provider.model,
+      provider.id,
+      provider.model,
       params.providerKey,
       entry.hash,
       JSON.stringify(embedding),
