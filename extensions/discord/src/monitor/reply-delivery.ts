@@ -117,10 +117,10 @@ async function sendDiscordMediaOnly(params: {
   target: string;
   cfg: OpenClawConfig;
   token: string;
-  rest: RequestClient;
+  rest?: RequestClient;
   mediaUrl: string;
-  accountId: string;
-  mediaLocalRoots?: string[];
+  accountId?: string;
+  mediaLocalRoots?: readonly string[];
   replyTo?: string;
   retryConfig: ResolvedRetryConfig;
 }): Promise<void> {
@@ -143,10 +143,10 @@ async function sendDiscordMediaBatch(params: {
   target: string;
   cfg: OpenClawConfig;
   token: string;
-  rest: RequestClient;
+  rest?: RequestClient;
   mediaUrls: string[];
-  accountId: string;
-  mediaLocalRoots?: string[];
+  accountId?: string;
+  mediaLocalRoots?: readonly string[];
   replyTo: () => string | undefined;
   retryConfig: ResolvedRetryConfig;
 }): Promise<void> {
