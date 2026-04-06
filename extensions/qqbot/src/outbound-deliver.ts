@@ -58,6 +58,68 @@ export type SendWithRetryFn = <T>(sendFn: (token: string) => Promise<T>) => Prom
 /** Consume a quote ref exactly once. */
 export type ConsumeQuoteRefFn = () => string | undefined;
 
+function resolveQQBotMediaTargetContext(
+  event: DeliverEventContext,
+  account: ResolvedQQBotAccount,
+  prefix: string,
+): MediaTargetContext {
+  return {
+    targetType:
+      event.type === "c2c"
+        ? "c2c"
+        : event.type === "group"
+          ? "group"
+          : event.type === "dm"
+            ? "dm"
+            : "channel",
+    targetId:
+      event.type === "c2c"
+        ? event.senderId
+        : event.type === "group"
+          ? event.groupOpenid!
+          : event.type === "dm"
+            ? event.guildId!
+            : event.channelId!,
+    account,
+    replyToId: event.messageId,
+    logPrefix: prefix,
+  };
+}
+
+async function sendQQBotAutoMediaBatch(params: {
+  qualifiedTarget: string;
+  account: ResolvedQQBotAccount;
+  replyToId: string;
+  mediaUrls: string[];
+  log?: DeliverAccountContext["log"];
+  onResultError: (mediaUrl: string, error: string) => string;
+  onThrownError: (mediaUrl: string, error: string) => string;
+  onSuccess?: (mediaUrl: string) => string | undefined;
+}): Promise<void> {
+  for (const mediaUrl of params.mediaUrls) {
+    try {
+      const result = await sendMediaAuto({
+        to: params.qualifiedTarget,
+        text: "",
+        mediaUrl,
+        accountId: params.account.accountId,
+        replyToId: params.replyToId,
+        account: params.account,
+      });
+      if (result.error) {
+        params.log?.error(params.onResultError(mediaUrl, result.error));
+        continue;
+      }
+      const successMessage = params.onSuccess?.(mediaUrl);
+      if (successMessage) {
+        params.log?.info(successMessage);
+      }
+    } catch (err) {
+      params.log?.error(params.onThrownError(mediaUrl, String(err)));
+    }
+  }
+}
+
 // Media-tag parsing and delivery.
 
 /**
@@ -151,27 +213,7 @@ export async function parseAndSendMediaTags(
   log?.info(`${prefix} Send queue: ${sendQueue.map((item) => item.type).join(" -> ")}`);
 
   // Send queue items in order.
-  const mediaTarget: MediaTargetContext = {
-    targetType:
-      event.type === "c2c"
-        ? "c2c"
-        : event.type === "group"
-          ? "group"
-          : event.type === "dm"
-            ? "dm"
-            : "channel",
-    targetId:
-      event.type === "c2c"
-        ? event.senderId
-        : event.type === "group"
-          ? event.groupOpenid!
-          : event.type === "dm"
-            ? event.guildId!
-            : event.channelId!,
-    account,
-    replyToId: event.messageId,
-    logPrefix: prefix,
-  };
+  const mediaTarget = resolveQQBotMediaTargetContext(event, account, prefix);
 
   for (const item of sendQueue) {
     if (item.type === "text") {
@@ -345,25 +387,18 @@ export async function sendPlainReply(
     log?.info(
       `${prefix} Sending ${localMediaToSend.length} local media via sendMedia auto-routing`,
     );
-    for (const mediaPath of localMediaToSend) {
-      try {
-        const result = await sendMediaAuto({
-          to: qualifiedTarget,
-          text: "",
-          mediaUrl: mediaPath,
-          accountId: account.accountId,
-          replyToId: event.messageId,
-          account,
-        });
-        if (result.error) {
-          log?.error(`${prefix} sendMedia(auto) error for ${mediaPath}: ${result.error}`);
-        } else {
-          log?.info(`${prefix} Sent local media: ${mediaPath}`);
-        }
-      } catch (err) {
-        log?.error(`${prefix} sendMedia(auto) failed for ${mediaPath}: ${String(err)}`);
-      }
-    }
+    await sendQQBotAutoMediaBatch({
+      qualifiedTarget,
+      account,
+      replyToId: event.messageId,
+      mediaUrls: localMediaToSend,
+      log,
+      onSuccess: (mediaPath) => `${prefix} Sent local media: ${mediaPath}`,
+      onResultError: (mediaPath, error) =>
+        `${prefix} sendMedia(auto) error for ${mediaPath}: ${error}`,
+      onThrownError: (mediaPath, error) =>
+        `${prefix} sendMedia(auto) failed for ${mediaPath}: ${error}`,
+    });
   }
 
   // Forward media gathered during the tool phase.
@@ -371,25 +406,16 @@ export async function sendPlainReply(
     log?.info(
       `${prefix} Forwarding ${toolMediaUrls.length} tool-collected media URL(s) after block deliver`,
     );
-    for (const mediaUrl of toolMediaUrls) {
-      try {
-        const result = await sendMediaAuto({
-          to: qualifiedTarget,
-          text: "",
-          mediaUrl,
-          accountId: account.accountId,
-          replyToId: event.messageId,
-          account,
-        });
-        if (result.error) {
-          log?.error(`${prefix} Tool media forward error: ${result.error}`);
-        } else {
-          log?.info(`${prefix} Forwarded tool media: ${mediaUrl.slice(0, 80)}...`);
-        }
-      } catch (err) {
-        log?.error(`${prefix} Tool media forward failed: ${String(err)}`);
-      }
-    }
+    await sendQQBotAutoMediaBatch({
+      qualifiedTarget,
+      account,
+      replyToId: event.messageId,
+      mediaUrls: toolMediaUrls,
+      log,
+      onSuccess: (mediaUrl) => `${prefix} Forwarded tool media: ${mediaUrl.slice(0, 80)}...`,
+      onResultError: (_mediaUrl, error) => `${prefix} Tool media forward error: ${error}`,
+      onThrownError: (_mediaUrl, error) => `${prefix} Tool media forward failed: ${error}`,
+    });
     toolMediaUrls.length = 0;
   }
 }
@@ -695,27 +721,7 @@ async function sendPlainTextReply(
   const { account, log } = actx;
   const prefix = `[qqbot:${account.accountId}]`;
 
-  const imgMediaTarget: MediaTargetContext = {
-    targetType:
-      event.type === "c2c"
-        ? "c2c"
-        : event.type === "group"
-          ? "group"
-          : event.type === "dm"
-            ? "dm"
-            : "channel",
-    targetId:
-      event.type === "c2c"
-        ? event.senderId
-        : event.type === "group"
-          ? event.groupOpenid!
-          : event.type === "dm"
-            ? event.guildId!
-            : event.channelId!,
-    account,
-    replyToId: event.messageId,
-    logPrefix: prefix,
-  };
+  const imgMediaTarget = resolveQQBotMediaTargetContext(event, account, prefix);
 
   let result = textWithoutImages;
   for (const m of mdMatches) {
