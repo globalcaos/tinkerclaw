@@ -1,8 +1,11 @@
-import { chunkMarkdownTextWithMode, chunkText } from "../../auto-reply/chunk.js";
-import type { ChannelOutboundAdapter } from "../../channels/plugins/types.js";
-import type { OpenClawConfig } from "../../config/config.js";
-import { sanitizeForPlainText } from "../../plugin-sdk/outbound-runtime.js";
-import { resolveOutboundSendDep, type OutboundSendDeps } from "./send-deps.js";
+import { chunkMarkdownTextWithMode, chunkText } from "../../../src/auto-reply/chunk.js";
+import type { ChannelOutboundAdapter } from "../../../src/channels/plugins/types.js";
+import type { OpenClawConfig } from "../../../src/config/config.js";
+import {
+  resolveOutboundSendDep,
+  type OutboundSendDeps,
+} from "../../../src/infra/outbound/send-deps.js";
+import { sanitizeForPlainText } from "../../../src/plugin-sdk/outbound-runtime.js";
 
 type SignalSendFn = (
   to: string,
@@ -53,8 +56,6 @@ function withSignalChannel(result: Awaited<ReturnType<SignalSendFn>>) {
   };
 }
 
-// Keep deliver-core tests on a light local Signal stub. The real adapter owns
-// markdown/style correctness in extensions/signal tests.
 export const signalOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   textChunkLimit: 4000,
@@ -218,40 +219,36 @@ function resolveIMessageSender(deps: OutboundSendDeps | undefined) {
     ) => Promise<{ messageId: string; chatId?: string }>
   >(deps, "imessage");
   if (!sender) {
-    throw new Error("missing imessage dep");
+    throw new Error("missing sendIMessage dep");
   }
   return sender;
 }
 
-function resolveIMessageMaxBytes(cfg: OpenClawConfig): number | undefined {
-  const channelMb = (cfg.channels?.imessage as { mediaMaxMb?: number } | undefined)?.mediaMaxMb;
-  const agentMb = cfg.agents?.defaults?.mediaMaxMb;
-  const mediaMaxMb = channelMb ?? agentMb;
-  return typeof mediaMaxMb === "number" ? mediaMaxMb * MB : undefined;
+function withIMessageChannel(
+  result: Awaited<ReturnType<ReturnType<typeof resolveIMessageSender>>>,
+) {
+  return {
+    channel: "imessage" as const,
+    ...result,
+  };
 }
 
 export const imessageOutboundForTest: ChannelOutboundAdapter = {
   deliveryMode: "direct",
-  sendText: async ({ cfg, to, text, accountId, replyToId, deps }) =>
-    ({
-      channel: "imessage",
-      ...(await resolveIMessageSender(deps)(to, text, {
-        config: cfg,
-        maxBytes: resolveIMessageMaxBytes(cfg),
+  sanitizeText: ({ text }) => text,
+  sendText: async ({ to, text, accountId, deps }) =>
+    withIMessageChannel(
+      await resolveIMessageSender(deps)(to, text, {
         accountId: accountId ?? undefined,
-        replyToId: replyToId ?? undefined,
-      })),
-    }) as const,
-  sendMedia: async ({ cfg, to, text, mediaUrl, mediaLocalRoots, accountId, replyToId, deps }) =>
-    ({
-      channel: "imessage",
-      ...(await resolveIMessageSender(deps)(to, text, {
-        config: cfg,
+      }),
+    ),
+  sendMedia: async ({ to, text, mediaUrl, mediaLocalRoots, mediaReadFile, accountId, deps }) =>
+    withIMessageChannel(
+      await resolveIMessageSender(deps)(to, text, {
         mediaUrl,
         mediaLocalRoots,
-        maxBytes: resolveIMessageMaxBytes(cfg),
+        mediaReadFile,
         accountId: accountId ?? undefined,
-        replyToId: replyToId ?? undefined,
-      })),
-    }) as const,
+      }),
+    ),
 };
