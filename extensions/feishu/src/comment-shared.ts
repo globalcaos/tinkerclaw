@@ -25,6 +25,10 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+export function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export function extractCommentElementText(element: unknown): string | undefined {
   if (!isRecord(element)) {
     return undefined;
