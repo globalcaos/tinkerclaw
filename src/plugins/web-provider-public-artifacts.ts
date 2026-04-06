@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isRecord } from "../utils.js";
 import type { PluginLoadOptions } from "./loader.js";
 import { loadPluginManifestRegistry } from "./manifest-registry.js";
 import { loadBundledPluginPublicArtifactModuleSync } from "./public-surface-loader.js";
@@ -22,10 +23,6 @@ type BundledWebProviderPublicArtifactParams = {
   bundledAllowlistCompat?: boolean;
   onlyPluginIds?: readonly string[];
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
