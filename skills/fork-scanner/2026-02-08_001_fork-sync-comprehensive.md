@@ -53,7 +53,7 @@ Being 519 commits behind means:
 **How to execute:**
 
 ```bash
-cd /home/<user>/src/tinkerclaw
+cd ~/src/tinkerclaw
 git fetch upstream
 git merge upstream/main
 npm install
