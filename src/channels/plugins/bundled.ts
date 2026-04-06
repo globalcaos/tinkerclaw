@@ -93,7 +93,11 @@ function loadGeneratedBundledChannelModule(params: {
   metadata: BundledPluginMetadata;
   entry: BundledPluginMetadata["source"] | BundledPluginMetadata["setupSource"];
 }): unknown {
-  const modulePath = resolveBundledPluginGeneratedPath(OPENCLAW_PACKAGE_ROOT, params.entry);
+  const modulePath = resolveBundledPluginGeneratedPath(
+    OPENCLAW_PACKAGE_ROOT,
+    params.entry,
+    params.metadata.dirName,
+  );
   if (!modulePath) {
     throw new Error(`missing generated module for bundled channel ${params.metadata.manifest.id}`);
   }
