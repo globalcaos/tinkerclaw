@@ -1,4 +1,4 @@
-import { BUNDLED_RUNTIME_SIDECAR_PATHS } from "./runtime-sidecar-paths.js";
+import { BUNDLED_RUNTIME_SIDECAR_PATHS } from "../../../src/plugins/runtime-sidecar-paths.js";
 
 function assertUniqueValues<T extends string>(values: readonly T[], label: string): readonly T[] {
   const seen = new Set<string>();
