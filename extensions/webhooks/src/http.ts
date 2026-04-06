@@ -237,24 +237,7 @@ function optionalTruthyStringField<TKey extends string>(
   return value ? ({ [key]: value } as Record<TKey, string>) : {};
 }
 
-function toFlowView(flow: {
-  flowId: string;
-  syncMode: "task_mirrored" | "managed";
-  controllerId?: string;
-  revision: number;
-  status: string;
-  notifyPolicy: string;
-  goal: string;
-  currentStep?: string;
-  blockedTaskId?: string;
-  blockedSummary?: string;
-  stateJson?: JsonValue;
-  waitJson?: JsonValue;
-  cancelRequestedAt?: number;
-  createdAt: number;
-  updatedAt: number;
-  endedAt?: number;
-}): FlowView {
+function toFlowView(flow: FlowView): FlowView {
   return {
     flowId: flow.flowId,
     syncMode: flow.syncMode,
@@ -275,31 +258,7 @@ function toFlowView(flow: {
   };
 }
 
-function toTaskView(task: {
-  taskId: string;
-  runtime: string;
-  sourceId?: string;
-  scopeKind: string;
-  childSessionKey?: string;
-  parentFlowId?: string;
-  parentTaskId?: string;
-  agentId?: string;
-  runId?: string;
-  label?: string;
-  task: string;
-  status: string;
-  deliveryStatus: string;
-  notifyPolicy: string;
-  createdAt: number;
-  startedAt?: number;
-  endedAt?: number;
-  lastEventAt?: number;
-  cleanupAfter?: number;
-  error?: string;
-  progressSummary?: string;
-  terminalSummary?: string;
-  terminalOutcome?: string;
-}): TaskView {
+function toTaskView(task: TaskView): TaskView {
   return {
     taskId: task.taskId,
     runtime: task.runtime,
