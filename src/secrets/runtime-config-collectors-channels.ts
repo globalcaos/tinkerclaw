@@ -1,4 +1,4 @@
-import { iterateBootstrapChannelPlugins } from "../channels/plugins/bootstrap-registry.js";
+import { getBootstrapChannelPlugin } from "../channels/plugins/bootstrap-registry.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { type ResolverContext, type SecretDefaults } from "./runtime-shared.js";
 
@@ -7,10 +7,15 @@ export function collectChannelConfigAssignments(params: {
   defaults: SecretDefaults | undefined;
   context: ResolverContext;
 }): void {
-  if (!params.config.channels || Object.keys(params.config.channels).length === 0) {
+  const channelIds = Object.keys(params.config.channels ?? {});
+  if (channelIds.length === 0) {
     return;
   }
-  for (const plugin of iterateBootstrapChannelPlugins()) {
+  for (const channelId of channelIds) {
+    const plugin = getBootstrapChannelPlugin(channelId);
+    if (!plugin) {
+      continue;
+    }
     plugin.secrets?.collectRuntimeConfigAssignments?.(params);
   }
 }
