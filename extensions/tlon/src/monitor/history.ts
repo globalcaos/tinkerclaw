@@ -1,9 +1,5 @@
 import type { RuntimeEnv } from "../../api.js";
-import { asRecord, extractMessageText } from "./utils.js";
-
-function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { asRecord, extractMessageText, formatErrorMessage } from "./utils.js";
 
 /**
  * Format a number as @ud (with dots every 3 digits from the right)
