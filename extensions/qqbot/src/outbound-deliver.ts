@@ -228,27 +228,31 @@ export async function parseAndSendMediaTags(
     } else if (item.type === "voice") {
       await sendVoiceWithTimeout(mediaTarget, item.content, account, log, prefix);
     } else if (item.type === "video") {
-      const result = await sendVideoMsg(mediaTarget, item.content);
-      if (result.error) {
-        log?.error(`${prefix} sendVideoMsg error: ${result.error}`);
-      }
-    } else if (item.type === "file") {
-      const result = await sendDocument(mediaTarget, item.content);
-      if (result.error) {
-        log?.error(`${prefix} sendDocument error: ${result.error}`);
-      }
-    } else if (item.type === "media") {
-      const result = await sendMediaAuto({
-        to: actx.qualifiedTarget,
-        text: "",
-        mediaUrl: item.content,
-        accountId: account.accountId,
-        replyToId: event.messageId,
-        account,
+      await sendQQBotResultWithLogging({
+        run: async () => await sendVideoMsg(mediaTarget, item.content),
+        log,
+        onError: (error) => `${prefix} sendVideoMsg error: ${error}`,
       });
-      if (result.error) {
-        log?.error(`${prefix} sendMedia(auto) error: ${result.error}`);
-      }
+    } else if (item.type === "file") {
+      await sendQQBotResultWithLogging({
+        run: async () => await sendDocument(mediaTarget, item.content),
+        log,
+        onError: (error) => `${prefix} sendDocument error: ${error}`,
+      });
+    } else if (item.type === "media") {
+      await sendQQBotResultWithLogging({
+        run: async () =>
+          await sendMediaAuto({
+            to: actx.qualifiedTarget,
+            text: "",
+            mediaUrl: item.content,
+            accountId: account.accountId,
+            replyToId: event.messageId,
+            account,
+          }),
+        log,
+        onError: (error) => `${prefix} sendMedia(auto) error: ${error}`,
+      });
     }
   }
 
@@ -550,6 +554,27 @@ async function sendQQBotTextChunksWithRetry(params: {
   }
 }
 
+async function sendQQBotResultWithLogging(params: {
+  run: () => Promise<{ error?: string }>;
+  log?: DeliverAccountContext["log"];
+  onSuccess?: () => string | undefined;
+  onError: (error: string) => string;
+}): Promise<void> {
+  try {
+    const result = await params.run();
+    if (result.error) {
+      params.log?.error(params.onError(result.error));
+      return;
+    }
+    const successMessage = params.onSuccess?.();
+    if (successMessage) {
+      params.log?.info(successMessage);
+    }
+  } catch (err) {
+    params.log?.error(params.onError(String(err)));
+  }
+}
+
 async function sendQQBotPhotoWithLogging(params: {
   target: MediaTargetContext;
   imageUrl: string;
@@ -557,19 +582,12 @@ async function sendQQBotPhotoWithLogging(params: {
   onSuccess?: (imageUrl: string) => string | undefined;
   onError: (error: string) => string;
 }): Promise<void> {
-  try {
-    const result = await sendPhoto(params.target, params.imageUrl);
-    if (result.error) {
-      params.log?.error(params.onError(result.error));
-      return;
-    }
-    const successMessage = params.onSuccess?.(params.imageUrl);
-    if (successMessage) {
-      params.log?.info(successMessage);
-    }
-  } catch (err) {
-    params.log?.error(params.onError(String(err)));
-  }
+  await sendQQBotResultWithLogging({
+    run: async () => await sendPhoto(params.target, params.imageUrl),
+    log: params.log,
+    onSuccess: params.onSuccess ? () => params.onSuccess?.(params.imageUrl) : undefined,
+    onError: params.onError,
+  });
 }
 
 /** Send voice with a 45s timeout guard. */
