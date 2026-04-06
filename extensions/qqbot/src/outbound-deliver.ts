@@ -503,6 +503,32 @@ async function sendTextChunks(
   const { account, log } = actx;
   const prefix = `[qqbot:${account.accountId}]`;
   const chunks = getQQBotRuntime().channel.text.chunkMarkdownText(text, TEXT_CHUNK_LIMIT);
+  await sendQQBotTextChunksWithRetry({
+    account,
+    event,
+    chunks,
+    sendWithRetry,
+    consumeQuoteRef,
+    allowDm: true,
+    log,
+    onSuccess: (chunk) =>
+      `${prefix} Sent text chunk (${chunk.length}/${text.length} chars): ${chunk.slice(0, 50)}...`,
+    onError: (err) => `${prefix} Failed to send text chunk: ${String(err)}`,
+  });
+}
+
+async function sendQQBotTextChunksWithRetry(params: {
+  account: ResolvedQQBotAccount;
+  event: DeliverEventContext;
+  chunks: string[];
+  sendWithRetry: SendWithRetryFn;
+  consumeQuoteRef: ConsumeQuoteRefFn;
+  allowDm: boolean;
+  log?: DeliverAccountContext["log"];
+  onSuccess: (chunk: string) => string;
+  onError: (err: unknown) => string;
+}): Promise<void> {
+  const { account, event, chunks, sendWithRetry, consumeQuoteRef, allowDm, log } = params;
   for (const chunk of chunks) {
     try {
       await sendWithRetry((token) =>
@@ -512,14 +538,12 @@ async function sendTextChunks(
           token,
           text: chunk,
           consumeQuoteRef,
-          allowDm: true,
+          allowDm,
         }),
       );
-      log?.info(
-        `${prefix} Sent text chunk (${chunk.length}/${text.length} chars): ${chunk.slice(0, 50)}...`,
-      );
+      log?.info(params.onSuccess(chunk));
     } catch (err) {
-      log?.error(`${prefix} Failed to send text chunk: ${String(err)}`);
+      log?.error(params.onError(err));
     }
   }
 }
@@ -685,25 +709,18 @@ async function sendMarkdownReply(
   // Send markdown text.
   if (result.trim()) {
     const mdChunks = chunkText(result, TEXT_CHUNK_LIMIT);
-    for (const chunk of mdChunks) {
-      try {
-        await sendWithRetry((token) =>
-          sendQQBotTextChunk({
-            account,
-            event,
-            token,
-            text: chunk,
-            consumeQuoteRef,
-            allowDm: true,
-          }),
-        );
-        log?.info(
-          `${prefix} Sent markdown chunk (${chunk.length}/${result.length} chars) with ${httpImageUrls.length} HTTP images (${event.type})`,
-        );
-      } catch (err) {
-        log?.error(`${prefix} Failed to send markdown message chunk: ${String(err)}`);
-      }
-    }
+    await sendQQBotTextChunksWithRetry({
+      account,
+      event,
+      chunks: mdChunks,
+      sendWithRetry,
+      consumeQuoteRef,
+      allowDm: true,
+      log,
+      onSuccess: (chunk) =>
+        `${prefix} Sent markdown chunk (${chunk.length}/${result.length} chars) with ${httpImageUrls.length} HTTP images (${event.type})`,
+      onError: (err) => `${prefix} Failed to send markdown message chunk: ${String(err)}`,
+    });
   }
 }
 
@@ -752,21 +769,18 @@ async function sendPlainTextReply(
 
     if (result.trim()) {
       const plainChunks = chunkText(result, TEXT_CHUNK_LIMIT);
-      for (const chunk of plainChunks) {
-        await sendWithRetry((token) =>
-          sendQQBotTextChunk({
-            account,
-            event,
-            token,
-            text: chunk,
-            consumeQuoteRef,
-            allowDm: false,
-          }),
-        );
-        log?.info(
+      await sendQQBotTextChunksWithRetry({
+        account,
+        event,
+        chunks: plainChunks,
+        sendWithRetry,
+        consumeQuoteRef,
+        allowDm: false,
+        log,
+        onSuccess: (chunk) =>
           `${prefix} Sent text chunk (${chunk.length}/${result.length} chars) (${event.type})`,
-        );
-      }
+        onError: (err) => `${prefix} Send failed: ${String(err)}`,
+      });
     }
   } catch (err) {
     log?.error(`${prefix} Send failed: ${String(err)}`);
