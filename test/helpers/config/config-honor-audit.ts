@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GENERATED_BASE_CONFIG_SCHEMA } from "./schema.base.generated.js";
+import { GENERATED_BASE_CONFIG_SCHEMA } from "../../../src/config/schema.base.generated.js";
 
 export type ConfigHonorInventoryRow = {
   key: string;
@@ -34,7 +34,7 @@ export type ConfigHonorAuditResult = {
   }>;
 };
 
-const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 function hasSchemaPath(schemaPath: string): boolean {
   const segments = schemaPath.split(".");
