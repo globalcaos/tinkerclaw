@@ -109,4 +109,33 @@ describe("unit vitest config", () => {
       expect.arrayContaining(["src/commands/**", "src/config/**", "src/security/**"]),
     );
   });
+
+  it("keeps bundled unit include files out of the resolved exclude list", () => {
+    const unitConfig = createUnitVitestConfigWithOptions(
+      {},
+      {
+        includePatterns: [
+          "src/infra/matrix-plugin-helper.test.ts",
+          "src/plugin-sdk/facade-runtime.test.ts",
+          "src/plugins/loader.test.ts",
+        ],
+      },
+    );
+
+    expect(unitConfig.test?.include).toEqual([
+      "src/infra/matrix-plugin-helper.test.ts",
+      "src/plugin-sdk/facade-runtime.test.ts",
+      "src/plugins/loader.test.ts",
+    ]);
+    expect(unitConfig.test?.exclude).not.toEqual(
+      expect.arrayContaining([
+        "src/infra/**",
+        "src/plugin-sdk/**",
+        "src/plugins/**",
+        "src/infra/matrix-plugin-helper.test.ts",
+        "src/plugin-sdk/facade-runtime.test.ts",
+        "src/plugins/loader.test.ts",
+      ]),
+    );
+  });
 });
