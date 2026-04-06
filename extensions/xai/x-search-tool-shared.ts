@@ -1,3 +1,4 @@
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 
 export function buildMissingXSearchApiKeyPayload() {
@@ -10,7 +11,7 @@ export function buildMissingXSearchApiKeyPayload() {
 }
 
 export function createXSearchToolDefinition(
-  execute: (toolCallId: string, args: Record<string, unknown>) => Promise<unknown>,
+  execute: (toolCallId: string, args: Record<string, unknown>) => Promise<AgentToolResult<unknown>>,
 ) {
   return {
     label: "X Search",
