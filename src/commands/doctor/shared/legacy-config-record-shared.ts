@@ -1,7 +1,9 @@
+import { isRecord } from "../../../utils.js";
+
 type JsonRecord = Record<string, unknown>;
 
 export type { JsonRecord };
-export { isRecord } from "../../../utils.js";
+export { isRecord };
 
 export function cloneRecord<T extends JsonRecord>(value: T | undefined): T {
   return { ...value } as T;
