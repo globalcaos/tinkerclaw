@@ -10,6 +10,7 @@ import {
   resolveMatrixChannelConfig,
   resolveMatrixDefaultOrOnlyAccountId,
 } from "./account-selection.js";
+import { resolveMatrixAccountStringValues } from "./auth-precedence.js";
 import {
   resolveGlobalMatrixEnvConfig,
   resolveScopedMatrixEnvConfig,
@@ -38,68 +39,8 @@ export type MatrixLegacyFlatStoreTarget = MatrixMigrationAccountTarget & {
 
 type MatrixLegacyFlatStoreKind = "state" | "encrypted state";
 
-type MatrixResolvedStringField =
-  | "homeserver"
-  | "userId"
-  | "accessToken"
-  | "password"
-  | "deviceId"
-  | "deviceName";
-
-type MatrixResolvedStringValues = Record<MatrixResolvedStringField, string>;
-
-type MatrixStringSourceMap = Partial<Record<MatrixResolvedStringField, string>>;
-
-const MATRIX_DEFAULT_ACCOUNT_AUTH_ONLY_FIELDS = new Set<MatrixResolvedStringField>([
-  "userId",
-  "accessToken",
-  "password",
-  "deviceId",
-]);
-
 function clean(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function resolveMatrixStringSourceValue(value: string | undefined): string {
-  return typeof value === "string" ? value : "";
-}
-
-function shouldAllowBaseAuthFallback(accountId: string, field: MatrixResolvedStringField): boolean {
-  return (
-    normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID ||
-    !MATRIX_DEFAULT_ACCOUNT_AUTH_ONLY_FIELDS.has(field)
-  );
-}
-
-function resolveMatrixAccountStringValues(params: {
-  accountId: string;
-  account?: MatrixStringSourceMap;
-  scopedEnv?: MatrixStringSourceMap;
-  channel?: MatrixStringSourceMap;
-  globalEnv?: MatrixStringSourceMap;
-}): MatrixResolvedStringValues {
-  const fields: MatrixResolvedStringField[] = [
-    "homeserver",
-    "userId",
-    "accessToken",
-    "password",
-    "deviceId",
-    "deviceName",
-  ];
-  const resolved = {} as MatrixResolvedStringValues;
-
-  for (const field of fields) {
-    resolved[field] =
-      resolveMatrixStringSourceValue(params.account?.[field]) ||
-      resolveMatrixStringSourceValue(params.scopedEnv?.[field]) ||
-      (shouldAllowBaseAuthFallback(params.accountId, field)
-        ? resolveMatrixStringSourceValue(params.channel?.[field]) ||
-          resolveMatrixStringSourceValue(params.globalEnv?.[field])
-        : "");
-  }
-
-  return resolved;
 }
 
 function resolveMatrixAccountConfigEntry(
