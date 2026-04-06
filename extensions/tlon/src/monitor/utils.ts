@@ -1,3 +1,4 @@
+import { asNullableObjectRecord } from "openclaw/plugin-sdk/text-runtime";
 import { normalizeShip } from "../targets.js";
 
 // Cite types for message references
@@ -181,9 +182,7 @@ export async function resolveAuthorizedMessageText(params: {
   return citedContent + rawText;
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
+export const asRecord = asNullableObjectRecord;
 
 export function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
