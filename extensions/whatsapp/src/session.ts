@@ -6,6 +6,8 @@ import { danger, success } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger, toPinoLikeLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 import qrcode from "qrcode-terminal";
+// FORK: SQLite history capture
+import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js";
 import {
   maybeRestoreCredsFromBackup,
   readCredsJsonRaw,
@@ -169,6 +171,9 @@ export async function createWaSocket(
       sessionLogger.error({ error: String(err) }, "WebSocket error");
     });
   }
+
+  // FORK: bind SQLite history capture to Baileys events
+  bindHistoryCapture(sock.ev);
 
   return sock;
 }
