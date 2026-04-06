@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("openclaw/plugin-sdk/memory-host-events", () => ({
+  appendMemoryHostEvent: vi.fn(async () => {}),
+}));
+
 import {
   applyShortTermPromotions,
   auditShortTermPromotionArtifacts,
