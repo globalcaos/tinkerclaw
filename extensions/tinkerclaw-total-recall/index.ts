@@ -153,7 +153,7 @@ export default definePluginEntry({
         }
 
         try {
-          const pack = assembleRetrievalPack(query, store, {
+          const pack = await assembleRetrievalPack(query, store, {
             maxTokens: budgetTokens,
           });
           if (!pack) {
