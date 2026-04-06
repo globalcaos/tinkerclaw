@@ -144,6 +144,7 @@
   "realtime-transcription",
   "realtime-voice",
   "media-understanding",
+  "media-understanding-runtime",
   "messaging-targets",
   "request-url",
   "runtime-store",
