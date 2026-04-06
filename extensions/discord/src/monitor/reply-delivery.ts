@@ -113,6 +113,32 @@ async function sendWithRetry(
   });
 }
 
+async function sendDiscordMediaOnly(params: {
+  target: string;
+  cfg: OpenClawConfig;
+  token: string;
+  rest: RequestClient;
+  mediaUrl: string;
+  accountId: string;
+  mediaLocalRoots?: string[];
+  replyTo?: string;
+  retryConfig: ResolvedRetryConfig;
+}): Promise<void> {
+  await sendWithRetry(
+    () =>
+      sendMessageDiscord(params.target, "", {
+        cfg: params.cfg,
+        token: params.token,
+        rest: params.rest,
+        mediaUrl: params.mediaUrl,
+        accountId: params.accountId,
+        mediaLocalRoots: params.mediaLocalRoots,
+        replyTo: params.replyTo,
+      }),
+    params.retryConfig,
+  );
+}
+
 function resolveTargetChannelId(target: string): string | undefined {
   if (!target.startsWith("channel:")) {
     return undefined;
@@ -410,20 +436,17 @@ export async function deliverDiscordReply(params: {
         mediaUrls: reply.mediaUrls.slice(1),
         caption: "",
         send: async ({ mediaUrl }) => {
-          const replyTo = resolvePayloadReplyTo();
-          await sendWithRetry(
-            () =>
-              sendMessageDiscord(params.target, "", {
-                cfg: params.cfg,
-                token: params.token,
-                rest: params.rest,
-                mediaUrl,
-                accountId: params.accountId,
-                mediaLocalRoots: params.mediaLocalRoots,
-                replyTo,
-              }),
+          await sendDiscordMediaOnly({
+            target: params.target,
+            cfg: params.cfg,
+            token: params.token,
+            rest: params.rest,
+            mediaUrl,
+            accountId: params.accountId,
+            mediaLocalRoots: params.mediaLocalRoots,
+            replyTo: resolvePayloadReplyTo(),
             retryConfig,
-          );
+          });
         },
       });
       continue;
@@ -454,20 +477,17 @@ export async function deliverDiscordReply(params: {
         mediaUrls: reply.mediaUrls,
         caption: "",
         send: async ({ mediaUrl }) => {
-          const replyTo = resolvePayloadReplyTo();
-          await sendWithRetry(
-            () =>
-              sendMessageDiscord(params.target, "", {
-                cfg: params.cfg,
-                token: params.token,
-                rest: params.rest,
-                mediaUrl,
-                accountId: params.accountId,
-                mediaLocalRoots: params.mediaLocalRoots,
-                replyTo,
-              }),
+          await sendDiscordMediaOnly({
+            target: params.target,
+            cfg: params.cfg,
+            token: params.token,
+            rest: params.rest,
+            mediaUrl,
+            accountId: params.accountId,
+            mediaLocalRoots: params.mediaLocalRoots,
+            replyTo: resolvePayloadReplyTo(),
             retryConfig,
-          );
+          });
         },
       });
       deliveredAny = true;
