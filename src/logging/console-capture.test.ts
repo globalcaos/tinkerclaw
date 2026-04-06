@@ -1,5 +1,3 @@
-import crypto from "node:crypto";
-import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   enableConsoleCapture,
@@ -9,7 +7,7 @@ import {
   setLoggerOverride,
 } from "../logging.js";
 import { defaultRuntime } from "../runtime.js";
-import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
+import { createSuiteLogPathTracker } from "./log-test-helpers.js";
 import { loggingState } from "./state.js";
 import {
   captureConsoleSnapshot,
@@ -18,14 +16,10 @@ import {
 } from "./test-helpers/console-snapshot.js";
 
 let snapshot: ConsoleSnapshot;
-let logRoot = "";
-const logRootTracker = createSuiteTempRootTracker({
-  prefix: "openclaw-log-",
-});
+const logPathTracker = createSuiteLogPathTracker("openclaw-log-");
 
 beforeAll(async () => {
-  await logRootTracker.setup();
-  logRoot = await logRootTracker.make("case");
+  await logPathTracker.setup();
 });
 
 beforeEach(() => {
@@ -49,8 +43,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await logRootTracker.cleanup();
-  logRoot = "";
+  await logPathTracker.cleanup();
 });
 
 describe("enableConsoleCapture", () => {
@@ -165,7 +158,7 @@ describe("enableConsoleCapture", () => {
 });
 
 function tempLogPath() {
-  return path.join(logRoot, `${crypto.randomUUID()}.log`);
+  return logPathTracker.nextPath();
 }
 
 function eioError() {
