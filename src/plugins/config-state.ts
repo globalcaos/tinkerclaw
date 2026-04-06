@@ -8,6 +8,46 @@ import type { PluginRecord } from "./registry.js";
 import { defaultSlotIdForKey, hasKind } from "./slots.js";
 import type { PluginKind } from "./types.js";
 
+// FORK: Types and functions required by facade-runtime.ts and loader.ts.
+// Upstream has these in a refactored config-state.ts; we add them here
+// to bridge the gap without accepting the full upstream rewrite (which
+// pulls in config-activation-shared.ts and cascading dependencies).
+
+export type PluginActivationSource = "disabled" | "explicit" | "auto" | "default";
+
+export type PluginActivationState = {
+  source: PluginActivationSource;
+  enabled: boolean;
+};
+
+export type PluginActivationConfigSource = {
+  plugins: NormalizedPluginsConfig;
+  rootConfig?: OpenClawConfig;
+};
+
+export function createPluginActivationSource(params: {
+  config?: OpenClawConfig;
+  plugins?: NormalizedPluginsConfig;
+}): PluginActivationConfigSource {
+  return {
+    plugins: params.plugins ?? normalizePluginsConfig(params.config?.plugins),
+    rootConfig: params.config,
+  };
+}
+
+export function resolveEffectivePluginActivationState(params: {
+  pluginId: string;
+  activationSource: PluginActivationConfigSource;
+  enabledByDefault?: boolean;
+}): PluginActivationState {
+  const entry = params.activationSource.plugins.entries[params.pluginId];
+  if (entry && typeof entry.enabled === "boolean") {
+    return { source: entry.enabled ? "explicit" : "disabled", enabled: entry.enabled };
+  }
+  const enabled = params.enabledByDefault ?? true;
+  return { source: "default", enabled };
+}
+
 export type NormalizedPluginsConfig = {
   enabled: boolean;
   allow: string[];
