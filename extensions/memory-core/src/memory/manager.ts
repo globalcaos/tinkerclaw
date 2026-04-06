@@ -1,5 +1,7 @@
+import type { DatabaseSync } from "node:sqlite";
 import { type FSWatcher } from "chokidar";
 import {
+  createSubsystemLogger,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
   resolveMemorySearchConfig,
@@ -53,6 +55,7 @@ const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const BATCH_FAILURE_LIMIT = 2;
 
 const MEMORY_INDEX_MANAGER_CACHE_KEY = Symbol.for("openclaw.memoryIndexManagerCache");
+const log = createSubsystemLogger("memory");
 
 const { cache: INDEX_CACHE, pending: INDEX_CACHE_PENDING } =
   resolveSingletonManagedCache<MemoryIndexManager>(MEMORY_INDEX_MANAGER_CACHE_KEY);
@@ -542,7 +545,19 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   }
 
   private enqueueTargetedSessionSync(sessionFiles?: string[]): Promise<void> {
-    return enqueueMemoryTargetedSessionSync(this, sessionFiles);
+    return enqueueMemoryTargetedSessionSync(
+      {
+        isClosed: () => this.closed,
+        getSyncing: () => this.syncing,
+        getQueuedSessionFiles: () => this.queuedSessionFiles,
+        getQueuedSessionSync: () => this.queuedSessionSync,
+        setQueuedSessionSync: (value) => {
+          this.queuedSessionSync = value;
+        },
+        sync: async (params) => await this.sync(params),
+      },
+      sessionFiles,
+    );
   }
 
   private isReadonlyDbError(err: unknown): boolean {
@@ -650,7 +665,16 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   status(): MemoryProviderStatus {
     const sourceFilter = this.buildSourceFilter();
     const aggregateState = collectMemoryStatusAggregate({
-      db: this.db,
+      db: {
+        prepare: (sql) => ({
+          all: (...args) =>
+            this.db.prepare(sql).all(...args) as Array<{
+              kind: "files" | "chunks";
+              source: MemorySource;
+              c: number;
+            }>,
+        }),
+      },
       sources: this.sources,
       sourceFilterSql: sourceFilter.sql,
       sourceFilterParams: sourceFilter.params,
