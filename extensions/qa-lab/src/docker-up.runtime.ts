@@ -118,7 +118,7 @@ async function waitForHealth(
     pollMs?: number;
   },
 ) {
-  const timeoutMs = deps.timeoutMs ?? 120_000;
+  const timeoutMs = deps.timeoutMs ?? 240_000;
   const pollMs = deps.pollMs ?? 1_000;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
