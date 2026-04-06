@@ -3,10 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createEventStore, estimateTokens } from "../src/event-store.js";
-import {
-  assembleRetrievalPack,
-  DEFAULT_RETRIEVAL_MAX_TOKENS,
-} from "../src/retrieval-integration.js";
+import { assembleRetrievalPack } from "../src/retrieval-integration.js";
 
 describe("Retrieval pack assembly", () => {
   let baseDir: string;
@@ -19,13 +16,13 @@ describe("Retrieval pack assembly", () => {
     rmSync(baseDir, { recursive: true, force: true });
   });
 
-  it("returns empty string for empty store", () => {
+  it("returns empty string for empty store", async () => {
     const store = createEventStore({ baseDir, sessionKey: "empty" });
-    const pack = assembleRetrievalPack("hello", store);
+    const pack = await assembleRetrievalPack("hello", store);
     expect(pack).toBe("");
   });
 
-  it("returns empty string when no FTS matches", () => {
+  it("returns empty string when no FTS matches", async () => {
     const store = createEventStore({ baseDir, sessionKey: "no-match" });
     store.append({
       turnId: 1,
@@ -36,11 +33,11 @@ describe("Retrieval pack assembly", () => {
       metadata: {},
     });
 
-    const pack = assembleRetrievalPack("zzzzzzzzz", store);
+    const pack = await assembleRetrievalPack("zzzzzzzzz", store);
     expect(pack).toBe("");
   });
 
-  it("assembles a pack when FTS matches exist", () => {
+  it("assembles a pack when FTS matches exist", async () => {
     const store = createEventStore({ baseDir, sessionKey: "match" });
     store.append({
       turnId: 1,
@@ -67,13 +64,13 @@ describe("Retrieval pack assembly", () => {
       metadata: {},
     });
 
-    const pack = assembleRetrievalPack("deployment pipeline", store);
+    const pack = await assembleRetrievalPack("deployment pipeline", store);
     expect(pack).not.toBe("");
     expect(pack).toContain("## Retrieved Context");
     expect(pack).toContain("deployment");
   });
 
-  it("respects token budget", () => {
+  it("respects token budget", async () => {
     const store = createEventStore({ baseDir, sessionKey: "budget" });
     // Add many events with matching content
     for (let i = 0; i < 50; i++) {
@@ -87,7 +84,7 @@ describe("Retrieval pack assembly", () => {
       });
     }
 
-    const pack = assembleRetrievalPack("server performance database", store, {
+    const pack = await assembleRetrievalPack("server performance database", store, {
       maxTokens: 100,
     });
     // Should not exceed budget (100 tokens ~= 400 chars)
@@ -95,7 +92,7 @@ describe("Retrieval pack assembly", () => {
     expect(packTokens).toBeLessThanOrEqual(110); // small margin for rounding
   });
 
-  it("deduplicates via MMR", () => {
+  it("deduplicates via MMR", async () => {
     const store = createEventStore({ baseDir, sessionKey: "mmr" });
     // Add near-identical events
     for (let i = 0; i < 10; i++) {
@@ -118,7 +115,7 @@ describe("Retrieval pack assembly", () => {
       metadata: {},
     });
 
-    const pack = assembleRetrievalPack("server crashed", store);
+    const pack = await assembleRetrievalPack("server crashed", store);
     expect(pack).not.toBe("");
     // MMR should include diverse results too
     expect(pack).toContain("Retrieved Context");
