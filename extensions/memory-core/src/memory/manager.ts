@@ -34,7 +34,11 @@ import {
   resolveSingletonManagedCache,
 } from "./manager-cache.js";
 import { MemoryManagerEmbeddingOps } from "./manager-embedding-ops.js";
-import { resolveMemoryProviderState } from "./manager-provider-state.js";
+import {
+  resolveMemoryPrimaryProviderRequest,
+  resolveMemoryProviderState,
+} from "./manager-provider-state.js";
+import { resolveMemorySearchPreflight } from "./manager-search-preflight.js";
 import { searchKeyword, searchVector } from "./manager-search.js";
 import {
   collectMemoryStatusAggregate,
@@ -142,12 +146,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     return await createEmbeddingProvider({
       config: params.cfg,
       agentDir: resolveAgentDir(params.cfg, params.agentId),
-      provider: params.settings.provider,
-      remote: params.settings.remote,
-      model: params.settings.model,
-      outputDimensionality: params.settings.outputDimensionality,
-      fallback: params.settings.fallback,
-      local: params.settings.local,
+      ...resolveMemoryPrimaryProviderRequest({ settings: params.settings }),
     });
   }
 
@@ -293,10 +292,14 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       sessionKey?: string;
     },
   ): Promise<MemorySearchResult[]> {
-    const cleaned = query.trim();
-    if (!cleaned) {
+    const preflight = resolveMemorySearchPreflight({
+      query,
+      hasIndexedContent: this.hasIndexedContent(),
+    });
+    if (!preflight.shouldSearch) {
       return [];
     }
+    const cleaned = preflight.normalizedQuery;
     void this.warmSession(opts?.sessionKey);
     startAsyncSearchSync({
       enabled: this.settings.sync.onSearch,
@@ -307,11 +310,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         log.warn(`memory sync failed (search): ${String(err)}`);
       },
     });
-    const hasIndexedContent = this.hasIndexedContent();
-    if (!hasIndexedContent) {
-      return [];
+    if (preflight.shouldInitializeProvider) {
+      await this.ensureProviderInitialized();
     }
-    await this.ensureProviderInitialized();
     const minScore = opts?.minScore ?? this.settings.query.minScore;
     const maxResults = opts?.maxResults ?? this.settings.query.maxResults;
     const hybrid = this.settings.query.hybrid;
