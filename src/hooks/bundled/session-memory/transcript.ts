@@ -1,9 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { hasInterSessionUserProvenance } from "../../../sessions/input-provenance.js";
 
-function extractTextMessageContent(content: AgentMessage["content"]): string | undefined {
+function extractTextMessageContent(content: unknown): string | undefined {
   if (typeof content === "string") {
     return content;
   }
