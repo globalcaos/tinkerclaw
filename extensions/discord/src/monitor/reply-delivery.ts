@@ -442,8 +442,8 @@ export async function deliverDiscordReply(params: {
     if (!reply.hasContent) {
       continue;
     }
-    if (!reply.hasMedia) {
-      await sendDiscordPayloadText({
+    const sendReplyText = async () =>
+      sendDiscordPayloadText({
         cfg: params.cfg,
         target: params.target,
         text: reply.text,
@@ -461,6 +461,20 @@ export async function deliverDiscordReply(params: {
         request,
         retryConfig,
       });
+    const sendReplyMediaBatch = async (mediaUrls: string[]) =>
+      sendDiscordMediaBatch({
+        target: params.target,
+        cfg: params.cfg,
+        token: params.token,
+        rest: params.rest,
+        mediaUrls,
+        accountId: params.accountId,
+        mediaLocalRoots: params.mediaLocalRoots,
+        replyTo: resolvePayloadReplyTo,
+        retryConfig,
+      });
+    if (!reply.hasMedia) {
+      await sendReplyText();
       if (reply.text.trim()) {
         deliveredAny = true;
       }
@@ -483,36 +497,9 @@ export async function deliverDiscordReply(params: {
       });
       deliveredAny = true;
       // Voice messages cannot include text; send remaining text separately if present.
-      await sendDiscordPayloadText({
-        cfg: params.cfg,
-        target: params.target,
-        text: reply.text,
-        token: params.token,
-        rest: params.rest,
-        accountId: params.accountId,
-        textLimit: params.textLimit,
-        maxLinesPerMessage: params.maxLinesPerMessage,
-        resolveReplyTo: resolvePayloadReplyTo,
-        binding,
-        chunkMode: params.chunkMode,
-        username: persona.username,
-        avatarUrl: persona.avatarUrl,
-        channelId,
-        request,
-        retryConfig,
-      });
+      await sendReplyText();
       // Additional media items are sent as regular attachments (voice is single-file only).
-      await sendDiscordMediaBatch({
-        target: params.target,
-        cfg: params.cfg,
-        token: params.token,
-        rest: params.rest,
-        mediaUrls: reply.mediaUrls.slice(1),
-        accountId: params.accountId,
-        mediaLocalRoots: params.mediaLocalRoots,
-        replyTo: resolvePayloadReplyTo,
-        retryConfig,
-      });
+      await sendReplyMediaBatch(reply.mediaUrls.slice(1));
       continue;
     }
 
@@ -520,35 +507,8 @@ export async function deliverDiscordReply(params: {
       reply.text.trim().length > 0 &&
       reply.mediaUrls.some((mediaUrl) => isLikelyDiscordVideoMedia(mediaUrl));
     if (shouldSplitVideoMediaReply) {
-      await sendDiscordPayloadText({
-        cfg: params.cfg,
-        target: params.target,
-        text: reply.text,
-        token: params.token,
-        rest: params.rest,
-        accountId: params.accountId,
-        textLimit: params.textLimit,
-        maxLinesPerMessage: params.maxLinesPerMessage,
-        resolveReplyTo: resolvePayloadReplyTo,
-        binding,
-        chunkMode: params.chunkMode,
-        username: persona.username,
-        avatarUrl: persona.avatarUrl,
-        channelId,
-        request,
-        retryConfig,
-      });
-      await sendDiscordMediaBatch({
-        target: params.target,
-        cfg: params.cfg,
-        token: params.token,
-        rest: params.rest,
-        mediaUrls: reply.mediaUrls,
-        accountId: params.accountId,
-        mediaLocalRoots: params.mediaLocalRoots,
-        replyTo: resolvePayloadReplyTo,
-        retryConfig,
-      });
+      await sendReplyText();
+      await sendReplyMediaBatch(reply.mediaUrls);
       deliveredAny = true;
       continue;
     }
