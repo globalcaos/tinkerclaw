@@ -210,7 +210,7 @@ describe("connectGateway", () => {
     expect(host.lastError).toBeNull();
   });
 
-  it("preserves approval prompts, clears stale run indicators, and resumes queued work after seq-gap reconnect", () => {
+  it("preserves live approval prompts, clears stale run indicators, and resumes queued work after seq-gap reconnect", () => {
     const now = 1_700_000_000_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
     const host = createHost();
@@ -253,7 +253,8 @@ describe("connectGateway", () => {
     client.emitGap(20, 24);
 
     expect(gatewayClientInstances).toHaveLength(2);
-    expect(host.execApprovalQueue).toHaveLength(0);
+    expect(host.execApprovalQueue).toHaveLength(1);
+    expect(host.execApprovalQueue[0]?.id).toBe("approval-1");
     expect(chatHost.chatQueue).toHaveLength(1);
     expect(chatHost.chatQueue[0]?.text).toBe("follow up");
 
