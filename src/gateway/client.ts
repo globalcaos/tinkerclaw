@@ -71,6 +71,10 @@ type StoredDeviceAuth = {
   scopes?: string[];
 };
 
+type FingerprintCheckingClientOptions = Omit<ClientOptions, "checkServerIdentity"> & {
+  checkServerIdentity?: (servername: string, cert: CertMeta) => Error | undefined;
+};
+
 class GatewayClientRequestError extends Error {
   readonly gatewayCode: string;
   readonly details?: unknown;
@@ -229,15 +233,12 @@ export class GatewayClient {
       return;
     }
     // Allow node screen snapshots and other large responses.
-    const wsOptions: ClientOptions = {
+    const wsOptions: FingerprintCheckingClientOptions = {
       maxPayload: 25 * 1024 * 1024,
     };
     if (url.startsWith("wss://") && this.opts.tlsFingerprint) {
       wsOptions.rejectUnauthorized = false;
-      const checkServerIdentity: NonNullable<ClientOptions["checkServerIdentity"]> = (
-        _host: string,
-        cert: CertMeta,
-      ) => {
+      wsOptions.checkServerIdentity = (_host: string, cert: CertMeta) => {
         const fingerprintValue =
           typeof cert === "object" && cert && "fingerprint256" in cert
             ? ((cert as { fingerprint256?: string }).fingerprint256 ?? "")
@@ -257,9 +258,8 @@ export class GatewayClient {
         }
         return undefined;
       };
-      wsOptions.checkServerIdentity = checkServerIdentity;
     }
-    const ws = new WebSocket(url, wsOptions);
+    const ws = new WebSocket(url, wsOptions as ClientOptions);
     this.ws = ws;
 
     ws.on("open", () => {
