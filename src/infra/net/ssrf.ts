@@ -206,7 +206,7 @@ function normalizeLookupResults(results: LookupResult): readonly LookupAddress[]
   if (Array.isArray(results)) {
     return results;
   }
-  return [results];
+  return [results as LookupAddress];
 }
 
 export function createPinnedLookup(params: {
