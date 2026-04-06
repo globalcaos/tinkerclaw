@@ -51,7 +51,10 @@ export async function cleanupTrackedTempDirsAsync(trackedDirs: string[]) {
   );
 }
 
-export function createSuiteTempRootTracker(prefix: string) {
+export function createSuiteTempRootTracker(
+  prefix: string,
+  baseDir = path.join(process.cwd(), ".tmp"),
+) {
   let suiteTempRoot = "";
   let tempDirCounter = 0;
 
@@ -59,9 +62,8 @@ export function createSuiteTempRootTracker(prefix: string) {
     if (suiteTempRoot) {
       return suiteTempRoot;
     }
-    const bundleTempRoot = path.join(process.cwd(), ".tmp");
-    fs.mkdirSync(bundleTempRoot, { recursive: true });
-    suiteTempRoot = fs.mkdtempSync(path.join(bundleTempRoot, String(prefix) + "-"));
+    fs.mkdirSync(baseDir, { recursive: true });
+    suiteTempRoot = fs.mkdtempSync(path.join(baseDir, String(prefix) + "-"));
     return suiteTempRoot;
   }
 
