@@ -326,7 +326,7 @@ export function resolveClosestResolution<TResolution extends string>(params: {
   if (params.requestedResolution && supported.includes(params.requestedResolution)) {
     return params.requestedResolution;
   }
-  const order = params.order ?? (IMAGE_RESOLUTION_ORDER as readonly TResolution[]);
+  const order: readonly string[] = params.order ?? IMAGE_RESOLUTION_ORDER;
   const requestedIndex = params.requestedResolution
     ? order.indexOf(params.requestedResolution)
     : -1;
