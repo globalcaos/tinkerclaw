@@ -183,3 +183,21 @@ docs/README-SPEC.md
 scripts/post-merge-build-playbook.md
 docs/fork-setup.md
 docs/plans/2026-03-21-whatsapp-protocol-v2.md
+
+# ═══════════════════════════════════════════════════════════════════
+# AMYGDALA PERSONALITY MODELS — trained on private conversation data
+# Prudence models (public AI incident data) remain tracked.
+# ═══════════════════════════════════════════════════════════════════
+models/amygdala/checkpoints/personality_*.pt
+models/amygdala/checkpoints/personality_*.json
+models/amygdala/onnx/personality_*.onnx
+models/amygdala/onnx/personality_*.onnx.data
+models/amygdala/personality-*.onnx
+models/amygdala/personality-*.onnx.data
+# Personality nudge file — contains active behavioral modulation state
+data/amygdala/personality-nudge.json
+# Training data databases — contain private interaction history
+data/amygdala/*.sqlite
+models/amygdala/training.db
+# Compiled Python bytecache
+data/amygdala/tests/__pycache__/
