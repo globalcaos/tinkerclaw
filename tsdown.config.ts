@@ -167,6 +167,8 @@ export default defineConfig([
     entry: buildUnifiedDistEntries(),
     deps: {
       neverBundle: [
+        "better-sqlite3", // FORK: native addon must stay external
+        "bindings", // FORK: native addon must stay external
         "@lancedb/lancedb",
         "@matrix-org/matrix-sdk-crypto-nodejs",
         "matrix-js-sdk",

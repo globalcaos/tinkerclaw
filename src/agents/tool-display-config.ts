@@ -691,6 +691,81 @@ export const TOOL_DISPLAY_CONFIG: ToolDisplayConfig = {
       title: "TTS",
       detailKeys: ["text", "channel"],
     },
+    archive: {
+      emoji: "🗜️",
+      title: "Archive",
+      detailKeys: ["path", "format"],
+    },
+    confluence: {
+      emoji: "📝",
+      title: "Confluence",
+      detailKeys: ["spaceKey", "pageId", "title", "query"],
+    },
+    email: {
+      emoji: "📧",
+      title: "Email",
+      detailKeys: ["to", "subject", "from"],
+    },
+    git: {
+      emoji: "🔀",
+      title: "Git",
+      detailKeys: ["command", "path", "ref"],
+    },
+    jira: {
+      emoji: "🎫",
+      title: "Jira",
+      detailKeys: ["project", "issueKey", "query"],
+    },
+    media: {
+      emoji: "🎞️",
+      title: "Media",
+      detailKeys: ["path", "url", "format"],
+    },
+    network: {
+      emoji: "🌐",
+      title: "Network",
+      detailKeys: ["url", "host", "port"],
+    },
+    office: {
+      emoji: "📊",
+      title: "Office",
+      detailKeys: ["path", "format"],
+    },
+    resource_monitor: {
+      emoji: "📈",
+      title: "Resource Monitor",
+      detailKeys: ["metric", "pid"],
+    },
+    run_history: {
+      emoji: "📜",
+      title: "Run History",
+      detailKeys: ["runId", "limit"],
+    },
+    slack_integration: {
+      emoji: "💬",
+      title: "Slack",
+      detailKeys: ["channel", "to", "query"],
+    },
+    synapse_debate: {
+      emoji: "🧠",
+      title: "Synapse Debate",
+      detailKeys: ["topic", "participants"],
+    },
+    tmux: {
+      emoji: "🖥️",
+      title: "Tmux",
+      detailKeys: ["sessionName", "command"],
+    },
+    transcribe: {
+      emoji: "🎙️",
+      title: "Transcribe",
+      detailKeys: ["path", "url", "language"],
+    },
+    whatsapp_history: {
+      emoji: "📱",
+      title: "WhatsApp History",
+      detailKeys: ["chatId", "limit", "query"],
+    },
   },
 };
 

@@ -126,15 +126,22 @@ data/
 db/
 crm_data/
 sessions/
+!src/config/sessions/
 employees.txt
 *.sqlite
 *.db
 auth-profiles.json
 memory/
 !src/memory/
+!extensions/*/src/memory/
+!.agents/*/
 morning-briefings/
 skills/
+!.agents/skills/
+!src/agents/skills/
 config/
+!src/config/
+!extensions/*/src/config*
 
 # Local iOS signing overrides
 apps/ios/LocalSigning.xcconfig

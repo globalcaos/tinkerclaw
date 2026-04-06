@@ -39,6 +39,8 @@ export type SubscribeEmbeddedPiSessionParams = {
   /** Agent identity for hook context — resolved from session config in attempt.ts. */
   agentId?: string;
   internalEvents?: AgentInternalEvent[];
+  /** Auth profile ID for lifecycle event tracking. */
+  authProfileId?: string;
 };
 
 export type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";
