@@ -1137,7 +1137,7 @@ These are upstream files modified to support Tinker features. They require re-ap
 - **Root cause 1 — stale workspace shadow:** `~/.openclaw/workspace/extensions/whatsapp/` was a 15-day-old copy (from 2026-03-06 workspace sync) that overrode the freshly-merged bundled version. It lacked `light-runtime-api.ts` and `runtime-api.ts` introduced by upstream commit `30a94dfd3`. Workspace extensions (rank 1) override bundled (rank 3) by design.
 - **Root cause 2 — boundary discovery gap:** After removing the workspace copy, the runtime boundary's independent `loadPluginManifestRegistry()` call (no `workspaceDir`, different cache key than startup) only found 46/85 plugins. WhatsApp is an optional bundled cluster excluded from tsdown build — no `dist/extensions/whatsapp/` entry exists. The boundary's discovery silently dropped it.
 - **Fix 1:** Removed stale `~/.openclaw/workspace/extensions/whatsapp/`.
-- **Fix 2:** Added `OPENCLAW_BUNDLED_PLUGINS_DIR=/home/<user>/src/tinkerclaw/extensions` to `~/.config/systemd/user/openclaw-gateway.service`. This upstream-supported env var bypasses auto-detection and ensures the boundary discovers all source extensions including optional clusters.
+- **Fix 2:** Added `OPENCLAW_BUNDLED_PLUGINS_DIR=~/src/tinkerclaw/extensions` to `~/.config/systemd/user/openclaw-gateway.service`. This upstream-supported env var bypasses auto-detection and ensures the boundary discovers all source extensions including optional clusters.
 
 ### FIXED: Auth Error Badge Not Seeded for Dead OAuth Tokens (2026-03-21)
 
