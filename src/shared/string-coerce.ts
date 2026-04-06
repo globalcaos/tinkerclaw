@@ -9,3 +9,7 @@ export function normalizeNullableString(value: unknown): string | null {
 export function normalizeOptionalString(value: unknown): string | undefined {
   return normalizeNullableString(value) ?? undefined;
 }
+
+export function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}

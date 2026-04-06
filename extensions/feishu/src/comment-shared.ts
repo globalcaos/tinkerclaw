@@ -1,4 +1,8 @@
-import { asOptionalRecord, normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
+import {
+  asOptionalRecord,
+  hasNonEmptyString as sharedHasNonEmptyString,
+  normalizeOptionalString,
+} from "openclaw/plugin-sdk/text-runtime";
 
 export function encodeQuery(params: Record<string, string | undefined>): string {
   const query = new URLSearchParams();
@@ -24,9 +28,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const asRecord = asOptionalRecord;
 
-export function hasNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
+export const hasNonEmptyString = sharedHasNonEmptyString;
 
 export function extractCommentElementText(element: unknown): string | undefined {
   if (!isRecord(element)) {
