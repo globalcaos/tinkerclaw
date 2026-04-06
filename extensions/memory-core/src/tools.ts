@@ -118,6 +118,28 @@ async function resolveMemoryReadFailureResult(params: {
   return jsonResult({ path: params.relPath, text: "", disabled: true, error: message });
 }
 
+async function executeMemoryReadResult<T>(params: {
+  read: () => Promise<T>;
+  requestedCorpus?: "memory" | "wiki" | "all";
+  relPath: string;
+  from?: number;
+  lines?: number;
+  agentSessionKey?: string;
+}) {
+  try {
+    return jsonResult(await params.read());
+  } catch (error) {
+    return await resolveMemoryReadFailureResult({
+      error,
+      requestedCorpus: params.requestedCorpus,
+      relPath: params.relPath,
+      from: params.from,
+      lines: params.lines,
+      agentSessionKey: params.agentSessionKey,
+    });
+  }
+}
+
 export function createMemorySearchTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
@@ -266,25 +288,21 @@ export function createMemoryGetTool(options: {
         }
         const resolved = resolveMemoryBackendConfig({ cfg, agentId });
         if (resolved.backend === "builtin") {
-          try {
-            const result = await readAgentMemoryFile({
-              cfg,
-              agentId,
-              relPath,
-              from: from ?? undefined,
-              lines: lines ?? undefined,
-            });
-            return jsonResult(result);
-          } catch (err) {
-            return await resolveMemoryReadFailureResult({
-              error: err,
-              requestedCorpus,
-              relPath,
-              from: from ?? undefined,
-              lines: lines ?? undefined,
-              agentSessionKey: options.agentSessionKey,
-            });
-          }
+          return await executeMemoryReadResult({
+            read: async () =>
+              await readAgentMemoryFile({
+                cfg,
+                agentId,
+                relPath,
+                from: from ?? undefined,
+                lines: lines ?? undefined,
+              }),
+            requestedCorpus,
+            relPath,
+            from: from ?? undefined,
+            lines: lines ?? undefined,
+            agentSessionKey: options.agentSessionKey,
+          });
         }
         const memory = await getMemoryManagerContextWithPurpose({
           cfg,
@@ -294,23 +312,19 @@ export function createMemoryGetTool(options: {
         if ("error" in memory) {
           return jsonResult({ path: relPath, text: "", disabled: true, error: memory.error });
         }
-        try {
-          const result = await memory.manager.readFile({
-            relPath,
-            from: from ?? undefined,
-            lines: lines ?? undefined,
-          });
-          return jsonResult(result);
-        } catch (err) {
-          return await resolveMemoryReadFailureResult({
-            error: err,
-            requestedCorpus,
-            relPath,
-            from: from ?? undefined,
-            lines: lines ?? undefined,
-            agentSessionKey: options.agentSessionKey,
-          });
-        }
+        return await executeMemoryReadResult({
+          read: async () =>
+            await memory.manager.readFile({
+              relPath,
+              from: from ?? undefined,
+              lines: lines ?? undefined,
+            }),
+          requestedCorpus,
+          relPath,
+          from: from ?? undefined,
+          lines: lines ?? undefined,
+          agentSessionKey: options.agentSessionKey,
+        });
       },
   });
 }
