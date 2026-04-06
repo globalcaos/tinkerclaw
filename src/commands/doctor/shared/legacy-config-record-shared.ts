@@ -2,6 +2,8 @@ import { isRecord } from "../../../utils.js";
 
 type JsonRecord = Record<string, unknown>;
 
+import { isRecord } from "../../../utils.js";
+
 export type { JsonRecord };
 export { isRecord };
 
