@@ -139,6 +139,36 @@ async function sendDiscordMediaOnly(params: {
   );
 }
 
+async function sendDiscordMediaBatch(params: {
+  target: string;
+  cfg: OpenClawConfig;
+  token: string;
+  rest: RequestClient;
+  mediaUrls: string[];
+  accountId: string;
+  mediaLocalRoots?: string[];
+  replyTo: () => string | undefined;
+  retryConfig: ResolvedRetryConfig;
+}): Promise<void> {
+  await sendMediaWithLeadingCaption({
+    mediaUrls: params.mediaUrls,
+    caption: "",
+    send: async ({ mediaUrl }) => {
+      await sendDiscordMediaOnly({
+        target: params.target,
+        cfg: params.cfg,
+        token: params.token,
+        rest: params.rest,
+        mediaUrl,
+        accountId: params.accountId,
+        mediaLocalRoots: params.mediaLocalRoots,
+        replyTo: params.replyTo(),
+        retryConfig: params.retryConfig,
+      });
+    },
+  });
+}
+
 function resolveTargetChannelId(target: string): string | undefined {
   if (!target.startsWith("channel:")) {
     return undefined;
@@ -432,22 +462,16 @@ export async function deliverDiscordReply(params: {
         retryConfig,
       });
       // Additional media items are sent as regular attachments (voice is single-file only).
-      await sendMediaWithLeadingCaption({
+      await sendDiscordMediaBatch({
+        target: params.target,
+        cfg: params.cfg,
+        token: params.token,
+        rest: params.rest,
         mediaUrls: reply.mediaUrls.slice(1),
-        caption: "",
-        send: async ({ mediaUrl }) => {
-          await sendDiscordMediaOnly({
-            target: params.target,
-            cfg: params.cfg,
-            token: params.token,
-            rest: params.rest,
-            mediaUrl,
-            accountId: params.accountId,
-            mediaLocalRoots: params.mediaLocalRoots,
-            replyTo: resolvePayloadReplyTo(),
-            retryConfig,
-          });
-        },
+        accountId: params.accountId,
+        mediaLocalRoots: params.mediaLocalRoots,
+        replyTo: resolvePayloadReplyTo,
+        retryConfig,
       });
       continue;
     }
@@ -473,22 +497,16 @@ export async function deliverDiscordReply(params: {
         request,
         retryConfig,
       });
-      await sendMediaWithLeadingCaption({
+      await sendDiscordMediaBatch({
+        target: params.target,
+        cfg: params.cfg,
+        token: params.token,
+        rest: params.rest,
         mediaUrls: reply.mediaUrls,
-        caption: "",
-        send: async ({ mediaUrl }) => {
-          await sendDiscordMediaOnly({
-            target: params.target,
-            cfg: params.cfg,
-            token: params.token,
-            rest: params.rest,
-            mediaUrl,
-            accountId: params.accountId,
-            mediaLocalRoots: params.mediaLocalRoots,
-            replyTo: resolvePayloadReplyTo(),
-            retryConfig,
-          });
-        },
+        accountId: params.accountId,
+        mediaLocalRoots: params.mediaLocalRoots,
+        replyTo: resolvePayloadReplyTo,
+        retryConfig,
       });
       deliveredAny = true;
       continue;
