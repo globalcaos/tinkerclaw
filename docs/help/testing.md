@@ -515,6 +515,9 @@ If you want to rely on env keys (e.g. exported in your `~/.profile`), run local 
     - `videoToVideo` when the provider declares `capabilities.videoToVideo.enabled` and the selected provider/model accepts buffer-backed local video input in the shared sweep
   - Current declared-but-skipped `imageToVideo` providers in the shared sweep:
     - `vydra` because bundled `veo3` is text-only and bundled `kling` requires a remote image URL
+  - Provider-specific Vydra coverage:
+    - `OPENCLAW_LIVE_TEST=1 OPENCLAW_LIVE_VYDRA_VIDEO=1 pnpm test:live -- extensions/vydra/vydra.live.test.ts`
+    - that file runs `veo3` text-to-video plus a `kling` lane that uses a remote image URL fixture by default
   - Current `videoToVideo` live coverage:
     - `runway` only when the selected model is `runway/gen4_aleph`
   - Current declared-but-skipped `videoToVideo` providers in the shared sweep:
