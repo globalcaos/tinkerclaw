@@ -16,10 +16,6 @@ function hasLegacyDiscordStreamingAliases(value: unknown): boolean {
   return hasLegacyStreamingAliases(value, { includePreviewChunk: true });
 }
 
-function hasLegacyDiscordAccountStreamingAliases(value: unknown): boolean {
-  return hasLegacyAccountStreamingAliases(value, hasLegacyDiscordStreamingAliases);
-}
-
 const LEGACY_TTS_PROVIDER_KEYS = ["openai", "elevenlabs", "microsoft", "edge"] as const;
 
 function hasLegacyTtsProviderKeys(value: unknown): boolean {
@@ -128,7 +124,7 @@ export const legacyConfigRules: ChannelDoctorLegacyConfigRule[] = [
     path: ["channels", "discord", "accounts"],
     message:
       "channels.discord.accounts.<id>.streamMode, streaming (scalar), chunkMode, blockStreaming, draftChunk, and blockStreamingCoalesce are legacy; use channels.discord.accounts.<id>.streaming.{mode,chunkMode,preview.chunk,block.enabled,block.coalesce}.",
-    match: hasLegacyDiscordAccountStreamingAliases,
+    match: (value) => hasLegacyAccountStreamingAliases(value, hasLegacyDiscordStreamingAliases),
   },
   {
     path: ["channels", "discord", "voice", "tts"],
