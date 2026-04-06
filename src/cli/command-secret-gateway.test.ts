@@ -445,8 +445,8 @@ describe("resolveCommandSecretRefsViaGateway", () => {
     callGateway.mockResolvedValueOnce({
       assignments: [
         {
-          path: TALK_TEST_PROVIDER_API_KEY_PATH,
-          pathSegments: [...TALK_TEST_PROVIDER_API_KEY_PATH_SEGMENTS],
+          path: "talk.providers.missing.apiKey",
+          pathSegments: ["talk", "providers", "missing", "apiKey"],
           value: "sk-live",
         },
       ],
