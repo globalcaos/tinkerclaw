@@ -79,7 +79,6 @@ function nodeBuildConfig(config: UserConfig): UserConfig {
     env,
     fixedExtension: false,
     platform: "node",
-    external: ["better-sqlite3", "bindings"], // FORK: native addons must stay external
     inputOptions: buildInputOptions,
   };
 }
@@ -126,10 +125,12 @@ function buildCoreDistEntries(): Record<string, string> {
     // Keep long-lived lazy runtime boundaries on stable filenames so rebuilt
     // dist/ trees do not strand already-running gateways on stale hashed chunks.
     "agents/auth-profiles.runtime": "src/agents/auth-profiles.runtime.ts",
+    "agents/model-catalog.runtime": "src/agents/model-catalog.runtime.ts",
+    "agents/models-config.runtime": "src/agents/models-config.runtime.ts",
     "agents/pi-model-discovery-runtime": "src/agents/pi-model-discovery-runtime.ts",
     "commands/status.summary.runtime": "src/commands/status.summary.runtime.ts",
+    "plugins/provider-discovery.runtime": "src/plugins/provider-discovery.runtime.ts",
     "plugins/provider-runtime.runtime": "src/plugins/provider-runtime.runtime.ts",
-    "plugins/runtime/runtime-line.contract": "src/plugins/runtime/runtime-line.contract.ts",
     extensionAPI: "src/extensionAPI.ts",
     "infra/warning-filter": "src/infra/warning-filter.ts",
     "telegram/audit": bundledPluginFile("telegram", "src/audit.ts"),
@@ -169,8 +170,6 @@ export default defineConfig([
         "@lancedb/lancedb",
         "@matrix-org/matrix-sdk-crypto-nodejs",
         "matrix-js-sdk",
-        "better-sqlite3", // FORK: native addon — must not be bundled (uses bindings for .node resolution)
-        "bindings", // FORK: required by better-sqlite3 for native binding resolution
         ...bundledPluginRuntimeDependencies,
       ],
     },
