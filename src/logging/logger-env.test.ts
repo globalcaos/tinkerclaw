@@ -1,22 +1,33 @@
-import os from "node:os";
+import crypto from "node:crypto";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getResolvedConsoleSettings,
   getResolvedLoggerSettings,
   resetLogger,
   setLoggerOverride,
 } from "../logging.js";
+import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 import { loggingState } from "./state.js";
 
-const testLogPath = path.join(os.tmpdir(), "openclaw-test-env-log-level.log");
 const defaultMaxFileBytes = 500 * 1024 * 1024;
+const logRootTracker = createSuiteTempRootTracker({
+  prefix: "openclaw-test-env-log-level-",
+});
 
 describe("OPENCLAW_LOG_LEVEL", () => {
   let originalEnv: string | undefined;
+  let logRoot = "";
+  let testLogPath = "";
+
+  beforeAll(async () => {
+    await logRootTracker.setup();
+    logRoot = await logRootTracker.make("case");
+  });
 
   beforeEach(() => {
     originalEnv = process.env.OPENCLAW_LOG_LEVEL;
+    testLogPath = path.join(logRoot, `${crypto.randomUUID()}.log`);
     delete process.env.OPENCLAW_LOG_LEVEL;
     loggingState.invalidEnvLogLevelValue = null;
     resetLogger();
@@ -33,6 +44,12 @@ describe("OPENCLAW_LOG_LEVEL", () => {
     resetLogger();
     setLoggerOverride(null);
     vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    await logRootTracker.cleanup();
+    logRoot = "";
+    testLogPath = "";
   });
 
   it("applies a valid env override to both file and console levels", () => {
