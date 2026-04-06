@@ -136,16 +136,19 @@ describe("runEmbeddedAttempt context injection", () => {
 
   it("filters no-op heartbeat pairs before history limiting and context-engine assembly", async () => {
     hoisted.getDmHistoryLimitFromSessionKeyMock.mockReturnValue(1);
-    hoisted.limitHistoryTurnsMock.mockImplementation(limitHistoryTurns);
+    hoisted.limitHistoryTurnsMock.mockImplementation(
+      (messages: unknown, limit: number | undefined) =>
+        limitHistoryTurns(messages as AgentMessage[], limit),
+    );
     const assemble = vi.fn(async ({ messages }: { messages: AgentMessage[] }) => ({
       messages,
       estimatedTokens: 1,
     }));
     const sessionMessages: AgentMessage[] = [
-      { role: "user", content: "real question", timestamp: 1 } as AgentMessage,
-      { role: "assistant", content: "real answer", timestamp: 2 } as AgentMessage,
-      { role: "user", content: HEARTBEAT_PROMPT, timestamp: 3 } as AgentMessage,
-      { role: "assistant", content: "HEARTBEAT_OK", timestamp: 4 } as AgentMessage,
+      { role: "user", content: "real question", timestamp: 1 } as unknown as AgentMessage,
+      { role: "assistant", content: "real answer", timestamp: 2 } as unknown as AgentMessage,
+      { role: "user", content: HEARTBEAT_PROMPT, timestamp: 3 } as unknown as AgentMessage,
+      { role: "assistant", content: "HEARTBEAT_OK", timestamp: 4 } as unknown as AgentMessage,
     ];
 
     await createContextEngineAttemptRunner({
