@@ -33,7 +33,8 @@
     "!docs/.i18n/zh-CN.tm.jsonl",
     "skills/",
     "scripts/npm-runner.mjs",
-    "scripts/postinstall-bundled-plugins.mjs"
+    "scripts/postinstall-bundled-plugins.mjs",
+    "scripts/windows-cmd-helpers.mjs"
   ],
   "type": "module",
   "main": "dist/index.js",
