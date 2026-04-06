@@ -3,18 +3,42 @@
  *
  * Assembles a token-bounded string of relevant past events for injection
  * into the system prompt. Pipeline:
- *   FTS search → task-conditioned scoring → MMR dedup → token-bounded format.
+ *   Hybrid (FTS + vector) search → task-conditioned scoring → MMR dedup → token-bounded format.
+ *
+ * When an embedding cache and embed function are provided via setEmbeddingContext(),
+ * the pipeline runs vector search alongside FTS and merges the results using
+ * weighted scoring (0.6 vector / 0.4 keyword). Falls back gracefully to FTS-only
+ * when embeddings are unavailable or the provider is down.
  */
 
+import type { EmbeddingCache } from "./embedding-cache.js";
+import type { EmbedFn } from "./embedding-worker.js";
 import { estimateTokens } from "./event-store.js";
 import type { EventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
+import { mergeHybridResults } from "./hybrid-merge.js";
 import { ftsSearch } from "./search-index.js";
 import { taskConditionedScore } from "./task-conditioned-scoring.js";
 import { createDefaultTaskState } from "./task-state.js";
+import { vectorSearch } from "./vector-search.js";
 
 /** Default token budget for a retrieval pack (fits comfortably in system prompt). */
 export const DEFAULT_RETRIEVAL_MAX_TOKENS = 4096;
+
+// -- Embedding context (set once at extension init, read by assembleRetrievalPack) --
+
+let sharedEmbeddingCache: EmbeddingCache | null = null;
+let sharedEmbedFn: EmbedFn | null = null;
+
+/**
+ * Provide embedding cache + embed function for hybrid retrieval.
+ * Call once during extension initialisation. If never called, the pipeline
+ * falls back to FTS-only (no vector search).
+ */
+export function setEmbeddingContext(cache: EmbeddingCache, embedFn: EmbedFn): void {
+  sharedEmbeddingCache = cache;
+  sharedEmbedFn = embedFn;
+}
 
 /** MMR diversity weight: higher = more relevance-focused, lower = more diverse. */
 const MMR_LAMBDA = 0.7;
@@ -67,11 +91,7 @@ interface ScoredEvent {
 }
 
 /**
- * Maximal Marginal Relevance reranking (λ=0.7 by default).
- * Iteratively selects the candidate that best balances relevance against
- * redundancy with already-selected items.
- *
- * MMR(i) = λ · relevance(i) - (1-λ) · max_j∈S similarity(i, j)
+ * Maximal Marginal Relevance reranking.
  */
 function mmrRerank(
   candidates: ScoredEvent[],
@@ -91,7 +111,6 @@ function mmrRerank(
 
     for (let i = 0; i < remaining.length; i++) {
       const c = remaining[i];
-      // Max similarity to any already-selected item
       let maxSim = 0;
       for (const s of selected) {
         const sim = wordJaccard(c.event.content, s.event.content);
@@ -113,12 +132,8 @@ function mmrRerank(
   return selected;
 }
 
-/**
- * Format a single memory event as a compact, readable line.
- * Truncates long content to keep token cost predictable.
- */
 function formatEvent(event: MemoryEvent): string {
-  const ts = event.timestamp.slice(0, 19); // "2024-01-01T12:00:00" without ms/tz
+  const ts = event.timestamp.slice(0, 19);
   const preview = event.content.length > 300 ? `${event.content.slice(0, 300)}…` : event.content;
   return `[${ts}] [${event.kind}] ${preview}`;
 }
@@ -127,42 +142,80 @@ function formatEvent(event: MemoryEvent): string {
  * Assemble a retrieval pack: a token-bounded, relevance-ranked, deduplicated
  * string of past events ready for system prompt injection.
  *
- * Returns an empty string when the store is empty or no FTS matches exist.
- *
- * @param query   - The current user message or turn query.
- * @param eventStore - The ENGRAM event store for this session.
- * @param options - Optional token budget and task context.
+ * When embedding context is available (via setEmbeddingContext), runs hybrid
+ * FTS + vector search. Otherwise falls back to FTS-only. Embedding failures
+ * are caught and degraded gracefully.
  */
-export function assembleRetrievalPack(
+export async function assembleRetrievalPack(
   query: string,
   eventStore: EventStore,
   options?: AssembleOptions,
-): string {
+): Promise<string> {
   const maxTokens = options?.maxTokens ?? DEFAULT_RETRIEVAL_MAX_TOKENS;
   const taskId = options?.taskId;
 
-  // Fast-path: nothing to retrieve
   if (eventStore.count() === 0) {
     return "";
   }
 
-  // 1. FTS search — pull candidate events
+  // 1. FTS search
   const ftsResults = ftsSearch(eventStore, query, FTS_TOP_N, taskId ? { taskId } : undefined);
-  if (ftsResults.length === 0) {
+
+  // 1.5. Hybrid merge — combine FTS with vector search when embeddings available
+  let candidateIds: Map<string, number>;
+
+  if (sharedEmbeddingCache && sharedEmbedFn) {
+    try {
+      const [queryEmbedding] = await sharedEmbedFn([query]);
+      if (queryEmbedding) {
+        const vecResults = vectorSearch(
+          queryEmbedding,
+          eventStore,
+          sharedEmbeddingCache,
+          FTS_TOP_N,
+        );
+        const merged = mergeHybridResults({
+          vector: vecResults,
+          keyword: ftsResults.map((r) => ({ eventId: r.event.id, score: r.score })),
+        });
+        candidateIds = new Map(merged.map((m) => [m.eventId, m.score]));
+      } else {
+        candidateIds = new Map(ftsResults.map((r) => [r.event.id, r.score]));
+      }
+    } catch {
+      // Embedding provider down — graceful degradation to FTS-only
+      candidateIds = new Map(ftsResults.map((r) => [r.event.id, r.score]));
+    }
+  } else {
+    candidateIds = new Map(ftsResults.map((r) => [r.event.id, r.score]));
+  }
+
+  if (candidateIds.size === 0) {
     return "";
   }
 
-  // 2. Task-conditioned scoring — amplify / discount by task context
-  const taskState = createDefaultTaskState(taskId ?? "default");
-  const scored: ScoredEvent[] = ftsResults.map((r) => ({
-    event: r.event,
-    score: taskConditionedScore(r.event, r.score, taskState),
-  }));
+  // Resolve event objects for candidates (some may come from vector-only matches)
+  const allEvents = eventStore.readAll();
+  const eventById = new Map(allEvents.map((e) => [e.id, e]));
 
-  // 3. Sort by score descending before MMR so the greedy first pick is best
+  // 2. Task-conditioned scoring
+  const taskState = createDefaultTaskState(taskId ?? "default");
+  const scored: ScoredEvent[] = [];
+  for (const [eventId, baseScore] of candidateIds) {
+    const event = eventById.get(eventId);
+    if (!event) {
+      continue;
+    }
+    scored.push({
+      event,
+      score: taskConditionedScore(event, baseScore, taskState),
+    });
+  }
+
+  // 3. Sort by score descending
   scored.sort((a, b) => b.score - a.score);
 
-  // 4. MMR deduplication — diversity-aware reranking (λ=0.7)
+  // 4. MMR deduplication
   const reranked = mmrRerank(scored);
 
   // 5. Token-bounded assembly
@@ -184,7 +237,6 @@ export function assembleRetrievalPack(
     tokensUsed += lineTokens;
   }
 
-  // If only the header was added, return empty (nothing useful to inject)
   if (lines.length === 1) {
     return "";
   }
