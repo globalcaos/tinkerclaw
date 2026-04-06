@@ -1,20 +1,11 @@
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
-import {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  makeWASocket,
-  useMultiFileAuthState,
-} from "@whiskeysockets/baileys";
 import { formatCliCommand } from "openclaw/plugin-sdk/cli-runtime";
 import { VERSION } from "openclaw/plugin-sdk/cli-runtime";
 import { danger, success } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger, toPinoLikeLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 import qrcode from "qrcode-terminal";
-// FORK: SQLite history capture
-import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js";
 import {
   maybeRestoreCredsFromBackup,
   readCredsJsonRaw,
@@ -23,6 +14,13 @@ import {
   resolveWebCredsPath,
 } from "./auth-store.js";
 import { formatError, getStatusCode } from "./session-errors.js";
+import {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  makeWASocket,
+  useMultiFileAuthState,
+} from "./session.runtime.js";
 export { formatError, getStatusCode } from "./session-errors.js";
 
 export {
@@ -127,17 +125,9 @@ export async function createWaSocket(
     logger,
     printQRInTerminal: false,
     browser: ["openclaw", "cli", VERSION],
-    syncFullHistory: true,
+    syncFullHistory: false,
     markOnlineOnConnect: false,
   });
-
-  // FORK: bind SQLite history capture for persistent, searchable message storage
-  try {
-    bindHistoryCapture(sock.ev);
-    sessionLogger.info("WhatsApp history live-capture bound to socket events");
-  } catch (err) {
-    sessionLogger.warn({ error: String(err) }, "whatsapp-history live-capture failed to bind");
-  }
 
   sock.ev.on("creds.update", () => enqueueSaveCreds(authDir, saveCreds, sessionLogger));
   sock.ev.on(

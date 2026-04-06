@@ -19,7 +19,6 @@ type LibraryExports = typeof import("./library.js");
 
 // These bindings are populated only for library consumers. The CLI entry stays
 // on the lean path and must not read them while running as main.
-export let assertWebChannel: LibraryExports["assertWebChannel"];
 export let applyTemplate: LibraryExports["applyTemplate"];
 export let createDefaultDeps: LibraryExports["createDefaultDeps"];
 export let deriveSessionKey: LibraryExports["deriveSessionKey"];
@@ -39,7 +38,6 @@ export let resolveStorePath: LibraryExports["resolveStorePath"];
 export let runCommandWithTimeout: LibraryExports["runCommandWithTimeout"];
 export let runExec: LibraryExports["runExec"];
 export let saveSessionStore: LibraryExports["saveSessionStore"];
-export let toWhatsappJid: LibraryExports["toWhatsappJid"];
 export let waitForever: LibraryExports["waitForever"];
 
 async function loadLegacyCliDeps(): Promise<LegacyCliDeps> {
@@ -66,7 +64,6 @@ const isMain = isMainModule({
 
 if (!isMain) {
   ({
-    assertWebChannel,
     applyTemplate,
     createDefaultDeps,
     deriveSessionKey,
@@ -86,7 +83,6 @@ if (!isMain) {
     runCommandWithTimeout,
     runExec,
     saveSessionStore,
-    toWhatsappJid,
     waitForever,
   } = await import("./library.js"));
 }

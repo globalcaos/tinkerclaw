@@ -32,8 +32,7 @@ export async function maybeRepairLegacyOAuthProfileIds(
   const providers = resolvePluginProviders({
     config: cfg,
     env: process.env,
-    bundledProviderAllowlistCompat: true,
-    bundledProviderVitestCompat: true,
+    mode: "setup",
   });
   for (const provider of providers) {
     for (const repairSpec of provider.oauthProfileIdRepairs ?? []) {
@@ -135,8 +134,7 @@ export async function maybeRemoveDeprecatedCliAuthProfiles(
   const providers = resolvePluginProviders({
     config: cfg,
     env: process.env,
-    bundledProviderAllowlistCompat: true,
-    bundledProviderVitestCompat: true,
+    mode: "setup",
   });
   const deprecatedEntries = providers.flatMap((provider) =>
     (provider.deprecatedProfileIds ?? [])
