@@ -33,6 +33,7 @@ export const enqueueSystemEventMock: UnknownMock = vi.fn();
 export const requestHeartbeatNowMock: UnknownMock = vi.fn();
 export const SMALL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";
+let cliRunnerModulePromise: Promise<typeof import("./cli-runner.js")> | undefined;
 
 const hoisted = vi.hoisted(
   (): {
@@ -145,6 +146,44 @@ function buildOpenAICodexCliBackendFixture(): CliBackendPlugin {
 }
 
 function buildAnthropicCliBackendFixture(): CliBackendPlugin {
+  const clearEnv = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_KEY_OLD",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_UNIX_SOCKET",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "CLAUDE_CODE_OAUTH_SCOPES",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_PLUGIN_CACHE_DIR",
+    "CLAUDE_CODE_PLUGIN_SEED_DIR",
+    "CLAUDE_CODE_REMOTE",
+    "CLAUDE_CODE_USE_COWORK_PLUGINS",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_VERTEX",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+    "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+    "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+    "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+    "OTEL_LOGS_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_SDK_DISABLED",
+    "OTEL_TRACES_EXPORTER",
+  ] as const;
+  const blockedEnvKeys = new Set(clearEnv);
   return {
     id: "claude-cli",
     bundleMcp: true,
@@ -182,6 +221,7 @@ function buildAnthropicCliBackendFixture(): CliBackendPlugin {
         "claude-opus-4-6": "opus",
         sonnet: "sonnet",
         "claude-sonnet-4-6": "sonnet",
+        "claude-sonnet-4-5": "sonnet",
         haiku: "haiku",
       },
       sessionArg: "--session-id",
@@ -193,43 +233,7 @@ function buildAnthropicCliBackendFixture(): CliBackendPlugin {
       env: {
         CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
       },
-      clearEnv: [
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_API_KEY_OLD",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_UNIX_SOCKET",
-        "CLAUDE_CONFIG_DIR",
-        "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
-        "CLAUDE_CODE_OAUTH_SCOPES",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
-        "CLAUDE_CODE_PLUGIN_CACHE_DIR",
-        "CLAUDE_CODE_PLUGIN_SEED_DIR",
-        "CLAUDE_CODE_REMOTE",
-        "CLAUDE_CODE_USE_COWORK_PLUGINS",
-        "CLAUDE_CODE_USE_BEDROCK",
-        "CLAUDE_CODE_USE_FOUNDRY",
-        "CLAUDE_CODE_USE_VERTEX",
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_HEADERS",
-        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-        "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
-        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
-        "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
-        "OTEL_EXPORTER_OTLP_PROTOCOL",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
-        "OTEL_LOGS_EXPORTER",
-        "OTEL_METRICS_EXPORTER",
-        "OTEL_SDK_DISABLED",
-        "OTEL_TRACES_EXPORTER",
-      ],
+      clearEnv: [...clearEnv],
       reliability: {
         watchdog: {
           fresh: { ...CLI_FRESH_WATCHDOG_DEFAULTS },
@@ -238,6 +242,12 @@ function buildAnthropicCliBackendFixture(): CliBackendPlugin {
       },
       serialize: true,
     },
+    normalizeConfig: (config) => ({
+      ...config,
+      env: Object.fromEntries(
+        Object.entries(config.env ?? {}).filter(([key]) => !blockedEnvKeys.has(key)),
+      ),
+    }),
   };
 }
 
@@ -342,7 +352,8 @@ export async function setupCliRunnerTestModule() {
     bootstrapFiles: [],
     contextFiles: [],
   });
-  return (await import("./cli-runner.js")).runCliAgent;
+  cliRunnerModulePromise ??= import("./cli-runner.js");
+  return (await cliRunnerModulePromise).runCliAgent;
 }
 
 export async function setupClaudeCliRunnerTestModule() {
