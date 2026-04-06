@@ -2122,7 +2122,8 @@ function renderSystemMsg(text: string, idx: number): string {
     // Show file paths as links instead of dumping content
     const links = paths.map((p) => {
       const name = p.split("/").pop() || p;
-      const fullPath = p.startsWith("~") ? p.replace("~", "/home/<user>") : p;
+      // Home dir expansion happens server-side; keep ~ as-is for display links
+      const fullPath = p;
       return `<span class="sys-file-link" data-path="${esc(fullPath)}">📄 ${esc(name)}</span>`;
     });
     preview = links.join(" ");
