@@ -5,6 +5,7 @@ import type {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import {
   asObjectRecord,
+  hasLegacyAccountStreamingAliases,
   hasLegacyStreamingAliases,
   normalizeLegacyDmAliases,
   normalizeLegacyStreamingAliases,
@@ -16,11 +17,7 @@ function hasLegacyDiscordStreamingAliases(value: unknown): boolean {
 }
 
 function hasLegacyDiscordAccountStreamingAliases(value: unknown): boolean {
-  const accounts = asObjectRecord(value);
-  if (!accounts) {
-    return false;
-  }
-  return Object.values(accounts).some((account) => hasLegacyDiscordStreamingAliases(account));
+  return hasLegacyAccountStreamingAliases(value, hasLegacyDiscordStreamingAliases);
 }
 
 const LEGACY_TTS_PROVIDER_KEYS = ["openai", "elevenlabs", "microsoft", "edge"] as const;
