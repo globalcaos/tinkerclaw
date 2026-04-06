@@ -593,39 +593,6 @@ export function ensureAuthProfileStore(
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
   const authPath = resolveAuthStorePath(agentDir);
 
-  // FORK: Preserve newer OAuth refresh tokens from disk to prevent stale
-  // in-memory writes from overwriting freshly-rotated credentials.
-  // Anthropic uses strict refresh token rotation — once rotated, the old
-  // token is immediately invalidated.  Without this guard any concurrent
-  // or fallback (unlocked) save that still holds the pre-rotation snapshot
-  // permanently kills the OAuth chain (invalid_grant).
-  try {
-    const onDisk = loadCoercedStore(authPath);
-    if (onDisk) {
-      for (const [profileId, diskCred] of Object.entries(onDisk.profiles)) {
-        if (
-          diskCred.type === "oauth" &&
-          typeof diskCred.expires === "number" &&
-          Number.isFinite(diskCred.expires) &&
-          diskCred.expires > 0
-        ) {
-          const memCred = store.profiles[profileId];
-          if (
-            memCred?.type === "oauth" &&
-            typeof memCred.expires === "number" &&
-            Number.isFinite(memCred.expires) &&
-            diskCred.expires > memCred.expires
-          ) {
-            // Disk has a newer token — keep it, don't downgrade
-            store.profiles[profileId] = { ...diskCred };
-          }
-        }
-      }
-    }
-  } catch {
-    // Best-effort: don't block the save if disk read fails
-  }
-
   const profiles = Object.fromEntries(
     Object.entries(store.profiles).map(([profileId, credential]) => {
       if (credential.type === "api_key" && credential.keyRef && credential.key !== undefined) {
