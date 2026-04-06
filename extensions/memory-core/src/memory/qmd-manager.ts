@@ -41,6 +41,7 @@ import {
   type ResolvedQmdConfig,
   type ResolvedQmdMcporterConfig,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import { asRecord } from "../dreaming-shared.js";
 import { resolveQmdCollectionPatternFlags, type QmdCollectionPatternFlag } from "./qmd-compat.js";
 
 type SqliteDatabase = import("node:sqlite").DatabaseSync;
@@ -1759,16 +1760,14 @@ export class QmdMemoryManager implements MemorySearchManager {
     }
 
     const parsedUnknown: unknown = JSON.parse(result.stdout);
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      typeof value === "object" && value !== null && !Array.isArray(value);
 
     const structured =
-      isRecord(parsedUnknown) && isRecord(parsedUnknown.structuredContent)
+      asRecord(parsedUnknown) && asRecord(parsedUnknown.structuredContent)
         ? parsedUnknown.structuredContent
         : parsedUnknown;
 
     const results: unknown[] =
-      isRecord(structured) && Array.isArray(structured.results)
+      asRecord(structured) && Array.isArray(structured.results)
         ? (structured.results as unknown[])
         : Array.isArray(structured)
           ? structured
@@ -1776,7 +1775,7 @@ export class QmdMemoryManager implements MemorySearchManager {
 
     const out: QmdQueryResult[] = [];
     for (const item of results) {
-      if (!isRecord(item)) {
+      if (!asRecord(item)) {
         continue;
       }
       const docidRaw = item.docid;
