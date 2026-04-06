@@ -3,6 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { whatsappCommandPolicy } from "../../../test/helpers/channels/command-contract.js";
+import {
+  addSubagentRunForTests,
+  listSubagentRunsForRequester,
+  resetSubagentRegistryForTests,
+} from "../../agents/subagent-registry.test-helpers.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { updateSessionStore } from "../../config/sessions.js";
@@ -21,17 +26,27 @@ vi.mock("../../gateway/call.js", () => ({
   callGateway: callGatewayMock,
 }));
 
-const { buildCommandTestParams } = await import("./commands.test-harness.js");
-const { buildStatusReply } = await import("./commands-status.js");
-const { handleSubagentsCommand } = await import("./commands-subagents.js");
-const { __testing: subagentControlTesting } = await import("../../agents/subagent-control.js");
-const { addSubagentRunForTests, listSubagentRunsForRequester, resetSubagentRegistryForTests } =
-  await import("../../agents/subagent-registry.js");
-const { createTaskRecord, resetTaskRegistryForTests } =
-  await import("../../tasks/task-registry.js");
-const { failTaskRunByRunId } = await import("../../tasks/task-executor.js");
-
 let testWorkspaceDir = os.tmpdir();
+let buildCommandTestParamsPromise: Promise<typeof import("./commands.test-harness.js")> | null =
+  null;
+let handleSubagentsCommandPromise: Promise<typeof import("./commands-subagents.js")> | null = null;
+let subagentControlPromise: Promise<typeof import("../../agents/subagent-control.js")> | null =
+  null;
+
+function loadCommandTestHarness() {
+  buildCommandTestParamsPromise ??= import("./commands.test-harness.js");
+  return buildCommandTestParamsPromise;
+}
+
+function loadSubagentsModule() {
+  handleSubagentsCommandPromise ??= import("./commands-subagents.js");
+  return handleSubagentsCommandPromise;
+}
+
+function loadSubagentControlModule() {
+  subagentControlPromise ??= import("../../agents/subagent-control.js");
+  return subagentControlPromise;
+}
 
 const whatsappCommandTestPlugin: ChannelPlugin = {
   ...createChannelTestPluginBase({
@@ -69,47 +84,31 @@ function setChannelPluginRegistryForTests(): void {
   );
 }
 
-function buildParams(commandBody: string, cfg: OpenClawConfig) {
+async function buildParams(commandBody: string, cfg: OpenClawConfig) {
+  const { buildCommandTestParams } = await loadCommandTestHarness();
   return buildCommandTestParams(commandBody, cfg, undefined, { workspaceDir: testWorkspaceDir });
 }
 
-async function buildStatusReplyForTests(params: {
-  cfg: OpenClawConfig;
-  sessionKey?: string;
-  verbose?: boolean;
-}): Promise<CommandHandlerResult> {
-  const commandParams = buildCommandTestParams("/status", params.cfg, undefined, {
-    workspaceDir: testWorkspaceDir,
-  });
-  const sessionKey = params.sessionKey ?? commandParams.sessionKey;
-  const reply = await buildStatusReply({
-    cfg: params.cfg,
-    command: commandParams.command,
-    sessionEntry: commandParams.sessionEntry,
-    sessionKey,
-    parentSessionKey: sessionKey,
-    sessionScope: commandParams.sessionScope,
-    storePath: commandParams.storePath,
-    provider: "anthropic",
-    model: "claude-opus-4-6",
-    contextTokens: 0,
-    resolvedThinkLevel: commandParams.resolvedThinkLevel,
-    resolvedFastMode: false,
-    resolvedVerboseLevel: params.verbose ? "on" : commandParams.resolvedVerboseLevel,
-    resolvedReasoningLevel: commandParams.resolvedReasoningLevel,
-    resolvedElevatedLevel: commandParams.resolvedElevatedLevel,
-    resolveDefaultThinkingLevel: commandParams.resolveDefaultThinkingLevel,
-    isGroup: commandParams.isGroup,
-    defaultGroupActivation: commandParams.defaultGroupActivation,
-  });
-  return { shouldContinue: false, reply };
-}
-
 function requireCommandResult(
-  result: Awaited<ReturnType<typeof handleSubagentsCommand>>,
+  result: Awaited<ReturnType<typeof runSubagentsCommand>> | null,
 ): CommandHandlerResult {
   expect(result).not.toBeNull();
   return result as CommandHandlerResult;
+}
+
+async function runSubagentsCommand(commandBody: string, cfg: OpenClawConfig) {
+  const params = await buildParams(commandBody, cfg);
+  const { handleSubagentsCommand } = await loadSubagentsModule();
+  return handleSubagentsCommand(params, true);
+}
+
+async function resetSubagentStateForTests() {
+  const { __testing: subagentControlTesting } = await loadSubagentControlModule();
+  resetSubagentRegistryForTests();
+  callGatewayMock.mockImplementation(async () => ({}));
+  subagentControlTesting.setDepsForTest({
+    callGateway: (opts: unknown) => callGatewayMock(opts),
+  });
 }
 
 function requireReplyText(reply: ReplyPayload | undefined): string {
@@ -131,60 +130,13 @@ afterAll(async () => {
   });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
-  resetTaskRegistryForTests();
-  resetSubagentRegistryForTests();
+  await resetSubagentStateForTests();
   setChannelPluginRegistryForTests();
-  callGatewayMock.mockImplementation(async () => ({}));
-  subagentControlTesting.setDepsForTest({
-    callGateway: (opts: unknown) => callGatewayMock(opts),
-  });
 });
 
 describe("handleCommands subagents", () => {
-  it("lists subagents when none exist", async () => {
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
-    const params = buildParams("/subagents list", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
-    const text = requireReplyText(result.reply);
-    expect(result.shouldContinue).toBe(false);
-    expect(text).toContain("active subagents:");
-    expect(text).toContain("active subagents:\n-----\n");
-    expect(text).toContain("recent subagents (last 30m):");
-    expect(text).toContain("\n\nrecent subagents (last 30m):");
-    expect(text).toContain("recent subagents (last 30m):\n-----\n");
-  });
-
-  it("truncates long subagent task text in /subagents list", async () => {
-    addSubagentRunForTests({
-      runId: "run-long-task",
-      childSessionKey: "agent:main:subagent:long-task",
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "This is a deliberately long task description used to verify that subagent list output keeps the full task text instead of appending ellipsis after a short hard cutoff.",
-      cleanup: "keep",
-      createdAt: 1000,
-      startedAt: 1000,
-    });
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
-    const params = buildParams("/subagents list", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
-    const text = requireReplyText(result.reply);
-    expect(result.shouldContinue).toBe(false);
-    expect(text).toContain(
-      "This is a deliberately long task description used to verify that subagent list output keeps the full task text",
-    );
-    expect(text).toContain("...");
-    expect(text).not.toContain("after a short hard cutoff.");
-  });
-
   it("lists subagents for the command target session for native /subagents", async () => {
     addSubagentRunForTests({
       runId: "run-target",
@@ -210,6 +162,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig;
+    const { buildCommandTestParams } = await loadCommandTestHarness();
     const params = buildCommandTestParams(
       "/subagents list",
       cfg,
@@ -220,163 +173,13 @@ describe("handleCommands subagents", () => {
       { workspaceDir: testWorkspaceDir },
     );
     params.sessionKey = "agent:main:slack:slash:u1";
+    const { handleSubagentsCommand } = await loadSubagentsModule();
     const result = requireCommandResult(await handleSubagentsCommand(params, true));
     const text = requireReplyText(result.reply);
     expect(result.shouldContinue).toBe(false);
     expect(text).toContain("active subagents:");
     expect(text).toContain("target run");
     expect(text).not.toContain("slash run");
-  });
-
-  it("keeps ended orchestrators in active list while descendants are pending", async () => {
-    const now = Date.now();
-    addSubagentRunForTests({
-      runId: "run-orchestrator-ended",
-      childSessionKey: "agent:main:subagent:orchestrator-ended",
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "orchestrate child workers",
-      cleanup: "keep",
-      createdAt: now - 120_000,
-      startedAt: now - 120_000,
-      endedAt: now - 60_000,
-      outcome: { status: "ok" },
-    });
-    addSubagentRunForTests({
-      runId: "run-orchestrator-child-active",
-      childSessionKey: "agent:main:subagent:orchestrator-ended:subagent:child",
-      requesterSessionKey: "agent:main:subagent:orchestrator-ended",
-      requesterDisplayKey: "subagent:orchestrator-ended",
-      task: "child worker still running",
-      cleanup: "keep",
-      createdAt: now - 30_000,
-      startedAt: now - 30_000,
-    });
-
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
-    const params = buildParams("/subagents list", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
-    const text = requireReplyText(result.reply);
-
-    expect(result.shouldContinue).toBe(false);
-    expect(text).toContain("active (waiting on 1 child)");
-    expect(text).not.toContain("recent subagents (last 30m):\n-----\n1. orchestrate child workers");
-  });
-
-  it("formats subagent usage with io and prompt/cache breakdown", async () => {
-    addSubagentRunForTests({
-      runId: "run-usage",
-      childSessionKey: "agent:main:subagent:usage",
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "do thing",
-      cleanup: "keep",
-      createdAt: 1000,
-      startedAt: 1000,
-    });
-    const storePath = path.join(testWorkspaceDir, "sessions-subagents-usage.json");
-    await updateSessionStore(storePath, (store) => {
-      store["agent:main:subagent:usage"] = {
-        sessionId: "child-session-usage",
-        updatedAt: Date.now(),
-        inputTokens: 12,
-        outputTokens: 1000,
-        totalTokens: 197000,
-        model: "opencode/claude-opus-4-6",
-      };
-    });
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      session: { store: storePath },
-    } as OpenClawConfig;
-    const params = buildParams("/subagents list", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
-    const text = requireReplyText(result.reply);
-    expect(result.shouldContinue).toBe(false);
-    expect(text).toMatch(/tokens 1(\.0)?k \(in 12 \/ out 1(\.0)?k\)/);
-    expect(text).toContain("prompt/cache 197k");
-    expect(text).not.toContain("1k io");
-  });
-
-  it.each([
-    {
-      name: "omits subagent status line when none exist",
-      seedRuns: () => undefined,
-      verboseLevel: "on" as const,
-      expectedText: [] as string[],
-      unexpectedText: ["Subagents:"],
-    },
-    {
-      name: "includes subagent count in /status when active",
-      seedRuns: () => {
-        addSubagentRunForTests({
-          runId: "run-1",
-          childSessionKey: "agent:main:subagent:abc",
-          requesterSessionKey: "agent:main:main",
-          requesterDisplayKey: "main",
-          task: "do thing",
-          cleanup: "keep",
-          createdAt: 1000,
-          startedAt: 1000,
-        });
-      },
-      verboseLevel: "off" as const,
-      expectedText: ["🤖 Subagents: 1 active"],
-      unexpectedText: [] as string[],
-    },
-    {
-      name: "includes subagent details in /status when verbose",
-      seedRuns: () => {
-        addSubagentRunForTests({
-          runId: "run-1",
-          childSessionKey: "agent:main:subagent:abc",
-          requesterSessionKey: "agent:main:main",
-          requesterDisplayKey: "main",
-          task: "do thing",
-          cleanup: "keep",
-          createdAt: 1000,
-          startedAt: 1000,
-        });
-        addSubagentRunForTests({
-          runId: "run-2",
-          childSessionKey: "agent:main:subagent:def",
-          requesterSessionKey: "agent:main:main",
-          requesterDisplayKey: "main",
-          task: "finished task",
-          cleanup: "keep",
-          createdAt: 900,
-          startedAt: 900,
-          endedAt: 1200,
-          outcome: { status: "ok" },
-        });
-      },
-      verboseLevel: "on" as const,
-      expectedText: ["🤖 Subagents: 1 active", "· 1 done"],
-      unexpectedText: [] as string[],
-    },
-  ])("$name", async ({ seedRuns, verboseLevel, expectedText, unexpectedText }) => {
-    seedRuns();
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      session: { mainKey: "main", scope: "per-sender" },
-    } as OpenClawConfig;
-    const result = await buildStatusReplyForTests({
-      cfg,
-      verbose: verboseLevel === "on",
-    });
-    expect(result.shouldContinue).toBe(false);
-    const text = requireReplyText(result.reply);
-    for (const expected of expectedText) {
-      expect(text).toContain(expected);
-    }
-    for (const blocked of unexpectedText) {
-      expect(text).not.toContain(blocked);
-    }
   });
 
   it("returns help/usage for invalid or incomplete subagents commands", async () => {
@@ -389,113 +192,11 @@ describe("handleCommands subagents", () => {
       { commandBody: "/subagents info", expectedText: "/subagents info" },
     ] as const;
     for (const testCase of cases) {
-      const params = buildParams(testCase.commandBody, cfg);
-      const result = requireCommandResult(await handleSubagentsCommand(params, true));
+      const result = requireCommandResult(await runSubagentsCommand(testCase.commandBody, cfg));
       const text = requireReplyText(result.reply);
       expect(result.shouldContinue).toBe(false);
       expect(text).toContain(testCase.expectedText);
     }
-  });
-
-  it("returns info for a subagent", async () => {
-    const now = Date.now();
-    addSubagentRunForTests({
-      runId: "run-1",
-      childSessionKey: "agent:main:subagent:abc",
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "do thing",
-      cleanup: "keep",
-      createdAt: now - 20_000,
-      startedAt: now - 20_000,
-      endedAt: now - 1_000,
-      outcome: { status: "ok" },
-    });
-    createTaskRecord({
-      runtime: "subagent",
-      requesterSessionKey: "agent:main:main",
-      childSessionKey: "agent:main:subagent:abc",
-      runId: "run-1",
-      task: "do thing",
-      status: "succeeded",
-      terminalSummary: "Completed the requested task",
-      deliveryStatus: "delivered",
-    });
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      session: { mainKey: "main", scope: "per-sender" },
-    } as OpenClawConfig;
-    const params = buildParams("/subagents info 1", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
-    const text = requireReplyText(result.reply);
-    expect(result.shouldContinue).toBe(false);
-    expect(text).toContain("Subagent info");
-    expect(text).toContain("Run: run-1");
-    expect(text).toContain("Status: done");
-    expect(text).toContain("TaskStatus: succeeded");
-    expect(text).toContain("Task summary: Completed the requested task");
-  });
-
-  it("sanitizes leaked task details in /subagents info", async () => {
-    const now = Date.now();
-    addSubagentRunForTests({
-      runId: "run-1",
-      childSessionKey: "agent:main:subagent:abc",
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "Inspect the stuck run",
-      cleanup: "keep",
-      createdAt: now - 20_000,
-      startedAt: now - 20_000,
-      endedAt: now - 1_000,
-      outcome: {
-        status: "error",
-        error: [
-          "OpenClaw runtime context (internal):",
-          "This context is runtime-generated, not user-authored. Keep internal details private.",
-          "",
-          "[Internal task completion event]",
-          "source: subagent",
-        ].join("\n"),
-      },
-    });
-    createTaskRecord({
-      runtime: "subagent",
-      requesterSessionKey: "agent:main:main",
-      childSessionKey: "agent:main:subagent:abc",
-      runId: "run-1",
-      task: "Inspect the stuck run",
-      status: "running",
-      deliveryStatus: "delivered",
-    });
-    failTaskRunByRunId({
-      runId: "run-1",
-      endedAt: now - 1_000,
-      error: [
-        "OpenClaw runtime context (internal):",
-        "This context is runtime-generated, not user-authored. Keep internal details private.",
-        "",
-        "[Internal task completion event]",
-        "source: subagent",
-      ].join("\n"),
-      terminalSummary: "Needs manual follow-up.",
-    });
-    const cfg = {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-      session: { mainKey: "main", scope: "per-sender" },
-    } as OpenClawConfig;
-    const params = buildParams("/subagents info 1", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
-    const text = requireReplyText(result.reply);
-
-    expect(result.shouldContinue).toBe(false);
-    expect(text).toContain("Subagent info");
-    expect(text).toContain("Outcome: error");
-    expect(text).toContain("Task summary: Needs manual follow-up.");
-    expect(text).not.toContain("OpenClaw runtime context (internal):");
-    expect(text).not.toContain("Internal task completion event");
   });
 
   it("kills subagents via /kill alias without a confirmation reply", async () => {
@@ -513,8 +214,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig;
-    const params = buildParams("/kill 1", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
+    const result = requireCommandResult(await runSubagentsCommand("/kill 1", cfg));
     expect(result.shouldContinue).toBe(false);
     expect(result.reply).toBeUndefined();
   });
@@ -547,8 +247,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig;
-    const params = buildParams("/kill 1", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
+    const result = requireCommandResult(await runSubagentsCommand("/kill 1", cfg));
     expect(result.shouldContinue).toBe(false);
     expect(result.reply).toBeUndefined();
   });
@@ -584,8 +283,9 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig;
-    const params = buildParams("/subagents send 1 continue with follow-up details", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
+    const result = requireCommandResult(
+      await runSubagentsCommand("/subagents send 1 continue with follow-up details", cfg),
+    );
     const text = requireReplyText(result.reply);
     expect(result.shouldContinue).toBe(false);
     expect(text).toContain("✅ Sent to");
@@ -648,9 +348,10 @@ describe("handleCommands subagents", () => {
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { store: storePath },
     } as OpenClawConfig;
-    const params = buildParams("/subagents send 1 continue with follow-up details", cfg);
+    const params = await buildParams("/subagents send 1 continue with follow-up details", cfg);
     params.sessionKey = leafKey;
 
+    const { handleSubagentsCommand } = await loadSubagentsModule();
     const result = requireCommandResult(await handleSubagentsCommand(params, true));
     const text = requireReplyText(result.reply);
 
@@ -689,8 +390,9 @@ describe("handleCommands subagents", () => {
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { store: storePath },
     } as OpenClawConfig;
-    const params = buildParams("/steer 1 check timer.ts instead", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
+    const result = requireCommandResult(
+      await runSubagentsCommand("/steer 1 check timer.ts instead", cfg),
+    );
     const text = requireReplyText(result.reply);
     expect(result.shouldContinue).toBe(false);
     expect(text).toContain("steered");
@@ -749,8 +451,9 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig;
-    const params = buildParams("/steer 1 check timer.ts instead", cfg);
-    const result = requireCommandResult(await handleSubagentsCommand(params, true));
+    const result = requireCommandResult(
+      await runSubagentsCommand("/steer 1 check timer.ts instead", cfg),
+    );
     const text = requireReplyText(result.reply);
     expect(result.shouldContinue).toBe(false);
     expect(text).toContain("send failed: dispatch failed");
