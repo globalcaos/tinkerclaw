@@ -6,6 +6,7 @@ import type { RuntimeWebFetchMetadata } from "../../secrets/runtime-web-tools.ty
 import { wrapExternalContent, wrapWebContent } from "../../security/external-content.js";
 import { isRecord } from "../../utils.js";
 import { resolveWebFetchDefinition } from "../../web-fetch/runtime.js";
+import { resolveWebProviderConfig } from "../../web/provider-runtime-shared.js";
 import { stringEnum } from "../schema/typebox.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
@@ -69,11 +70,7 @@ type WebFetchConfig = NonNullable<OpenClawConfig["tools"]>["web"] extends infer 
   : undefined;
 
 function resolveFetchConfig(cfg?: OpenClawConfig): WebFetchConfig {
-  const fetch = cfg?.tools?.web?.fetch;
-  if (!fetch || typeof fetch !== "object") {
-    return undefined;
-  }
-  return fetch as WebFetchConfig;
+  return resolveWebProviderConfig<"fetch", NonNullable<WebFetchConfig>>(cfg, "fetch");
 }
 
 function resolveFetchEnabled(params: { fetch?: WebFetchConfig; sandboxed?: boolean }): boolean {
