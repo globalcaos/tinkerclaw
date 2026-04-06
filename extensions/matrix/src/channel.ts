@@ -28,6 +28,7 @@ import {
   createComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
 } from "openclaw/plugin-sdk/status-helpers";
+import { chunkTextForOutbound } from "openclaw/plugin-sdk/text-chunking";
 import { matrixMessageActions } from "./actions.js";
 import { matrixApprovalCapability } from "./approval-native.js";
 import { MatrixConfigSchema } from "./config-schema.js";
@@ -69,22 +70,6 @@ import type { CoreConfig } from "./types.js";
 
 // Mutex for serializing account startup (workaround for concurrent dynamic import race condition)
 let matrixStartupLock: Promise<void> = Promise.resolve();
-
-function chunkTextForOutbound(text: string, limit: number): string[] {
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > limit) {
-    const window = remaining.slice(0, limit);
-    const splitAt = Math.max(window.lastIndexOf("\n"), window.lastIndexOf(" "));
-    const breakAt = splitAt > 0 ? splitAt : limit;
-    chunks.push(remaining.slice(0, breakAt).trimEnd());
-    remaining = remaining.slice(breakAt).trimStart();
-  }
-  if (remaining.length > 0 || text.length === 0) {
-    chunks.push(remaining);
-  }
-  return chunks;
-}
 
 const loadMatrixChannelRuntime = createLazyRuntimeNamedExport(
   () => import("./channel.runtime.js"),
