@@ -441,7 +441,9 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = create
       resolveGatewayAuthBypassPaths: ({ cfg }) => {
         const base = cfg.channels?.mattermost;
         const callbackPaths = new Set(
-          collectMattermostSlashCallbackPaths(base?.commands).filter(
+          collectMattermostSlashCallbackPaths(
+            base?.commands as Partial<MattermostSlashCommandConfig> | undefined,
+          ).filter(
             (path) =>
               path === "/api/channels/mattermost/command" ||
               path.startsWith("/api/channels/mattermost/"),
