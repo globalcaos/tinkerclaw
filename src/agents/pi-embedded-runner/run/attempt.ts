@@ -1217,8 +1217,17 @@ export async function runEmbeddedAttempt(
           sessionId: params.sessionId,
           policy: transcriptPolicy,
         });
-        const truncated = limitHistoryTurns(
+        const heartbeatSummary =
+          params.config && sessionAgentId
+            ? resolveHeartbeatSummaryForAgent(params.config, sessionAgentId)
+            : undefined;
+        const heartbeatFiltered = filterHeartbeatPairs(
           validated,
+          heartbeatSummary?.ackMaxChars,
+          heartbeatSummary?.prompt,
+        );
+        const truncated = limitHistoryTurns(
+          heartbeatFiltered,
           getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
         );
         // Re-run tool_use/tool_result pairing repair after truncation, since
@@ -1667,10 +1676,6 @@ export async function runEmbeddedAttempt(
             activeSession.agent.state.messages = activeSession.messages;
           }
 
-          const heartbeatSummary =
-            params.config && sessionAgentId
-              ? resolveHeartbeatSummaryForAgent(params.config, sessionAgentId)
-              : undefined;
           const filteredMessages = filterHeartbeatPairs(
             activeSession.messages,
             heartbeatSummary?.ackMaxChars,
