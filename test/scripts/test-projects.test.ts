@@ -112,13 +112,17 @@ describe("scripts/test-projects changed-target routing", () => {
   it("routes changed commands source allowlist files to sibling light tests", () => {
     const plans = buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
       "src/commands/status-overview-values.ts",
+      "src/commands/gateway-status/helpers.ts",
     ]);
 
     expect(plans).toEqual([
       {
         config: "vitest.commands-light.config.ts",
         forwardedArgs: [],
-        includePatterns: ["src/commands/status-overview-values.test.ts"],
+        includePatterns: [
+          "src/commands/status-overview-values.test.ts",
+          "src/commands/gateway-status/helpers.test.ts",
+        ],
         watchMode: false,
       },
     ]);

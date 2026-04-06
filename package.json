@@ -1176,6 +1176,7 @@
     "test:parallels:npm-update": "bash scripts/e2e/parallels-npm-update-smoke.sh",
     "test:parallels:windows": "bash scripts/e2e/parallels-windows-smoke.sh",
     "test:perf:budget": "node scripts/test-perf-budget.mjs",
+    "test:perf:changed:bench": "node scripts/bench-test-changed.mjs",
     "test:perf:hotspots": "node scripts/test-hotspots.mjs",
     "test:perf:imports": "OPENCLAW_VITEST_IMPORT_DURATIONS=1 OPENCLAW_VITEST_PRINT_IMPORT_BREAKDOWN=1 node scripts/test-projects.mjs",
     "test:perf:imports:changed": "OPENCLAW_VITEST_IMPORT_DURATIONS=1 OPENCLAW_VITEST_PRINT_IMPORT_BREAKDOWN=1 node scripts/test-projects.mjs --changed origin/main",
