@@ -7,10 +7,12 @@ import type {
   SpeechVoiceOption,
 } from "openclaw/plugin-sdk/speech";
 import {
+  asObject,
   normalizeApplyTextNormalization,
   normalizeLanguageCode,
   normalizeSeed,
   requireInRange,
+  trimToUndefined,
 } from "openclaw/plugin-sdk/speech";
 import { resolveElevenLabsApiKeyWithProfileFallback } from "./config-api.js";
 import { elevenLabsTTS } from "./tts.js";
@@ -49,22 +51,12 @@ type ElevenLabsProviderConfig = {
   };
 };
 
-function trimToUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function parseBooleanValue(value: string): boolean | undefined {

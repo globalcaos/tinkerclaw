@@ -11,6 +11,7 @@ import type {
   SpeechProviderPlugin,
   SpeechVoiceOption,
 } from "openclaw/plugin-sdk/speech";
+import { asObject, trimToUndefined } from "openclaw/plugin-sdk/speech";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { edgeTTS, inferEdgeExtension } from "./tts.js";
 
@@ -43,22 +44,12 @@ type MicrosoftVoiceListEntry = {
   };
 };
 
-function trimToUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function normalizeMicrosoftProviderConfig(
