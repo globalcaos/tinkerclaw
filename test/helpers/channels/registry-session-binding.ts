@@ -2,19 +2,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect } from "vitest";
-import type { OpenClawConfig } from "../../../config/config.js";
+import { createChannelConversationBindingManager } from "../../../src/channels/plugins/conversation-bindings.js";
+import type { OpenClawConfig } from "../../../src/config/config.js";
 import {
   getSessionBindingService,
   type SessionBindingCapabilities,
   type SessionBindingRecord,
-} from "../../../infra/outbound/session-binding-service.js";
-import { createChannelConversationBindingManager } from "../conversation-bindings.js";
+} from "../../../src/infra/outbound/session-binding-service.js";
 import {
   sessionBindingContractChannelIds,
   type SessionBindingContractChannelId,
 } from "./manifest.js";
 import { importBundledChannelContractArtifact } from "./runtime-artifacts.js";
-import "../registry.js";
+import "../../../src/channels/plugins/registry.js";
 
 type SessionBindingContractEntry = {
   id: string;
@@ -238,35 +238,25 @@ const sessionBindingContractEntries: Record<
           channel: "discord",
           accountId: "default",
           conversationId: "channel:123456789012345678",
+          parentConversationId: "channel:123456789012345677",
         },
-        placement: "current",
+        placement: "child",
         metadata: {
-          label: "codex-discord",
+          agentId: "discord",
+          label: "discord-child",
         },
       });
       expectResolvedSessionBinding({
         channel: "discord",
         accountId: "default",
         conversationId: "channel:123456789012345678",
+        parentConversationId: "channel:123456789012345677",
         targetSessionKey: "agent:discord:child:thread-1",
       });
       return binding;
     },
     unbindAndVerify: unbindAndExpectClearedSessionBinding,
     cleanup: async () => {
-      const { createThreadBindingManager } = await getContractApi<{
-        createThreadBindingManager: (params: {
-          accountId: string;
-          persist: boolean;
-          enableSweeper: boolean;
-        }) => { stop: () => void };
-      }>("discord");
-      const manager = createThreadBindingManager({
-        accountId: "default",
-        persist: false,
-        enableSweeper: false,
-      });
-      manager.stop();
       expectClearedSessionBinding({
         channel: "discord",
         accountId: "default",
@@ -279,16 +269,21 @@ const sessionBindingContractEntries: Record<
       adapterAvailable: true,
       bindSupported: true,
       unbindSupported: true,
-      placements: ["current"],
+      placements: ["current", "child"],
     },
     getCapabilities: async () => {
       const { createFeishuThreadBindingManager } = await getContractApi<{
         createFeishuThreadBindingManager: (params: {
-          cfg: OpenClawConfig;
           accountId: string;
+          persist: boolean;
+          enableSweeper: boolean;
         }) => unknown;
       }>("feishu");
-      createFeishuThreadBindingManager({ cfg: baseSessionBindingCfg, accountId: "default" });
+      createFeishuThreadBindingManager({
+        accountId: "default",
+        persist: false,
+        enableSweeper: false,
+      });
       return getSessionBindingService().getCapabilities({
         channel: "feishu",
         accountId: "default",
@@ -297,51 +292,47 @@ const sessionBindingContractEntries: Record<
     bindAndResolve: async () => {
       const { createFeishuThreadBindingManager } = await getContractApi<{
         createFeishuThreadBindingManager: (params: {
-          cfg: OpenClawConfig;
           accountId: string;
+          persist: boolean;
+          enableSweeper: boolean;
         }) => unknown;
       }>("feishu");
-      createFeishuThreadBindingManager({ cfg: baseSessionBindingCfg, accountId: "default" });
+      createFeishuThreadBindingManager({
+        accountId: "default",
+        persist: false,
+        enableSweeper: false,
+      });
       const service = getSessionBindingService();
       const binding = await service.bind({
-        targetSessionKey: "agent:codex:acp:binding:feishu:default:abc123",
-        targetKind: "session",
+        targetSessionKey: "agent:feishu:child:thread-1",
+        targetKind: "subagent",
         conversation: {
           channel: "feishu",
           accountId: "default",
-          conversationId: "oc_group_chat:topic:om_topic_root",
-          parentConversationId: "oc_group_chat",
+          conversationId: "chat:123456",
+          parentConversationId: "chat:123455",
         },
-        placement: "current",
+        placement: "child",
         metadata: {
-          agentId: "codex",
-          label: "codex-main",
+          agentId: "feishu",
+          label: "feishu-child",
         },
       });
       expectResolvedSessionBinding({
         channel: "feishu",
         accountId: "default",
-        conversationId: "oc_group_chat:topic:om_topic_root",
-        targetSessionKey: "agent:codex:acp:binding:feishu:default:abc123",
+        conversationId: "chat:123456",
+        parentConversationId: "chat:123455",
+        targetSessionKey: "agent:feishu:child:thread-1",
       });
       return binding;
     },
     unbindAndVerify: unbindAndExpectClearedSessionBinding,
     cleanup: async () => {
-      const { createFeishuThreadBindingManager } = await getContractApi<{
-        createFeishuThreadBindingManager: (params: { cfg: OpenClawConfig; accountId: string }) => {
-          stop: () => void;
-        };
-      }>("feishu");
-      const manager = createFeishuThreadBindingManager({
-        cfg: baseSessionBindingCfg,
-        accountId: "default",
-      });
-      manager.stop();
       expectClearedSessionBinding({
         channel: "feishu",
         accountId: "default",
-        conversationId: "oc_group_chat:topic:om_topic_root",
+        conversationId: "chat:123456",
       });
     },
   },
@@ -371,24 +362,24 @@ const sessionBindingContractEntries: Record<
       });
       const service = getSessionBindingService();
       const binding = await service.bind({
-        targetSessionKey: "agent:codex:acp:binding:imessage:default:abc123",
+        targetSessionKey: "agent:imessage:current",
         targetKind: "session",
         conversation: {
           channel: "imessage",
           accountId: "default",
-          conversationId: "+15555550123",
+          conversationId: "+15555550124",
         },
         placement: "current",
         metadata: {
-          agentId: "codex",
-          label: "codex-main",
+          agentId: "imessage",
+          label: "imessage-main",
         },
       });
       expectResolvedSessionBinding({
         channel: "imessage",
         accountId: "default",
-        conversationId: "+15555550123",
-        targetSessionKey: "agent:codex:acp:binding:imessage:default:abc123",
+        conversationId: "+15555550124",
+        targetSessionKey: "agent:imessage:current",
       });
       return binding;
     },
@@ -403,7 +394,7 @@ const sessionBindingContractEntries: Record<
       expectClearedSessionBinding({
         channel: "imessage",
         accountId: "default",
-        conversationId: "+15555550123",
+        conversationId: "+15555550124",
       });
     },
   },
@@ -425,38 +416,35 @@ const sessionBindingContractEntries: Record<
       await createContractMatrixThreadBindingManager();
       const service = getSessionBindingService();
       const binding = await service.bind({
-        targetSessionKey: "agent:matrix:child:thread-1",
+        targetSessionKey: "agent:matrix:thread",
         targetKind: "subagent",
         conversation: {
           channel: "matrix",
           accountId: matrixSessionBindingAuth.accountId,
-          conversationId: "$thread",
-          parentConversationId: "!room:example",
+          conversationId: "!room:example.org::$thread",
+          parentConversationId: "!room:example.org",
         },
-        placement: "current",
+        placement: "child",
         metadata: {
-          label: "codex-matrix",
+          agentId: "matrix",
+          label: "matrix-thread",
         },
       });
       expectResolvedSessionBinding({
         channel: "matrix",
         accountId: matrixSessionBindingAuth.accountId,
-        conversationId: "$thread",
-        targetSessionKey: "agent:matrix:child:thread-1",
+        conversationId: "!room:example.org::$thread",
+        parentConversationId: "!room:example.org",
+        targetSessionKey: "agent:matrix:thread",
       });
       return binding;
     },
     unbindAndVerify: unbindAndExpectClearedSessionBinding,
     cleanup: async () => {
-      const { resetMatrixThreadBindingsForTests } = await getContractApi<{
-        resetMatrixThreadBindingsForTests: () => void;
-      }>("matrix");
-      resetMatrixThreadBindingsForTests();
-      resetMatrixSessionBindingStateDir();
       expectClearedSessionBinding({
         channel: "matrix",
         accountId: matrixSessionBindingAuth.accountId,
-        conversationId: "$thread",
+        conversationId: "!room:example.org::$thread",
       });
     },
   },
@@ -467,11 +455,18 @@ const sessionBindingContractEntries: Record<
       unbindSupported: true,
       placements: ["current", "child"],
     },
-    getCapabilities: () => {
-      void createChannelConversationBindingManager({
-        channelId: "telegram",
-        cfg: baseSessionBindingCfg,
+    getCapabilities: async () => {
+      const { createTelegramThreadBindingManager } = await getContractApi<{
+        createTelegramThreadBindingManager: (params: {
+          accountId: string;
+          persist: boolean;
+          enableSweeper: boolean;
+        }) => unknown;
+      }>("telegram");
+      createTelegramThreadBindingManager({
         accountId: "default",
+        persist: false,
+        enableSweeper: false,
       });
       return getSessionBindingService().getCapabilities({
         channel: "telegram",
@@ -479,45 +474,49 @@ const sessionBindingContractEntries: Record<
       });
     },
     bindAndResolve: async () => {
-      await createChannelConversationBindingManager({
-        channelId: "telegram",
-        cfg: baseSessionBindingCfg,
+      const { createTelegramThreadBindingManager } = await getContractApi<{
+        createTelegramThreadBindingManager: (params: {
+          accountId: string;
+          persist: boolean;
+          enableSweeper: boolean;
+        }) => unknown;
+      }>("telegram");
+      createTelegramThreadBindingManager({
         accountId: "default",
+        persist: false,
+        enableSweeper: false,
       });
       const service = getSessionBindingService();
       const binding = await service.bind({
-        targetSessionKey: "agent:main:subagent:child-1",
+        targetSessionKey: "agent:telegram:child:thread-1",
         targetKind: "subagent",
         conversation: {
           channel: "telegram",
           accountId: "default",
-          conversationId: "-100200300:topic:77",
+          conversationId: "chat:1234:topic:5678",
+          parentConversationId: "chat:1234",
         },
-        placement: "current",
+        placement: "child",
         metadata: {
-          boundBy: "user-1",
+          agentId: "telegram",
+          label: "telegram-topic",
         },
       });
       expectResolvedSessionBinding({
         channel: "telegram",
         accountId: "default",
-        conversationId: "-100200300:topic:77",
-        targetSessionKey: "agent:main:subagent:child-1",
+        conversationId: "chat:1234:topic:5678",
+        parentConversationId: "chat:1234",
+        targetSessionKey: "agent:telegram:child:thread-1",
       });
       return binding;
     },
     unbindAndVerify: unbindAndExpectClearedSessionBinding,
     cleanup: async () => {
-      const manager = await createChannelConversationBindingManager({
-        channelId: "telegram",
-        cfg: baseSessionBindingCfg,
-        accountId: "default",
-      });
-      await manager?.stop();
       expectClearedSessionBinding({
         channel: "telegram",
         accountId: "default",
-        conversationId: "-100200300:topic:77",
+        conversationId: "chat:1234:topic:5678",
       });
     },
   },
