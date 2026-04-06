@@ -64,12 +64,22 @@ function isExpectedNonErrorLaneFailure(err: unknown): boolean {
 const COMMAND_QUEUE_STATE_KEY = Symbol.for("openclaw.commandQueueState");
 
 function getQueueState() {
-  return resolveGlobalSingleton(COMMAND_QUEUE_STATE_KEY, () => ({
+  const state = resolveGlobalSingleton(COMMAND_QUEUE_STATE_KEY, () => ({
     gatewayDraining: false,
     lanes: new Map<string, LaneState>(),
     activeTaskWaiters: new Set<ActiveTaskWaiter>(),
     nextTaskId: 1,
   }));
+  // Schema migration: the singleton may have been created by an older code
+  // version (e.g. v2026.4.2) that did not include `activeTaskWaiters`.  After
+  // a SIGUSR1 in-process restart the new code inherits the stale object via
+  // `resolveGlobalSingleton` because the Symbol key already exists on
+  // globalThis.  Patch the missing field so all downstream consumers see a
+  // valid Set instead of `undefined`.
+  if (!state.activeTaskWaiters) {
+    state.activeTaskWaiters = new Set<ActiveTaskWaiter>();
+  }
+  return state;
 }
 
 function normalizeLane(lane: string): string {
@@ -324,26 +334,6 @@ export function resetCommandQueueStateForTest(): void {
  * preserved work is pumped immediately rather than waiting for a future
  * `enqueueCommandInLane()` call (which may never come).
  */
-/**
- * FORK: Reset a single lane's runtime state to idle.  Used by the stuck-session
- * watchdog to recover a deadlocked session lane without disturbing other lanes.
- * Same logic as resetAllLanes() but scoped to one lane.
- */
-export function resetCommandLane(lane: string): boolean {
-  const cleaned = lane.trim() || CommandLane.Main;
-  const state = queueState.lanes.get(cleaned);
-  if (!state) {
-    return false;
-  }
-  state.generation += 1;
-  state.activeTaskIds.clear();
-  state.draining = false;
-  if (state.queue.length > 0) {
-    drainLane(cleaned);
-  }
-  return true;
-}
-
 export function resetAllLanes(): void {
   const queueState = getQueueState();
   queueState.gatewayDraining = false;
