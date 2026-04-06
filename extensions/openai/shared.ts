@@ -6,6 +6,10 @@ import {
 
 export const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
 
+export function toOpenAIDataUrl(buffer: Buffer, mimeType: string): string {
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
 export function isOpenAIApiBaseUrl(baseUrl?: string): boolean {
   const trimmed = baseUrl?.trim();
   if (!trimmed) {
