@@ -176,6 +176,7 @@ async function sendDiscordPayloadText(params: {
   token: string;
   rest?: RequestClient;
   accountId?: string;
+  textLimit?: number;
   maxLinesPerMessage?: number;
   binding?: DiscordThreadBindingLookupRecord;
   chunkMode?: ChunkMode;
@@ -186,23 +187,38 @@ async function sendDiscordPayloadText(params: {
   retryConfig: ResolvedRetryConfig;
   resolveReplyTo: () => string | undefined;
 }): Promise<void> {
-  await sendDiscordChunkWithFallback({
-    cfg: params.cfg,
-    target: params.target,
-    text: params.text,
-    token: params.token,
-    rest: params.rest,
-    accountId: params.accountId,
-    maxLinesPerMessage: params.maxLinesPerMessage,
-    replyTo: params.resolveReplyTo(),
-    binding: params.binding,
-    chunkMode: params.chunkMode,
-    username: params.username,
-    avatarUrl: params.avatarUrl,
-    channelId: params.channelId,
-    request: params.request,
-    retryConfig: params.retryConfig,
-  });
+  const mode = params.chunkMode ?? "length";
+  const chunkLimit = Math.min(params.textLimit ?? 2000, 2000);
+  const chunks = resolveTextChunksWithFallback(
+    params.text,
+    chunkDiscordTextWithMode(params.text, {
+      maxChars: chunkLimit,
+      maxLines: params.maxLinesPerMessage,
+      chunkMode: mode,
+    }),
+  );
+  for (const chunk of chunks) {
+    if (!chunk.trim()) {
+      continue;
+    }
+    await sendDiscordChunkWithFallback({
+      cfg: params.cfg,
+      target: params.target,
+      text: chunk,
+      token: params.token,
+      rest: params.rest,
+      accountId: params.accountId,
+      maxLinesPerMessage: params.maxLinesPerMessage,
+      replyTo: params.resolveReplyTo(),
+      binding: params.binding,
+      chunkMode: params.chunkMode,
+      username: params.username,
+      avatarUrl: params.avatarUrl,
+      channelId: params.channelId,
+      request: params.request,
+      retryConfig: params.retryConfig,
+    });
+  }
 }
 
 function resolveTargetChannelId(target: string): string | undefined {
@@ -380,7 +396,6 @@ export async function deliverDiscordReply(params: {
   threadBindings?: DiscordThreadBindingLookup;
   mediaLocalRoots?: readonly string[];
 }) {
-  const chunkLimit = Math.min(params.textLimit, 2000);
   const replyTo = params.replyToId?.trim() || undefined;
   const replyToMode = params.replyToMode ?? "all";
   const replyOnce = isSingleUseReplyToMode(replyToMode);
@@ -428,37 +443,25 @@ export async function deliverDiscordReply(params: {
       continue;
     }
     if (!reply.hasMedia) {
-      const mode = params.chunkMode ?? "length";
-      const chunks = resolveTextChunksWithFallback(
-        reply.text,
-        chunkDiscordTextWithMode(reply.text, {
-          maxChars: chunkLimit,
-          maxLines: params.maxLinesPerMessage,
-          chunkMode: mode,
-        }),
-      );
-      for (const chunk of chunks) {
-        if (!chunk.trim()) {
-          continue;
-        }
-        const replyTo = resolvePayloadReplyTo();
-        await sendDiscordChunkWithFallback({
-          cfg: params.cfg,
-          target: params.target,
-          text: chunk,
-          token: params.token,
-          rest: params.rest,
-          accountId: params.accountId,
-          maxLinesPerMessage: params.maxLinesPerMessage,
-          replyTo,
-          binding,
-          chunkMode: params.chunkMode,
-          username: persona.username,
-          avatarUrl: persona.avatarUrl,
-          channelId,
-          request,
-          retryConfig,
-        });
+      await sendDiscordPayloadText({
+        cfg: params.cfg,
+        target: params.target,
+        text: reply.text,
+        token: params.token,
+        rest: params.rest,
+        accountId: params.accountId,
+        textLimit: params.textLimit,
+        maxLinesPerMessage: params.maxLinesPerMessage,
+        resolveReplyTo: resolvePayloadReplyTo,
+        binding,
+        chunkMode: params.chunkMode,
+        username: persona.username,
+        avatarUrl: persona.avatarUrl,
+        channelId,
+        request,
+        retryConfig,
+      });
+      if (reply.text.trim()) {
         deliveredAny = true;
       }
       continue;
@@ -487,6 +490,7 @@ export async function deliverDiscordReply(params: {
         token: params.token,
         rest: params.rest,
         accountId: params.accountId,
+        textLimit: params.textLimit,
         maxLinesPerMessage: params.maxLinesPerMessage,
         resolveReplyTo: resolvePayloadReplyTo,
         binding,
@@ -523,6 +527,7 @@ export async function deliverDiscordReply(params: {
         token: params.token,
         rest: params.rest,
         accountId: params.accountId,
+        textLimit: params.textLimit,
         maxLinesPerMessage: params.maxLinesPerMessage,
         resolveReplyTo: resolvePayloadReplyTo,
         binding,
