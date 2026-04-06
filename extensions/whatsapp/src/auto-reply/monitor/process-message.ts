@@ -1,3 +1,7 @@
+import {
+  annotateOfflineRecovery as _annotateOfflineRecovery,
+  createThinkingReaction as _createThinkingReaction,
+} from "../../../fork/process-message-hooks.js"; // FORK
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import { getPrimaryIdentityId, getSelfIdentity, getSenderIdentity } from "../../identity.js";
 import { newConnectionId } from "../../reconnect.js";
@@ -41,7 +45,6 @@ import {
   type LoadConfigFn,
   type resolveAgentRoute,
 } from "./runtime-api.js";
-
 async function resolveWhatsAppCommandAuthorized(params: {
   cfg: ReturnType<LoadConfigFn>;
   msg: WebInboundMsg;
@@ -208,6 +211,13 @@ export async function processMessage(params: {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
+  // FORK: annotate offline recovery messages for agent awareness
+  combinedBody = _annotateOfflineRecovery(
+    combinedBody,
+    params.msg.isOfflineRecovery,
+    params.msg.timestamp,
+  );
+
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
     sessionKey: params.route.sessionKey,
@@ -336,26 +346,40 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
-  return dispatchWhatsAppBufferedReply({
-    cfg: params.cfg,
-    connectionId: params.connectionId,
-    context: ctxPayload,
-    conversationId,
-    deliverReply: deliverWebReply,
-    groupHistories: params.groupHistories,
-    groupHistoryKey: params.groupHistoryKey,
-    maxMediaBytes: params.maxMediaBytes,
-    maxMediaTextChunkLimit: params.maxMediaTextChunkLimit,
-    msg: params.msg,
-    onModelSelected,
-    rememberSentText: params.rememberSentText,
-    replyLogger: params.replyLogger,
-    replyPipeline: {
-      ...replyPipeline,
-      responsePrefix,
-    },
-    replyResolver: params.replyResolver,
-    route: params.route,
-    shouldClearGroupHistory,
+  // FORK: thinking reaction (WhatsApp progress indicator)
+  const thinkingReaction = _createThinkingReaction({
+    messageId: params.msg.id,
+    chatId: conversationId,
+    senderJid: params.msg.senderJid,
+    accountId: params.route.accountId,
   });
+  thinkingReaction.start();
+
+  try {
+    return await dispatchWhatsAppBufferedReply({
+      cfg: params.cfg,
+      connectionId: params.connectionId,
+      context: ctxPayload,
+      conversationId,
+      deliverReply: deliverWebReply,
+      groupHistories: params.groupHistories,
+      groupHistoryKey: params.groupHistoryKey,
+      maxMediaBytes: params.maxMediaBytes,
+      maxMediaTextChunkLimit: params.maxMediaTextChunkLimit,
+      msg: params.msg,
+      onModelSelected,
+      rememberSentText: params.rememberSentText,
+      replyLogger: params.replyLogger,
+      replyPipeline: {
+        ...replyPipeline,
+        responsePrefix,
+      },
+      replyResolver: params.replyResolver,
+      route: params.route,
+      shouldClearGroupHistory,
+    });
+  } finally {
+    // FORK: stop thinking reaction after dispatch completes
+    thinkingReaction.stop();
+  }
 }

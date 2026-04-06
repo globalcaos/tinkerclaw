@@ -13,15 +13,14 @@ import {
 } from "../../plugins/provider-runtime.runtime.js";
 import { resolveSecretRefString, type SecretRefResolveCache } from "../../secrets/resolve.js";
 import { refreshChutesTokens } from "../chutes-oauth.js";
+import { writeCodexCliCredentials } from "../cli-credentials.js";
 import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
-import {
-  readCredentialFile,
-  refreshAnthropicOAuthToken,
-  resolveCredentialFilePath,
-  writeCredentialFile,
-} from "./credential-file.js";
 import { resolveTokenExpiryState } from "./credential-state.js";
 import { formatAuthDoctorHint } from "./doctor.js";
+import {
+  areOAuthCredentialsEquivalent,
+  readManagedExternalCliCredential,
+} from "./external-cli-sync.js";
 import { ensureAuthStoreFile, resolveAuthStorePath } from "./paths.js";
 import { assertNoOAuthSecretRefPolicyViolations } from "./policy.js";
 import { suggestOAuthProfileIdForLegacyDefault } from "./repair.js";
@@ -186,103 +185,56 @@ async function refreshOAuthTokenWithLock(params: {
       };
     }
 
-    // FORK: Generic credential file refresh for all OAuth profiles.
-    // Replaces hardcoded SV/GM branches with config-driven credential file resolution.
-    const cfg = loadConfig();
-    const credFilePath = resolveCredentialFilePath(params.profileId, cfg);
-
-    if (credFilePath) {
-      // Read from credential file — it may have a fresher token
-      const fresh = readCredentialFile(credFilePath, cred.provider);
-      if (fresh && Date.now() < fresh.expires) {
-        store.profiles[params.profileId] = {
-          ...cred,
-          access: fresh.access,
-          refresh: fresh.refresh,
-          expires: fresh.expires,
-          type: "oauth",
-        };
+    const externallyManaged = readManagedExternalCliCredential({
+      profileId: params.profileId,
+      credential: cred,
+    });
+    if (externallyManaged) {
+      if (!areOAuthCredentialsEquivalent(cred, externallyManaged)) {
+        store.profiles[params.profileId] = externallyManaged;
         saveAuthProfileStore(store, params.agentDir);
+      }
+      if (Date.now() < externallyManaged.expires) {
         return {
-          apiKey: await buildOAuthApiKey(cred.provider, { ...cred, access: fresh.access }),
-          newCredentials: {
-            ...cred,
-            access: fresh.access,
-            refresh: fresh.refresh,
-            expires: fresh.expires,
-          },
+          apiKey: await buildOAuthApiKey(externallyManaged.provider, externallyManaged),
+          newCredentials: externallyManaged,
         };
       }
-
-      // Credential file token also expired — try refreshing
-      const refreshSource = fresh ?? cred;
-      if (refreshSource.refresh) {
-        try {
-          // FORK: Use our own refresh for Anthropic (pi-ai's lacks User-Agent → Cloudflare blocks it).
-          // For other providers, fall through to the standard getOAuthApiKey path below.
-          const refreshed =
-            cred.provider === "anthropic"
-              ? await (async () => {
-                  const result = await refreshAnthropicOAuthToken(refreshSource.refresh);
-                  if (!result) {
-                    return null;
-                  }
-                  return {
-                    apiKey: result.access,
-                    newCredentials: {
-                      ...cred,
-                      access: result.access,
-                      refresh: result.refresh,
-                      expires: result.expires,
-                      type: "oauth" as const,
-                    },
-                  };
-                })()
-              : await (async () => {
-                  const oauthProvider = resolveOAuthProvider(cred.provider);
-                  if (!oauthProvider) {
-                    return null;
-                  }
-                  const refreshCred: OAuthCredentials = {
-                    ...cred,
-                    access: refreshSource.access,
-                    refresh: refreshSource.refresh,
-                    expires: refreshSource.expires,
-                    type: "oauth",
-                  };
-                  return await getOAuthApiKey(oauthProvider, { [cred.provider]: refreshCred });
-                })();
-          if (refreshed) {
-            store.profiles[params.profileId] = {
-              ...cred,
-              ...refreshed.newCredentials,
-              type: "oauth",
-            };
-            saveAuthProfileStore(store, params.agentDir);
-            writeCredentialFile(credFilePath, cred.provider, refreshed.newCredentials);
-            return refreshed;
-          }
-        } catch (err) {
-          log.warn("credential file refresh failed", {
-            profileId: params.profileId,
-            credentialFile: credFilePath,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      } else {
-        log.warn("credential file missing or has no refresh token", {
-          profileId: params.profileId,
-          credentialFile: credFilePath,
-          hasFresh: !!fresh,
+      if (externallyManaged.managedBy === "codex-cli") {
+        const pluginRefreshed = await refreshProviderOAuthCredentialWithPlugin({
+          provider: externallyManaged.provider,
+          context: externallyManaged,
         });
+        if (pluginRefreshed) {
+          const refreshedCredentials: OAuthCredential = {
+            ...externallyManaged,
+            ...pluginRefreshed,
+            type: "oauth",
+            managedBy: "codex-cli",
+          };
+          if (!writeCodexCliCredentials(refreshedCredentials)) {
+            log.warn("failed to persist refreshed codex credentials back to Codex storage", {
+              profileId: params.profileId,
+            });
+          }
+          store.profiles[params.profileId] = refreshedCredentials;
+          saveAuthProfileStore(store, params.agentDir);
+          return {
+            apiKey: await buildOAuthApiKey(refreshedCredentials.provider, refreshedCredentials),
+            newCredentials: refreshedCredentials,
+          };
+        }
       }
-      return null;
+      throw new Error(
+        `${externallyManaged.managedBy} credential is expired; refresh it in the external CLI and retry.`,
+      );
+    }
+    if (cred.managedBy) {
+      throw new Error(
+        `${cred.managedBy} credential is unavailable; re-authenticate in the external CLI and retry.`,
+      );
     }
 
-    // No credential file — fall through to provider-specific refresh below
-    // (chutes, qwen-portal, standard OAuth via getOAuthApiKey)
-
-    const { refreshProviderOAuthCredentialWithPlugin } = await loadProviderRuntime();
     const pluginRefreshed = await refreshProviderOAuthCredentialWithPlugin({
       provider: cred.provider,
       context: cred,
