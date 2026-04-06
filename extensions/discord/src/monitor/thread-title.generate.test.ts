@@ -173,9 +173,11 @@ describe("generateThreadTitle", () => {
     expect(completeWithPreparedSimpleCompletionModelMock.mock.calls[0]?.[0]?.options).toEqual(
       expect.objectContaining({
         maxTokens: 24,
-        temperature: 0.2,
       }),
     );
+    expect(
+      completeWithPreparedSimpleCompletionModelMock.mock.calls[0]?.[0]?.options,
+    ).not.toHaveProperty("temperature");
   });
 
   it("returns null when completion throws", async () => {
