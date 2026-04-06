@@ -2,9 +2,12 @@ import type {
   ChannelId,
   ChannelOutboundAdapter,
   ChannelPlugin,
-} from "../channels/plugins/types.js";
-import { createOutboundTestPlugin } from "../test-utils/channel-plugins.js";
-import { resolveOutboundSendDep, type OutboundSendDeps } from "./outbound/send-deps.js";
+} from "../../../src/channels/plugins/types.js";
+import {
+  resolveOutboundSendDep,
+  type OutboundSendDeps,
+} from "../../../src/infra/outbound/send-deps.js";
+import { createOutboundTestPlugin } from "../../../src/test-utils/channel-plugins.js";
 
 type HeartbeatSendChannelId = "slack" | "telegram" | "whatsapp";
 type HeartbeatSendFn = (

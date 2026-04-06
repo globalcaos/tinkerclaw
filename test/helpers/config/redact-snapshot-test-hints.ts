@@ -1,4 +1,4 @@
-import type { ConfigUiHints } from "./schema.js";
+import type { ConfigUiHints } from "../../../src/config/schema.js";
 
 // Keep this fixture minimal so redaction tests exercise the hint-matching
 // behavior they care about without paying to build the full config schema graph.
