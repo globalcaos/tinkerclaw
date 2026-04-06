@@ -169,6 +169,7 @@ export default defineConfig([
       neverBundle: [
         "better-sqlite3", // FORK: native addon must stay external
         "bindings", // FORK: native addon must stay external
+        "@whatsmeow-node/whatsmeow-node", // FORK: optional native Go addon, not always installed
         "@lancedb/lancedb",
         "@matrix-org/matrix-sdk-crypto-nodejs",
         "matrix-js-sdk",
