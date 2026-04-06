@@ -1,5 +1,5 @@
-import { listBundledChannelPlugins } from "../bundled.js";
-import type { ChannelPlugin } from "../types.js";
+import { listBundledChannelPlugins } from "../../../src/channels/plugins/bundled.js";
+import type { ChannelPlugin } from "../../../src/channels/plugins/types.js";
 
 type PluginContractEntry = {
   id: string;

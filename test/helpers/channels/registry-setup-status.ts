@@ -1,7 +1,7 @@
 import { expect } from "vitest";
-import type { OpenClawConfig } from "../../../config/config.js";
-import { requireBundledChannelPlugin } from "../bundled.js";
-import type { ChannelPlugin } from "../types.js";
+import { requireBundledChannelPlugin } from "../../../src/channels/plugins/bundled.js";
+import type { ChannelPlugin } from "../../../src/channels/plugins/types.js";
+import type { OpenClawConfig } from "../../../src/config/config.js";
 
 type SetupContractEntry = {
   id: string;
