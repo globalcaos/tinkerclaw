@@ -7,27 +7,7 @@ import {
 import { readChannelAllowFromStore } from "openclaw/plugin-sdk/conversation-runtime";
 import type { ResolvedDiscordAccount } from "./accounts.js";
 import type { OpenClawConfig } from "./runtime-api.js";
-
-export function isDiscordMutableAllowEntry(raw: string): boolean {
-  const text = raw.trim();
-  if (!text || text === "*") {
-    return false;
-  }
-
-  const maybeMentionId = text.replace(/^<@!?/, "").replace(/>$/, "");
-  if (/^\d+$/.test(maybeMentionId)) {
-    return false;
-  }
-
-  for (const prefix of ["discord:", "user:", "pk:"]) {
-    if (!text.startsWith(prefix)) {
-      continue;
-    }
-    return text.slice(prefix.length).trim().length === 0;
-  }
-
-  return true;
-}
+import { isDiscordMutableAllowEntry } from "./security-doctor.js";
 
 function addDiscordNameBasedEntries(params: {
   target: Set<string>;
