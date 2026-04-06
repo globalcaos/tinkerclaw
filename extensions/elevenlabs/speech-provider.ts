@@ -17,9 +17,8 @@ import {
   trimToUndefined,
 } from "openclaw/plugin-sdk/speech";
 import { resolveElevenLabsApiKeyWithProfileFallback } from "./config-api.js";
+import { isValidElevenLabsVoiceId, normalizeElevenLabsBaseUrl } from "./shared.js";
 import { elevenLabsTTS } from "./tts.js";
-
-const DEFAULT_ELEVENLABS_BASE_URL = "https://api.elevenlabs.io";
 const DEFAULT_ELEVENLABS_VOICE_ID = "pMsXgVXv3BLzUgSXRplE";
 const DEFAULT_ELEVENLABS_MODEL_ID = "eleven_multilingual_v2";
 const DEFAULT_ELEVENLABS_VOICE_SETTINGS = {
@@ -69,14 +68,7 @@ function parseNumberValue(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export function isValidVoiceId(voiceId: string): boolean {
-  return /^[a-zA-Z0-9]{10,40}$/.test(voiceId);
-}
-
-function normalizeElevenLabsBaseUrl(baseUrl: string | undefined): string {
-  const trimmed = baseUrl?.trim();
-  return trimmed?.replace(/\/+$/, "") || DEFAULT_ELEVENLABS_BASE_URL;
-}
+export const isValidVoiceId = isValidElevenLabsVoiceId;
 
 function normalizeElevenLabsProviderConfig(
   rawConfig: Record<string, unknown>,
@@ -162,7 +154,7 @@ function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext) {
         if (!ctx.policy.allowVoice) {
           return { handled: true };
         }
-        if (!isValidVoiceId(ctx.value)) {
+        if (!isValidElevenLabsVoiceId(ctx.value)) {
           return { handled: true, warnings: [`invalid ElevenLabs voiceId "${ctx.value}"`] };
         }
         return {
