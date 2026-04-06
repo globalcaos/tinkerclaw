@@ -307,6 +307,22 @@ function notifyEmbeddedRunEnded(sessionId: string) {
   }
 }
 
+/**
+ * Resolves the active embedded run's sessionId for a given session key.
+ * Checks exact match first, then partial (substring) match.
+ */
+export function resolveActiveEmbeddedRunSessionId(sessionKey: string): string | undefined {
+  if (ACTIVE_EMBEDDED_RUNS.has(sessionKey)) {
+    return sessionKey;
+  }
+  for (const sessionId of ACTIVE_EMBEDDED_RUNS.keys()) {
+    if (sessionId.includes(sessionKey) || sessionKey.includes(sessionId)) {
+      return sessionId;
+    }
+  }
+  return undefined;
+}
+
 export function setActiveEmbeddedRun(
   sessionId: string,
   handle: EmbeddedPiQueueHandle,

@@ -7,7 +7,7 @@ Cold-start Personality networks using Knowledge Distillation (KD).
 Strategy:
   1. For each historical situation (from mined_examples in training.sqlite):
      - Ask local LLM (Ollama llama3:8b) what personality modulation a
-       heavily-prompted the user-persona agent would produce
+       heavily-prompted operator-persona agent would produce
      - Teacher label = continuous vector in [-1, +1]^5 for 5 personality dims:
          [verbosity, formality, hedging, emoji_rate, assertiveness]
   2. Pre-train Personality networks (A–E) via MSE regression on teacher labels
@@ -70,7 +70,7 @@ def query_teacher_label(
     preceding_text: str,
 ) -> Optional[List[float]]:
     """
-    Ask the LLM what personality vector a heavily-prompted the user agent would use.
+    Ask the LLM what personality vector a heavily-prompted operator agent would use.
     Returns 5-dim list in [-1, +1] or None on failure.
     """
     if not check_ollama():
@@ -79,7 +79,7 @@ def query_teacher_label(
     prompt = f"""You are helping train an AI personality system called AMYGDALA.
 
 Given the following situation (what an AI assistant is about to do), predict what personality
-adjustments a well-calibrated the user-style assistant would make. the user is technical, direct,
+adjustments a well-calibrated operator-style assistant would make. The target operator is technical, direct,
 uses dry humor, dislikes over-politeness and emoji spam.
 
 Score each dimension from -1.0 (minimum) to +1.0 (maximum):
@@ -120,9 +120,9 @@ All values must be floats in [-1.0, 1.0].
             label = [
                 float(parsed.get("verbosity", 0.0)),
                 float(parsed.get("formality", 0.0)),
-                float(parsed.get("hedging", -0.3)),   # the user default: less hedging
-                float(parsed.get("emoji_rate", -0.5)),  # the user default: low emoji
-                float(parsed.get("assertiveness", 0.4)),  # the user default: assertive
+                float(parsed.get("hedging", -0.3)),   # operator default: less hedging
+                float(parsed.get("emoji_rate", -0.5)),  # operator default: low emoji
+                float(parsed.get("assertiveness", 0.4)),  # operator default: assertive
             ]
             # Clamp to [-1, 1]
             return [max(-1.0, min(1.0, x)) for x in label]
@@ -134,9 +134,9 @@ All values must be floats in [-1.0, 1.0].
 def heuristic_teacher_label(action_type: str, outcome_label: float) -> List[float]:
     """
     Fallback teacher label when Ollama is unavailable.
-    Uses action type and outcome to approximate the user's personality adjustment.
+    Uses action type and outcome to approximate the operator's personality adjustment.
     """
-    # Base: the user's personality defaults
+    # Base: operator personality defaults
     base = [
         -0.2,  # verbosity: somewhat terse
         -0.3,  # formality: casual-leaning

@@ -1,0 +1,79 @@
+{
+  "id": "prefrontal",
+  "name": "Prefrontal",
+  "description": "Real-time agent topology tracking with force-directed graph visualization",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable or disable the prefrontal plugin"
+      },
+      "model": {
+        "type": "string",
+        "description": "Primary model for prefrontal analysis"
+      },
+      "summaryModel": {
+        "type": "string",
+        "description": "Model used for summary generation"
+      },
+      "monitorIntervalMs": {
+        "type": "number",
+        "default": 120000,
+        "description": "Monitor check interval in milliseconds"
+      },
+      "staleThresholdMs": {
+        "type": "number",
+        "default": 180000,
+        "description": "Time in ms before marking an agent as stale"
+      },
+      "guardianStaleThresholdMs": {
+        "type": "number",
+        "default": 300000,
+        "description": "Time in ms before guardian triggers recovery"
+      },
+      "maxConcurrentWorkers": {
+        "type": "number",
+        "default": 8,
+        "description": "Maximum number of concurrent worker agents"
+      },
+      "autoRoute": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable automatic effort-based model routing"
+      },
+      "effortRouting": {
+        "type": "object",
+        "description": "Model lists for each effort tier",
+        "additionalProperties": true
+      },
+      "pollIntervalMs": {
+        "type": "number",
+        "default": 5000,
+        "description": "Session store enrichment poll interval in milliseconds"
+      },
+      "stalenessThresholdMs": {
+        "type": "number",
+        "default": 60000,
+        "description": "Time in ms before marking an agent as stuck"
+      },
+      "chatMinIntervalMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Minimum interval for chat summary messages"
+      },
+      "chatMaxIntervalMs": {
+        "type": "number",
+        "default": 180000,
+        "description": "Maximum interval for chat summary messages"
+      },
+      "persistPath": {
+        "type": "string",
+        "description": "Path to persist topology state across restarts"
+      }
+    }
+  }
+}

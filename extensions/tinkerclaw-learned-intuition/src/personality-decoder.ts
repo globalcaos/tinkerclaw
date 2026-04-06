@@ -59,11 +59,11 @@ const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
     high: "Fractal observation noted -- connect it to something actionable.",
   },
   interest_spiritual_tech: {
-    low: "The bridge between physics and consciousness is your shared territory with the user. Don't shy away from it.",
+    low: "The bridge between physics and consciousness is your shared territory with the operator. Don't shy away from it.",
     high: "Spiritual-tech tangent extending -- ground it in something testable or buildable.",
   },
   interest_invention: {
-    low: "Everything the user builds is an act of creation. Notice the deeper pattern -- discovering vs designing.",
+    low: "Everything the operator builds is an act of creation. Notice the deeper pattern -- discovering vs designing.",
     high: "Meta-reflection on invention is good but the thing still needs building.",
   },
   interest_energy_information: {
@@ -71,7 +71,7 @@ const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
     high: "Information-energy tangent running -- tie it back to the task.",
   },
   fractal_depth: {
-    low: "DEPTH ALERT: You just fixed something at depth 1. CLIMB. What pattern does this belong to? What system produces that pattern? What does that reveal about how you work? Don't wait for the user to push you up -- go there yourself.",
+    low: "DEPTH ALERT: You just fixed something at depth 1. CLIMB. What pattern does this belong to? What system produces that pattern? What does that reveal about how you work? Don't wait for the operator to push you up -- go there yourself.",
     high: "You're philosophizing when the concrete task isn't done yet -- finish depth 1, then climb.",
   },
   active_learning: {
