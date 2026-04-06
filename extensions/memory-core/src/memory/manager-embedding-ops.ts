@@ -15,7 +15,11 @@ import {
   type MemoryFileEntry,
   type MemorySource,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
-import { recordMemoryBatchFailure, resetMemoryBatchFailureState } from "./manager-batch-state.js";
+import {
+  MEMORY_BATCH_FAILURE_LIMIT,
+  recordMemoryBatchFailure,
+  resetMemoryBatchFailureState,
+} from "./manager-batch-state.js";
 import {
   collectMemoryCachedEmbeddings,
   loadMemoryEmbeddingCache,
@@ -156,8 +160,9 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     _entry: MemoryFileEntry | SessionFileEntry,
     source: MemorySource,
   ): Promise<number[][]> {
+    const provider = this.provider;
     const batchEmbed = this.providerRuntime?.batchEmbed;
-    if (!this.provider || !batchEmbed) {
+    if (!provider || !batchEmbed) {
       return this.embedChunksInBatches(chunks);
     }
     if (chunks.length === 0) {
@@ -170,7 +175,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
 
     const missingChunks = missing.map((item) => item.chunk);
     const batchResult = await this.runBatchWithFallback({
-      provider: this.provider.id,
+      provider: provider.id,
       run: async () =>
         await batchEmbed({
           agentId: this.agentId,
@@ -199,7 +204,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     upsertMemoryEmbeddingCache({
       db: this.db,
       enabled: this.cache.enabled,
-      provider: this.provider,
+      provider,
       providerKey: this.providerKey,
       entries: toCache,
       tableName: EMBEDDING_CACHE_TABLE,
@@ -228,19 +233,20 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     if (texts.length === 0) {
       return [];
     }
-    if (!this.provider) {
+    const provider = this.provider;
+    if (!provider) {
       throw new Error("Cannot embed batch in FTS-only mode (no embedding provider)");
     }
     return await runMemoryEmbeddingRetryLoop({
       run: async () => {
         const timeoutMs = this.resolveEmbeddingTimeout("batch");
         log.debug("memory embeddings: batch start", {
-          provider: this.provider.id,
+          provider: provider.id,
           items: texts.length,
           timeoutMs,
         });
         return await this.withTimeout(
-          this.provider.embedBatch(texts),
+          provider.embedBatch(texts),
           timeoutMs,
           `memory embeddings batch timed out after ${Math.round(timeoutMs / 1000)}s`,
         );
@@ -258,19 +264,21 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     if (inputs.length === 0) {
       return [];
     }
-    if (!this.provider?.embedBatchInputs) {
+    const provider = this.provider;
+    const embedBatchInputs = provider?.embedBatchInputs;
+    if (!embedBatchInputs) {
       return await this.embedBatchWithRetry(inputs.map((input) => input.text));
     }
     return await runMemoryEmbeddingRetryLoop({
       run: async () => {
         const timeoutMs = this.resolveEmbeddingTimeout("batch");
         log.debug("memory embeddings: structured batch start", {
-          provider: this.provider.id,
+          provider: provider.id,
           items: inputs.length,
           timeoutMs,
         });
         return await this.withTimeout(
-          this.provider.embedBatchInputs(inputs),
+          embedBatchInputs(inputs),
           timeoutMs,
           `memory embeddings batch timed out after ${Math.round(timeoutMs / 1000)}s`,
         );
@@ -447,7 +455,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       });
       const suffix = failure.disabled ? "disabling batch" : "keeping batch enabled";
       log.warn(
-        `memory embeddings: ${params.provider} batch failed (${failure.count}/${BATCH_FAILURE_LIMIT}); ${suffix}; falling back to non-batch embeddings: ${message}`,
+        `memory embeddings: ${params.provider} batch failed (${failure.count}/${MEMORY_BATCH_FAILURE_LIMIT}); ${suffix}; falling back to non-batch embeddings: ${message}`,
       );
       return await params.fallback();
     }
