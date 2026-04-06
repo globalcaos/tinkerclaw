@@ -7,8 +7,7 @@ import type { ProviderPlugin } from "./types.js";
 
 type ResolveRuntimePluginRegistry = typeof import("./loader.js").resolveRuntimePluginRegistry;
 type LoadOpenClawPlugins = typeof import("./loader.js").loadOpenClawPlugins;
-type ResolvePluginRegistryLoadCacheKey =
-  typeof import("./loader.js").resolvePluginRegistryLoadCacheKey;
+type IsPluginRegistryLoadInFlight = typeof import("./loader.js").isPluginRegistryLoadInFlight;
 type LoadPluginManifestRegistry =
   typeof import("./manifest-registry.js").loadPluginManifestRegistry;
 type ApplyPluginAutoEnable = typeof import("../config/plugin-auto-enable.js").applyPluginAutoEnable;
@@ -16,9 +15,7 @@ type SetActivePluginRegistry = typeof import("./runtime.js").setActivePluginRegi
 
 const resolveRuntimePluginRegistryMock = vi.fn<ResolveRuntimePluginRegistry>();
 const loadOpenClawPluginsMock = vi.fn<LoadOpenClawPlugins>();
-const resolvePluginRegistryLoadCacheKeyMock = vi.fn<ResolvePluginRegistryLoadCacheKey>((options) =>
-  JSON.stringify(options ?? {}),
-);
+const isPluginRegistryLoadInFlightMock = vi.fn<IsPluginRegistryLoadInFlight>((_) => false);
 const loadPluginManifestRegistryMock = vi.fn<LoadPluginManifestRegistry>();
 const applyPluginAutoEnableMock = vi.fn<ApplyPluginAutoEnable>();
 
@@ -269,8 +266,8 @@ describe("resolvePluginProviders", () => {
     vi.doMock("./loader.js", () => ({
       loadOpenClawPlugins: (...args: Parameters<LoadOpenClawPlugins>) =>
         loadOpenClawPluginsMock(...args),
-      resolvePluginRegistryLoadCacheKey: (...args: Parameters<ResolvePluginRegistryLoadCacheKey>) =>
-        resolvePluginRegistryLoadCacheKeyMock(...args),
+      isPluginRegistryLoadInFlight: (...args: Parameters<IsPluginRegistryLoadInFlight>) =>
+        isPluginRegistryLoadInFlightMock(...args),
       resolveRuntimePluginRegistry: (...args: Parameters<ResolveRuntimePluginRegistry>) =>
         resolveRuntimePluginRegistryMock(...args),
     }));
@@ -302,10 +299,8 @@ describe("resolvePluginProviders", () => {
     setActivePluginRegistry(createEmptyPluginRegistry());
     resolveRuntimePluginRegistryMock.mockReset();
     loadOpenClawPluginsMock.mockReset();
-    resolvePluginRegistryLoadCacheKeyMock.mockReset();
-    resolvePluginRegistryLoadCacheKeyMock.mockImplementation((options) =>
-      JSON.stringify(options ?? {}),
-    );
+    isPluginRegistryLoadInFlightMock.mockReset();
+    isPluginRegistryLoadInFlightMock.mockReturnValue(false);
     const provider: ProviderPlugin = {
       id: "demo-provider",
       label: "Demo Provider",

@@ -8,7 +8,12 @@ import { withEnv } from "../test-utils/env.js";
 import { clearPluginCommands, getPluginCommandSpecs } from "./command-registry-state.js";
 import { getGlobalHookRunner, resetGlobalHookRunner } from "./hook-runner-global.js";
 import { createHookRunner } from "./hooks.js";
-import { __testing, clearPluginLoaderCache, loadOpenClawPlugins } from "./loader.js";
+import {
+  __testing,
+  clearPluginLoaderCache,
+  loadOpenClawPlugins,
+  PluginLoadReentryError,
+} from "./loader.js";
 import {
   cleanupPluginLoaderFixturesForTest,
   EMPTY_PLUGIN_SCHEMA,
@@ -1181,6 +1186,71 @@ module.exports = { id: "throws-after-import", register() {} };`,
           expect(Number(Reflect.get(globalThis, importMarker) ?? 0)).toBeGreaterThan(0);
         } finally {
           Reflect.deleteProperty(globalThis, importMarker);
+        }
+      },
+    },
+    {
+      label: "fails loudly when a plugin reenters the same snapshot load during register",
+      run: () => {
+        useNoBundledPlugins();
+        const marker = "__openclaw_loader_reentry_error";
+        const reenterFnMarker = "__openclaw_loader_reentry_fn";
+        Reflect.deleteProperty(globalThis, marker);
+        Reflect.set(
+          globalThis,
+          reenterFnMarker,
+          (options: Parameters<typeof loadOpenClawPlugins>[0]) => loadOpenClawPlugins(options),
+        );
+        const pluginDir = makeTempDir();
+        const pluginFile = path.join(pluginDir, "reentrant-snapshot.cjs");
+        const nestedOptions = {
+          cache: false,
+          activate: false,
+          workspaceDir: pluginDir,
+          config: {
+            plugins: {
+              load: { paths: [pluginFile] },
+              allow: ["reentrant-snapshot"],
+            },
+          },
+        } satisfies Parameters<typeof loadOpenClawPlugins>[0];
+        writePlugin({
+          id: "reentrant-snapshot",
+          dir: pluginDir,
+          filename: "reentrant-snapshot.cjs",
+          body: `module.exports = {
+  id: "reentrant-snapshot",
+  register() {
+    try {
+      globalThis.${reenterFnMarker}(${JSON.stringify(nestedOptions)});
+    } catch (error) {
+      globalThis.${marker} = {
+        name: error?.name,
+        message: String(error?.message ?? error),
+      };
+      throw error;
+    }
+  },
+};`,
+        });
+
+        const registry = loadOpenClawPlugins(nestedOptions);
+
+        try {
+          expect(Reflect.get(globalThis, marker)).toMatchObject({
+            name: PluginLoadReentryError.name,
+            message: expect.stringContaining("plugin load reentry detected"),
+          });
+          expect(registry.plugins.find((entry) => entry.id === "reentrant-snapshot")).toMatchObject(
+            {
+              status: "error",
+              error: expect.stringContaining("plugin load reentry detected"),
+              failurePhase: "register",
+            },
+          );
+        } finally {
+          Reflect.deleteProperty(globalThis, marker);
+          Reflect.deleteProperty(globalThis, reenterFnMarker);
         }
       },
     },
