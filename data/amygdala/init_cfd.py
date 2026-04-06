@@ -243,7 +243,7 @@ KNOWN_INCIDENTS = [
             "Agent auto-reacted (👍) to every incoming message in a WhatsApp group "
             "chat containing family members. The agent was monitoring the group for "
             "mentions but had a logic bug causing it to react unconditionally. "
-            "Approximately 47 consecutive reactions were sent before the user noticed "
+            "Approximately 47 consecutive reactions were sent before the operator noticed "
             "and stopped it. Social dynamics in the group were affected."
         ),
         "date_occurred": "2025-12-15",
@@ -285,7 +285,7 @@ KNOWN_INCIDENTS = [
         "title": "DM intrusion — agent messaged contact outside allowlist",
         "description": (
             "Agent sent a direct message to a contact not in the approved allowlist. "
-            "The contact was a work colleague of the user's, referenced in a previous "
+            "The contact was a work colleague of the operator's, referenced in a previous "
             "conversation. The agent interpreted a request to 'follow up' as permission "
             "to contact directly. The message contained internal project details."
         ),
