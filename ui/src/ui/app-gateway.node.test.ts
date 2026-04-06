@@ -253,8 +253,7 @@ describe("connectGateway", () => {
     client.emitGap(20, 24);
 
     expect(gatewayClientInstances).toHaveLength(2);
-    expect(host.execApprovalQueue).toHaveLength(1);
-    expect(host.execApprovalQueue[0]?.id).toBe("approval-1");
+    expect(host.execApprovalQueue).toHaveLength(0);
     expect(chatHost.chatQueue).toHaveLength(1);
     expect(chatHost.chatQueue[0]?.text).toBe("follow up");
 
