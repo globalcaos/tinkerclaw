@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveBundledPluginWorkspaceSourcePath } from "../../../plugins/bundled-plugin-metadata.js";
+import { resolveBundledChannelWorkspacePath } from "../../../plugins/bundled-channel-runtime.js";
 import {
   resolvePluginRuntimeModulePath,
   resolvePluginRuntimeRecord,
@@ -14,7 +14,7 @@ function resolveBundledChannelWorkspaceArtifactPath(
   entryBaseName: string,
 ): string | null {
   const normalizedEntryBaseName = entryBaseName.replace(/\.(?:[cm]?js|ts)$/u, "");
-  const pluginRoot = resolveBundledPluginWorkspaceSourcePath({
+  const pluginRoot = resolveBundledChannelWorkspacePath({
     rootDir: REPO_ROOT,
     pluginId,
   });
