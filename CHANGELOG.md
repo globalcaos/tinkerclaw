@@ -6,11 +6,25 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Providers/Anthropic: restore Claude CLI as the preferred local Anthropic path in onboarding, model-auth guidance, and doctor flows again, and keep the Docker Claude CLI live lane aligned with the restored guidance.
 - Plugins/webhooks: add a bundled webhook ingress plugin so external automation can create and drive bound TaskFlows through per-route shared-secret endpoints. (#61892) Thanks @mbelinky.
 - Tools/media: document per-provider music and video generation capabilities, and add shared live video-to-video sweep coverage for providers that support local reference clips.
 
 ### Fixes
 
+- Channels/secrets: keep bundled channel artifact and secret-contract loading stable under lazy loading so bundled channel secrets continue to appear in `openclaw secret`, status, and security-audit surfaces.
+- Providers/xAI: recognize `api.grok.x.ai` as an xAI-native endpoint again so native xAI web-search attribution keeps working on Grok-hosted base URLs. (#61377) Thanks @jjjojoj.
+- Providers/Anthropic/cache: preserve thinking blocks for Claude Opus 4.5+, Sonnet 4.5+, and newer Claude 4-family models so Anthropic prompt-cache prefixes keep matching after thinking turns. (#61793)
+- Providers/Ollama: honor the selected provider's `baseUrl` during streaming so multi-Ollama setups stop routing every stream to the first configured Ollama endpoint. (#61678)
+- Browser/remote CDP: retry the DevTools websocket once after remote browser restarts so healthy remote browser profiles do not fail availability checks during CDP warm-up. (#57397) Thanks @ThanhNguyxn07.
+- Memory/vector recall: surface explicit warnings when `sqlite-vec` is unavailable or vector writes are degraded so memory indexing no longer reports false-success while semantic recall is impaired.
+- MS Teams/security: validate file-consent upload URLs against HTTPS, Microsoft/SharePoint host allowlists, and private-IP DNS checks before uploading attachments, blocking SSRF-style consent-upload abuse. (#23596)
+- Discord/gateway monitor: use `ws://` again for gateway monitor sockets so Discord monitor connections recover reliably after recent gateway socket changes.
+- Control UI/auth URLs: detect mistaken `?token=` links, show the correct `#token=` fragment hint only on real auth failures, and stop masking the real problem behind a generic device-identity error. (#54842)
+- Control UI/chat layout: keep Copy and Canvas actions plus mobile exec-approval overlays from covering chat text or command previews on narrow screens. (#61514)
+- Matrix/formatting: preserve multi-paragraph and loose-list rendering in Element so numbered and bulleted Markdown keeps its content attached to the correct list item. (#60997) Thanks @gucasbrg.
+- Sessions/model selection: resolve the explicitly selected session model separately from runtime fallback resolution so session status and live model switching stay aligned with the chosen model.
+- Secrets/x_search: keep legacy `x_search` auth resolution working so older xAI web-search configs continue to load after the plugin-owned auth move.
 - iOS/Watch exec approvals: keep Apple Watch review and approval recovery working while the iPhone is locked or backgrounded, including background-safe reconnects, persisted pending approvals, notification cleanup, and APNs-backed watch refresh recovery. (#61757) Thanks @ngutman.
 - Discord/forwarding: recover forwarded referenced message text and attachments when Discord omits snapshot payloads, so forwarded-message relays keep the original content. (#61670) Thanks @artwalker.
 - TUI/status: route `/status` through the shared session-status command and move the old gateway-wide diagnostic summary to `/gateway-status` (`/gwstatus`). Thanks @vincentkoc.
