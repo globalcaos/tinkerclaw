@@ -169,6 +169,42 @@ async function sendDiscordMediaBatch(params: {
   });
 }
 
+async function sendDiscordPayloadText(params: {
+  cfg: OpenClawConfig;
+  target: string;
+  text: string;
+  token: string;
+  rest?: RequestClient;
+  accountId?: string;
+  maxLinesPerMessage?: number;
+  binding?: DiscordThreadBindingLookupRecord;
+  chunkMode?: ChunkMode;
+  username?: string;
+  avatarUrl?: string;
+  channelId?: string;
+  request?: RetryRunner;
+  retryConfig: ResolvedRetryConfig;
+  resolveReplyTo: () => string | undefined;
+}): Promise<void> {
+  await sendDiscordChunkWithFallback({
+    cfg: params.cfg,
+    target: params.target,
+    text: params.text,
+    token: params.token,
+    rest: params.rest,
+    accountId: params.accountId,
+    maxLinesPerMessage: params.maxLinesPerMessage,
+    replyTo: params.resolveReplyTo(),
+    binding: params.binding,
+    chunkMode: params.chunkMode,
+    username: params.username,
+    avatarUrl: params.avatarUrl,
+    channelId: params.channelId,
+    request: params.request,
+    retryConfig: params.retryConfig,
+  });
+}
+
 function resolveTargetChannelId(target: string): string | undefined {
   if (!target.startsWith("channel:")) {
     return undefined;
@@ -444,7 +480,7 @@ export async function deliverDiscordReply(params: {
       });
       deliveredAny = true;
       // Voice messages cannot include text; send remaining text separately if present.
-      await sendDiscordChunkWithFallback({
+      await sendDiscordPayloadText({
         cfg: params.cfg,
         target: params.target,
         text: reply.text,
@@ -452,7 +488,7 @@ export async function deliverDiscordReply(params: {
         rest: params.rest,
         accountId: params.accountId,
         maxLinesPerMessage: params.maxLinesPerMessage,
-        replyTo: resolvePayloadReplyTo(),
+        resolveReplyTo: resolvePayloadReplyTo,
         binding,
         chunkMode: params.chunkMode,
         username: persona.username,
@@ -480,7 +516,7 @@ export async function deliverDiscordReply(params: {
       reply.text.trim().length > 0 &&
       reply.mediaUrls.some((mediaUrl) => isLikelyDiscordVideoMedia(mediaUrl));
     if (shouldSplitVideoMediaReply) {
-      await sendDiscordChunkWithFallback({
+      await sendDiscordPayloadText({
         cfg: params.cfg,
         target: params.target,
         text: reply.text,
@@ -488,7 +524,7 @@ export async function deliverDiscordReply(params: {
         rest: params.rest,
         accountId: params.accountId,
         maxLinesPerMessage: params.maxLinesPerMessage,
-        replyTo: resolvePayloadReplyTo(),
+        resolveReplyTo: resolvePayloadReplyTo,
         binding,
         chunkMode: params.chunkMode,
         username: persona.username,
