@@ -7,7 +7,7 @@ import {
   resolveProviderHttpRequestConfig,
 } from "openclaw/plugin-sdk/provider-http";
 import { OPENAI_DEFAULT_IMAGE_MODEL as DEFAULT_OPENAI_IMAGE_MODEL } from "./default-models.js";
-import { toOpenAIDataUrl } from "./shared.js";
+import { resolveConfiguredOpenAIBaseUrl, toOpenAIDataUrl } from "./shared.js";
 
 const DEFAULT_OPENAI_IMAGE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OUTPUT_MIME = "image/png";
@@ -21,11 +21,6 @@ type OpenAIImageApiResponse = {
     revised_prompt?: string;
   }>;
 };
-
-function resolveOpenAIBaseUrl(cfg: Parameters<typeof resolveApiKeyForProvider>[0]["cfg"]): string {
-  const direct = cfg?.models?.providers?.openai?.baseUrl?.trim();
-  return direct || DEFAULT_OPENAI_IMAGE_BASE_URL;
-}
 
 export function buildOpenAIImageGenerationProvider(): ImageGenerationProvider {
   return {
@@ -71,7 +66,7 @@ export function buildOpenAIImageGenerationProvider(): ImageGenerationProvider {
       }
       const { baseUrl, allowPrivateNetwork, headers, dispatcherPolicy } =
         resolveProviderHttpRequestConfig({
-          baseUrl: resolveOpenAIBaseUrl(req.cfg),
+          baseUrl: resolveConfiguredOpenAIBaseUrl(req.cfg),
           defaultBaseUrl: DEFAULT_OPENAI_IMAGE_BASE_URL,
           defaultHeaders: {
             Authorization: `Bearer ${auth.apiKey}`,
