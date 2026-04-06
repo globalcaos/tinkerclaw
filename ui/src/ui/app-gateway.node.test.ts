@@ -187,6 +187,7 @@ describe("connectGateway", () => {
   beforeEach(() => {
     gatewayClientInstances.length = 0;
     loadChatHistoryMock.mockClear();
+    vi.restoreAllMocks();
   });
 
   it("ignores stale client onGap callbacks after reconnect", () => {
@@ -210,6 +211,8 @@ describe("connectGateway", () => {
   });
 
   it("preserves approval prompts, clears stale run indicators, and resumes queued work after seq-gap reconnect", () => {
+    const now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
     const host = createHost();
     const chatHost = host as typeof host & {
       chatRunId: string | null;
@@ -239,8 +242,8 @@ describe("connectGateway", () => {
         id: "approval-1",
         kind: "exec",
         request: { command: "rm -rf /tmp/demo" },
-        createdAtMs: Date.now(),
-        expiresAtMs: Date.now() + 60_000,
+        createdAtMs: now,
+        expiresAtMs: now + 60_000,
       },
     ];
 

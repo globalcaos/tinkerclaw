@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { __testing, ensurePluginRegistryLoaded } from "./plugin-registry.js";
 
 const mocks = vi.hoisted(() => ({
   applyPluginAutoEnable: vi.fn(),
@@ -36,8 +35,13 @@ vi.mock("../plugins/runtime.js", () => ({
   getActivePluginRegistry: mocks.getActivePluginRegistry,
 }));
 
+let ensurePluginRegistryLoaded: typeof import("./plugin-registry.js").ensurePluginRegistryLoaded;
+let __testing: typeof import("./plugin-registry.js").__testing;
+
 describe("ensurePluginRegistryLoaded", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    ({ ensurePluginRegistryLoaded, __testing } = await import("./plugin-registry.js"));
     vi.clearAllMocks();
     __testing.resetPluginRegistryLoadedForTests();
     mocks.getActivePluginRegistry.mockReturnValue({
@@ -230,9 +234,6 @@ describe("ensurePluginRegistryLoaded", () => {
       channels: [{ plugin: { id: "demo-channel-b" } }],
       tools: [],
     });
-
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
-
     ensurePluginRegistryLoaded({ scope: "configured-channels" });
 
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledTimes(1);
