@@ -50,3 +50,43 @@ export async function cleanupTrackedTempDirsAsync(trackedDirs: string[]) {
     }),
   );
 }
+
+export function createSuiteTempRootTracker(prefix: string) {
+  let suiteTempRoot = "";
+  let tempDirCounter = 0;
+
+  function ensureSuiteTempRoot() {
+    if (suiteTempRoot) {
+      return suiteTempRoot;
+    }
+    const bundleTempRoot = path.join(process.cwd(), ".tmp");
+    fs.mkdirSync(bundleTempRoot, { recursive: true });
+    suiteTempRoot = fs.mkdtempSync(path.join(bundleTempRoot, String(prefix) + "-"));
+    return suiteTempRoot;
+  }
+
+  function makeTempDir() {
+    const dir = path.join(ensureSuiteTempRoot(), `case-${String(tempDirCounter)}`);
+    tempDirCounter += 1;
+    fs.mkdirSync(dir);
+    return dir;
+  }
+
+  function cleanup() {
+    if (!suiteTempRoot) {
+      return;
+    }
+    try {
+      fs.rmSync(suiteTempRoot, { recursive: true, force: true });
+    } finally {
+      suiteTempRoot = "";
+      tempDirCounter = 0;
+    }
+  }
+
+  return {
+    cleanup,
+    ensureSuiteTempRoot,
+    makeTempDir,
+  };
+}
