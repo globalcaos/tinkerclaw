@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { upsertAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import * as jsonFiles from "../../infra/json-files.js";
 import type { OpenClawConfig } from "../config.js";
@@ -16,29 +16,8 @@ import {
 import { evaluateSessionFreshness, resolveSessionResetPolicy } from "./reset.js";
 import { resolveAndPersistSessionFile } from "./session-file.js";
 import { clearSessionStoreCacheForTest, loadSessionStore, updateSessionStore } from "./store.js";
+import { useTempSessionsFixture } from "./test-helpers.js";
 import { mergeSessionEntry, type SessionEntry } from "./types.js";
-
-function useTempSessionsFixture(prefix: string) {
-  let tempDir = "";
-  let storePath = "";
-  let sessionsDir = "";
-
-  beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-    sessionsDir = path.join(tempDir, "agents", "main", "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    storePath = path.join(sessionsDir, "sessions.json");
-  });
-
-  afterEach(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  return {
-    storePath: () => storePath,
-    sessionsDir: () => sessionsDir,
-  };
-}
 
 describe("session path safety", () => {
   it("rejects unsafe session IDs", () => {
