@@ -33,7 +33,6 @@ describe("short-term promotion", () => {
 
   async function withTempWorkspace(run: (workspaceDir: string) => Promise<void>) {
     const workspaceDir = path.join(fixtureRoot, `case-${caseId++}`);
-    await fs.mkdir(workspaceDir, { recursive: true });
     await run(workspaceDir);
   }
 
