@@ -246,7 +246,9 @@ describe("runCliAgent spawn path", () => {
       abortSignal: abortController.signal,
     });
 
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(supervisorSpawnMock).toHaveBeenCalledTimes(1);
+    });
     abortController.abort();
 
     await expect(runPromise).rejects.toMatchObject({ name: "AbortError" });
