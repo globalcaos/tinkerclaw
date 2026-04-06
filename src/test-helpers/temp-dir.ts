@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +20,31 @@ export async function withTempDir<T>(
     return await run(dir);
   } finally {
     await fs.rm(base, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 25,
+    });
+  }
+}
+
+export function withTempDirSync<T>(
+  options: {
+    prefix: string;
+    parentDir?: string;
+    subdir?: string;
+  },
+  run: (dir: string) => T,
+): T {
+  const base = fsSync.mkdtempSync(path.join(options.parentDir ?? os.tmpdir(), options.prefix));
+  const dir = options.subdir ? path.join(base, options.subdir) : base;
+  if (options.subdir) {
+    fsSync.mkdirSync(dir, { recursive: true });
+  }
+  try {
+    return run(dir);
+  } finally {
+    fsSync.rmSync(base, {
       recursive: true,
       force: true,
       maxRetries: 20,
