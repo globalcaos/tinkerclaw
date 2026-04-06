@@ -113,6 +113,10 @@ export function createAcpxRuntimeService(
       });
       ctx.logger.info(`embedded acpx runtime backend registered (cwd: ${pluginConfig.cwd})`);
 
+      if (process.env.OPENCLAW_SKIP_ACPX_RUNTIME_PROBE === "1") {
+        return;
+      }
+
       lifecycleRevision += 1;
       const currentRevision = lifecycleRevision;
       void (async () => {
