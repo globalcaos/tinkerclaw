@@ -808,9 +808,9 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Status:** `DEPLOYED`
 - **What:** Replaced hardcoded SV/GM auth profile handling with config-driven generic system. Any user can configure N subscriptions per provider via `openclaw.json` `auth.profiles` with optional `credentialFile` field. Upstream `advanceAuthProfile()` rotation handles fallback between profiles automatically.
 - **Key change:** New `credential-file.ts` module handles all credential file I/O. Removed `CLAUDE_CLI_PROFILE_ID`/`CLAUDE_CLI_SV_PROFILE_ID` constants and 8 SV/GM-specific functions (151 lines).
-- **Proactive refresh:** Runs on gateway startup + every 15 min. Uses fork's own `refreshAnthropicOAuthToken()` with proper User-Agent header (pi-ai's lacked it → Cloudflare blocked refreshes).
+- **Proactive refresh:** REMOVED (2026-04-06) — upstream now has native `claude-cli` auth that reads `~/.claude/.credentials.json`. The fork's `tinkerclaw-proactive-auth` extension is no longer needed.
 - **Overloaded (529) fix:** On overloaded, skips profile rotation entirely and throws FailoverError immediately for model fallback. Prevents retry storms (was 3+ min, now instant).
-- **Files:** `credential-file.ts` (new), `oauth.ts`, `proactive-refresh.ts`, `constants.ts`, `types.auth.ts`, `zod-schema.ts`, `doctor-auth.ts`, `cli-credentials.ts`, `run.ts`, `server.impl.ts`, `budget-panel/index.ts`, `merge-guardian.sh`, `anthropic-oauth-login.mjs`
+- **Files:** `credential-file.ts` (new), `oauth.ts`, ~~`proactive-refresh.ts`~~ (removed 2026-04-06), `constants.ts`, `types.auth.ts`, `zod-schema.ts`, `doctor-auth.ts`, `cli-credentials.ts`, `run.ts`, `server.impl.ts`, `budget-panel/index.ts`, `merge-guardian.sh`, `anthropic-oauth-login.mjs`
 - **Spec:** `jarvis-icu/docs/superpowers/specs/2026-03-18-generic-multi-subscription-auth-design.md`
 
 ### 5.36 Voice Mute Button (2026-03-19)
@@ -1091,7 +1091,7 @@ These are upstream files modified to support Tinker features. They require re-ap
 | `extensions/tinker/index.ts`       | `/tinker/api/file-read` endpoint                              | Fork-only (no merge risk)        | —                                                         |
 | `extensions/budget-panel/index.ts` | `writeCredentialFile` + `resolveCredentialFilePath` (generic) | Fork-only (no merge risk)        | `writeCredentialFile`                                     |
 | `credential-file.ts`               | Generic credential file I/O + Anthropic OAuth refresh         | Fork-only (no merge risk)        | `resolveCredentialFilePath`, `refreshAnthropicOAuthToken` |
-| `proactive-refresh.ts`             | Proactive OAuth refresh for all profiles                      | Fork-only (no merge risk)        | `startProactiveOAuthRefresh`                              |
+| ~~`proactive-refresh.ts`~~         | ~~Proactive OAuth refresh~~ REMOVED (2026-04-06) — upstream native `claude-cli` auth | —                        | —                                                         |
 | `get-reply.ts`                     | `clearSessionResume` moved after `runPreparedReply`           | Manual                           | `clearSessionResume` after `runPreparedReply`             |
 | `server-startup.ts`                | Session resume via `agentCommand` (not heartbeat)             | Manual                           | `agentCommand` in server-startup                          |
 | `context-anatomy-db.ts`            | SQLite persistence for timeline (replaces JSONL)              | Fork-only (no merge risk)        | `anatomy-timeline.db`                                     |
@@ -1190,6 +1190,7 @@ These are upstream files modified to support Tinker features. They require re-ap
 - **Why Claude Code works:** Claude Code's SDK includes proper headers. Same OAuth tokens, same API, different HTTP client behavior.
 - **Fix:** `refreshAnthropicOAuthToken()` in `credential-file.ts` sends `User-Agent: openclaw-gateway/1.0`. Used by both `oauth.ts` and `proactive-refresh.ts` for Anthropic refreshes. pi-ai's function kept for other providers.
 - **Files:** `credential-file.ts`, `oauth.ts`, `proactive-refresh.ts`
+- **Note:** `proactive-refresh.ts` removed 2026-04-06 (upstream native `claude-cli` auth). User-Agent fix in `credential-file.ts` and `oauth.ts` remains relevant.
 
 ### FIXED: Overloaded (529) Retry Storm (2026-03-18)
 
@@ -1345,10 +1346,11 @@ These are upstream files modified to support Tinker features. They require re-ap
 - **Fix:** Clear provider errors for `authProfileId` and `provider/model` on successful run completion (`phase=end`). `loadBudget` clearing no longer requires usage data — clears transient errors for any profile in the response (preserves `billing`/`auth_permanent`).
 - **Files:** `app.ts` (onEvent `phase=end` handler + `loadBudget` clearing)
 
-### FIXED: Proactive Refresh Failing Silently (2026-03-19)
+### ~~FIXED: Proactive Refresh Failing Silently (2026-03-19)~~ [OBSOLETE — extension removed 2026-04-06]
 
 - **Root cause:** When credential file had expired tokens and the refresh API returned null (stale refresh token), no log was emitted — just "token expired" then silence. Made it impossible to diagnose dead OAuth profiles from logs.
 - **Fix:** Added 3 log lines in `proactive-refresh.ts`: credential file expired (with minutes ago), credential file unreadable, refresh returned null (with actionable `anthropic-oauth-login.mjs` command).
+- **Note:** This fix is now obsolete — the `tinkerclaw-proactive-auth` extension was removed on 2026-04-06. Upstream handles auth natively.
 
 ### FIXED: Usage Cache 30min Lockout After Boot (2026-03-19)
 
@@ -1641,11 +1643,7 @@ These are fork-exclusive backend systems that run server-side. They are not part
   - TTL bumped from 60s to 300s
   - System event sent to main session after SIGUSR1 restart
   - Files: `src/fork/session-resume.ts`, wired in `server-startup.ts`
-- **Proactive OAuth Refresh:**
-  - Generic refresh for all OAuth profiles (not just hardcoded SV/GM)
-  - `credentialFile` config option in auth profiles for external token files
-  - Generic credential file I/O module
-  - Files: `src/auth/proactive-refresh.ts`, `credential-file.ts`
+- **~~Proactive OAuth Refresh~~:** REMOVED (2026-04-06) — upstream native `claude-cli` auth handles credential sync from `~/.claude/.credentials.json`. Fork extension `tinkerclaw-proactive-auth` deleted.
 
 ### 11.8 Local Embedding Infrastructure — ollama mxbai-embed-large (2026-03-27)
 
@@ -1690,7 +1688,7 @@ These are fork-exclusive backend systems that run server-side. They are not part
   - `tinkerclaw-computational-humor` (LIMBIC) — Humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture. Reads Identity Persistence shared state for persona.humor calibration.
   - `tinkerclaw-total-recall` (ENGRAM) — Episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation. Hooks: `before_prompt_build` (priority 50), `llm_output`, `before_compaction`. Recall tool + `engram.search` gateway method.
   - `tinkerclaw-learned-intuition` (AMYGDALA) — Neural safety gate with ONNX graceful degradation (falls back to rule-based heuristics). Hook: `before_tool_call`. Writes personality nudge for Identity Persistence.
-  - `tinkerclaw-proactive-auth` — OAuth refresh via `gateway_start`/`gateway_stop` lifecycle hooks.
+  - ~~`tinkerclaw-proactive-auth`~~ — REMOVED (2026-04-06): upstream native `claude-cli` auth replaces this.
 - **Feature flags:** `fork.cognitive` config section gates each subsystem: `"inline"` (default), `"extension"`, or `"disabled"`. Instant rollback via `rollback-extension.sh <codename>`.
 - **Inter-extension communication:** Filesystem convention at `~/.openclaw/cognitive/` — each extension writes a JSON state file, others read it.
 - **Source deleted:** `src/memory/synapse/`, `src/memory/cortex/`, `src/memory/limbic/` removed. Upstream copies in `packages/memory-host-sdk/` untouched.
