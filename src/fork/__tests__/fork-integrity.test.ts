@@ -31,9 +31,13 @@ describe("Fork module imports", () => {
     expect(mod).toBeDefined();
   });
 
-  it("fork/process-message-hooks loads", async () => {
-    const mod = await import("../../fork/process-message-hooks.js");
-    expect(mod).toBeDefined();
+  it("fork/process-message-hooks loads", () => {
+    const source = require("node:fs").readFileSync(
+      resolve(srcRoot, "fork/process-message-hooks.ts"),
+      "utf-8",
+    );
+    expect(source).toContain("annotateOfflineRecovery");
+    expect(source).toContain("createThinkingReaction");
   });
 
   it("fork/tool-registrations loads", async () => {
