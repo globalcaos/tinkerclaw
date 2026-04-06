@@ -503,6 +503,10 @@ export function resolveRuntimePluginRegistry(
   return getCompatibleActivePluginRegistry(options) ?? loadOpenClawPlugins(options);
 }
 
+export function resolvePluginRegistryLoadCacheKey(options: PluginLoadOptions = {}): string {
+  return resolvePluginLoadCacheContext(options).cacheKey;
+}
+
 export function resolveCompatibleRuntimePluginRegistry(
   options?: PluginLoadOptions,
 ): PluginRegistry | undefined {
