@@ -23,4 +23,12 @@ export function isOpenAIApiBaseUrl(baseUrl?: string): boolean {
   return /^https?:\/\/api\.openai\.com(?:\/v1)?\/?$/i.test(trimmed);
 }
 
+export function isOpenAICodexBaseUrl(baseUrl?: string): boolean {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return /^https?:\/\/chatgpt\.com\/backend-api\/?$/i.test(trimmed);
+}
+
 export { cloneFirstTemplateModel, findCatalogTemplate, matchesExactOrPrefix };

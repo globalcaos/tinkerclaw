@@ -27,6 +27,7 @@ import {
   cloneFirstTemplateModel,
   findCatalogTemplate,
   isOpenAIApiBaseUrl,
+  isOpenAICodexBaseUrl,
   matchesExactOrPrefix,
 } from "./shared.js";
 import {
@@ -82,14 +83,6 @@ const OPENAI_CODEX_MODERN_MODEL_IDS = [
   OPENAI_CODEX_GPT_53_SPARK_MODEL_ID,
 ] as const;
 const OPENAI_RESPONSES_STREAM_HOOKS = buildProviderStreamFamilyHooks("openai-responses-defaults");
-
-function isOpenAICodexBaseUrl(baseUrl?: string): boolean {
-  const trimmed = baseUrl?.trim();
-  if (!trimmed) {
-    return false;
-  }
-  return /^https?:\/\/chatgpt\.com\/backend-api\/?$/i.test(trimmed);
-}
 
 function normalizeCodexTransport(model: ProviderRuntimeModel): ProviderRuntimeModel {
   const useCodexTransport =
