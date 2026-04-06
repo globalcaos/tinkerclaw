@@ -45,6 +45,7 @@ function makeCfg(home: string) {
 describe("getReplyFromConfig media note plumbing", () => {
   beforeEach(async () => {
     vi.resetModules();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     resetReplyRuntimeMocks(agentMocks);
     ({ getReplyFromConfig } = await import("./reply.js"));
   });
