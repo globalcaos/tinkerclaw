@@ -375,6 +375,23 @@ function mapMutationResult(
   return result;
 }
 
+function mapFlowMutationResult(result: {
+  applied: boolean;
+  code: string;
+  flow?: Parameters<typeof toFlowView>[0];
+  current?: Parameters<typeof toFlowView>[0];
+}): unknown {
+  return mapMutationResult(
+    result.applied
+      ? { applied: true, flow: toFlowView(result.flow!) }
+      : {
+          applied: false,
+          code: result.code,
+          ...(result.current ? { current: toFlowView(result.current) } : {}),
+        },
+  );
+}
+
 function mapMutationStatus(result: {
   applied: boolean;
   code?: "not_found" | "not_managed" | "revision_conflict";
@@ -579,15 +596,7 @@ async function executeWebhookAction(params: {
         blockedTaskId: action.blockedTaskId,
         blockedSummary: action.blockedSummary,
       });
-      return mapMutationResult(
-        result.applied
-          ? { applied: true, flow: toFlowView(result.flow) }
-          : {
-              applied: false,
-              code: result.code,
-              ...(result.current ? { current: toFlowView(result.current) } : {}),
-            },
-      );
+      return mapFlowMutationResult(result);
     }
     case "resume_flow": {
       const result = target.taskFlow.resume({
@@ -597,15 +606,7 @@ async function executeWebhookAction(params: {
         currentStep: action.currentStep,
         stateJson: action.stateJson,
       });
-      return mapMutationResult(
-        result.applied
-          ? { applied: true, flow: toFlowView(result.flow) }
-          : {
-              applied: false,
-              code: result.code,
-              ...(result.current ? { current: toFlowView(result.current) } : {}),
-            },
-      );
+      return mapFlowMutationResult(result);
     }
     case "finish_flow": {
       const result = target.taskFlow.finish({
@@ -613,15 +614,7 @@ async function executeWebhookAction(params: {
         expectedRevision: action.expectedRevision,
         stateJson: action.stateJson,
       });
-      return mapMutationResult(
-        result.applied
-          ? { applied: true, flow: toFlowView(result.flow) }
-          : {
-              applied: false,
-              code: result.code,
-              ...(result.current ? { current: toFlowView(result.current) } : {}),
-            },
-      );
+      return mapFlowMutationResult(result);
     }
     case "fail_flow": {
       const result = target.taskFlow.fail({
@@ -631,30 +624,14 @@ async function executeWebhookAction(params: {
         blockedTaskId: action.blockedTaskId,
         blockedSummary: action.blockedSummary,
       });
-      return mapMutationResult(
-        result.applied
-          ? { applied: true, flow: toFlowView(result.flow) }
-          : {
-              applied: false,
-              code: result.code,
-              ...(result.current ? { current: toFlowView(result.current) } : {}),
-            },
-      );
+      return mapFlowMutationResult(result);
     }
     case "request_cancel": {
       const result = target.taskFlow.requestCancel({
         flowId: action.flowId,
         expectedRevision: action.expectedRevision,
       });
-      return mapMutationResult(
-        result.applied
-          ? { applied: true, flow: toFlowView(result.flow) }
-          : {
-              applied: false,
-              code: result.code,
-              ...(result.current ? { current: toFlowView(result.current) } : {}),
-            },
-      );
+      return mapFlowMutationResult(result);
     }
     case "cancel_flow": {
       const result = await target.taskFlow.cancel({
