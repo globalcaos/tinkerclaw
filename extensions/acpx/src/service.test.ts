@@ -37,6 +37,7 @@ async function makeTempDir(): Promise<string> {
 
 afterEach(async () => {
   runtimeRegistry.clear();
+  delete process.env.OPENCLAW_SKIP_ACPX_RUNTIME;
   delete process.env.OPENCLAW_SKIP_ACPX_RUNTIME_PROBE;
   for (const dir of tempDirs.splice(0)) {
     await fs.rm(dir, { recursive: true, force: true });
@@ -166,5 +167,25 @@ describe("createAcpxRuntimeService", () => {
     expect(getAcpRuntimeBackend("acpx")).toBeTruthy();
 
     await service.stop?.(ctx);
+  });
+
+  it("can skip the embedded runtime backend via env", async () => {
+    process.env.OPENCLAW_SKIP_ACPX_RUNTIME = "1";
+    const workspaceDir = await makeTempDir();
+    const ctx = createServiceContext(workspaceDir);
+    const runtimeFactory = vi.fn(() => {
+      throw new Error("runtime factory should not run when ACPX is skipped");
+    });
+    const service = createAcpxRuntimeService({
+      runtimeFactory: runtimeFactory as never,
+    });
+
+    await service.start(ctx);
+
+    expect(runtimeFactory).not.toHaveBeenCalled();
+    expect(getAcpRuntimeBackend("acpx")).toBeUndefined();
+    expect(ctx.logger.info).toHaveBeenCalledWith(
+      "skipping embedded acpx runtime backend (OPENCLAW_SKIP_ACPX_RUNTIME=1)",
+    );
   });
 });
