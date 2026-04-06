@@ -8,7 +8,6 @@ import {
   resolveTimeoutSeconds,
   writeCache,
 } from "@openclaw/plugin-sdk/provider-web-search";
-import { Type } from "@sinclair/typebox";
 import { isXaiToolEnabled, resolveXaiToolApiKey } from "./src/tool-auth-shared.js";
 import { resolveEffectiveXSearchConfig } from "./src/x-search-config.js";
 import {
