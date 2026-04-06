@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import type { ProviderRuntimeModel } from "openclaw/plugin-sdk/plugin-entry";
 import { findCatalogTemplate } from "openclaw/plugin-sdk/provider-catalog-shared";
 import {
   cloneFirstTemplateModel,
@@ -29,6 +30,30 @@ export function isOpenAICodexBaseUrl(baseUrl?: string): boolean {
     return false;
   }
   return /^https?:\/\/chatgpt\.com\/backend-api\/?$/i.test(trimmed);
+}
+
+export function buildOpenAISyntheticCatalogEntry(
+  template: ReturnType<typeof findCatalogTemplate>,
+  entry: {
+    id: string;
+    reasoning: boolean;
+    input: readonly ("text" | "image")[];
+    contextWindow: number;
+    contextTokens?: number;
+  },
+): ProviderRuntimeModel | undefined {
+  if (!template) {
+    return undefined;
+  }
+  return {
+    ...template,
+    id: entry.id,
+    name: entry.id,
+    reasoning: entry.reasoning,
+    input: [...entry.input],
+    contextWindow: entry.contextWindow,
+    ...(entry.contextTokens === undefined ? {} : { contextTokens: entry.contextTokens }),
+  };
 }
 
 export { cloneFirstTemplateModel, findCatalogTemplate, matchesExactOrPrefix };
