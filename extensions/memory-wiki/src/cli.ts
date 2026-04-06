@@ -177,6 +177,14 @@ function formatMemoryWikiMutationSummary(result: MemoryWikiMutationResult, json?
   return `${result.changed ? "Updated" : "No changes for"} ${result.pagePath} via ${result.operation}. ${result.compile.updatedFiles.length > 0 ? `Refreshed ${result.compile.updatedFiles.length} index file${result.compile.updatedFiles.length === 1 ? "" : "s"}.` : "Indexes unchanged."}`;
 }
 
+function formatJsonOrText<T>(
+  result: T,
+  json: boolean | undefined,
+  render: (result: T) => string,
+): string {
+  return json ? JSON.stringify(result, null, 2) : render(result);
+}
+
 function addWikiSearchConfigOptions<T extends Command>(command: T): T {
   return command
     .option(
@@ -241,9 +249,12 @@ export async function runWikiInit(params: {
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
   const result = await initializeMemoryWikiVault(params.config);
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : `Initialized wiki vault at ${result.rootDir} (${result.createdDirectories.length} dirs, ${result.createdFiles.length} files).`;
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) =>
+      `Initialized wiki vault at ${value.rootDir} (${value.createdDirectories.length} dirs, ${value.createdFiles.length} files).`,
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -256,9 +267,12 @@ export async function runWikiCompile(params: {
 }) {
   await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const result = await compileMemoryWikiVault(params.config);
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : `Compiled wiki vault at ${result.vaultRoot} (${result.pages.length} pages, ${result.updatedFiles.length} indexes updated).`;
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) =>
+      `Compiled wiki vault at ${value.vaultRoot} (${value.pages.length} pages, ${value.updatedFiles.length} indexes updated).`,
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -271,9 +285,12 @@ export async function runWikiLint(params: {
 }) {
   await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
   const result = await lintMemoryWikiVault(params.config);
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : `Linted wiki vault at ${result.vaultRoot} (${result.issueCount} issues, report: ${result.reportPath}).`;
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) =>
+      `Linted wiki vault at ${value.vaultRoot} (${value.issueCount} issues, report: ${value.reportPath}).`,
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -290,9 +307,12 @@ export async function runWikiIngest(params: {
     inputPath: params.inputPath,
     title: params.title,
   });
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : `Ingested ${result.sourcePath} into ${result.pagePath}. Refreshed ${result.indexUpdatedFiles.length} index file${result.indexUpdatedFiles.length === 1 ? "" : "s"}.`;
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) =>
+      `Ingested ${value.sourcePath} into ${value.pagePath}. Refreshed ${value.indexUpdatedFiles.length} index file${value.indexUpdatedFiles.length === 1 ? "" : "s"}.`,
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -449,9 +469,12 @@ export async function runWikiBridgeImport(params: {
     config: params.config,
     appConfig: params.appConfig,
   });
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : `Bridge import synced ${result.artifactCount} artifacts across ${result.workspaces} workspaces (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged, ${result.removedCount} removed). Indexes ${result.indexesRefreshed ? `refreshed (${result.indexUpdatedFiles.length} files)` : `not refreshed (${result.indexRefreshReason})`}.`;
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) =>
+      `Bridge import synced ${value.artifactCount} artifacts across ${value.workspaces} workspaces (${value.importedCount} new, ${value.updatedCount} updated, ${value.skippedCount} unchanged, ${value.removedCount} removed). Indexes ${value.indexesRefreshed ? `refreshed (${value.indexUpdatedFiles.length} files)` : `not refreshed (${value.indexRefreshReason})`}.`,
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -466,9 +489,12 @@ export async function runWikiUnsafeLocalImport(params: {
     config: params.config,
     appConfig: params.appConfig,
   });
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : `Unsafe-local import synced ${result.artifactCount} artifacts (${result.importedCount} new, ${result.updatedCount} updated, ${result.skippedCount} unchanged, ${result.removedCount} removed). Indexes ${result.indexesRefreshed ? `refreshed (${result.indexUpdatedFiles.length} files)` : `not refreshed (${result.indexRefreshReason})`}.`;
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) =>
+      `Unsafe-local import synced ${value.artifactCount} artifacts (${value.importedCount} new, ${value.updatedCount} updated, ${value.skippedCount} unchanged, ${value.removedCount} removed). Indexes ${value.indexesRefreshed ? `refreshed (${value.indexUpdatedFiles.length} files)` : `not refreshed (${value.indexRefreshReason})`}.`,
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -479,11 +505,11 @@ export async function runWikiObsidianStatus(params: {
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
   const result = await probeObsidianCli();
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : result.available
-      ? `Obsidian CLI available at ${result.command}`
-      : "Obsidian CLI is not available on PATH.";
+  const summary = formatJsonOrText(result, params.json, (value) =>
+    value.available
+      ? `Obsidian CLI available at ${value.command}`
+      : "Obsidian CLI is not available on PATH.",
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -495,7 +521,7 @@ export async function runWikiObsidianSearch(params: {
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
   const result = await runObsidianSearch({ config: params.config, query: params.query });
-  const summary = params.json ? JSON.stringify(result, null, 2) : result.stdout.trim();
+  const summary = formatJsonOrText(result, params.json, (value) => value.stdout.trim());
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -507,9 +533,11 @@ export async function runWikiObsidianOpenCli(params: {
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
   const result = await runObsidianOpen({ config: params.config, vaultPath: params.vaultPath });
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : result.stdout.trim() || "Opened in Obsidian.";
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) => value.stdout.trim() || "Opened in Obsidian.",
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -521,9 +549,11 @@ export async function runWikiObsidianCommandCli(params: {
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
   const result = await runObsidianCommand({ config: params.config, id: params.id });
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : result.stdout.trim() || "Command sent to Obsidian.";
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) => value.stdout.trim() || "Command sent to Obsidian.",
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
@@ -534,9 +564,11 @@ export async function runWikiObsidianDailyCli(params: {
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }) {
   const result = await runObsidianDaily({ config: params.config });
-  const summary = params.json
-    ? JSON.stringify(result, null, 2)
-    : result.stdout.trim() || "Opened today's daily note.";
+  const summary = formatJsonOrText(
+    result,
+    params.json,
+    (value) => value.stdout.trim() || "Opened today's daily note.",
+  );
   writeOutput(summary, params.stdout);
   return result;
 }
