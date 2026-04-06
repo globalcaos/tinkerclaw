@@ -801,6 +801,17 @@ describe("runtime web tools resolution", () => {
     expect(metadata.search.selectedProvider).toBeUndefined();
   });
 
+  it("skips provider discovery when no web surfaces are configured", async () => {
+    const { metadata } = await runRuntimeWebTools({
+      config: asConfig({}),
+    });
+
+    expect(metadata.search.providerSource).toBe("none");
+    expect(metadata.fetch.providerSource).toBe("none");
+    expect(runtimeWebSearchProviders.resolvePluginWebSearchProviders).not.toHaveBeenCalled();
+    expect(runtimeWebFetchProviders.resolvePluginWebFetchProviders).not.toHaveBeenCalled();
+  });
+
   it("uses env fallback for unresolved web fetch provider SecretRef when active", async () => {
     const { metadata, resolvedConfig, context } = await runRuntimeWebTools({
       config: asConfig({
