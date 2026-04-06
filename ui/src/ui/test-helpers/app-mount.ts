@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, vi } from "vitest";
 import { i18n } from "../../i18n/index.ts";
 import { getSafeLocalStorage, getSafeSessionStorage } from "../../local-storage.ts";
+import { createStorageMock } from "../../test-helpers/storage.ts";
 import "../app.ts";
 import type { OpenClawApp } from "../app.ts";
 
@@ -21,6 +22,19 @@ class MockWebSocket {
   send() {}
 }
 
+function createMatchMediaMock(matches = true): typeof window.matchMedia {
+  return ((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as typeof window.matchMedia;
+}
+
 export function mountApp(pathname: string) {
   window.history.replaceState({}, "", pathname);
   const app = document.createElement("openclaw-app") as OpenClawApp;
@@ -33,6 +47,15 @@ export function mountApp(pathname: string) {
 export function registerAppMountHooks() {
   beforeEach(async () => {
     window.__OPENCLAW_CONTROL_UI_BASE_PATH__ = undefined;
+    vi.stubGlobal("localStorage", createStorageMock());
+    vi.stubGlobal("sessionStorage", createStorageMock());
+    const matchMedia = createMatchMediaMock(true);
+    vi.stubGlobal("matchMedia", matchMedia);
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: matchMedia,
+    });
     getSafeLocalStorage()?.clear();
     getSafeSessionStorage()?.clear();
     document.body.innerHTML = "";

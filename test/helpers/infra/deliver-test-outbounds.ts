@@ -1,4 +1,5 @@
 import { chunkMarkdownTextWithMode, chunkText } from "../../../src/auto-reply/chunk.js";
+import { resolveChannelMediaMaxBytes } from "../../../src/channels/plugins/media-limits.js";
 import type { ChannelOutboundAdapter } from "../../../src/channels/plugins/types.js";
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import {
@@ -233,21 +234,36 @@ function withIMessageChannel(
   };
 }
 
+function resolveIMessageMaxBytes(
+  cfg: OpenClawConfig,
+  accountId?: string | null,
+): number | undefined {
+  return resolveChannelMediaMaxBytes({
+    cfg,
+    resolveChannelLimitMb: ({ cfg, accountId }) =>
+      cfg.channels?.imessage?.accounts?.[accountId]?.mediaMaxMb ??
+      cfg.channels?.imessage?.mediaMaxMb,
+    accountId,
+  });
+}
+
 export const imessageOutboundForTest: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   sanitizeText: ({ text }) => text,
-  sendText: async ({ to, text, accountId, deps }) =>
+  sendText: async ({ cfg, to, text, accountId, deps }) =>
     withIMessageChannel(
       await resolveIMessageSender(deps)(to, text, {
+        maxBytes: resolveIMessageMaxBytes(cfg, accountId),
         accountId: accountId ?? undefined,
       }),
     ),
-  sendMedia: async ({ to, text, mediaUrl, mediaLocalRoots, mediaReadFile, accountId, deps }) =>
+  sendMedia: async ({ cfg, to, text, mediaUrl, mediaLocalRoots, mediaReadFile, accountId, deps }) =>
     withIMessageChannel(
       await resolveIMessageSender(deps)(to, text, {
         mediaUrl,
         mediaLocalRoots,
         mediaReadFile,
+        maxBytes: resolveIMessageMaxBytes(cfg, accountId),
         accountId: accountId ?? undefined,
       }),
     ),

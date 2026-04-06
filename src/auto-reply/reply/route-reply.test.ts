@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { compileSlackInteractiveReplies } from "../../../extensions/slack/src/interactive-replies.ts";
 import type {
   ChannelMessagingAdapter,
   ChannelPlugin,
@@ -29,6 +30,11 @@ vi.mock("../../infra/outbound/deliver-runtime.js", async () => {
 const { routeReply } = await import("./route-reply.js");
 
 const slackMessaging: ChannelMessagingAdapter = {
+  transformReplyPayload: ({ payload, cfg }) =>
+    (cfg.channels?.slack as { capabilities?: { interactiveReplies?: boolean } } | undefined)
+      ?.capabilities?.interactiveReplies === true
+      ? compileSlackInteractiveReplies(payload)
+      : payload,
   enableInteractiveReplies: ({ cfg }) =>
     (cfg.channels?.slack as { capabilities?: { interactiveReplies?: boolean } } | undefined)
       ?.capabilities?.interactiveReplies === true,
@@ -45,6 +51,13 @@ const slackThreading: ChannelThreadingAdapter = {
   resolveReplyTransport: ({ threadId, replyToId }) => ({
     replyToId: replyToId ?? (threadId != null && threadId !== "" ? String(threadId) : undefined),
     threadId: null,
+  }),
+};
+
+const mattermostThreading: ChannelThreadingAdapter = {
+  resolveReplyTransport: ({ threadId, replyToId }) => ({
+    replyToId: replyToId ?? (threadId != null && threadId !== "" ? String(threadId) : undefined),
+    threadId,
   }),
 };
 
@@ -135,7 +148,10 @@ describe("routeReply", () => {
         },
         {
           pluginId: "mattermost",
-          plugin: createChannelPlugin("mattermost", { label: "Mattermost" }),
+          plugin: createChannelPlugin("mattermost", {
+            label: "Mattermost",
+            threading: mattermostThreading,
+          }),
           source: "test",
         },
       ]),
