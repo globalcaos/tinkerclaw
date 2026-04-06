@@ -1,12 +1,9 @@
 import { parseFiniteNumber } from "openclaw/plugin-sdk/infra-runtime";
+import { asNullableRecord } from "openclaw/plugin-sdk/text-runtime";
 import { extractHandleFromChatGuid, normalizeBlueBubblesHandle } from "./targets.js";
 import type { BlueBubblesAttachment } from "./types.js";
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
+export const asRecord = asNullableRecord;
 
 function readString(record: Record<string, unknown> | null, key: string): string | undefined {
   if (!record) {
