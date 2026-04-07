@@ -30,6 +30,7 @@ Docs: https://docs.openclaw.ai
 - Agents/context engine: expose prompt-cache runtime context to context engines and keep current-turn prompt-cache usage aligned with the active attempt instead of stale prior-turn assistant state. (#62179) Thanks @jalehman.
 - Tools/media: document per-provider music and video generation capabilities, and add shared live video-to-video sweep coverage for providers that support local reference clips.
 - Compaction: add pluggable compaction provider registry so plugins can replace the built-in summarization pipeline. Configure via `agents.defaults.compaction.provider`; falls back to LLM summarization on provider failure. (#56224) Thanks @DhruvBhatia0.
+- Discord/events: allow `event-create` to accept a cover image URL or local file path, load and validate PNG/JPG/GIF event cover media, and pass the encoded image payload through Discord admin action/runtime paths. (#60883) Thanks @bittoby.
 
 ### Fixes
 
