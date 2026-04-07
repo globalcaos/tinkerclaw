@@ -4,6 +4,7 @@ import {
   resolveNonEnvSecretRefApiKeyMarker,
 } from "openclaw/plugin-sdk/provider-auth";
 import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import {
   buildCloudflareAiGatewayModelDefinition,
   resolveCloudflareAiGatewayBaseUrl,
@@ -21,12 +22,11 @@ export function resolveCloudflareAiGatewayApiKey(
   }
 
   const keyRef = coerceSecretRef(cred.keyRef);
-  if (keyRef && keyRef.id.trim()) {
-    return keyRef.source === "env"
-      ? keyRef.id.trim()
-      : resolveNonEnvSecretRefApiKeyMarker(keyRef.source);
+  const keyRefId = normalizeOptionalString(keyRef?.id);
+  if (keyRef && keyRefId) {
+    return keyRef.source === "env" ? keyRefId : resolveNonEnvSecretRefApiKeyMarker(keyRef.source);
   }
-  return cred.key?.trim() || undefined;
+  return normalizeOptionalString(cred.key);
 }
 
 export function resolveCloudflareAiGatewayMetadata(cred: CloudflareAiGatewayCredential): {
@@ -37,8 +37,8 @@ export function resolveCloudflareAiGatewayMetadata(cred: CloudflareAiGatewayCred
     return {};
   }
   return {
-    accountId: cred.metadata?.accountId?.trim() || undefined,
-    gatewayId: cred.metadata?.gatewayId?.trim() || undefined,
+    accountId: normalizeOptionalString(cred.metadata?.accountId),
+    gatewayId: normalizeOptionalString(cred.metadata?.gatewayId),
   };
 }
 
@@ -46,7 +46,9 @@ export function buildCloudflareAiGatewayCatalogProvider(params: {
   credential: CloudflareAiGatewayCredential;
   envApiKey?: string;
 }): ModelProviderConfig | null {
-  const apiKey = params.envApiKey?.trim() || resolveCloudflareAiGatewayApiKey(params.credential);
+  const apiKey =
+    normalizeOptionalString(params.envApiKey) ??
+    resolveCloudflareAiGatewayApiKey(params.credential);
   if (!apiKey) {
     return null;
   }
