@@ -278,6 +278,29 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     ).toBe(false);
   });
 
+  it("preserves all successful text payloads for direct delivery", async () => {
+    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
+
+    const params = makeBaseParams({ synthesizedText: undefined });
+    params.deliveryPayloads = [{ text: "Working on it..." }, { text: "Final weather summary" }];
+    params.summary = "Final weather summary";
+    params.outputText = "Final weather summary";
+
+    const state = await dispatchCronDelivery(params);
+
+    expect(state.deliveryAttempted).toBe(true);
+    expect(state.delivered).toBe(true);
+    expect(deliverOutboundPayloads).toHaveBeenCalledTimes(1);
+    expect(deliverOutboundPayloads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        to: "123456",
+        payloads: [{ text: "Working on it..." }, { text: "Final weather summary" }],
+      }),
+    );
+  });
+
   it("queues main-session awareness for isolated cron jobs after delivery", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
