@@ -5,14 +5,15 @@ Orchestrates the full nightly AMYGDALA retraining cycle, designed to be
 called by CEREBELLUM's nightly cron job.
 
 Pipeline:
-  1. Batch reward labeling (label today's unlabeled evaluations)
-  2. Fine-tune all 10 networks (1-3 PPO epochs + 3 supervised epochs)
-  3. Recalibrate conformal prediction (rolling 30-day window)
-  4. Compute calibration quality and exclude miscalibrated networks
-  5. Export updated ONNX models
-  6. Update meta-learner weights
-  7. Update trust ramp α based on avg prediction set size
-  8. Log everything
+  1. Mine history (extract new examples from session transcripts)
+  2. Reflect & curate (detect/resolve contradictions in training data)
+  3. Batch reward labeling (label today's unlabeled evaluations)
+  4. Fine-tune all 10 networks (1-3 PPO epochs + 3 supervised epochs)
+  5. Recalibrate conformal prediction (rolling 30-day window)
+  6. Compute calibration quality and exclude miscalibrated networks
+  7. Export updated ONNX models
+  8. Update meta-learner weights
+  9. Update trust ramp α based on avg prediction set size
 
 Integration with CEREBELLUM (TypeScript side):
   // In CEREBELLUM's nightly cycle (e.g. src/cerebellum/nightly.ts):
@@ -215,18 +216,21 @@ def run_nightly(
     device_str:  Optional[str] = None,
     ppo_epochs:  int = 3,
     finetune_epochs: int = 3,
+    sessions_dir: Optional[str] = None,
 ) -> Dict:
     """
     Full nightly AMYGDALA training cycle.
 
     Steps:
-      1. Reward labeling    — label today's unlabeled evaluations
-      2. PPO update         — online RL on new experiences
-      3. Supervised fine-tune — 3 supervised epochs per network
-      4. Conformal calibration — recalibrate 30-day rolling window
-      5. Export ONNX        — push updated models to runtime
-      6. Meta-learner update — adjust weights by calibration quality
-      7. Trust ramp update  — advance phase if coverage improves
+      1. Mine history       — extract new examples from session transcripts
+      2. Reflect & curate   — detect/resolve contradictions in training data
+      3. Reward labeling    — label today's unlabeled evaluations
+      4. PPO update         — online RL on new experiences
+      5. Supervised fine-tune — 3 supervised epochs per network
+      6. Conformal calibration — recalibrate 30-day rolling window
+      7. Export ONNX        — push updated models to runtime
+      8. Meta-learner update — adjust weights by calibration quality
+      9. Trust ramp update  — advance phase if coverage improves
 
     Returns:
         Summary dict with metrics from each step
@@ -249,14 +253,28 @@ def run_nightly(
     device = torch.device(device_str or ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"[nightly] Device: {device}")
 
-    # ── Step 1: Reward labeling ───────────────────────────────
-    print("\n[step 1/7] Reward labeling...")
+    # ── Step 1: Mine history ─────────────────────────────────
+    # ── Step 2: Reflect & curate ─────────────────────────────
+    print("\n[step 1-2/9] Mine & reflect...")
+    try:
+        from .reflect_and_curate import reflect_and_curate
+        rc_results = reflect_and_curate(training_db, sessions_dir)
+        summary["steps"]["reflect_and_curate"] = rc_results
+        print(f"  → mined {rc_results['examples_mined']}, "
+              f"contradictions {rc_results['contradictions_found']}, "
+              f"demoted {rc_results['examples_demoted']}")
+    except Exception as e:
+        print(f"  [WARN] Reflect & curate failed: {e}")
+        summary["steps"]["reflect_and_curate"] = {"error": str(e)}
+
+    # ── Step 3: Reward labeling ───────────────────────────────
+    print("\n[step 3/9] Reward labeling...")
     label_stats = _label_rewards(training_db)
     summary["steps"]["reward_labeling"] = label_stats
     print(f"  → labeled {label_stats['labeled']} evaluations")
 
-    # ── Step 2: PPO update ────────────────────────────────────
-    print("\n[step 2/7] PPO update...")
+    # ── Step 4: PPO update ────────────────────────────────────
+    print("\n[step 4/9] PPO update...")
     try:
         from .ppo_trainer import ppo_update_all
         ppo_results = ppo_update_all(
@@ -267,8 +285,8 @@ def run_nightly(
         print(f"  [WARN] PPO update failed: {e}")
         summary["steps"]["ppo"] = {"error": str(e)}
 
-    # ── Step 3: Supervised fine-tuning ───────────────────────
-    print("\n[step 3/7] Supervised fine-tuning (3 epochs per network)...")
+    # ── Step 5: Supervised fine-tuning ───────────────────────
+    print("\n[step 5/9] Supervised fine-tuning (3 epochs per network)...")
     try:
         from .pretrain import pretrain_all
         ft_config_overrides = dict(
@@ -298,8 +316,8 @@ def run_nightly(
         print(f"  [WARN] Fine-tuning failed: {e}")
         summary["steps"]["finetune"] = {"error": str(e)}
 
-    # ── Step 4: Conformal calibration ────────────────────────
-    print("\n[step 4/7] Conformal calibration...")
+    # ── Step 6: Conformal calibration ────────────────────────
+    print("\n[step 6/9] Conformal calibration...")
     try:
         from .conformal import ConformalCalibrator
         cal = ConformalCalibrator(epsilon=0.05, window_days=30)
@@ -326,8 +344,8 @@ def run_nightly(
         avg_coverage   = 0.0
         summary["steps"]["conformal"] = {"error": str(e)}
 
-    # ── Step 5: Export ONNX ───────────────────────────────────
-    print("\n[step 5/7] Exporting ONNX models...")
+    # ── Step 7: Export ONNX ───────────────────────────────────
+    print("\n[step 7/9] Exporting ONNX models...")
     try:
         from .export_onnx import export_all
         onnx_results = export_all(weights_dir, models_dir, verify=True)
@@ -336,8 +354,8 @@ def run_nightly(
         print(f"  [WARN] ONNX export failed: {e}")
         summary["steps"]["onnx"] = {"error": str(e)}
 
-    # ── Step 6: Meta-learner weight update ───────────────────
-    print("\n[step 6/7] Updating meta-learner weights...")
+    # ── Step 8: Meta-learner weight update ───────────────────
+    print("\n[step 8/9] Updating meta-learner weights...")
     try:
         _update_meta_learner_weights(training_db, quality_scores, "prudence")
         _update_meta_learner_weights(training_db, quality_scores, "personality")
@@ -346,8 +364,8 @@ def run_nightly(
         print(f"  [WARN] Meta-learner update failed: {e}")
         summary["steps"]["meta_learner"] = {"error": str(e)}
 
-    # ── Step 7: Trust ramp update ─────────────────────────────
-    print("\n[step 7/7] Trust ramp update...")
+    # ── Step 9: Trust ramp update ─────────────────────────────
+    print("\n[step 9/9] Trust ramp update...")
     try:
         current_phase = _get_current_phase(training_db)
         threshold     = PHASE_ADVANCE_THRESHOLD.get(current_phase)
@@ -400,6 +418,7 @@ if __name__ == "__main__":
     parser.add_argument("--models",  default=DEFAULT_MODELS_DIR,  help="ONNX models directory")
     parser.add_argument("--weights", default=DEFAULT_WEIGHTS_DIR, help="PyTorch checkpoints directory")
     parser.add_argument("--device",  default=None)
+    parser.add_argument("--sessions-dir", default=None, help="Session transcripts directory")
     parser.add_argument("--ppo-epochs",      type=int, default=3)
     parser.add_argument("--finetune-epochs", type=int, default=3)
     args = parser.parse_args()
@@ -411,5 +430,6 @@ if __name__ == "__main__":
         device_str      = args.device,
         ppo_epochs      = args.ppo_epochs,
         finetune_epochs = args.finetune_epochs,
+        sessions_dir    = args.sessions_dir,
     )
     sys.exit(0 if "error" not in str(summary) else 1)
