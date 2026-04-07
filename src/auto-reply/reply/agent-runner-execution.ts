@@ -387,28 +387,29 @@ function applyOpenAIGptChatReplyGuard(params: {
     );
 
   for (const payload of params.payloads) {
+    const text = normalizeOptionalString(payload.text);
     if (
-      !normalizeOptionalString(payload.text) ||
+      !text ||
       payload.isError ||
       payload.isReasoning ||
       payload.mediaUrl ||
       (payload.mediaUrls?.length ?? 0) > 0 ||
       payload.interactive ||
-      payload.text.includes("```")
+      text.includes("```")
     ) {
       continue;
     }
 
     if (isAckTurn) {
-      payload.text = shortenChattyFinalReplyText(payload.text, {
+      payload.text = shortenChattyFinalReplyText(text, {
         maxChars: GPT_CHAT_BREVITY_ACK_MAX_CHARS,
         maxSentences: GPT_CHAT_BREVITY_ACK_MAX_SENTENCES,
       });
       continue;
     }
 
-    if (allowSoftCap && scoreChattyFinalReplyText(payload.text) >= 4) {
-      payload.text = shortenChattyFinalReplyText(payload.text, {
+    if (allowSoftCap && scoreChattyFinalReplyText(text) >= 4) {
+      payload.text = shortenChattyFinalReplyText(text, {
         maxChars: GPT_CHAT_BREVITY_SOFT_MAX_CHARS,
         maxSentences: GPT_CHAT_BREVITY_SOFT_MAX_SENTENCES,
       });
