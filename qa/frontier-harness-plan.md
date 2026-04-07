@@ -84,6 +84,7 @@ Use the QA Lab runner catalog or `openclaw models list --all` to pick the curren
 - empty-promise rate
 - tool continuity after model switch
 - discovery report completeness and specificity
+- scope drift: unrelated scenario updates, grand wrap-ups, or invented completion tallies
 - latency / obvious stall behavior
 - token cost notes if a change makes the prompt materially heavier
 
@@ -95,11 +96,33 @@ Run this after the executable subset, not before:
 read QA_KICKOFF_TASK.md, tell me what feels half-baked about this qa mission, and keep it to two short sentences
 ```
 
+GPT manual lane:
+
+```bash
+pnpm openclaw qa manual \
+  --provider-mode live-frontier \
+  --model openai/gpt-5.4 \
+  --alt-model openai/gpt-5.4 \
+  --fast \
+  --message "read QA_KICKOFF_TASK.md, tell me what feels half-baked about this qa mission, and keep it to two short sentences"
+```
+
+Claude manual lane:
+
+```bash
+pnpm openclaw qa manual \
+  --provider-mode live-frontier \
+  --model anthropic/claude-sonnet-4-6 \
+  --alt-model anthropic/claude-opus-4-6 \
+  --message "read QA_KICKOFF_TASK.md, tell me what feels half-baked about this qa mission, and keep it to two short sentences"
+```
+
 Score it on:
 
 - did it read first
 - did it say something specific instead of generic fluff
 - did the agent still sound like itself while doing useful work
+- did it stay on the scoped ask instead of widening into a suite recap or fake completion claim
 
 ## Deferred
 
