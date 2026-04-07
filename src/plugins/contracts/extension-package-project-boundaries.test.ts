@@ -85,6 +85,7 @@ describe("opt-in extension package boundaries", () => {
       "../../src/plugin-sdk/lazy-value.ts",
       "../../src/plugin-sdk/oauth-utils.ts",
       "../../src/plugin-sdk/plugin-entry.ts",
+      "../../src/plugin-sdk/plugin-runtime.ts",
       "../../src/plugin-sdk/provider-auth-result.ts",
       "../../src/plugin-sdk/provider-auth-runtime.ts",
       "../../src/plugin-sdk/provider-auth.ts",
@@ -98,6 +99,7 @@ describe("opt-in extension package boundaries", () => {
       "../../src/plugin-sdk/provider-web-search.ts",
       "../../src/plugin-sdk/runtime-doctor.ts",
       "../../src/plugin-sdk/runtime-env.ts",
+      "../../src/plugin-sdk/security-runtime.ts",
       "../../src/plugin-sdk/secret-input-schema.ts",
       "../../src/plugin-sdk/secret-input.ts",
       "../../src/plugin-sdk/telegram-command-config.ts",
@@ -115,11 +117,17 @@ describe("opt-in extension package boundaries", () => {
     expect(packageJson.exports?.["./plugin-entry"]?.types).toBe(
       "./dist/src/plugin-sdk/plugin-entry.d.ts",
     );
+    expect(packageJson.exports?.["./plugin-runtime"]?.types).toBe(
+      "./dist/src/plugin-sdk/plugin-runtime.d.ts",
+    );
     expect(packageJson.exports?.["./provider-http"]?.types).toBe(
       "./dist/src/plugin-sdk/provider-http.d.ts",
     );
     expect(packageJson.exports?.["./runtime-doctor"]?.types).toBe(
       "./dist/src/plugin-sdk/runtime-doctor.d.ts",
+    );
+    expect(packageJson.exports?.["./security-runtime"]?.types).toBe(
+      "./dist/src/plugin-sdk/security-runtime.d.ts",
     );
     expect(packageJson.exports?.["./text-runtime"]?.types).toBe(
       "./dist/src/plugin-sdk/text-runtime.d.ts",

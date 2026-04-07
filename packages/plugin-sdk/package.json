@@ -12,6 +12,10 @@
       "types": "./dist/src/plugin-sdk/plugin-entry.d.ts",
       "default": "./src/plugin-entry.ts"
     },
+    "./plugin-runtime": {
+      "types": "./dist/src/plugin-sdk/plugin-runtime.d.ts",
+      "default": "./src/plugin-runtime.ts"
+    },
     "./provider-auth": {
       "types": "./dist/src/plugin-sdk/provider-auth.d.ts",
       "default": "./src/provider-auth.ts"
@@ -55,6 +59,10 @@
     "./runtime-env": {
       "types": "./dist/src/plugin-sdk/runtime-env.d.ts",
       "default": "./src/runtime-env.ts"
+    },
+    "./security-runtime": {
+      "types": "./dist/src/plugin-sdk/security-runtime.d.ts",
+      "default": "./src/security-runtime.ts"
     },
     "./secret-input": {
       "types": "./dist/src/plugin-sdk/secret-input.d.ts",
