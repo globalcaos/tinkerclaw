@@ -60,7 +60,7 @@ export function createProcessSupervisor(): ProcessSupervisor {
     const runId = normalizeOptionalString(input.runId) ?? crypto.randomUUID();
     const scopeKey = normalizeOptionalString(input.scopeKey);
     if (input.replaceExistingScope && scopeKey) {
-      cancelScope(input.scopeKey, "manual-cancel");
+      cancelScope(scopeKey, "manual-cancel");
     }
     const startedAtMs = Date.now();
     const record: RunRecord = {
