@@ -1,4 +1,7 @@
-import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+} from "../../shared/string-coerce.js";
 
 // CSS property values that indicate an element is hidden
 const HIDDEN_STYLE_PATTERNS: Array<[string, RegExp]> = [
@@ -24,7 +27,7 @@ const HIDDEN_CLASS_NAMES = new Set([
 ]);
 
 function hasHiddenClass(className: string): boolean {
-  const classes = className.toLowerCase().split(/\s+/);
+  const classes = normalizeLowercaseStringOrEmpty(className).split(/\s+/);
   return classes.some((cls) => HIDDEN_CLASS_NAMES.has(cls));
 }
 
@@ -88,7 +91,7 @@ function isStyleHidden(style: string): boolean {
 }
 
 function shouldRemoveElement(element: Element): boolean {
-  const tagName = element.tagName.toLowerCase();
+  const tagName = normalizeLowercaseStringOrEmpty(element.tagName);
 
   // Always-remove tags
   if (["meta", "template", "svg", "canvas", "iframe", "object", "embed"].includes(tagName)) {
