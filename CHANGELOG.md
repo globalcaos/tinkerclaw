@@ -20,6 +20,7 @@ Docs: https://docs.openclaw.ai
 - Memory/dreaming: ingest redacted session transcripts into the dreaming corpus with per-day session-corpus notes, cursor checkpointing, and promotion/doctor support. (#62227) Thanks @vignesh07.
 - Plugins/memory: add a public memory-artifact export seam to the unified memory capability so companion plugins like `memory-wiki` can bridge the active memory plugin without reaching into `memory-core` internals. Thanks @vincentkoc.
 - Memory/wiki: add structured claim/evidence fields plus compiled agent digest artifacts so `memory-wiki` behaves more like a persistent knowledge layer and less like markdown-only page storage. Thanks @vincentkoc.
+- Memory/wiki: add claim-health linting, contradiction clustering, staleness-aware dashboards, and freshness-weighted wiki search so `memory-wiki` can act more like a maintained belief layer than a passive markdown dump. Thanks @vincentkoc.
 
 ### Fixes
 

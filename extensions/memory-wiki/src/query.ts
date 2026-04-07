@@ -4,8 +4,14 @@ import { resolveDefaultAgentId, resolveSessionAgentId } from "openclaw/plugin-sd
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-host-files";
 import { getActiveMemorySearchManager } from "openclaw/plugin-sdk/memory-host-search";
 import type { OpenClawConfig } from "../api.js";
+import { assessClaimFreshness, isClaimContestedStatus } from "./claim-health.js";
 import type { ResolvedMemoryWikiConfig, WikiSearchBackend, WikiSearchCorpus } from "./config.js";
-import { parseWikiMarkdown, toWikiPageSummary, type WikiPageSummary } from "./markdown.js";
+import {
+  parseWikiMarkdown,
+  toWikiPageSummary,
+  type WikiClaim,
+  type WikiPageSummary,
+} from "./markdown.js";
 import { initializeMemoryWikiVault } from "./vault.js";
 
 const QUERY_DIRS = ["entities", "concepts", "sources", "syntheses", "reports"] as const;
@@ -114,14 +120,55 @@ function buildPageSearchText(page: QueryableWikiPage): string {
     .join("\n");
 }
 
+function isClaimMatch(claim: WikiClaim, queryLower: string): boolean {
+  if (claim.text.toLowerCase().includes(queryLower)) {
+    return true;
+  }
+  return claim.id?.toLowerCase().includes(queryLower) ?? false;
+}
+
+function rankClaimMatch(page: QueryableWikiPage, claim: WikiClaim, queryLower: string): number {
+  let score = 0;
+  if (claim.text.toLowerCase().includes(queryLower)) {
+    score += 25;
+  }
+  if (claim.id?.toLowerCase().includes(queryLower)) {
+    score += 10;
+  }
+  if (typeof claim.confidence === "number") {
+    score += Math.round(claim.confidence * 10);
+  }
+  const freshness = assessClaimFreshness({ page, claim });
+  switch (freshness.level) {
+    case "fresh":
+      score += 8;
+      break;
+    case "aging":
+      score += 4;
+      break;
+    case "stale":
+      score -= 2;
+      break;
+    case "unknown":
+      score -= 4;
+      break;
+  }
+  score += isClaimContestedStatus(claim.status) ? -6 : 4;
+  return score;
+}
+
+function getMatchingClaims(page: QueryableWikiPage, queryLower: string): WikiClaim[] {
+  return page.claims
+    .filter((claim) => isClaimMatch(claim, queryLower))
+    .toSorted(
+      (left, right) =>
+        rankClaimMatch(page, right, queryLower) - rankClaimMatch(page, left, queryLower),
+    );
+}
+
 function buildPageSnippet(page: QueryableWikiPage, query: string): string {
   const queryLower = query.toLowerCase();
-  const matchingClaim = page.claims.find((claim) => {
-    if (claim.text.toLowerCase().includes(queryLower)) {
-      return true;
-    }
-    return claim.id?.toLowerCase().includes(queryLower);
-  });
+  const matchingClaim = getMatchingClaims(page, queryLower)[0];
   if (matchingClaim) {
     return matchingClaim.text;
   }
@@ -162,14 +209,10 @@ function scorePage(page: QueryableWikiPage, query: string): number {
   if (page.sourceIds.some((sourceId) => sourceId.toLowerCase().includes(queryLower))) {
     score += 12;
   }
-  const matchingClaimCount = page.claims.filter((claim) => {
-    if (claim.text.toLowerCase().includes(queryLower)) {
-      return true;
-    }
-    return claim.id?.toLowerCase().includes(queryLower);
-  }).length;
-  if (matchingClaimCount > 0) {
-    score += 25 + Math.min(20, matchingClaimCount * 5);
+  const matchingClaims = getMatchingClaims(page, queryLower);
+  if (matchingClaims.length > 0) {
+    score += rankClaimMatch(page, matchingClaims[0], queryLower);
+    score += Math.min(10, (matchingClaims.length - 1) * 2);
   }
   const bodyOccurrences = rawLower.split(queryLower).length - 1;
   score += Math.min(10, bodyOccurrences);
