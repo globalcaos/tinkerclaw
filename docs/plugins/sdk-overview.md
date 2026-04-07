@@ -157,6 +157,7 @@ explicitly promotes one as public.
     | `plugin-sdk/command-surface` | Command-body normalization and command-surface helpers |
     | `plugin-sdk/allow-from` | `formatAllowFromLowercase` |
     | `plugin-sdk/channel-secret-runtime` | Narrow secret-contract collection helpers for channel/plugin secret surfaces |
+    | `plugin-sdk/secret-ref-runtime` | Narrow `coerceSecretRef` and SecretRef typing helpers for secret-contract/config parsing |
     | `plugin-sdk/security-runtime` | Shared trust, DM gating, external-content, and secret-collection helpers |
     | `plugin-sdk/ssrf-policy` | Host allowlist and private-network SSRF policy helpers |
     | `plugin-sdk/ssrf-runtime` | Pinned-dispatcher, SSRF-guarded fetch, and SSRF policy helpers |

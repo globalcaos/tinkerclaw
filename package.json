@@ -264,6 +264,10 @@
       "types": "./dist/plugin-sdk/channel-secret-runtime.d.ts",
       "default": "./dist/plugin-sdk/channel-secret-runtime.js"
     },
+    "./plugin-sdk/secret-ref-runtime": {
+      "types": "./dist/plugin-sdk/secret-ref-runtime.d.ts",
+      "default": "./dist/plugin-sdk/secret-ref-runtime.js"
+    },
     "./plugin-sdk/security-runtime": {
       "types": "./dist/plugin-sdk/security-runtime.d.ts",
       "default": "./dist/plugin-sdk/security-runtime.js"
