@@ -1191,7 +1191,7 @@
     "test:docker:live-cli-backend": "bash scripts/test-live-cli-backend-docker.sh",
     "test:docker:live-cli-backend:claude": "OPENCLAW_LIVE_CLI_BACKEND_MODEL=claude-cli/claude-sonnet-4-6 bash scripts/test-live-cli-backend-docker.sh",
     "test:docker:live-cli-backend:codex": "OPENCLAW_LIVE_CLI_BACKEND_MODEL=codex-cli/gpt-5.4 bash scripts/test-live-cli-backend-docker.sh",
-    "test:docker:live-cli-backend:gemini": "OPENCLAW_LIVE_CLI_BACKEND_MODEL=google-gemini-cli/gemini-3.1-pro-preview bash scripts/test-live-cli-backend-docker.sh",
+    "test:docker:live-cli-backend:gemini": "OPENCLAW_LIVE_CLI_BACKEND_MODEL=google-gemini-cli/gemini-3-flash-preview bash scripts/test-live-cli-backend-docker.sh",
     "test:docker:live-gateway": "bash scripts/test-live-gateway-models-docker.sh",
     "test:docker:live-gateway:claude": "OPENCLAW_LIVE_GATEWAY_PROVIDERS=claude-cli OPENCLAW_LIVE_GATEWAY_MODELS=claude-cli/claude-sonnet-4-6 bash scripts/test-live-gateway-models-docker.sh",
     "test:docker:live-gateway:codex": "OPENCLAW_LIVE_GATEWAY_PROVIDERS=codex-cli OPENCLAW_LIVE_GATEWAY_MODELS=codex-cli/gpt-5.4 bash scripts/test-live-gateway-models-docker.sh",
