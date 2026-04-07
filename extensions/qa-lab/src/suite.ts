@@ -2195,6 +2195,7 @@ export async function runQaSuite(params?: {
     repoRoot,
     providerBaseUrl: mock ? `${mock.baseUrl}/v1` : undefined,
     qaBusBaseUrl: lab.listenUrl,
+    controlUiAllowedOrigins: [lab.listenUrl],
     providerMode,
     primaryModel,
     alternateModel,

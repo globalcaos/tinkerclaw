@@ -198,6 +198,7 @@ export async function startQaGatewayChild(params: {
   repoRoot: string;
   providerBaseUrl?: string;
   qaBusBaseUrl: string;
+  controlUiAllowedOrigins?: string[];
   providerMode?: "mock-openai" | "live-frontier";
   primaryModel?: string;
   alternateModel?: string;
@@ -238,6 +239,7 @@ export async function startQaGatewayChild(params: {
       repoRoot: params.repoRoot,
       controlUiEnabled: params.controlUiEnabled,
     }),
+    controlUiAllowedOrigins: params.controlUiAllowedOrigins,
     providerMode: params.providerMode,
     primaryModel: params.primaryModel,
     alternateModel: params.alternateModel,
