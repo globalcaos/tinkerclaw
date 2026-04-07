@@ -21,6 +21,7 @@ Docs: https://docs.openclaw.ai
 - Plugins/memory: add a public memory-artifact export seam to the unified memory capability so companion plugins like `memory-wiki` can bridge the active memory plugin without reaching into `memory-core` internals. Thanks @vincentkoc.
 - Memory/wiki: add structured claim/evidence fields plus compiled agent digest artifacts so `memory-wiki` behaves more like a persistent knowledge layer and less like markdown-only page storage. Thanks @vincentkoc.
 - Memory/wiki: add claim-health linting, contradiction clustering, staleness-aware dashboards, and freshness-weighted wiki search so `memory-wiki` can act more like a maintained belief layer than a passive markdown dump. Thanks @vincentkoc.
+- Memory/wiki: use compiled digest artifacts as the first-pass wiki index for search/get flows, and resolve claim ids back to owning pages so agents can retrieve knowledge by belief identity instead of only by file path. Thanks @vincentkoc.
 
 ### Fixes
 

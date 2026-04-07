@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../api.js";
+import { compileMemoryWikiVault } from "./compile.js";
 import type { MemoryWikiPluginConfig } from "./config.js";
 import { renderWikiMarkdown } from "./markdown.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
@@ -447,6 +448,46 @@ describe("getMemoryWikiPage", () => {
     expect(result?.content).toContain("line one");
     expect(result?.content).toContain("line two");
     expect(result?.content).not.toContain("line three");
+  });
+
+  it("resolves compiled claim ids back to the owning page", async () => {
+    const { rootDir, config } = await createQueryVault({
+      initialize: true,
+    });
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha",
+          title: "Alpha",
+          claims: [
+            {
+              id: "claim.alpha.db",
+              text: "Alpha uses PostgreSQL for production writes.",
+              status: "supported",
+              evidence: [{ sourceId: "source.alpha", lines: "1-2" }],
+            },
+          ],
+        },
+        body: "# Alpha\n\nline one\nline two\n",
+      }),
+      "utf8",
+    );
+    await compileMemoryWikiVault(config);
+
+    const result = await getMemoryWikiPage({
+      config,
+      lookup: "claim.alpha.db",
+    });
+
+    expect(result).toMatchObject({
+      corpus: "wiki",
+      path: "entities/alpha.md",
+      title: "Alpha",
+      id: "entity.alpha",
+    });
+    expect(result?.content).toContain("line one");
   });
 
   it("returns provenance for imported wiki source pages", async () => {
