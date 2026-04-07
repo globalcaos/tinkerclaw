@@ -30,6 +30,20 @@ const DISABLED_BUNDLED_CHANNELS = Object.freeze({
   zalouser: { enabled: false },
 } satisfies Record<string, { enabled: false }>);
 
+export const DEFAULT_QA_CONTROL_UI_ALLOWED_ORIGINS = Object.freeze([
+  "http://127.0.0.1:18789",
+  "http://localhost:18789",
+  "http://127.0.0.1:43124",
+  "http://localhost:43124",
+]);
+
+export function mergeQaControlUiAllowedOrigins(extraOrigins?: string[]) {
+  const normalizedExtra = (extraOrigins ?? [])
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+  return [...new Set([...DEFAULT_QA_CONTROL_UI_ALLOWED_ORIGINS, ...normalizedExtra])];
+}
+
 export function buildQaGatewayConfig(params: {
   bind: "loopback" | "lan";
   gatewayPort: number;
@@ -146,15 +160,7 @@ export function buildQaGatewayConfig(params: {
           transport: "sse",
           openaiWsWarmup: false,
         });
-  const allowedOrigins =
-    params.controlUiAllowedOrigins && params.controlUiAllowedOrigins.length > 0
-      ? params.controlUiAllowedOrigins
-      : [
-          "http://127.0.0.1:18789",
-          "http://localhost:18789",
-          "http://127.0.0.1:43124",
-          "http://localhost:43124",
-        ];
+  const allowedOrigins = mergeQaControlUiAllowedOrigins(params.controlUiAllowedOrigins);
 
   return {
     plugins: {
