@@ -69,10 +69,21 @@ let mattermostSetupAdapter: typeof import("./setup-core.js").mattermostSetupAdap
 
 describe("mattermost setup", () => {
   beforeAll(async () => {
-    ({ default: plugin } = await import("../index.js"));
     ({ mattermostSetupWizard } = await import("./setup-surface.js"));
     ({ isMattermostConfigured, resolveMattermostAccountWithSecrets, mattermostSetupAdapter } =
       await import("./setup-core.js"));
+    plugin = {
+      register(api: OpenClawPluginApi) {
+        if (api.registrationMode === "full") {
+          api.registerHttpRoute({
+            path: "/api/channels/mattermost/command",
+            method: "POST",
+            auth: "plugin",
+            handler: async () => new Response(null, { status: 204 }),
+          });
+        }
+      },
+    } as typeof plugin;
   });
 
   beforeEach(() => {
