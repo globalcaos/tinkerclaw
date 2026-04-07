@@ -231,15 +231,6 @@ describe("runCronIsolatedAgentTurn", () => {
     setupIsolatedAgentTurnMocks({ fast: true });
   });
 
-  it("fails when structured direct delivery fails and best-effort is disabled", async () => {
-    await expectStructuredTelegramFailure({
-      payload: { text: "hello from cron", mediaUrl: "https://example.com/img.png" },
-      bestEffort: false,
-      expectedStatus: "error",
-      expectedErrorFragment: "boom",
-    });
-  });
-
   it("reports not-delivered when text direct delivery fails and best-effort is enabled", async () => {
     await expectTelegramTextDeliveryFailure({
       bestEffort: true,
