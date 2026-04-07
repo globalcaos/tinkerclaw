@@ -523,8 +523,8 @@ function taskRunScopeKey(
   return [
     task.runtime,
     task.scopeKind,
-    normalizeComparableText(task.ownerKey),
-    normalizeComparableText(task.childSessionKey),
+    normalizeOptionalString(task.ownerKey) ?? "",
+    normalizeOptionalString(task.childSessionKey) ?? "",
   ].join("\u0000");
 }
 
@@ -562,9 +562,10 @@ function getPeerTasksForDelivery(task: TaskRecord): TaskRecord[] {
     (candidate) =>
       candidate.runtime === task.runtime &&
       candidate.scopeKind === task.scopeKind &&
-      normalizeComparableText(candidate.ownerKey) === normalizeComparableText(task.ownerKey) &&
-      normalizeComparableText(candidate.childSessionKey) ===
-        normalizeComparableText(task.childSessionKey),
+      (normalizeOptionalString(candidate.ownerKey) ?? "") ===
+        (normalizeOptionalString(task.ownerKey) ?? "") &&
+      (normalizeOptionalString(candidate.childSessionKey) ?? "") ===
+        (normalizeOptionalString(task.childSessionKey) ?? ""),
   );
 }
 
@@ -581,10 +582,6 @@ function pickPreferredRunIdTask(matches: TaskRecord[]): TaskRecord | undefined {
     }
     return left.createdAt - right.createdAt;
   })[0];
-}
-
-function normalizeComparableText(value: string | undefined): string {
-  return normalizeOptionalString(value) ?? "";
 }
 
 function compareTasksNewestFirst(
@@ -614,18 +611,21 @@ function findExistingTaskForCreate(params: {
         (task) =>
           task.runtime === params.runtime &&
           task.scopeKind === params.scopeKind &&
-          normalizeComparableText(task.ownerKey) === normalizeComparableText(params.ownerKey) &&
-          normalizeComparableText(task.childSessionKey) ===
-            normalizeComparableText(params.childSessionKey) &&
-          normalizeComparableText(task.parentFlowId) ===
-            normalizeComparableText(params.parentFlowId),
+          (normalizeOptionalString(task.ownerKey) ?? "") ===
+            (normalizeOptionalString(params.ownerKey) ?? "") &&
+          (normalizeOptionalString(task.childSessionKey) ?? "") ===
+            (normalizeOptionalString(params.childSessionKey) ?? "") &&
+          (normalizeOptionalString(task.parentFlowId) ?? "") ===
+            (normalizeOptionalString(params.parentFlowId) ?? ""),
       )
     : [];
   const exact = runId
     ? runScopeMatches.find(
         (task) =>
-          normalizeComparableText(task.label) === normalizeComparableText(params.label) &&
-          normalizeComparableText(task.task) === normalizeComparableText(params.task),
+          (normalizeOptionalString(task.label) ?? "") ===
+            (normalizeOptionalString(params.label) ?? "") &&
+          (normalizeOptionalString(task.task) ?? "") ===
+            (normalizeOptionalString(params.task) ?? ""),
       )
     : undefined;
   if (exact) {
@@ -688,11 +688,11 @@ function mergeExistingTaskForCreate(
   }
   const nextLabel = params.label?.trim();
   if (params.preferMetadata) {
-    if (nextLabel && normalizeComparableText(existing.label) !== nextLabel) {
+    if (nextLabel && (normalizeOptionalString(existing.label) ?? "") !== nextLabel) {
       patch.label = nextLabel;
     }
     const nextTask = params.task.trim();
-    if (nextTask && normalizeComparableText(existing.task) !== nextTask) {
+    if (nextTask && (normalizeOptionalString(existing.task) ?? "") !== nextTask) {
       patch.task = nextTask;
     }
   } else if (nextLabel && !existing.label?.trim()) {
