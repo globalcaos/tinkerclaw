@@ -7,6 +7,7 @@ import {
   acquireBoundaryCheckLock,
   cleanupCanaryArtifactsForExtensions,
   formatBoundaryCheckSuccessSummary,
+  formatSkippedCompileProgress,
   formatStepFailure,
   installCanaryArtifactCleanup,
   isBoundaryCompileFresh,
@@ -189,11 +190,27 @@ describe("check-extension-package-tsc-boundary", () => {
     );
   });
 
+  it("formats skipped compile progress concisely", () => {
+    expect(
+      formatSkippedCompileProgress({
+        skippedCount: 13,
+        totalCount: 97,
+      }),
+    ).toBe("skipped 13 fresh plugin compiles before running 84 stale plugin checks\n");
+
+    expect(
+      formatSkippedCompileProgress({
+        skippedCount: 97,
+        totalCount: 97,
+      }),
+    ).toBe("skipped 97 fresh plugin compiles\n");
+  });
+
   it("treats a plugin compile as fresh only when its outputs are newer than plugin and sdk inputs", () => {
     const { rootDir, extensionRoot } = createTempExtensionRoot();
     const extensionSourcePath = path.join(extensionRoot, "index.ts");
     const extensionTsconfigPath = path.join(extensionRoot, "tsconfig.json");
-    const buildInfoPath = path.join(extensionRoot, "dist", ".boundary-tsc.tsbuildinfo");
+    const stampPath = path.join(extensionRoot, "dist", ".boundary-tsc.stamp");
     const rootSdkBuildInfoPath = path.join(rootDir, "dist", "plugin-sdk", ".tsbuildinfo");
     const packageSdkBuildInfoPath = path.join(
       rootDir,
@@ -210,7 +227,7 @@ describe("check-extension-package-tsc-boundary", () => {
     );
 
     fs.mkdirSync(path.dirname(extensionSourcePath), { recursive: true });
-    fs.mkdirSync(path.dirname(buildInfoPath), { recursive: true });
+    fs.mkdirSync(path.dirname(stampPath), { recursive: true });
     fs.mkdirSync(path.dirname(rootSdkBuildInfoPath), { recursive: true });
     fs.mkdirSync(path.dirname(packageSdkBuildInfoPath), { recursive: true });
 
@@ -220,7 +237,7 @@ describe("check-extension-package-tsc-boundary", () => {
       '{ "extends": "../tsconfig.package-boundary.base.json" }\n',
       "utf8",
     );
-    fs.writeFileSync(buildInfoPath, "ok\n", "utf8");
+    fs.writeFileSync(stampPath, "ok\n", "utf8");
     fs.writeFileSync(rootSdkBuildInfoPath, "ok\n", "utf8");
     fs.writeFileSync(packageSdkBuildInfoPath, "ok\n", "utf8");
     fs.writeFileSync(entryShimStampPath, "ok\n", "utf8");
@@ -230,7 +247,7 @@ describe("check-extension-package-tsc-boundary", () => {
     fs.utimesSync(rootSdkBuildInfoPath, new Date(2_000), new Date(2_000));
     fs.utimesSync(packageSdkBuildInfoPath, new Date(2_000), new Date(2_000));
     fs.utimesSync(entryShimStampPath, new Date(2_000), new Date(2_000));
-    fs.utimesSync(buildInfoPath, new Date(3_000), new Date(3_000));
+    fs.utimesSync(stampPath, new Date(3_000), new Date(3_000));
 
     expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
 
