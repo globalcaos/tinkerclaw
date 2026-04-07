@@ -993,7 +993,7 @@ export async function compactEmbeddedPiSessionDirect(
               }
             } catch (err) {
               log.warn("[compaction] failed to harden manual compaction boundary", {
-                errorMessage: err instanceof Error ? err.message : String(err),
+                errorMessage: formatErrorMessage(err),
               });
             }
           }
@@ -1028,7 +1028,7 @@ export async function compactEmbeddedPiSessionDirect(
               checkpointSnapshotRetained = storedCheckpoint !== null;
             } catch (err) {
               log.warn("failed to persist compaction checkpoint", {
-                errorMessage: err instanceof Error ? err.message : String(err),
+                errorMessage: formatErrorMessage(err),
               });
             }
           }
@@ -1319,7 +1319,7 @@ export async function compactEmbeddedPiSession(
               checkpointSnapshotRetained = storedCheckpoint !== null;
             } catch (err) {
               log.warn("failed to persist compaction checkpoint", {
-                errorMessage: err instanceof Error ? err.message : String(err),
+                errorMessage: formatErrorMessage(err),
               });
             }
           }
