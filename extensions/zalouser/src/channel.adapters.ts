@@ -1,5 +1,6 @@
 import { createScopedDmSecurityResolver } from "openclaw/plugin-sdk/channel-config-helpers";
 import { createPairingPrefixStripper } from "openclaw/plugin-sdk/channel-pairing";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import {
   createEmptyChannelResult,
   createRawChannelSendResultAdapter,
@@ -218,10 +219,10 @@ export const zalouserResolverAdapter = {
     runtime,
   }: {
     cfg: OpenClawConfig;
-    accountId?: string;
+    accountId?: string | null;
     inputs: string[];
     kind: "user" | "group";
-    runtime: { error?: (msg: string) => void };
+    runtime: RuntimeEnv;
   }) => {
     const results = [];
     for (const input of inputs) {
@@ -282,8 +283,8 @@ export const zalouserAuthAdapter = {
     runtime,
   }: {
     cfg: OpenClawConfig;
-    accountId?: string;
-    runtime: { log: (msg: string) => void };
+    accountId?: string | null;
+    runtime: RuntimeEnv;
   }) => {
     const { startZaloQrLogin, waitForZaloQrLogin } = await loadZalouserChannelRuntime();
     const account = resolveZalouserAccountSync({
@@ -321,7 +322,12 @@ export const zalouserAuthAdapter = {
 
 export const zalouserSecurityAdapter = {
   resolveDmPolicy: resolveZalouserDmPolicy,
-  collectAuditFindings: async (params: unknown) =>
+  collectAuditFindings: async (params: {
+    accountId?: string | null;
+    account: ResolvedZalouserAccount;
+    orderedAccountIds: string[];
+    hasExplicitAccountPath: boolean;
+  }) =>
     (await loadZalouserChannelRuntime()).collectZalouserSecurityAuditFindings(params),
 };
 
@@ -350,9 +356,13 @@ export const zalouserOutboundAdapter = {
   deliveryMode: "direct" as const,
   chunker: chunkTextForOutbound,
   chunkerMode: "markdown" as const,
-  sendPayload: async (ctx: Parameters<typeof sendPayloadWithChunkedTextAndMedia>[0]) =>
+  sendPayload: async (ctx: { payload: object } & Parameters<
+    NonNullable<typeof zalouserRawSendResultAdapter.sendText>
+  >[0]) =>
     await sendPayloadWithChunkedTextAndMedia({
       ctx,
+      textChunkLimit: resolveZalouserOutboundTextChunkLimit(ctx.cfg, ctx.accountId ?? undefined),
+      chunker: chunkTextForOutbound,
       sendText: (nextCtx) => zalouserRawSendResultAdapter.sendText!(nextCtx),
       sendMedia: (nextCtx) => zalouserRawSendResultAdapter.sendMedia!(nextCtx),
       emptyResult: createEmptyChannelResult("zalouser"),
