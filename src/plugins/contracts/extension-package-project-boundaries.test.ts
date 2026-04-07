@@ -73,6 +73,16 @@ describe("opt-in extension package boundaries", () => {
     }
   });
 
+  it("keeps xai as the only opt-in extension with custom path overrides", () => {
+    const optInExtensions = collectOptInExtensionPackageBoundaries(REPO_ROOT);
+    const extensionsWithCustomPaths = optInExtensions.filter((extensionName) => {
+      const tsconfig = readExtensionPackageBoundaryTsconfig(extensionName, REPO_ROOT);
+      return tsconfig.compilerOptions?.paths !== undefined;
+    });
+
+    expect(extensionsWithCustomPaths).toEqual(["xai"]);
+  });
+
   it("keeps xai's boundary-specific path overrides derived from the shared package boundary map", () => {
     const tsconfig = readExtensionPackageBoundaryTsconfig("xai", REPO_ROOT);
     expect(tsconfig.compilerOptions?.paths).toEqual(EXTENSION_PACKAGE_BOUNDARY_XAI_PATHS);
