@@ -84,6 +84,9 @@ importers:
       '@sinclair/typebox':
         specifier: 0.34.49
         version: 0.34.49
+      '@whatsmeow-node/whatsmeow-node':
+        specifier: 0.5.3
+        version: 0.5.3
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
@@ -4035,6 +4038,48 @@ packages:
 
   '@wasm-audio-decoders/opus-ml@0.0.2':
     resolution: {integrity: sha512-58rWEqDGg+CKCyEeKm2KoxxSwTWtHh/NLTW9ObR4K8CGF6VwuuGudEI1CtniS/oSRmL1nJq/eh8MKARiluw4DQ==}
+
+  '@whatsmeow-node/darwin-arm64@0.5.3':
+    resolution: {integrity: sha512-Ui0sAsRqvOvzHrg1KBTRx0FGplLnYlnix73s01iAmrvj5rWy0XcGNPe0iABeZN1tjpqGYu2pU0n34O6r9NqxYw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@whatsmeow-node/darwin-x64@0.5.3':
+    resolution: {integrity: sha512-Q95/ny0nWTVneGiOUh60Icb717yISHBgMMmV7OjxM55sGG7fdarXuibmL7s2GApwecDlqnwxMH+eJO2mSWUj1g==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@whatsmeow-node/linux-arm64@0.5.3':
+    resolution: {integrity: sha512-tMXmFotShuj536LB0FRp2A3oWkGeYAOrzhQtx02Gb+flleIJPhJaFWqe2jQW6sW3lGEhXRTcHsZ4rE0kgfu/hA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@whatsmeow-node/linux-x64-musl@0.5.3':
+    resolution: {integrity: sha512-YPacywbyllp623jsjoMuAx74RKdgxphwZ2zN/cxrjkOUAAtSLImBfoxo+z7XBHEVpiCoaKbVrxBTOOagFVGJIQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@whatsmeow-node/linux-x64@0.5.3':
+    resolution: {integrity: sha512-wYd02EwWKjZR0ckKVkqwKKvCyvXqBfhmEjS4uEePKbjrgcnJGNSmrhtsXuVlH5Ns3SPrvQgt+DcktTX9FNlFlA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@whatsmeow-node/whatsmeow-node@0.5.3':
+    resolution: {integrity: sha512-ecs34YA4TK4BQ38DY0/G6c1DKGaOlVA9++0kt20NCYkNYDjEv1EF9S4d6vvRk+Of77Pn3x3roFh6L1cWt7ZDcg==}
+    engines: {node: '>=18'}
+
+  '@whatsmeow-node/win32-arm64@0.5.3':
+    resolution: {integrity: sha512-QtgbHjfuGwiR3JBZv3DTDMofImsn4U0F+AMT60Xh1UwJyUQY/hBDRmCGavLqRKPzauDaywpcJ7rs2B5umtDJ0A==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@whatsmeow-node/win32-x64@0.5.3':
+    resolution: {integrity: sha512-7PdEViDyxj0DkgJtGXU0UuI/W1dyDMeGmEKn8DMe7SYkCSl9+P6TvcIiSoPGAyXtS/gQBSpNkXxUM40z6aaXqg==}
+    cpu: [x64]
+    os: [win32]
 
   '@whiskeysockets/baileys@7.0.0-rc.9':
     resolution: {integrity: sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==}
@@ -10817,6 +10862,37 @@ snapshots:
   '@wasm-audio-decoders/opus-ml@0.0.2':
     dependencies:
       '@wasm-audio-decoders/common': 9.0.7
+    optional: true
+
+  '@whatsmeow-node/darwin-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/darwin-x64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-x64-musl@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-x64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/whatsmeow-node@0.5.3':
+    optionalDependencies:
+      '@whatsmeow-node/darwin-arm64': 0.5.3
+      '@whatsmeow-node/darwin-x64': 0.5.3
+      '@whatsmeow-node/linux-arm64': 0.5.3
+      '@whatsmeow-node/linux-x64': 0.5.3
+      '@whatsmeow-node/linux-x64-musl': 0.5.3
+      '@whatsmeow-node/win32-arm64': 0.5.3
+      '@whatsmeow-node/win32-x64': 0.5.3
+
+  '@whatsmeow-node/win32-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/win32-x64@0.5.3':
     optional: true
 
   '@whiskeysockets/baileys@7.0.0-rc.9(audio-decode@2.2.3)(jimp@1.6.0)(sharp@0.34.5)':
