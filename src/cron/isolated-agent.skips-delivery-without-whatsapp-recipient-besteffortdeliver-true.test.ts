@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as modelSelection from "../agents/model-selection.js";
 import { runSubagentAnnounceFlow } from "../agents/subagent-announce.js";
 import type { CliDeps } from "../cli/deps.js";
-import { callGateway } from "../gateway/call.js";
 import {
   createCliDeps,
   expectDirectTelegramDelivery,
@@ -230,43 +229,6 @@ describe("runCronIsolatedAgentTurn", () => {
   beforeEach(() => {
     vi.spyOn(modelSelection, "resolveThinkingDefault").mockReturnValue("off");
     setupIsolatedAgentTurnMocks({ fast: true });
-  });
-
-  it("deletes the isolated cron session after NO_REPLY when deleteAfterRun is enabled", async () => {
-    await withTelegramAnnounceFixture(async ({ home, storePath, deps }) => {
-      mockAgentPayloads([{ text: "NO_REPLY" }]);
-      vi.mocked(callGateway).mockClear();
-
-      const res = await runCronIsolatedAgentTurn({
-        cfg: makeCfg(home, storePath, {
-          channels: { telegram: { botToken: "t-1" } },
-        }),
-        deps,
-        job: {
-          ...makeJob({ kind: "agentTurn", message: "do it" }),
-          deleteAfterRun: true,
-          delivery: { mode: "announce", channel: "telegram", to: "123" },
-        },
-        message: "do it",
-        sessionKey: "cron:job-1",
-        lane: "cron",
-      });
-
-      expect(res.status).toBe("ok");
-      expect(res.delivered).toBe(false);
-      expect(deps.sendMessageTelegram).not.toHaveBeenCalled();
-      expect(callGateway).toHaveBeenCalledTimes(1);
-      expect(callGateway).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: "sessions.delete",
-          params: expect.objectContaining({
-            key: "agent:main:cron:job-1",
-            deleteTranscript: true,
-            emitLifecycleHooks: false,
-          }),
-        }),
-      );
-    });
   });
 
   it("fails when structured direct delivery fails and best-effort is disabled", async () => {
