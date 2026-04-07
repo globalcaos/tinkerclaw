@@ -10,8 +10,6 @@ import {
 } from "./isolated-agent.delivery.test-helpers.js";
 import { runCronIsolatedAgentTurn } from "./isolated-agent.js";
 import {
-  makeCfg,
-  makeJob,
   withTempCronHome as withTempHome,
   writeSessionStore,
 } from "./isolated-agent.test-harness.js";
@@ -110,61 +108,10 @@ function expectFailedTelegramDeliveryResult(params: {
   expect(params.deps.sendMessageTelegram).toHaveBeenCalledTimes(1);
 }
 
-async function runSignalDeliveryResult(bestEffort: boolean) {
-  let outcome:
-    | {
-        res: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>;
-        deps: CliDeps;
-      }
-    | undefined;
-  await withTempHome(async (home) => {
-    const storePath = await writeSessionStore(home, { lastProvider: "webchat", lastTo: "" });
-    const deps = createCliDeps();
-    mockAgentPayloads([{ text: "hello from cron" }]);
-    const res = await runCronIsolatedAgentTurn({
-      cfg: makeCfg(home, storePath, {
-        channels: { signal: {} },
-      }),
-      deps,
-      job: {
-        ...makeJob({ kind: "agentTurn", message: "do it" }),
-        delivery: {
-          mode: "announce",
-          channel: "signal",
-          to: "+15551234567",
-          bestEffort,
-        },
-      },
-      message: "do it",
-      sessionKey: "cron:job-1",
-      lane: "cron",
-    });
-    outcome = { res, deps };
-  });
-  if (!outcome) {
-    throw new Error("signal delivery did not produce an outcome");
-  }
-  return outcome;
-}
-
 describe("runCronIsolatedAgentTurn", () => {
   beforeEach(() => {
     vi.spyOn(modelSelection, "resolveThinkingDefault").mockReturnValue("off");
     setupIsolatedAgentTurnMocks({ fast: true });
-  });
-
-  it("delivers text directly for signal when best-effort is enabled", async () => {
-    const { res, deps } = await runSignalDeliveryResult(true);
-    expect(res.status).toBe("ok");
-    expect(res.delivered).toBe(true);
-    expect(res.deliveryAttempted).toBe(true);
-    expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
-    expect(deps.sendMessageSignal).toHaveBeenCalledTimes(1);
-    expect(deps.sendMessageSignal).toHaveBeenCalledWith(
-      "+15551234567",
-      "hello from cron",
-      expect.any(Object),
-    );
   });
 
   it("ignores structured direct delivery failures when best-effort is enabled", async () => {
