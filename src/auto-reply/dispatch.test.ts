@@ -3,18 +3,26 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { ReplyDispatcher } from "./reply/reply-dispatcher.js";
 import { buildTestCtx } from "./reply/test-ctx.js";
 
+type DispatchReplyFromConfigFn =
+  typeof import("./reply/dispatch-from-config.js").dispatchReplyFromConfig;
+type FinalizeInboundContextFn = typeof import("./reply/inbound-context.js").finalizeInboundContext;
+type CreateReplyDispatcherWithTypingFn =
+  typeof import("./reply/reply-dispatcher.js").createReplyDispatcherWithTyping;
+
 const hoisted = vi.hoisted(() => ({
   dispatchReplyFromConfigMock: vi.fn(),
-  finalizeInboundContextMock: vi.fn((ctx: unknown) => ctx),
+  finalizeInboundContextMock: vi.fn((ctx: unknown, _opts?: unknown) => ctx),
   createReplyDispatcherWithTypingMock: vi.fn(),
 }));
 
 vi.mock("./reply/dispatch-from-config.js", () => ({
-  dispatchReplyFromConfig: (...args: unknown[]) => hoisted.dispatchReplyFromConfigMock(...args),
+  dispatchReplyFromConfig: (...args: Parameters<DispatchReplyFromConfigFn>) =>
+    hoisted.dispatchReplyFromConfigMock(...args),
 }));
 
 vi.mock("./reply/inbound-context.js", () => ({
-  finalizeInboundContext: (ctx: unknown) => hoisted.finalizeInboundContextMock(ctx),
+  finalizeInboundContext: (...args: Parameters<FinalizeInboundContextFn>) =>
+    hoisted.finalizeInboundContextMock(...args),
 }));
 
 vi.mock("./reply/reply-dispatcher.js", async () => {
@@ -23,7 +31,7 @@ vi.mock("./reply/reply-dispatcher.js", async () => {
   );
   return {
     ...actual,
-    createReplyDispatcherWithTyping: (...args: unknown[]) =>
+    createReplyDispatcherWithTyping: (...args: Parameters<CreateReplyDispatcherWithTypingFn>) =>
       hoisted.createReplyDispatcherWithTypingMock(...args),
   };
 });
