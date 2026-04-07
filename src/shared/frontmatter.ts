@@ -1,21 +1,10 @@
 import JSON5 from "json5";
 import { LEGACY_MANIFEST_KEYS, MANIFEST_KEY } from "../compat/legacy-names.js";
 import { parseBooleanValue } from "../utils/boolean.js";
+import { normalizeCsvOrLooseStringList } from "./string-normalization.js";
 
 export function normalizeStringList(input: unknown): string[] {
-  if (!input) {
-    return [];
-  }
-  if (Array.isArray(input)) {
-    return input.map((value) => String(value).trim()).filter(Boolean);
-  }
-  if (typeof input === "string") {
-    return input
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-  }
-  return [];
+  return normalizeCsvOrLooseStringList(input);
 }
 
 export function getFrontmatterString(

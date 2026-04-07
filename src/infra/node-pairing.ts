@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolveMissingRequestedScope } from "../shared/operator-scope-compat.js";
+import { normalizeTrimmedStringList } from "../shared/string-normalization.js";
 import { type NodeApprovalScope, resolveNodePairApprovalScopes } from "./node-pairing-authz.js";
 import {
   createAsyncLock,
@@ -70,7 +71,7 @@ function normalizeStringList(values?: string[]): string[] | undefined {
   if (!Array.isArray(values)) {
     return undefined;
   }
-  const normalized = values.map((value) => value.trim()).filter(Boolean);
+  const normalized = normalizeTrimmedStringList(values);
   return normalized.length > 0 ? normalized : [];
 }
 

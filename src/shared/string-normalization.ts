@@ -25,6 +25,19 @@ export function normalizeSingleOrTrimmedStringList(value: unknown): string[] {
   return [];
 }
 
+export function normalizeCsvOrLooseStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 export function normalizeHyphenSlug(raw?: string | null) {
   const trimmed = raw?.trim().toLowerCase() ?? "";
   if (!trimmed) {
