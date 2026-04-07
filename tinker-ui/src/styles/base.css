@@ -2977,10 +2977,19 @@ body {
   padding: 10px 12px;
   margin-bottom: 6px;
   border: 1px solid rgba(193,154,107,0.1);
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, background 0.2s, transform 0.1s;
+  cursor: pointer;
 }
 .recipe-card:hover {
-  border-color: rgba(193,154,107,0.3);
+  border-color: rgba(193,154,107,0.4);
+  background: #332b1f;
+  transform: translateX(2px);
+}
+.recipe-summary {
+  font-size: 11px;
+  color: #9a8e7a;
+  line-height: 1.4;
+  margin-bottom: 6px;
 }
 .recipe-card-header {
   display: flex;
