@@ -2,6 +2,7 @@ import path from "node:path";
 import { buildQaDockerHarnessImage, writeQaDockerHarnessFiles } from "./docker-harness.js";
 import { runQaDockerUp } from "./docker-up.runtime.js";
 import { startQaLabServer } from "./lab-server.js";
+import { runQaManualLane } from "./manual-lane.runtime.js";
 import { startQaMockOpenAiServer } from "./mock-openai-server.js";
 import { runQaSuite } from "./suite.js";
 
@@ -61,6 +62,28 @@ export async function runQaSuiteCommand(opts: {
   process.stdout.write(`QA suite watch: ${result.watchUrl}\n`);
   process.stdout.write(`QA suite report: ${result.reportPath}\n`);
   process.stdout.write(`QA suite summary: ${result.summaryPath}\n`);
+}
+
+export async function runQaManualLaneCommand(opts: {
+  providerMode?: "mock-openai" | "live-frontier";
+  primaryModel?: string;
+  alternateModel?: string;
+  fastMode?: boolean;
+  message: string;
+  timeoutMs?: number;
+}) {
+  const model = opts.primaryModel?.trim() || "openai/gpt-5.4";
+  const result = await runQaManualLane({
+    repoRoot: process.cwd(),
+    providerMode: opts.providerMode ?? "live-frontier",
+    primaryModel: model,
+    alternateModel: opts.alternateModel?.trim() || model,
+    fastMode: opts.fastMode,
+    message: opts.message,
+    timeoutMs: opts.timeoutMs,
+  });
+  process.stdout.write(JSON.stringify(result, null, 2));
+  process.stdout.write("\n");
 }
 
 export async function runQaLabUiCommand(opts: {
