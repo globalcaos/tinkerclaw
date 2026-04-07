@@ -188,8 +188,10 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
 
   const prompt = loadPrompt(extensionDir);
 
-  // Small delay to let the current response fully flush to the UI
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  // Delay to let the current reply operation complete and release the session lock.
+  // The reply-run-registry throws ReplyRunAlreadyActiveError if a run is still active.
+  // 5 seconds gives enough time for tool calls, compaction flush, and lifecycle events.
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   try {
     // Dynamic import to avoid bundling the full gateway call module at parse time
