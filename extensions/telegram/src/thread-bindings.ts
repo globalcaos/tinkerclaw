@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import {
-  formatErrorMessage,
   formatThreadBindingDurationLabel,
   registerSessionBindingAdapter,
   resolveThreadBindingConversationIdFromBindingId,
@@ -13,6 +12,7 @@ import {
   type SessionBindingAdapter,
   type SessionBindingRecord,
 } from "openclaw/plugin-sdk/conversation-runtime";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { writeJsonFileAtomically } from "openclaw/plugin-sdk/json-store";
 import { normalizeAccountId } from "openclaw/plugin-sdk/routing";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";

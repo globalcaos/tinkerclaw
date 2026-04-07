@@ -301,8 +301,7 @@ export function createDiffsTool(params: {
             content: [
               {
                 type: "text",
-                text:
-                  `Diff viewer ready.\n${viewerUrl}\n` + `File rendering failed: ${errorMessage}`,
+                text: `Diff viewer ready.\n${viewerUrl}\nFile rendering failed: ${errorMessage}`,
               },
             ],
             details: {
