@@ -105,8 +105,8 @@ describe("qqbot setup", () => {
     const account = qqbotSetupPlugin.config.resolveAccount?.(cfg, DEFAULT_ACCOUNT_ID);
 
     expect(account?.clientSecret).toBe("");
-    expect(qqbotSetupPlugin.config.isConfigured?.(account, cfg)).toBe(true);
-    expect(qqbotSetupPlugin.config.describeAccount?.(account, cfg)?.configured).toBe(true);
+    expect(qqbotSetupPlugin.config.isConfigured?.(account)).toBe(true);
+    expect(qqbotSetupPlugin.config.describeAccount?.(account)?.configured).toBe(true);
   });
 
   it("keeps the sibling credential when switching only AppSecret to env mode", async () => {

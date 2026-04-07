@@ -17,7 +17,7 @@ function expectSchemaInvalidIssuePath(
       value: unknown,
     ) =>
       | { success: true }
-      | { success: false; error: { issues: Array<{ path?: Array<string | number> }> } };
+      | { success: false; error: { issues: Array<{ path?: Array<PropertyKey> }> } };
   },
   config: unknown,
   expectedPath: string,
