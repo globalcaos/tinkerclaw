@@ -1,3 +1,4 @@
+import { normalizeOptionalString } from "../../../src/shared/string-coerce.js";
 import { isRecord } from "../../../src/utils.js";
 
 export type JsonObject = Record<string, unknown>;
@@ -25,7 +26,7 @@ export const EXTERNAL_CODE_PLUGIN_REQUIRED_FIELD_PATHS = [
 ] as const;
 
 function getTrimmedString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  return normalizeOptionalString(value);
 }
 
 function readOpenClawBlock(packageJson: unknown) {
