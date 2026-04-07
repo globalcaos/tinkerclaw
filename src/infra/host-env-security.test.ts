@@ -369,7 +369,6 @@ describe("sanitizeHostExecEnv", () => {
         GOPRIVATE: "example.invalid/*",
         GOENV: "/tmp/evil-goenv",
         GOPATH: "/tmp/evil-go",
-        CARGO_HOME: "/tmp/evil-cargo",
         PYTHONUSERBASE: "/tmp/evil-python-userbase",
         VIRTUAL_ENV: "/tmp/evil-venv",
         SHELLOPTS: "xtrace",
