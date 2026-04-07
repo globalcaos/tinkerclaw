@@ -9,7 +9,7 @@ type BundledMediaProviderDefaults = {
 
 const BUNDLED_MEDIA_PROVIDER_DEFAULTS: Record<string, BundledMediaProviderDefaults> = {
   openai: {
-    defaultModels: { image: "gpt-5.4-mini", audio: "gpt-4o-mini-transcribe" },
+    defaultModels: { image: "gpt-5.4-mini", audio: "gpt-4o-transcribe" },
     autoPriority: { image: 10, audio: 10 },
   },
   "openai-codex": {
