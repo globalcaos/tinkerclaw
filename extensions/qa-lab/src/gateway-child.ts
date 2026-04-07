@@ -6,7 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { startQaGatewayRpcClient } from "./gateway-rpc-client.js";
 import { seedQaAgentWorkspace } from "./qa-agent-workspace.js";
 import { buildQaGatewayConfig } from "./qa-gateway-config.js";
 
@@ -157,34 +157,6 @@ async function waitForGatewayReady(params: {
   throw new Error(`gateway failed to become healthy:\n${params.logs()}`);
 }
 
-async function runCliJson(params: { cwd: string; env: NodeJS.ProcessEnv; args: string[] }) {
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(process.execPath, params.args, {
-      cwd: params.cwd,
-      env: params.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new Error(
-          `gateway cli failed (${code ?? "unknown"}): ${Buffer.concat(stderr).toString("utf8")}`,
-        ),
-      );
-    });
-  });
-  const text = Buffer.concat(stdout).toString("utf8").trim();
-  return text ? (JSON.parse(text) as unknown) : {};
-}
-
 export function resolveQaControlUiRoot(params: { repoRoot: string; controlUiEnabled?: boolean }) {
   if (params.controlUiEnabled === false) {
     return undefined;
@@ -288,11 +260,17 @@ export async function startQaGatewayChild(params: {
     `${Buffer.concat(stdout).toString("utf8")}\n${Buffer.concat(stderr).toString("utf8")}`.trim();
   const keepTemp = process.env.OPENCLAW_QA_KEEP_TEMP === "1";
 
+  let rpcClient;
   try {
     await waitForGatewayReady({
       baseUrl,
       logs,
       child,
+    });
+    rpcClient = await startQaGatewayRpcClient({
+      wsUrl,
+      token: gatewayToken,
+      logs,
     });
   } catch (error) {
     child.kill("SIGTERM");
@@ -314,31 +292,10 @@ export async function startQaGatewayChild(params: {
       rpcParams?: unknown,
       opts?: { expectFinal?: boolean; timeoutMs?: number },
     ) {
-      return await runCliJson({
-        cwd: runtimeCwd,
-        env,
-        args: [
-          distEntryPath,
-          "gateway",
-          "call",
-          method,
-          "--url",
-          wsUrl,
-          "--token",
-          gatewayToken,
-          "--json",
-          "--timeout",
-          String(opts?.timeoutMs ?? 20_000),
-          ...(opts?.expectFinal ? ["--expect-final"] : []),
-          "--params",
-          JSON.stringify(rpcParams ?? {}),
-        ],
-      }).catch((error) => {
-        const details = formatErrorMessage(error);
-        throw new Error(`${details}\nGateway logs:\n${logs()}`);
-      });
+      return await rpcClient.request(method, rpcParams, opts);
     },
     async stop(opts?: { keepTemp?: boolean }) {
+      await rpcClient.stop().catch(() => {});
       if (!child.killed) {
         child.kill("SIGTERM");
         await Promise.race([
