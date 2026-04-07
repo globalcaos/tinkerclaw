@@ -26,6 +26,18 @@ async function runQaSuite(opts: {
   await runtime.runQaSuiteCommand(opts);
 }
 
+async function runQaManualLane(opts: {
+  providerMode?: "mock-openai" | "live-frontier";
+  primaryModel?: string;
+  alternateModel?: string;
+  fastMode?: boolean;
+  message: string;
+  timeoutMs?: number;
+}) {
+  const runtime = await loadQaLabCliRuntime();
+  await runtime.runQaManualLaneCommand(opts);
+}
+
 function collectString(value: string, previous: string[]) {
   const trimmed = value.trim();
   return trimmed ? [...previous, trimmed] : previous;
@@ -124,6 +136,38 @@ export function registerQaLabCli(program: Command) {
           alternateModel: opts.altModel,
           fastMode: opts.fast,
           scenarioIds: opts.scenario,
+        });
+      },
+    );
+
+  qa.command("manual")
+    .description("Run a one-off QA agent prompt against the selected provider/model lane")
+    .requiredOption("--message <text>", "Prompt to send to the QA agent")
+    .option(
+      "--provider-mode <mode>",
+      "Provider mode: mock-openai or live-frontier (legacy live-openai still works)",
+      "live-frontier",
+    )
+    .option("--model <ref>", "Primary provider/model ref", "openai/gpt-5.4")
+    .option("--alt-model <ref>", "Alternate provider/model ref")
+    .option("--fast", "Enable provider fast mode where supported", false)
+    .option("--timeout-ms <ms>", "Override agent.wait timeout", (value: string) => Number(value))
+    .action(
+      async (opts: {
+        message: string;
+        providerMode?: "mock-openai" | "live-frontier";
+        model?: string;
+        altModel?: string;
+        fast?: boolean;
+        timeoutMs?: number;
+      }) => {
+        await runQaManualLane({
+          providerMode: opts.providerMode,
+          primaryModel: opts.model,
+          alternateModel: opts.altModel,
+          fastMode: opts.fast,
+          message: opts.message,
+          timeoutMs: opts.timeoutMs,
         });
       },
     );
