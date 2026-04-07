@@ -7,6 +7,7 @@ import {
 import type { QaSeedScenario } from "./scenario-catalog.js";
 
 export type { QaProviderMode } from "./model-selection.js";
+export type QaProviderModeInput = QaProviderMode | "live-openai";
 
 export type QaLabRunSelection = {
   providerMode: QaProviderMode;

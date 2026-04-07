@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import type { QaProviderModeInput } from "./run-config.js";
 
 type QaLabCliRuntime = typeof import("./cli.runtime.js");
 
@@ -17,7 +18,7 @@ async function runQaSelfCheck(opts: { repoRoot?: string; output?: string }) {
 async function runQaSuite(opts: {
   repoRoot?: string;
   outputDir?: string;
-  providerMode?: "mock-openai" | "live-frontier";
+  providerMode?: QaProviderModeInput;
   primaryModel?: string;
   alternateModel?: string;
   fastMode?: boolean;
@@ -29,7 +30,7 @@ async function runQaSuite(opts: {
 
 async function runQaManualLane(opts: {
   repoRoot?: string;
-  providerMode?: "mock-openai" | "live-frontier";
+  providerMode?: QaProviderModeInput;
   primaryModel?: string;
   alternateModel?: string;
   fastMode?: boolean;
@@ -129,7 +130,7 @@ export function registerQaLabCli(program: Command) {
       async (opts: {
         repoRoot?: string;
         outputDir?: string;
-        providerMode?: "mock-openai" | "live-frontier";
+        providerMode?: QaProviderModeInput;
         model?: string;
         altModel?: string;
         scenario?: string[];
@@ -164,7 +165,7 @@ export function registerQaLabCli(program: Command) {
       async (opts: {
         message: string;
         repoRoot?: string;
-        providerMode?: "mock-openai" | "live-frontier";
+        providerMode?: QaProviderModeInput;
         model?: string;
         altModel?: string;
         fast?: boolean;
