@@ -5,6 +5,15 @@ const REQUIRED_DISCOVERY_REFS = [
   "repo/docs/help/testing.md",
 ] as const;
 
+const DISCOVERY_SCOPE_LEAK_PHRASES = [
+  "all mandatory scenarios",
+  "final qa tally",
+  "final qa tally update",
+  "qa run complete",
+  "scenario: `subagent-handoff`",
+  "scenario: subagent-handoff",
+] as const;
+
 function confirmsDiscoveryFileRead(text: string) {
   const lower = text.toLowerCase();
   const mentionsAllRefs = REQUIRED_DISCOVERY_REFS.every((ref) => lower.includes(ref.toLowerCase()));
@@ -40,4 +49,9 @@ export function reportsMissingDiscoveryFiles(text: string) {
     lower.includes("blocked by missing") ||
     lower.includes("could not inspect")
   );
+}
+
+export function reportsDiscoveryScopeLeak(text: string) {
+  const lower = text.toLowerCase();
+  return DISCOVERY_SCOPE_LEAK_PHRASES.some((phrase) => lower.includes(phrase));
 }
