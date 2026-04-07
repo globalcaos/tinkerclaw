@@ -206,7 +206,7 @@ describe("check-extension-package-tsc-boundary", () => {
     ).toBe("skipped 97 fresh plugin compiles\n");
   });
 
-  it("treats a plugin compile as fresh only when its outputs are newer than plugin and package sdk inputs", () => {
+  it("treats a plugin compile as fresh only when its outputs are newer than plugin and shared sdk inputs", () => {
     const { rootDir, extensionRoot } = createTempExtensionRoot();
     const extensionSourcePath = path.join(extensionRoot, "index.ts");
     const extensionTsconfigPath = path.join(extensionRoot, "tsconfig.json");
@@ -251,10 +251,6 @@ describe("check-extension-package-tsc-boundary", () => {
     expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
 
     fs.utimesSync(rootSdkTypePath, new Date(4_000), new Date(4_000));
-
-    expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
-
-    fs.utimesSync(packageSdkTypePath, new Date(4_000), new Date(4_000));
 
     expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(false);
   });

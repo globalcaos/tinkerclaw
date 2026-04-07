@@ -242,9 +242,14 @@ export function isBoundaryCompileFresh(extensionId, params = {}) {
     collectNewestMtime(extensionRoot, { includeFile: isRelevantCompileInput });
   const sharedNewestInputMtimeMs =
     params.sharedNewestInputMtimeMs ??
-    collectNewestMtime(resolve(rootDir, "packages/plugin-sdk/dist"), {
-      skipDistDirectories: false,
-    });
+    Math.max(
+      collectNewestMtime(resolve(rootDir, "dist/plugin-sdk"), {
+        skipDistDirectories: false,
+      }),
+      collectNewestMtime(resolve(rootDir, "packages/plugin-sdk/dist"), {
+        skipDistDirectories: false,
+      }),
+    );
   const newestInputMtimeMs = Math.max(extensionNewestInputMtimeMs, sharedNewestInputMtimeMs);
   const oldestOutputMtimeMs = collectOldestMtime([
     resolveBoundaryTsStampPath(extensionId, rootDir),
@@ -553,19 +558,17 @@ async function runCompileCheck(extensionIds) {
   process.stdout.write(
     `preparing plugin-sdk boundary artifacts for ${extensionIds.length} plugins\n`,
   );
-  runNodeStep(
-    "plugin-sdk boundary prep",
-    [prepareBoundaryArtifactsBin, "--mode=package-boundary"],
-    420_000,
-  );
+  runNodeStep("plugin-sdk boundary prep", [prepareBoundaryArtifactsBin], 420_000);
   const prepElapsedMs = Date.now() - prepStartedAt;
   const concurrency = resolveCompileConcurrency();
   const verboseFreshLogs = process.env.OPENCLAW_EXTENSION_BOUNDARY_VERBOSE_FRESH === "1";
-  const sharedNewestInputMtimeMs = collectNewestMtime(
-    resolve(repoRoot, "packages/plugin-sdk/dist"),
-    {
+  const sharedNewestInputMtimeMs = Math.max(
+    collectNewestMtime(resolve(repoRoot, "dist/plugin-sdk"), {
       skipDistDirectories: false,
-    },
+    }),
+    collectNewestMtime(resolve(repoRoot, "packages/plugin-sdk/dist"), {
+      skipDistDirectories: false,
+    }),
   );
   process.stdout.write(`compile concurrency ${concurrency}\n`);
   const compileStartedAt = Date.now();
