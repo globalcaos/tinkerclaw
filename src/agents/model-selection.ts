@@ -198,7 +198,7 @@ export function inferUniqueProviderFromConfiguredModels(params: {
       if (!parsed) {
         continue;
       }
-      if (parsed.model === model || parsed.model.toLowerCase() === normalized) {
+      if (parsed.model === model || normalizeLowercaseStringOrEmpty(parsed.model) === normalized) {
         addProvider(parsed.provider);
         if (providers.size > 1) {
           return undefined;
@@ -218,7 +218,7 @@ export function inferUniqueProviderFromConfiguredModels(params: {
         if (!modelId) {
           continue;
         }
-        if (modelId === model || modelId.toLowerCase() === normalized) {
+        if (modelId === model || normalizeLowercaseStringOrEmpty(modelId) === normalized) {
           addProvider(providerId);
         }
       }

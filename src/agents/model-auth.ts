@@ -12,6 +12,7 @@ import {
   shouldDeferProviderSyntheticProfileAuthWithPlugin,
 } from "../plugins/provider-runtime.js";
 import { resolveOwningPluginIdsForProvider } from "../plugins/providers.js";
+import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
 import {
   type AuthProfileStore,
@@ -717,7 +718,7 @@ export function applyAuthHeaderOverride<T extends Model<Api>>(
   const headers: Record<string, string> = {};
   if (model.headers) {
     for (const [key, value] of Object.entries(model.headers)) {
-      if (key.toLowerCase() !== "authorization") {
+      if (normalizeOptionalLowercaseString(key) !== "authorization") {
         headers[key] = value;
       }
     }

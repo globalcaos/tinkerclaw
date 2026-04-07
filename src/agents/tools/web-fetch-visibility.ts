@@ -1,3 +1,5 @@
+import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
+
 // CSS property values that indicate an element is hidden
 const HIDDEN_STYLE_PATTERNS: Array<[string, RegExp]> = [
   ["display", /^\s*none\s*$/i],
@@ -94,7 +96,10 @@ function shouldRemoveElement(element: Element): boolean {
   }
 
   // input type=hidden
-  if (tagName === "input" && element.getAttribute("type")?.toLowerCase() === "hidden") {
+  if (
+    tagName === "input" &&
+    normalizeOptionalLowercaseString(element.getAttribute("type")) === "hidden"
+  ) {
     return true;
   }
 
