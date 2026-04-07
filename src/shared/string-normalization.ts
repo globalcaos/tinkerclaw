@@ -6,6 +6,25 @@ export function normalizeStringEntriesLower(list?: ReadonlyArray<unknown>) {
   return normalizeStringEntries(list).map((entry) => entry.toLowerCase());
 }
 
+export function normalizeTrimmedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) =>
+    typeof entry === "string" && entry.trim() ? [entry.trim()] : [],
+  );
+}
+
+export function normalizeSingleOrTrimmedStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return normalizeTrimmedStringList(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
 export function normalizeHyphenSlug(raw?: string | null) {
   const trimmed = raw?.trim().toLowerCase() ?? "";
   if (!trimmed) {
