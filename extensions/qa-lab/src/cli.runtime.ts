@@ -8,6 +8,7 @@ import {
   defaultQaModelForMode,
   normalizeQaProviderMode,
   type QaProviderMode,
+  type QaProviderModeInput,
 } from "./run-config.js";
 import { runQaSuite } from "./suite.js";
 
@@ -71,7 +72,7 @@ export async function runQaLabSelfCheckCommand(opts: { repoRoot?: string; output
 export async function runQaSuiteCommand(opts: {
   repoRoot?: string;
   outputDir?: string;
-  providerMode?: "mock-openai" | "live-frontier";
+  providerMode?: QaProviderModeInput;
   primaryModel?: string;
   alternateModel?: string;
   fastMode?: boolean;
@@ -95,7 +96,7 @@ export async function runQaSuiteCommand(opts: {
 
 export async function runQaManualLaneCommand(opts: {
   repoRoot?: string;
-  providerMode?: "mock-openai" | "live-frontier";
+  providerMode?: QaProviderModeInput;
   primaryModel?: string;
   alternateModel?: string;
   fastMode?: boolean;

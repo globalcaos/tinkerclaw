@@ -83,7 +83,7 @@ describe("qa cli runtime", () => {
   it("normalizes legacy live-openai suite runs onto the frontier provider mode", async () => {
     await runQaSuiteCommand({
       repoRoot: "/tmp/openclaw-repo",
-      providerMode: "live-openai" as "live-frontier",
+      providerMode: "live-openai",
       scenarioIds: ["approval-turn-tool-followthrough"],
     });
 
@@ -174,7 +174,7 @@ describe("qa cli runtime", () => {
   it("normalizes legacy live-openai manual runs onto the frontier provider mode", async () => {
     await runQaManualLaneCommand({
       repoRoot: "/tmp/openclaw-repo",
-      providerMode: "live-openai" as "live-frontier",
+      providerMode: "live-openai",
       message: "read qa kickoff and reply short",
     });
 
