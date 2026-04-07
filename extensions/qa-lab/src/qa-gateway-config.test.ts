@@ -87,4 +87,18 @@ describe("buildQaGatewayConfig", () => {
     expect(cfg.gateway?.controlUi).not.toHaveProperty("allowInsecureAuth");
     expect(cfg.gateway?.controlUi).not.toHaveProperty("allowedOrigins");
   });
+
+  it("pins control ui to a provided built root when available", () => {
+    const cfg = buildQaGatewayConfig({
+      bind: "loopback",
+      gatewayPort: 18789,
+      gatewayToken: "token",
+      qaBusBaseUrl: "http://127.0.0.1:43124",
+      workspaceDir: "/tmp/qa-workspace",
+      controlUiRoot: "/tmp/openclaw/dist/control-ui",
+    });
+
+    expect(cfg.gateway?.controlUi?.enabled).toBe(true);
+    expect(cfg.gateway?.controlUi?.root).toBe("/tmp/openclaw/dist/control-ui");
+  });
 });
