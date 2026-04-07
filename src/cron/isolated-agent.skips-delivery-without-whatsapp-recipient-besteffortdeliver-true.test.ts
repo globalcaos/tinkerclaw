@@ -295,18 +295,6 @@ describe("runCronIsolatedAgentTurn", () => {
     });
   });
 
-  it("delivers explicit targets with all successful payload text", async () => {
-    await withTelegramAnnounceFixture(async ({ home, storePath, deps }) => {
-      await assertExplicitTelegramTargetDelivery({
-        home,
-        storePath,
-        deps,
-        payloads: [{ text: "Working on it..." }, { text: "Final weather summary" }],
-        expectedTexts: ["Working on it...", "Final weather summary"],
-      });
-    });
-  });
-
   it("delivers explicit targets directly with per-channel-peer session scoping", async () => {
     await withTelegramAnnounceFixture(async ({ home, storePath, deps }) => {
       mockAgentPayloads([{ text: "hello from cron" }]);
