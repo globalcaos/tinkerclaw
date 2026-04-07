@@ -8,7 +8,7 @@ import { collectOptInExtensionPackageBoundaries } from "../scripts/lib/extension
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const TSC_BIN = require.resolve("typescript/bin/tsc");
-const PLUGIN_SDK_PACKAGE_TSCONFIG = resolve(REPO_ROOT, "packages/plugin-sdk/tsconfig.json");
+const PLUGIN_SDK_DTS_TSCONFIG = resolve(REPO_ROOT, "tsconfig.plugin-sdk.dts.json");
 const OPT_IN_EXTENSION_IDS = collectOptInExtensionPackageBoundaries(REPO_ROOT);
 
 function runTsc(args: string[]) {
@@ -20,7 +20,7 @@ function runTsc(args: string[]) {
 
 describe("opt-in extension package TypeScript boundaries", () => {
   it("typechecks each opt-in extension cleanly through @openclaw/plugin-sdk", () => {
-    const prepareResult = runTsc(["-p", PLUGIN_SDK_PACKAGE_TSCONFIG]);
+    const prepareResult = runTsc(["-p", PLUGIN_SDK_DTS_TSCONFIG]);
     expect(prepareResult.status, `${prepareResult.stdout}\n${prepareResult.stderr}`).toBe(0);
 
     for (const extensionId of OPT_IN_EXTENSION_IDS) {
