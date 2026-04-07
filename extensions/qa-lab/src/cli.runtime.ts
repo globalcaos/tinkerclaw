@@ -12,6 +12,24 @@ type InterruptibleServer = {
   stop(): Promise<void>;
 };
 
+function resolveQaManualLaneModels(opts: {
+  providerMode: QaProviderMode;
+  primaryModel?: string;
+  alternateModel?: string;
+}) {
+  const primaryModel = opts.primaryModel?.trim() || defaultQaModelForMode(opts.providerMode);
+  const alternateModel = opts.alternateModel?.trim();
+  return {
+    primaryModel,
+    alternateModel:
+      alternateModel && alternateModel.length > 0
+        ? alternateModel
+        : opts.primaryModel?.trim()
+          ? primaryModel
+          : defaultQaModelForMode(opts.providerMode, true),
+  };
+}
+
 async function runInterruptibleServer(label: string, server: InterruptibleServer) {
   process.stdout.write(`${label}: ${server.baseUrl}\n`);
   process.stdout.write("Press Ctrl+C to stop.\n");
@@ -79,12 +97,16 @@ export async function runQaManualLaneCommand(opts: {
 }) {
   const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
   const providerMode: QaProviderMode = opts.providerMode ?? "live-frontier";
-  const model = opts.primaryModel?.trim() || defaultQaModelForMode(providerMode);
+  const models = resolveQaManualLaneModels({
+    providerMode,
+    primaryModel: opts.primaryModel,
+    alternateModel: opts.alternateModel,
+  });
   const result = await runQaManualLane({
     repoRoot,
     providerMode,
-    primaryModel: model,
-    alternateModel: opts.alternateModel?.trim() || defaultQaModelForMode(providerMode, true),
+    primaryModel: models.primaryModel,
+    alternateModel: models.alternateModel,
     fastMode: opts.fastMode,
     message: opts.message,
     timeoutMs: opts.timeoutMs,
