@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   defaultQaModelForMode,
   isQaFastModeEnabled,
+  normalizeQaProviderMode,
   type QaProviderMode,
 } from "./model-selection.js";
 import type { QaSeedScenario } from "./scenario-catalog.js";
@@ -44,7 +45,9 @@ export function createDefaultQaRunSelection(scenarios: QaSeedScenario[]): QaLabR
 }
 
 function normalizeProviderMode(input: unknown): QaProviderMode {
-  return input === "live-openai" ? "live-openai" : "mock-openai";
+  return normalizeQaProviderMode(
+    input === "live-frontier" || input === "live-openai" ? input : "mock-openai",
+  );
 }
 
 function normalizeModel(input: unknown, fallback: string) {
