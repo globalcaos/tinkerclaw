@@ -1,11 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import "./accounts.test-mocks.js";
 import { listZalouserDirectoryGroupMembers } from "./directory.js";
-import { createZalouserRuntimeEnv } from "./test-helpers.js";
 import "./zalo-js.test-mocks.js";
 import { listZaloGroupMembersMock } from "./zalo-js.test-mocks.js";
-
-const runtimeStub = createZalouserRuntimeEnv();
 
 describe("zalouser directory group members", () => {
   beforeEach(() => {
@@ -21,15 +18,11 @@ describe("zalouser directory group members", () => {
       },
       {
         listZaloGroupMembers: async (profile, groupId) =>
-          await listZaloGroupMembersMock(profile, groupId, runtimeStub),
+          await listZaloGroupMembersMock(profile, groupId),
       },
     );
 
-    expect(listZaloGroupMembersMock).toHaveBeenLastCalledWith(
-      "default",
-      "1471383327500481391",
-      runtimeStub,
-    );
+    expect(listZaloGroupMembersMock).toHaveBeenLastCalledWith("default", "1471383327500481391");
   });
 
   it("keeps backward compatibility for raw group ids", async () => {
@@ -41,15 +34,11 @@ describe("zalouser directory group members", () => {
       },
       {
         listZaloGroupMembers: async (profile, groupId) =>
-          await listZaloGroupMembersMock(profile, groupId, runtimeStub),
+          await listZaloGroupMembersMock(profile, groupId),
       },
     );
 
-    expect(listZaloGroupMembersMock).toHaveBeenLastCalledWith(
-      "default",
-      "1471383327500481391",
-      runtimeStub,
-    );
+    expect(listZaloGroupMembersMock).toHaveBeenLastCalledWith("default", "1471383327500481391");
   });
 
   it("accepts provider-native g- group ids without stripping the prefix", async () => {
@@ -61,14 +50,10 @@ describe("zalouser directory group members", () => {
       },
       {
         listZaloGroupMembers: async (profile, groupId) =>
-          await listZaloGroupMembersMock(profile, groupId, runtimeStub),
+          await listZaloGroupMembersMock(profile, groupId),
       },
     );
 
-    expect(listZaloGroupMembersMock).toHaveBeenLastCalledWith(
-      "default",
-      "g-1471383327500481391",
-      runtimeStub,
-    );
+    expect(listZaloGroupMembersMock).toHaveBeenLastCalledWith("default", "g-1471383327500481391");
   });
 });
