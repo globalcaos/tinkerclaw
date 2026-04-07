@@ -34,8 +34,15 @@ export {
   normalizeProviderIdForAuth,
 };
 
-function normalizeProviderModelId(provider: string, model: string): string {
+function normalizeProviderModelId(
+  provider: string,
+  model: string,
+  options?: { allowPluginNormalization?: boolean },
+): string {
   const staticModelId = normalizeStaticProviderModelId(provider, model);
+  if (options?.allowPluginNormalization === false) {
+    return staticModelId;
+  }
   return (
     normalizeProviderModelIdWithRuntime({
       provider,
@@ -57,10 +64,7 @@ export function normalizeModelRef(
   options?: ModelRefNormalizeOptions,
 ): ModelRef {
   const normalizedProvider = normalizeProviderId(provider);
-  const normalizedModel =
-    options?.allowPluginNormalization === false
-      ? model.trim()
-      : normalizeProviderModelId(normalizedProvider, model.trim());
+  const normalizedModel = normalizeProviderModelId(normalizedProvider, model.trim(), options);
   return { provider: normalizedProvider, model: normalizedModel };
 }
 
