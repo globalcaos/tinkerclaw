@@ -17,6 +17,7 @@ import {
 } from "../plugins/web-provider-public-artifacts.explicit.js";
 import { sortWebSearchProvidersForAutoDetect } from "../plugins/web-search-providers.shared.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
+import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
 import { secretRefKey } from "./ref-contract.js";
 import { resolveSecretRefValues } from "./resolve.js";
@@ -488,8 +489,7 @@ export async function resolveRuntimeWebTools(params: {
       diagnostics,
     };
   }
-  const rawProvider =
-    typeof search?.provider === "string" ? search.provider.trim().toLowerCase() : "";
+  const rawProvider = normalizeLowercaseStringOrEmpty(search?.provider);
   const searchMetadata: RuntimeWebSearchMetadata = {
     providerSource: "none",
     diagnostics: [],
@@ -605,8 +605,7 @@ export async function resolveRuntimeWebTools(params: {
     });
   }
 
-  const rawFetchProvider =
-    typeof fetch?.provider === "string" ? fetch.provider.trim().toLowerCase() : "";
+  const rawFetchProvider = normalizeLowercaseStringOrEmpty(fetch?.provider);
   const fetchMetadata: RuntimeWebFetchMetadata = {
     providerSource: "none",
     diagnostics: [],
