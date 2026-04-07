@@ -6448,45 +6448,50 @@ function init() {
 
   interface Recipe {
     name: string;
+    id: string;
+    summary: string;
     trigger: string;
     steps: string[];
     children?: RecipeChild[];
     category: keyof typeof RECIPE_CATEGORIES;
   }
 
+  // Recipe file base path — recipes are .md files in the prefrontal extension
+  const RECIPE_BASE = "extensions/tinkerclaw-prefrontal/recipes";
+
   const RECIPE_CATALOG: Recipe[] = [
     // ── Coding ──
-    { category: "coding", name: "Debug & Fix", trigger: "bug, error, crash, broken", steps: ["reproduce", "diagnose", "fix", "verify"], children: [
+    { category: "coding", id: "debug", name: "Debug & Fix", summary: "Reproduce the failure, trace root cause through code, apply minimal fix, verify with tests", trigger: "bug, error, crash, broken", steps: ["reproduce", "diagnose", "fix", "verify"], children: [
       { name: "Memory Leak Debug", trigger: "memory leak, heap, OOM" },
       { name: "API Error Debug", trigger: "API error, 500, timeout" },
       { name: "UI Regression Debug", trigger: "UI regression, layout, render" },
     ]},
-    { category: "coding", name: "Build Feature", trigger: "feature, implement, add", steps: ["explore", "design", "test", "implement", "verify"] },
-    { category: "coding", name: "Refactor", trigger: "refactor, clean, simplify", steps: ["understand", "baseline-tests", "refactor", "verify"] },
-    { category: "coding", name: "Code Review", trigger: "review, PR, diff", steps: ["read-changes", "context", "assess", "report"] },
-    { category: "coding", name: "Upstream Merge", trigger: "merge, upstream, sync", steps: ["fetch", "merge", "resolve-conflicts", "wire", "build", "test", "push"] },
-    { category: "coding", name: "Fork Patch", trigger: "fork, patch, re-wire", steps: ["identify-target", "accept-upstream", "re-wire-hooks", "build", "verify"] },
+    { category: "coding", id: "feature", name: "Build Feature", summary: "Explore existing patterns, design the approach, write failing tests first, implement minimal code, verify", trigger: "feature, implement, add", steps: ["explore", "design", "test", "implement", "verify"] },
+    { category: "coding", id: "refactor", name: "Refactor", summary: "Understand current structure, ensure tests pass as baseline, restructure without behavior change, verify tests still pass", trigger: "refactor, clean, simplify", steps: ["understand", "baseline-tests", "refactor", "verify"] },
+    { category: "coding", id: "code-review", name: "Code Review", summary: "Read the diff, understand surrounding context, assess correctness and security, report findings", trigger: "review, PR, diff", steps: ["read-changes", "context", "assess", "report"] },
+    { category: "coding", id: "upstream-merge", name: "Upstream Merge", summary: "Fetch upstream, merge with intelligent conflict resolution, re-wire fork hooks, build, test, push", trigger: "merge, upstream, sync", steps: ["fetch", "merge", "resolve-conflicts", "wire", "build", "test", "push"] },
+    { category: "coding", id: "fork-patch", name: "Fork Patch", summary: "Identify upstream target file, accept their version, re-apply fork hooks via wiring script, build, verify", trigger: "fork, patch, re-wire", steps: ["identify-target", "accept-upstream", "re-wire-hooks", "build", "verify"] },
     // ── Writing & Research ──
-    { category: "writing", name: "Write Paper", trigger: "paper, article, publication", steps: ["literature-review", "outline", "draft", "figures", "review", "revise"] },
-    { category: "writing", name: "Brainstorm", trigger: "brainstorm, ideate, explore", steps: ["explore-context", "clarify-intent", "propose-approaches", "present-design", "write-spec"], children: [
+    { category: "writing", id: "write-paper", name: "Write Paper", summary: "Review literature, build outline from thesis, draft sections, create figures, peer review, revise", trigger: "paper, article, publication", steps: ["literature-review", "outline", "draft", "figures", "review", "revise"] },
+    { category: "writing", id: "brainstorm", name: "Brainstorm", summary: "Explore project context, clarify user intent, propose 2-3 approaches with tradeoffs, present design for approval", trigger: "brainstorm, ideate, explore", steps: ["explore-context", "clarify-intent", "propose-approaches", "present-design", "write-spec"], children: [
       { name: "Feature Brainstorm", trigger: "feature idea, new capability" },
       { name: "Architecture Brainstorm", trigger: "architecture, system design" },
     ]},
-    { category: "writing", name: "Write Plan", trigger: "plan, spec, implementation", steps: ["read-spec", "map-files", "define-tasks", "write-tests", "implementation-steps"] },
+    { category: "writing", id: "write-plan", name: "Write Plan", summary: "Read the spec, map file structure, decompose into bite-sized tasks with tests, write implementation steps", trigger: "plan, spec, implementation", steps: ["read-spec", "map-files", "define-tasks", "write-tests", "implementation-steps"] },
     // ── Operations ──
-    { category: "operations", name: "Gateway Restart", trigger: "restart, gateway, reload", steps: ["check-active-sessions", "save-state", "restart", "verify-health", "verify-whatsapp"] },
-    { category: "operations", name: "Security Audit", trigger: "audit, secrets, scan", steps: ["scan-secrets", "check-git-history", "scan-PII", "check-gitignore", "report"] },
-    { category: "operations", name: "Deploy", trigger: "deploy, release, ship", steps: ["build", "test", "backup", "deploy", "smoke-test", "monitor"] },
+    { category: "operations", id: "gateway-restart", name: "Gateway Restart", summary: "Check for active LLM sessions, save state, SIGUSR1 graceful restart, verify health endpoint and WhatsApp", trigger: "restart, gateway, reload", steps: ["check-active-sessions", "save-state", "restart", "verify-health", "verify-whatsapp"] },
+    { category: "operations", id: "security-audit", name: "Security Audit", summary: "Scan for API keys and tokens, check git history for leaks, scan PII, verify gitignore, produce report", trigger: "audit, secrets, scan", steps: ["scan-secrets", "check-git-history", "scan-PII", "check-gitignore", "report"] },
+    { category: "operations", id: "deploy", name: "Deploy", summary: "Build from clean state, run full test suite, backup current state, deploy, smoke test, monitor for errors", trigger: "deploy, release, ship", steps: ["build", "test", "backup", "deploy", "smoke-test", "monitor"] },
     // ── Analysis ──
-    { category: "analysis", name: "Investigate", trigger: "investigate, dig, explore", steps: ["scope", "gather", "analyze", "report"] },
-    { category: "analysis", name: "Performance Audit", trigger: "performance, slow, profile", steps: ["profile", "identify-bottlenecks", "measure", "optimize", "verify"] },
-    { category: "analysis", name: "Dependency Analysis", trigger: "dependencies, outdated, risk", steps: ["inventory", "check-versions", "assess-risk", "update-plan"] },
+    { category: "analysis", id: "investigate", name: "Investigate", summary: "Define the question, gather evidence from multiple sources in parallel, synthesize findings, present report", trigger: "investigate, dig, explore", steps: ["scope", "gather", "analyze", "report"] },
+    { category: "analysis", id: "performance-audit", name: "Performance Audit", summary: "Profile the system, identify bottlenecks with measurements, optimize hot paths, verify improvement", trigger: "performance, slow, profile", steps: ["profile", "identify-bottlenecks", "measure", "optimize", "verify"] },
+    { category: "analysis", id: "dependency-analysis", name: "Dependency Analysis", summary: "Inventory all dependencies, check versions against latest, assess risk of outdated packages, plan updates", trigger: "dependencies, outdated, risk", steps: ["inventory", "check-versions", "assess-risk", "update-plan"] },
     // ── Security ──
-    { category: "security", name: "Incident Response", trigger: "incident, breach, compromise", steps: ["detect", "contain", "investigate", "remediate", "postmortem"] },
-    { category: "security", name: "Credential Rotation", trigger: "rotate, credentials, keys", steps: ["inventory", "generate-new", "update-configs", "verify", "revoke-old"] },
+    { category: "security", id: "incident-response", name: "Incident Response", summary: "Detect the breach scope, contain the damage, investigate root cause, remediate, write postmortem", trigger: "incident, breach, compromise", steps: ["detect", "contain", "investigate", "remediate", "postmortem"] },
+    { category: "security", id: "credential-rotation", name: "Credential Rotation", summary: "Inventory all credentials, generate new ones, update all configs atomically, verify access, revoke old", trigger: "rotate, credentials, keys", steps: ["inventory", "generate-new", "update-configs", "verify", "revoke-old"] },
     // ── Communication ──
-    { category: "communication", name: "Daily Report", trigger: "daily, status, standup", steps: ["gather-status", "analyze-changes", "format", "deliver"] },
-    { category: "communication", name: "Jarvis Report", trigger: "report, incident, summary", steps: ["incident-summary", "root-cause", "changes", "rationale", "suggested-actions"] },
+    { category: "communication", id: "daily-report", name: "Daily Report", summary: "Gather status across all systems, analyze what changed and why, format as structured report, deliver", trigger: "daily, status, standup", steps: ["gather-status", "analyze-changes", "format", "deliver"] },
+    { category: "communication", id: "jarvis-report", name: "Jarvis Report", summary: "Summarize incident, analyze root cause, list all changes with rationale, suggest next actions", trigger: "report, incident, summary", steps: ["incident-summary", "root-cause", "changes", "rationale", "suggested-actions"] },
   ];
 
   function renderRecipesTab(body: Element, sub: Element) {
@@ -6508,11 +6513,14 @@ function init() {
       html += `<span class="recipe-cat-count">${recipes.length}</span>`;
       html += `</div><div class="recipe-cat-items">`;
       for (const r of recipes) {
-        html += `<div class="recipe-card">`;
+        const filePath = `${RECIPE_BASE}/${catKey}/${r.id}.md`;
+        html += `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to edit recipe">`;
         html += `<div class="recipe-card-header">`;
         html += `<span class="recipe-name">${altEsc(r.name)}</span>`;
         html += `<span class="recipe-trigger">${altEsc(r.trigger)}</span>`;
-        html += `</div><div class="recipe-steps">`;
+        html += `</div>`;
+        html += `<div class="recipe-summary">${altEsc(r.summary)}</div>`;
+        html += `<div class="recipe-steps">`;
         r.steps.forEach((s, i) => {
           if (i > 0) html += `<span class="recipe-step-arrow">\u2192</span>`;
           html += `<span class="recipe-step">${altEsc(s)}</span>`;
@@ -6534,8 +6542,25 @@ function init() {
     }
     html += `</div>`;
 
-    sub.textContent = `${RECIPE_CATALOG.length} recipes in ${Object.keys(RECIPE_CATEGORIES).length} categories`;
+    sub.textContent = `${RECIPE_CATALOG.length} recipes`;
     body.innerHTML = html;
+
+    // Click to open recipe file in default editor
+    body.addEventListener("click", (e) => {
+      const card = (e.target as HTMLElement).closest("[data-recipe-file]") as HTMLElement | null;
+      if (!card) return;
+      const file = card.dataset.recipeFile;
+      if (!file) return;
+      // Use the gateway exec endpoint to open with xdg-open (Linux native editor)
+      authedFetch(`/api/exec`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: `xdg-open "${file}"`, background: true }),
+      }).catch(() => {
+        // Fallback: try opening via window.open for the raw file
+        window.open(`/api/files/${encodeURIComponent(file)}`, "_blank");
+      });
+    });
   }
 
   // ─── Tab bar events ───
