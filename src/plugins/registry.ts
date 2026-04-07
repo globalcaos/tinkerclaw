@@ -15,7 +15,10 @@ import {
   NODE_SYSTEM_RUN_COMMANDS,
 } from "../infra/node-commands.js";
 import { normalizePluginGatewayMethodScope } from "../shared/gateway-method-policy.js";
-import { normalizeOptionalString } from "../shared/string-coerce.js";
+import {
+  normalizeOptionalString,
+  normalizeStringifiedOptionalString,
+} from "../shared/string-coerce.js";
 import { resolveUserPath } from "../utils.js";
 import { buildPluginApi } from "./api-builder.js";
 import { registerPluginCommand, validatePluginCommandDefinition } from "./command-registration.js";
@@ -611,7 +614,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         ? (registration as OpenClawPluginChannelRegistration)
         : { plugin: registration as ChannelPlugin };
     const plugin = normalized.plugin;
-    const id = typeof plugin?.id === "string" ? plugin.id.trim() : String(plugin?.id ?? "").trim();
+    const id =
+      normalizeOptionalString(plugin?.id) ?? normalizeStringifiedOptionalString(plugin?.id) ?? "";
     if (!id) {
       pushDiagnostic({
         level: "error",
