@@ -1,3 +1,4 @@
+import { normalizeText } from "../../acp/normalize-text.js";
 import {
   buildConfiguredAcpSessionKey,
   normalizeBindingConfig,
@@ -57,7 +58,7 @@ function resolveRawConfiguredAcpSessionKey(params: {
   parentConversationId?: string;
 }): string | undefined {
   for (const binding of acpResetTargetDeps.listAcpBindings(params.cfg)) {
-    const bindingChannel = normalizeText(binding.match.channel).toLowerCase();
+    const bindingChannel = normalizeText(binding.match.channel)?.toLowerCase() ?? "";
     if (!bindingChannel || bindingChannel !== params.channel) {
       continue;
     }
@@ -111,7 +112,7 @@ export function resolveEffectiveResetTargetSessionKey(params: {
     activeSessionKey && isAcpSessionKey(activeSessionKey) ? activeSessionKey : undefined;
   const activeIsNonAcp = Boolean(activeSessionKey) && !activeAcpSessionKey;
 
-  const channel = normalizeText(params.channel).toLowerCase();
+  const channel = normalizeText(params.channel)?.toLowerCase() ?? "";
   const conversationId = normalizeText(params.conversationId);
   if (!channel || !conversationId) {
     return activeAcpSessionKey;
