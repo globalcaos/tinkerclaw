@@ -22,6 +22,10 @@ export function normalizeLowercaseStringOrEmpty(value: unknown): string {
   return normalizeOptionalLowercaseString(value) ?? "";
 }
 
+export function lowercasePreservingWhitespace(value: string): string {
+  return value.toLowerCase();
+}
+
 export function resolvePrimaryStringValue(value: unknown): string | undefined {
   if (typeof value === "string") {
     return normalizeOptionalString(value);
