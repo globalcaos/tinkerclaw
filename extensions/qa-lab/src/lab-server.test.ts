@@ -14,10 +14,42 @@ afterEach(async () => {
   }
 });
 
+function isRetryableLocalFetchError(error: unknown) {
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+  const cause = (error as TypeError & { cause?: unknown }).cause;
+  if (!cause || typeof cause !== "object") {
+    return false;
+  }
+  const code = "code" in cause ? (cause as { code?: unknown }).code : undefined;
+  return code === "ECONNRESET" || code === "UND_ERR_SOCKET";
+}
+
+async function fetchWithRetry(input: string, init?: RequestInit, attempts = 3) {
+  const method = init?.method?.toUpperCase() ?? "GET";
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      lastError = error;
+      if ((method !== "GET" && method !== "HEAD") || !isRetryableLocalFetchError(error)) {
+        throw error;
+      }
+      if (attempt === attempts) {
+        throw error;
+      }
+      await sleep(50);
+    }
+  }
+  throw lastError;
+}
+
 async function waitForRunnerCatalog(baseUrl: string, timeoutMs = 5_000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const response = await fetch(`${baseUrl}/api/bootstrap`);
+    const response = await fetchWithRetry(`${baseUrl}/api/bootstrap`);
     const bootstrap = (await response.json()) as {
       runnerCatalog: {
         status: "loading" | "ready" | "failed";
@@ -51,7 +83,7 @@ describe("qa-lab server", () => {
       await lab.stop();
     });
 
-    const bootstrapResponse = await fetch(`${lab.baseUrl}/api/bootstrap`);
+    const bootstrapResponse = await fetchWithRetry(`${lab.baseUrl}/api/bootstrap`);
     expect(bootstrapResponse.status).toBe(200);
     const bootstrap = (await bootstrapResponse.json()) as {
       controlUiUrl: string | null;
@@ -86,7 +118,7 @@ describe("qa-lab server", () => {
     });
     expect(messageResponse.status).toBe(200);
 
-    const stateResponse = await fetch(`${lab.baseUrl}/api/state`);
+    const stateResponse = await fetchWithRetry(`${lab.baseUrl}/api/state`);
     expect(stateResponse.status).toBe(200);
     const snapshot = (await stateResponse.json()) as {
       messages: Array<{ direction: string; text: string }>;
@@ -130,7 +162,9 @@ describe("qa-lab server", () => {
       await autoKickoffLab.stop();
     });
 
-    const autoSnapshot = (await (await fetch(`${autoKickoffLab.baseUrl}/api/state`)).json()) as {
+    const autoSnapshot = (await (
+      await fetchWithRetry(`${autoKickoffLab.baseUrl}/api/state`)
+    ).json()) as {
       messages: Array<{ text: string }>;
     };
     expect(autoSnapshot.messages.some((message) => message.text.includes("QA mission:"))).toBe(
@@ -150,7 +184,9 @@ describe("qa-lab server", () => {
     });
     expect(kickoffResponse.status).toBe(200);
 
-    const manualSnapshot = (await (await fetch(`${manualLab.baseUrl}/api/state`)).json()) as {
+    const manualSnapshot = (await (
+      await fetchWithRetry(`${manualLab.baseUrl}/api/state`)
+    ).json()) as {
       messages: Array<{ text: string }>;
     };
     expect(
@@ -200,7 +236,7 @@ describe("qa-lab server", () => {
       await lab.stop();
     });
 
-    const bootstrap = (await (await fetch(`${lab.listenUrl}/api/bootstrap`)).json()) as {
+    const bootstrap = (await (await fetchWithRetry(`${lab.listenUrl}/api/bootstrap`)).json()) as {
       controlUiUrl: string | null;
       controlUiEmbeddedUrl: string | null;
     };
@@ -209,11 +245,11 @@ describe("qa-lab server", () => {
       "http://127.0.0.1:43124/control-ui/#token=proxy-token",
     );
 
-    const healthResponse = await fetch(`${lab.listenUrl}/control-ui/healthz`);
+    const healthResponse = await fetchWithRetry(`${lab.listenUrl}/control-ui/healthz`);
     expect(healthResponse.status).toBe(200);
     expect(await healthResponse.json()).toEqual({ ok: true, status: "live" });
 
-    const rootResponse = await fetch(`${lab.listenUrl}/control-ui/`);
+    const rootResponse = await fetchWithRetry(`${lab.listenUrl}/control-ui/`);
     expect(rootResponse.status).toBe(200);
     expect(rootResponse.headers.get("x-frame-options")).toBeNull();
     expect(rootResponse.headers.get("content-security-policy")).toContain("frame-ancestors 'self'");
@@ -240,7 +276,7 @@ describe("qa-lab server", () => {
       await lab.stop();
     });
 
-    const rootResponse = await fetch(`${lab.baseUrl}/`);
+    const rootResponse = await fetchWithRetry(`${lab.baseUrl}/`);
     expect(rootResponse.status).toBe(200);
     const html = await rootResponse.text();
     expect(html).not.toContain("QA Lab UI not built");
@@ -301,7 +337,7 @@ describe("qa-lab server", () => {
       await lab.stop();
     });
 
-    const rootResponse = await fetch(`${lab.baseUrl}/`);
+    const rootResponse = await fetchWithRetry(`${lab.baseUrl}/`);
     expect(rootResponse.status).toBe(200);
     expect(await rootResponse.text()).toContain("repo-root-ui");
 
@@ -341,7 +377,7 @@ describe("qa-lab server", () => {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 800));
-    const snapshot = (await (await fetch(`${lab.baseUrl}/api/state`)).json()) as {
+    const snapshot = (await (await fetchWithRetry(`${lab.baseUrl}/api/state`)).json()) as {
       messages: Array<{ direction: string }>;
     };
     expect(snapshot.messages.filter((message) => message.direction === "outbound")).toHaveLength(0);
@@ -357,7 +393,9 @@ describe("qa-lab server", () => {
       await lab.stop();
     });
 
-    const initialOutcomes = (await (await fetch(`${lab.baseUrl}/api/outcomes`)).json()) as {
+    const initialOutcomes = (await (
+      await fetchWithRetry(`${lab.baseUrl}/api/outcomes`)
+    ).json()) as {
       run: null | unknown;
     };
     expect(initialOutcomes.run).toBeNull();
@@ -387,12 +425,12 @@ describe("qa-lab server", () => {
       controlUiToken: "late-token",
     });
 
-    const bootstrap = (await (await fetch(`${lab.baseUrl}/api/bootstrap`)).json()) as {
+    const bootstrap = (await (await fetchWithRetry(`${lab.baseUrl}/api/bootstrap`)).json()) as {
       controlUiEmbeddedUrl: string | null;
     };
     expect(bootstrap.controlUiEmbeddedUrl).toBe("http://127.0.0.1:18789/#token=late-token");
 
-    const outcomes = (await (await fetch(`${lab.baseUrl}/api/outcomes`)).json()) as {
+    const outcomes = (await (await fetchWithRetry(`${lab.baseUrl}/api/outcomes`)).json()) as {
       run: {
         status: string;
         counts: { total: number; passed: number; running: number };
