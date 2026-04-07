@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { formatErrorMessage } from "../infra/errors.js";
 export { isRecord } from "../utils.js";
 
 export function isNonEmptyString(value: unknown): value is string {
@@ -59,8 +58,4 @@ export function writeTextFileAtomic(pathname: string, value: string, mode = 0o60
   fs.writeFileSync(tempPath, value, "utf8");
   fs.chmodSync(tempPath, mode);
   fs.renameSync(tempPath, pathname);
-}
-
-export function describeUnknownError(err: unknown): string {
-  return formatErrorMessage(err);
 }
