@@ -15,6 +15,18 @@ export function normalizeTrimmedStringList(value: unknown): string[] {
   );
 }
 
+export function normalizeOptionalTrimmedStringList(value: unknown): string[] | undefined {
+  const normalized = normalizeTrimmedStringList(value);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+export function normalizeArrayBackedTrimmedStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return normalizeTrimmedStringList(value);
+}
+
 export function normalizeSingleOrTrimmedStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return normalizeTrimmedStringList(value);
