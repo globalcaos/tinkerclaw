@@ -24,7 +24,7 @@ import {
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import { normalizeAllowFrom } from "./bot-access.js";
-import { resolveLineGroupConfigEntry, resolveLineGroupHistoryKey } from "./group-keys.js";
+import { resolveLineGroupConfigEntry } from "./group-keys.js";
 import type { LineGroupConfig, ResolvedLineAccount } from "./types.js";
 
 type EventSource = webhook.Source | undefined;
@@ -77,10 +77,9 @@ function buildPeerId(source: EventSource): string {
   if (!source) {
     return "unknown";
   }
-  const groupKey = resolveLineGroupHistoryKey({
-    groupId: source.type === "group" ? source.groupId : undefined,
-    roomId: source.type === "room" ? source.roomId : undefined,
-  });
+  const groupKey =
+    normalizeOptionalString(source.type === "group" ? source.groupId : undefined) ??
+    normalizeOptionalString(source.type === "room" ? source.roomId : undefined);
   if (groupKey) {
     return groupKey;
   }
