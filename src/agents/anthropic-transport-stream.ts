@@ -48,7 +48,7 @@ const CLAUDE_CODE_TOOLS = [
   "WebSearch",
 ] as const;
 const CLAUDE_CODE_TOOL_LOOKUP = new Map(
-  CLAUDE_CODE_TOOLS.map((tool) => [tool.toLowerCase(), tool]),
+  CLAUDE_CODE_TOOLS.map((tool) => [normalizeLowercaseStringOrEmpty(tool), tool]),
 );
 
 type AnthropicTransportModel = Model<"anthropic-messages"> & {
