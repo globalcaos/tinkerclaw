@@ -119,7 +119,10 @@ export async function loadSubagentSpawnModuleForTest(params: {
   resolveAgentConfig?: (cfg: Record<string, unknown>, agentId: string) => unknown;
   resolveAgentWorkspaceDir?: (cfg: Record<string, unknown>, agentId: string) => string;
   resolveSubagentSpawnModelSelection?: () => string | undefined;
-  resolveSandboxRuntimeStatus?: () => { sandboxed: boolean };
+  resolveSandboxRuntimeStatus?: (params: {
+    cfg?: Record<string, unknown>;
+    sessionKey?: string;
+  }) => { sandboxed: boolean };
   workspaceDir?: string;
   sessionStorePath?: string;
   resetModules?: boolean;
