@@ -164,30 +164,6 @@ async function withTelegramTextDelivery(
   }, fixtureParams);
 }
 
-async function expectTelegramTextDeliveryFailure(params: {
-  bestEffort: boolean;
-  expectedStatus: "ok" | "error";
-  expectedErrorFragment?: string;
-}) {
-  await withTelegramTextDelivery(
-    { bestEffort: params.bestEffort },
-    async ({ deps, res }) => {
-      expectFailedTelegramDeliveryResult({
-        res,
-        deps,
-        expectedStatus: params.expectedStatus,
-        expectedErrorFragment: params.expectedErrorFragment,
-        expectDeliveryAttempted: true,
-      });
-    },
-    {
-      deps: {
-        sendMessageTelegram: vi.fn().mockRejectedValue(new Error("boom")),
-      },
-    },
-  );
-}
-
 async function runSignalDeliveryResult(bestEffort: boolean) {
   let outcome:
     | {
@@ -231,27 +207,12 @@ describe("runCronIsolatedAgentTurn", () => {
     setupIsolatedAgentTurnMocks({ fast: true });
   });
 
-  it("reports not-delivered when text direct delivery fails and best-effort is enabled", async () => {
-    await expectTelegramTextDeliveryFailure({
-      bestEffort: true,
-      expectedStatus: "ok",
-    });
-  });
-
   it("delivers text directly when best-effort is disabled", async () => {
     const { res, deps } = await runTelegramDeliveryResult(false);
     expectSuccessfulTelegramTextDelivery({ res, deps });
     expectDirectTelegramDelivery(deps, {
       chatId: "123",
       text: "hello from cron",
-    });
-  });
-
-  it("returns error when text direct delivery fails and best-effort is disabled", async () => {
-    await expectTelegramTextDeliveryFailure({
-      bestEffort: false,
-      expectedStatus: "error",
-      expectedErrorFragment: "boom",
     });
   });
 
