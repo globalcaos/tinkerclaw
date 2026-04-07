@@ -248,7 +248,10 @@ OpenClaw resolves when it needs a context engine.
 - **Memory plugins** (`plugins.slots.memory`) are separate from context engines.
   Memory plugins provide search/retrieval; context engines control what the
   model sees. They can work together — a context engine might use memory
-  plugin data during assembly.
+  plugin data during assembly. Plugin engines that want the active memory
+  plugin's legacy prompt guidance can pull it explicitly from
+  `openclaw/plugin-sdk/memory-host-core` via
+  `buildActiveMemoryPromptSection(...)`.
 - **Session pruning** (trimming old tool results in-memory) still runs
   regardless of which context engine is active.
 

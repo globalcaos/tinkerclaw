@@ -28,8 +28,22 @@ export default definePluginEntry({
     api.registerTool(createWikiStatusTool(config, api.config), { name: "wiki_status" });
     api.registerTool(createWikiLintTool(config, api.config), { name: "wiki_lint" });
     api.registerTool(createWikiApplyTool(config, api.config), { name: "wiki_apply" });
-    api.registerTool(createWikiSearchTool(config, api.config), { name: "wiki_search" });
-    api.registerTool(createWikiGetTool(config, api.config), { name: "wiki_get" });
+    api.registerTool(
+      (ctx) =>
+        createWikiSearchTool(config, api.config, {
+          agentId: ctx.agentId,
+          agentSessionKey: ctx.sessionKey,
+        }),
+      { name: "wiki_search" },
+    );
+    api.registerTool(
+      (ctx) =>
+        createWikiGetTool(config, api.config, {
+          agentId: ctx.agentId,
+          agentSessionKey: ctx.sessionKey,
+        }),
+      { name: "wiki_get" },
+    );
     api.registerCli(
       ({ program }) => {
         registerWikiCli(program, config, api.config);

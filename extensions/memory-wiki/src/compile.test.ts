@@ -35,7 +35,19 @@ describe("compileMemoryWikiVault", () => {
     await fs.writeFile(
       path.join(rootDir, "sources", "alpha.md"),
       renderWikiMarkdown({
-        frontmatter: { pageType: "source", id: "source.alpha", title: "Alpha" },
+        frontmatter: {
+          pageType: "source",
+          id: "source.alpha",
+          title: "Alpha",
+          claims: [
+            {
+              id: "claim.alpha.doc",
+              text: "Alpha is the canonical source page.",
+              status: "supported",
+              evidence: [{ sourceId: "source.alpha", lines: "1-3" }],
+            },
+          ],
+        },
         body: "# Alpha\n",
       }),
       "utf8",
@@ -44,12 +56,33 @@ describe("compileMemoryWikiVault", () => {
     const result = await compileMemoryWikiVault(config);
 
     expect(result.pageCounts.source).toBe(1);
+    expect(result.claimCount).toBe(1);
     await expect(fs.readFile(path.join(rootDir, "index.md"), "utf8")).resolves.toContain(
       "[Alpha](sources/alpha.md)",
+    );
+    await expect(fs.readFile(path.join(rootDir, "index.md"), "utf8")).resolves.toContain(
+      "- Claims: 1",
     );
     await expect(fs.readFile(path.join(rootDir, "sources", "index.md"), "utf8")).resolves.toContain(
       "[Alpha](sources/alpha.md)",
     );
+    const agentDigest = JSON.parse(
+      await fs.readFile(path.join(rootDir, ".openclaw-wiki", "cache", "agent-digest.json"), "utf8"),
+    ) as {
+      claimCount: number;
+      pages: Array<{ path: string; claimCount: number; topClaims: Array<{ text: string }> }>;
+    };
+    expect(agentDigest.claimCount).toBe(1);
+    expect(agentDigest.pages).toContainEqual(
+      expect.objectContaining({
+        path: "sources/alpha.md",
+        claimCount: 1,
+        topClaims: [expect.objectContaining({ text: "Alpha is the canonical source page." })],
+      }),
+    );
+    await expect(
+      fs.readFile(path.join(rootDir, ".openclaw-wiki", "cache", "claims.jsonl"), "utf8"),
+    ).resolves.toContain('"text":"Alpha is the canonical source page."');
   });
 
   it("renders obsidian-friendly links when configured", async () => {

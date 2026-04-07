@@ -8,12 +8,22 @@ import { renderWikiMarkdown } from "./markdown.js";
 import { getMemoryWikiPage, searchMemoryWiki } from "./query.js";
 import { createMemoryWikiTestHarness } from "./test-helpers.js";
 
-const { getActiveMemorySearchManagerMock } = vi.hoisted(() => ({
-  getActiveMemorySearchManagerMock: vi.fn(),
-}));
+const { getActiveMemorySearchManagerMock, resolveDefaultAgentIdMock, resolveSessionAgentIdMock } =
+  vi.hoisted(() => ({
+    getActiveMemorySearchManagerMock: vi.fn(),
+    resolveDefaultAgentIdMock: vi.fn(() => "main"),
+    resolveSessionAgentIdMock: vi.fn(({ sessionKey }: { sessionKey?: string }) =>
+      sessionKey === "agent:secondary:thread" ? "secondary" : "main",
+    ),
+  }));
 
 vi.mock("openclaw/plugin-sdk/memory-host-search", () => ({
   getActiveMemorySearchManager: getActiveMemorySearchManagerMock,
+}));
+
+vi.mock("openclaw/plugin-sdk/memory-host-core", () => ({
+  resolveDefaultAgentId: resolveDefaultAgentIdMock,
+  resolveSessionAgentId: resolveSessionAgentIdMock,
 }));
 
 const { createVault } = createMemoryWikiTestHarness();
@@ -23,6 +33,8 @@ let caseIndex = 0;
 beforeEach(() => {
   getActiveMemorySearchManagerMock.mockReset();
   getActiveMemorySearchManagerMock.mockResolvedValue({ manager: null, error: "unavailable" });
+  resolveDefaultAgentIdMock.mockClear();
+  resolveSessionAgentIdMock.mockClear();
 });
 
 beforeAll(async () => {
@@ -104,6 +116,42 @@ describe("searchMemoryWiki", () => {
     expect(getActiveMemorySearchManagerMock).not.toHaveBeenCalled();
   });
 
+  it("finds wiki pages by structured claim text and surfaces the claim as the snippet", async () => {
+    const { rootDir, config } = await createQueryVault({
+      initialize: true,
+    });
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha",
+          title: "Alpha",
+          claims: [
+            {
+              id: "claim.alpha.postgres",
+              text: "Alpha uses PostgreSQL for production writes.",
+              status: "supported",
+              confidence: 0.91,
+              evidence: [{ sourceId: "source.alpha", lines: "12-18" }],
+            },
+          ],
+        },
+        body: "# Alpha\n\nsummary without the query phrase\n",
+      }),
+      "utf8",
+    );
+
+    const results = await searchMemoryWiki({ config, query: "postgresql" });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      corpus: "wiki",
+      path: "entities/alpha.md",
+      snippet: "Alpha uses PostgreSQL for production writes.",
+    });
+  });
+
   it("surfaces bridge provenance for imported source pages", async () => {
     const { rootDir, config } = await createQueryVault({
       initialize: true,
@@ -179,6 +227,48 @@ describe("searchMemoryWiki", () => {
     expect(results.some((result) => result.corpus === "wiki")).toBe(true);
     expect(results.some((result) => result.corpus === "memory")).toBe(true);
     expect(manager.search).toHaveBeenCalledWith("alpha", { maxResults: 5 });
+    expect(getActiveMemorySearchManagerMock).toHaveBeenCalledWith({
+      cfg: createAppConfig(),
+      agentId: "main",
+    });
+  });
+
+  it("uses the active session agent for shared memory search", async () => {
+    const { config } = await createQueryVault({
+      initialize: true,
+      config: {
+        search: { backend: "shared", corpus: "memory" },
+      },
+    });
+    const manager = createMemoryManager({
+      searchResults: [
+        {
+          path: "memory/2026-04-07.md",
+          startLine: 1,
+          endLine: 2,
+          score: 1,
+          snippet: "secondary agent memory",
+          source: "memory",
+        },
+      ],
+    });
+    getActiveMemorySearchManagerMock.mockResolvedValue({ manager });
+
+    await searchMemoryWiki({
+      config,
+      appConfig: createAppConfig(),
+      agentSessionKey: "agent:secondary:thread",
+      query: "secondary",
+    });
+
+    expect(resolveSessionAgentIdMock).toHaveBeenCalledWith({
+      sessionKey: "agent:secondary:thread",
+      config: createAppConfig(),
+    });
+    expect(getActiveMemorySearchManagerMock).toHaveBeenCalledWith({
+      cfg: createAppConfig(),
+      agentId: "secondary",
+    });
   });
 
   it("allows per-call corpus overrides without changing config defaults", async () => {
@@ -366,6 +456,39 @@ describe("getMemoryWikiPage", () => {
       relPath: "MEMORY.md",
       from: 2,
       lines: 2,
+    });
+  });
+
+  it("uses the active session agent for shared memory reads", async () => {
+    const { config } = await createQueryVault({
+      initialize: true,
+      config: {
+        search: { backend: "shared", corpus: "memory" },
+      },
+    });
+    const manager = createMemoryManager({
+      readResult: {
+        path: "MEMORY.md",
+        text: "secondary memory line",
+      },
+    });
+    getActiveMemorySearchManagerMock.mockResolvedValue({ manager });
+
+    const result = await getMemoryWikiPage({
+      config,
+      appConfig: createAppConfig(),
+      agentSessionKey: "agent:secondary:thread",
+      lookup: "MEMORY.md",
+    });
+
+    expect(result?.corpus).toBe("memory");
+    expect(resolveSessionAgentIdMock).toHaveBeenCalledWith({
+      sessionKey: "agent:secondary:thread",
+      config: createAppConfig(),
+    });
+    expect(getActiveMemorySearchManagerMock).toHaveBeenCalledWith({
+      cfg: createAppConfig(),
+      agentId: "secondary",
     });
   });
 
