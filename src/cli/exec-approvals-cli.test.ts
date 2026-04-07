@@ -436,7 +436,7 @@ describe("exec approvals CLI", () => {
                 effective: "always",
               }),
               askFallback: expect.objectContaining({
-                effective: "full",
+                effective: "allowlist",
                 source: "OpenClaw default (full)",
               }),
             }),
