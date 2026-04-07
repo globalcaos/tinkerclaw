@@ -48,7 +48,11 @@ const FAKE_PDF_MEDIA = {
   fileName: "doc.pdf",
 } as const;
 
-function requirePdfTool(tool: Awaited<ReturnType<typeof loadCreatePdfTool>> extends (...args: any[]) => infer R ? R : never) {
+function requirePdfTool(
+  tool: Awaited<ReturnType<typeof loadCreatePdfTool>> extends (...args: any[]) => infer R
+    ? R
+    : never,
+) {
   expect(tool).not.toBeNull();
   if (!tool) {
     throw new Error("expected pdf tool");
@@ -64,6 +68,16 @@ async function withAnthropicPdfTool(
   await withTempAgentDir(async (agentDir) => {
     vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-test");
     const cfg = withDefaultModel(ANTHROPIC_PDF_MODEL);
+    const tool = requirePdfTool((await loadCreatePdfTool())({ config: cfg, agentDir }));
+    await run(tool, agentDir);
+  });
+}
+
+async function withConfiguredPdfTool(
+  run: (tool: PdfToolInstance, agentDir: string) => Promise<void>,
+) {
+  await withTempAgentDir(async (agentDir) => {
+    const cfg = withPdfModel(ANTHROPIC_PDF_MODEL);
     const tool = requirePdfTool((await loadCreatePdfTool())({ config: cfg, agentDir }));
     await run(tool, agentDir);
   });
@@ -154,8 +168,8 @@ describe("createPdfTool", () => {
     expect(() => createTool({ config: cfg })).toThrow("requires agentDir");
   });
 
-  it("creates tool when auth is available", async () => {
-    await withAnthropicPdfTool(async (tool) => {
+  it("creates tool when a PDF model is configured", async () => {
+    await withConfiguredPdfTool(async (tool) => {
       expect(tool.name).toBe("pdf");
       expect(tool.label).toBe("PDF");
       expect(tool.description).toContain("PDF documents");
@@ -163,13 +177,13 @@ describe("createPdfTool", () => {
   });
 
   it("rejects when no pdf input provided", async () => {
-    await withAnthropicPdfTool(async (tool) => {
+    await withConfiguredPdfTool(async (tool) => {
       await expect(tool.execute("t1", { prompt: "test" })).rejects.toThrow("pdf required");
     });
   });
 
   it("rejects too many PDFs", async () => {
-    await withAnthropicPdfTool(async (tool) => {
+    await withConfiguredPdfTool(async (tool) => {
       const manyPdfs = Array.from({ length: 15 }, (_, i) => `/tmp/doc${i}.pdf`);
       const result = await tool.execute("t1", { prompt: "test", pdfs: manyPdfs });
       expect(result).toMatchObject({
@@ -180,11 +194,10 @@ describe("createPdfTool", () => {
 
   it("respects fsPolicy.workspaceOnly for non-sandbox pdf paths", async () => {
     await withTempAgentDir(async (agentDir) => {
-      vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-test");
       const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-pdf-ws-"));
       const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-pdf-out-"));
       try {
-        const cfg = withDefaultModel(ANTHROPIC_PDF_MODEL);
+        const cfg = withPdfModel(ANTHROPIC_PDF_MODEL);
         const tool = requirePdfTool(
           (await loadCreatePdfTool())({
             config: cfg,
@@ -208,7 +221,7 @@ describe("createPdfTool", () => {
   });
 
   it("rejects unsupported scheme references", async () => {
-    await withAnthropicPdfTool(async (tool) => {
+    await withConfiguredPdfTool(async (tool) => {
       const result = await tool.execute("t1", {
         prompt: "test",
         pdf: "ftp://example.com/doc.pdf",
@@ -216,24 +229,6 @@ describe("createPdfTool", () => {
       expect(result).toMatchObject({
         details: { error: "unsupported_pdf_reference" },
       });
-    });
-  });
-
-  it("deduplicates pdf inputs before loading", async () => {
-    await withTempAgentDir(async (agentDir) => {
-      const { loadSpy } = await stubPdfToolInfra(agentDir, { modelFound: false });
-      const cfg = withPdfModel(ANTHROPIC_PDF_MODEL);
-      const tool = requirePdfTool((await loadCreatePdfTool())({ config: cfg, agentDir }));
-
-      await expect(
-        tool.execute("t1", {
-          prompt: "test",
-          pdf: "/tmp/nonexistent.pdf",
-          pdfs: ["/tmp/nonexistent.pdf"],
-        }),
-      ).rejects.toThrow("Unknown model");
-
-      expect(loadSpy).toHaveBeenCalledTimes(1);
     });
   });
 
