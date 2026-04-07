@@ -6545,21 +6545,18 @@ function init() {
     sub.textContent = `${RECIPE_CATALOG.length} recipes`;
     body.innerHTML = html;
 
-    // Click to open recipe file in default editor
+    // Click to open recipe file in native OS markdown editor
     body.addEventListener("click", (e) => {
       const card = (e.target as HTMLElement).closest("[data-recipe-file]") as HTMLElement | null;
       if (!card) return;
       const file = card.dataset.recipeFile;
       if (!file) return;
-      // Use the gateway exec endpoint to open with xdg-open (Linux native editor)
-      authedFetch(`/api/exec`, {
+      // POST to Vite dev server's open-file endpoint (calls xdg-open server-side)
+      fetch("/api/open-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: `xdg-open "${file}"`, background: true }),
-      }).catch(() => {
-        // Fallback: try opening via window.open for the raw file
-        window.open(`/api/files/${encodeURIComponent(file)}`, "_blank");
-      });
+        body: JSON.stringify({ path: file }),
+      }).catch(() => { /* silent — editor may not open in prod mode */ });
     });
   }
 
