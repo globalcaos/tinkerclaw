@@ -295,6 +295,99 @@ describe("gateway.channelHealthCheckMinutes", () => {
   });
 });
 
+describe("config identity/materialization regressions", () => {
+  it("keeps explicit responsePrefix and group mention patterns", () => {
+    const res = validateConfigObject({
+      agents: {
+        list: [
+          {
+            id: "main",
+            identity: {
+              name: "Samantha Sloth",
+              theme: "space lobster",
+              emoji: "🦞",
+            },
+            groupChat: { mentionPatterns: ["@openclaw"] },
+          },
+        ],
+      },
+      messages: {
+        responsePrefix: "✅",
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.config.messages?.responsePrefix).toBe("✅");
+      expect(res.config.agents?.list?.[0]?.groupChat?.mentionPatterns).toEqual(["@openclaw"]);
+    }
+  });
+
+  it("preserves empty responsePrefix when identity is present", () => {
+    const res = validateConfigObject({
+      agents: {
+        list: [
+          {
+            id: "main",
+            identity: {
+              name: "Samantha",
+              theme: "helpful sloth",
+              emoji: "🦥",
+            },
+          },
+        ],
+      },
+      messages: {
+        responsePrefix: "",
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.config.messages?.responsePrefix).toBe("");
+    }
+  });
+
+  it("accepts blank model provider apiKey values", () => {
+    const res = validateConfigObject({
+      models: {
+        mode: "merge",
+        providers: {
+          minimax: {
+            baseUrl: "https://api.minimax.io/anthropic",
+            apiKey: "",
+            api: "anthropic-messages",
+            models: [
+              {
+                id: "MiniMax-M2.7",
+                name: "MiniMax M2.7",
+                reasoning: false,
+                input: ["text"],
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                },
+                contextWindow: 200000,
+                maxTokens: 8192,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.config.models?.providers?.minimax?.baseUrl).toBe(
+        "https://api.minimax.io/anthropic",
+      );
+      expect(res.config.models?.providers?.minimax?.apiKey).toBe("");
+    }
+  });
+});
+
 describe("cron webhook schema", () => {
   it("accepts cron.webhookToken and legacy cron.webhook", () => {
     const res = OpenClawSchema.safeParse({
@@ -344,6 +437,38 @@ describe("cron webhook schema", () => {
       },
     });
     expect(res.success).toBe(true);
+  });
+
+  it("accepts channel textChunkLimit config without reviving legacy message limits", () => {
+    const res = OpenClawSchema.safeParse({
+      messages: {
+        messagePrefix: "[openclaw]",
+        responsePrefix: "🦞",
+      },
+      channels: {
+        whatsapp: { allowFrom: ["+15555550123"], textChunkLimit: 4444 },
+        telegram: { enabled: true, textChunkLimit: 3333 },
+        discord: {
+          enabled: true,
+          textChunkLimit: 1999,
+          maxLinesPerMessage: 17,
+        },
+        signal: { enabled: true, textChunkLimit: 2222 },
+        imessage: { enabled: true, textChunkLimit: 1111 },
+      },
+    });
+
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.data.channels?.whatsapp?.textChunkLimit).toBe(4444);
+      expect(res.data.channels?.telegram?.textChunkLimit).toBe(3333);
+      expect(res.data.channels?.discord?.textChunkLimit).toBe(1999);
+      expect(res.data.channels?.discord?.maxLinesPerMessage).toBe(17);
+      expect(res.data.channels?.signal?.textChunkLimit).toBe(2222);
+      expect(res.data.channels?.imessage?.textChunkLimit).toBe(1111);
+      const legacy = (res.data.messages as unknown as Record<string, unknown>).textChunkLimit;
+      expect(legacy).toBeUndefined();
+    }
   });
 });
 
