@@ -1,7 +1,7 @@
 import path from "node:path";
 import {
   defaultQaModelForMode as resolveDefaultQaModelForMode,
-  normalizeQaProviderMode,
+  normalizeQaProviderMode as normalizeQaProviderModeInput,
   type QaProviderMode,
 } from "./model-selection.js";
 import type { QaSeedScenario } from "./scenario-catalog.js";
@@ -47,8 +47,8 @@ export function createDefaultQaRunSelection(scenarios: QaSeedScenario[]): QaLabR
   };
 }
 
-function normalizeProviderMode(input: unknown): QaProviderMode {
-  return normalizeQaProviderMode(
+export function normalizeQaProviderMode(input: unknown): QaProviderMode {
+  return normalizeQaProviderModeInput(
     input === "live-frontier" || input === "live-openai" ? input : "mock-openai",
   );
 }
@@ -76,7 +76,7 @@ export function normalizeQaRunSelection(
   scenarios: QaSeedScenario[],
 ): QaLabRunSelection {
   const payload = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const providerMode = normalizeProviderMode(payload.providerMode);
+  const providerMode = normalizeQaProviderMode(payload.providerMode);
   return {
     providerMode,
     primaryModel: normalizeModel(payload.primaryModel, defaultQaModelForMode(providerMode)),

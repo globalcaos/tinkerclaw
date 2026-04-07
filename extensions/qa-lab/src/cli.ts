@@ -9,7 +9,7 @@ async function loadQaLabCliRuntime(): Promise<QaLabCliRuntime> {
   return await qaLabCliRuntimePromise;
 }
 
-async function runQaSelfCheck(opts: { output?: string }) {
+async function runQaSelfCheck(opts: { repoRoot?: string; output?: string }) {
   const runtime = await loadQaLabCliRuntime();
   await runtime.runQaLabSelfCheckCommand(opts);
 }
@@ -46,6 +46,7 @@ function collectString(value: string, previous: string[]) {
 }
 
 async function runQaUi(opts: {
+  repoRoot?: string;
   host?: string;
   port?: number;
   advertiseHost?: string;
@@ -105,8 +106,9 @@ export function registerQaLabCli(program: Command) {
 
   qa.command("run")
     .description("Run the bundled QA self-check and write a Markdown report")
+    .option("--repo-root <path>", "Repository root to target when running from a neutral cwd")
     .option("--output <path>", "Report output path")
-    .action(async (opts: { output?: string }) => {
+    .action(async (opts: { repoRoot?: string; output?: string }) => {
       await runQaSelfCheck(opts);
     });
 
@@ -182,6 +184,7 @@ export function registerQaLabCli(program: Command) {
 
   qa.command("ui")
     .description("Start the private QA debugger UI and local QA bus")
+    .option("--repo-root <path>", "Repository root to target when running from a neutral cwd")
     .option("--host <host>", "Bind host", "127.0.0.1")
     .option("--port <port>", "Bind port", (value: string) => Number(value))
     .option("--advertise-host <host>", "Optional public host to advertise in bootstrap payloads")
@@ -204,6 +207,7 @@ export function registerQaLabCli(program: Command) {
     )
     .action(
       async (opts: {
+        repoRoot?: string;
         host?: string;
         port?: number;
         advertiseHost?: string;
