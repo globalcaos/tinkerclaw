@@ -45,6 +45,7 @@ import {
   normalizeAgentId,
   parseAgentSessionKey,
 } from "../routing/session-key.js";
+import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { createRunningTaskRun } from "../tasks/task-executor.js";
 import {
   deliveryContextFromSession,
@@ -233,9 +234,9 @@ function normalizeTelegramConversationIdFallback(params: {
   threadId?: string | number;
   groupId?: string;
 }): string | undefined {
-  const explicitGroupId = params.groupId?.trim();
+  const explicitGroupId = normalizeOptionalString(params.groupId);
   const explicitThreadId =
-    params.threadId != null ? String(params.threadId).trim() || undefined : undefined;
+    params.threadId != null ? normalizeOptionalString(String(params.threadId)) : undefined;
   if (
     explicitGroupId &&
     explicitThreadId &&
