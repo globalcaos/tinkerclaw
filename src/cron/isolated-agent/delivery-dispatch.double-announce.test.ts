@@ -712,6 +712,31 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     });
   });
 
+  it("passes threaded telegram delivery through to the outbound adapter", async () => {
+    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
+
+    const params = makeBaseParams({ synthesizedText: "Final weather summary" });
+    params.resolvedDelivery = {
+      ...makeResolvedDelivery(),
+      mode: "implicit",
+      threadId: 42,
+    };
+
+    const state = await dispatchCronDelivery(params);
+
+    expect(state.result).toBeUndefined();
+    expect(state.delivered).toBe(true);
+    expect(deliverOutboundPayloads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        to: "123456",
+        threadId: 42,
+        payloads: [{ text: "Final weather summary" }],
+      }),
+    );
+  });
+
   it("suppresses NO_REPLY payload with surrounding whitespace", async () => {
     vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);

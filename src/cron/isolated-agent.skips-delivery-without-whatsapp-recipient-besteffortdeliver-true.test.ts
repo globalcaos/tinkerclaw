@@ -1,5 +1,4 @@
 import "./isolated-agent.mocks.js";
-import fs from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as modelSelection from "../agents/model-selection.js";
 import { runSubagentAnnounceFlow } from "../agents/subagent-announce.js";
@@ -247,46 +246,6 @@ describe("runCronIsolatedAgentTurn", () => {
   beforeEach(() => {
     vi.spyOn(modelSelection, "resolveThinkingDefault").mockReturnValue("off");
     setupIsolatedAgentTurnMocks({ fast: true });
-  });
-
-  it("routes threaded announce targets through direct delivery", async () => {
-    await withTempHome(async (home) => {
-      const storePath = await writeSessionStore(home, { lastProvider: "webchat", lastTo: "" });
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            "agent:main:main": {
-              sessionId: "main-session",
-              updatedAt: Date.now(),
-              lastChannel: "telegram",
-              lastTo: "123",
-              lastThreadId: 42,
-            },
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      const deps = createCliDeps();
-      mockAgentPayloads([{ text: "Final weather summary" }]);
-      const res = await runTelegramAnnounceTurn({
-        home,
-        storePath,
-        deps,
-        delivery: { mode: "announce", channel: "last" },
-      });
-
-      expect(res.status).toBe("ok");
-      expect(res.delivered).toBe(true);
-      expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
-      expectDirectTelegramDelivery(deps, {
-        chatId: "123",
-        text: "Final weather summary",
-        messageThreadId: 42,
-      });
-    });
   });
 
   it("skips announce when messaging tool already sent to target", async () => {
