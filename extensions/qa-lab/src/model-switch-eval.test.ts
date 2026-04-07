@@ -25,4 +25,14 @@ describe("qa model-switch evaluation", () => {
       ),
     ).toBe(false);
   });
+
+  it("rejects over-scoped multi-line wrap-ups even if they mention a switch and the mission", () => {
+    expect(
+      hasModelSwitchContinuityEvidence(
+        `model switch acknowledged. qa mission stays the same.
+
+Final QA tally update: all mandatory scenarios resolved. QA run complete.`,
+      ),
+    ).toBe(false);
+  });
 });

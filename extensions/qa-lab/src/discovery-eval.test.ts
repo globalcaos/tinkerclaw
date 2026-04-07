@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { hasDiscoveryLabels, reportsMissingDiscoveryFiles } from "./discovery-eval.js";
+import {
+  hasDiscoveryLabels,
+  reportsDiscoveryScopeLeak,
+  reportsMissingDiscoveryFiles,
+} from "./discovery-eval.js";
 
 describe("qa discovery evaluation", () => {
   it("accepts rich discovery reports that explicitly confirm all required files were read", () => {
@@ -18,6 +22,7 @@ The helper text mentions banned phrases like "not present", "missing files", "bl
 
     expect(hasDiscoveryLabels(report)).toBe(true);
     expect(reportsMissingDiscoveryFiles(report)).toBe(false);
+    expect(reportsDiscoveryScopeLeak(report)).toBe(false);
   });
 
   it("accepts numeric 'all 4 required files read' confirmations", () => {
@@ -37,6 +42,7 @@ The report may quote phrases like "not present" while describing the evaluator, 
 
     expect(hasDiscoveryLabels(report)).toBe(true);
     expect(reportsMissingDiscoveryFiles(report)).toBe(false);
+    expect(reportsDiscoveryScopeLeak(report)).toBe(false);
   });
 
   it("accepts claude-style 'all four files retrieved' discovery summaries", () => {
@@ -54,6 +60,7 @@ Follow-up
 
     expect(hasDiscoveryLabels(report)).toBe(true);
     expect(reportsMissingDiscoveryFiles(report)).toBe(false);
+    expect(reportsDiscoveryScopeLeak(report)).toBe(false);
   });
 
   it("still flags genuine file-miss language when the report never confirms the required reads", () => {
@@ -70,5 +77,25 @@ Follow-up
 
     expect(hasDiscoveryLabels(report)).toBe(true);
     expect(reportsMissingDiscoveryFiles(report)).toBe(true);
+    expect(reportsDiscoveryScopeLeak(report)).toBe(false);
+  });
+
+  it("flags discovery replies that drift into unrelated suite wrap-up claims", () => {
+    const report = `
+Worked
+- All four requested files were read: repo/qa/seed-scenarios.json, repo/qa/QA_KICKOFF_TASK.md, repo/extensions/qa-lab/src/suite.ts, repo/docs/help/testing.md.
+Failed
+- None.
+Blocked
+- Runtime execution not attempted here.
+Follow-up
+- Run the live suite next.
+
+Final QA tally update: all mandatory scenarios resolved. QA run complete.
+`.trim();
+
+    expect(hasDiscoveryLabels(report)).toBe(true);
+    expect(reportsMissingDiscoveryFiles(report)).toBe(false);
+    expect(reportsDiscoveryScopeLeak(report)).toBe(true);
   });
 });
