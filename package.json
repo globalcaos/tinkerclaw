@@ -1217,6 +1217,7 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@mozilla/readability": "^0.6.0",
     "@sinclair/typebox": "0.34.49",
+    "@whatsmeow-node/whatsmeow-node": "0.5.3",
     "ajv": "^8.18.0",
     "better-sqlite3": "^11.8.1",
     "bindings": "^1.5.0",
