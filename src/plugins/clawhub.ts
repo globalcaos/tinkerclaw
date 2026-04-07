@@ -895,8 +895,8 @@ export async function installPluginFromClawHub(
       clawhub: {
         source: "clawhub",
         clawhubUrl:
-          params.baseUrl?.trim() ||
-          process.env.OPENCLAW_CLAWHUB_URL?.trim() ||
+          normalizeOptionalString(params.baseUrl) ||
+          normalizeOptionalString(process.env.OPENCLAW_CLAWHUB_URL) ||
           "https://clawhub.ai",
         clawhubPackage: parsed.name,
         clawhubFamily,

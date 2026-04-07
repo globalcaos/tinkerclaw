@@ -515,8 +515,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
 
   const describeHttpRouteOwner = (entry: PluginHttpRouteRegistration): string => {
-    const plugin = entry.pluginId?.trim() || "unknown-plugin";
-    const source = entry.source?.trim() || "unknown-source";
+    const plugin = normalizeOptionalString(entry.pluginId) || "unknown-plugin";
+    const source = normalizeOptionalString(entry.source) || "unknown-source";
     return `${plugin} (${source})`;
   };
 
