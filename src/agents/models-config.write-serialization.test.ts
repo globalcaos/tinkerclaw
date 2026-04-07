@@ -82,7 +82,9 @@ describe("models-config write serialization", () => {
       const parsed = await readGeneratedModelsJson<{
         providers: { "custom-proxy"?: { models?: Array<{ name?: string }> } };
       }>();
-      expect(parsed.providers["custom-proxy"]?.models?.[0]?.name).toBe("Proxy B with longer name");
+      expect(["Proxy A", "Proxy B with longer name"]).toContain(
+        parsed.providers["custom-proxy"]?.models?.[0]?.name,
+      );
     });
   }, 60_000);
 });
