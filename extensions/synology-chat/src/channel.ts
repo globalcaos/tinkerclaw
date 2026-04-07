@@ -308,7 +308,7 @@ export function createSynologyChatPlugin(): SynologyChatPlugin {
       text: {
         idLabel: "synologyChatUserId",
         message: "OpenClaw: your access has been approved.",
-        normalizeAllowEntry: (entry: string) => entry.toLowerCase().trim(),
+        normalizeAllowEntry: (entry: string) => normalizeLowercaseStringOrEmpty(entry),
         notify: async ({ cfg, id, message }) => {
           const account = resolveAccount(cfg);
           if (!account.incomingUrl) {
