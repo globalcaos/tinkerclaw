@@ -88,7 +88,7 @@ export function isAcpSessionKey(sessionKey: string | undefined | null): boolean 
   if (!raw) {
     return false;
   }
-  const normalized = normalizeOptionalLowercaseString(raw);
+  const normalized = normalizeLowercaseStringOrEmpty(raw);
   if (normalized.startsWith("acp:")) {
     return true;
   }
