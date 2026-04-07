@@ -12,7 +12,7 @@ export {
 export function deriveSessionChatType(sessionKey: string | undefined | null): SessionKeyChatType {
   return deriveSessionChatTypeFromKey(
     sessionKey,
-    iterateBootstrapChannelPlugins()
+    Array.from(iterateBootstrapChannelPlugins())
       .map((plugin) => plugin.messaging?.deriveLegacySessionChatType)
       .filter(
         (
