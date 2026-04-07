@@ -328,11 +328,11 @@ function buildAssistantText(input: ResponsesInputItem[], body: Record<string, un
   if (/memory tools check/i.test(prompt) && orbitCode) {
     return `Protocol note: I checked memory and the project codename is ${orbitCode}.`;
   }
+  if (/tool continuity check/i.test(prompt) && toolOutput) {
+    return `Protocol note: model switch handoff confirmed on ${model || "the requested model"}. QA mission from QA_KICKOFF_TASK.md still applies: understand this OpenClaw repo from source + docs before acting.`;
+  }
   if (/switch(?:ing)? models?/i.test(prompt)) {
     return `Protocol note: model switch acknowledged. Continuing on ${model || "the requested model"}.`;
-  }
-  if (/tool continuity check/i.test(prompt) && toolOutput) {
-    return `Protocol note: model switch acknowledged. Tool continuity held on ${model || "the requested model"}.`;
   }
   if (/image generation check/i.test(prompt) && mediaPath) {
     return `Protocol note: generated the QA lighthouse image successfully.\nMEDIA:${mediaPath}`;

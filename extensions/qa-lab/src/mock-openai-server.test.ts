@@ -425,6 +425,55 @@ describe("qa mock openai server", () => {
     expect(await response.text()).toContain('"name":"read"');
   });
 
+  it("returns continuity language after the model-switch reread completes", async () => {
+    const server = await startQaMockOpenAiServer({
+      host: "127.0.0.1",
+      port: 0,
+    });
+    cleanups.push(async () => {
+      await server.stop();
+    });
+
+    const response = await fetch(`${server.baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        stream: false,
+        model: "gpt-5.4-alt",
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "Switch models now. Tool continuity check: reread QA_KICKOFF_TASK.md and mention the handoff in one short sentence.",
+              },
+            ],
+          },
+          {
+            type: "function_call_output",
+            output: "QA mission: Understand this OpenClaw repo from source + docs before acting.",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      output: [
+        {
+          content: [
+            {
+              text: expect.stringContaining("model switch handoff confirmed"),
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("returns NO_REPLY for unmentioned group chatter", async () => {
     const server = await startQaMockOpenAiServer({
       host: "127.0.0.1",
