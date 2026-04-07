@@ -7,8 +7,10 @@ describe("record-coerce", () => {
   it("keeps record coercion behavior for optional and nullable variants", () => {
     expect(asOptionalRecord({ ok: true })).toEqual({ ok: true });
     expect(asOptionalRecord(null)).toBeUndefined();
+    expect(asOptionalRecord([{ ok: true }])).toBeUndefined();
     expect(asNullableRecord({ ok: true })).toEqual({ ok: true });
     expect(asNullableRecord(null)).toBeNull();
+    expect(asNullableRecord([{ ok: true }])).toBeNull();
   });
 
   it("stays isolated from utils.ts so browser bundles stay Node-free", () => {
