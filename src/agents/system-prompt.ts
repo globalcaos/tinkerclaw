@@ -5,6 +5,10 @@ import { resolveChannelApprovalCapability } from "../channels/plugins/approvals.
 import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { buildMemoryPromptSection } from "../plugins/memory-state.js";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+} from "../shared/string-coerce.js";
 import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
@@ -47,7 +51,7 @@ function normalizeContextFilePath(pathValue: string): string {
 
 function getContextFileBasename(pathValue: string): string {
   const normalizedPath = normalizeContextFilePath(pathValue);
-  return (normalizedPath.split("/").pop() ?? normalizedPath).toLowerCase();
+  return normalizeLowercaseStringOrEmpty(normalizedPath.split("/").pop() ?? normalizedPath);
 }
 
 function isDynamicContextFile(pathValue: string): boolean {
@@ -297,7 +301,7 @@ function buildExecApprovalPromptGuidance(params: {
   runtimeChannel?: string;
   inlineButtonsEnabled?: boolean;
 }) {
-  const runtimeChannel = params.runtimeChannel?.trim().toLowerCase();
+  const runtimeChannel = normalizeOptionalLowercaseString(params.runtimeChannel);
   const usesNativeApprovalUi =
     runtimeChannel === "webchat" ||
     params.inlineButtonsEnabled === true ||
@@ -368,7 +372,7 @@ export function buildAgentSystemPrompt(params: {
   // Preserve caller casing while deduping tool names by lowercase.
   const canonicalByNormalized = new Map<string, string>();
   for (const name of canonicalToolNames) {
-    const normalized = name.toLowerCase();
+    const normalized = normalizeLowercaseStringOrEmpty(name);
     if (!canonicalByNormalized.has(normalized)) {
       canonicalByNormalized.set(normalized, name);
     }
@@ -376,7 +380,7 @@ export function buildAgentSystemPrompt(params: {
   const resolveToolName = (normalized: string) =>
     canonicalByNormalized.get(normalized) ?? normalized;
 
-  const normalizedTools = canonicalToolNames.map((tool) => tool.toLowerCase());
+  const normalizedTools = canonicalToolNames.map((tool) => normalizeLowercaseStringOrEmpty(tool));
   const availableTools = new Set(normalizedTools);
   const hasSessionsSpawn = availableTools.has("sessions_spawn");
   const hasUpdatePlanTool = availableTools.has("update_plan");
@@ -430,10 +434,10 @@ export function buildAgentSystemPrompt(params: {
       ? normalizeStructuredPromptSection(params.heartbeatPrompt)
       : undefined;
   const runtimeInfo = params.runtimeInfo;
-  const runtimeChannel = runtimeInfo?.channel?.trim().toLowerCase();
+  const runtimeChannel = normalizeOptionalLowercaseString(runtimeInfo?.channel);
   const runtimeCapabilities = runtimeInfo?.capabilities ?? [];
   const runtimeCapabilitiesLower = new Set(
-    runtimeCapabilities.map((cap) => String(cap).trim().toLowerCase()).filter(Boolean),
+    runtimeCapabilities.map((cap) => normalizeLowercaseStringOrEmpty(String(cap))).filter(Boolean),
   );
   const inlineButtonsEnabled = runtimeCapabilitiesLower.has("inlinebuttons");
   const messageChannelOptions = listDeliverableMessageChannels().join("|");
