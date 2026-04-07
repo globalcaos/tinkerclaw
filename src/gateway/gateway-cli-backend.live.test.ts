@@ -148,6 +148,7 @@ describeLive("gateway live (cli backend)", () => {
       const nextCfg = {
         ...cfg,
         gateway: {
+          mode: "local",
           ...cfg.gateway,
           port,
           auth: { mode: "token", token },

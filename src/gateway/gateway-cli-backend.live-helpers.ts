@@ -316,8 +316,6 @@ export function applyCliBackendLiveEnv(preservedEnv: ReadonlySet<string>): void 
   process.env.OPENCLAW_SKIP_CRON = "1";
   process.env.OPENCLAW_SKIP_CANVAS_HOST = "1";
   process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER = "1";
-  process.env.OPENCLAW_BUNDLED_PLUGINS_DIR =
-    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR ?? "openclaw-live-test-no-bundled-extensions";
   process.env.OPENCLAW_TEST_MINIMAL_GATEWAY = "1";
   if (!preservedEnv.has("ANTHROPIC_API_KEY")) {
     delete process.env.ANTHROPIC_API_KEY;
