@@ -671,13 +671,15 @@ function isProvider(provider: string | undefined, match: string): boolean {
 
 function isAnthropicGenericUnknownError(raw: string, provider?: string): boolean {
   return (
-    isProvider(provider, "anthropic") && raw.toLowerCase().includes("an unknown error occurred")
+    isProvider(provider, "anthropic") &&
+    (normalizeOptionalLowercaseString(raw)?.includes("an unknown error occurred") ?? false)
   );
 }
 
 function isOpenRouterProviderReturnedError(raw: string, provider?: string): boolean {
   return (
-    isProvider(provider, "openrouter") && raw.toLowerCase().includes("provider returned error")
+    isProvider(provider, "openrouter") &&
+    (normalizeOptionalLowercaseString(raw)?.includes("provider returned error") ?? false)
   );
 }
 

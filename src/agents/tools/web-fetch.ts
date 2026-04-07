@@ -4,7 +4,10 @@ import { SsrFBlockedError, type LookupFn } from "../../infra/net/ssrf.js";
 import { logDebug } from "../../logger.js";
 import type { RuntimeWebFetchMetadata } from "../../secrets/runtime-web-tools.types.js";
 import { wrapExternalContent, wrapWebContent } from "../../security/external-content.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import {
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+} from "../../shared/string-coerce.js";
 import { isRecord } from "../../utils.js";
 import { resolveWebFetchDefinition } from "../../web-fetch/runtime.js";
 import { resolveWebProviderConfig } from "../../web/provider-runtime-shared.js";
@@ -141,7 +144,7 @@ function formatWebFetchErrorDetail(params: {
     return "";
   }
   let text = detail;
-  const contentTypeLower = contentType?.toLowerCase();
+  const contentTypeLower = normalizeOptionalLowercaseString(contentType);
   if (contentTypeLower?.includes("text/html") || looksLikeHtml(detail)) {
     const rendered = htmlToMarkdown(detail);
     const withTitle = rendered.title ? `${rendered.title}\n${rendered.text}` : rendered.text;
