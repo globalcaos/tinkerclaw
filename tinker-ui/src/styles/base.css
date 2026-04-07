@@ -2940,6 +2940,101 @@ body {
   letter-spacing: 0.5px;
 }
 
+/* ─── Recipes Tab ─── */
+.recipes-view {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+  max-height: 100%;
+}
+.recipe-category {
+  border-left: 3px solid var(--cat-color);
+  padding-left: 12px;
+}
+.recipe-cat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cat-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.recipe-cat-count {
+  background: rgba(255,255,255,0.08);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: #9a8e7a;
+}
+.recipe-card {
+  background: #2a2318;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(193,154,107,0.1);
+  transition: border-color 0.2s;
+}
+.recipe-card:hover {
+  border-color: rgba(193,154,107,0.3);
+}
+.recipe-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.recipe-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: #e8e0d4;
+}
+.recipe-trigger {
+  font-size: 11px;
+  color: #9a8e7a;
+  font-style: italic;
+}
+.recipe-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #c19a6b;
+  flex-wrap: wrap;
+}
+.recipe-step {
+  background: rgba(193,154,107,0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.recipe-step-arrow {
+  color: #6b5a48;
+  font-size: 10px;
+}
+.recipe-children {
+  margin-top: 6px;
+  padding-left: 16px;
+  border-left: 1px solid rgba(193,154,107,0.15);
+}
+.recipe-child {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 11px;
+}
+.recipe-child-name {
+  color: #c4b8a8;
+}
+.recipe-child-trigger {
+  color: #7a6e5e;
+  font-style: italic;
+  font-size: 10px;
+}
+
 /* ─── Prefrontal Panel ─── */
 .pf-tree-panel {
   background: url("./wood-panel.jpg") repeat;

@@ -4319,6 +4319,7 @@ function init() {
       <button class="nav-btn" data-tab="config" data-hint="Config"><svg viewBox="0 0 24 24" style="stroke:#a1a1aa"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       <button class="nav-btn" data-tab="debug" data-hint="Debug"><svg viewBox="0 0 24 24" style="stroke:#f87171"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3 3 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg></button>
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
+      <button class="nav-btn" data-tab="recipes" data-hint="Recipes"><svg viewBox="0 0 24 24" style="stroke:#d4a574"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="12" y1="17" y2="17"/><line x1="8" x2="10" y1="9" y2="9"/></svg></button>
     </nav>
     <div class="topbar">
       <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=4" alt="T" style="height:76px;width:auto" onmouseenter="this.src='${BASE}icon-neon.png?v=1'" onmouseleave="this.src='${BASE}icon.png?v=4'"><img src="${BASE}icon-neon.png?v=1" style="display:none" aria-hidden="true"></div>
@@ -4596,7 +4597,8 @@ function init() {
     | "nodes"
     | "config"
     | "debug"
-    | "logs";
+    | "logs"
+    | "recipes";
 
   const TAB_COLORS: Record<AltTab, string> = {
     overview: "#4ade80",
@@ -4610,6 +4612,7 @@ function init() {
     config: "#a1a1aa",
     debug: "#f87171",
     logs: "#94a3b8",
+    recipes: "#d4a574",
   };
 
   function switchTab(tab: string) {
@@ -4876,6 +4879,9 @@ function init() {
           break;
         case "logs":
           await renderLogsTab(body, sub);
+          break;
+        case "recipes":
+          renderRecipesTab(body, sub);
           break;
       }
     } catch (e) {
@@ -6424,6 +6430,113 @@ function init() {
     }
     send("/new");
   });
+
+  // ═══════════════ RECIPES ═══════════════
+  const RECIPE_CATEGORIES = {
+    coding: { label: "Coding", color: "#6b8e23", icon: "\u2328\uFE0F" },
+    writing: { label: "Writing & Research", color: "#8b5cf6", icon: "\uD83D\uDCDD" },
+    operations: { label: "Operations", color: "#f59e0b", icon: "\u2699\uFE0F" },
+    analysis: { label: "Analysis", color: "#3b82f6", icon: "\uD83D\uDD0D" },
+    security: { label: "Security", color: "#ef4444", icon: "\uD83D\uDEE1\uFE0F" },
+    communication: { label: "Communication", color: "#10b981", icon: "\uD83D\uDCAC" },
+  } as const;
+
+  interface RecipeChild {
+    name: string;
+    trigger: string;
+  }
+
+  interface Recipe {
+    name: string;
+    trigger: string;
+    steps: string[];
+    children?: RecipeChild[];
+    category: keyof typeof RECIPE_CATEGORIES;
+  }
+
+  const RECIPE_CATALOG: Recipe[] = [
+    // ── Coding ──
+    { category: "coding", name: "Debug & Fix", trigger: "bug, error, crash, broken", steps: ["reproduce", "diagnose", "fix", "verify"], children: [
+      { name: "Memory Leak Debug", trigger: "memory leak, heap, OOM" },
+      { name: "API Error Debug", trigger: "API error, 500, timeout" },
+      { name: "UI Regression Debug", trigger: "UI regression, layout, render" },
+    ]},
+    { category: "coding", name: "Build Feature", trigger: "feature, implement, add", steps: ["explore", "design", "test", "implement", "verify"] },
+    { category: "coding", name: "Refactor", trigger: "refactor, clean, simplify", steps: ["understand", "baseline-tests", "refactor", "verify"] },
+    { category: "coding", name: "Code Review", trigger: "review, PR, diff", steps: ["read-changes", "context", "assess", "report"] },
+    { category: "coding", name: "Upstream Merge", trigger: "merge, upstream, sync", steps: ["fetch", "merge", "resolve-conflicts", "wire", "build", "test", "push"] },
+    { category: "coding", name: "Fork Patch", trigger: "fork, patch, re-wire", steps: ["identify-target", "accept-upstream", "re-wire-hooks", "build", "verify"] },
+    // ── Writing & Research ──
+    { category: "writing", name: "Write Paper", trigger: "paper, article, publication", steps: ["literature-review", "outline", "draft", "figures", "review", "revise"] },
+    { category: "writing", name: "Brainstorm", trigger: "brainstorm, ideate, explore", steps: ["explore-context", "clarify-intent", "propose-approaches", "present-design", "write-spec"], children: [
+      { name: "Feature Brainstorm", trigger: "feature idea, new capability" },
+      { name: "Architecture Brainstorm", trigger: "architecture, system design" },
+    ]},
+    { category: "writing", name: "Write Plan", trigger: "plan, spec, implementation", steps: ["read-spec", "map-files", "define-tasks", "write-tests", "implementation-steps"] },
+    // ── Operations ──
+    { category: "operations", name: "Gateway Restart", trigger: "restart, gateway, reload", steps: ["check-active-sessions", "save-state", "restart", "verify-health", "verify-whatsapp"] },
+    { category: "operations", name: "Security Audit", trigger: "audit, secrets, scan", steps: ["scan-secrets", "check-git-history", "scan-PII", "check-gitignore", "report"] },
+    { category: "operations", name: "Deploy", trigger: "deploy, release, ship", steps: ["build", "test", "backup", "deploy", "smoke-test", "monitor"] },
+    // ── Analysis ──
+    { category: "analysis", name: "Investigate", trigger: "investigate, dig, explore", steps: ["scope", "gather", "analyze", "report"] },
+    { category: "analysis", name: "Performance Audit", trigger: "performance, slow, profile", steps: ["profile", "identify-bottlenecks", "measure", "optimize", "verify"] },
+    { category: "analysis", name: "Dependency Analysis", trigger: "dependencies, outdated, risk", steps: ["inventory", "check-versions", "assess-risk", "update-plan"] },
+    // ── Security ──
+    { category: "security", name: "Incident Response", trigger: "incident, breach, compromise", steps: ["detect", "contain", "investigate", "remediate", "postmortem"] },
+    { category: "security", name: "Credential Rotation", trigger: "rotate, credentials, keys", steps: ["inventory", "generate-new", "update-configs", "verify", "revoke-old"] },
+    // ── Communication ──
+    { category: "communication", name: "Daily Report", trigger: "daily, status, standup", steps: ["gather-status", "analyze-changes", "format", "deliver"] },
+    { category: "communication", name: "Jarvis Report", trigger: "report, incident, summary", steps: ["incident-summary", "root-cause", "changes", "rationale", "suggested-actions"] },
+  ];
+
+  function renderRecipesTab(body: Element, sub: Element) {
+    const grouped = new Map<string, Recipe[]>();
+    for (const r of RECIPE_CATALOG) {
+      const list = grouped.get(r.category) ?? [];
+      list.push(r);
+      grouped.set(r.category, list);
+    }
+
+    let html = '<div class="recipes-view">';
+    for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
+      const recipes = grouped.get(catKey) ?? [];
+      if (!recipes.length) continue;
+      html += `<div class="recipe-category" style="--cat-color:${cat.color}">`;
+      html += `<div class="recipe-cat-header">`;
+      html += `<span class="recipe-cat-icon">${cat.icon}</span>`;
+      html += `<span class="recipe-cat-label">${cat.label}</span>`;
+      html += `<span class="recipe-cat-count">${recipes.length}</span>`;
+      html += `</div><div class="recipe-cat-items">`;
+      for (const r of recipes) {
+        html += `<div class="recipe-card">`;
+        html += `<div class="recipe-card-header">`;
+        html += `<span class="recipe-name">${altEsc(r.name)}</span>`;
+        html += `<span class="recipe-trigger">${altEsc(r.trigger)}</span>`;
+        html += `</div><div class="recipe-steps">`;
+        r.steps.forEach((s, i) => {
+          if (i > 0) html += `<span class="recipe-step-arrow">\u2192</span>`;
+          html += `<span class="recipe-step">${altEsc(s)}</span>`;
+        });
+        html += `</div>`;
+        if (r.children?.length) {
+          html += `<div class="recipe-children">`;
+          for (const c of r.children) {
+            html += `<div class="recipe-child">`;
+            html += `<span class="recipe-child-name">${altEsc(c.name)}</span>`;
+            html += `<span class="recipe-child-trigger">${altEsc(c.trigger)}</span>`;
+            html += `</div>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+
+    sub.textContent = `${RECIPE_CATALOG.length} recipes in ${Object.keys(RECIPE_CATEGORIES).length} categories`;
+    body.innerHTML = html;
+  }
 
   // ─── Tab bar events ───
   $("tab-bar-scroll")!.addEventListener("click", (e) => {
