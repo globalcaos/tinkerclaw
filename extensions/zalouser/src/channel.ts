@@ -320,7 +320,12 @@ export const zalouserPlugin: ChannelPlugin<ResolvedZalouserAccount, ZalouserProb
         listGroupMembers: async ({ cfg, accountId, groupId, limit }) => {
           const { listZaloGroupMembers } = await loadZalouserChannelRuntime();
           return await listZalouserDirectoryGroupMembers(
-            { cfg, accountId, groupId, limit },
+            {
+              cfg,
+              accountId: accountId ?? undefined,
+              groupId,
+              limit: limit ?? undefined,
+            },
             { listZaloGroupMembers },
           );
         },
