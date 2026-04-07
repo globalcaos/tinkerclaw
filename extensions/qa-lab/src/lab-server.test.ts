@@ -353,6 +353,58 @@ describe("qa-lab server", () => {
     );
   });
 
+  it("does not eagerly load the runner model catalog before bootstrap is requested", async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "qa-lab-lazy-catalog-"));
+    cleanups.push(async () => {
+      await rm(repoRoot, { recursive: true, force: true });
+    });
+    const markerPath = path.join(repoRoot, "runner-catalog-hit.txt");
+
+    await mkdir(path.join(repoRoot, "dist"), { recursive: true });
+    await mkdir(path.join(repoRoot, "extensions/qa-lab/web/dist"), { recursive: true });
+    await writeFile(
+      path.join(repoRoot, "dist/index.js"),
+      [
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(markerPath)}, process.argv.slice(2).join(" "), "utf8");`,
+        "process.stdout.write(JSON.stringify({",
+        "  models: [{",
+        '    key: "openai/gpt-5.4",',
+        '    name: "GPT-5.4",',
+        '    input: "openai/gpt-5.4",',
+        "    available: true,",
+        "    missing: false,",
+        "  }],",
+        "}));",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      path.join(repoRoot, "extensions/qa-lab/web/dist/index.html"),
+      "<!doctype html><html><body>lazy catalog</body></html>",
+      "utf8",
+    );
+
+    const lab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+      repoRoot,
+    });
+    cleanups.push(async () => {
+      await lab.stop();
+    });
+
+    await sleep(150);
+    await expect(readFile(markerPath, "utf8")).rejects.toThrow();
+
+    const bootstrapResponse = await fetchWithRetry(`${lab.baseUrl}/api/bootstrap`);
+    expect(bootstrapResponse.status).toBe(200);
+
+    const runnerCatalog = await waitForRunnerCatalog(lab.baseUrl);
+    expect(runnerCatalog.status).toBe("ready");
+    expect(await readFile(markerPath, "utf8")).toContain("models list --all --json");
+  });
+
   it("can disable the embedded echo gateway for real-suite runs", async () => {
     const lab = await startQaLabServer({
       host: "127.0.0.1",
