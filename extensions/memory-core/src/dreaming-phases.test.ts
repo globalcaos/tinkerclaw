@@ -1177,7 +1177,7 @@ describe("memory-core dreaming phases", () => {
   });
 
   it("records light/rem signals that reinforce deep promotion ranking", async () => {
-    const workspaceDir = await createTempWorkspace("openclaw-dreaming-phases-");
+    const workspaceDir = await createDreamingWorkspace();
     const nowMs = Date.parse("2026-04-05T10:00:00.000Z");
     await recordShortTermRecalls({
       workspaceDir,
