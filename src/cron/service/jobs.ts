@@ -27,8 +27,6 @@ import { normalizeHttpWebhookUrl } from "../webhook-url.js";
 import { resolveInitialCronDelivery } from "./initial-delivery.js";
 import {
   normalizeOptionalAgentId,
-  normalizeOptionalSessionKey,
-  normalizeOptionalText,
   normalizePayloadToSystemText,
   normalizeRequiredName,
 } from "./normalize.js";
@@ -543,9 +541,9 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
   const job: CronJob = {
     id,
     agentId: normalizeOptionalAgentId(input.agentId),
-    sessionKey: normalizeOptionalSessionKey((input as { sessionKey?: unknown }).sessionKey),
+    sessionKey: normalizeOptionalString((input as { sessionKey?: unknown }).sessionKey),
     name: normalizeRequiredName(input.name),
-    description: normalizeOptionalText(input.description),
+    description: normalizeOptionalString(input.description),
     enabled,
     deleteAfterRun,
     createdAtMs: now,
@@ -577,7 +575,7 @@ export function applyJobPatch(
     job.name = normalizeRequiredName(patch.name);
   }
   if ("description" in patch) {
-    job.description = normalizeOptionalText(patch.description);
+    job.description = normalizeOptionalString(patch.description);
   }
   if (typeof patch.enabled === "boolean") {
     job.enabled = patch.enabled;
@@ -637,7 +635,7 @@ export function applyJobPatch(
     job.agentId = normalizeOptionalAgentId((patch as { agentId?: unknown }).agentId);
   }
   if ("sessionKey" in patch) {
-    job.sessionKey = normalizeOptionalSessionKey((patch as { sessionKey?: unknown }).sessionKey);
+    job.sessionKey = normalizeOptionalString((patch as { sessionKey?: unknown }).sessionKey);
   }
   assertSupportedJobSpec(job);
   assertMainSessionAgentId(job, opts?.defaultAgentId);
