@@ -253,7 +253,8 @@ function resolveBundledEntryModulePath(importMetaUrl: string, specifier: string)
 
 function getJiti(modulePath: string) {
   const tryNative =
-    shouldPreferNativeJiti(modulePath) || modulePath.includes(`${path.sep}dist${path.sep}`);
+    shouldPreferNativeJiti(modulePath) ||
+    (process.platform !== "win32" && modulePath.includes(`${path.sep}dist${path.sep}`));
   const aliasMap = buildPluginLoaderAliasMap(modulePath, process.argv[1], import.meta.url);
   const cacheKey = JSON.stringify({
     tryNative,
