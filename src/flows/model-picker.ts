@@ -413,8 +413,9 @@ export async function promptDefaultModel(
   const includeManual = params.includeManual ?? true;
   const includeProviderPluginSetups = params.includeProviderPluginSetups ?? false;
   const ignoreAllowlist = params.ignoreAllowlist ?? false;
-  const preferredProvider = normalizeOptionalString(params.preferredProvider)
-    ? normalizeProviderId(params.preferredProvider)
+  const preferredProviderRaw = normalizeOptionalString(params.preferredProvider);
+  const preferredProvider = preferredProviderRaw
+    ? normalizeProviderId(preferredProviderRaw)
     : undefined;
   const configuredRaw = resolveConfiguredModelRaw(cfg);
   const resolved = resolveConfiguredModelRef({
@@ -581,8 +582,9 @@ export async function promptModelAllowlist(params: {
   const existingKeys = resolveConfiguredModelKeys(cfg);
   const allowedKeys = normalizeModelKeys(params.allowedKeys ?? []);
   const allowedKeySet = allowedKeys.length > 0 ? new Set(allowedKeys) : null;
-  const preferredProvider = normalizeOptionalString(params.preferredProvider)
-    ? normalizeProviderId(params.preferredProvider)
+  const preferredProviderRaw = normalizeOptionalString(params.preferredProvider);
+  const preferredProvider = preferredProviderRaw
+    ? normalizeProviderId(preferredProviderRaw)
     : undefined;
   const resolved = resolveConfiguredModelRef({
     cfg,
