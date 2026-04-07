@@ -6,6 +6,33 @@ const require = createRequire(import.meta.url);
 const repoRoot = resolve(import.meta.dirname, "..");
 const tscBin = require.resolve("typescript/bin/tsc");
 
+export function createPrefixedOutputWriter(label, target) {
+  let buffered = "";
+  const prefix = `[${label}] `;
+
+  return {
+    write(chunk) {
+      buffered += chunk;
+      while (true) {
+        const newlineIndex = buffered.indexOf("\n");
+        if (newlineIndex === -1) {
+          return;
+        }
+        const line = buffered.slice(0, newlineIndex + 1);
+        buffered = buffered.slice(newlineIndex + 1);
+        target.write(`${prefix}${line}`);
+      }
+    },
+    flush() {
+      if (!buffered) {
+        return;
+      }
+      target.write(`${prefix}${buffered}`);
+      buffered = "";
+    },
+  };
+}
+
 function runNodeStep(label, args, timeoutMs) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, args, {
@@ -14,27 +41,27 @@ function runNodeStep(label, args, timeoutMs) {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let stdout = "";
-    let stderr = "";
     let settled = false;
+    const stdoutWriter = createPrefixedOutputWriter(label, process.stdout);
+    const stderrWriter = createPrefixedOutputWriter(label, process.stderr);
     const timer = setTimeout(() => {
       if (settled) {
         return;
       }
       child.kill("SIGTERM");
       settled = true;
-      rejectPromise(
-        new Error(`${label}\n${stdout}${stderr}\n${label} timed out after ${timeoutMs}ms`.trim()),
-      );
+      stdoutWriter.flush();
+      stderrWriter.flush();
+      rejectPromise(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdout += chunk;
+      stdoutWriter.write(chunk);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk;
+      stderrWriter.write(chunk);
     });
     child.on("error", (error) => {
       if (settled) {
@@ -42,7 +69,9 @@ function runNodeStep(label, args, timeoutMs) {
       }
       clearTimeout(timer);
       settled = true;
-      rejectPromise(new Error(`${label}\n${stdout}${stderr}\n${error.message}`.trim()));
+      stdoutWriter.flush();
+      stderrWriter.flush();
+      rejectPromise(new Error(`${label} failed to start: ${error.message}`));
     });
     child.on("close", (code) => {
       if (settled) {
@@ -50,16 +79,18 @@ function runNodeStep(label, args, timeoutMs) {
       }
       clearTimeout(timer);
       settled = true;
+      stdoutWriter.flush();
+      stderrWriter.flush();
       if (code === 0) {
         resolvePromise();
         return;
       }
-      rejectPromise(new Error(`${label}\n${stdout}${stderr}`.trim()));
+      rejectPromise(new Error(`${label} failed with exit code ${code ?? 1}`));
     });
   });
 }
 
-async function main() {
+export async function main() {
   try {
     await Promise.all([
       runNodeStep(
@@ -84,4 +115,6 @@ async function main() {
   }
 }
 
-await main();
+if (import.meta.main) {
+  await main();
+}
