@@ -171,24 +171,37 @@ export function mountContextTimeline(
   onGroupLineClick?: (groupIndex: number, firstEvent: AnatomyEvent) => void,
   onFilterModeChange?: (mode: "session" | "all") => void,
   getAuthHeaders?: () => Record<string, string>,
+  reqFn?: (method: string, params?: any) => Promise<any>,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
   let selectedIdx: number | null = null;
   let selectedMode: "context" | "response" = "context";
   let groupCounter = 0;
   let tooltipEl: HTMLElement | null = null;
-  let filterMode: "session" | "all" = "all";
+  let filterMode: "session" | "all" = "session";
   let currentGlobalMax = 200_000;
   let hasMoreHistory = false;
   let loadingMore = false;
 
-  /** Fetch timeline API. In dev mode (Vite), uses relative URL so the Vite proxy
-   *  handles auth server-side — avoids CORS preflight from cross-origin Authorization header. */
-  function authedFetch(url: string): Promise<Response> {
-    // If URL is absolute (http://localhost:18789/tinker/api/...), convert to relative
-    // (/tinker/api/...) so the Vite dev server proxy handles the request + auth.
-    const relativeUrl = url.replace(/^https?:\/\/[^/]+/, "");
-    return fetch(relativeUrl);
+  /** Fetch timeline data via WS (preferred) or HTTP fallback. */
+  async function fetchAnatomy(method: string, params: any): Promise<any> {
+    if (reqFn) return reqFn(method, params);
+    // HTTP fallback (prod mode where same-origin works)
+    const base = getGatewayBase();
+    const headers = getAuthHeaders?.() ?? {};
+    let url: string;
+    if (method === "anatomy.recent") {
+      url = `${base}/tinker/api/context-anatomy/recent?hours=${params.hours}&limit=${params.limit}`;
+    } else if (method === "anatomy.before") {
+      url = `${base}/tinker/api/context-anatomy/before?ts=${params.beforeMs}&limit=${params.limit}`;
+    } else if (method === "anatomy.session") {
+      url = `${base}/tinker/api/context-anatomy/${encodeURIComponent(params.sessionKey)}?limit=${params.limit}`;
+    } else {
+      throw new Error(`Unknown anatomy method: ${method}`);
+    }
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json();
   }
 
   /** Append events to buffer with session-boundary group detection. Events must be in ASC order. */
@@ -240,16 +253,11 @@ export function mountContextTimeline(
   async function loadOlderPage() {
     if (loadingMore || !hasMoreHistory || buffer.length === 0) return;
     loadingMore = true;
-    const oldestTs = buffer[0].event.timestampMs ?? buffer[0].event.timestamp_ms;
+    const oldestTs = buffer[0].event.timestampMs ?? (buffer[0].event as any).timestamp_ms;
     if (!oldestTs) { loadingMore = false; return; }
-    const base = getGatewayBase();
     const pageSize = Math.max(30, Math.ceil(container.clientWidth / BAR_WIDTH_PX));
     try {
-      const resp = await authedFetch(
-        `${base}/tinker/api/context-anatomy/before?ts=${oldestTs}&limit=${pageSize}`,
-      );
-      if (!resp.ok) { loadingMore = false; return; }
-      const body = await resp.json();
+      const body = await fetchAnatomy("anatomy.before", { beforeMs: oldestTs, limit: pageSize });
       const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
       hasMoreHistory = events.length >= pageSize;
       if (events.length > 0) {
@@ -859,40 +867,25 @@ export function mountContextTimeline(
         return;
       }
 
-      const base = getGatewayBase();
       try {
-        const resp = await authedFetch(
-          `${base}/tinker/api/context-anatomy/${encodeURIComponent(sessionKey)}?limit=${MAX_BUFFER}`,
-        );
-        if (!resp.ok) {
-          // Keep existing buffer on fetch failure
-          return;
-        }
-        const body = await resp.json();
-        // API returns { sessionKey, count, events: [...] } — DESC order from DB
+        const body = await fetchAnatomy("anatomy.session", { sessionKey, limit: MAX_BUFFER });
         const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
 
-        // Replace buffer only now that we have data (or confirmed empty)
         buffer.length = 0;
         selectedIdx = null;
         groupCounter = 0;
 
         if (events.length > 0) {
-          // API returns newest-first (DESC); reverse to chronological for display
+          // WS/API returns newest-first (DESC); reverse to chronological for display
           events.reverse();
-
-          // Backfill with turn-based grouping
           for (const ev of events) {
             const groupId = assignGroupId(undefined, ev);
             push({ event: ev, groupId });
           }
-
-          // Auto-select latest
           selectedIdx = buffer.length - 1;
           onBarSelect(buffer[selectedIdx].event, "context");
         }
       } catch {
-        // API not available — keep existing buffer
         return;
       }
       render();
@@ -953,16 +946,12 @@ export function mountContextTimeline(
     },
 
     async loadAllSessions(_sessionKeys?: string[]) {
-      const base = getGatewayBase();
-      // Estimate how many bars fit on screen, fetch that + a small buffer
       const screenBars = Math.max(20, Math.ceil(container.clientWidth / BAR_WIDTH_PX));
       const initialLimit = screenBars + 10;
+      console.log("[timeline] loadAllSessions called, limit=", initialLimit);
       try {
-        const resp = await authedFetch(
-          `${base}/tinker/api/context-anatomy/recent?hours=8760&limit=${initialLimit}`,
-        );
-        if (!resp.ok) return;
-        const body = await resp.json();
+        const body = await fetchAnatomy("anatomy.recent", { hours: 8760, limit: initialLimit });
+        console.log("[timeline] loadAllSessions got", body?.count ?? body?.events?.length ?? 0, "events");
         const allEvents: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
 
         buffer.length = 0;
@@ -975,7 +964,8 @@ export function mountContextTimeline(
           selectedIdx = buffer.length - 1;
           onBarSelect(buffer[selectedIdx].event, "context");
         }
-      } catch {
+      } catch (e: any) {
+        console.error("[timeline] loadAllSessions failed:", e?.message ?? e);
         return;
       }
       render();
