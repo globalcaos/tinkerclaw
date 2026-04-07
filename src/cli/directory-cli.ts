@@ -144,7 +144,8 @@ export function registerDirectoryCli(program: Command) {
     if (!plugin) {
       throw new Error(`Unsupported channel: ${String(channelId)}`);
     }
-    const accountId = opts.account?.trim() || resolveChannelDefaultAccountId({ plugin, cfg });
+    const accountId =
+      normalizeOptionalString(opts.account) || resolveChannelDefaultAccountId({ plugin, cfg });
     return { cfg, channelId, accountId, plugin };
   };
 
