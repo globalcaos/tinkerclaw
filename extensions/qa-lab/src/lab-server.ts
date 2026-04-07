@@ -855,6 +855,7 @@ export async function startQaLabServer(params?: {
         state,
         cfg: gateway?.cfg ?? createQaLabConfig(listenUrl),
         outputPath: params?.outputPath,
+        repoRoot,
       });
       latestScenarioRun = withQaLabRunCounts({
         kind: "self-check",

@@ -100,6 +100,26 @@ describe("qa-lab server", () => {
     expect(markdown).toContain("- Status: pass");
   });
 
+  it("anchors direct self-check runs under the explicit repo root by default", async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "qa-lab-self-check-root-"));
+    cleanups.push(async () => {
+      await rm(repoRoot, { recursive: true, force: true });
+    });
+
+    const lab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+      repoRoot,
+    });
+    cleanups.push(async () => {
+      await lab.stop();
+    });
+
+    const result = await lab.runSelfCheck();
+    expect(result.outputPath).toBe(path.join(repoRoot, ".artifacts", "qa-e2e", "self-check.md"));
+    expect(await readFile(result.outputPath, "utf8")).toContain("Synthetic Slack-class roundtrip");
+  });
+
   it("injects the kickoff task on demand and on startup", async () => {
     const autoKickoffLab = await startQaLabServer({
       host: "127.0.0.1",
