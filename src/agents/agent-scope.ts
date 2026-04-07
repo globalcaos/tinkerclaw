@@ -11,7 +11,7 @@ import {
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
 } from "../routing/session-key.js";
-import { readStringValue } from "../shared/string-coerce.js";
+import { normalizeOptionalString, readStringValue } from "../shared/string-coerce.js";
 import { resolveUserPath } from "../utils.js";
 import { resolveEffectiveAgentSkillFilter } from "./skills/agent-filter.js";
 import { resolveDefaultAgentWorkspaceDir } from "./workspace.js";
@@ -172,18 +172,13 @@ export function resolveAgentSkillsFilter(
 
 function resolveModelPrimary(raw: unknown): string | undefined {
   if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    return trimmed || undefined;
+    return normalizeOptionalString(raw);
   }
   if (!raw || typeof raw !== "object") {
     return undefined;
   }
   const primary = (raw as { primary?: unknown }).primary;
-  if (typeof primary !== "string") {
-    return undefined;
-  }
-  const trimmed = primary.trim();
-  return trimmed || undefined;
+  return normalizeOptionalString(primary);
 }
 
 export function resolveAgentExplicitModelPrimary(
