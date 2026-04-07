@@ -1211,6 +1211,7 @@
     "test:extensions": "node scripts/run-vitest.mjs run --config vitest.extensions.config.ts",
     "test:extensions:batch": "node scripts/test-extension-batch.mjs",
     "test:extensions:memory": "node scripts/profile-extension-memory.mjs",
+    "test:extensions:package-boundary": "node scripts/check-extension-package-tsc-boundary.mjs",
     "test:fast": "node scripts/run-vitest.mjs run --config vitest.unit.config.ts",
     "test:force": "node --import tsx scripts/test-force.ts",
     "test:gateway": "node scripts/run-vitest.mjs run --config vitest.gateway.config.ts",
