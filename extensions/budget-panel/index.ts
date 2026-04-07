@@ -689,6 +689,38 @@ export default function register(api: OpenClawPluginApi) {
     respond(true, { primary, fallbacks, models, authProfiles, authOrder }, undefined);
   });
 
+  // FORK: Anatomy timeline WS methods (registered here because budget-panel reliably loads)
+  const getAnatomyDb = () => (globalThis as any).__anatomyDb;
+
+  api.registerGatewayMethod("anatomy.recent", async ({ params, respond }) => {
+    const db = getAnatomyDb();
+    if (!db) return respond(true, { count: 0, events: [] }, undefined);
+    const hours = Math.min(Math.max(params?.hours ?? 8760, 1), 8760);
+    const limit = Math.min(Math.max(params?.limit ?? 50, 1), 2000);
+    const events = db.queryRecentEvents(hours, limit);
+    respond(true, { count: events.length, events }, undefined);
+  });
+
+  api.registerGatewayMethod("anatomy.before", async ({ params, respond }) => {
+    const db = getAnatomyDb();
+    if (!db) return respond(true, { count: 0, events: [] }, undefined);
+    const beforeMs = params?.beforeMs;
+    if (!beforeMs) return respond(true, { count: 0, events: [] }, undefined);
+    const limit = Math.min(Math.max(params?.limit ?? 50, 1), 500);
+    const events = db.queryEventsBefore ? db.queryEventsBefore(beforeMs, limit) : [];
+    respond(true, { count: events.length, events }, undefined);
+  });
+
+  api.registerGatewayMethod("anatomy.session", async ({ params, respond }) => {
+    const db = getAnatomyDb();
+    if (!db) return respond(true, { count: 0, events: [] }, undefined);
+    const sk = params?.sessionKey;
+    if (!sk) return respond(true, { count: 0, events: [] }, undefined);
+    const limit = Math.min(Math.max(params?.limit ?? 200, 1), 500);
+    const events = db.querySessionEvents(sk, limit);
+    respond(true, { sessionKey: sk, count: events.length, events }, undefined);
+  });
+
   // Register HTTP route for dashboard
   api.registerHttpRoute({
     path: "/budget",
