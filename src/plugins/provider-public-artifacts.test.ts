@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelDefinitionConfig } from "../config/types.models.js";
+import type { ModelDefinitionConfig, ModelProviderConfig } from "../config/types.models.js";
 import { resolveBundledProviderPolicySurface } from "./provider-public-artifacts.js";
 
 function createModel(id: string, name: string): ModelDefinitionConfig {
@@ -71,9 +71,9 @@ describe("provider public artifacts", () => {
     const surface = resolveBundledProviderPolicySurface("openai");
     expect(surface?.normalizeConfig).toBeTypeOf("function");
 
-    const providerConfig = {
+    const providerConfig: ModelProviderConfig = {
       baseUrl: "https://api.openai.com/v1",
-      api: "openai-completions" as const,
+      api: "openai-completions",
       models: [createModel("gpt-5", "gpt-5")],
     };
     expect(
