@@ -60,6 +60,19 @@ export type ExecApprovalChannelRuntime<
   request: <T = unknown>(method: string, params: Record<string, unknown>) => Promise<T>;
 };
 
+function resolveApprovalReplayMethods(
+  eventKinds: ReadonlySet<ExecApprovalChannelRuntimeEventKind>,
+): string[] {
+  const methods: string[] = [];
+  if (eventKinds.has("exec")) {
+    methods.push("exec.approval.list");
+  }
+  if (eventKinds.has("plugin")) {
+    methods.push("plugin.approval.list");
+  }
+  return methods;
+}
+
 export function createExecApprovalChannelRuntime<
   TPending,
   TRequest extends ApprovalRequestEvent = ExecApprovalRequest,
@@ -114,11 +127,12 @@ export function createExecApprovalChannelRuntime<
       return;
     }
 
-    log.debug(`received request ${request.id}`);
-    const existing = pending.get(request.id);
-    if (existing?.timeoutId) {
-      clearTimeout(existing.timeoutId);
+    if (pending.has(request.id)) {
+      log.debug(`ignored duplicate request ${request.id}`);
+      return;
     }
+
+    log.debug(`received request ${request.id}`);
     const entry: PendingApprovalEntry<TPending, TRequest, TResolved> = {
       request,
       entries: [],
@@ -221,6 +235,21 @@ export function createExecApprovalChannelRuntime<
           return;
         }
 
+        let readySettled = false;
+        let resolveReady!: () => void;
+        let rejectReady!: (error: unknown) => void;
+        const ready = new Promise<void>((resolve, reject) => {
+          resolveReady = resolve;
+          rejectReady = reject;
+        });
+        const settleReady = (fn: () => void) => {
+          if (readySettled) {
+            return;
+          }
+          readySettled = true;
+          fn();
+        };
+
         const client = await createOperatorApprovalsGatewayClient({
           config: adapter.cfg,
           gatewayUrl: adapter.gatewayUrl,
@@ -228,12 +257,15 @@ export function createExecApprovalChannelRuntime<
           onEvent: handleGatewayEvent,
           onHelloOk: () => {
             log.debug("connected to gateway");
+            settleReady(resolveReady);
           },
           onConnectError: (err) => {
             log.error(`connect error: ${err.message}`);
+            settleReady(() => rejectReady(err));
           },
           onClose: (code, reason) => {
             log.debug(`gateway closed: ${code} ${reason}`);
+            settleReady(() => rejectReady(new Error(`gateway closed: ${code} ${reason}`)));
           },
         });
 
@@ -243,9 +275,16 @@ export function createExecApprovalChannelRuntime<
         }
         await adapter.beforeGatewayClientStart?.();
         gatewayClient = client;
-        started = true;
         try {
           client.start();
+          await ready;
+          for (const method of resolveApprovalReplayMethods(eventKinds)) {
+            const pendingRequests = await client.request<Array<TRequest>>(method, {});
+            for (const request of pendingRequests) {
+              await handleRequested(request);
+            }
+          }
+          started = true;
         } catch (error) {
           gatewayClient = null;
           started = false;
