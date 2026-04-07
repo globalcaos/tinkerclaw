@@ -32,6 +32,7 @@ describe("buildQaGatewayConfig", () => {
     expect(cfg.plugins?.allow).toEqual(["memory-core", "qa-channel"]);
     expect(cfg.plugins?.entries?.["memory-core"]).toEqual({ enabled: true });
     expect(cfg.plugins?.entries?.openai).toBeUndefined();
+    expect(cfg.gateway?.reload?.deferralTimeoutMs).toBe(1_000);
   });
 
   it("uses built-in provider wiring in frontier live mode", () => {

@@ -110,7 +110,9 @@ export function buildQaRuntimeEnv(params: {
     OPENCLAW_SKIP_CANVAS_HOST: "1",
     OPENCLAW_NO_RESPAWN: "1",
     OPENCLAW_TEST_FAST: "1",
-    // QA still exercises normal reply-config flows under the fast envelope.
+    OPENCLAW_QA_ALLOW_LOCAL_IMAGE_PROVIDER: "1",
+    // QA uses the fast runtime envelope for speed, but it still exercises
+    // normal config-driven heartbeats and runtime config writes.
     OPENCLAW_ALLOW_SLOW_REPLY_TESTS: "1",
     XDG_CONFIG_HOME: params.xdgConfigHome,
     XDG_DATA_HOME: params.xdgDataHome,
@@ -119,6 +121,19 @@ export function buildQaRuntimeEnv(params: {
   return normalizeQaProviderModeEnv(env, params.providerMode);
 }
 
+function isRetryableGatewayCallError(details: string): boolean {
+  return (
+    details.includes("gateway closed (1012)") ||
+    details.includes("gateway closed (1006") ||
+    details.includes("abnormal closure") ||
+    details.includes("service restart")
+  );
+}
+
+export const __testing = {
+  buildQaRuntimeEnv,
+  isRetryableGatewayCallError,
+};
 async function waitForGatewayReady(params: {
   baseUrl: string;
   logs: () => string;
@@ -276,18 +291,47 @@ export async function startQaGatewayChild(params: {
     cfg,
     baseUrl,
     wsUrl,
+    pid: child.pid ?? null,
     token: gatewayToken,
     workspaceDir,
     tempRoot,
     configPath,
     runtimeEnv: env,
     logs,
+    async restart(signal: NodeJS.Signals = "SIGUSR1") {
+      if (!child.pid) {
+        throw new Error("qa gateway child has no pid");
+      }
+      process.kill(child.pid, signal);
+    },
     async call(
       method: string,
       rpcParams?: unknown,
       opts?: { expectFinal?: boolean; timeoutMs?: number },
     ) {
-      return await rpcClient.request(method, rpcParams, opts);
+      const timeoutMs = opts?.timeoutMs ?? 20_000;
+      let lastDetails = "";
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await rpcClient.request(method, rpcParams, {
+            ...opts,
+            timeoutMs,
+          });
+        } catch (error) {
+          const details = formatErrorMessage(error);
+          lastDetails = details;
+          if (attempt >= 3 || !isRetryableGatewayCallError(details)) {
+            throw new Error(`${details}\nGateway logs:\n${logs()}`, { cause: error });
+          }
+          await waitForGatewayReady({
+            baseUrl,
+            logs,
+            child,
+            timeoutMs: Math.max(10_000, timeoutMs),
+          });
+        }
+      }
+      throw new Error(`${lastDetails}\nGateway logs:\n${logs()}`);
     },
     async stop(opts?: { keepTemp?: boolean }) {
       await rpcClient.stop().catch(() => {});

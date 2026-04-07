@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildQaRuntimeEnv, resolveQaControlUiRoot } from "./gateway-child.js";
+import { __testing, buildQaRuntimeEnv, resolveQaControlUiRoot } from "./gateway-child.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -33,6 +33,7 @@ describe("buildQaRuntimeEnv", () => {
     });
 
     expect(env.OPENCLAW_TEST_FAST).toBe("1");
+    expect(env.OPENCLAW_QA_ALLOW_LOCAL_IMAGE_PROVIDER).toBe("1");
     expect(env.OPENCLAW_ALLOW_SLOW_REPLY_TESTS).toBe("1");
   });
 
@@ -92,6 +93,17 @@ describe("buildQaRuntimeEnv", () => {
     expect(env.OPENCLAW_LIVE_ANTHROPIC_KEY).toBeUndefined();
     expect(env.OPENCLAW_LIVE_ANTHROPIC_KEYS).toBeUndefined();
     expect(env.OPENCLAW_LIVE_GEMINI_KEY).toBeUndefined();
+  });
+
+  it("treats restart socket closures as retryable gateway call errors", () => {
+    expect(__testing.isRetryableGatewayCallError("gateway closed (1006 abnormal closure)")).toBe(
+      true,
+    );
+    expect(__testing.isRetryableGatewayCallError("gateway closed (1012 service restart)")).toBe(
+      true,
+    );
+    expect(__testing.isRetryableGatewayCallError("service restart in progress")).toBe(true);
+    expect(__testing.isRetryableGatewayCallError("permission denied")).toBe(false);
   });
 });
 
