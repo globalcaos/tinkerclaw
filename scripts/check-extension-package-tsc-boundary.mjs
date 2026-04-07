@@ -79,6 +79,15 @@ export function formatBoundaryCheckSuccessSummary(params = {}) {
   if (Number.isInteger(params.canaryCount)) {
     lines.push(`canary plugins: ${params.canaryCount}`);
   }
+  if (Number.isFinite(params.prepElapsedMs) && params.prepElapsedMs > 0) {
+    lines.push(`prep elapsed: ${params.prepElapsedMs}ms`);
+  }
+  if (Number.isFinite(params.compileElapsedMs) && params.compileElapsedMs > 0) {
+    lines.push(`compile elapsed: ${params.compileElapsedMs}ms`);
+  }
+  if (Number.isFinite(params.canaryElapsedMs) && params.canaryElapsedMs > 0) {
+    lines.push(`canary elapsed: ${params.canaryElapsedMs}ms`);
+  }
   if (Number.isFinite(params.elapsedMs)) {
     lines.push(`elapsed: ${params.elapsedMs}ms`);
   }
@@ -426,12 +435,15 @@ export function acquireBoundaryCheckLock(params = {}) {
 }
 
 async function runCompileCheck(extensionIds) {
+  const prepStartedAt = Date.now();
   process.stdout.write(
     `preparing plugin-sdk boundary artifacts for ${extensionIds.length} plugins\n`,
   );
   runNodeStep("plugin-sdk boundary prep", [prepareBoundaryArtifactsBin], 420_000);
+  const prepElapsedMs = Date.now() - prepStartedAt;
   const concurrency = resolveCompileConcurrency();
   process.stdout.write(`compile concurrency ${concurrency}\n`);
+  const compileStartedAt = Date.now();
   const steps = extensionIds.map((extensionId, index) => {
     const tsBuildInfoPath = resolveBoundaryTsBuildInfoPath(extensionId);
     mkdirSync(dirname(tsBuildInfoPath), { recursive: true });
@@ -453,9 +465,14 @@ async function runCompileCheck(extensionIds) {
     };
   });
   await runNodeStepsWithConcurrency(steps, concurrency);
+  return {
+    prepElapsedMs,
+    compileElapsedMs: Date.now() - compileStartedAt,
+  };
 }
 
 function runCanaryCheck(extensionIds) {
+  const startedAt = Date.now();
   for (const extensionId of extensionIds) {
     const { canaryPath, tsconfigPath } = resolveCanaryArtifactPaths(extensionId);
 
@@ -500,6 +517,9 @@ function runCanaryCheck(extensionIds) {
       cleanupCanaryArtifacts(extensionId);
     }
   }
+  return {
+    canaryElapsedMs: Date.now() - startedAt,
+  };
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -511,20 +531,26 @@ export async function main(argv = process.argv.slice(2)) {
   const shouldRunCanary = mode === "all" || mode === "canary";
   const releaseBoundaryLock = acquireBoundaryCheckLock();
   const teardownCanaryCleanup = installCanaryArtifactCleanup(cleanupExtensionIds);
+  let prepElapsedMs;
+  let compileElapsedMs;
+  let canaryElapsedMs;
 
   try {
     cleanupCanaryArtifactsForExtensions(cleanupExtensionIds);
     if (mode === "all" || mode === "compile") {
-      await runCompileCheck(optInExtensionIds);
+      ({ prepElapsedMs, compileElapsedMs } = await runCompileCheck(optInExtensionIds));
     }
     if (shouldRunCanary) {
-      runCanaryCheck(canaryExtensionIds);
+      ({ canaryElapsedMs } = runCanaryCheck(canaryExtensionIds));
     }
     process.stdout.write(
       formatBoundaryCheckSuccessSummary({
         mode,
         compileCount: mode === "canary" ? 0 : optInExtensionIds.length,
         canaryCount: shouldRunCanary ? canaryExtensionIds.length : 0,
+        prepElapsedMs,
+        compileElapsedMs,
+        canaryElapsedMs,
         elapsedMs: Date.now() - startedAt,
       }),
     );
