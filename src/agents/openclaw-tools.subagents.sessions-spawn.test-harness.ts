@@ -93,6 +93,8 @@ const hoisted = vi.hoisted(() => {
   return { callGatewayMock, defaultConfigOverride, state };
 });
 
+let cachedCreateSessionsSpawnTool: CreateSessionsSpawnTool | null = null;
+
 export function getCallGatewayMock(): Mock {
   return hoisted.callGatewayMock;
 }
@@ -158,8 +160,11 @@ export async function getSessionsSpawnTool(opts: CreateOpenClawToolsOpts) {
     captureSubagentCompletionReply,
     runSubagentAnnounceFlow: (params) => hoisted.state.runSubagentAnnounceFlowOverride(params),
   });
-  const { createSessionsSpawnTool } = await import("./tools/sessions-spawn-tool.js");
-  return createSessionsSpawnTool(opts);
+  if (!cachedCreateSessionsSpawnTool) {
+    ({ createSessionsSpawnTool: cachedCreateSessionsSpawnTool } =
+      await import("./tools/sessions-spawn-tool.js"));
+  }
+  return cachedCreateSessionsSpawnTool(opts);
 }
 
 export function setupSessionsSpawnGatewayMock(setupOpts: SessionsSpawnGatewayMockOptions): {
