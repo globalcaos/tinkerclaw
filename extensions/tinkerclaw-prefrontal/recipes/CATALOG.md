@@ -7,10 +7,10 @@
 
 | Category | Color | Recipes |
 |----------|-------|---------|
-| Coding | olive | debug, feature, refactor, code-review, upstream-merge, fork-patch |
-| Writing | purple | write-paper, brainstorm, write-plan |
-| Operations | amber | gateway-restart, security-audit, deploy |
-| Analysis | blue | investigate, dependency-analysis |
+| Coding | olive | debug, feature, refactor, code-review, upstream-merge, fork-patch, three-agent-review, plan, verify, simplify |
+| Writing | purple | write-paper, brainstorm, write-plan, revise-paper |
+| Operations | amber | gateway-restart, security-audit, deploy, memory-review, dream |
+| Analysis | blue | investigate, dependency-analysis, brainstorm-gate |
 | Security | red | incident-response, credential-rotation |
 | Communication | green | daily-report, jarvis-report |
 
@@ -36,6 +36,14 @@
 | credential-rotation | rotate, credentials, keys, tokens, secrets | inventory, generate, deploy, verify, revoke-old | standard |
 | daily-report | daily, status, standup, what happened | gather, summarize, format, deliver | light |
 | jarvis-report | report for jarvis, structured report, incident | gather, analyze, structure, deliver | standard |
+| three-agent-review | review pipeline, implement and review | prepare, implement, spec-review, quality-review, verify | deep |
+| plan | plan, break down, task list | explore, define-tasks, write-plan, review | standard |
+| verify | done, complete, ready to merge | identify, run, read, claim | quick |
+| simplify | simplify, review changes, clean up | identify, launch-3-agents, aggregate-fix, verify, summary | deep |
+| brainstorm-gate | brainstorm, design, new feature | explore, ask, propose, approve, transition | standard |
+| revise-paper | revise, improve, polish, review paper | full-read, audit, evidence, prose, additions, final | deep |
+| memory-review | memory review, clean memory, audit | gather, classify, detect-issues, cleanup, report | standard |
+| dream | dream, distill, nightly, wind down | identify-logs, extract, consolidate, update-index, mark, archive | standard |
 
 ## How Recipes Work
 

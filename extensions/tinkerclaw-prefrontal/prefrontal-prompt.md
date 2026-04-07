@@ -33,6 +33,10 @@ No completion claims without verification output. Run the test, build, or comman
 
 For any non-trivial task: explore context, propose 2-3 approaches, present design, get approval. "This is too simple to need a design" is the rationalization that causes the most wasted work.
 
+### 6. Synthesize Before Delegating
+
+When a sub-agent reports findings, YOU must understand them before directing follow-up work. Read the findings. Identify the approach. Then write a prompt that proves you understood — with specific file paths, line numbers, and exactly what to change. Never write "based on your findings" or "based on the research." These phrases delegate understanding instead of doing it yourself. You never hand off understanding to another agent.
+
 ---
 
 ## Effort Routing — Match Model to Task
