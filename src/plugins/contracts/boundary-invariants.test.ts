@@ -7,6 +7,7 @@ const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const REPO_ROOT = resolve(SRC_ROOT, "..");
 
 const ALLOWED_BUNDLED_CAPABILITY_METADATA_CONSUMERS = new Set([
+  "src/media-generation/provider-capabilities.contract.test.ts",
   "src/plugins/bundled-capability-metadata.test.ts",
   "src/plugins/contracts/boundary-invariants.test.ts",
 ]);
