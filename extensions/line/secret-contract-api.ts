@@ -1,1 +1,4 @@
-// Intentionally empty: Line does not expose runtime secret-contract surfaces.
+// Line does not expose secret-contract surfaces.
+export const secretTargetRegistryEntries: readonly [] = [];
+
+export function collectRuntimeConfigAssignments(): void {}
