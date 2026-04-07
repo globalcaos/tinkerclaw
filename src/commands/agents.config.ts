@@ -41,13 +41,6 @@ export function findAgentEntryIndex(list: AgentEntry[], agentId: string): number
   return list.findIndex((entry) => normalizeAgentId(entry.id) === id);
 }
 
-function resolveAgentName(cfg: OpenClawConfig, agentId: string) {
-  const entry = listAgentEntries(cfg).find(
-    (agent) => normalizeAgentId(agent.id) === normalizeAgentId(agentId),
-  );
-  return normalizeOptionalString(entry?.name);
-}
-
 function resolveAgentModel(cfg: OpenClawConfig, agentId: string) {
   const entry = listAgentEntries(cfg).find(
     (agent) => normalizeAgentId(agent.id) === normalizeAgentId(agentId),
@@ -101,7 +94,9 @@ export function buildAgentSummaries(cfg: OpenClawConfig): AgentSummary[] {
         : undefined;
     return {
       id,
-      name: resolveAgentName(cfg, id),
+      name: normalizeOptionalString(
+        configuredAgents.find((agent) => normalizeAgentId(agent.id) === id)?.name,
+      ),
       identityName,
       identityEmoji,
       identitySource,
