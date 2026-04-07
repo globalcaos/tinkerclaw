@@ -7,6 +7,7 @@ import {
   normalizeAgentId,
   parseAgentSessionKey,
 } from "../routing/session-key.js";
+import type { BootstrapContextMode } from "./bootstrap-files.js";
 import {
   mapToolContextToSpawnedRunMetadata,
   normalizeSpawnedRunMetadata,
@@ -44,7 +45,6 @@ import {
   updateSessionStore,
   isAdminOnlyMethod,
 } from "./subagent-spawn.runtime.js";
-import type { BootstrapContextMode } from "./bootstrap-files.js";
 import { readStringParam } from "./tools/common.js";
 
 export const SUBAGENT_SPAWN_MODES = ["run", "session"] as const;
@@ -748,8 +748,12 @@ export async function spawnSubagentDirect(
         thinking: thinkingOverride,
         timeout: runTimeoutSeconds,
         label: label || undefined,
-        bootstrapContextMode,
-        bootstrapContextRunKind: "default",
+        ...(bootstrapContextMode
+          ? {
+              bootstrapContextMode,
+              bootstrapContextRunKind: "default" as const,
+            }
+          : {}),
         ...publicSpawnedMetadata,
       },
       timeoutMs: 10_000,
