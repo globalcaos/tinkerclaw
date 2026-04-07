@@ -1,6 +1,5 @@
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { ReasoningLevel, ThinkLevel } from "../../auto-reply/thinking.js";
-import { formatErrorMessage } from "../../infra/errors.js";
 
 export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
   // pi-agent-core supports "xhigh"; OpenClaw enables it for specific models.
@@ -15,10 +14,6 @@ export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
     return "medium";
   }
   return level;
-}
-
-export function describeUnknownError(error: unknown): string {
-  return formatErrorMessage(error);
 }
 
 export type { ReasoningLevel, ThinkLevel };

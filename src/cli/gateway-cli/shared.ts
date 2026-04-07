@@ -4,7 +4,6 @@ import {
   resolveGatewayWindowsTaskName,
 } from "../../daemon/constants.js";
 import { resolveGatewayService } from "../../daemon/service.js";
-import { formatErrorMessage } from "../../infra/errors.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
 import { parsePort } from "../shared/parse-port.js";
@@ -20,10 +19,6 @@ export const toOptionString = (value: unknown): string | undefined => {
   }
   return undefined;
 };
-
-export function describeUnknownError(err: unknown): string {
-  return formatErrorMessage(err);
-}
 
 export function extractGatewayMiskeys(parsed: unknown): {
   hasGatewayToken: boolean;
