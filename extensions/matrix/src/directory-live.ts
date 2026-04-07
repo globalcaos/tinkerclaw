@@ -1,3 +1,4 @@
+import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import { resolveMatrixAuth } from "./matrix/client.js";
 import { MatrixAuthedHttpClient } from "./matrix/sdk/http-client.js";
 import { isMatrixQualifiedUserId, normalizeMatrixMessagingTarget } from "./matrix/target-ids.js";
@@ -132,15 +133,16 @@ export async function listMatrixDirectoryPeersLive(
   const results = res.results ?? [];
   return results
     .map((entry) => {
-      const userId = entry.user_id?.trim();
+      const userId = normalizeOptionalString(entry.user_id);
       if (!userId) {
         return null;
       }
+      const displayName = normalizeOptionalString(entry.display_name);
       return {
         kind: "user",
         id: userId,
-        name: entry.display_name?.trim() || undefined,
-        handle: entry.display_name ? `@${entry.display_name.trim()}` : undefined,
+        name: displayName,
+        handle: displayName ? `@${displayName}` : undefined,
         raw: entry,
       } satisfies ChannelDirectoryEntry;
     })
