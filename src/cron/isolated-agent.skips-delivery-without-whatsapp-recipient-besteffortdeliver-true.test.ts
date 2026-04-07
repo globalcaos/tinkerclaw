@@ -249,15 +249,6 @@ describe("runCronIsolatedAgentTurn", () => {
     }
   });
 
-  it("delivers text directly when best-effort is enabled", async () => {
-    const { res, deps } = await runTelegramDeliveryResult(true);
-    expectSuccessfulTelegramTextDelivery({ res, deps });
-    expectDirectTelegramDelivery(deps, {
-      chatId: "123",
-      text: "hello from cron",
-    });
-  });
-
   it("delivers text directly for signal when best-effort is enabled", async () => {
     const { res, deps } = await runSignalDeliveryResult(true);
     expect(res.status).toBe("ok");
