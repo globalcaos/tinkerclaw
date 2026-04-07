@@ -1,6 +1,7 @@
 import JSON5 from "json5";
 import { LEGACY_MANIFEST_KEYS, MANIFEST_KEY } from "../compat/legacy-names.js";
 import { parseBooleanValue } from "../utils/boolean.js";
+import { readStringValue } from "./string-coerce.js";
 import { normalizeCsvOrLooseStringList } from "./string-normalization.js";
 
 export function normalizeStringList(input: unknown): string[] {
@@ -11,8 +12,7 @@ export function getFrontmatterString(
   frontmatter: Record<string, unknown>,
   key: string,
 ): string | undefined {
-  const raw = frontmatter[key];
-  return typeof raw === "string" ? raw : undefined;
+  return readStringValue(frontmatter[key]);
 }
 
 export function parseFrontmatterBool(value: string | undefined, fallback: boolean): boolean {
