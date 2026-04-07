@@ -198,7 +198,6 @@ describe("memory cli", () => {
 
   async function withTempWorkspace(run: (workspaceDir: string) => Promise<void>) {
     const workspaceDir = path.join(workspaceFixtureRoot, `case-${workspaceCaseId++}`);
-    await fs.mkdir(workspaceDir, { recursive: true });
     await fs.mkdir(path.join(workspaceDir, "memory", ".dreams"), { recursive: true });
     await run(workspaceDir);
   }
