@@ -30,14 +30,15 @@ describe("buildQaGatewayConfig", () => {
     expect(cfg.plugins?.entries?.openai).toBeUndefined();
   });
 
-  it("uses built-in OpenAI provider wiring in live mode", () => {
+  it("uses built-in provider wiring in frontier live mode", () => {
     const cfg = buildQaGatewayConfig({
       bind: "loopback",
       gatewayPort: 18789,
       gatewayToken: "token",
       qaBusBaseUrl: "http://127.0.0.1:43124",
       workspaceDir: "/tmp/qa-workspace",
-      providerMode: "live-openai",
+      providerMode: "live-frontier",
+      fastMode: true,
       primaryModel: "openai/gpt-5.4",
       alternateModel: "openai/gpt-5.4",
     });
@@ -50,6 +51,26 @@ describe("buildQaGatewayConfig", () => {
     expect(cfg.agents?.defaults?.models?.["openai/gpt-5.4"]).toEqual({
       params: { transport: "sse", openaiWsWarmup: false, fastMode: true },
     });
+  });
+
+  it("does not force OpenAI when the frontier lane only needs Anthropic and Google", () => {
+    const cfg = buildQaGatewayConfig({
+      bind: "loopback",
+      gatewayPort: 18789,
+      gatewayToken: "token",
+      qaBusBaseUrl: "http://127.0.0.1:43124",
+      workspaceDir: "/tmp/qa-workspace",
+      providerMode: "live-frontier",
+      primaryModel: "anthropic/claude-sonnet-4-6",
+      alternateModel: "google/gemini-pro-test",
+      imageGenerationModel: null,
+    });
+
+    expect(cfg.plugins?.allow).toEqual(["memory-core", "anthropic", "google", "qa-channel"]);
+    expect(cfg.plugins?.entries?.anthropic).toEqual({ enabled: true });
+    expect(cfg.plugins?.entries?.google).toEqual({ enabled: true });
+    expect(cfg.plugins?.entries?.openai).toBeUndefined();
+    expect(cfg.agents?.defaults).not.toHaveProperty("imageGenerationModel");
   });
 
   it("can disable control ui for suite-only gateway children", () => {

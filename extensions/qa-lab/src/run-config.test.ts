@@ -46,7 +46,7 @@ describe("qa run config", () => {
         scenarios,
       ),
     ).toEqual({
-      providerMode: "live-openai",
+      providerMode: "live-frontier",
       primaryModel: "openai/gpt-5.4",
       alternateModel: "openai/gpt-5.4",
       fastMode: true,

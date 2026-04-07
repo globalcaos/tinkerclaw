@@ -22,6 +22,7 @@ import { startQaMockOpenAiServer } from "./mock-openai-server.js";
 import {
   defaultQaModelForMode,
   isQaFastModeEnabled,
+  normalizeQaProviderMode,
   type QaProviderMode,
 } from "./model-selection.js";
 import { renderQaMarkdownReport, type QaReportCheck, type QaReportScenario } from "./report.js";
@@ -45,7 +46,7 @@ type QaSuiteEnvironment = {
   mock: Awaited<ReturnType<typeof startQaMockOpenAiServer>> | null;
   gateway: Awaited<ReturnType<typeof startQaGatewayChild>>;
   cfg: OpenClawConfig;
-  providerMode: "mock-openai" | "live-openai";
+  providerMode: "mock-openai" | "live-frontier";
   primaryModel: string;
   alternateModel: string;
 };
@@ -92,7 +93,7 @@ function splitModelRef(ref: string) {
 }
 
 function liveTurnTimeoutMs(env: QaSuiteEnvironment, fallbackMs: number) {
-  return env.providerMode === "live-openai" ? Math.max(fallbackMs, 120_000) : fallbackMs;
+  return env.providerMode === "mock-openai" ? fallbackMs : Math.max(fallbackMs, 120_000);
 }
 
 function hasDiscoveryLabels(text: string) {
@@ -701,7 +702,7 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
               const message = await waitForOutboundMessage(
                 state,
                 (candidate) => candidate.conversation.id === "qa-room" && !candidate.threadId,
-                env.providerMode === "live-openai" ? 45_000 : 45_000,
+                env.providerMode === "mock-openai" ? 45_000 : 45_000,
               );
               return message.text;
             },
@@ -945,6 +946,69 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
         ]),
     ],
     [
+      "approval-turn-tool-followthrough",
+      async () =>
+        await runScenario("Approval turn tool followthrough", [
+          {
+            name: "turns short approval into a real file read",
+            run: async () => {
+              await reset();
+              await runAgentPrompt(env, {
+                sessionKey: "agent:qa:approval-followthrough",
+                message:
+                  "Before acting, tell me the single file you would start with in six words or fewer. Do not use tools yet.",
+                timeoutMs: liveTurnTimeoutMs(env, 20_000),
+              });
+              await waitForOutboundMessage(
+                state,
+                (candidate) => candidate.conversation.id === "qa-operator",
+                liveTurnTimeoutMs(env, 20_000),
+              );
+              const beforeApprovalCursor = state.getSnapshot().messages.length;
+              await runAgentPrompt(env, {
+                sessionKey: "agent:qa:approval-followthrough",
+                message:
+                  "ok do it. read `QA_KICKOFF_TASK.md` now and reply with the QA mission in one short sentence.",
+                timeoutMs: liveTurnTimeoutMs(env, 30_000),
+              });
+              const outbound = await waitForCondition(
+                () =>
+                  state
+                    .getSnapshot()
+                    .messages.slice(beforeApprovalCursor)
+                    .filter(
+                      (candidate) =>
+                        candidate.direction === "outbound" &&
+                        candidate.conversation.id === "qa-operator" &&
+                        /\bqa\b|\bmission\b|\btesting\b/i.test(candidate.text),
+                    )
+                    .at(-1),
+                liveTurnTimeoutMs(env, 20_000),
+                env.providerMode === "mock-openai" ? 100 : 250,
+              );
+              if (env.mock) {
+                const requests = await fetchJson<
+                  Array<{ allInputText?: string; plannedToolName?: string; toolOutput?: string }>
+                >(`${env.mock.baseUrl}/debug/requests`);
+                const approvalRequest = [...requests]
+                  .toReversed()
+                  .find(
+                    (request) =>
+                      String(request.allInputText ?? "").includes("ok do it.") &&
+                      !request.toolOutput,
+                  );
+                if (approvalRequest?.plannedToolName !== "read") {
+                  throw new Error(
+                    `expected read after approval, got ${String(approvalRequest?.plannedToolName ?? "")}`,
+                  );
+                }
+              }
+              return outbound.text;
+            },
+          },
+        ]),
+    ],
+    [
       "reaction-edit-delete",
       async () =>
         await runScenario("Reaction, edit, delete lifecycle", [
@@ -1010,7 +1074,7 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                     )
                     .at(-1),
                 liveTurnTimeoutMs(env, 20_000),
-                env.providerMode === "live-openai" ? 250 : 100,
+                env.providerMode === "mock-openai" ? 100 : 250,
               );
               if (reportsMissingDiscoveryFiles(outbound.text)) {
                 throw new Error(`discovery report still missed repo files: ${outbound.text}`);
@@ -1049,7 +1113,7 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                     )
                     .at(-1),
                 liveTurnTimeoutMs(env, 45_000),
-                env.providerMode === "live-openai" ? 250 : 100,
+                env.providerMode === "mock-openai" ? 100 : 250,
               );
               const lower = outbound.text.toLowerCase();
               if (
@@ -1096,7 +1160,7 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                 state,
                 (candidate) =>
                   candidate.conversation.id === "qa-room" && candidate.threadId === threadId,
-                env.providerMode === "live-openai" ? 45_000 : 15_000,
+                env.providerMode === "mock-openai" ? 15_000 : 45_000,
               );
               const leaked = state
                 .getSnapshot()
@@ -1731,8 +1795,7 @@ When the user asks for the hot install marker exactly, reply with exactly: HOT-I
           {
             name: "enables image_generate and saves a real media artifact",
             run: async () => {
-              const imageModelRef =
-                env.providerMode === "live-openai" ? "openai/gpt-image-1" : "openai/gpt-image-1";
+              const imageModelRef = "openai/gpt-image-1";
               await patchConfig({
                 env,
                 patch:
@@ -2103,18 +2166,22 @@ When the user asks for the drift skill marker exactly, reply with exactly: DRIFT
 
 export async function runQaSuite(params?: {
   outputDir?: string;
-  providerMode?: QaProviderMode;
+  providerMode?: QaProviderMode | "live-openai";
   primaryModel?: string;
   alternateModel?: string;
+  fastMode?: boolean;
   scenarioIds?: string[];
   lab?: Awaited<ReturnType<typeof startQaLabServer>>;
 }) {
   const startedAt = new Date();
-  const providerMode = params?.providerMode ?? "mock-openai";
+  const providerMode = normalizeQaProviderMode(params?.providerMode ?? "mock-openai");
   const primaryModel = params?.primaryModel ?? defaultQaModelForMode(providerMode);
   const alternateModel =
     params?.alternateModel ?? defaultQaModelForMode(providerMode, { alternate: true });
-  const fastMode = isQaFastModeEnabled({ primaryModel, alternateModel });
+  const fastMode =
+    typeof params?.fastMode === "boolean"
+      ? params.fastMode
+      : isQaFastModeEnabled({ primaryModel, alternateModel });
   const outputDir =
     params?.outputDir ??
     path.join(process.cwd(), ".artifacts", "qa-e2e", `suite-${Date.now().toString(36)}`);
@@ -2270,7 +2337,7 @@ export async function runQaSuite(params?: {
       notes: [
         providerMode === "mock-openai"
           ? "Runs against qa-channel + qa-lab bus + real gateway child + mock OpenAI provider."
-          : `Runs against qa-channel + qa-lab bus + real gateway child + live OpenAI models (${primaryModel}, ${alternateModel})${fastMode ? " with fast mode enabled" : ""}.`,
+          : `Runs against qa-channel + qa-lab bus + real gateway child + live frontier models (${primaryModel}, ${alternateModel})${fastMode ? " with fast mode enabled" : ""}.`,
         "Cron uses a one-minute schedule assertion plus forced execution for fast verification.",
       ],
     });

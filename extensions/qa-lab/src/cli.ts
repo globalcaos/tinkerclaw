@@ -16,12 +16,19 @@ async function runQaSelfCheck(opts: { output?: string }) {
 
 async function runQaSuite(opts: {
   outputDir?: string;
-  providerMode?: "mock-openai" | "live-openai";
+  providerMode?: "mock-openai" | "live-frontier";
   primaryModel?: string;
   alternateModel?: string;
+  fastMode?: boolean;
+  scenarioIds?: string[];
 }) {
   const runtime = await loadQaLabCliRuntime();
   await runtime.runQaSuiteCommand(opts);
+}
+
+function collectString(value: string, previous: string[]) {
+  const trimmed = value.trim();
+  return trimmed ? [...previous, trimmed] : previous;
 }
 
 async function runQaUi(opts: {
@@ -90,23 +97,33 @@ export function registerQaLabCli(program: Command) {
     });
 
   qa.command("suite")
-    .description("Run all repo-backed QA scenarios against the real QA gateway lane")
+    .description("Run repo-backed QA scenarios against the QA gateway lane")
     .option("--output-dir <path>", "Suite artifact directory")
-    .option("--provider-mode <mode>", "Provider mode: mock-openai or live-openai", "mock-openai")
+    .option(
+      "--provider-mode <mode>",
+      "Provider mode: mock-openai or live-frontier (legacy live-openai still works)",
+      "mock-openai",
+    )
     .option("--model <ref>", "Primary provider/model ref")
     .option("--alt-model <ref>", "Alternate provider/model ref")
+    .option("--scenario <id>", "Run only the named QA scenario (repeatable)", collectString, [])
+    .option("--fast", "Enable provider fast mode where supported", false)
     .action(
       async (opts: {
         outputDir?: string;
-        providerMode?: "mock-openai" | "live-openai";
+        providerMode?: "mock-openai" | "live-frontier";
         model?: string;
         altModel?: string;
+        scenario?: string[];
+        fast?: boolean;
       }) => {
         await runQaSuite({
           outputDir: opts.outputDir,
           providerMode: opts.providerMode,
           primaryModel: opts.model,
           alternateModel: opts.altModel,
+          fastMode: opts.fast,
+          scenarioIds: opts.scenario,
         });
       },
     );

@@ -32,7 +32,7 @@ function buildQaRuntimeEnv(params: {
   xdgConfigHome: string;
   xdgDataHome: string;
   xdgCacheHome: string;
-  providerMode?: "mock-openai" | "live-openai";
+  providerMode?: "mock-openai" | "live-frontier";
 }) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -141,7 +141,7 @@ export async function startQaGatewayChild(params: {
   repoRoot: string;
   providerBaseUrl?: string;
   qaBusBaseUrl: string;
-  providerMode?: "mock-openai" | "live-openai";
+  providerMode?: "mock-openai" | "live-frontier";
   primaryModel?: string;
   alternateModel?: string;
   controlUiEnabled?: boolean;
