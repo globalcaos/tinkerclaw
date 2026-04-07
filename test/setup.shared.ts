@@ -84,6 +84,7 @@ export function installSharedTestSetup(options?: SharedTestSetupOptions): {
       }
       cleaned = true;
       testEnv.cleanup();
+      delete globalState[SHARED_TEST_SETUP];
     },
   };
   globalState[SHARED_TEST_SETUP] = handle;
