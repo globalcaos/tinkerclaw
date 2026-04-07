@@ -1236,7 +1236,7 @@ describe("exec approvals", () => {
     const tool = createExecTool({
       host: "gateway",
       ask: "always",
-      security: "allowlist",
+      security: "full",
       trigger: "cron",
       approvalRunningNoticeMs: 0,
     });
