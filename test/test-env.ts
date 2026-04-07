@@ -7,7 +7,7 @@ import JSON5 from "json5";
 
 type RestoreEntry = { key: string; value: string | undefined };
 
-const LIVE_EXTERNAL_AUTH_DIRS = [".claude", ".codex", ".minimax"] as const;
+const LIVE_EXTERNAL_AUTH_DIRS = [".claude", ".codex", ".gemini", ".minimax"] as const;
 const LIVE_EXTERNAL_AUTH_FILES = [".claude.json"] as const;
 const requireFromHere = createRequire(import.meta.url);
 
@@ -366,6 +366,7 @@ function stageLiveTestState(params: {
   }
   const tempStateDir = path.join(params.tempHome, ".openclaw");
   fs.mkdirSync(tempStateDir, { recursive: true });
+  fs.mkdirSync(path.join(params.tempHome, ".gemini"), { recursive: true });
 
   const realConfigPath = params.env.OPENCLAW_CONFIG_PATH?.trim()
     ? resolveHomeRelativePath(params.env.OPENCLAW_CONFIG_PATH, params.realHome)
