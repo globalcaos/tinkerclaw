@@ -25,6 +25,7 @@ import {
   resolveInternalSessionKey,
   resolveSandboxedSessionToolContext,
   type SessionListRow,
+  type SessionRunStatus,
   stripToolMessages,
 } from "./sessions-helpers.js";
 
@@ -36,6 +37,16 @@ const SessionsListToolSchema = Type.Object({
 });
 
 type GatewayCaller = typeof callGateway;
+
+function readSessionRunStatus(value: unknown): SessionRunStatus | undefined {
+  return value === "running" ||
+    value === "done" ||
+    value === "failed" ||
+    value === "killed" ||
+    value === "timeout"
+    ? value
+    : undefined;
+}
 
 export function createSessionsListTool(opts?: {
   agentSessionKey?: string;
@@ -247,7 +258,7 @@ export function createSessionsListTool(opts?: {
           totalTokens: typeof entry.totalTokens === "number" ? entry.totalTokens : undefined,
           estimatedCostUsd:
             typeof entry.estimatedCostUsd === "number" ? entry.estimatedCostUsd : undefined,
-          status: readStringValue(entry.status),
+          status: readSessionRunStatus(entry.status),
           startedAt: typeof entry.startedAt === "number" ? entry.startedAt : undefined,
           endedAt: typeof entry.endedAt === "number" ? entry.endedAt : undefined,
           runtimeMs: typeof entry.runtimeMs === "number" ? entry.runtimeMs : undefined,
