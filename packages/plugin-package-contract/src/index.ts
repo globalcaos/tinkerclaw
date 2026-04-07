@@ -1,3 +1,5 @@
+import { isRecord } from "../../../src/utils.js";
+
 export type JsonObject = Record<string, unknown>;
 
 export type ExternalPluginCompatibility = {
@@ -21,10 +23,6 @@ export const EXTERNAL_CODE_PLUGIN_REQUIRED_FIELD_PATHS = [
   "openclaw.compat.pluginApi",
   "openclaw.build.openclawVersion",
 ] as const;
-
-function isRecord(value: unknown): value is JsonObject {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function getTrimmedString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
