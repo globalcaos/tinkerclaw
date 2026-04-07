@@ -108,7 +108,7 @@ explicitly promotes one as public.
     | `plugin-sdk/group-access` | Shared group-access decision helpers |
     | `plugin-sdk/direct-dm` | Shared direct-DM auth/guard helpers |
     | `plugin-sdk/interactive-runtime` | Interactive reply payload normalization/reduction helpers |
-    | `plugin-sdk/channel-inbound` | Debounce, mention matching, envelope helpers |
+    | `plugin-sdk/channel-inbound` | Inbound debounce, mention matching, mention-policy helpers, and envelope helpers |
     | `plugin-sdk/channel-send-result` | Reply result types |
     | `plugin-sdk/channel-actions` | `createMessageToolButtonsSchema`, `createMessageToolCardSchema` |
     | `plugin-sdk/channel-targets` | Target parsing/matching helpers |
