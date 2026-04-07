@@ -746,8 +746,9 @@ export async function dispatchReplyFromConfig(params: {
       message?: string;
     }) => {
       if (payload.status === "pending") {
-        if (normalizeOptionalString(payload.command)) {
-          return normalizeWorkingLabel(`awaiting approval: ${payload.command}`);
+        const command = normalizeOptionalString(payload.command);
+        if (command) {
+          return normalizeWorkingLabel(`awaiting approval: ${command}`);
         }
         return "awaiting approval";
       }
