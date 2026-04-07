@@ -21,24 +21,18 @@ describe("startQaGatewayRpcClient", () => {
     gatewayRpcMock.reset();
   });
 
-  it("calls the in-process gateway cli helper with the qa runtime env", async () => {
+  it("calls the in-process gateway cli helper without mutating process.env", async () => {
     const originalHome = process.env.OPENCLAW_HOME;
     delete process.env.OPENCLAW_HOME;
-    delete process.env.OPENCLAW_QA_TEST_ONLY;
 
     gatewayRpcMock.callGatewayFromCli.mockImplementationOnce(async () => {
-      expect(process.env.OPENCLAW_HOME).toBe("/tmp/openclaw-home");
-      expect(process.env.OPENCLAW_QA_TEST_ONLY).toBe("1");
+      expect(process.env.OPENCLAW_HOME).toBeUndefined();
       return { ok: true };
     });
 
     const client = await startQaGatewayRpcClient({
       wsUrl: "ws://127.0.0.1:18789",
       token: "qa-token",
-      env: {
-        OPENCLAW_HOME: "/tmp/openclaw-home",
-        OPENCLAW_QA_TEST_ONLY: "1",
-      } as NodeJS.ProcessEnv,
       logs: () => "qa logs",
     });
 
@@ -63,7 +57,6 @@ describe("startQaGatewayRpcClient", () => {
     );
 
     expect(process.env.OPENCLAW_HOME).toBe(originalHome);
-    expect(process.env.OPENCLAW_QA_TEST_ONLY).toBeUndefined();
   });
 
   it("wraps request failures with gateway logs", async () => {
@@ -71,7 +64,6 @@ describe("startQaGatewayRpcClient", () => {
     const client = await startQaGatewayRpcClient({
       wsUrl: "ws://127.0.0.1:18789",
       token: "qa-token",
-      env: { OPENCLAW_HOME: "/tmp/openclaw-home" } as NodeJS.ProcessEnv,
       logs: () => "qa logs",
     });
 
@@ -84,7 +76,6 @@ describe("startQaGatewayRpcClient", () => {
     const client = await startQaGatewayRpcClient({
       wsUrl: "ws://127.0.0.1:18789",
       token: "qa-token",
-      env: { OPENCLAW_HOME: "/tmp/openclaw-home" } as NodeJS.ProcessEnv,
       logs: () => "qa logs",
     });
 

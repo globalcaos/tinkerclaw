@@ -110,8 +110,7 @@ export function buildQaRuntimeEnv(params: {
     OPENCLAW_SKIP_CANVAS_HOST: "1",
     OPENCLAW_NO_RESPAWN: "1",
     OPENCLAW_TEST_FAST: "1",
-    // QA uses the fast runtime envelope for speed, but it still exercises
-    // normal config-driven heartbeats and runtime config writes.
+    // QA still exercises normal reply-config flows under the fast envelope.
     OPENCLAW_ALLOW_SLOW_REPLY_TESTS: "1",
     XDG_CONFIG_HOME: params.xdgConfigHome,
     XDG_DATA_HOME: params.xdgDataHome,
@@ -119,10 +118,6 @@ export function buildQaRuntimeEnv(params: {
   };
   return normalizeQaProviderModeEnv(env, params.providerMode);
 }
-
-export const __testing = {
-  buildQaRuntimeEnv,
-};
 
 async function waitForGatewayReady(params: {
   baseUrl: string;
@@ -140,17 +135,17 @@ async function waitForGatewayReady(params: {
         `gateway exited before becoming healthy (exitCode=${String(params.child.exitCode)}, signal=${String(params.child.signalCode)}):\n${params.logs()}`,
       );
     }
-    try {
-      for (const readyPath of ["/readyz", "/healthz"]) {
-        const response = await fetch(`${params.baseUrl}${readyPath}`, {
+    for (const healthPath of ["/readyz", "/healthz"]) {
+      try {
+        const response = await fetch(`${params.baseUrl}${healthPath}`, {
           signal: AbortSignal.timeout(2_000),
         });
         if (response.ok) {
           return;
         }
+      } catch {
+        // retry until timeout
       }
-    } catch {
-      // retry until timeout
     }
     await sleep(250);
   }
@@ -270,7 +265,6 @@ export async function startQaGatewayChild(params: {
     rpcClient = await startQaGatewayRpcClient({
       wsUrl,
       token: gatewayToken,
-      env,
       logs,
     });
   } catch (error) {

@@ -26,7 +26,7 @@ function createParams(baseEnv?: NodeJS.ProcessEnv) {
 }
 
 describe("buildQaRuntimeEnv", () => {
-  it("allows normal reply config flows while keeping fast test mode", () => {
+  it("keeps the slow-reply QA opt-out enabled under fast mode", () => {
     const env = buildQaRuntimeEnv({
       ...createParams(),
       providerMode: "mock-openai",
