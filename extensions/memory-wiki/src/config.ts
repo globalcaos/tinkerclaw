@@ -45,6 +45,9 @@ export type MemoryWikiPluginConfig = {
     backend?: WikiSearchBackend;
     corpus?: WikiSearchCorpus;
   };
+  context?: {
+    includeCompiledDigestPrompt?: boolean;
+  };
   render?: {
     preserveHumanBlocks?: boolean;
     createBacklinks?: boolean;
@@ -84,6 +87,9 @@ export type ResolvedMemoryWikiConfig = {
   search: {
     backend: WikiSearchBackend;
     corpus: WikiSearchCorpus;
+  };
+  context: {
+    includeCompiledDigestPrompt: boolean;
   };
   render: {
     preserveHumanBlocks: boolean;
@@ -140,6 +146,11 @@ const MemoryWikiConfigSource = z.strictObject({
     .strictObject({
       backend: z.enum(WIKI_SEARCH_BACKENDS).optional(),
       corpus: z.enum(WIKI_SEARCH_CORPORA).optional(),
+    })
+    .optional(),
+  context: z
+    .strictObject({
+      includeCompiledDigestPrompt: z.boolean().optional(),
     })
     .optional(),
   render: z
@@ -234,6 +245,9 @@ export function resolveMemoryWikiConfig(
     search: {
       backend: safeConfig.search?.backend ?? DEFAULT_WIKI_SEARCH_BACKEND,
       corpus: safeConfig.search?.corpus ?? DEFAULT_WIKI_SEARCH_CORPUS,
+    },
+    context: {
+      includeCompiledDigestPrompt: safeConfig.context?.includeCompiledDigestPrompt ?? false,
     },
     render: {
       preserveHumanBlocks: safeConfig.render?.preserveHumanBlocks ?? true,

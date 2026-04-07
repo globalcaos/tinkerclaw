@@ -31,6 +31,10 @@
     "unsafeLocal.allowPrivateMemoryCoreAccess": {
       "label": "Allow Private Memory Access",
       "help": "Experimental same-repo escape hatch for reading memory-core private paths."
+    },
+    "context.includeCompiledDigestPrompt": {
+      "label": "Include Compiled Digest In Prompt",
+      "help": "Append a compact compiled wiki digest snapshot to memory prompt sections for context engines and legacy prompt assembly."
     }
   },
   "configSchema": {
@@ -138,6 +142,15 @@
           "corpus": {
             "type": "string",
             "enum": ["wiki", "memory", "all"]
+          }
+        }
+      },
+      "context": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "includeCompiledDigestPrompt": {
+            "type": "boolean"
           }
         }
       },
