@@ -24,7 +24,7 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
-import type { FinalizedMsgContext, MsgContext } from "../templating.js";
+import type { FinalizedMsgContext } from "../templating.js";
 import {
   applyAbortCutoffToSessionEntry,
   resolveAbortCutoffFromContext,
@@ -116,14 +116,6 @@ export function resolveSessionEntryForKey(
         };
   }
   return {};
-}
-
-function resolveAbortTargetKey(ctx: MsgContext): string | undefined {
-  const target = normalizeOptionalString(ctx.CommandTargetSessionKey);
-  if (target) {
-    return target;
-  }
-  return normalizeOptionalString(ctx.SessionKey);
 }
 
 function normalizeRequesterSessionKey(
@@ -232,7 +224,8 @@ export async function tryFastAbortFromMessage(params: {
   cfg: OpenClawConfig;
 }): Promise<{ handled: boolean; aborted: boolean; stoppedSubagents?: number }> {
   const { ctx, cfg } = params;
-  const targetKey = resolveAbortTargetKey(ctx);
+  const targetKey =
+    normalizeOptionalString(ctx.CommandTargetSessionKey) ?? normalizeOptionalString(ctx.SessionKey);
   // Use RawBody/CommandBody for abort detection (clean message without structural context).
   const raw = stripStructuralPrefixes(ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "");
   const isGroup = normalizeOptionalString(ctx.ChatType)?.toLowerCase() === "group";
