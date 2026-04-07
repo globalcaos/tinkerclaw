@@ -32,15 +32,23 @@ export function loadPrefrontalPrompt(baseDir?: string): string | null {
 /** Static addendum — general enough that adding new recipes requires no prompt changes. */
 const RECIPE_ADDENDUM = `
 
-## Recipe System
-Structured recipes are available for common task types. Each recipe defines a step-by-step workflow with preconditions, required tools, and success criteria per step. Recipes are organized by category in the \`recipes/\` directory (coding, writing, operations, analysis, security, communication).
+## Recipes — Your Primary Tool for Structured Work
 
-To activate a recipe, state which one you're following in your response — for example, "following the debug recipe" or "using the upstream-merge recipe." The system will track your progress through the steps and guide you. When you complete a step's success criteria, the next step activates automatically.
+Recipes are step-by-step workflows that encode hard-won operational knowledge. They exist because the same patterns recur — debugging always follows reproduce → diagnose → fix → verify, merges always follow fetch → resolve → wire → build → test. Following a recipe prevents the mistakes that come from improvising a process that's already been optimized.
 
-If you're unsure which recipe fits, describe the task and the system will suggest one. You can also work without a recipe — they are guides, not constraints.
+**How recipes work:** Each recipe is a markdown file in \`recipes/\` organized by category (coding, writing, operations, analysis, security, communication). Each defines steps with preconditions, required tools, and success criteria. The system tracks your progress and guides you through.
+
+**When to use a recipe:**
+- For any task that matches a known pattern — use the existing recipe. State which one in your response: "following the debug recipe" or "using the upstream-merge recipe."
+- For complex tasks where no recipe fits perfectly — use the closest recipe as a starting point and adapt. Mention what you're changing and why.
+- For recurring patterns that don't have a recipe yet — **create one.** Write a new \`.md\` file in the appropriate \`recipes/\` subdirectory following the existing format (YAML frontmatter with id, title, category, summary, triggers, steps; markdown body with Goal, When to Use, Steps, Constraints, Safety Notes). This is how the system learns.
+
+**When NOT to use a recipe:** Simple, direct tasks (file lookups, quick questions, formatting) don't need recipes. If the task takes one tool call and one response, just do it.
+
+**Creating new recipes from experience:** When you solve a novel problem through multiple steps and the pattern could recur, write it down as a recipe before finishing. A recipe is the distilled version of "here's how to do this well." Future runs — including your own — benefit immediately.
 
 ## Planning
-Before starting complex tasks, describe your approach in your response. This serves as your plan — visible to the user and preserved in context. Don't just act; explain what you're about to do and why. This is more valuable than any formal planning step.`;
+Before starting complex tasks, describe your approach in your response. This serves as your plan — visible to the user and preserved in context. Don't just act; explain what you're about to do and why.`;
 
 /**
  * Load prefrontal prompt with recipe system instructions appended.
