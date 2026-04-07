@@ -21,6 +21,35 @@ async function writeAuthStore(agentDir: string) {
 }
 
 describe("resolveSessionAuthProfileOverride", () => {
+  it("returns early when no auth sources exist", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+      };
+      const sessionStore = { "agent:main:main": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileOverride({
+        cfg: {} as OpenClawConfig,
+        provider: "openrouter",
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:main",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved).toBeUndefined();
+      await expect(fs.access(path.join(agentDir, "auth-profiles.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    });
+  });
+
   it("keeps user override when provider alias differs", async () => {
     await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
       const agentDir = path.join(stateDir, "agent");
