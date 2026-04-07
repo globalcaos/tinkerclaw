@@ -133,6 +133,7 @@ explicitly promotes one as public.
     | `plugin-sdk/provider-model-shared` | `ProviderReplayFamily`, `buildProviderReplayFamilyHooks`, `normalizeModelCompat`, shared replay-policy builders, provider-endpoint helpers, and model-id normalization helpers such as `normalizeNativeXaiModelId` |
     | `plugin-sdk/provider-catalog-shared` | `findCatalogTemplate`, `buildSingleProviderApiKeyCatalog`, `supportsNativeStreamingUsageCompat`, `applyProviderNativeStreamingUsageCompat` |
     | `plugin-sdk/provider-http` | Generic provider HTTP/endpoint capability helpers |
+    | `plugin-sdk/provider-web-fetch-contract` | Narrow web-fetch config/selection contract helpers such as `enablePluginInConfig` and `WebFetchProviderPlugin` |
     | `plugin-sdk/provider-web-fetch` | Web-fetch provider registration/cache helpers |
     | `plugin-sdk/provider-web-search-contract` | Narrow web-search config/credential contract helpers such as `enablePluginInConfig`, `resolveProviderWebSearchPluginConfig`, and scoped credential setters/getters |
     | `plugin-sdk/provider-web-search` | Web-search provider registration/cache/runtime helpers |
