@@ -33,7 +33,7 @@ import {
   resolveAgentIdFromSessionKey,
   toAgentStoreSessionKey,
 } from "../../routing/session-key.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { normalizeOptionalString, readStringValue } from "../../shared/string-coerce.js";
 import { GATEWAY_CLIENT_IDS } from "../protocol/client-info.js";
 import {
   ErrorCodes,
@@ -1206,14 +1206,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       context,
       requestedKey: key,
       canonicalKey,
-      runId: typeof p.runId === "string" ? p.runId : undefined,
+      runId: readStringValue(p.runId),
     });
     let abortedRunId: string | null = null;
     await chatHandlers["chat.abort"]({
       req,
       params: {
         sessionKey: abortSessionKey,
-        runId: typeof p.runId === "string" ? p.runId : undefined,
+        runId: readStringValue(p.runId),
       },
       respond: (ok, payload, error, meta) => {
         if (!ok) {
