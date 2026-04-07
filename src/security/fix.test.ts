@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { applySecurityFixConfigMutations, fixSecurityFootguns } from "./fix.js";
+import {
+  applySecurityFixConfigMutations,
+  collectSecurityPermissionTargets,
+  fixSecurityFootguns,
+} from "./fix.js";
 
 const isWindows = process.platform === "win32";
 
@@ -231,7 +235,7 @@ describe("security fix", () => {
     await expectTightenedStateAndConfigPerms(stateDir, configPath);
   });
 
-  it("tightens perms for credentials + agent auth/sessions + include files", async () => {
+  it("collects permission targets for credentials + agent auth/sessions + include files", async () => {
     const stateDir = await createStateDir("includes");
 
     const includesDir = path.join(stateDir, "includes");
@@ -273,25 +277,27 @@ describe("security fix", () => {
     await fs.writeFile(transcriptPath, '{"type":"session"}\n', "utf-8");
     await fs.chmod(transcriptPath, 0o644);
 
-    const res = await fixSecurityFootguns({
+    const targets = await collectSecurityPermissionTargets({
       env: createFixEnv(stateDir, configPath),
       stateDir,
       configPath,
+      cfg: {
+        channels: { whatsapp: { groupPolicy: "open" } },
+      } as OpenClawConfig,
+      includePaths: [includePath],
     });
-    expect(res.ok).toBe(true);
 
-    const permissionChecks: Array<readonly [string, number]> = [
-      [credsDir, 0o700],
-      [allowFromPath, 0o600],
-      [authProfilesPath, 0o600],
-      [sessionsStorePath, 0o600],
-      [transcriptPath, 0o600],
-      [includePath, 0o600],
-    ];
-    await Promise.all(
-      permissionChecks.map(async ([targetPath, expectedMode]) =>
-        expectPerms((await fs.stat(targetPath)).mode & 0o777, expectedMode),
-      ),
+    expect(targets).toEqual(
+      expect.arrayContaining([
+        { path: stateDir, mode: 0o700, require: "dir" },
+        { path: configPath, mode: 0o600, require: "file" },
+        { path: credsDir, mode: 0o700, require: "dir" },
+        { path: allowFromPath, mode: 0o600, require: "file" },
+        { path: authProfilesPath, mode: 0o600, require: "file" },
+        { path: sessionsStorePath, mode: 0o600, require: "file" },
+        { path: transcriptPath, mode: 0o600, require: "file" },
+        { path: includePath, mode: 0o600, require: "file" },
+      ]),
     );
   });
 });

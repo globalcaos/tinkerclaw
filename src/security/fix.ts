@@ -40,6 +40,12 @@ export type SecurityFixResult = {
   errors: string[];
 };
 
+export type SecurityPermissionTarget = {
+  path: string;
+  mode: number;
+  require: "dir" | "file";
+};
+
 async function safeChmod(params: {
   path: string;
   mode: number;
@@ -302,19 +308,24 @@ async function collectChannelSecurityConfigFixMutation(params: {
   return { cfg: nextCfg, changes };
 }
 
-async function chmodCredentialsAndAgentState(params: {
+export async function collectSecurityPermissionTargets(params: {
   env: NodeJS.ProcessEnv;
   stateDir: string;
+  configPath: string;
   cfg: OpenClawConfig;
-  actions: SecurityFixAction[];
-  applyPerms: (params: {
-    path: string;
-    mode: number;
-    require: "dir" | "file";
-  }) => Promise<SecurityFixAction>;
-}): Promise<void> {
+  includePaths?: readonly string[];
+}): Promise<SecurityPermissionTarget[]> {
+  const targets: SecurityPermissionTarget[] = [
+    { path: params.stateDir, mode: 0o700, require: "dir" },
+    { path: params.configPath, mode: 0o600, require: "file" },
+    ...(params.includePaths ?? []).map((targetPath) => ({
+      path: targetPath,
+      mode: 0o600,
+      require: "file" as const,
+    })),
+  ];
   const credsDir = resolveOAuthDir(params.env, params.stateDir);
-  params.actions.push(await safeChmod({ path: credsDir, mode: 0o700, require: "dir" }));
+  targets.push({ path: credsDir, mode: 0o700, require: "dir" });
 
   const credsEntries = await fs.readdir(credsDir, { withFileTypes: true }).catch(() => []);
   for (const entry of credsEntries) {
@@ -325,12 +336,12 @@ async function chmodCredentialsAndAgentState(params: {
       continue;
     }
     const p = path.join(credsDir, entry.name);
-    params.actions.push(await safeChmod({ path: p, mode: 0o600, require: "file" }));
+    targets.push({ path: p, mode: 0o600, require: "file" });
   }
 
   const ids = new Set<string>();
   ids.add(resolveDefaultAgentId(params.cfg));
-  const list = Array.isArray(params.cfg.agents?.list) ? params.cfg.agents?.list : [];
+  const list = Array.isArray(params.cfg.agents?.list) ? params.cfg.agents.list : [];
   for (const agent of list ?? []) {
     if (!agent || typeof agent !== "object") {
       continue;
@@ -348,18 +359,16 @@ async function chmodCredentialsAndAgentState(params: {
     const agentDir = path.join(agentRoot, "agent");
     const sessionsDir = path.join(agentRoot, "sessions");
 
-    params.actions.push(await safeChmod({ path: agentRoot, mode: 0o700, require: "dir" }));
-    params.actions.push(await params.applyPerms({ path: agentDir, mode: 0o700, require: "dir" }));
+    targets.push({ path: agentRoot, mode: 0o700, require: "dir" });
+    targets.push({ path: agentDir, mode: 0o700, require: "dir" });
 
     const authPath = path.join(agentDir, "auth-profiles.json");
-    params.actions.push(await params.applyPerms({ path: authPath, mode: 0o600, require: "file" }));
+    targets.push({ path: authPath, mode: 0o600, require: "file" });
 
-    params.actions.push(
-      await params.applyPerms({ path: sessionsDir, mode: 0o700, require: "dir" }),
-    );
+    targets.push({ path: sessionsDir, mode: 0o700, require: "dir" });
 
     const storePath = path.join(sessionsDir, "sessions.json");
-    params.actions.push(await params.applyPerms({ path: storePath, mode: 0o600, require: "file" }));
+    targets.push({ path: storePath, mode: 0o600, require: "file" });
 
     // Fix permissions on session transcript files (*.jsonl)
     const sessionEntries = await fs.readdir(sessionsDir, { withFileTypes: true }).catch(() => []);
@@ -371,9 +380,10 @@ async function chmodCredentialsAndAgentState(params: {
         continue;
       }
       const p = path.join(sessionsDir, entry.name);
-      params.actions.push(await params.applyPerms({ path: p, mode: 0o600, require: "file" }));
+      targets.push({ path: p, mode: 0o600, require: "file" });
     }
   }
+  return targets;
 }
 
 export async function fixSecurityFootguns(opts?: {
@@ -423,29 +433,27 @@ export async function fixSecurityFootguns(opts?: {
     isWindows
       ? safeAclReset({ path: params.path, require: params.require, env, exec })
       : safeChmod({ path: params.path, mode: params.mode, require: params.require });
-
-  actions.push(await applyPerms({ path: stateDir, mode: 0o700, require: "dir" }));
-  actions.push(await applyPerms({ path: configPath, mode: 0o600, require: "file" }));
-
+  let includePaths: string[] = [];
   if (snap.exists) {
-    const includePaths = await collectIncludePathsRecursive({
+    includePaths = await collectIncludePathsRecursive({
       configPath: snap.path,
       parsed: snap.parsed,
     }).catch(() => []);
-    for (const p of includePaths) {
-      actions.push(await applyPerms({ path: p, mode: 0o600, require: "file" }));
-    }
   }
 
-  await chmodCredentialsAndAgentState({
+  const permissionTargets = await collectSecurityPermissionTargets({
     env,
     stateDir,
+    configPath,
     cfg: snap.config ?? {},
-    actions,
-    applyPerms,
+    includePaths,
   }).catch((err) => {
-    errors.push(`chmodCredentialsAndAgentState failed: ${String(err)}`);
+    errors.push(`collectSecurityPermissionTargets failed: ${String(err)}`);
+    return [] as SecurityPermissionTarget[];
   });
+  for (const target of permissionTargets) {
+    actions.push(await applyPerms(target));
+  }
 
   return {
     ok: errors.length === 0,
