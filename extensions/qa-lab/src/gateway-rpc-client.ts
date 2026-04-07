@@ -1,19 +1,10 @@
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { GatewayClient } from "./runtime-api.js";
+import { callGatewayFromCli } from "./runtime-api.js";
 
 type QaGatewayRpcRequestOptions = {
   expectFinal?: boolean;
   timeoutMs?: number;
 };
-
-const QA_GATEWAY_RPC_SCOPES = [
-  "operator.admin",
-  "operator.read",
-  "operator.write",
-  "operator.approvals",
-  "operator.pairing",
-  "operator.talk.secrets",
-] as const;
 
 export type QaGatewayRpcClient = {
   request(method: string, rpcParams?: unknown, opts?: QaGatewayRpcRequestOptions): Promise<unknown>;
@@ -25,77 +16,88 @@ function formatQaGatewayRpcError(error: unknown, logs: () => string) {
   return new Error(`${details}\nGateway logs:\n${logs()}`);
 }
 
+let qaGatewayRpcQueue = Promise.resolve();
+
+async function withScopedProcessEnv<T>(env: NodeJS.ProcessEnv, task: () => Promise<T>): Promise<T> {
+  const original = new Map<string, string | undefined>();
+  const keys = new Set([...Object.keys(process.env), ...Object.keys(env)]);
+
+  for (const key of keys) {
+    original.set(key, process.env[key]);
+    const nextValue = env[key];
+    if (nextValue === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = nextValue;
+  }
+
+  try {
+    return await task();
+  } finally {
+    for (const key of keys) {
+      const previousValue = original.get(key);
+      if (previousValue === undefined) {
+        delete process.env[key];
+        continue;
+      }
+      process.env[key] = previousValue;
+    }
+  }
+}
+
+async function runQueuedQaGatewayRpc<T>(task: () => Promise<T>): Promise<T> {
+  const run = qaGatewayRpcQueue.then(task, task);
+  qaGatewayRpcQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return await run;
+}
+
 export async function startQaGatewayRpcClient(params: {
   wsUrl: string;
   token: string;
+  env: NodeJS.ProcessEnv;
   logs: () => string;
 }): Promise<QaGatewayRpcClient> {
-  let readySettled = false;
-  let stopping = false;
-  let resolveReady!: () => void;
-  let rejectReady!: (err: unknown) => void;
-
-  const ready = new Promise<void>((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
-
-  const settleReady = (error?: unknown) => {
-    if (readySettled) {
-      return;
-    }
-    readySettled = true;
-    if (error) {
-      rejectReady(error);
-      return;
-    }
-    resolveReady();
-  };
-
   const wrapError = (error: unknown) => formatQaGatewayRpcError(error, params.logs);
-
-  const client = new GatewayClient({
-    url: params.wsUrl,
-    token: params.token,
-    deviceIdentity: null,
-    // Mirror the old gateway CLI caller scopes so the faster path stays behavior-identical.
-    scopes: [...QA_GATEWAY_RPC_SCOPES],
-    onHelloOk: () => {
-      settleReady();
-    },
-    onConnectError: (error) => {
-      settleReady(wrapError(error));
-    },
-    onClose: (code, reason) => {
-      if (stopping) {
-        return;
-      }
-      const reasonText = reason.trim() || "no close reason";
-      settleReady(wrapError(new Error(`gateway closed (${code}): ${reasonText}`)));
-    },
-  });
-
-  client.start();
-  await ready;
+  let stopped = false;
 
   return {
     async request(method, rpcParams, opts) {
+      if (stopped) {
+        throw wrapError(new Error("gateway rpc client already stopped"));
+      }
       try {
-        return await client.request(method, rpcParams, {
-          expectFinal: opts?.expectFinal,
-          timeoutMs: opts?.timeoutMs ?? 20_000,
-        });
+        return await runQueuedQaGatewayRpc(
+          async () =>
+            await withScopedProcessEnv(
+              params.env,
+              async () =>
+                await callGatewayFromCli(
+                  method,
+                  {
+                    url: params.wsUrl,
+                    token: params.token,
+                    timeout: String(opts?.timeoutMs ?? 20_000),
+                    expectFinal: opts?.expectFinal,
+                    json: true,
+                  },
+                  rpcParams ?? {},
+                  {
+                    expectFinal: opts?.expectFinal,
+                    progress: false,
+                  },
+                ),
+            ),
+        );
       } catch (error) {
         throw wrapError(error);
       }
     },
     async stop() {
-      stopping = true;
-      try {
-        await client.stopAndWait();
-      } catch {
-        client.stop();
-      }
+      stopped = true;
     },
   };
 }

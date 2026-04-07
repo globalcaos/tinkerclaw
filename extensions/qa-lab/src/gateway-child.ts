@@ -270,6 +270,7 @@ export async function startQaGatewayChild(params: {
     rpcClient = await startQaGatewayRpcClient({
       wsUrl,
       token: gatewayToken,
+      env,
       logs,
     });
   } catch (error) {
