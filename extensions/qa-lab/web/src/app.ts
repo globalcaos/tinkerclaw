@@ -18,6 +18,14 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function getJsonNoStore<T>(path: string): Promise<T> {
+  const response = await fetch(path, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as T;
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
@@ -91,6 +99,7 @@ export async function createQaLabApp(root: HTMLDivElement) {
   let lastFingerprint = "";
   let renderDeferred = false;
   let previousRunnerStatus: string | null = null;
+  let currentUiVersion: string | null = null;
 
   function stateFingerprint(): string {
     const msgs = state.snapshot?.messages;
@@ -179,6 +188,24 @@ export async function createQaLabApp(root: HTMLDivElement) {
     if (renderDeferred && !isSelectOpen()) {
       renderDeferred = false;
       render();
+    }
+  }
+
+  async function pollUiVersion() {
+    if (document.visibilityState === "hidden") {
+      return;
+    }
+    try {
+      const payload = await getJsonNoStore<{ version: string | null }>("/api/ui-version");
+      if (!currentUiVersion) {
+        currentUiVersion = payload.version;
+        return;
+      }
+      if (payload.version && payload.version !== currentUiVersion) {
+        window.location.reload();
+      }
+    } catch {
+      // Ignore transient rebuild windows while the dist dir is being rewritten.
     }
   }
 
@@ -590,5 +617,7 @@ export async function createQaLabApp(root: HTMLDivElement) {
 
   render();
   await refresh();
+  void pollUiVersion();
   setInterval(() => void refresh(), 1_000);
+  setInterval(() => void pollUiVersion(), 1_000);
 }
