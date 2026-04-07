@@ -937,8 +937,10 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
           {
             name: "turns short approval into a real file read",
             run: async () => {
+              // Direct agent turns only need the gateway plus outbound dispatch.
+              // Waiting for the qa-channel poll loop adds mock-lane startup cost
+              // without increasing coverage for this scenario.
               await waitForGatewayHealthy(env, 60_000);
-              await waitForQaChannelReady(env, 60_000);
               await reset();
               await runAgentPrompt(env, {
                 sessionKey: "agent:qa:approval-followthrough",
@@ -1600,8 +1602,8 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
           {
             name: "keeps using tools after switching models",
             run: async () => {
+              // This scenario exercises direct agent delivery, not inbound qa-channel polling.
               await waitForGatewayHealthy(env, 60_000);
-              await waitForQaChannelReady(env, 60_000);
               await reset();
               await runAgentPrompt(env, {
                 sessionKey: "agent:qa:model-switch-tools",
