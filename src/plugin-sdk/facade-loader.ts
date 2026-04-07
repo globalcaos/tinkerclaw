@@ -1,25 +1,30 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createJiti } from "jiti";
-import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
 import { resolveBundledPluginsDir } from "../plugins/bundled-dir.js";
-import { resolveBundledPluginPublicSurfacePath } from "../plugins/public-surface-runtime.js";
-import {
-  buildPluginLoaderAliasMap,
-  buildPluginLoaderJitiOptions,
-  resolveLoaderPackageRoot,
-  shouldPreferNativeJiti,
-} from "../plugins/sdk-alias.js";
 
-const OPENCLAW_PACKAGE_ROOT =
-  resolveLoaderPackageRoot({
-    modulePath: fileURLToPath(import.meta.url),
-    moduleUrl: import.meta.url,
-  }) ?? fileURLToPath(new URL("../..", import.meta.url));
 const CURRENT_MODULE_PATH = fileURLToPath(import.meta.url);
 const PUBLIC_SURFACE_SOURCE_EXTENSIONS = [".ts", ".mts", ".js", ".mjs", ".cts", ".cjs"] as const;
-const jitiLoaders = new Map<string, ReturnType<typeof createJiti>>();
+type JitiLoader = ReturnType<(typeof import("jiti"))["createJiti"]>;
+type SdkAliasRuntimeModule = Pick<
+  typeof import("../plugins/sdk-alias.js"),
+  | "buildPluginLoaderAliasMap"
+  | "buildPluginLoaderJitiOptions"
+  | "resolveLoaderPackageRoot"
+  | "shouldPreferNativeJiti"
+>;
+type PublicSurfaceRuntimeModule = Pick<
+  typeof import("../plugins/public-surface-runtime.js"),
+  "resolveBundledPluginPublicSurfacePath"
+>;
+type BoundaryFileRuntimeModule = Pick<
+  typeof import("../infra/boundary-file-read.js"),
+  "openBoundaryFileSync"
+>;
+
+const nodeRequire = createRequire(import.meta.url);
+const jitiLoaders = new Map<string, JitiLoader>();
 const loadedFacadeModules = new Map<string, unknown>();
 const loadedFacadePluginIds = new Set<string>();
 const cachedFacadeModuleLocationsByKey = new Map<
@@ -29,6 +34,87 @@ const cachedFacadeModuleLocationsByKey = new Map<
     boundaryRoot: string;
   } | null
 >();
+let facadeLoaderJitiFactory:
+  | ((...args: Parameters<(typeof import("jiti"))["createJiti"]>) => JitiLoader)
+  | undefined;
+let sdkAliasRuntimeModule: SdkAliasRuntimeModule | undefined;
+let publicSurfaceRuntimeModule: PublicSurfaceRuntimeModule | undefined;
+let boundaryFileRuntimeModule: BoundaryFileRuntimeModule | undefined;
+let cachedOpenClawPackageRoot: string | undefined;
+
+function getJitiFactory() {
+  if (facadeLoaderJitiFactory) {
+    return facadeLoaderJitiFactory;
+  }
+  const { createJiti } = nodeRequire("jiti") as typeof import("jiti");
+  facadeLoaderJitiFactory = createJiti;
+  return facadeLoaderJitiFactory;
+}
+
+function loadRuntimeModule<T>(params: { candidates: readonly string[]; errorMessage: string }): T {
+  for (const candidate of params.candidates) {
+    try {
+      return nodeRequire(candidate) as T;
+    } catch {
+      // Try source/runtime candidates in order.
+    }
+  }
+  const createJiti = getJitiFactory();
+  const jiti = createJiti(import.meta.url, { tryNative: false });
+  for (const candidate of params.candidates) {
+    try {
+      return jiti(candidate) as T;
+    } catch {
+      // Try source/runtime candidates in order.
+    }
+  }
+  throw new Error(params.errorMessage);
+}
+
+function loadSdkAliasRuntime(): SdkAliasRuntimeModule {
+  if (sdkAliasRuntimeModule) {
+    return sdkAliasRuntimeModule;
+  }
+  sdkAliasRuntimeModule = loadRuntimeModule<SdkAliasRuntimeModule>({
+    candidates: ["../plugins/sdk-alias.js", "../plugins/sdk-alias.ts"],
+    errorMessage: "Unable to load plugin sdk-alias runtime",
+  });
+  return sdkAliasRuntimeModule;
+}
+
+function loadPublicSurfaceRuntime(): PublicSurfaceRuntimeModule {
+  if (publicSurfaceRuntimeModule) {
+    return publicSurfaceRuntimeModule;
+  }
+  publicSurfaceRuntimeModule = loadRuntimeModule<PublicSurfaceRuntimeModule>({
+    candidates: ["../plugins/public-surface-runtime.js", "../plugins/public-surface-runtime.ts"],
+    errorMessage: "Unable to load plugin public-surface runtime",
+  });
+  return publicSurfaceRuntimeModule;
+}
+
+function loadBoundaryFileRuntime(): BoundaryFileRuntimeModule {
+  if (boundaryFileRuntimeModule) {
+    return boundaryFileRuntimeModule;
+  }
+  boundaryFileRuntimeModule = loadRuntimeModule<BoundaryFileRuntimeModule>({
+    candidates: ["../infra/boundary-file-read.js", "../infra/boundary-file-read.ts"],
+    errorMessage: "Unable to load boundary-file runtime",
+  });
+  return boundaryFileRuntimeModule;
+}
+
+function getOpenClawPackageRoot() {
+  if (cachedOpenClawPackageRoot) {
+    return cachedOpenClawPackageRoot;
+  }
+  cachedOpenClawPackageRoot =
+    loadSdkAliasRuntime().resolveLoaderPackageRoot({
+      modulePath: fileURLToPath(import.meta.url),
+      moduleUrl: import.meta.url,
+    }) ?? fileURLToPath(new URL("../..", import.meta.url));
+  return cachedOpenClawPackageRoot;
+}
 
 function createFacadeResolutionKey(params: { dirName: string; artifactBasename: string }): string {
   const bundledPluginsDir = resolveBundledPluginsDir();
@@ -41,7 +127,8 @@ function resolveSourceFirstPublicSurfacePath(params: {
   artifactBasename: string;
 }): string | null {
   const sourceBaseName = params.artifactBasename.replace(/\.js$/u, "");
-  const sourceRoot = params.bundledPluginsDir ?? path.resolve(OPENCLAW_PACKAGE_ROOT, "extensions");
+  const sourceRoot =
+    params.bundledPluginsDir ?? path.resolve(getOpenClawPackageRoot(), "extensions");
   for (const ext of PUBLIC_SURFACE_SOURCE_EXTENSIONS) {
     const candidate = path.resolve(sourceRoot, params.dirName, `${sourceBaseName}${ext}`);
     if (fs.existsSync(candidate)) {
@@ -64,8 +151,8 @@ function resolveFacadeModuleLocationUncached(params: {
         ...(bundledPluginsDir ? { bundledPluginsDir } : {}),
       }) ??
       resolveSourceFirstPublicSurfacePath(params) ??
-      resolveBundledPluginPublicSurfacePath({
-        rootDir: OPENCLAW_PACKAGE_ROOT,
+      loadPublicSurfaceRuntime().resolveBundledPluginPublicSurfacePath({
+        rootDir: getOpenClawPackageRoot(),
         ...(bundledPluginsDir ? { bundledPluginsDir } : {}),
         dirName: params.dirName,
         artifactBasename: params.artifactBasename,
@@ -76,13 +163,13 @@ function resolveFacadeModuleLocationUncached(params: {
         boundaryRoot:
           bundledPluginsDir && modulePath.startsWith(path.resolve(bundledPluginsDir) + path.sep)
             ? path.resolve(bundledPluginsDir)
-            : OPENCLAW_PACKAGE_ROOT,
+            : getOpenClawPackageRoot(),
       };
     }
     return null;
   }
-  const modulePath = resolveBundledPluginPublicSurfacePath({
-    rootDir: OPENCLAW_PACKAGE_ROOT,
+  const modulePath = loadPublicSurfaceRuntime().resolveBundledPluginPublicSurfacePath({
+    rootDir: getOpenClawPackageRoot(),
     ...(bundledPluginsDir ? { bundledPluginsDir } : {}),
     dirName: params.dirName,
     artifactBasename: params.artifactBasename,
@@ -95,7 +182,7 @@ function resolveFacadeModuleLocationUncached(params: {
     boundaryRoot:
       bundledPluginsDir && modulePath.startsWith(path.resolve(bundledPluginsDir) + path.sep)
         ? path.resolve(bundledPluginsDir)
-        : OPENCLAW_PACKAGE_ROOT,
+        : getOpenClawPackageRoot(),
   };
 }
 
@@ -113,9 +200,11 @@ function resolveFacadeModuleLocation(params: {
 }
 
 function getJiti(modulePath: string) {
+  const sdkAlias = loadSdkAliasRuntime();
   const tryNative =
-    shouldPreferNativeJiti(modulePath) || modulePath.includes(`${path.sep}dist${path.sep}`);
-  const aliasMap = buildPluginLoaderAliasMap(modulePath, process.argv[1], import.meta.url);
+    sdkAlias.shouldPreferNativeJiti(modulePath) ||
+    modulePath.includes(`${path.sep}dist${path.sep}`);
+  const aliasMap = sdkAlias.buildPluginLoaderAliasMap(modulePath, process.argv[1], import.meta.url);
   const cacheKey = JSON.stringify({
     tryNative,
     aliasMap: Object.entries(aliasMap).toSorted(([left], [right]) => left.localeCompare(right)),
@@ -124,8 +213,8 @@ function getJiti(modulePath: string) {
   if (cached) {
     return cached;
   }
-  const loader = createJiti(import.meta.url, {
-    ...buildPluginLoaderJitiOptions(aliasMap),
+  const loader = getJitiFactory()(import.meta.url, {
+    ...sdkAlias.buildPluginLoaderJitiOptions(aliasMap),
     tryNative,
   });
   jitiLoaders.set(cacheKey, loader);
@@ -209,11 +298,11 @@ export function loadFacadeModuleAtLocationSync<T extends object>(params: {
     return cached as T;
   }
 
-  const opened = openBoundaryFileSync({
+  const opened = loadBoundaryFileRuntime().openBoundaryFileSync({
     absolutePath: params.location.modulePath,
     rootPath: params.location.boundaryRoot,
     boundaryLabel:
-      params.location.boundaryRoot === OPENCLAW_PACKAGE_ROOT
+      params.location.boundaryRoot === getOpenClawPackageRoot()
         ? "OpenClaw package root"
         : (() => {
             const bundledDir = resolveBundledPluginsDir();
@@ -279,4 +368,9 @@ export function resetFacadeLoaderStateForTest(): void {
   loadedFacadePluginIds.clear();
   jitiLoaders.clear();
   cachedFacadeModuleLocationsByKey.clear();
+  facadeLoaderJitiFactory = undefined;
+  sdkAliasRuntimeModule = undefined;
+  publicSurfaceRuntimeModule = undefined;
+  boundaryFileRuntimeModule = undefined;
+  cachedOpenClawPackageRoot = undefined;
 }
