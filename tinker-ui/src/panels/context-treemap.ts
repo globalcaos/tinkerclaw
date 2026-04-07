@@ -521,8 +521,8 @@ export function mountContextTreemap(
   let maxTokenWindow = 200_000;
 
   // ─── Render empty state ───
-  function renderEmpty(msg = "No forensic dump loaded. Toggle 🛡️, send a message, then click ↻") {
-    container.innerHTML = `<div class="tm-empty">${esc(msg)}</div>`;
+  function renderEmpty(msg = "") {
+    container.innerHTML = msg ? `<div class="tm-empty">${esc(msg)}</div>` : "";
     footerEl.textContent = "";
     breadcrumbEl.innerHTML = "";
     if (costEl) {
@@ -1131,6 +1131,7 @@ export function mountContextTreemap(
 
   // ─── Public hooks ───
   (container as any).__treemapRefresh = loadLatest;
+  (container as any).__treemapClear = () => { currentDump = null; renderEmpty(); };
   (container as any).__treemapShowAnatomy = showAnatomyEvent;
   (container as any).__treemapBack = () => {
     if (level === 3) {

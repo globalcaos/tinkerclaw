@@ -8,7 +8,7 @@ import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
-import { createOllamaEmbeddingProvider } from "../../plugin-sdk/ollama.js";
+import { createOllamaEmbeddingProvider } from "../../plugin-sdk/ollama-runtime.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
