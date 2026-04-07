@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -184,6 +185,15 @@ async function runCliJson(params: { cwd: string; env: NodeJS.ProcessEnv; args: s
   return text ? (JSON.parse(text) as unknown) : {};
 }
 
+export function resolveQaControlUiRoot(params: { repoRoot: string; controlUiEnabled?: boolean }) {
+  if (params.controlUiEnabled === false) {
+    return undefined;
+  }
+  const controlUiRoot = path.join(params.repoRoot, "dist", "control-ui");
+  const indexPath = path.join(controlUiRoot, "index.html");
+  return existsSync(indexPath) ? controlUiRoot : undefined;
+}
+
 export async function startQaGatewayChild(params: {
   repoRoot: string;
   providerBaseUrl?: string;
@@ -224,6 +234,10 @@ export async function startQaGatewayChild(params: {
     providerBaseUrl: params.providerBaseUrl,
     qaBusBaseUrl: params.qaBusBaseUrl,
     workspaceDir,
+    controlUiRoot: resolveQaControlUiRoot({
+      repoRoot: params.repoRoot,
+      controlUiEnabled: params.controlUiEnabled,
+    }),
     providerMode: params.providerMode,
     primaryModel: params.primaryModel,
     alternateModel: params.alternateModel,

@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { buildQaRuntimeEnv } from "./gateway-child.js";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildQaRuntimeEnv, resolveQaControlUiRoot } from "./gateway-child.js";
+
+const cleanups: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+  while (cleanups.length > 0) {
+    await cleanups.pop()?.();
+  }
+});
 
 function createParams(baseEnv?: NodeJS.ProcessEnv) {
   return {
@@ -81,5 +92,29 @@ describe("buildQaRuntimeEnv", () => {
     expect(env.OPENCLAW_LIVE_ANTHROPIC_KEY).toBeUndefined();
     expect(env.OPENCLAW_LIVE_ANTHROPIC_KEYS).toBeUndefined();
     expect(env.OPENCLAW_LIVE_GEMINI_KEY).toBeUndefined();
+  });
+});
+
+describe("resolveQaControlUiRoot", () => {
+  it("returns the built control ui root when repo assets exist", async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "qa-control-ui-root-"));
+    cleanups.push(async () => {
+      await rm(repoRoot, { recursive: true, force: true });
+    });
+    const controlUiRoot = path.join(repoRoot, "dist", "control-ui");
+    await mkdir(controlUiRoot, { recursive: true });
+    await writeFile(path.join(controlUiRoot, "index.html"), "<html></html>", "utf8");
+
+    expect(resolveQaControlUiRoot({ repoRoot })).toBe(controlUiRoot);
+  });
+
+  it("returns undefined when control ui is disabled or not built", async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "qa-control-ui-root-missing-"));
+    cleanups.push(async () => {
+      await rm(repoRoot, { recursive: true, force: true });
+    });
+
+    expect(resolveQaControlUiRoot({ repoRoot })).toBeUndefined();
+    expect(resolveQaControlUiRoot({ repoRoot, controlUiEnabled: false })).toBeUndefined();
   });
 });
