@@ -140,6 +140,9 @@ describe("check-extension-package-tsc-boundary", () => {
         mode: "all",
         compileCount: 97,
         canaryCount: 12,
+        prepElapsedMs: 12_345,
+        compileElapsedMs: 54_321,
+        canaryElapsedMs: 6_789,
         elapsedMs: 54_321,
       }),
     ).toBe(
@@ -148,7 +151,35 @@ describe("check-extension-package-tsc-boundary", () => {
         "mode: all",
         "compiled plugins: 97",
         "canary plugins: 12",
+        "prep elapsed: 12345ms",
+        "compile elapsed: 54321ms",
+        "canary elapsed: 6789ms",
         "elapsed: 54321ms",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("omits phase timings that never ran", () => {
+    expect(
+      formatBoundaryCheckSuccessSummary({
+        mode: "compile",
+        compileCount: 97,
+        canaryCount: 0,
+        prepElapsedMs: 12_345,
+        compileElapsedMs: 54_321,
+        canaryElapsedMs: 0,
+        elapsedMs: 66_666,
+      }),
+    ).toBe(
+      [
+        "extension package boundary check passed",
+        "mode: compile",
+        "compiled plugins: 97",
+        "canary plugins: 0",
+        "prep elapsed: 12345ms",
+        "compile elapsed: 54321ms",
+        "elapsed: 66666ms",
         "",
       ].join("\n"),
     );
