@@ -4,7 +4,11 @@ import { runQaDockerUp } from "./docker-up.runtime.js";
 import { startQaLabServer } from "./lab-server.js";
 import { runQaManualLane } from "./manual-lane.runtime.js";
 import { startQaMockOpenAiServer } from "./mock-openai-server.js";
-import { defaultQaModelForMode, type QaProviderMode } from "./run-config.js";
+import {
+  defaultQaModelForMode,
+  normalizeQaProviderMode,
+  type QaProviderMode,
+} from "./run-config.js";
 import { runQaSuite } from "./suite.js";
 
 type InterruptibleServer = {
@@ -50,9 +54,11 @@ async function runInterruptibleServer(label: string, server: InterruptibleServer
   await new Promise(() => undefined);
 }
 
-export async function runQaLabSelfCheckCommand(opts: { output?: string }) {
+export async function runQaLabSelfCheckCommand(opts: { repoRoot?: string; output?: string }) {
+  const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
   const server = await startQaLabServer({
-    outputPath: opts.output,
+    repoRoot,
+    outputPath: opts.output ? path.resolve(repoRoot, opts.output) : undefined,
   });
   try {
     const result = await server.runSelfCheck();
@@ -72,10 +78,11 @@ export async function runQaSuiteCommand(opts: {
   scenarioIds?: string[];
 }) {
   const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
+  const providerMode = normalizeQaProviderMode(opts.providerMode);
   const result = await runQaSuite({
     repoRoot,
     outputDir: opts.outputDir ? path.resolve(repoRoot, opts.outputDir) : undefined,
-    providerMode: opts.providerMode,
+    providerMode,
     primaryModel: opts.primaryModel,
     alternateModel: opts.alternateModel,
     fastMode: opts.fastMode,
@@ -96,7 +103,8 @@ export async function runQaManualLaneCommand(opts: {
   timeoutMs?: number;
 }) {
   const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
-  const providerMode: QaProviderMode = opts.providerMode ?? "live-frontier";
+  const providerMode: QaProviderMode =
+    opts.providerMode === undefined ? "live-frontier" : normalizeQaProviderMode(opts.providerMode);
   const models = resolveQaManualLaneModels({
     providerMode,
     primaryModel: opts.primaryModel,
@@ -116,6 +124,7 @@ export async function runQaManualLaneCommand(opts: {
 }
 
 export async function runQaLabUiCommand(opts: {
+  repoRoot?: string;
   host?: string;
   port?: number;
   advertiseHost?: string;
@@ -128,7 +137,9 @@ export async function runQaLabUiCommand(opts: {
   embeddedGateway?: string;
   sendKickoffOnStart?: boolean;
 }) {
+  const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
   const server = await startQaLabServer({
+    repoRoot,
     host: opts.host,
     port: Number.isFinite(opts.port) ? opts.port : undefined,
     advertiseHost: opts.advertiseHost,
