@@ -32,7 +32,9 @@ function extractSlackSessionKind(
     return null;
   }
   const match = sessionKey.match(/slack:(direct|channel|group):/i);
-  return match?.[1] ? (match[1].toLowerCase() as "direct" | "channel" | "group") : null;
+  return match?.[1]
+    ? (normalizeLowercaseStringOrEmpty(match[1]) as "direct" | "channel" | "group")
+    : null;
 }
 
 function normalizeComparableTarget(value: string): string {
