@@ -4,7 +4,10 @@ import type { SkillCommandSpec } from "../agents/skills.js";
 import { getChannelPlugin } from "../channels/plugins/index.js";
 import { isCommandFlagEnabled } from "../config/commands.js";
 import type { OpenClawConfig } from "../config/types.js";
-import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+} from "../shared/string-coerce.js";
 import { escapeRegExp } from "../utils.js";
 import { getChatCommands, getNativeCommandSurfaces } from "./commands-registry.data.js";
 import type {
@@ -395,7 +398,7 @@ export function normalizeCommandBody(raw: string, options?: CommandNormalizeOpti
       })()
     : singleLine;
 
-  const normalizedBotUsername = options?.botUsername?.trim().toLowerCase();
+  const normalizedBotUsername = normalizeOptionalLowercaseString(options?.botUsername);
   const mentionMatch = normalizedBotUsername
     ? normalized.match(/^\/([^\s@]+)@([^\s]+)(.*)$/)
     : null;
@@ -404,7 +407,7 @@ export function normalizeCommandBody(raw: string, options?: CommandNormalizeOpti
       ? `/${mentionMatch[1]}${mentionMatch[3] ?? ""}`
       : normalized;
 
-  const lowered = commandBody.toLowerCase();
+  const lowered = normalizeLowercaseStringOrEmpty(commandBody);
   const textAliasMap = getTextAliasMap();
   const exact = textAliasMap.get(lowered);
   if (exact) {
@@ -442,7 +445,7 @@ export function getCommandDetection(_cfg?: OpenClawConfig): CommandDetection {
   const patterns: string[] = [];
   for (const cmd of commands) {
     for (const alias of cmd.textAliases) {
-      const normalized = alias.trim().toLowerCase();
+      const normalized = normalizeOptionalLowercaseString(alias);
       if (!normalized) {
         continue;
       }
@@ -472,7 +475,7 @@ export function maybeResolveTextAlias(raw: string, cfg?: OpenClawConfig) {
     return null;
   }
   const detection = getCommandDetection(cfg);
-  const normalized = trimmed.toLowerCase();
+  const normalized = normalizeLowercaseStringOrEmpty(trimmed);
   if (detection.exact.has(normalized)) {
     return normalized;
   }
@@ -518,7 +521,7 @@ export function isNativeCommandSurface(surface?: string): boolean {
   if (!surface) {
     return false;
   }
-  return getNativeCommandSurfaces().has(surface.toLowerCase());
+  return getNativeCommandSurfaces().has(normalizeLowercaseStringOrEmpty(surface));
 }
 
 export function shouldHandleTextCommands(params: ShouldHandleTextCommandsParams): boolean {
