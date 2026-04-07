@@ -75,7 +75,7 @@ function isLegacyFoundryVisionModelCandidate(params: {
   const normalizedCandidates = [params.modelId, params.modelName]
     .filter((value): value is string => typeof value === "string")
     .map((value) => normalizeOptionalLowercaseString(value))
-    .filter(Boolean);
+    .filter((value): value is string => Boolean(value));
   return normalizedCandidates.some(
     (candidate) =>
       candidate.startsWith("gpt-") ||

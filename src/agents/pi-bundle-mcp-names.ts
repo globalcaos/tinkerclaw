@@ -33,7 +33,9 @@ export function sanitizeToolName(raw: string): string {
 
 export function normalizeReservedToolNames(names?: Iterable<string>): Set<string> {
   return new Set(
-    Array.from(names ?? [], (name) => normalizeOptionalLowercaseString(name)).filter(Boolean),
+    Array.from(names ?? [], (name) => normalizeOptionalLowercaseString(name)).filter(
+      (name): name is string => Boolean(name),
+    ),
   );
 }
 
