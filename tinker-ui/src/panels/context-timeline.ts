@@ -140,7 +140,8 @@ interface TimelineController {
   loadAllSessions(sessionKeys?: string[]): void;
 }
 
-const MAX_BUFFER = 200;
+const MAX_BUFFER = 2000;
+const BAR_WIDTH_PX = 35; // approximate width per bar including gaps
 // Per-column chrome: provider icon (16) + timestamp 2-line (24) + group border (4) + legend (16) = 60px
 const COLUMN_CHROME_PX = 60;
 
@@ -176,8 +177,10 @@ export function mountContextTimeline(
   let selectedMode: "context" | "response" = "context";
   let groupCounter = 0;
   let tooltipEl: HTMLElement | null = null;
-  let filterMode: "session" | "all" = "session";
+  let filterMode: "session" | "all" = "all";
   let currentGlobalMax = 200_000;
+  let hasMoreHistory = false;
+  let loadingMore = false;
 
   /** Fetch timeline API. In dev mode (Vite), uses relative URL so the Vite proxy
    *  handles auth server-side — avoids CORS preflight from cross-origin Authorization header. */
@@ -187,6 +190,87 @@ export function mountContextTimeline(
     const relativeUrl = url.replace(/^https?:\/\/[^/]+/, "");
     return fetch(relativeUrl);
   }
+
+  /** Append events to buffer with session-boundary group detection. Events must be in ASC order. */
+  function appendEvents(events: AnatomyEvent[]) {
+    for (const ev of events) {
+      const prevEntry = buffer[buffer.length - 1];
+      const prevSession = prevEntry?.event?.sessionKey;
+      const curSession = ev.sessionKey;
+      let groupId: string;
+      if (prevSession && curSession && prevSession !== curSession) {
+        groupId = `grp-${++groupCounter}`;
+      } else {
+        groupId = assignGroupId(ev.runId, ev);
+      }
+      push({ event: ev, runId: ev.runId, groupId });
+    }
+  }
+
+  /** Prepend older events to the front of the buffer. Events must be in ASC order. */
+  function prependEvents(events: AnatomyEvent[]) {
+    if (events.length === 0) return;
+    const oldEntries: BufferEntry[] = [];
+    let prevSession: string | undefined;
+    let prependGroupCounter = 0;
+    for (const ev of events) {
+      const curSession = ev.sessionKey;
+      let groupId: string;
+      if (prevSession && curSession && prevSession !== curSession) {
+        groupId = `pre-grp-${++prependGroupCounter}`;
+      } else {
+        groupId = assignGroupId(ev.runId, ev);
+      }
+      oldEntries.push({ event: ev, runId: ev.runId, groupId });
+      prevSession = curSession;
+    }
+    // Fix group boundary between prepended and existing buffer
+    if (buffer.length > 0 && oldEntries.length > 0) {
+      const lastPrepended = oldEntries[oldEntries.length - 1];
+      const firstExisting = buffer[0];
+      if (lastPrepended.event.sessionKey !== firstExisting.event.sessionKey) {
+        firstExisting.groupId = `grp-${++groupCounter}`;
+      }
+    }
+    if (selectedIdx !== null) selectedIdx += oldEntries.length;
+    buffer.unshift(...oldEntries);
+  }
+
+  /** Load older events before the oldest entry in the buffer. */
+  async function loadOlderPage() {
+    if (loadingMore || !hasMoreHistory || buffer.length === 0) return;
+    loadingMore = true;
+    const oldestTs = buffer[0].event.timestampMs ?? buffer[0].event.timestamp_ms;
+    if (!oldestTs) { loadingMore = false; return; }
+    const base = getGatewayBase();
+    const pageSize = Math.max(30, Math.ceil(container.clientWidth / BAR_WIDTH_PX));
+    try {
+      const resp = await authedFetch(
+        `${base}/tinker/api/context-anatomy/before?ts=${oldestTs}&limit=${pageSize}`,
+      );
+      if (!resp.ok) { loadingMore = false; return; }
+      const body = await resp.json();
+      const events: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
+      hasMoreHistory = events.length >= pageSize;
+      if (events.length > 0) {
+        const oldScrollWidth = container.scrollWidth;
+        const oldScrollLeft = container.scrollLeft;
+        prependEvents(events);
+        render();
+        // Preserve scroll position after prepending
+        const newScrollWidth = container.scrollWidth;
+        container.scrollLeft = oldScrollLeft + (newScrollWidth - oldScrollWidth);
+      }
+    } catch { /* ignore */ }
+    loadingMore = false;
+  }
+
+  // Scroll-left lazy loading
+  container.addEventListener("scroll", () => {
+    if (filterMode === "all" && container.scrollLeft < 100 && hasMoreHistory && !loadingMore) {
+      loadOlderPage();
+    }
+  });
 
   // ─── Tooltip ───
   function showTooltip(x: number, y: number, entry: BufferEntry) {
@@ -870,43 +954,28 @@ export function mountContextTimeline(
 
     async loadAllSessions(_sessionKeys?: string[]) {
       const base = getGatewayBase();
+      // Estimate how many bars fit on screen, fetch that + a small buffer
+      const screenBars = Math.max(20, Math.ceil(container.clientWidth / BAR_WIDTH_PX));
+      const initialLimit = screenBars + 10;
       try {
-        // Use the /recent endpoint which queries by timestamp across ALL sessions,
-        // regardless of whether the gateway's live session list includes them.
         const resp = await authedFetch(
-          `${base}/tinker/api/context-anatomy/recent?hours=168&limit=${MAX_BUFFER}`,
+          `${base}/tinker/api/context-anatomy/recent?hours=8760&limit=${initialLimit}`,
         );
         if (!resp.ok) return;
         const body = await resp.json();
         const allEvents: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
 
-        // Replace buffer only after fetch succeeds
         buffer.length = 0;
         selectedIdx = null;
         groupCounter = 0;
+        hasMoreHistory = allEvents.length >= initialLimit;
 
-        // /recent returns oldest-first (ASC) — no sort needed
-        for (const ev of allEvents) {
-          // Detect session boundary — force new group when sessionKey changes
-          const prevEntry = buffer[buffer.length - 1];
-          const prevSession = prevEntry?.event?.sessionKey;
-          const curSession = ev.sessionKey;
-
-          let groupId: string;
-          if (prevSession && curSession && prevSession !== curSession) {
-            groupId = `grp-${++groupCounter}`;
-          } else {
-            groupId = assignGroupId(ev.runId, ev);
-          }
-
-          push({ event: ev, runId: ev.runId, groupId });
-        }
+        appendEvents(allEvents);
         if (buffer.length > 0) {
           selectedIdx = buffer.length - 1;
           onBarSelect(buffer[selectedIdx].event, "context");
         }
       } catch {
-        // API not available — keep existing buffer
         return;
       }
       render();

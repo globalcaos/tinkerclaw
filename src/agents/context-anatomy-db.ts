@@ -529,6 +529,26 @@ export function querySessionEvents(
   return rows.map(parseRow);
 }
 
+/**
+ * Return `limit` anatomy events older than `beforeMs`, newest first in that window,
+ * then re-sorted ASC for display. Used for infinite-scroll pagination.
+ */
+export function queryEventsBefore(
+  beforeMs: number,
+  limit = 50,
+): Array<ContextAnatomyEvent & Record<string, unknown>> {
+  const database = openAnatomyDb();
+  const rows = database
+    .prepare(
+      `SELECT * FROM (
+        SELECT * FROM anatomy_events WHERE timestamp_ms < ?
+        ORDER BY timestamp_ms DESC LIMIT ?
+      ) ORDER BY timestamp_ms ASC`,
+    )
+    .all(beforeMs, limit) as AnatomyRow[];
+  return rows.map(parseRow);
+}
+
 // ---------------------------------------------------------------------------
 // Global registry — allows extensions to call query functions without
 // importing better-sqlite3 (extensions run in the same process but can't
@@ -538,4 +558,5 @@ export function querySessionEvents(
 (globalThis as any).__anatomyDb = {
   queryRecentEvents,
   querySessionEvents,
+  queryEventsBefore,
 };
