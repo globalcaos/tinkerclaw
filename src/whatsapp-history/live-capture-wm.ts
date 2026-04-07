@@ -173,6 +173,11 @@ function requestDmBackfill(client: WhatsmeowClient, jid: string): void {
  * Bind whatsmeow-node client events to SQLite history capture.
  */
 export function bindWmHistoryCapture(client: WhatsmeowClient): void {
+  // Guard: skip binding if client is a stub (whatsmeow-node not installed)
+  if (!client || (client as unknown as { _isStub?: boolean })._isStub) {
+    logger.info("Skipping whatsmeow history capture (stub client)");
+    return;
+  }
   logger.info("Binding whatsmeow history capture");
 
   client.on("message", ({ info, message }) => {

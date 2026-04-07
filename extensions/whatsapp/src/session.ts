@@ -175,6 +175,12 @@ export async function createWaSocket(
   // FORK: bind SQLite history capture to Baileys events
   bindHistoryCapture(sock.ev);
 
+  // FORK: add waitForConnection method expected by upstream channel startup
+  // Wraps the event-based connection waiting as a method on the socket.
+  (sock as unknown as Record<string, unknown>).waitForConnection = (
+    timeoutMs?: number,
+  ) => waitForWaConnection(sock).then(() => true);
+
   return sock;
 }
 
