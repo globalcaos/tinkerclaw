@@ -1,3 +1,5 @@
+import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
+
 const TOOL_NAME_SAFE_RE = /[^A-Za-z0-9_-]/g;
 export const TOOL_NAME_SEPARATOR = "__";
 const TOOL_NAME_MAX_PREFIX = 30;
@@ -30,7 +32,9 @@ export function sanitizeToolName(raw: string): string {
 }
 
 export function normalizeReservedToolNames(names?: Iterable<string>): Set<string> {
-  return new Set(Array.from(names ?? [], (name) => name.trim().toLowerCase()).filter(Boolean));
+  return new Set(
+    Array.from(names ?? [], (name) => normalizeOptionalLowercaseString(name)).filter(Boolean),
+  );
 }
 
 export function buildSafeToolName(params: {
