@@ -45,6 +45,7 @@ export class McpLoopbackToolCache {
       sessionKey: params.sessionKey,
       messageProvider: params.messageProvider,
       accountId: params.accountId,
+      applyDefaultGatewayHttpDeny: false,
       excludeToolNames: NATIVE_TOOL_EXCLUDE,
     });
     const nextEntry: CachedScopedTools = {
