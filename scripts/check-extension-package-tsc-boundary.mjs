@@ -278,9 +278,7 @@ export async function main(argv = process.argv.slice(2)) {
     : null;
 
   try {
-    if (shouldRunCanary) {
-      cleanupCanaryArtifactsForExtensions(canaryExtensionIds);
-    }
+    cleanupCanaryArtifactsForExtensions(canaryExtensionIds);
     if (mode === "all" || mode === "compile") {
       await runCompileCheck(optInExtensionIds);
     }
