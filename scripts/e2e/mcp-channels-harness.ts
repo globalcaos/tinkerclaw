@@ -6,6 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { WebSocket } from "ws";
 import { z } from "zod";
 import { PROTOCOL_VERSION } from "../../src/gateway/protocol/index.ts";
+import { formatErrorMessage } from "../../src/infra/errors.ts";
 import { rawDataToString } from "../../src/infra/ws.ts";
 
 export const ClaudeChannelNotificationSchema = z.object({
@@ -379,7 +380,7 @@ export async function maybeApprovePendingBridgePairing(
       pending?: Array<{ requestId?: string; role?: string }>;
     }>("device.pair.list", {});
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatErrorMessage(error);
     if (message.includes("missing scope: operator.pairing")) {
       return false;
     }
