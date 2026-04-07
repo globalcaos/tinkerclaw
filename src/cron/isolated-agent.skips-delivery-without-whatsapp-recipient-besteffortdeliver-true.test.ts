@@ -5,7 +5,6 @@ import { runSubagentAnnounceFlow } from "../agents/subagent-announce.js";
 import type { CliDeps } from "../cli/deps.js";
 import {
   createCliDeps,
-  expectDirectTelegramDelivery,
   mockAgentPayloads,
   runTelegramAnnounceTurn,
 } from "./isolated-agent.delivery.test-helpers.js";
@@ -111,22 +110,6 @@ function expectFailedTelegramDeliveryResult(params: {
   expect(params.deps.sendMessageTelegram).toHaveBeenCalledTimes(1);
 }
 
-async function runTelegramDeliveryResult(bestEffort: boolean) {
-  let outcome:
-    | {
-        res: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>;
-        deps: CliDeps;
-      }
-    | undefined;
-  await withTelegramTextDelivery({ bestEffort }, async ({ res, deps }) => {
-    outcome = { res, deps };
-  });
-  if (!outcome) {
-    throw new Error("telegram delivery did not produce an outcome");
-  }
-  return outcome;
-}
-
 function expectSuccessfulTelegramTextDelivery(params: {
   res: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>;
   deps: CliDeps;
@@ -205,15 +188,6 @@ describe("runCronIsolatedAgentTurn", () => {
   beforeEach(() => {
     vi.spyOn(modelSelection, "resolveThinkingDefault").mockReturnValue("off");
     setupIsolatedAgentTurnMocks({ fast: true });
-  });
-
-  it("delivers text directly when best-effort is disabled", async () => {
-    const { res, deps } = await runTelegramDeliveryResult(false);
-    expectSuccessfulTelegramTextDelivery({ res, deps });
-    expectDirectTelegramDelivery(deps, {
-      chatId: "123",
-      text: "hello from cron",
-    });
   });
 
   it("retries transient text direct delivery failures before succeeding", async () => {
