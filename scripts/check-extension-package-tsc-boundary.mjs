@@ -106,6 +106,20 @@ export function formatBoundaryCheckSuccessSummary(params = {}) {
   return `${lines.join("\n")}\n`;
 }
 
+export function formatSkippedCompileProgress(params = {}) {
+  const skippedCount = params.skippedCount ?? 0;
+  const totalCount = params.totalCount ?? 0;
+  if (!Number.isInteger(skippedCount) || skippedCount <= 0) {
+    return "";
+  }
+
+  const staleCount = Math.max(0, totalCount - skippedCount);
+  if (staleCount > 0) {
+    return `skipped ${skippedCount} fresh plugin compiles before running ${staleCount} stale plugin checks\n`;
+  }
+  return `skipped ${skippedCount} fresh plugin compiles\n`;
+}
+
 export function formatStepFailure(label, params = {}) {
   const stdoutSection = summarizeOutputSection("stdout", params.stdout ?? "");
   const stderrSection = summarizeOutputSection("stderr", params.stderr ?? "");
@@ -226,9 +240,14 @@ export function isBoundaryCompileFresh(extensionId, params = {}) {
     collectNewestMtime(resolve(rootDir, "packages/plugin-sdk/dist")),
   );
   const oldestOutputMtimeMs = collectOldestMtime([
-    resolve(rootDir, "extensions", extensionId, "dist", ".boundary-tsc.tsbuildinfo"),
+    resolveBoundaryTsStampPath(extensionId, rootDir),
   ]);
   return oldestOutputMtimeMs !== null && oldestOutputMtimeMs >= newestInputMtimeMs;
+}
+
+function writeStampFile(filePath) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${new Date().toISOString()}\n`, "utf8");
 }
 
 function runNodeStep(label, args, timeoutMs) {
@@ -429,6 +448,7 @@ export async function runNodeStepsWithConcurrency(steps, concurrency) {
           firstFailure ??= error;
         },
       });
+      step.onSuccess?.();
     }
   });
   await Promise.allSettled(workers);
@@ -472,6 +492,10 @@ export function installCanaryArtifactCleanup(extensionIds, params = {}) {
 
 function resolveBoundaryTsBuildInfoPath(extensionId) {
   return resolve(repoRoot, "extensions", extensionId, "dist", ".boundary-tsc.tsbuildinfo");
+}
+
+function resolveBoundaryTsStampPath(extensionId, rootDir = repoRoot) {
+  return resolve(rootDir, "extensions", extensionId, "dist", ".boundary-tsc.stamp");
 }
 
 export function resolveBoundaryCheckLockPath(rootDir = repoRoot) {
@@ -525,6 +549,7 @@ async function runCompileCheck(extensionIds) {
   runNodeStep("plugin-sdk boundary prep", [prepareBoundaryArtifactsBin], 420_000);
   const prepElapsedMs = Date.now() - prepStartedAt;
   const concurrency = resolveCompileConcurrency();
+  const verboseFreshLogs = process.env.OPENCLAW_EXTENSION_BOUNDARY_VERBOSE_FRESH === "1";
   process.stdout.write(`compile concurrency ${concurrency}\n`);
   const compileStartedAt = Date.now();
   let skippedCompileCount = 0;
@@ -534,15 +559,20 @@ async function runCompileCheck(extensionIds) {
       mkdirSync(dirname(tsBuildInfoPath), { recursive: true });
       if (isBoundaryCompileFresh(extensionId)) {
         skippedCompileCount += 1;
-        process.stdout.write(
-          `[${index + 1}/${extensionIds.length}] ${extensionId} (fresh; skipping)\n`,
-        );
+        if (verboseFreshLogs) {
+          process.stdout.write(
+            `[${index + 1}/${extensionIds.length}] ${extensionId} (fresh; skipping)\n`,
+          );
+        }
         return null;
       }
       return {
         label: extensionId,
         onStart() {
           process.stdout.write(`[${index + 1}/${extensionIds.length}] ${extensionId}\n`);
+        },
+        onSuccess() {
+          writeStampFile(resolveBoundaryTsStampPath(extensionId));
         },
         args: [
           tscBin,
@@ -557,6 +587,14 @@ async function runCompileCheck(extensionIds) {
       };
     })
     .filter(Boolean);
+  if (!verboseFreshLogs && skippedCompileCount > 0) {
+    process.stdout.write(
+      formatSkippedCompileProgress({
+        skippedCount: skippedCompileCount,
+        totalCount: extensionIds.length,
+      }),
+    );
+  }
   if (steps.length > 0) {
     await runNodeStepsWithConcurrency(steps, concurrency);
   }
