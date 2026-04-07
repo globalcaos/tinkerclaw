@@ -11,6 +11,7 @@ import {
   parseWikiMarkdown,
   renderWikiMarkdown,
   toWikiPageSummary,
+  type WikiClaim,
   type WikiPageKind,
   type WikiPageSummary,
   WIKI_RELATED_END_MARKER,
@@ -26,6 +27,8 @@ const COMPILE_PAGE_GROUPS: Array<{ kind: WikiPageKind; dir: string; heading: str
   { kind: "report", dir: "reports", heading: "Reports" },
 ];
 const DASHBOARD_STALE_PAGE_DAYS = 30;
+const AGENT_DIGEST_PATH = ".openclaw-wiki/cache/agent-digest.json";
+const CLAIMS_DIGEST_PATH = ".openclaw-wiki/cache/claims.jsonl";
 
 type DashboardPageDefinition = {
   id: string;
@@ -152,6 +155,7 @@ export type CompileMemoryWikiResult = {
   vaultRoot: string;
   pageCounts: Record<WikiPageKind, number>;
   pages: WikiPageSummary[];
+  claimCount: number;
   updatedFiles: string[];
 };
 
@@ -509,9 +513,11 @@ function buildRootIndexBody(params: {
   pages: WikiPageSummary[];
   counts: Record<WikiPageKind, number>;
 }): string {
+  const claimCount = params.pages.reduce((total, page) => total + page.claims.length, 0);
   const lines = [
     `- Render mode: \`${params.config.vault.renderMode}\``,
     `- Total pages: ${params.pages.length}`,
+    `- Claims: ${claimCount}`,
     `- Sources: ${params.counts.source}`,
     `- Entities: ${params.counts.entity}`,
     `- Concepts: ${params.counts.concept}`,
@@ -545,6 +551,143 @@ function buildDirectoryIndexBody(params: {
   });
 }
 
+type AgentDigestClaim = {
+  id?: string;
+  text: string;
+  status: string;
+  confidence?: number;
+  evidenceCount: number;
+  evidence: WikiClaim["evidence"];
+  updatedAt?: string;
+};
+
+type AgentDigestPage = {
+  id?: string;
+  title: string;
+  kind: WikiPageKind;
+  path: string;
+  sourceIds: string[];
+  questions: string[];
+  contradictions: string[];
+  confidence?: number;
+  updatedAt?: string;
+  claimCount: number;
+  topClaims: AgentDigestClaim[];
+};
+
+type AgentDigest = {
+  pageCounts: Record<WikiPageKind, number>;
+  claimCount: number;
+  pages: AgentDigestPage[];
+};
+
+function normalizeClaimStatus(claim: WikiClaim): string {
+  return claim.status?.trim() || "supported";
+}
+
+function sortClaims(claims: WikiClaim[]): WikiClaim[] {
+  return [...claims].toSorted((left, right) => {
+    const leftConfidence = left.confidence ?? -1;
+    const rightConfidence = right.confidence ?? -1;
+    if (leftConfidence !== rightConfidence) {
+      return rightConfidence - leftConfidence;
+    }
+    return left.text.localeCompare(right.text);
+  });
+}
+
+function buildAgentDigest(params: {
+  pages: WikiPageSummary[];
+  pageCounts: Record<WikiPageKind, number>;
+}): AgentDigest {
+  const pages = [...params.pages]
+    .toSorted((left, right) => left.relativePath.localeCompare(right.relativePath))
+    .map((page) => ({
+      ...(page.id ? { id: page.id } : {}),
+      title: page.title,
+      kind: page.kind,
+      path: page.relativePath,
+      sourceIds: [...page.sourceIds],
+      questions: [...page.questions],
+      contradictions: [...page.contradictions],
+      ...(typeof page.confidence === "number" ? { confidence: page.confidence } : {}),
+      ...(page.updatedAt ? { updatedAt: page.updatedAt } : {}),
+      claimCount: page.claims.length,
+      topClaims: sortClaims(page.claims)
+        .slice(0, 5)
+        .map((claim) => ({
+          ...(claim.id ? { id: claim.id } : {}),
+          text: claim.text,
+          status: normalizeClaimStatus(claim),
+          ...(typeof claim.confidence === "number" ? { confidence: claim.confidence } : {}),
+          evidenceCount: claim.evidence.length,
+          evidence: [...claim.evidence],
+          ...(claim.updatedAt ? { updatedAt: claim.updatedAt } : {}),
+        })),
+    }));
+  return {
+    pageCounts: params.pageCounts,
+    claimCount: params.pages.reduce((total, page) => total + page.claims.length, 0),
+    pages,
+  };
+}
+
+function buildClaimsDigestLines(params: { pages: WikiPageSummary[] }): string[] {
+  return params.pages
+    .flatMap((page) =>
+      sortClaims(page.claims).map((claim) =>
+        JSON.stringify({
+          ...(claim.id ? { id: claim.id } : {}),
+          pageId: page.id,
+          pageTitle: page.title,
+          pageKind: page.kind,
+          pagePath: page.relativePath,
+          text: claim.text,
+          status: normalizeClaimStatus(claim),
+          confidence: claim.confidence,
+          sourceIds: page.sourceIds,
+          evidence: claim.evidence,
+          updatedAt: claim.updatedAt ?? page.updatedAt,
+        }),
+      ),
+    )
+    .toSorted((left, right) => left.localeCompare(right));
+}
+
+async function writeAgentDigestArtifacts(params: {
+  rootDir: string;
+  pages: WikiPageSummary[];
+  pageCounts: Record<WikiPageKind, number>;
+}): Promise<string[]> {
+  const updatedFiles: string[] = [];
+  const agentDigestPath = path.join(params.rootDir, AGENT_DIGEST_PATH);
+  const claimsDigestPath = path.join(params.rootDir, CLAIMS_DIGEST_PATH);
+  const agentDigest = `${JSON.stringify(
+    buildAgentDigest({
+      pages: params.pages,
+      pageCounts: params.pageCounts,
+    }),
+    null,
+    2,
+  )}\n`;
+  const claimsDigest = withTrailingNewline(
+    buildClaimsDigestLines({ pages: params.pages }).join("\n"),
+  );
+
+  for (const [filePath, content] of [
+    [agentDigestPath, agentDigest],
+    [claimsDigestPath, claimsDigest],
+  ] as const) {
+    const existing = await fs.readFile(filePath, "utf8").catch(() => "");
+    if (existing === content) {
+      continue;
+    }
+    await fs.writeFile(filePath, content, "utf8");
+    updatedFiles.push(filePath);
+  }
+  return updatedFiles;
+}
+
 export async function compileMemoryWikiVault(
   config: ResolvedMemoryWikiConfig,
 ): Promise<CompileMemoryWikiResult> {
@@ -561,6 +704,12 @@ export async function compileMemoryWikiVault(
     pages = await readPageSummaries(rootDir);
   }
   const counts = buildPageCounts(pages);
+  const digestUpdatedFiles = await writeAgentDigestArtifacts({
+    rootDir,
+    pages,
+    pageCounts: counts,
+  });
+  updatedFiles.push(...digestUpdatedFiles);
 
   const rootIndexPath = path.join(rootDir, "index.md");
   if (
@@ -605,6 +754,7 @@ export async function compileMemoryWikiVault(
     vaultRoot: rootDir,
     pageCounts: counts,
     pages,
+    claimCount: pages.reduce((total, page) => total + page.claims.length, 0),
     updatedFiles,
   };
 }

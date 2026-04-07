@@ -18,6 +18,8 @@ Docs: https://docs.openclaw.ai
 - Gateway/sessions: add persisted compaction checkpoints plus Sessions UI branch/restore actions so operators can inspect and recover pre-compaction session state. (#62146) Thanks @scoootscooob.
 - Providers/Ollama: detect vision capability from the `/api/show` response and set image input on models that support it so Ollama vision models accept image attachments. (#62193) Thanks @BruceMacD.
 - Memory/dreaming: ingest redacted session transcripts into the dreaming corpus with per-day session-corpus notes, cursor checkpointing, and promotion/doctor support. (#62227) Thanks @vignesh07.
+- Plugins/memory: add a public memory-artifact export seam to the unified memory capability so companion plugins like `memory-wiki` can bridge the active memory plugin without reaching into `memory-core` internals. Thanks @vincentkoc.
+- Memory/wiki: add structured claim/evidence fields plus compiled agent digest artifacts so `memory-wiki` behaves more like a persistent knowledge layer and less like markdown-only page storage. Thanks @vincentkoc.
 
 ### Fixes
 

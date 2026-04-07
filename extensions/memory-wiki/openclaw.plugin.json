@@ -22,7 +22,11 @@
     },
     "bridge.enabled": {
       "label": "Enable Bridge Mode",
-      "help": "Read public memory artifacts and events from the selected memory plugin."
+      "help": "Read public memory artifacts and events from the active memory plugin in bridge mode."
+    },
+    "bridge.readMemoryArtifacts": {
+      "label": "Read Memory Artifacts",
+      "help": "Enable bridge reads from the active memory plugin's public artifact export."
     },
     "unsafeLocal.allowPrivateMemoryCoreAccess": {
       "label": "Allow Private Memory Access",
@@ -75,7 +79,7 @@
           "enabled": {
             "type": "boolean"
           },
-          "readMemoryCore": {
+          "readMemoryArtifacts": {
             "type": "boolean"
           },
           "indexDreamReports": {

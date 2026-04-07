@@ -2,14 +2,14 @@
 
 Persistent wiki compiler and Obsidian-friendly knowledge vault for **OpenClaw**.
 
-This plugin is separate from the active memory plugin. `memory-core` still handles recall, promotion, and dreaming. `memory-wiki` compiles durable knowledge into a navigable markdown vault with deterministic indexes, provenance, and optional Obsidian CLI workflows.
+This plugin is separate from the active memory plugin. The active memory plugin still handles recall, promotion, and dreaming. `memory-wiki` compiles durable knowledge into a navigable markdown vault with deterministic indexes, provenance, structured claim/evidence metadata, and optional Obsidian CLI workflows.
 
 When the active memory plugin exposes shared recall, agents can use `memory_search` with `corpus=all` to search durable memory and the compiled wiki in one pass, then fall back to `wiki_search` / `wiki_get` when wiki-specific ranking or provenance matters.
 
 ## Modes
 
 - `isolated`: own vault, own sources, no dependency on `memory-core`
-- `bridge`: reads public `memory-core` artifacts and memory events through public seams
+- `bridge`: reads public memory artifacts and memory events through public seams
 - `unsafe-local`: explicit same-machine escape hatch for private local paths
 
 Default mode is `isolated`.
@@ -36,7 +36,7 @@ Put config under `plugins.entries.memory-wiki.config`:
 
   bridge: {
     enabled: false,
-    readMemoryCore: true,
+    readMemoryArtifacts: true,
     indexDreamReports: true,
     indexDailyNotes: true,
     indexMemoryRoot: true,
@@ -89,6 +89,8 @@ The plugin initializes a vault like this:
 
 Generated content stays inside managed blocks. Human note blocks are preserved.
 
+Key beliefs can live in structured `claims` frontmatter with per-claim evidence, confidence, and status. Compile also emits machine-readable digests under `.openclaw-wiki/cache/` so agent/runtime consumers do not have to scrape markdown pages.
+
 When `render.createBacklinks` is enabled, compile adds deterministic `## Related` blocks to pages. Those blocks list source pages, pages that reference the current page, and nearby pages that share the same source ids.
 
 When `render.createDashboards` is enabled, compile also maintains report dashboards under `reports/` for open questions, contradictions, low-confidence pages, and stale pages.
@@ -134,6 +136,8 @@ openclaw wiki obsidian daily
 
 The plugin also registers a non-exclusive memory corpus supplement, so shared `memory_search` / `memory_get` flows can reach the wiki when the active memory plugin supports corpus selection.
 
+`wiki_apply` accepts structured `claims` payloads for synthesis and metadata updates, so the wiki can store claim-level evidence instead of only page-level prose.
+
 ## Gateway RPC
 
 Read methods:
@@ -161,6 +165,7 @@ Write methods:
 ## Notes
 
 - `unsafe-local` is intentionally experimental and non-portable.
-- Bridge mode reads `memory-core` through public seams only.
+- Bridge mode reads the active memory plugin through public seams only.
 - Wiki pages are compiled artifacts, not the ultimate source of truth. Keep provenance attached to raw sources, memory artifacts, and daily notes.
+- The compiled agent digests in `.openclaw-wiki/cache/agent-digest.json` and `.openclaw-wiki/cache/claims.jsonl` are the stable machine-facing view of the wiki.
 - Obsidian CLI support requires the official `obsidian` CLI to be installed and available on `PATH`.

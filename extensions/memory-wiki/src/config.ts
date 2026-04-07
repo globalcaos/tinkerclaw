@@ -26,7 +26,7 @@ export type MemoryWikiPluginConfig = {
   };
   bridge?: {
     enabled?: boolean;
-    readMemoryCore?: boolean;
+    readMemoryArtifacts?: boolean;
     indexDreamReports?: boolean;
     indexDailyNotes?: boolean;
     indexMemoryRoot?: boolean;
@@ -66,7 +66,7 @@ export type ResolvedMemoryWikiConfig = {
   };
   bridge: {
     enabled: boolean;
-    readMemoryCore: boolean;
+    readMemoryArtifacts: boolean;
     indexDreamReports: boolean;
     indexDailyNotes: boolean;
     indexMemoryRoot: boolean;
@@ -116,7 +116,7 @@ const MemoryWikiConfigSource = z.strictObject({
   bridge: z
     .strictObject({
       enabled: z.boolean().optional(),
-      readMemoryCore: z.boolean().optional(),
+      readMemoryArtifacts: z.boolean().optional(),
       indexDreamReports: z.boolean().optional(),
       indexDailyNotes: z.boolean().optional(),
       indexMemoryRoot: z.boolean().optional(),
@@ -216,7 +216,7 @@ export function resolveMemoryWikiConfig(
     },
     bridge: {
       enabled: safeConfig.bridge?.enabled ?? false,
-      readMemoryCore: safeConfig.bridge?.readMemoryCore ?? true,
+      readMemoryArtifacts: safeConfig.bridge?.readMemoryArtifacts ?? true,
       indexDreamReports: safeConfig.bridge?.indexDreamReports ?? true,
       indexDailyNotes: safeConfig.bridge?.indexDailyNotes ?? true,
       indexMemoryRoot: safeConfig.bridge?.indexMemoryRoot ?? true,

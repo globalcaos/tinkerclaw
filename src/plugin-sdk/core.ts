@@ -84,6 +84,11 @@ export type {
 } from "./plugin-entry.js";
 export type { OpenClawPluginToolContext, OpenClawPluginToolFactory } from "../plugins/types.js";
 export type {
+  MemoryPluginCapability,
+  MemoryPluginPublicArtifact,
+  MemoryPluginPublicArtifactsProvider,
+} from "../plugins/memory-state.js";
+export type {
   PluginHookReplyDispatchContext,
   PluginHookReplyDispatchEvent,
   PluginHookReplyDispatchResult,

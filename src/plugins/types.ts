@@ -2184,7 +2184,14 @@ export type OpenClawPluginApi = {
     id: string,
     factory: import("../context-engine/registry.js").ContextEngineFactory,
   ) => void;
-  /** Register the system prompt section builder for this memory plugin (exclusive slot). */
+  /** Register the active memory capability for this memory plugin (exclusive slot). */
+  registerMemoryCapability: (
+    capability: import("./memory-state.js").MemoryPluginCapability,
+  ) => void;
+  /**
+   * Register the system prompt section builder for this memory plugin (exclusive slot).
+   * @deprecated Use registerMemoryCapability({ promptBuilder }) instead.
+   */
   registerMemoryPromptSection: (
     builder: import("./memory-state.js").MemoryPromptSectionBuilder,
   ) => void;
@@ -2196,9 +2203,15 @@ export type OpenClawPluginApi = {
   registerMemoryCorpusSupplement: (
     supplement: import("./memory-state.js").MemoryCorpusSupplement,
   ) => void;
-  /** Register the pre-compaction flush plan resolver for this memory plugin (exclusive slot). */
+  /**
+   * Register the pre-compaction flush plan resolver for this memory plugin (exclusive slot).
+   * @deprecated Use registerMemoryCapability({ flushPlanResolver }) instead.
+   */
   registerMemoryFlushPlan: (resolver: import("./memory-state.js").MemoryFlushPlanResolver) => void;
-  /** Register the active memory runtime adapter for this memory plugin (exclusive slot). */
+  /**
+   * Register the active memory runtime adapter for this memory plugin (exclusive slot).
+   * @deprecated Use registerMemoryCapability({ runtime }) instead.
+   */
   registerMemoryRuntime: (runtime: import("./memory-state.js").MemoryPluginRuntime) => void;
   /** Register a memory embedding provider adapter. Multiple adapters may coexist. */
   registerMemoryEmbeddingProvider: (

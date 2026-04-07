@@ -46,6 +46,16 @@ describe("resolveMemoryWikiConfig", () => {
     expect(config.vault.path).toBe("/Users/tester/vaults/wiki");
     expect(config.vault.renderMode).toBe("obsidian");
   });
+
+  it("normalizes the bridge artifact toggle", () => {
+    const canonical = resolveMemoryWikiConfig({
+      bridge: {
+        readMemoryArtifacts: false,
+      },
+    });
+
+    expect(canonical.bridge.readMemoryArtifacts).toBe(false);
+  });
 });
 
 describe("memory-wiki manifest config schema", () => {
@@ -63,6 +73,7 @@ describe("memory-wiki manifest config schema", () => {
       },
       bridge: {
         enabled: true,
+        readMemoryArtifacts: true,
         followMemoryEvents: true,
       },
       unsafeLocal: {

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resolveDefaultAgentId } from "openclaw/plugin-sdk/config-runtime";
+import { resolveDefaultAgentId, resolveSessionAgentId } from "openclaw/plugin-sdk/memory-host-core";
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-host-files";
 import { getActiveMemorySearchManager } from "openclaw/plugin-sdk/memory-host-search";
 import type { OpenClawConfig } from "../api.js";
@@ -99,17 +99,48 @@ function buildSnippet(raw: string, query: string): string {
   );
 }
 
+function buildPageSearchText(page: QueryableWikiPage): string {
+  return [
+    page.title,
+    page.relativePath,
+    page.id ?? "",
+    page.sourceIds.join(" "),
+    page.questions.join(" "),
+    page.contradictions.join(" "),
+    page.claims.map((claim) => claim.text).join(" "),
+    page.claims.map((claim) => claim.id ?? "").join(" "),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildPageSnippet(page: QueryableWikiPage, query: string): string {
+  const queryLower = query.toLowerCase();
+  const matchingClaim = page.claims.find((claim) => {
+    if (claim.text.toLowerCase().includes(queryLower)) {
+      return true;
+    }
+    return claim.id?.toLowerCase().includes(queryLower);
+  });
+  if (matchingClaim) {
+    return matchingClaim.text;
+  }
+  return buildSnippet(page.raw, query);
+}
+
 function scorePage(page: QueryableWikiPage, query: string): number {
   const queryLower = query.toLowerCase();
   const titleLower = page.title.toLowerCase();
   const pathLower = page.relativePath.toLowerCase();
   const idLower = page.id?.toLowerCase() ?? "";
+  const metadataLower = buildPageSearchText(page).toLowerCase();
   const rawLower = page.raw.toLowerCase();
   if (
     !(
       titleLower.includes(queryLower) ||
       pathLower.includes(queryLower) ||
       idLower.includes(queryLower) ||
+      metadataLower.includes(queryLower) ||
       rawLower.includes(queryLower)
     )
   ) {
@@ -126,10 +157,22 @@ function scorePage(page: QueryableWikiPage, query: string): number {
     score += 10;
   }
   if (idLower.includes(queryLower)) {
-    score += 10;
+    score += 20;
+  }
+  if (page.sourceIds.some((sourceId) => sourceId.toLowerCase().includes(queryLower))) {
+    score += 12;
+  }
+  const matchingClaimCount = page.claims.filter((claim) => {
+    if (claim.text.toLowerCase().includes(queryLower)) {
+      return true;
+    }
+    return claim.id?.toLowerCase().includes(queryLower);
+  }).length;
+  if (matchingClaimCount > 0) {
+    score += 25 + Math.min(20, matchingClaimCount * 5);
   }
   const bodyOccurrences = rawLower.split(queryLower).length - 1;
-  score += Math.min(20, bodyOccurrences);
+  score += Math.min(10, bodyOccurrences);
   return score;
 }
 
@@ -159,14 +202,39 @@ function shouldSearchSharedMemory(
   );
 }
 
-async function resolveActiveMemoryManager(appConfig?: OpenClawConfig) {
-  if (!appConfig) {
+function resolveActiveMemoryAgentId(params: {
+  appConfig?: OpenClawConfig;
+  agentId?: string;
+  agentSessionKey?: string;
+}): string | null {
+  if (!params.appConfig) {
+    return null;
+  }
+  if (params.agentId?.trim()) {
+    return params.agentId.trim();
+  }
+  if (params.agentSessionKey?.trim()) {
+    return resolveSessionAgentId({
+      sessionKey: params.agentSessionKey,
+      config: params.appConfig,
+    });
+  }
+  return resolveDefaultAgentId(params.appConfig);
+}
+
+async function resolveActiveMemoryManager(params: {
+  appConfig?: OpenClawConfig;
+  agentId?: string;
+  agentSessionKey?: string;
+}) {
+  const agentId = resolveActiveMemoryAgentId(params);
+  if (!params.appConfig || !agentId) {
     return null;
   }
   try {
     const { manager } = await getActiveMemorySearchManager({
-      cfg: appConfig,
-      agentId: resolveDefaultAgentId(appConfig),
+      cfg: params.appConfig,
+      agentId,
     });
     return manager;
   } catch {
@@ -224,7 +292,7 @@ function toWikiSearchResult(page: QueryableWikiPage, query: string): WikiSearchR
     title: page.title,
     kind: page.kind,
     score: scorePage(page, query),
-    snippet: buildSnippet(page.raw, query),
+    snippet: buildPageSnippet(page, query),
     ...(page.id ? { id: page.id } : {}),
     ...(page.sourceType ? { sourceType: page.sourceType } : {}),
     ...(page.provenanceMode ? { provenanceMode: page.provenanceMode } : {}),
@@ -268,6 +336,8 @@ export function resolveQueryableWikiPageByLookup(
 export async function searchMemoryWiki(params: {
   config: ResolvedMemoryWikiConfig;
   appConfig?: OpenClawConfig;
+  agentId?: string;
+  agentSessionKey?: string;
   query: string;
   maxResults?: number;
   searchBackend?: WikiSearchBackend;
@@ -284,7 +354,11 @@ export async function searchMemoryWiki(params: {
     : [];
 
   const sharedMemoryManager = shouldSearchSharedMemory(effectiveConfig, params.appConfig)
-    ? await resolveActiveMemoryManager(params.appConfig)
+    ? await resolveActiveMemoryManager({
+        appConfig: params.appConfig,
+        agentId: params.agentId,
+        agentSessionKey: params.agentSessionKey,
+      })
     : null;
   const memoryResults = sharedMemoryManager
     ? (await sharedMemoryManager.search(params.query, { maxResults })).map((result) =>
@@ -305,6 +379,8 @@ export async function searchMemoryWiki(params: {
 export async function getMemoryWikiPage(params: {
   config: ResolvedMemoryWikiConfig;
   appConfig?: OpenClawConfig;
+  agentId?: string;
+  agentSessionKey?: string;
   lookup: string;
   fromLine?: number;
   lineCount?: number;
@@ -348,7 +424,11 @@ export async function getMemoryWikiPage(params: {
     return null;
   }
 
-  const manager = await resolveActiveMemoryManager(params.appConfig);
+  const manager = await resolveActiveMemoryManager({
+    appConfig: params.appConfig,
+    agentId: params.agentId,
+    agentSessionKey: params.agentSessionKey,
+  });
   if (!manager) {
     return null;
   }
