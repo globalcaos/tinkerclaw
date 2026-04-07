@@ -43,6 +43,8 @@ let initialized = false;
 let budgetData: any = null;
 let budgetUsageData: any = null;
 let forensicMode = false;
+// FORK: Active recipe step name for thinking indicator + message tags
+let activeRecipeStep: string | null = null;
 let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
@@ -1552,6 +1554,27 @@ function onEvent(evt: any) {
     if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-progress") {
       updateRecipeProgress(p.data.data);
     }
+    // FORK: Prefrontal recipe status — banner + thinking annotation + message tags
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-recipe-status") {
+      const d = p.data;
+      const banner = document.getElementById("recipe-banner");
+      const nameEl = document.getElementById("recipe-banner-name");
+      const stepEl = document.getElementById("recipe-banner-step");
+      const progressEl = document.getElementById("recipe-banner-progress");
+      if (banner && nameEl && stepEl && progressEl) {
+        banner.classList.remove("hidden");
+        nameEl.textContent = d.recipeName || d.recipeId || "";
+        stepEl.textContent = `step ${(d.completedSteps?.length || 0) + 1}/${d.totalSteps}: ${d.currentStepName || d.currentStep || "starting"}`;
+        progressEl.textContent = "";
+        // Set category color
+        const colors: Record<string, string> = {
+          coding: "#6b8e23", writing: "#8b5cf6", operations: "#f59e0b",
+          analysis: "#3b82f6", security: "#ef4444", communication: "#10b981",
+        };
+        banner.style.borderLeftColor = colors[d.category as string] || "#c19a6b";
+      }
+      activeRecipeStep = d.currentStepName || d.currentStep || null;
+    }
     if (p?.stream === "lifecycle" && p.data?.model) {
       // FORK: Ignore lifecycle events that don't belong to the current session.
       // Events without a sessionKey (cron, heartbeat) are also ignored — they would
@@ -1685,6 +1708,9 @@ function onEvent(evt: any) {
           // Clear sending once all runs are done
           if (activeRuns.size === 0) {
             sending = false;
+            // FORK: Hide recipe banner when all runs complete
+            activeRecipeStep = null;
+            document.getElementById("recipe-banner")?.classList.add("hidden");
           }
           updateBudgetPanel();
           updateSessionsPanel();
@@ -2600,7 +2626,9 @@ function renderMsg(
           const openAttr2 = hasAction2 ? " open" : "";
           h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
         } else {
-          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+          // FORK: Add recipe step tag below assistant messages when a recipe is active
+          const stepTag = activeRecipeStep && !isThinking ? `<div class="recipe-step-tag">${esc(activeRecipeStep)}</div>` : "";
+          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${stepTag}</div>`;
         }
       } else {
         h += renderSystemMsg(text, idx);
@@ -2667,9 +2695,11 @@ function renderThinkingIndicator(): string {
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
+      // FORK: Append active recipe step to thinking label
+      const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
       rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}</span>
+  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${recipeLabel}</span>
   <span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
@@ -4335,6 +4365,13 @@ function init() {
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
       </div>
       <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
+    </div>
+    <div id="recipe-banner" class="recipe-banner hidden">
+      <span class="recipe-banner-icon">📋</span>
+      <span id="recipe-banner-name" class="recipe-banner-name"></span>
+      <span class="recipe-banner-sep">&mdash;</span>
+      <span id="recipe-banner-step" class="recipe-banner-step"></span>
+      <span id="recipe-banner-progress" class="recipe-banner-progress"></span>
     </div>
     <div class="alt-view" id="alt-view"></div>
     <div class="chat-area">
