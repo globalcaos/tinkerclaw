@@ -12,11 +12,6 @@ import {
   createAllowlistProviderGroupPolicyWarningCollector,
   projectConfigWarningCollector,
 } from "openclaw/plugin-sdk/channel-policy";
-import {
-  createChannelDirectoryAdapter,
-  createRuntimeDirectoryLiveAdapter,
-  listDirectoryEntriesFromSources,
-} from "openclaw/plugin-sdk/directory-runtime";
 import { createLazyRuntimeNamedExport } from "openclaw/plugin-sdk/lazy-runtime";
 import { createRuntimeOutboundDelegates } from "openclaw/plugin-sdk/outbound-runtime";
 import { createComputedAccountStatusAdapter } from "openclaw/plugin-sdk/status-helpers";
@@ -33,6 +28,7 @@ import {
   type OpenClawConfig,
 } from "./channel-api.js";
 import { MSTeamsChannelConfigSchema } from "./config-schema.js";
+import { msteamsDirectoryAdapter } from "./directory.js";
 import { collectMSTeamsMutableAllowlistWarnings } from "./doctor.js";
 import { formatUnknownError } from "./errors.js";
 import { resolveMSTeamsGroupToolPolicy } from "./policy.js";
@@ -416,50 +412,7 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount, ProbeMSTeamsRe
           hint: "<conversationId|user:ID|conversation:ID>",
         },
       },
-      directory: createChannelDirectoryAdapter({
-        self: async ({ cfg }) => {
-          const creds = resolveMSTeamsCredentials(cfg.channels?.msteams);
-          if (!creds) {
-            return null;
-          }
-          return { kind: "user" as const, id: creds.appId, name: creds.appId };
-        },
-        listPeers: async ({ cfg, query, limit }) =>
-          listDirectoryEntriesFromSources({
-            kind: "user",
-            sources: [
-              cfg.channels?.msteams?.allowFrom ?? [],
-              Object.keys(cfg.channels?.msteams?.dms ?? {}),
-            ],
-            query,
-            limit,
-            normalizeId: (raw) => {
-              const normalized = normalizeMSTeamsMessagingTarget(raw) ?? raw;
-              const lowered = normalized.toLowerCase();
-              if (lowered.startsWith("user:") || lowered.startsWith("conversation:")) {
-                return normalized;
-              }
-              return `user:${normalized}`;
-            },
-          }),
-        listGroups: async ({ cfg, query, limit }) =>
-          listDirectoryEntriesFromSources({
-            kind: "group",
-            sources: [
-              Object.values(cfg.channels?.msteams?.teams ?? {}).flatMap((team) =>
-                Object.keys(team.channels ?? {}),
-              ),
-            ],
-            query,
-            limit,
-            normalizeId: (raw) => `conversation:${raw.replace(/^conversation:/i, "").trim()}`,
-          }),
-        ...createRuntimeDirectoryLiveAdapter({
-          getRuntime: loadMSTeamsChannelRuntime,
-          listPeersLive: (runtime) => runtime.listMSTeamsDirectoryPeersLive,
-          listGroupsLive: (runtime) => runtime.listMSTeamsDirectoryGroupsLive,
-        }),
-      }),
+      directory: msteamsDirectoryAdapter,
       resolver: {
         resolveTargets: async ({ cfg, inputs, kind, runtime }) => {
           const results = inputs.map((input) => ({
