@@ -145,6 +145,24 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     );
   });
 
+  it("forwards availableTools and citationsMode to assemble", async () => {
+    const { bootstrap, assemble } = createContextEngineBootstrapAndAssemble();
+    const contextEngine = createTestContextEngine({ bootstrap, assemble });
+
+    await runBootstrap(sessionKey, contextEngine);
+    await runAssemble(sessionKey, contextEngine, {
+      availableTools: new Set(["memory_search", "wiki_search"]),
+      citationsMode: "on",
+    });
+
+    expect(assemble).toHaveBeenCalledWith(
+      expect.objectContaining({
+        availableTools: new Set(["memory_search", "wiki_search"]),
+        citationsMode: "on",
+      }),
+    );
+  });
+
   it("forwards sessionKey to ingestBatch when afterTurn is absent", async () => {
     const { bootstrap, assemble } = createContextEngineBootstrapAndAssemble();
     const ingestBatch = vi.fn(

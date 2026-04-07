@@ -24,7 +24,10 @@ export type {
   MemoryPluginPublicArtifactsProvider,
 } from "../plugins/memory-state.js";
 export { resolveControlCommandGate } from "../channels/command-gating.js";
-export { delegateCompactionToRuntime } from "../context-engine/delegate.js";
+export {
+  buildMemorySystemPromptAddition,
+  delegateCompactionToRuntime,
+} from "../context-engine/delegate.js";
 export type { DiagnosticEventPayload } from "../infra/diagnostic-events.js";
 export { onDiagnosticEvent } from "../infra/diagnostic-events.js";
 export {
