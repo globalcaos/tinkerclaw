@@ -71,7 +71,7 @@ export function isNormalizedSenderAllowed(params: {
     return true;
   }
   const sender = normalizeOptionalLowercaseString(String(params.senderId));
-  return normalizedAllow.includes(sender);
+  return sender ? normalizedAllow.includes(sender) : false;
 }
 
 type ParsedChatAllowTarget =
