@@ -8,7 +8,7 @@ import {
   hasLegacyStreamingAliases,
   normalizeLegacyDmAliases,
   normalizeLegacyStreamingAliases,
-} from "openclaw/plugin-sdk/runtime-doctor";
+} from "../../../src/config/channel-compat-normalization.js";
 import { resolveSlackNativeStreaming, resolveSlackStreamingMode } from "./streaming-compat.js";
 
 function asObjectRecord(value: unknown): Record<string, unknown> | null {
