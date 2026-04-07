@@ -531,8 +531,15 @@ function resolveActivatedBundledPluginPublicSurfaceAccessOrThrow(
 export function loadBundledPluginPublicSurfaceModuleSync<T extends object>(
   params: BundledPluginPublicSurfaceParams,
 ): T {
-  return loadBundledPluginPublicSurfaceModuleSyncLight<T>({
-    ...params,
+  const location = resolveFacadeModuleLocation(params);
+  if (!location) {
+    return loadBundledPluginPublicSurfaceModuleSyncLight<T>({
+      ...params,
+      trackedPluginId: () => resolveTrackedFacadePluginId(params),
+    });
+  }
+  return loadFacadeModuleAtLocationSync<T>({
+    location,
     trackedPluginId: () => resolveTrackedFacadePluginId(params),
   });
 }
