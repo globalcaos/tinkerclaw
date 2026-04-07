@@ -77,12 +77,14 @@ A stale reference, outdated instruction, missing entry, better default?
 
 ## Rules
 
-- **START your response with `🌿 FRACTAL:` followed by a one-line summary.** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat.
+- **START your response with `🌿 FRACTAL:` followed by a one-line summary, then a brief list of any actions taken (edits, file writes, rule encodings).** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat. Example: `🌿 FRACTAL: Fixed stale path in README. ✉️ Updated ripple-tracker, encoded preempt rule for path renames.`
 - **Each numbered section (1-6) must start on a new line** with a blank line before the `###` header. This ensures clean rendering in all surfaces (webchat, WhatsApp, Tinker UI). Do not run sections together in one paragraph.
 - **Always respond.** Never NO_REPLY. Even "🌿 FRACTAL: nothing to reflect on" is a valid (if lazy) answer.
 - **ACT before explaining.** If you see something to fix, make the edit, then mention it.
+- **Name things correctly.** `exec` commands are not sub-agents. `sessions_spawn` creates sub-agents. Don't inflate terminology — it obscures what's actually happening.
 - **Brief.** 3-10 sentences total. This is a reflection, not an essay.
 - **If you write "should" or "would" and the action is within your power — that's a bug.** Convert it to a tool call.
+- **SELF-IMPROVEMENT: If the user does something you should have caught** (fixes a gap, spots a pattern, identifies stale data, flags a missing step), this is a fractal failure. Don't just note it — **modify this prompt** to catch that class of problem next time. Keep edits minimal and general: add a bullet to the right section, not a new paragraph. The goal is that the same oversight never survives two sessions. After editing, state what you changed and why. The prompt should stay lean, ordered, and actionable — if it grows past ~200 lines, consolidate.
 
 ### 5. RECIPE — Did you follow a recipe? Should you have? Should one be created or improved?
 
