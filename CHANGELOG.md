@@ -84,6 +84,7 @@ Docs: https://docs.openclaw.ai
 - OpenAI TTS/Groq: send `wav` to Groq-compatible speech endpoints, honor explicit `responseFormat` overrides on OpenAI-compatible paths, and only mark voice-note output as voice-compatible when the actual format is `opus`. (#62233) Thanks @neeravmakwana.
 - BlueBubbles/network: respect explicit private-network opt-out for loopback and private `serverUrl` values across account resolution, status probes, monitor startup, and attachment downloads, while keeping public-host attachment hostname pinning intact. (#59373) Thanks @jpreagan.
 - Agents/heartbeat: keep heartbeat runs pinned to the main session so active subagent transcripts are not overwritten by heartbeat status messages. (#61803) thanks @100yenadmin.
+
 ## 2026.4.5
 
 ### Breaking
@@ -221,6 +222,7 @@ Docs: https://docs.openclaw.ai
 - Feishu/reasoning: only expose streamed reasoning previews when the session is explicitly `reasoning:stream`, so hidden reasoning traces do not surface on normal streaming sessions. Thanks @vincentkoc.
 - Discord: keep REST, webhook, and monitor traffic on the configured proxy, preserve component-only media sends, honor `@everyone` and `@here` mention gates, keep ACK reactions on the active account, and split voice connect/playback timeouts so auto-join is more reliable. (#57465, #60361, #60345) Thanks @geekhuashan.
 - WhatsApp: restore `channels.whatsapp.blockStreaming` and reset watchdog timeouts after reconnect so quiet chats stop falling into reconnect loops. (#60007, #60069) Thanks @MonkeyLeeT and @mcaxtr.
+- Browser/security: re-run SSRF safety checks after interaction-driven navigations and before snapshot reads so click, submit, keyboard, and current-page snapshot flows fail closed on disallowed destinations. (#62023) Thanks @eleqtrizit.
 - Memory: keep `memory-core` builtin embedding registration on the already-registered path so selecting `memory-core` no longer recurses through plugin discovery and crashes during startup. (#61402) Thanks @ngutman.
 - Agents/tool results: keep large `read` outputs visible longer, preserve the latest `read` output when older tool output can absorb the overflow budget, and fall back to Pi's normal overflow compaction/retry path before replacing a fresh `read` with a compacted stub. Thanks @vincentkoc.
 - Memory/QMD: prefer modern `qmd collection add --glob`, accept newer single-line JSON hit metadata while keeping legacy line fields, refresh QMD docs/doctor install guidance and model-override guidance, and keep older QMD releases working. Thanks @vincentkoc.
