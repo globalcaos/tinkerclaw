@@ -4,6 +4,7 @@ import {
   resolveGatewayWindowsTaskName,
 } from "../../daemon/constants.js";
 import { resolveGatewayService } from "../../daemon/service.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
 import { parsePort } from "../shared/parse-port.js";
@@ -21,29 +22,7 @@ export const toOptionString = (value: unknown): string | undefined => {
 };
 
 export function describeUnknownError(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-  if (typeof err === "string") {
-    return err;
-  }
-  if (typeof err === "number" || typeof err === "bigint") {
-    return err.toString();
-  }
-  if (typeof err === "boolean") {
-    return err ? "true" : "false";
-  }
-  if (err && typeof err === "object") {
-    if ("message" in err && typeof err.message === "string") {
-      return err.message;
-    }
-    try {
-      return JSON.stringify(err);
-    } catch {
-      return "Unknown error";
-    }
-  }
-  return "Unknown error";
+  return formatErrorMessage(err);
 }
 
 export function extractGatewayMiskeys(parsed: unknown): {
