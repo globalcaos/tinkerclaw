@@ -1603,11 +1603,13 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   }
   updateSelect();
   updateSessionsPanel();
-  // FORK: If sessionKey was just resolved for the first time, load timeline + treemap
+  // FORK: If sessionKey was just resolved for the first time, load timeline
   if (!hadSessionKey && sessionKey) {
-    timelineCtrl?.loadSession(sessionKey);
-    const tmCanvas = $("treemap-canvas");
-    if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
+    if (timelineCtrl?.getFilterMode() === "all") {
+      timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
+    } else {
+      timelineCtrl?.loadSession(sessionKey);
+    }
   }
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
@@ -3042,7 +3044,7 @@ function switchToTab(tabId: string) {
     updateSelect();
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
-    if (tmCanvas) (tmCanvas as any).__treemapRefresh?.();
+    if (tmCanvas) (tmCanvas as any).__treemapClear?.();
     timelineCtrl?.loadSession(sessionKey);
     // Background refresh from server — only if still attached (server has the session)
     if (tab.isAttached) loadChat();

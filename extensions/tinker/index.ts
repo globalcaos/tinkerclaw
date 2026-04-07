@@ -103,6 +103,17 @@ function getAnatomyDb() {
             .all(key, limit)
             .map(parseRow);
         },
+        queryEventsBefore(beforeMs: number, limit: number) {
+          return db
+            .prepare(
+              `SELECT * FROM (
+                SELECT * FROM anatomy_events WHERE timestamp_ms < ?
+                ORDER BY timestamp_ms DESC LIMIT ?
+              ) ORDER BY timestamp_ms ASC`,
+            )
+            .all(beforeMs, limit)
+            .map(parseRow);
+        },
       };
     } catch {
       return null;
@@ -245,6 +256,26 @@ const plugin = {
           try {
             const subPath = pathname.slice(`${PREFIX}/api/context-anatomy/`.length);
             api.logger.info(`context-anatomy request: subPath="${subPath}" query="${url.search}"`);
+            // /tinker/api/context-anatomy/before?ts=<timestampMs>&limit=50
+            if (subPath === "before") {
+              const tsParam = url.searchParams.get("ts");
+              const beforeMs = parseInt(tsParam ?? "0", 10);
+              if (!beforeMs) {
+                res.writeHead(400, jsonHeaders);
+                res.end(JSON.stringify({ error: "ts parameter required" }));
+                return true;
+              }
+              const limitParam = url.searchParams.get("limit");
+              const limit = limitParam
+                ? Math.min(Math.max(1, parseInt(limitParam, 10) || 50), 500)
+                : 50;
+              const events = anatomyDb.queryEventsBefore
+                ? anatomyDb.queryEventsBefore(beforeMs, limit)
+                : [];
+              res.writeHead(200, jsonHeaders);
+              res.end(JSON.stringify({ count: events.length, events }));
+              return true;
+            }
             // /tinker/api/context-anatomy/recent?hours=24
             if (subPath === "recent") {
               const hoursParam = url.searchParams.get("hours");
