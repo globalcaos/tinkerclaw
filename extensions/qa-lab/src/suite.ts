@@ -49,6 +49,7 @@ type QaSuiteEnvironment = {
   mock: Awaited<ReturnType<typeof startQaMockOpenAiServer>> | null;
   gateway: Awaited<ReturnType<typeof startQaGatewayChild>>;
   cfg: OpenClawConfig;
+  repoRoot: string;
   providerMode: "mock-openai" | "live-frontier";
   primaryModel: string;
   alternateModel: string;
@@ -432,9 +433,10 @@ async function runQaCli(
 ) {
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
+  const distEntryPath = path.join(env.repoRoot, "dist", "index.js");
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(process.execPath, ["dist/index.js", ...args], {
-      cwd: process.cwd(),
+    const child = spawn(process.execPath, [distEntryPath, ...args], {
+      cwd: env.gateway.tempRoot,
       env: env.gateway.runtimeEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -935,6 +937,8 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
           {
             name: "turns short approval into a real file read",
             run: async () => {
+              await waitForGatewayHealthy(env, 60_000);
+              await waitForQaChannelReady(env, 60_000);
               await reset();
               await runAgentPrompt(env, {
                 sessionKey: "agent:qa:approval-followthrough",
@@ -2147,6 +2151,7 @@ When the user asks for the drift skill marker exactly, reply with exactly: DRIFT
 }
 
 export async function runQaSuite(params?: {
+  repoRoot?: string;
   outputDir?: string;
   providerMode?: QaProviderMode | "live-openai";
   primaryModel?: string;
@@ -2156,6 +2161,7 @@ export async function runQaSuite(params?: {
   lab?: Awaited<ReturnType<typeof startQaLabServer>>;
 }) {
   const startedAt = new Date();
+  const repoRoot = path.resolve(params?.repoRoot ?? process.cwd());
   const providerMode = normalizeQaProviderMode(params?.providerMode ?? "mock-openai");
   const primaryModel = params?.primaryModel ?? defaultQaModelForMode(providerMode);
   const alternateModel =
@@ -2166,13 +2172,14 @@ export async function runQaSuite(params?: {
       : isQaFastModeEnabled({ primaryModel, alternateModel });
   const outputDir =
     params?.outputDir ??
-    path.join(process.cwd(), ".artifacts", "qa-e2e", `suite-${Date.now().toString(36)}`);
+    path.join(repoRoot, ".artifacts", "qa-e2e", `suite-${Date.now().toString(36)}`);
   await fs.mkdir(outputDir, { recursive: true });
 
   const ownsLab = !params?.lab;
   const lab =
     params?.lab ??
     (await startQaLabServer({
+      repoRoot,
       host: "127.0.0.1",
       port: 0,
       embeddedGateway: "disabled",
@@ -2185,7 +2192,7 @@ export async function runQaSuite(params?: {
         })
       : null;
   const gateway = await startQaGatewayChild({
-    repoRoot: process.cwd(),
+    repoRoot,
     providerBaseUrl: mock ? `${mock.baseUrl}/v1` : undefined,
     qaBusBaseUrl: lab.listenUrl,
     providerMode,
@@ -2202,6 +2209,7 @@ export async function runQaSuite(params?: {
     mock,
     gateway,
     cfg: createQaActionConfig(lab.listenUrl),
+    repoRoot,
     providerMode,
     primaryModel,
     alternateModel,

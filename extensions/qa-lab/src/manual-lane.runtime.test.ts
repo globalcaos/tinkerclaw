@@ -89,6 +89,10 @@ describe("runQaManualLane", () => {
         providerBaseUrl: "http://127.0.0.1:44080/v1",
       }),
     );
+    expect(startQaLabServer).toHaveBeenCalledWith({
+      repoRoot: "/tmp/openclaw-repo",
+      embeddedGateway: "disabled",
+    });
     expect(result.reply).toBe("Protocol note: mock reply.");
     expect(gatewayStop).toHaveBeenCalledTimes(1);
     expect(mockStop).toHaveBeenCalledTimes(1);
@@ -106,6 +110,10 @@ describe("runQaManualLane", () => {
     });
 
     expect(startQaMockOpenAiServer).not.toHaveBeenCalled();
+    expect(startQaLabServer).toHaveBeenCalledWith({
+      repoRoot: "/tmp/openclaw-repo",
+      embeddedGateway: "disabled",
+    });
     expect(startQaGatewayChild).toHaveBeenCalledWith(
       expect.objectContaining({
         providerMode: "live-frontier",

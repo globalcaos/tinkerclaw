@@ -42,7 +42,10 @@ function resolveManualLaneTimeoutMs(params: {
 
 export async function runQaManualLane(params: QaManualLaneParams) {
   const sessionSuffix = params.primaryModel.replace(/[^a-z0-9._-]+/gi, "-");
-  const lab = await startQaLabServer({ embeddedGateway: "disabled" });
+  const lab = await startQaLabServer({
+    repoRoot: params.repoRoot,
+    embeddedGateway: "disabled",
+  });
   const mock =
     params.providerMode === "mock-openai"
       ? await startQaMockOpenAiServer({

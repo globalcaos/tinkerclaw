@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { startQaLabServer } from "./lab-server.js";
 
@@ -12,6 +13,24 @@ afterEach(async () => {
     await cleanups.pop()?.();
   }
 });
+
+async function waitForRunnerCatalog(baseUrl: string, timeoutMs = 5_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await fetch(`${baseUrl}/api/bootstrap`);
+    const bootstrap = (await response.json()) as {
+      runnerCatalog: {
+        status: "loading" | "ready" | "failed";
+        real: Array<{ key: string; name: string }>;
+      };
+    };
+    if (bootstrap.runnerCatalog.status !== "loading") {
+      return bootstrap.runnerCatalog;
+    }
+    await sleep(50);
+  }
+  throw new Error("runner catalog stayed loading");
+}
 
 describe("qa-lab server", () => {
   it("serves bootstrap state and writes a self-check report", async () => {
@@ -223,6 +242,59 @@ describe("qa-lab server", () => {
     };
     expect(version2.version).toMatch(/^[0-9a-f]{12}$/);
     expect(version2.version).not.toBe(version1.version);
+  });
+
+  it("uses the explicit repo root for ui assets and runner model discovery", async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "qa-lab-repo-root-"));
+    cleanups.push(async () => {
+      await rm(repoRoot, { recursive: true, force: true });
+    });
+    await mkdir(path.join(repoRoot, "dist"), { recursive: true });
+    await mkdir(path.join(repoRoot, "extensions/qa-lab/web/dist"), { recursive: true });
+    await writeFile(
+      path.join(repoRoot, "dist/index.js"),
+      [
+        "process.stdout.write(JSON.stringify({",
+        "  models: [{",
+        '    key: "anthropic/qa-temp-model",',
+        '    name: "QA Temp Model",',
+        '    input: "anthropic/qa-temp-model",',
+        "    available: true,",
+        "    missing: false,",
+        "  }],",
+        "}));",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      path.join(repoRoot, "extensions/qa-lab/web/dist/index.html"),
+      "<!doctype html><html><head><title>Temp QA Lab UI</title></head><body>repo-root-ui</body></html>",
+      "utf8",
+    );
+
+    const lab = await startQaLabServer({
+      host: "127.0.0.1",
+      port: 0,
+      repoRoot,
+    });
+    cleanups.push(async () => {
+      await lab.stop();
+    });
+
+    const rootResponse = await fetch(`${lab.baseUrl}/`);
+    expect(rootResponse.status).toBe(200);
+    expect(await rootResponse.text()).toContain("repo-root-ui");
+
+    const runnerCatalog = await waitForRunnerCatalog(lab.baseUrl);
+    expect(runnerCatalog.status).toBe("ready");
+    expect(runnerCatalog.real).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "anthropic/qa-temp-model",
+          name: "QA Temp Model",
+        }),
+      ]),
+    );
   });
 
   it("can disable the embedded echo gateway for real-suite runs", async () => {
