@@ -5,7 +5,10 @@ import { applyAgentDefaultModelPrimary } from "openclaw/plugin-sdk/provider-onbo
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import { WizardCancelledError, type WizardPrompter } from "openclaw/plugin-sdk/setup";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
-import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/text-runtime";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+} from "openclaw/plugin-sdk/text-runtime";
 import { OLLAMA_DEFAULT_BASE_URL, OLLAMA_DEFAULT_MODEL } from "./defaults.js";
 import {
   buildOllamaBaseUrlSsrFPolicy,
@@ -42,7 +45,7 @@ function normalizeOllamaModelName(value: string | undefined): string | undefined
   if (!trimmed) {
     return undefined;
   }
-  if (trimmed.toLowerCase().startsWith("ollama/")) {
+  if (normalizeLowercaseStringOrEmpty(trimmed).startsWith("ollama/")) {
     const normalized = trimmed.slice("ollama/".length).trim();
     return normalized || undefined;
   }
