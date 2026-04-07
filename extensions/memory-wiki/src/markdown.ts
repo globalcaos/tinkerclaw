@@ -81,7 +81,7 @@ export function renderWikiMarkdown(params: {
 
 export function extractTitleFromMarkdown(body: string): string | undefined {
   const match = body.match(/^#\s+(.+?)\s*$/m);
-  return match?.[1]?.trim() || undefined;
+  return normalizeOptionalString(match?.[1]);
 }
 
 export function normalizeSourceIds(value: unknown): string[] {
