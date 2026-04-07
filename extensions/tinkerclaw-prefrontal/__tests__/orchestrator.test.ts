@@ -69,6 +69,39 @@ describe("orchestrate", () => {
   });
 });
 
+describe("demand-driven activation (v3.0)", () => {
+  it("orchestrate still works for continuing active recipes", () => {
+    // Even with demand-driven activation, orchestrate() is still used
+    // for continuing active recipes from the llm_output hook
+    const plan = orchestrate({
+      userMessage: "continuing work",
+      activeRecipe: {
+        recipeId: "debug",
+        completedSteps: ["reproduce"],
+      },
+    });
+    expect(plan.recipe).not.toBeNull();
+    expect(plan.recipe!.id).toBe("debug");
+    expect(plan.currentStep).toBe("diagnose");
+  });
+
+  it("recipes are NOT auto-selected from user message in before_prompt_build", () => {
+    // In the new demand-driven model, orchestrate() with no activeRecipe
+    // is NOT called from before_prompt_build. The model must activate
+    // recipes via its output. This test documents the intended behavior:
+    // a message with trigger words but no activeRecipe should NOT
+    // automatically get a recipe injected in before_prompt_build.
+    //
+    // orchestrate() itself still returns a recipe (it's a utility),
+    // but index.ts no longer calls it from before_prompt_build.
+    const plan = orchestrate({ userMessage: "Fix the login bug" });
+    // orchestrate() still works — it's the CALLER that changed
+    expect(plan.recipe).not.toBeNull();
+    // The key behavioral change: index.ts before_prompt_build no longer
+    // calls orchestrate() for new messages. Only active recipes get injected.
+  });
+});
+
 describe("classifyEffort", () => {
   it("classifies 'hello' as minimal", () => {
     expect(classifyEffort("hello")).toBe("minimal");

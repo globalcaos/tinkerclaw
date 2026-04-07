@@ -67,17 +67,17 @@ import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./explor
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
-import { orchestrate, type ActiveRecipeState, type OrchestrationPlan } from "./orchestrator.js";
+import { type ActiveRecipeState } from "./orchestrator.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
 import { createPrefrontalHttpHandler } from "./prefrontal-http.js";
 import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
 import type { SubagentRunInfo } from "./prefrontal-monitor.js";
-import { loadPrefrontalPrompt } from "./prefrontal-prompt-loader.js";
+import { loadPrefrontalPromptWithAddendum } from "./prefrontal-prompt-loader.js";
 import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
 import { formatProgressEvent, type ProgressReport } from "./progress-reporter.js";
-import { formatRecipePrompt, BUILT_IN_RECIPES } from "./recipe-engine.js";
+import { formatRecipePrompt, BUILT_IN_RECIPES, isToolAllowedByCurrentStep, detectRecipeActivation } from "./recipe-engine.js";
 import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "prefrontal";
@@ -352,6 +352,29 @@ export default function register(api: OpenClawPluginApi) {
       });
     }
 
+    // v3.0: Demand-driven recipe activation — detect when model mentions a recipe
+    if (isEnabled(featureFlags, "recipeEngine")) {
+      const outputText =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- event shape varies
+        (event as any).text ?? (event as any).content ?? "";
+      if (typeof outputText === "string" && outputText.length > 0) {
+        const existingRecipe = activeRecipes.get(sessionKey);
+        if (!existingRecipe) {
+          const activatedId = detectRecipeActivation(outputText);
+          if (activatedId) {
+            activeRecipes.set(sessionKey, {
+              recipeId: activatedId,
+              completedSteps: [],
+            });
+            recipeStartTimes.set(sessionKey, Date.now());
+            log.info?.(
+              `[prefrontal] Demand-driven recipe activated: ${activatedId} (session=${sessionKey})`,
+            );
+          }
+        }
+      }
+    }
+
     // v3.0: Recipe step completion detection + progress broadcast
     if (isEnabled(featureFlags, "recipeEngine")) {
       const recipeState = activeRecipes.get(sessionKey);
@@ -421,13 +444,34 @@ export default function register(api: OpenClawPluginApi) {
       );
 
       // P0: Exploration gate — block mutating tools before read-only exploration
+      // Bypass: if a recipe is active and the current step explicitly allows this tool,
+      // skip the gate (earlier recipe steps already did exploration).
       if (isEnabled(featureFlags, "explorationGate")) {
-        const gateResult = explorationGate.checkTool(event.toolName, {
-          trigger: ctx.trigger,
-          isSubagent: ctx.sessionKey?.includes(":subagent:"),
-        });
-        if (gateResult.blocked) {
-          return { block: true, blockReason: gateResult.message };
+        let bypassGate = false;
+        if (isEnabled(featureFlags, "recipeEngine")) {
+          const sessionKey = ctx.sessionKey || "agent:main:main";
+          const recipeState = activeRecipes.get(sessionKey);
+          if (recipeState) {
+            const recipe = BUILT_IN_RECIPES.find((r) => r.id === recipeState.recipeId);
+            if (recipe) {
+              const currentStep = recipe.steps.find(
+                (s) => !recipeState.completedSteps.includes(s.id),
+              );
+              if (currentStep && isToolAllowedByCurrentStep(recipe, currentStep.id, event.toolName)) {
+                bypassGate = true;
+              }
+            }
+          }
+        }
+
+        if (!bypassGate) {
+          const gateResult = explorationGate.checkTool(event.toolName, {
+            trigger: ctx.trigger,
+            isSubagent: ctx.sessionKey?.includes(":subagent:"),
+          });
+          if (gateResult.blocked) {
+            return { block: true, blockReason: gateResult.message };
+          }
         }
         // Record the tool call for gate tracking
         explorationGate.recordToolCall(event.toolName);
@@ -496,12 +540,13 @@ export default function register(api: OpenClawPluginApi) {
       const parts: string[] = [];
 
       // v3.0: Prefrontal system prompt (Iron Laws, debugging protocol, orchestration)
+      // Includes recipe system description + planning instruction for demand-driven activation
       if (
         isEnabled(featureFlags, "recipeEngine") &&
         ctx?.trigger !== "heartbeat" &&
         ctx?.trigger !== "cron"
       ) {
-        const prefrontalPrompt = loadPrefrontalPrompt();
+        const prefrontalPrompt = loadPrefrontalPromptWithAddendum();
         if (prefrontalPrompt) {
           parts.push(prefrontalPrompt);
         }
@@ -525,34 +570,28 @@ export default function register(api: OpenClawPluginApi) {
         parts.push(getForcingQuestionsPrompt());
       }
 
-      // v3.0: Recipe engine — classify task and inject recipe workflow
+      // v3.0: Recipe engine — inject active recipe steps (demand-driven, NOT auto-selected)
+      // Recipes are activated by the model mentioning them in its output (llm_output hook).
+      // Here we only inject the recipe prompt for ALREADY-ACTIVE recipes.
       if (
         isEnabled(featureFlags, "recipeEngine") &&
         ctx?.trigger !== "heartbeat" &&
         ctx?.trigger !== "cron"
       ) {
-        const userMessage = event?.query ?? event?.userMessage ?? event?.prompt ?? "";
         const sessionKey = ctx?.sessionKey ?? "agent:main:main";
+        const existingRecipe = activeRecipes.get(sessionKey) ?? null;
 
-        if (userMessage && typeof userMessage === "string" && userMessage.trim()) {
-          const existingRecipe = activeRecipes.get(sessionKey) ?? null;
-          const plan: OrchestrationPlan = orchestrate({
-            userMessage,
-            activeRecipe: existingRecipe,
-          });
-
-          if (plan.recipe) {
-            // Store recipe state for step tracking
-            if (!existingRecipe || existingRecipe.recipeId !== plan.recipe.id) {
-              activeRecipes.set(sessionKey, {
-                recipeId: plan.recipe.id,
-                completedSteps: [],
-              });
-              recipeStartTimes.set(sessionKey, Date.now());
-            }
-
-            parts.push(formatRecipePrompt(plan.recipe, plan.currentStep ?? undefined));
-            log.info?.(`[prefrontal] Recipe engine: ${plan.reasoning} (session=${sessionKey})`);
+        if (existingRecipe) {
+          const recipe = BUILT_IN_RECIPES.find((r) => r.id === existingRecipe.recipeId);
+          if (recipe) {
+            // Find next incomplete step
+            const nextStep = recipe.steps.find(
+              (s) => !existingRecipe.completedSteps.includes(s.id),
+            );
+            parts.push(formatRecipePrompt(recipe, nextStep?.id ?? undefined));
+            log.info?.(
+              `[prefrontal] Recipe prompt injected: ${recipe.name} step=${nextStep?.id ?? "done"} (session=${sessionKey})`,
+            );
           }
         }
       }

@@ -275,3 +275,47 @@ export function formatRecipePrompt(recipe: Recipe, currentStep?: string): string
 
   return lines.join("\n");
 }
+
+/**
+ * Check whether a tool is allowed by the current recipe step's requiredTools list.
+ * Returns true if no restriction exists (step has no requiredTools) or the tool is listed.
+ */
+export function isToolAllowedByCurrentStep(
+  recipe: Recipe,
+  currentStepId: string,
+  toolName: string,
+): boolean {
+  const step = recipe.steps.find((s) => s.id === currentStepId);
+  if (!step || !step.requiredTools || step.requiredTools.length === 0) return true;
+  return step.requiredTools.includes(toolName) || step.requiredTools.includes(toolName.toLowerCase());
+}
+
+/**
+ * Detect recipe activation patterns in model output text.
+ * Returns the recipe ID if the model is requesting a recipe, null otherwise.
+ */
+export function detectRecipeActivation(text: string): string | null {
+  if (!text || typeof text !== "string") return null;
+  const lower = text.toLowerCase();
+
+  // Patterns: "following the X recipe", "using the X recipe",
+  // "X recipe step", "starting the X workflow", "activating the X recipe"
+  const patterns = [
+    /following the (\w+) recipe/,
+    /using the (\w+) recipe/,
+    /(\w+) recipe step/,
+    /starting the (\w+) (?:recipe|workflow)/,
+    /activating the (\w+) recipe/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = lower.match(pattern);
+    if (match) {
+      const candidateId = match[1];
+      const recipe = BUILT_IN_RECIPES.find((r) => r.id === candidateId);
+      if (recipe) return recipe.id;
+    }
+  }
+
+  return null;
+}
