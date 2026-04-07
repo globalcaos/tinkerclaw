@@ -23,10 +23,6 @@ type WebFetchConfig = NonNullable<OpenClawConfig["tools"]>["web"] extends infer 
     : undefined
   : undefined;
 
-function resolveFetchConfig(cfg?: OpenClawConfig): WebFetchConfig {
-  return resolveWebProviderConfig<"fetch", NonNullable<WebFetchConfig>>(cfg, "fetch");
-}
-
 export type ResolveWebFetchDefinitionParams = {
   config?: OpenClawConfig;
   sandboxed?: boolean;
