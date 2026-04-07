@@ -272,13 +272,12 @@ export async function main(argv = process.argv.slice(2)) {
   const mode = parseMode(argv);
   const optInExtensionIds = collectOptInExtensionIds();
   const canaryExtensionIds = collectCanaryExtensionIds(optInExtensionIds);
+  const cleanupExtensionIds = optInExtensionIds;
   const shouldRunCanary = mode === "all" || mode === "canary";
-  const teardownCanaryCleanup = shouldRunCanary
-    ? installCanaryArtifactCleanup(canaryExtensionIds)
-    : null;
+  const teardownCanaryCleanup = installCanaryArtifactCleanup(cleanupExtensionIds);
 
   try {
-    cleanupCanaryArtifactsForExtensions(canaryExtensionIds);
+    cleanupCanaryArtifactsForExtensions(cleanupExtensionIds);
     if (mode === "all" || mode === "compile") {
       await runCompileCheck(optInExtensionIds);
     }
@@ -287,9 +286,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
   } finally {
     teardownCanaryCleanup?.();
-    if (shouldRunCanary) {
-      cleanupCanaryArtifactsForExtensions(canaryExtensionIds);
-    }
+    cleanupCanaryArtifactsForExtensions(cleanupExtensionIds);
   }
 }
 

@@ -11,16 +11,16 @@ import {
 
 const tempRoots = new Set<string>();
 
-function createTempExtensionRoot() {
+function createTempExtensionRoot(extensionId = "demo") {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-boundary-canary-"));
   tempRoots.add(rootDir);
-  const extensionRoot = path.join(rootDir, "extensions", "demo");
+  const extensionRoot = path.join(rootDir, "extensions", extensionId);
   fs.mkdirSync(extensionRoot, { recursive: true });
   return { rootDir, extensionRoot };
 }
 
-function writeCanaryArtifacts(rootDir: string) {
-  const { canaryPath, tsconfigPath } = resolveCanaryArtifactPaths("demo", rootDir);
+function writeCanaryArtifacts(rootDir: string, extensionId = "demo") {
+  const { canaryPath, tsconfigPath } = resolveCanaryArtifactPaths(extensionId, rootDir);
   fs.writeFileSync(canaryPath, "export {};\n", "utf8");
   fs.writeFileSync(tsconfigPath, '{ "extends": "./tsconfig.json" }\n', "utf8");
   return { canaryPath, tsconfigPath };
@@ -55,5 +55,27 @@ describe("check-extension-package-tsc-boundary", () => {
 
     expect(fs.existsSync(canaryPath)).toBe(false);
     expect(fs.existsSync(tsconfigPath)).toBe(false);
+  });
+
+  it("cleans stale artifacts for every extension id passed to the cleanup hook", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-boundary-canary-"));
+    tempRoots.add(rootDir);
+    fs.mkdirSync(path.join(rootDir, "extensions", "demo-a"), { recursive: true });
+    fs.mkdirSync(path.join(rootDir, "extensions", "demo-b"), { recursive: true });
+    const demoA = writeCanaryArtifacts(rootDir, "demo-a");
+    const demoB = writeCanaryArtifacts(rootDir, "demo-b");
+    const processObject = new EventEmitter();
+    const teardown = installCanaryArtifactCleanup(["demo-a", "demo-b"], {
+      processObject,
+      rootDir,
+    });
+
+    processObject.emit("exit");
+    teardown();
+
+    expect(fs.existsSync(demoA.canaryPath)).toBe(false);
+    expect(fs.existsSync(demoA.tsconfigPath)).toBe(false);
+    expect(fs.existsSync(demoB.canaryPath)).toBe(false);
+    expect(fs.existsSync(demoB.tsconfigPath)).toBe(false);
   });
 });
