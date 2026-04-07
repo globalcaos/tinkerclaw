@@ -4,7 +4,11 @@ import type { PluginApprovalRequest, PluginApprovalResolved } from "./plugin-app
 
 const mockGatewayClientStarts = vi.hoisted(() => vi.fn());
 const mockGatewayClientStops = vi.hoisted(() => vi.fn());
-const mockGatewayClientRequests = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+const mockGatewayClientRequests = vi.hoisted(() =>
+  vi.fn<(method: string, params?: Record<string, unknown>) => Promise<unknown>>(async () => ({
+    ok: true,
+  })),
+);
 const mockCreateOperatorApprovalsGatewayClient = vi.hoisted(() => vi.fn());
 const loggerMocks = vi.hoisted(() => ({
   debug: vi.fn(),
@@ -401,7 +405,7 @@ describe("createExecApprovalChannelRuntime", () => {
   });
 
   it("replays pending approvals after the gateway connection is ready", async () => {
-    mockGatewayClientRequests.mockImplementation(async (method) => {
+    mockGatewayClientRequests.mockImplementation(async (method: string) => {
       if (method === "exec.approval.list") {
         return [
           {
@@ -438,7 +442,7 @@ describe("createExecApprovalChannelRuntime", () => {
   });
 
   it("ignores live duplicate approval events after replay", async () => {
-    mockGatewayClientRequests.mockImplementation(async (method) => {
+    mockGatewayClientRequests.mockImplementation(async (method: string) => {
       if (method === "plugin.approval.list") {
         return [
           {
@@ -500,7 +504,7 @@ describe("createExecApprovalChannelRuntime", () => {
         expiresAtMs: number;
       }>
     >();
-    mockGatewayClientRequests.mockImplementation(async (method) => {
+    mockGatewayClientRequests.mockImplementation(async (method: string) => {
       if (method === "exec.approval.list") {
         return replayDeferred.promise;
       }
