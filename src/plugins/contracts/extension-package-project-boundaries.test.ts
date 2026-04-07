@@ -152,6 +152,9 @@ describe("opt-in extension package boundaries", () => {
     expect(packageJson.exports?.["./video-generation"]?.types).toBe(
       "./dist/src/plugin-sdk/video-generation.d.ts",
     );
+    expect(packageJson.exports?.["./provider-model-types"]?.types).toBe(
+      "./dist/src/plugin-sdk/provider-model-types.d.ts",
+    );
     expect(packageJson.exports?.["./zod"]?.types).toBe("./dist/src/plugin-sdk/zod.d.ts");
     expect(existsSync(resolve(REPO_ROOT, "packages/plugin-sdk/types/plugin-entry.d.ts"))).toBe(
       false,
