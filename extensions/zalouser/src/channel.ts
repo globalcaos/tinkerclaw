@@ -1,11 +1,16 @@
 import { createChatChannelPlugin } from "openclaw/plugin-sdk/channel-core";
+import { buildPassiveProbedChannelStatusSummary } from "openclaw/plugin-sdk/extension-shared";
 import { createAccountStatusSink } from "openclaw/plugin-sdk/channel-lifecycle";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   createAsyncComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
 } from "openclaw/plugin-sdk/status-helpers";
-import { checkZcaAuthenticated, type ResolvedZalouserAccount } from "./accounts.js";
+import {
+  checkZcaAuthenticated,
+  resolveZalouserAccountSync,
+  type ResolvedZalouserAccount,
+} from "./accounts.js";
 import type { ChannelDirectoryEntry, ChannelPlugin } from "./channel-api.js";
 import { DEFAULT_ACCOUNT_ID } from "./channel-api.js";
 import {
@@ -15,6 +20,7 @@ import {
   zalouserMessagingAdapter,
   zalouserOutboundAdapter,
   zalouserPairingTextAdapter,
+  resolveZalouserQrProfile,
   zalouserResolverAdapter,
   zalouserSecurityAdapter,
   zalouserThreadingAdapter,
