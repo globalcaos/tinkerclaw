@@ -77,7 +77,7 @@ export function createSessionsListTool(opts?: {
 
       const kindsRaw = readStringArrayParam(params, "kinds")
         ?.map((value) => normalizeOptionalLowercaseString(value))
-        .filter(Boolean);
+        .filter((value): value is string => Boolean(value));
       const allowedKindsList = (kindsRaw ?? []).filter((value) =>
         ["main", "group", "cron", "hook", "node", "other"].includes(value),
       );
