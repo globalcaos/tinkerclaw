@@ -94,10 +94,10 @@ export function collectOptInExtensionPackageBoundaries(rootDir = resolve(".")): 
 }
 
 export function renderExtensionPackageBoundaryTsconfig(params?: {
-  paths?: Record<string, string[]>;
+  paths?: Record<string, readonly string[]>;
 }): {
   extends: "../tsconfig.package-boundary.base.json";
-  compilerOptions: { rootDir: "."; paths?: Record<string, string[]> };
+  compilerOptions: { rootDir: "."; paths?: Record<string, readonly string[]> };
   include: typeof EXTENSION_PACKAGE_BOUNDARY_INCLUDE;
   exclude: typeof EXTENSION_PACKAGE_BOUNDARY_EXCLUDE;
 } {

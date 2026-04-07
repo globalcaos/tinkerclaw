@@ -1,9 +1,7 @@
 import {
   coerceSecretRef,
-  ensureAuthProfileStore,
   resolveNonEnvSecretRefApiKeyMarker,
 } from "openclaw/plugin-sdk/provider-auth";
-import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import {
   buildCloudflareAiGatewayModelDefinition,
@@ -11,7 +9,15 @@ import {
 } from "./models.js";
 
 export type CloudflareAiGatewayCredential =
-  | ReturnType<typeof ensureAuthProfileStore>["profiles"][string]
+  | {
+      type?: string;
+      keyRef?: unknown;
+      key?: unknown;
+      metadata?: {
+        accountId?: unknown;
+        gatewayId?: unknown;
+      };
+    }
   | undefined;
 
 export function resolveCloudflareAiGatewayApiKey(
@@ -45,7 +51,7 @@ export function resolveCloudflareAiGatewayMetadata(cred: CloudflareAiGatewayCred
 export function buildCloudflareAiGatewayCatalogProvider(params: {
   credential: CloudflareAiGatewayCredential;
   envApiKey?: string;
-}): ModelProviderConfig | null {
+}) {
   const apiKey =
     normalizeOptionalString(params.envApiKey) ??
     resolveCloudflareAiGatewayApiKey(params.credential);
@@ -62,7 +68,7 @@ export function buildCloudflareAiGatewayCatalogProvider(params: {
   }
   return {
     baseUrl,
-    api: "anthropic-messages",
+    api: "anthropic-messages" as const,
     apiKey,
     models: [buildCloudflareAiGatewayModelDefinition()],
   };

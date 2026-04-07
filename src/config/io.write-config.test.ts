@@ -27,7 +27,8 @@ vi.mock("./backup-rotation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./backup-rotation.js")>();
   return {
     ...actual,
-    maintainConfigBackups: (...args: unknown[]) => mockMaintainConfigBackups(...args),
+    maintainConfigBackups: (..._args: Parameters<typeof actual.maintainConfigBackups>) =>
+      mockMaintainConfigBackups(),
   };
 });
 

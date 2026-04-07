@@ -91,6 +91,10 @@ export function _setComfyFetchGuardForTesting(impl: typeof fetchWithSsrFGuard | 
   comfyFetchGuard = impl ?? fetchWithSsrFGuard;
 }
 
+function readConfigString(config: ComfyProviderConfig, key: string): string | undefined {
+  return normalizeOptionalString(config[key]);
+}
+
 function readConfigBoolean(config: ComfyProviderConfig, key: string): boolean | undefined {
   const value = config[key];
   return typeof value === "boolean" ? value : undefined;
