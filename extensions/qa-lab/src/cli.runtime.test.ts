@@ -119,4 +119,23 @@ describe("qa cli runtime", () => {
       timeoutMs: undefined,
     });
   });
+
+  it("keeps an explicit manual primary model as the alternate default", async () => {
+    await runQaManualLaneCommand({
+      repoRoot: "/tmp/openclaw-repo",
+      providerMode: "live-frontier",
+      primaryModel: "anthropic/claude-sonnet-4-6",
+      message: "read qa kickoff and reply short",
+    });
+
+    expect(runQaManualLane).toHaveBeenCalledWith({
+      repoRoot: path.resolve("/tmp/openclaw-repo"),
+      providerMode: "live-frontier",
+      primaryModel: "anthropic/claude-sonnet-4-6",
+      alternateModel: "anthropic/claude-sonnet-4-6",
+      fastMode: undefined,
+      message: "read qa kickoff and reply short",
+      timeoutMs: undefined,
+    });
+  });
 });
