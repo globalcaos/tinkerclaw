@@ -633,6 +633,7 @@ describe("cron service timer regressions", () => {
       await writeCronJobs(store.storePath, [cronJob]);
 
       let now = scheduledAt;
+      const abortAwareRunner = createAbortAwareIsolatedRunner("late-summary");
       const state = createCronServiceState({
         cronEnabled: true,
         storePath: store.storePath,
@@ -641,32 +642,14 @@ describe("cron service timer regressions", () => {
         enqueueSystemEvent,
         requestHeartbeatNow: vi.fn(),
         runIsolatedAgentJob: vi.fn(async (params) => {
-          const abortSignal = params.abortSignal;
-          if (abortSignal?.aborted) {
-            now += 100;
-            throw new Error("aborted");
-          }
-          await new Promise<void>((resolve, reject) => {
-            const onAbort = () => {
-              abortSignal?.removeEventListener("abort", onAbort);
-              now += 100;
-              reject(new Error("aborted"));
-            };
-            abortSignal?.addEventListener("abort", onAbort, { once: true });
-          });
-          return {
-            status: "ok" as const,
-            summary: "late-summary",
-            delivered: false,
-            error:
-              abortSignal?.aborted && typeof abortSignal.reason === "string"
-                ? abortSignal.reason
-                : undefined,
-          };
+          const result = await abortAwareRunner.runIsolatedAgentJob(params);
+          now += 100;
+          return result;
         }),
       });
 
       const timerPromise = onTimer(state);
+      await abortAwareRunner.waitForStart();
       await vi.advanceTimersByTimeAsync(Math.ceil(FAST_TIMEOUT_SECONDS * 1_000) + 10);
       await timerPromise;
 
@@ -989,7 +972,7 @@ describe("cron service timer regressions", () => {
       let now = scheduledAt;
       const wallStart = Date.now();
       let abortWallMs: number | undefined;
-      let started = false;
+      const started = createDeferred<void>();
 
       const state = createCronServiceState({
         cronEnabled: true,
@@ -999,7 +982,7 @@ describe("cron service timer regressions", () => {
         enqueueSystemEvent: vi.fn(),
         requestHeartbeatNow: vi.fn(),
         runIsolatedAgentJob: vi.fn(async ({ abortSignal }: { abortSignal?: AbortSignal }) => {
-          started = true;
+          started.resolve();
           await new Promise<void>((resolve) => {
             if (!abortSignal) {
               resolve();
@@ -1025,7 +1008,7 @@ describe("cron service timer regressions", () => {
       });
 
       const timerPromise = onTimer(state);
-      expect(started).toBe(true);
+      await started.promise;
 
       await vi.advanceTimersByTimeAsync(15);
       expect(abortWallMs).toBeUndefined();
