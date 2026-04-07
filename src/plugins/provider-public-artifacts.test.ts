@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
+import type { ModelDefinitionConfig } from "../config/types.models.js";
 import { resolveBundledProviderPolicySurface } from "./provider-public-artifacts.js";
+
+function createModel(id: string, name: string): ModelDefinitionConfig {
+  return {
+    id,
+    name,
+    reasoning: false,
+    input: ["text"],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    contextWindow: 128_000,
+    maxTokens: 8_192,
+  };
+}
 
 describe("provider public artifacts", () => {
   it("loads bundled provider policy surfaces for anthropic", () => {
@@ -17,7 +35,7 @@ describe("provider public artifacts", () => {
       provider: "anthropic",
       providerConfig: {
         baseUrl: "https://api.anthropic.com",
-        models: [{ id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" }],
+        models: [createModel("claude-sonnet-4-6", "Claude Sonnet 4.6")],
       },
     });
     expect(normalized).toMatchObject({
@@ -26,6 +44,7 @@ describe("provider public artifacts", () => {
     });
 
     const nextConfig = surface?.applyConfigDefaults?.({
+      provider: "anthropic",
       config: {
         auth: {
           profiles: {
@@ -54,8 +73,8 @@ describe("provider public artifacts", () => {
 
     const providerConfig = {
       baseUrl: "https://api.openai.com/v1",
-      api: "openai-completions",
-      models: [{ id: "gpt-5", name: "gpt-5" }],
+      api: "openai-completions" as const,
+      models: [createModel("gpt-5", "gpt-5")],
     };
     expect(
       surface?.normalizeConfig?.({
