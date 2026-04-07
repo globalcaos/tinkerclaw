@@ -625,52 +625,55 @@ async function runCompileCheck(extensionIds) {
   };
 }
 
-function runCanaryCheck(extensionIds) {
+async function runCanaryCheck(extensionIds) {
   const startedAt = Date.now();
-  for (const extensionId of extensionIds) {
-    const { canaryPath, tsconfigPath } = resolveCanaryArtifactPaths(extensionId);
+  await Promise.all(
+    extensionIds.map(async (extensionId, index) => {
+      const { canaryPath, tsconfigPath } = resolveCanaryArtifactPaths(extensionId);
 
-    cleanupCanaryArtifacts(extensionId);
-    try {
-      writeFileSync(
-        canaryPath,
-        'import * as foo from "../../src/cli/acp-cli.ts";\nvoid foo;\nexport {};\n',
-        "utf8",
-      );
-      writeFileSync(
-        tsconfigPath,
-        `${JSON.stringify(
-          {
-            extends: "./tsconfig.json",
-            include: ["./__rootdir_boundary_canary__.ts"],
-            exclude: [],
-          },
-          null,
-          2,
-        )}\n`,
-        "utf8",
-      );
-
-      const result = runNodeStep(
-        `${extensionId} canary`,
-        [tscBin, "-p", tsconfigPath, "--noEmit"],
-        120_000,
-      );
-      throw new Error(
-        `${extensionId} canary unexpectedly passed\n${result.stdout}${result.stderr}`,
-      );
-    } catch (error) {
-      const output =
-        error instanceof Error && typeof error.fullOutput === "string"
-          ? error.fullOutput
-          : String(error);
-      if (!output.includes("TS6059") || !output.includes("src/cli/acp-cli.ts")) {
-        throw error;
-      }
-    } finally {
       cleanupCanaryArtifacts(extensionId);
-    }
-  }
+      process.stdout.write(`[${index + 1}/${extensionIds.length}] ${extensionId} canary\n`);
+      try {
+        writeFileSync(
+          canaryPath,
+          'import * as foo from "../../src/cli/acp-cli.ts";\nvoid foo;\nexport {};\n',
+          "utf8",
+        );
+        writeFileSync(
+          tsconfigPath,
+          `${JSON.stringify(
+            {
+              extends: "./tsconfig.json",
+              include: ["./__rootdir_boundary_canary__.ts"],
+              exclude: [],
+            },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+
+        const result = await runNodeStepAsync(
+          `${extensionId} canary`,
+          [tscBin, "-p", tsconfigPath, "--noEmit"],
+          120_000,
+        );
+        throw new Error(
+          `${extensionId} canary unexpectedly passed\n${result.stdout}${result.stderr}`,
+        );
+      } catch (error) {
+        const output =
+          error instanceof Error && typeof error.fullOutput === "string"
+            ? error.fullOutput
+            : String(error);
+        if (!output.includes("TS6059") || !output.includes("src/cli/acp-cli.ts")) {
+          throw error;
+        }
+      } finally {
+        cleanupCanaryArtifacts(extensionId);
+      }
+    }),
+  );
   return {
     canaryElapsedMs: Date.now() - startedAt,
   };
@@ -698,7 +701,7 @@ export async function main(argv = process.argv.slice(2)) {
         await runCompileCheck(optInExtensionIds));
     }
     if (shouldRunCanary) {
-      ({ canaryElapsedMs } = runCanaryCheck(canaryExtensionIds));
+      ({ canaryElapsedMs } = await runCanaryCheck(canaryExtensionIds));
     }
     process.stdout.write(
       formatBoundaryCheckSuccessSummary({
