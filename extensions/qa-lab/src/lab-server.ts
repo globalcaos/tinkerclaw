@@ -515,18 +515,25 @@ export async function startQaLabServer(params?: {
   } | null = null;
 
   let publicBaseUrl = "";
-  const runnerModelCatalogPromise = (async () => {
-    try {
-      const { loadQaRunnerModelOptions } = await import("./model-catalog.runtime.js");
-      runnerModelOptions = await loadQaRunnerModelOptions({
-        repoRoot,
-      });
-      runnerModelCatalogStatus = "ready";
-    } catch {
-      runnerModelOptions = [];
-      runnerModelCatalogStatus = "failed";
+  let runnerModelCatalogPromise: Promise<void> | null = null;
+  const ensureRunnerModelCatalog = () => {
+    if (runnerModelCatalogPromise) {
+      return runnerModelCatalogPromise;
     }
-  })();
+    runnerModelCatalogPromise = (async () => {
+      try {
+        const { loadQaRunnerModelOptions } = await import("./model-catalog.runtime.js");
+        runnerModelOptions = await loadQaRunnerModelOptions({
+          repoRoot,
+        });
+        runnerModelCatalogStatus = "ready";
+      } catch {
+        runnerModelOptions = [];
+        runnerModelCatalogStatus = "failed";
+      }
+    })();
+    return runnerModelCatalogPromise;
+  };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
@@ -547,6 +554,7 @@ export async function startQaLabServer(params?: {
       }
 
       if (req.method === "GET" && url.pathname === "/api/bootstrap") {
+        void ensureRunnerModelCatalog();
         const resolvedControlUiUrl = controlUiProxyTarget
           ? `${publicBaseUrl}/control-ui/`
           : controlUiUrl;
@@ -801,7 +809,6 @@ export async function startQaLabServer(params?: {
       kickoffTask: scenarioCatalog.kickoffTask,
     });
   }
-  void runnerModelCatalogPromise;
 
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
