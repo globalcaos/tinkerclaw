@@ -1,1 +1,4 @@
-// Intentionally empty: Zalo User does not expose runtime secret-contract surfaces.
+// Zalo User does not expose secret-contract surfaces.
+export const secretTargetRegistryEntries: readonly [] = [];
+
+export function collectRuntimeConfigAssignments(): void {}
