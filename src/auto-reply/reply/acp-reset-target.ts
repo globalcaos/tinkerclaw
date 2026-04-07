@@ -1,4 +1,3 @@
-import { normalizeText } from "../../acp/normalize-text.js";
 import {
   buildConfiguredAcpSessionKey,
   normalizeBindingConfig,
