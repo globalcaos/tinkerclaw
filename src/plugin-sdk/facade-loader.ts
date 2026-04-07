@@ -52,7 +52,12 @@ function getJitiFactory() {
 }
 
 function loadRuntimeModule<T>(params: { candidates: readonly string[]; errorMessage: string }): T {
-  for (const candidate of params.candidates) {
+  const candidates = CURRENT_MODULE_PATH.includes(`${path.sep}dist${path.sep}`)
+    ? params.candidates.flatMap((candidate) =>
+        candidate.startsWith("../") ? [candidate, `.${candidate.slice(2)}`] : [candidate],
+      )
+    : params.candidates;
+  for (const candidate of candidates) {
     try {
       return nodeRequire(candidate) as T;
     } catch {
@@ -61,7 +66,7 @@ function loadRuntimeModule<T>(params: { candidates: readonly string[]; errorMess
   }
   const createJiti = getJitiFactory();
   const jiti = createJiti(import.meta.url, { tryNative: false });
-  for (const candidate of params.candidates) {
+  for (const candidate of candidates) {
     try {
       return jiti(candidate) as T;
     } catch {
