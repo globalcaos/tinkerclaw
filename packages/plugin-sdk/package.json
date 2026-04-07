@@ -84,6 +84,10 @@
       "types": "./dist/src/plugin-sdk/provider-http.d.ts",
       "default": "./src/provider-http.ts"
     },
+    "./provider-model-types": {
+      "types": "./dist/src/plugin-sdk/provider-model-types.d.ts",
+      "default": "./src/provider-model-types.ts"
+    },
     "./provider-model-shared": {
       "types": "./dist/src/plugin-sdk/provider-model-shared.d.ts",
       "default": "./src/provider-model-shared.ts"
