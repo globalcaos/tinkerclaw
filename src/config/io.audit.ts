@@ -120,7 +120,15 @@ export type ConfigAuditProcessInfo = {
 
 export type ConfigWriteAuditRecordBase = Omit<
   ConfigWriteAuditRecord,
-  "result" | "errorCode" | "errorMessage"
+  | "result"
+  | "errorCode"
+  | "errorMessage"
+  | "nextDev"
+  | "nextIno"
+  | "nextMode"
+  | "nextNlink"
+  | "nextUid"
+  | "nextGid"
 > & {
   nextHash: string;
   nextBytes: number;
@@ -142,19 +150,6 @@ type ConfigAuditFs = {
     options?: { encoding?: BufferEncoding; mode?: number },
   ): unknown;
 };
-
-type ConfigAuditAppendParams =
-  | {
-      fs: ConfigAuditFs;
-      env: NodeJS.ProcessEnv;
-      homedir: () => string;
-      record: ConfigAuditRecord;
-    }
-  | ({
-      fs: ConfigAuditFs;
-      env: NodeJS.ProcessEnv;
-      homedir: () => string;
-    } & ConfigAuditRecord);
 
 function normalizeAuditLabel(value: string | undefined): string | null {
   if (typeof value !== "string") {
