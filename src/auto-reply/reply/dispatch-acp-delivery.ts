@@ -3,7 +3,10 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import {
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+} from "../../shared/string-coerce.js";
 import { resolveStatusTtsSnapshot } from "../../tts/status-config.js";
 import { resolveConfiguredTtsMode } from "../../tts/tts-config.js";
 import type { FinalizedMsgContext } from "../templating.js";
@@ -53,11 +56,6 @@ type ToolMessageHandle = {
   messageId: string;
 };
 
-function normalizeDeliveryChannel(value: string | undefined): string | undefined {
-  const normalized = normalizeOptionalString(value)?.toLowerCase();
-  return normalized || undefined;
-}
-
 async function shouldTreatDeliveredTextAsVisible(params: {
   channel: string | undefined;
   kind: ReplyDispatchKind;
@@ -70,7 +68,7 @@ async function shouldTreatDeliveredTextAsVisible(params: {
   if (params.kind === "final") {
     return true;
   }
-  const channelId = normalizeDeliveryChannel(params.channel);
+  const channelId = normalizeOptionalLowercaseString(params.channel);
   if (!channelId) {
     return false;
   }
@@ -185,8 +183,8 @@ export function createAcpDispatchDeliveryCoordinator(params: {
     },
     toolMessageByCallId: new Map(),
   };
-  const directChannel = normalizeDeliveryChannel(params.ctx.Provider ?? params.ctx.Surface);
-  const routedChannel = normalizeDeliveryChannel(params.originatingChannel);
+  const directChannel = normalizeOptionalLowercaseString(params.ctx.Provider ?? params.ctx.Surface);
+  const routedChannel = normalizeOptionalLowercaseString(params.originatingChannel);
   const explicitAccountId = normalizeOptionalString(params.ctx.AccountId);
   const resolvedAccountId =
     explicitAccountId ??
