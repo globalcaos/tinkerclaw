@@ -37,7 +37,7 @@ type MatrixResolvedAuth = Awaited<ReturnType<typeof resolveMatrixAuth>>;
 const MATRIX_DIRECTORY_TIMEOUT_MS = 10_000;
 
 function normalizeQuery(value?: string | null): string {
-  return value?.trim() ?? "";
+  return normalizeOptionalString(value) ?? "";
 }
 
 function resolveMatrixDirectoryLimit(limit?: number | null): number {
@@ -158,7 +158,7 @@ async function resolveMatrixRoomAlias(
       method: "GET",
       endpoint: `/_matrix/client/v3/directory/room/${encodeURIComponent(alias)}`,
     });
-    return res.room_id?.trim() || null;
+    return normalizeOptionalString(res.room_id) ?? null;
   } catch {
     return null;
   }
@@ -173,7 +173,7 @@ async function fetchMatrixRoomName(
       method: "GET",
       endpoint: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name`,
     });
-    return res.name?.trim() || null;
+    return normalizeOptionalString(res.name) ?? null;
   } catch {
     return null;
   }
@@ -214,7 +214,9 @@ export async function listMatrixDirectoryGroupsLive(
     method: "GET",
     endpoint: "/_matrix/client/v3/joined_rooms",
   });
-  const rooms = (joined.joined_rooms ?? []).map((roomId) => roomId.trim()).filter(Boolean);
+  const rooms = (joined.joined_rooms ?? [])
+    .map((roomId) => normalizeOptionalString(roomId))
+    .filter((roomId): roomId is string => Boolean(roomId));
   const results: ChannelDirectoryEntry[] = [];
 
   for (const roomId of rooms) {
