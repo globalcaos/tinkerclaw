@@ -26,6 +26,7 @@ const LIGHT_DREAMING_TEST_CONFIG: OpenClawConfig = {
         config: {
           dreaming: {
             enabled: true,
+            timezone: "UTC",
             phases: {
               light: {
                 enabled: true,
@@ -55,10 +56,20 @@ function createHarness(config: OpenClawConfig, workspaceDir?: string) {
           defaults: {
             ...config.agents?.defaults,
             workspace: workspaceDir,
+            userTimezone: config.agents?.defaults?.userTimezone ?? "UTC",
           },
         },
       }
-    : config;
+    : {
+        ...config,
+        agents: {
+          ...config.agents,
+          defaults: {
+            ...config.agents?.defaults,
+            userTimezone: config.agents?.defaults?.userTimezone ?? "UTC",
+          },
+        },
+      };
   const pluginConfig = resolveMemoryCorePluginConfig(resolvedConfig) ?? {};
   const beforeAgentReply = async (
     event: { cleanedBody: string },
