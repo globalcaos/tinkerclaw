@@ -460,7 +460,7 @@ export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
     applyConfigDefaults: ({ config, env }) => applyAnthropicConfigDefaults({ config, env }),
     resolveDynamicModel: (ctx) => resolveAnthropicForwardCompatModel(ctx),
     resolveSyntheticAuth: ({ provider }) =>
-      provider.trim().toLowerCase() === CLAUDE_CLI_BACKEND_ID
+      normalizeLowercaseStringOrEmpty(provider) === CLAUDE_CLI_BACKEND_ID
         ? resolveClaudeCliSyntheticAuth()
         : undefined,
     buildReplayPolicy: buildAnthropicReplayPolicy,
