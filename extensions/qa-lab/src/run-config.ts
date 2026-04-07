@@ -1,11 +1,12 @@
 import path from "node:path";
 import {
-  defaultQaModelForMode,
-  isQaFastModeEnabled,
+  defaultQaModelForMode as resolveDefaultQaModelForMode,
   normalizeQaProviderMode,
   type QaProviderMode,
 } from "./model-selection.js";
 import type { QaSeedScenario } from "./scenario-catalog.js";
+
+export type { QaProviderMode } from "./model-selection.js";
 
 export type QaLabRunSelection = {
   providerMode: QaProviderMode;
@@ -31,15 +32,17 @@ export type QaLabRunnerSnapshot = {
   error: string | null;
 };
 
+export function defaultQaModelForMode(mode: QaProviderMode, alternate = false) {
+  return resolveDefaultQaModelForMode(mode, alternate ? { alternate: true } : undefined);
+}
+
 export function createDefaultQaRunSelection(scenarios: QaSeedScenario[]): QaLabRunSelection {
   const providerMode: QaProviderMode = "mock-openai";
-  const primaryModel = defaultQaModelForMode(providerMode);
-  const alternateModel = defaultQaModelForMode(providerMode, { alternate: true });
   return {
     providerMode,
-    primaryModel,
-    alternateModel,
-    fastMode: isQaFastModeEnabled({ primaryModel, alternateModel }),
+    primaryModel: defaultQaModelForMode(providerMode),
+    alternateModel: defaultQaModelForMode(providerMode, true),
+    fastMode: false,
     scenarioIds: scenarios.map((scenario) => scenario.id),
   };
 }
@@ -74,16 +77,14 @@ export function normalizeQaRunSelection(
 ): QaLabRunSelection {
   const payload = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const providerMode = normalizeProviderMode(payload.providerMode);
-  const primaryModel = normalizeModel(payload.primaryModel, defaultQaModelForMode(providerMode));
-  const alternateModel = normalizeModel(
-    payload.alternateModel,
-    defaultQaModelForMode(providerMode, { alternate: true }),
-  );
   return {
     providerMode,
-    primaryModel,
-    alternateModel,
-    fastMode: isQaFastModeEnabled({ primaryModel, alternateModel }),
+    primaryModel: normalizeModel(payload.primaryModel, defaultQaModelForMode(providerMode)),
+    alternateModel: normalizeModel(
+      payload.alternateModel,
+      defaultQaModelForMode(providerMode, true),
+    ),
+    fastMode: providerMode === "live-frontier" || payload.fastMode === true,
     scenarioIds: normalizeScenarioIds(payload.scenarioIds, scenarios),
   };
 }

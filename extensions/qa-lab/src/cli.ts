@@ -154,7 +154,7 @@ export function registerQaLabCli(program: Command) {
       "Provider mode: mock-openai or live-frontier (legacy live-openai still works)",
       "live-frontier",
     )
-    .option("--model <ref>", "Primary provider/model ref", "openai/gpt-5.4")
+    .option("--model <ref>", "Primary provider/model ref (defaults by provider mode)")
     .option("--alt-model <ref>", "Alternate provider/model ref")
     .option("--fast", "Enable provider fast mode where supported", false)
     .option("--timeout-ms <ms>", "Override agent.wait timeout", (value: string) => Number(value))

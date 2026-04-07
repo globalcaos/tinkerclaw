@@ -84,4 +84,39 @@ describe("qa cli runtime", () => {
       timeoutMs: 45_000,
     });
   });
+
+  it("defaults manual mock runs onto the mock-openai model lane", async () => {
+    await runQaManualLaneCommand({
+      repoRoot: "/tmp/openclaw-repo",
+      providerMode: "mock-openai",
+      message: "read qa kickoff and reply short",
+    });
+
+    expect(runQaManualLane).toHaveBeenCalledWith({
+      repoRoot: path.resolve("/tmp/openclaw-repo"),
+      providerMode: "mock-openai",
+      primaryModel: "mock-openai/gpt-5.4",
+      alternateModel: "mock-openai/gpt-5.4-alt",
+      fastMode: undefined,
+      message: "read qa kickoff and reply short",
+      timeoutMs: undefined,
+    });
+  });
+
+  it("defaults manual frontier runs onto the frontier model lane", async () => {
+    await runQaManualLaneCommand({
+      repoRoot: "/tmp/openclaw-repo",
+      message: "read qa kickoff and reply short",
+    });
+
+    expect(runQaManualLane).toHaveBeenCalledWith({
+      repoRoot: path.resolve("/tmp/openclaw-repo"),
+      providerMode: "live-frontier",
+      primaryModel: "openai/gpt-5.4",
+      alternateModel: "openai/gpt-5.4",
+      fastMode: undefined,
+      message: "read qa kickoff and reply short",
+      timeoutMs: undefined,
+    });
+  });
 });

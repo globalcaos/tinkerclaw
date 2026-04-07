@@ -4,6 +4,7 @@ import { runQaDockerUp } from "./docker-up.runtime.js";
 import { startQaLabServer } from "./lab-server.js";
 import { runQaManualLane } from "./manual-lane.runtime.js";
 import { startQaMockOpenAiServer } from "./mock-openai-server.js";
+import { defaultQaModelForMode, type QaProviderMode } from "./run-config.js";
 import { runQaSuite } from "./suite.js";
 
 type InterruptibleServer = {
@@ -77,12 +78,13 @@ export async function runQaManualLaneCommand(opts: {
   timeoutMs?: number;
 }) {
   const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
-  const model = opts.primaryModel?.trim() || "openai/gpt-5.4";
+  const providerMode: QaProviderMode = opts.providerMode ?? "live-frontier";
+  const model = opts.primaryModel?.trim() || defaultQaModelForMode(providerMode);
   const result = await runQaManualLane({
     repoRoot,
-    providerMode: opts.providerMode ?? "live-frontier",
+    providerMode,
     primaryModel: model,
-    alternateModel: opts.alternateModel?.trim() || model,
+    alternateModel: opts.alternateModel?.trim() || defaultQaModelForMode(providerMode, true),
     fastMode: opts.fastMode,
     message: opts.message,
     timeoutMs: opts.timeoutMs,
