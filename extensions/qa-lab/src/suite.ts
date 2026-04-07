@@ -14,10 +14,12 @@ import {
 import { buildAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import type { QaBusState } from "./bus-state.js";
 import { waitForCronRunCompletion } from "./cron-run-wait.js";
+import { hasDiscoveryLabels, reportsMissingDiscoveryFiles } from "./discovery-eval.js";
 import { extractQaToolPayload } from "./extract-tool-payload.js";
 import { startQaGatewayChild } from "./gateway-child.js";
 import { startQaLabServer } from "./lab-server.js";
 import type { QaLabLatestReport, QaLabScenarioOutcome } from "./lab-server.js";
+import { resolveQaLiveTurnTimeoutMs } from "./live-timeout.js";
 import { startQaMockOpenAiServer } from "./mock-openai-server.js";
 import {
   defaultQaModelForMode,
@@ -25,6 +27,7 @@ import {
   normalizeQaProviderMode,
   type QaProviderMode,
 } from "./model-selection.js";
+import { hasModelSwitchContinuityEvidence } from "./model-switch-eval.js";
 import { renderQaMarkdownReport, type QaReportCheck, type QaReportScenario } from "./report.js";
 import { qaChannelPlugin, type QaBusMessage } from "./runtime-api.js";
 import { readQaBootstrapScenarioCatalog } from "./scenario-catalog.js";
@@ -93,27 +96,7 @@ function splitModelRef(ref: string) {
 }
 
 function liveTurnTimeoutMs(env: QaSuiteEnvironment, fallbackMs: number) {
-  return env.providerMode === "mock-openai" ? fallbackMs : Math.max(fallbackMs, 120_000);
-}
-
-function hasDiscoveryLabels(text: string) {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("worked") &&
-    lower.includes("failed") &&
-    lower.includes("blocked") &&
-    (lower.includes("follow-up") || lower.includes("follow up"))
-  );
-}
-
-function reportsMissingDiscoveryFiles(text: string) {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("not present") ||
-    lower.includes("missing files") ||
-    lower.includes("blocked by missing") ||
-    lower.includes("could not inspect")
-  );
+  return resolveQaLiveTurnTimeoutMs(env, fallbackMs);
 }
 
 export type QaSuiteResult = {
@@ -916,7 +899,7 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                 message: "Continue the exchange after switching models and note the handoff.",
                 provider: alternate?.provider,
                 model: alternate?.model,
-                timeoutMs: liveTurnTimeoutMs(env, 30_000),
+                timeoutMs: resolveQaLiveTurnTimeoutMs(env, 30_000, env.alternateModel),
               });
               const outbound = await waitForCondition(
                 () =>
@@ -930,7 +913,7 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                           candidate.text.toLowerCase().includes("handoff")),
                     )
                     .at(-1),
-                liveTurnTimeoutMs(env, 20_000),
+                resolveQaLiveTurnTimeoutMs(env, 20_000, env.alternateModel),
               );
               if (env.mock) {
                 const request = await fetchJson<{ body?: { model?: string } }>(
@@ -1630,24 +1613,23 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                   "Switch models now. Tool continuity check: reread QA_KICKOFF_TASK.md and mention the handoff in one short sentence.",
                 provider: alternate?.provider,
                 model: alternate?.model,
-                timeoutMs: liveTurnTimeoutMs(env, 30_000),
+                timeoutMs: resolveQaLiveTurnTimeoutMs(env, 30_000, env.alternateModel),
               });
-              const outbound = await waitForCondition(
-                () => {
-                  const snapshot = state.getSnapshot();
-                  return snapshot.messages
-                    .slice(beforeSwitchCursor)
-                    .filter(
-                      (candidate) =>
-                        candidate.direction === "outbound" &&
-                        candidate.conversation.id === "qa-operator" &&
-                        (candidate.text.toLowerCase().includes("model switch") ||
-                          candidate.text.toLowerCase().includes("handoff")),
-                    )
-                    .at(-1);
-                },
-                liveTurnTimeoutMs(env, 30_000),
-              );
+              const outbound = await waitForCondition(() => {
+                const snapshot = state.getSnapshot();
+                return snapshot.messages
+                  .slice(beforeSwitchCursor)
+                  .filter(
+                    (candidate) =>
+                      candidate.direction === "outbound" &&
+                      candidate.conversation.id === "qa-operator" &&
+                      hasModelSwitchContinuityEvidence(candidate.text),
+                  )
+                  .at(-1);
+              }, 10_000);
+              if (!hasModelSwitchContinuityEvidence(outbound.text)) {
+                throw new Error(`switch reply missed kickoff continuity: ${outbound.text}`);
+              }
               if (env.mock) {
                 const requests = await fetchJson<
                   Array<{ allInputText?: string; plannedToolName?: string; model?: string }>
