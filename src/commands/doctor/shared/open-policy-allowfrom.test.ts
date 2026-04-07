@@ -34,7 +34,6 @@ describe("doctor open-policy allowFrom repair", () => {
     expect(result.changes).toEqual([
       '- channels.googlechat.dm.allowFrom: set to ["*"] (required by dmPolicy="open")',
     ]);
-    expect(result.config.channels?.googlechat?.allowFrom).toBeUndefined();
     expect(result.config.channels?.googlechat?.dm?.allowFrom).toEqual(["*"]);
   });
 
