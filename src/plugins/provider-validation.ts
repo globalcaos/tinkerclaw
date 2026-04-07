@@ -52,8 +52,8 @@ function normalizeProviderOAuthProfileIdRepairs(
   }
   const normalized = values
     .map((value) => {
-      const legacyProfileId = normalizeText(value?.legacyProfileId);
-      const promptLabel = normalizeText(value?.promptLabel);
+      const legacyProfileId = normalizeOptionalString(value?.legacyProfileId);
+      const promptLabel = normalizeOptionalString(value?.promptLabel);
       if (!legacyProfileId && !promptLabel) {
         return null;
       }

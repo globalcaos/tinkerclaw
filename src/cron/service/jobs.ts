@@ -717,15 +717,11 @@ function buildPayloadFromPatch(patch: CronPayloadPatch): CronPayload {
   };
 }
 
-function normalizeOptionalTrimmedString(value: unknown): string | undefined {
-  return normalizeOptionalString(value);
-}
-
 function normalizeOptionalThreadId(value: unknown): string | number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
-  return normalizeOptionalTrimmedString(value);
+  return normalizeOptionalString(value);
 }
 
 function mergeCronDelivery(
@@ -746,16 +742,16 @@ function mergeCronDelivery(
     next.mode = (patch.mode as string) === "deliver" ? "announce" : patch.mode;
   }
   if ("channel" in patch) {
-    next.channel = normalizeOptionalTrimmedString(patch.channel);
+    next.channel = normalizeOptionalString(patch.channel);
   }
   if ("to" in patch) {
-    next.to = normalizeOptionalTrimmedString(patch.to);
+    next.to = normalizeOptionalString(patch.to);
   }
   if ("threadId" in patch) {
     next.threadId = normalizeOptionalThreadId(patch.threadId);
   }
   if ("accountId" in patch) {
-    next.accountId = normalizeOptionalTrimmedString(patch.accountId);
+    next.accountId = normalizeOptionalString(patch.accountId);
   }
   if (typeof patch.bestEffort === "boolean") {
     next.bestEffort = patch.bestEffort;
@@ -815,10 +811,10 @@ function mergeCronFailureAlert(
     next.after = after > 0 ? Math.floor(after) : undefined;
   }
   if ("channel" in patch) {
-    next.channel = normalizeOptionalTrimmedString(patch.channel);
+    next.channel = normalizeOptionalString(patch.channel);
   }
   if ("to" in patch) {
-    next.to = normalizeOptionalTrimmedString(patch.to);
+    next.to = normalizeOptionalString(patch.to);
   }
   if ("cooldownMs" in patch) {
     const cooldownMs =
