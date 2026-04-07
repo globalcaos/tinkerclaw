@@ -53,6 +53,35 @@ function rankPromptDigestPage(page: PromptDigestPage): number {
   );
 }
 
+function rankPromptClaimFreshness(level?: string): number {
+  switch (level) {
+    case "fresh":
+      return 3;
+    case "aging":
+      return 2;
+    case "stale":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function sortPromptClaims(claims: PromptDigestClaim[]): PromptDigestClaim[] {
+  return [...claims].toSorted((left, right) => {
+    const leftConfidence = typeof left.confidence === "number" ? left.confidence : -1;
+    const rightConfidence = typeof right.confidence === "number" ? right.confidence : -1;
+    if (leftConfidence !== rightConfidence) {
+      return rightConfidence - leftConfidence;
+    }
+    const leftFreshness = rankPromptClaimFreshness(left.freshnessLevel);
+    const rightFreshness = rankPromptClaimFreshness(right.freshnessLevel);
+    if (leftFreshness !== rightFreshness) {
+      return rightFreshness - leftFreshness;
+    }
+    return left.text.localeCompare(right.text);
+  });
+}
+
 function formatPromptClaim(claim: PromptDigestClaim): string {
   const qualifiers = [
     claim.status?.trim() ? `status ${claim.status.trim()}` : null,
@@ -112,7 +141,10 @@ function buildDigestPromptSection(config: ResolvedMemoryWikiConfig): string[] {
         : null,
     ].filter(Boolean);
     lines.push(`- ${page.title}: ${details.join(", ")}`);
-    for (const claim of (page.topClaims ?? []).slice(0, DIGEST_MAX_CLAIMS_PER_PAGE)) {
+    for (const claim of sortPromptClaims(page.topClaims ?? []).slice(
+      0,
+      DIGEST_MAX_CLAIMS_PER_PAGE,
+    )) {
       lines.push(`  - ${formatPromptClaim(claim)}`);
     }
   }

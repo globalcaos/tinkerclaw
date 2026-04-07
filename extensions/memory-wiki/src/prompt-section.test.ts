@@ -99,4 +99,81 @@ describe("buildWikiPromptSection", () => {
 
     expect(builder({ availableTools: new Set(["web_search"]) })).toEqual([]);
   });
+
+  it("stabilizes digest prompt ordering for prompt-cache-friendly output", async () => {
+    const rootDir = path.join(suiteRoot, "digest-stable");
+    const digestPath = path.join(rootDir, ".openclaw-wiki", "cache", "agent-digest.json");
+    await fs.mkdir(path.dirname(digestPath), { recursive: true });
+
+    const builder = createWikiPromptSectionBuilder(
+      resolveMemoryWikiConfig({
+        vault: { path: rootDir },
+        context: { includeCompiledDigestPrompt: true },
+      }),
+    );
+
+    const firstDigest = {
+      claimCount: 6,
+      contradictionClusters: [{ key: "claim.alpha.db" }],
+      pages: [
+        {
+          title: "Zulu",
+          kind: "concept",
+          claimCount: 2,
+          questions: [],
+          contradictions: [],
+          topClaims: [
+            {
+              text: "Zulu fallback note.",
+              confidence: 0.3,
+              freshnessLevel: "stale",
+            },
+          ],
+        },
+        {
+          title: "Alpha",
+          kind: "entity",
+          claimCount: 4,
+          questions: ["Still active?"],
+          contradictions: ["Conflicts with source.beta"],
+          topClaims: [
+            {
+              text: "Alpha was renamed in 2026.",
+              confidence: 0.42,
+              freshnessLevel: "aging",
+            },
+            {
+              text: "Alpha uses PostgreSQL for production writes.",
+              confidence: 0.91,
+              freshnessLevel: "fresh",
+            },
+          ],
+        },
+      ],
+    };
+    const secondDigest = {
+      ...firstDigest,
+      pages: [
+        {
+          ...firstDigest.pages[1],
+          topClaims: firstDigest.pages[1].topClaims.toReversed(),
+        },
+        firstDigest.pages[0],
+      ],
+    };
+
+    await fs.writeFile(digestPath, JSON.stringify(firstDigest, null, 2), "utf8");
+    const firstLines = builder({ availableTools: new Set(["web_search"]) });
+
+    await fs.writeFile(digestPath, JSON.stringify(secondDigest, null, 2), "utf8");
+    const secondLines = builder({ availableTools: new Set(["web_search"]) });
+
+    expect(firstLines).toEqual(secondLines);
+    expect(firstLines.join("\n")).toContain(
+      "Alpha uses PostgreSQL for production writes. (confidence 0.91, freshness fresh)",
+    );
+    expect(firstLines.join("\n")).toContain(
+      "Alpha was renamed in 2026. (confidence 0.42, freshness aging)",
+    );
+  });
 });
