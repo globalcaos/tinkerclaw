@@ -59,6 +59,10 @@ Put config under `plugins.entries.memory-wiki.config`:
     corpus: "wiki", // or "memory" | "all"
   },
 
+  context: {
+    includeCompiledDigestPrompt: false, // opt in to append a compact compiled digest snapshot to memory prompt sections
+  },
+
   render: {
     preserveHumanBlocks: true,
     createBacklinks: true, // writes managed ## Related blocks with sources, backlinks, and related pages
@@ -137,6 +141,8 @@ openclaw wiki obsidian daily
 The plugin also registers a non-exclusive memory corpus supplement, so shared `memory_search` / `memory_get` flows can reach the wiki when the active memory plugin supports corpus selection.
 
 `wiki_apply` accepts structured `claims` payloads for synthesis and metadata updates, so the wiki can store claim-level evidence instead of only page-level prose.
+
+When `context.includeCompiledDigestPrompt` is enabled, the memory prompt supplement also appends a compact snapshot from `.openclaw-wiki/cache/agent-digest.json`. Legacy prompt assembly sees that automatically, and non-legacy context engines can pick it up when they explicitly consume memory prompt supplements via `buildActiveMemoryPromptSection(...)`.
 
 ## Gateway RPC
 
