@@ -3044,6 +3044,44 @@ body {
   font-size: 10px;
 }
 
+/* ─── Recipe Banner ─── */
+.recipe-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 16px;
+  background: rgba(42, 35, 24, 0.9);
+  border-left: 3px solid #c19a6b;
+  font-size: 11px;
+  color: #c19a6b;
+  backdrop-filter: blur(4px);
+  transition: opacity 0.3s;
+}
+.recipe-banner.hidden {
+  display: none;
+}
+.recipe-banner-icon {
+  font-size: 12px;
+}
+.recipe-banner-name {
+  font-weight: 600;
+  color: #e8e0d4;
+}
+.recipe-banner-sep {
+  color: #6b5a48;
+}
+.recipe-banner-step {
+  color: #9a8e7a;
+}
+
+/* ─── Recipe Message Step Tag ─── */
+.recipe-step-tag {
+  font-size: 10px;
+  color: #7a6e5e;
+  margin-top: 2px;
+  font-style: italic;
+}
+
 /* ─── Prefrontal Panel ─── */
 .pf-tree-panel {
   background: url("./wood-panel.jpg") repeat;

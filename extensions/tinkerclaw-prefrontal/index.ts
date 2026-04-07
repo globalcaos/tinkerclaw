@@ -592,6 +592,28 @@ export default function register(api: OpenClawPluginApi) {
             log.info?.(
               `[prefrontal] Recipe prompt injected: ${recipe.name} step=${nextStep?.id ?? "done"} (session=${sessionKey})`,
             );
+
+            // Emit recipe status event to Tinker UI
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- broadcast not in plugin SDK types
+              (api as any).broadcast?.("agent", {
+                stream: "lifecycle",
+                data: {
+                  phase: "prefrontal-recipe-status",
+                  recipeId: existingRecipe.recipeId,
+                  recipeName: recipe.name,
+                  currentStep: nextStep?.id ?? "done",
+                  currentStepName: nextStep?.name ?? "complete",
+                  completedSteps: [...existingRecipe.completedSteps],
+                  totalSteps: recipe.steps.length,
+                  category: (recipe as any).category ?? "coding",
+                  startedAt: recipeStartTimes.get(sessionKey) ?? Date.now(),
+                  ts: Date.now(),
+                },
+              });
+            } catch {
+              // broadcast not available — non-fatal
+            }
           }
         }
       }
