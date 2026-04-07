@@ -80,7 +80,11 @@ vi.mock("../../agents/pi-embedded.js", () => {
       compactState.compactEmbeddedPiSessionMock(params),
     queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
     runEmbeddedPiAgent: (params: unknown) => runEmbeddedPiAgentMock(params),
-    abortEmbeddedPiRun: (...args: unknown[]) => abortEmbeddedPiRunMock(...args),
+    abortEmbeddedPiRun: (sessionId: string) => {
+      abortEmbeddedPiRunMock(sessionId);
+      return abortEmbeddedPiRun(sessionId);
+    },
+    isEmbeddedPiRunActive: (sessionId: string) => isEmbeddedPiRunActive(sessionId),
   };
 });
 
