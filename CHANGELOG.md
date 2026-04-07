@@ -98,6 +98,7 @@ Docs: https://docs.openclaw.ai
 - Approvals/runtime: move native approval lifecycle assembly into shared core bootstrap/runtime seams driven by channel capabilities and runtime contexts, and remove the legacy bundled approval fallback wiring. (#62135) Thanks @gumadeiras.
 - Security/fetch-guard: stop rejecting operator-configured proxy hostnames against the target-scoped hostname allowlist in SSRF-guarded fetches, restoring proxy-based media downloads for Telegram and other channels. (#62312) Thanks @ademczuk.
 - iOS/gateway: replace string-matched connection error UI with structured gateway connection problems, preserve actionable pairing/auth failures over later generic disconnect noise, and surface reusable problem banners and details across onboarding, settings, and root status surfaces. (#62650) Thanks @ngutman.
+- Git/env sanitization: block additional Git repository-plumbing env variables such as `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, and `GIT_NAMESPACE` so host-run Git commands cannot be redirected to attacker-chosen repository state through inherited or request-scoped env. (#62002) Thanks @eleqtrizit.
 
 ## 2026.4.5
 
