@@ -67,6 +67,7 @@ vi.mock("./subagent-followup.runtime.js", () => ({
 import { countActiveDescendantRuns } from "../../agents/subagent-registry-read.js";
 import { callGateway } from "../../gateway/call.runtime.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
+import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { shouldEnqueueCronMainSummary } from "../heartbeat-policy.js";
 import {
@@ -688,6 +689,27 @@ describe("dispatchCronDelivery — double-announce guard", () => {
         payloads: [{ text: "hello from cron" }],
       }),
     );
+  });
+
+  it("builds outbound session context from the run session key under per-channel-peer scoping", async () => {
+    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
+
+    const params = makeBaseParams({ synthesizedText: "hello from cron" });
+    params.cfgWithAgentDefaults = {
+      session: { dmScope: "per-channel-peer" },
+    } as never;
+    params.agentSessionKey = "agent:main:telegram:123456";
+
+    const state = await dispatchCronDelivery(params);
+
+    expect(state.result).toBeUndefined();
+    expect(state.delivered).toBe(true);
+    expect(buildOutboundSessionContext).toHaveBeenCalledWith({
+      cfg: params.cfgWithAgentDefaults,
+      agentId: "main",
+      sessionKey: "agent:main:telegram:123456",
+    });
   });
 
   it("suppresses NO_REPLY payload with surrounding whitespace", async () => {
