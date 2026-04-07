@@ -1,7 +1,6 @@
 import { resetConfiguredBindingTargetInPlace } from "../../channels/plugins/binding-targets.js";
 import { logVerbose } from "../../globals.js";
 import { isAcpSessionKey } from "../../routing/session-key.js";
-import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
 import { resolveBoundAcpThreadSessionKey } from "./commands-acp/targets.js";
 import { emitResetCommandHooks, type ResetCommandAction } from "./commands-reset-hooks.js";
 import type { CommandHandlerResult, HandleCommandsParams } from "./commands-types.js";
@@ -15,29 +14,6 @@ function applyAcpResetTailContext(ctx: HandleCommandsParams["ctx"], resetTail: s
   mutableCtx.BodyForAgent = resetTail;
   mutableCtx.BodyStripped = resetTail;
   mutableCtx.AcpDispatchTailAfterReset = true;
-}
-
-function resolveSessionEntryForHookSessionKey(
-  sessionStore: HandleCommandsParams["sessionStore"] | undefined,
-  sessionKey: string,
-): HandleCommandsParams["sessionEntry"] | undefined {
-  if (!sessionStore) {
-    return undefined;
-  }
-  const directEntry = sessionStore[sessionKey];
-  if (directEntry) {
-    return directEntry;
-  }
-  const normalizedTarget = sessionKey.trim().toLowerCase();
-  if (!normalizedTarget) {
-    return undefined;
-  }
-  for (const [candidateKey, candidateEntry] of Object.entries(sessionStore)) {
-    if (normalizeOptionalLowercaseString(candidateKey) === normalizedTarget) {
-      return candidateEntry;
-    }
-  }
-  return undefined;
 }
 export async function maybeHandleResetCommand(
   params: HandleCommandsParams,
