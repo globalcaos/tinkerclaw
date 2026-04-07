@@ -7,10 +7,15 @@ import {
   type ProviderUsageAuth,
   usageNow,
 } from "./provider-usage.test-support.js";
+import type { ProviderUsageSnapshot } from "./provider-usage.types.js";
 
 type ProviderAuth = ProviderUsageAuth<typeof loadProviderUsageSummary>;
 const googleGeminiCliProvider = "google-gemini-cli" as unknown as ProviderAuth["provider"];
-const resolveProviderUsageSnapshotWithPluginMock = vi.fn(async () => null);
+const resolveProviderUsageSnapshotWithPluginMock = vi.hoisted(() =>
+  vi.fn<typeof import("../plugins/provider-runtime.js").resolveProviderUsageSnapshotWithPlugin>(
+    async () => null,
+  ),
+);
 
 vi.mock("../config/config.js", () => ({
   loadConfig: () => ({}),
@@ -22,8 +27,7 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   );
   return {
     ...actual,
-    resolveProviderUsageSnapshotWithPlugin: (...args: unknown[]) =>
-      resolveProviderUsageSnapshotWithPluginMock(...args),
+    resolveProviderUsageSnapshotWithPlugin: resolveProviderUsageSnapshotWithPluginMock,
   };
 });
 
@@ -35,36 +39,38 @@ describe("provider-usage.load", () => {
   });
 
   it("loads snapshots for copilot gemini codex and xiaomi", async () => {
-    resolveProviderUsageSnapshotWithPluginMock.mockImplementation(async ({ provider }) => {
-      switch (provider) {
-        case "github-copilot":
-          return {
-            provider,
-            displayName: "GitHub Copilot",
-            windows: [{ label: "Chat", usedPercent: 20 }],
-          };
-        case googleGeminiCliProvider:
-          return {
-            provider,
-            displayName: "Gemini CLI",
-            windows: [{ label: "Pro", usedPercent: 40 }],
-          };
-        case "openai-codex":
-          return {
-            provider,
-            displayName: "Codex",
-            windows: [{ label: "3h", usedPercent: 12 }],
-          };
-        case "xiaomi":
-          return {
-            provider,
-            displayName: "Xiaomi",
-            windows: [],
-          };
-        default:
-          return null;
-      }
-    });
+    resolveProviderUsageSnapshotWithPluginMock.mockImplementation(
+      async ({ provider }): Promise<ProviderUsageSnapshot | null> => {
+        switch (provider) {
+          case "github-copilot":
+            return {
+              provider,
+              displayName: "GitHub Copilot",
+              windows: [{ label: "Chat", usedPercent: 20 }],
+            };
+          case googleGeminiCliProvider:
+            return {
+              provider,
+              displayName: "Gemini CLI",
+              windows: [{ label: "Pro", usedPercent: 40 }],
+            };
+          case "openai-codex":
+            return {
+              provider,
+              displayName: "Codex",
+              windows: [{ label: "3h", usedPercent: 12 }],
+            };
+          case "xiaomi":
+            return {
+              provider,
+              displayName: "Xiaomi",
+              windows: [],
+            };
+          default:
+            return null;
+        }
+      },
+    );
     const mockFetch = createProviderUsageFetch(async () => {
       throw new Error("legacy fetch should not run");
     });
