@@ -330,7 +330,9 @@ function freshTabState(): TabState {
 
 /** Save current globals into the active tab's TabState. */
 function saveCurrentTabState() {
-  if (!activeTabId) return;
+  if (!activeTabId) {
+    return;
+  }
   const s = tabStates.get(activeTabId) ?? freshTabState();
   s.messages = messages;
   s.streamMsgIdx = streamMsgIdx;
@@ -341,7 +343,9 @@ function saveCurrentTabState() {
   s.currentTurnNumber = currentTurnNumber;
   s.expandedTools = expandedTools;
   const ta = $("chat-textarea") as HTMLTextAreaElement | null;
-  if (ta) s.draft = ta.value;
+  if (ta) {
+    s.draft = ta.value;
+  }
   tabStates.set(activeTabId, s);
 }
 
@@ -368,8 +372,12 @@ function loadTabState(tabId: string) {
 // Used as fallback in event filters during the window between chat.send and canonicalization.
 function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): boolean {
   const ref = refKey ?? sessionKey;
-  if (!evtKey || !ref) return false;
-  if (evtKey === ref) return true;
+  if (!evtKey || !ref) {
+    return false;
+  }
+  if (evtKey === ref) {
+    return true;
+  }
   return evtKey.endsWith(":" + ref) || ref.endsWith(":" + evtKey);
 }
 
@@ -474,7 +482,9 @@ function providerIcon(provider: string): string {
 
 function findLastIndex<T>(arr: T[], pred: (v: T) => boolean): number {
   for (let i = arr.length - 1; i >= 0; i--) {
-    if (pred(arr[i])) return i;
+    if (pred(arr[i])) {
+      return i;
+    }
   }
   return -1;
 }
@@ -485,7 +495,9 @@ const ERROR_STORAGE_KEY = "tinker-errors";
 function persistErrorMsg(sk: string, msg: any) {
   try {
     const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
-    if (!all[sk]) all[sk] = [];
+    if (!all[sk]) {
+      all[sk] = [];
+    }
     all[sk].push(msg);
     localStorage.setItem(ERROR_STORAGE_KEY, JSON.stringify(all));
   } catch {
@@ -530,7 +542,9 @@ const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
 function persistProviderErrors() {
   try {
     const obj: Record<string, { error: string; reason: string; ts: number }> = {};
-    for (const [k, v] of providerErrors) obj[k] = v;
+    for (const [k, v] of providerErrors) {
+      obj[k] = v;
+    }
     localStorage.setItem(PROVIDER_ERRORS_STORAGE_KEY, JSON.stringify(obj));
   } catch {
     /* ignore */
@@ -540,7 +554,9 @@ function persistProviderErrors() {
 function restoreProviderErrors() {
   try {
     const raw = localStorage.getItem(PROVIDER_ERRORS_STORAGE_KEY);
-    if (!raw) return;
+    if (!raw) {
+      return;
+    }
     const obj = JSON.parse(raw) as Record<string, { error: string; reason: string; ts: number }>;
     const now = Date.now();
     for (const [k, v] of Object.entries(obj)) {
@@ -573,7 +589,9 @@ function saveActiveRuns() {
 function restoreActiveRuns() {
   try {
     const raw = sessionStorage.getItem(ACTIVE_RUNS_STORAGE_KEY);
-    if (!raw) return;
+    if (!raw) {
+      return;
+    }
     const entries: [string, ActiveRunInfo][] = JSON.parse(raw);
     for (const [id, info] of entries) {
       activeRuns.set(id, info);
@@ -586,7 +604,9 @@ function restoreActiveRuns() {
 
 /** After reconnect, clear restored runs that no lifecycle event confirmed. */
 function scheduleUnconfirmedPrune() {
-  if (unconfirmedRuns.size === 0) return;
+  if (unconfirmedRuns.size === 0) {
+    return;
+  }
   setTimeout(() => {
     let changed = false;
     for (const id of unconfirmedRuns) {
@@ -607,10 +627,13 @@ restoreActiveRuns();
 function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const info of activeRuns.values()) {
-    if (forModel && info.model !== forModel) continue;
-    // FORK: Filter by scope toggle — "session" only counts runs for the active session
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+    if (forModel && info.model !== forModel) {
       continue;
+    }
+    // FORK: Filter by scope toggle — "session" only counts runs for the active session
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
+      continue;
+    }
     const key = info.authProfileId || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
@@ -632,13 +655,16 @@ let modelConfigData: any = null;
 // FORK: Build Prefrontal tree from activeRuns — unified with thinking indicator + models panel.
 // Called at the same points as updateBudgetPanel/updateChat for instant reactivity.
 function updatePrefrontalTree() {
-  if (!prefrontalCtrl) return;
+  if (!prefrontalCtrl) {
+    return;
+  }
 
   // Collect active runs (respecting session scope)
   const runs: Array<{ runId: string; info: ActiveRunInfo }> = [];
   for (const [runId, info] of activeRuns) {
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey))
+    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
       continue;
+    }
     runs.push({ runId, info });
   }
 
@@ -692,6 +718,68 @@ function updatePrefrontalTree() {
     root.children = children;
     prefrontalCtrl.update({ active: true, root });
   }
+}
+
+// ─── Recipe Progress (Prefrontal v3.0) ───
+// FORK: Shows active recipe progress below the call tree panel.
+function updateRecipeProgress(data: any) {
+  const container = document.getElementById("recipe-progress");
+  if (!container) {
+    return;
+  }
+
+  if (!data || !data.recipeId) {
+    container.style.display = "none";
+    return;
+  }
+
+  container.style.display = "block";
+  const completed = (data.completedSteps as string[]) ?? [];
+  const total = (data.totalSteps as number) ?? 0;
+  const elapsed = Math.floor(((data.elapsedMs as number) ?? 0) / 1000);
+
+  let html = `<div class="rp-panel">`;
+  html += `<div class="rp-header"><span class="rp-name">${data.recipeName}</span>`;
+  html += `<span class="rp-elapsed">${elapsed}s</span></div>`;
+  html += `<div class="rp-steps">`;
+
+  // We don't have step names in the event — use the IDs available
+  // The progress data sends currentStep + completedSteps
+  if (data.currentStep) {
+    // Render a compact step indicator
+    for (let i = 0; i < total; i++) {
+      const isDone = i < completed.length;
+      const isCurrent = i === completed.length;
+      const cls = isDone ? "rp-step rp-done" : isCurrent ? "rp-step rp-current" : "rp-step";
+      const icon = isDone ? "\u2713" : isCurrent ? "\u2192" : "\u00b7";
+      html += `<span class="${cls}">${icon}</span>`;
+    }
+  }
+
+  html += `</div>`;
+  html += `<div class="rp-counter">${completed.length}/${total} steps</div>`;
+  html += `</div>`;
+
+  container.innerHTML = html;
+}
+
+// Inject recipe progress styles
+{
+  const rpStyle = document.createElement("style");
+  rpStyle.id = "recipe-progress-styles";
+  rpStyle.textContent = `
+    .recipe-progress-container { padding: 0 0.5rem; }
+    .rp-panel { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.5rem 0.65rem; margin-bottom: 0.5rem; }
+    .rp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; }
+    .rp-name { color: #c9d1d9; font-size: 0.72rem; font-weight: 600; }
+    .rp-elapsed { color: #484f58; font-size: 0.65rem; }
+    .rp-steps { display: flex; gap: 0.3rem; align-items: center; margin-bottom: 0.25rem; }
+    .rp-step { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 0.65rem; border: 1px solid rgba(255,255,255,0.1); color: #484f58; }
+    .rp-step.rp-done { color: #3fb950; border-color: #3fb950; }
+    .rp-step.rp-current { color: #58a6ff; border-color: #58a6ff; background: rgba(88,166,255,0.1); }
+    .rp-counter { color: #484f58; font-size: 0.62rem; text-align: right; }
+  `;
+  document.head.appendChild(rpStyle);
 }
 
 // ─── Gateway ───
@@ -813,7 +901,9 @@ function req<T = any>(method: string, params?: any): Promise<T> {
 let healthPollInterval: ReturnType<typeof setInterval> | null = null;
 
 function startHealthPoll() {
-  if (healthPollInterval) return;
+  if (healthPollInterval) {
+    return;
+  }
   healthPollInterval = setInterval(async () => {
     if (providerErrors.size === 0) {
       clearInterval(healthPollInterval!);
@@ -822,7 +912,9 @@ function startHealthPoll() {
     }
     try {
       const res = await req("provider.health", {});
-      if (!res?.health) return;
+      if (!res?.health) {
+        return;
+      }
       let changed = false;
       for (const [provider, info] of Object.entries(res.health) as [string, any][]) {
         if (info.available) {
@@ -880,18 +972,29 @@ function mergeSentenceContinuations(msgs: any[]): void {
   // Find the range of temporary messages (they're always at the tail).
   let tempStart = -1;
   for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i]._temporary) tempStart = i;
-    else if (tempStart >= 0) break; // walked past the temp block
+    if (msgs[i]._temporary) {
+      tempStart = i;
+    } else if (tempStart >= 0) {
+      break;
+    } // walked past the temp block
   }
-  if (tempStart < 0) return;
+  if (tempStart < 0) {
+    return;
+  }
 
   for (let i = tempStart + 1; i < msgs.length; i++) {
     const m = msgs[i];
-    if (!m._temporary) continue;
-    if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+    if (!m._temporary) {
+      continue;
+    }
+    if ((m.role ?? "").toLowerCase() !== "assistant") {
+      continue;
+    }
     const content = Array.isArray(m.content) ? m.content : [];
     const textBlock = content.find((b: any) => b.type === "text" && (b.text ?? "").trim());
-    if (!textBlock) continue;
+    if (!textBlock) {
+      continue;
+    }
 
     const text = textBlock.text as string;
     const trimmed = text.trimStart();
@@ -901,15 +1004,21 @@ function mergeSentenceContinuations(msgs: any[]): void {
       firstChar !== "" &&
       firstChar === firstChar.toLowerCase() &&
       firstChar !== firstChar.toUpperCase();
-    const isMidSentence = isLower || /^[\d,;:.!?)}\]"'…–—\-]/.test(trimmed);
-    if (!isMidSentence) continue;
+    const isMidSentence = isLower || /^[\d,;:.!?)}\]"'…–—-]/.test(trimmed);
+    if (!isMidSentence) {
+      continue;
+    }
 
     // Find the previous temporary assistant text bubble
     let prevTextBlock: any = null;
     for (let k = i - 1; k >= tempStart; k--) {
       const prev = msgs[k];
-      if (!prev._temporary) continue;
-      if ((prev.role ?? "").toLowerCase() !== "assistant") continue;
+      if (!prev._temporary) {
+        continue;
+      }
+      if ((prev.role ?? "").toLowerCase() !== "assistant") {
+        continue;
+      }
       const pc = Array.isArray(prev.content) ? prev.content : [];
       const pt = pc.find((b: any) => b.type === "text" && (b.text ?? "").trim());
       if (pt) {
@@ -917,7 +1026,9 @@ function mergeSentenceContinuations(msgs: any[]): void {
         break;
       }
     }
-    if (!prevTextBlock) continue;
+    if (!prevTextBlock) {
+      continue;
+    }
 
     // Find sentence boundary in the current text
     const dotIdx = findSentenceEnd(text, 0);
@@ -968,7 +1079,9 @@ function onEvent(evt: any) {
       }
       // FORK: Un-queue any queued user messages — LLM absorbed them via steer
       for (const m of messages) {
-        if (m._queued) delete m._queued;
+        if (m._queued) {
+          delete m._queued;
+        }
       }
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
@@ -996,7 +1109,9 @@ function onEvent(evt: any) {
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
       // FORK: Un-queue any queued user messages on final/error
       for (const m of messages) {
-        if (m._queued) delete m._queued;
+        if (m._queued) {
+          delete m._queued;
+        }
       }
       if (p.state !== "error") {
         // ─── Continuation merge ───
@@ -1023,7 +1138,9 @@ function onEvent(evt: any) {
 
           // Remove temp text-only messages, keep temp tool messages
           messages = messages.filter((m: any) => {
-            if (!m._temporary) return true;
+            if (!m._temporary) {
+              return true;
+            }
             const c = Array.isArray(m.content) ? m.content : [];
             const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
             return isToolMsg;
@@ -1039,12 +1156,16 @@ function onEvent(evt: any) {
 
           // Clean up remaining temp flags
           for (const m of messages) {
-            if (m._temporary) delete m._temporary;
+            if (m._temporary) {
+              delete m._temporary;
+            }
           }
         } else if (hadTemps) {
           // No server final message — promote temps as-is (fallback)
           for (const m of messages) {
-            if (m._temporary) delete m._temporary;
+            if (m._temporary) {
+              delete m._temporary;
+            }
           }
         }
         if (!hadTemps && p.message) {
@@ -1220,8 +1341,9 @@ function onEvent(evt: any) {
         p.data.sessionKey &&
         p.data.sessionKey !== sessionKey &&
         !p.data.sessionKey.includes(":subagent:")
-      )
+      ) {
         return;
+      }
       if (timelineCtrl) {
         const roundEvent: any = {
           turn: p.data.turnNumber,
@@ -1242,8 +1364,9 @@ function onEvent(evt: any) {
         p.data.sessionKey &&
         p.data.sessionKey !== sessionKey &&
         !p.data.sessionKey.includes(":subagent:")
-      )
+      ) {
         return;
+      }
       if (timelineCtrl) {
         timelineCtrl.pushRoundComplete(p.runId, {
           roundNumber: p.data.roundNumber,
@@ -1264,8 +1387,9 @@ function onEvent(evt: any) {
         p.data.sessionKey &&
         p.data.sessionKey !== sessionKey &&
         !p.data.sessionKey.includes(":subagent:")
-      )
+      ) {
         return;
+      }
       if (timelineCtrl) {
         timelineCtrl.pushToolExec(p.runId, {
           roundNumber: p.data.roundNumber,
@@ -1424,6 +1548,10 @@ function onEvent(evt: any) {
         updateChat();
       }
     }
+    // v3.0: Prefrontal recipe progress events
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-progress") {
+      updateRecipeProgress(p.data.data);
+    }
     if (p?.stream === "lifecycle" && p.data?.model) {
       // FORK: Ignore lifecycle events that don't belong to the current session.
       // Events without a sessionKey (cron, heartbeat) are also ignored — they would
@@ -1433,13 +1561,18 @@ function onEvent(evt: any) {
       if (
         !evtSessionKey ||
         (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
-      )
+      ) {
         return;
+      }
       // Any lifecycle event for a restored run confirms it's still active
       unconfirmedRuns.delete(p.runId);
       // Track the provider/profile that's actively responding
-      if (p.data?.provider) streamProvider = String(p.data.provider);
-      if (p.data?.profileId) streamProfileId = String(p.data.profileId);
+      if (p.data?.provider) {
+        streamProvider = String(p.data.provider);
+      }
+      if (p.data?.profileId) {
+        streamProfileId = String(p.data.profileId);
+      }
       if (p.data.phase === "start") {
         const startProvider = p.data.modelProvider || providerOf(p.data.model);
         // Cancel any pending deletion for this runId (fallback reuses the same runId)
@@ -1485,7 +1618,9 @@ function onEvent(evt: any) {
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
                   const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
-                  if (events.length === 0) return;
+                  if (events.length === 0) {
+                    return;
+                  }
                   const turnEvents = events.filter((ev: any) => ev.turn === tn);
                   for (const ev of turnEvents) {
                     timelineCtrl!.pushEvent(ev);
@@ -1572,13 +1707,17 @@ function onEvent(evt: any) {
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
                 const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
-                if (events.length === 0) return;
+                if (events.length === 0) {
+                  return;
+                }
                 // Find events for the current turn
                 const turnEvents = events.filter((ev: any) => ev.turn === turnNum);
                 if (turnEvents.length === 0) {
                   // Fallback: just use the latest event (backwards compat)
                   const latest = events[events.length - 1];
-                  if (latest) turnEvents.push(latest);
+                  if (latest) {
+                    turnEvents.push(latest);
+                  }
                 }
                 for (const ev of turnEvents) {
                   timelineCtrl!.pushEvent(ev);
@@ -1605,11 +1744,7 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   updateSessionsPanel();
   // FORK: If sessionKey was just resolved for the first time, load timeline
   if (!hadSessionKey && sessionKey) {
-    if (timelineCtrl?.getFilterMode() === "all") {
-      timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
-    } else {
-      timelineCtrl?.loadSession(sessionKey);
-    }
+    timelineCtrl?.loadSession(sessionKey);
   }
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
@@ -1622,7 +1757,9 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
       if (sess && tab.sessionKey !== sess.key) {
         // Upgrade to canonical key
         tab.sessionKey = sess.key;
-        if (activeTabId === tab.id) sessionKey = sess.key;
+        if (activeTabId === tab.id) {
+          sessionKey = sess.key;
+        }
       } else if (!sess) {
         // Session doesn't exist on server yet — keep tab (don't detach new tabs)
         // Only detach if tab was previously canonicalized (key contains "agent:")
@@ -1636,7 +1773,9 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   }
   saveTabs();
   renderTabs();
-  if (opts?.loadChat) loadChat();
+  if (opts?.loadChat) {
+    loadChat();
+  }
 }
 
 async function loadChat() {
@@ -1686,7 +1825,9 @@ async function loadChat() {
 }
 
 async function generateTabTitle(tab: Tab) {
-  if (!tab.sessionKey || tab.id === "tab-main") return;
+  if (!tab.sessionKey || tab.id === "tab-main") {
+    return;
+  }
 
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
   const tabMessages =
@@ -1696,22 +1837,30 @@ async function generateTabTitle(tab: Tab) {
   let count = 0;
   for (let i = tabMessages.length - 1; i >= 0 && count < TAB_TITLE_INTERVAL; i--) {
     const m = tabMessages[i];
-    if (!m?.content) continue;
+    if (!m?.content) {
+      continue;
+    }
     const text = Array.isArray(m.content)
       ? m.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
           .join(" ")
       : String(m.content);
-    if (!text.trim()) continue;
+    if (!text.trim()) {
+      continue;
+    }
     const role = (m.role || "").toLowerCase();
     if (role === "user" || role === "assistant") {
       pairs.unshift(`${role}: ${text.slice(0, 200)}`);
-      if (role === "user") count++;
+      if (role === "user") {
+        count++;
+      }
     }
   }
 
-  if (pairs.length === 0) return;
+  if (pairs.length === 0) {
+    return;
+  }
 
   const prompt = `Summarize this conversation in 1-3 words (short title, no quotes, no punctuation). Start with a relevant emoji. Example: "🔧 Fix auth bug". Here is the conversation:\n\n${pairs.join("\n")}`;
 
@@ -1753,7 +1902,9 @@ async function generateTabTitle(tab: Tab) {
 }
 
 async function send(text: string) {
-  if (!text.trim()) return;
+  if (!text.trim()) {
+    return;
+  }
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
@@ -1768,7 +1919,9 @@ async function send(text: string) {
     renderTabs();
   }
 
-  if (!sessionKey) return;
+  if (!sessionKey) {
+    return;
+  }
 
   const isFirstMessage = messages.length === 0;
   // FORK: Mark message as queued only if THIS session has an active run
@@ -1786,7 +1939,9 @@ async function send(text: string) {
     ...(isQueued ? { _queued: true } : {}),
   });
   updateChat();
-  if (!isQueued) updateBtn();
+  if (!isQueued) {
+    updateBtn();
+  }
   scrollChat();
 
   await req("chat.send", { sessionKey, message: text, idempotencyKey: uuid() }).catch((e) => {
@@ -1917,7 +2072,9 @@ function extractGrepFiles(cmd: string): string {
   // Get the last path-like argument
   const parts = cmd.split(/\s+/);
   for (let i = parts.length - 1; i >= 0; i--) {
-    if (parts[i].includes("/")) return fileName(shortenPath(parts[i]));
+    if (parts[i].includes("/")) {
+      return fileName(shortenPath(parts[i]));
+    }
   }
   return "";
 }
@@ -1947,15 +2104,24 @@ function toolSummary(name: string, input: any): string {
         const what = nameM ? (nameM[1] ?? nameM[2] ?? nameM[3] ?? nameM[4]) : "something";
         return `Scanning the project to locate ${what}`;
       }
-      if (cmd.startsWith("ls")) return `Checking what's inside a folder`;
-      if (cmd.startsWith("cat")) return `Reading the contents of a file`;
-      if (cmd.startsWith("kill")) return `Stopping something that was running`;
-      if (cmd.includes("pnpm build") || cmd.includes("npm build"))
+      if (cmd.startsWith("ls")) {
+        return `Checking what's inside a folder`;
+      }
+      if (cmd.startsWith("cat")) {
+        return `Reading the contents of a file`;
+      }
+      if (cmd.startsWith("kill")) {
+        return `Stopping something that was running`;
+      }
+      if (cmd.includes("pnpm build") || cmd.includes("npm build")) {
         return `Compiling all recent changes so they take effect`;
-      if (cmd.includes("pnpm test") || cmd.includes("npm test"))
+      }
+      if (cmd.includes("pnpm test") || cmd.includes("npm test")) {
         return `Running automated checks to make sure nothing is broken`;
-      if (cmd.includes("pnpm install") || cmd.includes("npm install"))
+      }
+      if (cmd.includes("pnpm install") || cmd.includes("npm install")) {
         return `Setting up the required software components`;
+      }
       if (cmd.match(/^curl\b/)) {
         const urlM = cmd.match(/https?:\/\/([^/\s"']+)/);
         return urlM
@@ -1971,17 +2137,36 @@ function toolSummary(name: string, input: any): string {
         const bins = cmd.replace(/^which\s+/, "").trim();
         return `Checking whether ${bins} is available on this machine`;
       }
-      if (cmd.startsWith("ps ")) return `Checking what programs are currently running`;
-      if (cmd.startsWith("sed")) return `Making a quick text replacement in a file`;
-      if (cmd.includes("git pull")) return `Downloading the latest version of the code`;
-      if (cmd.includes("git push")) return `Uploading the changes so others can see them`;
-      if (cmd.includes("git commit")) return `Saving the current changes as a named checkpoint`;
-      if (cmd.includes("git diff")) return `Comparing what changed between two versions`;
-      if (cmd.includes("git ")) return `Doing some version tracking housekeeping`;
-      if (cmd.startsWith("echo")) return `Printing a note`;
-      if (cmd.startsWith("sleep")) return `Pausing briefly before the next step`;
-      if (cmd.startsWith("nohup") || cmd.startsWith("setsid"))
+      if (cmd.startsWith("ps ")) {
+        return `Checking what programs are currently running`;
+      }
+      if (cmd.startsWith("sed")) {
+        return `Making a quick text replacement in a file`;
+      }
+      if (cmd.includes("git pull")) {
+        return `Downloading the latest version of the code`;
+      }
+      if (cmd.includes("git push")) {
+        return `Uploading the changes so others can see them`;
+      }
+      if (cmd.includes("git commit")) {
+        return `Saving the current changes as a named checkpoint`;
+      }
+      if (cmd.includes("git diff")) {
+        return `Comparing what changed between two versions`;
+      }
+      if (cmd.includes("git ")) {
+        return `Doing some version tracking housekeeping`;
+      }
+      if (cmd.startsWith("echo")) {
+        return `Printing a note`;
+      }
+      if (cmd.startsWith("sleep")) {
+        return `Pausing briefly before the next step`;
+      }
+      if (cmd.startsWith("nohup") || cmd.startsWith("setsid")) {
         return `Starting a long-running task in the background`;
+      }
       return `Performing a system operation`;
     }
     case "read":
@@ -1991,18 +2176,30 @@ function toolSummary(name: string, input: any): string {
       const newStr = String(a.new_string ?? a.newText ?? "");
       const oldP = editPreview(oldStr);
       const newP = editPreview(newStr);
-      if (oldStr && !newStr) return `Removing: "${oldP}"`;
-      if (!oldStr && newStr) return `Adding: "${newP}"`;
+      if (oldStr && !newStr) {
+        return `Removing: "${oldP}"`;
+      }
+      if (!oldStr && newStr) {
+        return `Adding: "${newP}"`;
+      }
       return `Changing "${oldP}" to "${newP}"`;
     }
     case "write":
       return `Creating a new file with the necessary content`;
     case "process": {
       const act = a.action ?? "?";
-      if (act === "poll") return `Waiting for a background task to finish`;
-      if (act === "kill") return `Stopping a background task`;
-      if (act === "log") return `Checking the output of a background task`;
-      if (act === "list") return `Looking at what's running in the background`;
+      if (act === "poll") {
+        return `Waiting for a background task to finish`;
+      }
+      if (act === "kill") {
+        return `Stopping a background task`;
+      }
+      if (act === "log") {
+        return `Checking the output of a background task`;
+      }
+      if (act === "list") {
+        return `Looking at what's running in the background`;
+      }
       return `Managing a background task`;
     }
     case "memory_search":
@@ -2019,17 +2216,31 @@ function toolSummary(name: string, input: any): string {
     case "message": {
       const act = a.action ?? "send";
       const target = a.target ?? a.to ?? "someone";
-      if (act === "send") return `Sending a message to ${target}`;
-      if (act === "react") return `Reacting to a message`;
+      if (act === "send") {
+        return `Sending a message to ${target}`;
+      }
+      if (act === "react") {
+        return `Reacting to a message`;
+      }
       return `Performing a messaging action with ${target}`;
     }
     case "browser": {
       const act = a.action ?? "?";
-      if (act === "screenshot") return `Taking a picture of what's on screen`;
-      if (act === "snapshot") return `Reading the layout of the web page`;
-      if (act === "open") return `Opening a web page in the browser`;
-      if (act === "navigate") return `Going to a different web page`;
-      if (act === "act") return `Clicking or typing something on the page`;
+      if (act === "screenshot") {
+        return `Taking a picture of what's on screen`;
+      }
+      if (act === "snapshot") {
+        return `Reading the layout of the web page`;
+      }
+      if (act === "open") {
+        return `Opening a web page in the browser`;
+      }
+      if (act === "navigate") {
+        return `Going to a different web page`;
+      }
+      if (act === "act") {
+        return `Clicking or typing something on the page`;
+      }
       return `Doing something in the browser`;
     }
     case "image":
@@ -2038,19 +2249,33 @@ function toolSummary(name: string, input: any): string {
         : `Examining an image`;
     case "whatsapp_history": {
       const act = a.action ?? "?";
-      if (act === "search" && a.query) return `Searching WhatsApp messages for "${a.query}"`;
-      if (act === "search" && a.chat) return `Reading a WhatsApp conversation`;
-      if (act === "search") return `Going through recent WhatsApp messages`;
-      if (act === "stats") return `Checking how many WhatsApp messages there are`;
+      if (act === "search" && a.query) {
+        return `Searching WhatsApp messages for "${a.query}"`;
+      }
+      if (act === "search" && a.chat) {
+        return `Reading a WhatsApp conversation`;
+      }
+      if (act === "search") {
+        return `Going through recent WhatsApp messages`;
+      }
+      if (act === "stats") {
+        return `Checking how many WhatsApp messages there are`;
+      }
       return `Doing something with WhatsApp`;
     }
     case "sessions_spawn":
       return `Starting a helper to work on: ${String(a.task ?? "").slice(0, 80)}`;
     case "subagents": {
       const act = a.action ?? "?";
-      if (act === "list") return `Checking on helpers that are working in parallel`;
-      if (act === "kill") return `Telling a helper to stop`;
-      if (act === "steer") return `Giving new instructions to a helper`;
+      if (act === "list") {
+        return `Checking on helpers that are working in parallel`;
+      }
+      if (act === "kill") {
+        return `Telling a helper to stop`;
+      }
+      if (act === "steer") {
+        return `Giving new instructions to a helper`;
+      }
       return `Managing helpers`;
     }
     case "tts":
@@ -2093,8 +2318,9 @@ function toolExpandedDetail(name: string, input: any): string {
     default: {
       // Formatted key-value pairs instead of raw JSON
       const entries = Object.entries(a);
-      if (entries.length === 0)
+      if (entries.length === 0) {
         return `<div class="explanation">${esc(name ?? "tool")} (no parameters)</div>`;
+      }
       let out = `<div class="explanation">${esc(name ?? "tool")}:</div>`;
       for (const [k, v] of entries) {
         const vs = typeof v === "string" ? v : JSON.stringify(v);
@@ -2132,7 +2358,9 @@ function renderSystemMsg(text: string, idx: number): string {
   } else {
     const firstSentence = flat.match(/^[^.!?\n]{10,120}[.!?]/)?.[0];
     preview = esc(firstSentence ?? flat.slice(0, 120));
-    if (text.length > (firstSentence?.length ?? 120)) preview += " …";
+    if (text.length > (firstSentence?.length ?? 120)) {
+      preview += " …";
+    }
   }
 
   const cssClass = isAlert ? "msg system-alert" : "msg system";
@@ -2164,12 +2392,16 @@ function renderMsg(
   const _allMsgTexts =
     content.map((b: any) => b.text ?? "").join(" ") +
     (typeof msg.content === "string" ? msg.content : "");
-  if (_allMsgTexts.includes("# FRACTAL REFLECTION")) return h;
+  if (_allMsgTexts.includes("# FRACTAL REFLECTION")) {
+    return h;
+  }
   let blockIdx = 0;
   let hasNonToolContent = false;
 
   // Check if this message has any non-tool content (text blocks or plain string)
-  if (typeof msg.content === "string" && msg.content.trim()) hasNonToolContent = true;
+  if (typeof msg.content === "string" && msg.content.trim()) {
+    hasNonToolContent = true;
+  }
   for (const b of content) {
     if (b.type === "text" && (b.text ?? "").trim()) {
       hasNonToolContent = true;
@@ -2188,7 +2420,9 @@ function renderMsg(
       let inSystemBlock = true;
       for (const line of lines) {
         if (inSystemBlock && (line.startsWith("System:") || line.trim() === "")) {
-          if (line.startsWith("System:")) sysLines.push(line);
+          if (line.startsWith("System:")) {
+            sysLines.push(line);
+          }
         } else {
           inSystemBlock = false;
           userLines.push(line);
@@ -2196,7 +2430,9 @@ function renderMsg(
       }
       for (const line of sysLines) {
         const sysText = line.replace(/^System:\s*/, "").trim();
-        if (sysText) h += renderSystemMsg(sysText, idx);
+        if (sysText) {
+          h += renderSystemMsg(sysText, idx);
+        }
       }
       const userText = userLines.join("\n").trim();
       if (userText) {
@@ -2275,7 +2511,9 @@ function renderMsg(
   for (const block of content) {
     if (block.type === "text") {
       const text = (block.text ?? "").trim();
-      if (!text) continue;
+      if (!text) {
+        continue;
+      }
       if (role === "user") {
         // Split system event lines from user text
         const lines = text.split("\n");
@@ -2284,7 +2522,9 @@ function renderMsg(
         let inSystemBlock = true;
         for (const line of lines) {
           if (inSystemBlock && (line.startsWith("System:") || line.trim() === "")) {
-            if (line.startsWith("System:")) sysLines.push(line);
+            if (line.startsWith("System:")) {
+              sysLines.push(line);
+            }
           } else {
             inSystemBlock = false;
             userLines.push(line);
@@ -2293,7 +2533,9 @@ function renderMsg(
         // Render system lines as system messages
         for (const line of sysLines) {
           const sysText = line.replace(/^System:\s*/, "").trim();
-          if (sysText) h += renderSystemMsg(sysText, idx);
+          if (sysText) {
+            h += renderSystemMsg(sysText, idx);
+          }
         }
         // Render remaining user text
         const userText = userLines.join("\n").trim();
@@ -2389,8 +2631,12 @@ function renderMsg(
       // message has other content (otherwise skip the whole message).
       const uid = block.tool_use_id ?? "";
       const matchingTool = toolNameMap.get(uid);
-      if (matchingTool) continue; // will be shown with its tool_use
-      if (!hasNonToolContent) continue; // pure tool_result message — skip entirely
+      if (matchingTool) {
+        continue;
+      } // will be shown with its tool_use
+      if (!hasNonToolContent) {
+        continue;
+      } // pure tool_result message — skip entirely
       const rt =
         typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
       const err = block.is_error === true;
@@ -2415,7 +2661,9 @@ function renderThinkingIndicator(): string {
     // FORK: Only show runs belonging to the active session/tab
     let rows = "";
     for (const [runId, info] of activeRuns) {
-      if (info.sessionKey && !sessionKeyMatches(info.sessionKey)) continue;
+      if (info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
+        continue;
+      }
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
@@ -2426,7 +2674,9 @@ function renderThinkingIndicator(): string {
   <span class="thinking-stop">Stop</span>
 </div>`;
     }
-    if (rows) return `<div class="thinking-indicator">${rows}</div>`;
+    if (rows) {
+      return `<div class="thinking-indicator">${rows}</div>`;
+    }
   }
   if (sending) {
     return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#D97757;--thinking-glow:#D9775740;--thinking-glow-bg:#D9775720;--thinking-glow-bg2:#D9775730">
@@ -2439,7 +2689,9 @@ function renderThinkingIndicator(): string {
 }
 
 function startThinkingTick() {
-  if (thinkingTickInterval) return;
+  if (thinkingTickInterval) {
+    return;
+  }
   thinkingTickInterval = setInterval(() => {
     if (activeRuns.size === 0) {
       clearInterval(thinkingTickInterval!);
@@ -2448,12 +2700,18 @@ function startThinkingTick() {
     }
     document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
       const runId = el.getAttribute("data-run-id");
-      if (!runId) return;
+      if (!runId) {
+        return;
+      }
       const info = activeRuns.get(runId);
-      if (!info) return;
+      if (!info) {
+        return;
+      }
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const span = el.querySelector(".thinking-elapsed");
-      if (span) span.textContent = `${elapsed}s`;
+      if (span) {
+        span.textContent = `${elapsed}s`;
+      }
     });
     updatePrefrontalTree();
   }, 1000);
@@ -2461,8 +2719,12 @@ function startThinkingTick() {
 
 // ─── Usage Tracker Helpers ───
 function fmtCost(n: number): string {
-  if (n >= 1) return n % 1 === 0 ? n.toString() : n.toFixed(1);
-  if (n >= 0.1) return n.toFixed(2);
+  if (n >= 1) {
+    return n % 1 === 0 ? n.toString() : n.toFixed(1);
+  }
+  if (n >= 0.1) {
+    return n.toFixed(2);
+  }
   return n.toFixed(3);
 }
 
@@ -2473,12 +2735,18 @@ function getModelCost(modelId: string, keyId?: string): string {
   // Subscription profiles get effective flat rate
   if (keyId && (keyId.includes(":cli-") || keyId.includes(":oauth"))) {
     const provider = modelId.split("/")[0];
-    if (provider === "anthropic") return SUB_COST_LABEL;
+    if (provider === "anthropic") {
+      return SUB_COST_LABEL;
+    }
   }
   const name = modelId.split("/").slice(1).join("/") || modelId;
   const cost = MODEL_COST[name];
-  if (!cost) return "";
-  if (cost[0] === cost[1]) return `$${fmtCost(cost[0])}`;
+  if (!cost) {
+    return "";
+  }
+  if (cost[0] === cost[1]) {
+    return `$${fmtCost(cost[0])}`;
+  }
   return `$${fmtCost(cost[0])}/${fmtCost(cost[1])}`;
 }
 
@@ -2487,10 +2755,14 @@ function fmtReset(iso: string): string {
     const d = new Date(iso);
     const now = Date.now();
     const diffMs = d.getTime() - now;
-    if (diffMs <= 0) return "";
+    if (diffMs <= 0) {
+      return "";
+    }
     const h = Math.floor(diffMs / 3600000);
     const m = Math.floor((diffMs % 3600000) / 60000);
-    if (h < 24) return `${h}h ${m}m`;
+    if (h < 24) {
+      return `${h}h ${m}m`;
+    }
     const day = d.toLocaleDateString(undefined, { weekday: "short" });
     const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     return `${day} ${time}`;
@@ -2507,7 +2779,9 @@ interface ModelUsageInfo {
 }
 
 function getModelUsage(provider: string, modelId: string, keyId?: string): ModelUsageInfo | null {
-  if (!budgetUsageData || provider === "ollama") return null;
+  if (!budgetUsageData || provider === "ollama") {
+    return null;
+  }
   const name = modelId.split("/").slice(1).join("/") || modelId;
 
   if (provider === "anthropic") {
@@ -2525,13 +2799,14 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     const c = matched || budgetUsageData.claude;
     if (!c?.limits) {
       // Profile exists but no usage data — show disconnected state
-      if (profileKey)
+      if (profileKey) {
         return {
           topPct: 0,
           bottomPct: 0,
           tooltip: `${profileKey}: disconnected`,
           disconnected: true,
         };
+      }
       return null;
     }
     const src = matched ? profileKey : "shared";
@@ -2545,19 +2820,25 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
       const rs = c.limits.seven_day_sonnet?.resets_at;
       const rsfmt = rs ? fmtReset(rs) : "";
       tip += `\n7d sonnet: ${sonnet7}%`;
-      if (rsfmt) tip += ` \u2014 resets ${rsfmt}`;
+      if (rsfmt) {
+        tip += ` \u2014 resets ${rsfmt}`;
+      }
     } else {
       const r7 = c.limits.seven_day?.resets_at;
       const r7fmt = r7 ? fmtReset(r7) : "";
       tip += `\n7d: ${d7}%`;
-      if (r7fmt) tip += ` \u2014 resets ${r7fmt}`;
+      if (r7fmt) {
+        tip += ` \u2014 resets ${r7fmt}`;
+      }
     }
     return { topPct: h5, bottomPct, tooltip: tip };
   }
 
   if (provider === "google") {
     const g = budgetUsageData?.gemini;
-    if (!g || !g.rpd_limit) return null;
+    if (!g || !g.rpd_limit) {
+      return null;
+    }
     // Top bar: RPM (requests per minute — short-term pressure)
     const rpmPct = g.rpm_limit > 0 ? Math.min((g.rpm_used / g.rpm_limit) * 100, 100) : 0;
     // Bottom bar: RPD (requests per day — daily hard cap)
@@ -2569,7 +2850,9 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 
   if (provider === "openai") {
     const oc = budgetUsageData?.openaiCosts;
-    if (!oc || oc.monthSpend == null) return null;
+    if (!oc || oc.monthSpend == null) {
+      return null;
+    }
     const cap = 50;
     const monthPct = Math.min((oc.monthSpend / cap) * 100, 100);
     // Today's spend as fraction of total cap
@@ -2586,7 +2869,9 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 }
 
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
-  if (!usage) return '<span class="usage-bars-col"></span>';
+  if (!usage) {
+    return '<span class="usage-bars-col"></span>';
+  }
   if (usage.disconnected) {
     // Red-tinted dashes for billing/cooldown, gray for plain disconnected
     const isCapped = usage.topPct >= 100;
@@ -2611,7 +2896,9 @@ function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
 }
 
 function renderCostCol(costLabel: string): string {
-  if (!costLabel) return '<span class="usage-cost-col"></span>';
+  if (!costLabel) {
+    return '<span class="usage-cost-col"></span>';
+  }
   return `<span class="usage-cost-col">${esc(costLabel)}</span>`;
 }
 
@@ -2664,7 +2951,9 @@ function extractUserText(msg: any): string | null {
       }
     }
   }
-  if (!raw.trim()) return null;
+  if (!raw.trim()) {
+    return null;
+  }
   // Strip System: prefix lines
   const lines = raw.split("\n");
   const userLines: string[] = [];
@@ -2678,9 +2967,13 @@ function extractUserText(msg: any): string | null {
     }
   }
   const text = userLines.join("\n").trim();
-  if (!text) return null;
+  if (!text) {
+    return null;
+  }
   // Check if remaining text is system-injected runtime context
-  if (SYSTEM_INJECTED_RE.test(text)) return null;
+  if (SYSTEM_INJECTED_RE.test(text)) {
+    return null;
+  }
   return text;
 }
 
@@ -2703,14 +2996,22 @@ function updateChat(skipScroll = false) {
     const firstText =
       mc.find((b: any) => b.type === "text" && b.text)?.text ??
       (typeof m.content === "string" ? m.content : "");
-    if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) return true;
+    if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) {
+      return true;
+    }
 
-    if ((m.role ?? "").toLowerCase() !== "user") return false;
+    if ((m.role ?? "").toLowerCase() !== "user") {
+      return false;
+    }
     const c = Array.isArray(m.content) ? m.content : [];
     // Pure tool_result messages are part of the run, not boundaries
-    if (c.length > 0 && !c.some((b: any) => b.type !== "tool_result")) return false;
+    if (c.length > 0 && !c.some((b: any) => b.type !== "tool_result")) {
+      return false;
+    }
     // System-injected user messages (runtime context, subagent results) are not boundaries
-    if (extractUserText(m) === null) return false;
+    if (extractUserText(m) === null) {
+      return false;
+    }
     return true;
   };
   const thinkingSet = new Set<number>();
@@ -2718,33 +3019,47 @@ function updateChat(skipScroll = false) {
     let runStart = 0;
     for (let i = 0; i <= messages.length; i++) {
       const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
-      if (!isUserOrEnd) continue;
+      if (!isUserOrEnd) {
+        continue;
+      }
       const assistantTextIndices: number[] = [];
       for (let j = runStart; j < i; j++) {
         const m = messages[j];
-        if ((m.role ?? "").toLowerCase() !== "assistant") continue;
+        if ((m.role ?? "").toLowerCase() !== "assistant") {
+          continue;
+        }
         const c = Array.isArray(m.content) ? m.content : [];
         const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
-        if (!hasText && !plainText) continue;
+        if (!hasText && !plainText) {
+          continue;
+        }
         // FORK: Fractal responses are NOT real assistant text — they render as
         // their own collapsed block. Exclude them so the real answer before
         // a fractal isn't demoted to "thinking".
         const firstTextBlock =
           c.find((b: any) => b.type === "text" && b.text)?.text ?? (plainText || "");
-        if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) continue;
+        if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) {
+          continue;
+        }
         // FORK: Fractal prompts are hidden entirely — don't count them
-        if ((firstTextBlock as string).includes("# FRACTAL REFLECTION")) continue;
+        if ((firstTextBlock as string).includes("# FRACTAL REFLECTION")) {
+          continue;
+        }
         // FORK: System messages (warnings, errors, retries, prefrontal) must NEVER
         // collapse into reasoning groups — they are user-facing status updates.
-        if (m._isWarning || m._isError || m._isOverloadRetry || m._isPrefrontal) continue;
+        if (m._isWarning || m._isError || m._isOverloadRetry || m._isPrefrontal) {
+          continue;
+        }
         assistantTextIndices.push(j);
       }
       // During streaming, render all bubbles as normal assistant (no thinking style).
       // After finalization, all except the last become thinking → reasoning group.
       const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
       const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
-      for (const idx of intermediates) thinkingSet.add(idx);
+      for (const idx of intermediates) {
+        thinkingSet.add(idx);
+      }
       runStart = i + 1;
     }
   }
@@ -2770,7 +3085,9 @@ function updateChat(skipScroll = false) {
     let runStart = 0;
     for (let i = 0; i <= messages.length; i++) {
       const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
-      if (!isUserOrEnd) continue;
+      if (!isUserOrEnd) {
+        continue;
+      }
 
       // Collect intermediate vs final in this run
       const runEnd = i; // exclusive
@@ -2792,7 +3109,9 @@ function updateChat(skipScroll = false) {
               intermediateIndices.push(j);
             } else {
               // If we already had a final candidate, demote it to intermediate
-              if (finalIdx >= 0) intermediateIndices.push(finalIdx);
+              if (finalIdx >= 0) {
+                intermediateIndices.push(finalIdx);
+              }
               finalIdx = j;
             }
           } else {
@@ -2807,7 +3126,9 @@ function updateChat(skipScroll = false) {
       for (const j of intermediateIndices) {
         const tc = Array.isArray(messages[j].content) ? messages[j].content : [];
         for (const b of tc) {
-          if (b.type === "tool_use") toolCount++;
+          if (b.type === "tool_use") {
+            toolCount++;
+          }
         }
       }
 
@@ -2863,7 +3184,9 @@ function updateChat(skipScroll = false) {
   const openFractals = new Set<number>();
   el.querySelectorAll("details.fractal-details[open]").forEach((det) => {
     const idx = Array.prototype.indexOf.call(el.querySelectorAll("details.fractal-details"), det);
-    if (idx >= 0) openFractals.add(idx);
+    if (idx >= 0) {
+      openFractals.add(idx);
+    }
   });
 
   // Decide scroll behavior BEFORE replacing DOM content.
@@ -2875,7 +3198,9 @@ function updateChat(skipScroll = false) {
   // Restore fractal open state
   if (openFractals.size > 0) {
     el.querySelectorAll("details.fractal-details").forEach((det, idx) => {
-      if (openFractals.has(idx)) (det as HTMLDetailsElement).open = true;
+      if (openFractals.has(idx)) {
+        (det as HTMLDetailsElement).open = true;
+      }
     });
   }
   if (wasAtBottom) {
@@ -2889,7 +3214,9 @@ function updateChat(skipScroll = false) {
       if (fileLink) {
         ev.stopPropagation();
         const fp = fileLink.dataset.path;
-        if (!fp) return;
+        if (!fp) {
+          return;
+        }
         // Collapse any existing open file viewer
         el.querySelectorAll(".file-viewer-inline").forEach((v) => v.remove());
         // If clicking the same link that was already open, just collapse
@@ -2924,10 +3251,11 @@ function updateChat(skipScroll = false) {
               body = `<div class="file-viewer-content file-viewer-md">${md(data.content)}</div>`;
             } else {
               let content = data.content;
-              if (isJson)
+              if (isJson) {
                 try {
                   content = JSON.stringify(JSON.parse(content), null, 2);
                 } catch {}
+              }
               const lines = content.split("\n");
               const numbered = lines
                 .map((line: string, i: number) => `<span class="fv-ln">${i + 1}</span>${esc(line)}`)
@@ -2961,10 +3289,14 @@ function updateChat(skipScroll = false) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const prov = (btn as HTMLElement).getAttribute("data-retry-provider");
-      if (prov) retryProvider(prov);
+      if (prov) {
+        retryProvider(prov);
+      }
     }),
   );
-  if (!skipScroll) scrollChat();
+  if (!skipScroll) {
+    scrollChat();
+  }
 }
 
 function updateDots() {
@@ -2983,14 +3315,20 @@ function updateSelect() {
 
 function renderTabs() {
   const container = $("tab-bar-scroll");
-  if (!container) return;
+  if (!container) {
+    return;
+  }
 
   let html = "";
   for (const tab of tabs) {
     const isActive = tab.id === activeTabId;
     const classes = ["tab"];
-    if (isActive) classes.push("tab-active");
-    if (!tab.isAttached) classes.push("tab-unattached");
+    if (isActive) {
+      classes.push("tab-active");
+    }
+    if (!tab.isAttached) {
+      classes.push("tab-unattached");
+    }
 
     const isMain = tab.id === "tab-main";
     const closeBtn = isMain
@@ -3021,14 +3359,18 @@ function escapeHtml(s: string): string {
 function checkTabOverflow() {
   const bar = $("tab-bar");
   const scroll = $("tab-bar-scroll");
-  if (!bar || !scroll) return;
+  if (!bar || !scroll) {
+    return;
+  }
   const overflows = scroll.scrollWidth > scroll.clientWidth;
   bar.classList.toggle("has-overflow", overflows);
 }
 
 function switchToTab(tabId: string) {
   const tab = tabs.find((t) => t.id === tabId);
-  if (!tab || tab.id === activeTabId) return;
+  if (!tab || tab.id === activeTabId) {
+    return;
+  }
 
   // FORK: Save current tab's full state before switching
   saveCurrentTabState();
@@ -3044,10 +3386,14 @@ function switchToTab(tabId: string) {
     updateSelect();
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
-    if (tmCanvas) (tmCanvas as any).__treemapClear?.();
+    if (tmCanvas) {
+      (tmCanvas as any).__treemapClear?.();
+    }
     timelineCtrl?.loadSession(sessionKey);
     // Background refresh from server — only if still attached (server has the session)
-    if (tab.isAttached) loadChat();
+    if (tab.isAttached) {
+      loadChat();
+    }
   } else {
     sessionKey = "";
     loadTabState(tab.id); // loads fresh empty state
@@ -3076,10 +3422,14 @@ function createTab(): Tab {
 }
 
 function closeTab(tabId: string) {
-  if (tabId === "tab-main") return;
+  if (tabId === "tab-main") {
+    return;
+  }
 
   const idx = tabs.findIndex((t) => t.id === tabId);
-  if (idx < 0) return;
+  if (idx < 0) {
+    return;
+  }
 
   tabs.splice(idx, 1);
   tabStates.delete(tabId);
@@ -3096,7 +3446,9 @@ function closeTab(tabId: string) {
 
 function attachSessionToTab(key: string) {
   const tab = tabs.find((t) => t.id === activeTabId);
-  if (!tab) return;
+  if (!tab) {
+    return;
+  }
 
   const existing = tabs.find((t) => t.sessionKey === key && t.id !== activeTabId);
   if (existing) {
@@ -3107,7 +3459,9 @@ function attachSessionToTab(key: string) {
   tab.sessionKey = key;
   tab.isAttached = true;
   const sess = sessions.find((s: any) => s.key === key);
-  if (sess?.label) tab.title = sess.label.slice(0, 30);
+  if (sess?.label) {
+    tab.title = sess.label.slice(0, 30);
+  }
 
   sessionKey = key;
   messages = [];
@@ -3142,21 +3496,34 @@ function describeError(reason: string, errMsg: string): string {
 
   if (reason === "billing") {
     const resetMatch = errMsg.match(/regain access on (\d{4}-\d{2}-\d{2}(?: at [^.]+)?)/i);
-    if (resetMatch) return `Spending cap reached — resets ${resetMatch[1]}`;
-    if (/credit|payment/i.test(errMsg)) return "No credits remaining";
+    if (resetMatch) {
+      return `Spending cap reached — resets ${resetMatch[1]}`;
+    }
+    if (/credit|payment/i.test(errMsg)) {
+      return "No credits remaining";
+    }
     return "Spending cap reached";
   }
 
   if (reason === "auth" || reason === "auth_permanent") {
-    if (/OAuth authentication.*not.*supported/i.test(errMsg))
+    if (/OAuth authentication.*not.*supported/i.test(errMsg)) {
       return "OAuth API access disabled — click to re-authenticate";
-    if (/refresh token.*(?:not found|invalid|revoked|expired)/i.test(errMsg))
+    }
+    if (/refresh token.*(?:not found|invalid|revoked|expired)/i.test(errMsg)) {
       return "OAuth token revoked — click to re-authenticate";
-    if (/OAuth token refresh failed/i.test(errMsg))
+    }
+    if (/OAuth token refresh failed/i.test(errMsg)) {
       return "OAuth refresh failed — click to re-authenticate";
-    if (/token.*expired/i.test(errMsg)) return "Token expired — click to re-authenticate";
-    if (/invalid.*key|invalid.*api/i.test(errMsg)) return "Invalid API key";
-    if (/unauthorized|forbidden|permission/i.test(errMsg)) return "Access denied";
+    }
+    if (/token.*expired/i.test(errMsg)) {
+      return "Token expired — click to re-authenticate";
+    }
+    if (/invalid.*key|invalid.*api/i.test(errMsg)) {
+      return "Invalid API key";
+    }
+    if (/unauthorized|forbidden|permission/i.test(errMsg)) {
+      return "Access denied";
+    }
     return reason === "auth_permanent"
       ? "Auth permanently failed — click to re-authenticate"
       : "Auth error — click to re-authenticate";
@@ -3171,23 +3538,42 @@ function describeError(reason: string, errMsg: string): string {
       const secs = errMsg.match(/retry.after.*?(\d+)/i);
       return secs ? `Rate limited — retry in ${secs[1]}s` : "Rate limited";
     }
-    if (/tokens? per minute|tpm/i.test(errMsg)) return "TPM limit hit";
-    if (/requests? per minute|rpm/i.test(errMsg)) return "RPM limit hit";
-    if (/quota/i.test(errMsg)) return "Quota exceeded";
+    if (/tokens? per minute|tpm/i.test(errMsg)) {
+      return "TPM limit hit";
+    }
+    if (/requests? per minute|rpm/i.test(errMsg)) {
+      return "RPM limit hit";
+    }
+    if (/quota/i.test(errMsg)) {
+      return "Quota exceeded";
+    }
     return "Rate limited";
   }
 
-  if (reason === "timeout") return "Request timed out — server didn't respond";
-  if (reason === "model_not_found") return "Model not available on this provider";
-  if (reason === "session_expired") return "Session ended";
-  if (reason === "format") return "Request format rejected by provider";
-  if (reason === "cooldown") return "Cooling down after repeated failures";
-  if (reason === "overloaded" || /overloaded|503|capacity/i.test(e))
+  if (reason === "timeout") {
+    return "Request timed out — server didn't respond";
+  }
+  if (reason === "model_not_found") {
+    return "Model not available on this provider";
+  }
+  if (reason === "session_expired") {
+    return "Session ended";
+  }
+  if (reason === "format") {
+    return "Request format rejected by provider";
+  }
+  if (reason === "cooldown") {
+    return "Cooling down after repeated failures";
+  }
+  if (reason === "overloaded" || /overloaded|503|capacity/i.test(e)) {
     return "Server overloaded — retrying";
+  }
 
   if (errMsg && errMsg.length > 0) {
     const msgMatch = errMsg.match(/"message"\s*:\s*"([^"]{1,80})"/);
-    if (msgMatch) return msgMatch[1];
+    if (msgMatch) {
+      return msgMatch[1];
+    }
     return errMsg.slice(0, 80);
   }
   return reason || "Unknown error";
@@ -3216,14 +3602,22 @@ function modelName(id: string): string {
 
 function simplifyProfileLabel(label: string, mode: string): string {
   // "default" with api_key mode → "api"
-  if (label === "default") return mode === "api_key" ? "api" : "";
+  if (label === "default") {
+    return mode === "api_key" ? "api" : "";
+  }
   // cli-gm / oauth-gm → oauth (GM is primary, no suffix needed)
-  if (/^(?:cli|oauth)-gm$/i.test(label)) return "oauth";
+  if (/^(?:cli|oauth)-gm$/i.test(label)) {
+    return "oauth";
+  }
   // cli-sv / oauth-sv → oauth-sv
-  if (/^(?:cli|oauth)-sv$/i.test(label)) return "oauth-sv";
+  if (/^(?:cli|oauth)-sv$/i.test(label)) {
+    return "oauth-sv";
+  }
   // Other cli-*/oauth-* → oauth-{suffix}
   const oauthMatch = label.match(/^(?:cli|oauth)-(.+)$/i);
-  if (oauthMatch) return `oauth-${oauthMatch[1]}`;
+  if (oauthMatch) {
+    return `oauth-${oauthMatch[1]}`;
+  }
   return label;
 }
 
@@ -3236,19 +3630,28 @@ function providerOf(id: string): string {
 function modelPerfRank(id: string): number {
   const lo = id.toLowerCase();
   // Tier 0: frontier reasoning (opus, pro-preview, o1)
-  if (lo.includes("opus") || lo.includes("pro-preview") || lo.includes("-o1")) return 0;
+  if (lo.includes("opus") || lo.includes("pro-preview") || lo.includes("-o1")) {
+    return 0;
+  }
   // Tier 1: strong general (sonnet, pro, gpt-4o)
   if (
     lo.includes("sonnet") ||
     (lo.includes("pro") && !lo.includes("preview")) ||
     lo.includes("gpt-4o")
-  )
+  ) {
     return 1;
+  }
   // Tier 2: balanced (flash non-lite, haiku)
-  if (lo.includes("flash") && !lo.includes("lite")) return 2;
-  if (lo.includes("haiku")) return 3;
+  if (lo.includes("flash") && !lo.includes("lite")) {
+    return 2;
+  }
+  if (lo.includes("haiku")) {
+    return 3;
+  }
   // Tier 3: lightweight / local
-  if (lo.includes("lite") || lo.includes("mini") || lo.includes("nano")) return 4;
+  if (lo.includes("lite") || lo.includes("mini") || lo.includes("nano")) {
+    return 4;
+  }
   return 5;
 }
 
@@ -3321,8 +3724,12 @@ function updateBudgetPanel() {
 
   // Fallback chain: primary + fallbacks
   const chain: string[] = [];
-  if (primary) chain.push(primary);
-  if (fallbacks?.length) chain.push(...fallbacks);
+  if (primary) {
+    chain.push(primary);
+  }
+  if (fallbacks?.length) {
+    chain.push(...fallbacks);
+  }
 
   if (chain.length) {
     const open = !collapsedModelSections.has("fallback");
@@ -3358,9 +3765,13 @@ function updateBudgetPanel() {
   el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
     label.addEventListener("click", () => {
       const group = label.parentElement;
-      if (!group) return;
+      if (!group) {
+        return;
+      }
       const section = group.dataset.section;
-      if (!section) return;
+      if (!section) {
+        return;
+      }
       group.classList.toggle("open");
       if (group.classList.contains("open")) {
         collapsedModelSections.delete(section);
@@ -3482,7 +3893,9 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
   const cancelBtn = overlay.querySelector<HTMLButtonElement>(".auth-paste-cancel")!;
   const submit = async () => {
     const code = input.value.trim();
-    if (!code) return;
+    if (!code) {
+      return;
+    }
     submitBtn.disabled = true;
     status.textContent = "Exchanging code...";
     try {
@@ -3497,11 +3910,15 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
   };
   submitBtn.addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submit();
+    if (e.key === "Enter") {
+      submit();
+    }
   });
   cancelBtn.addEventListener("click", () => overlay.remove());
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.remove();
+    if (e.target === overlay) {
+      overlay.remove();
+    }
   });
 }
 
@@ -3648,7 +4065,7 @@ function classifySession(key: string): { group: string; shortLabel: string } {
     return { group: "pinned", shortLabel: "heartbeat" };
   }
   // agent:main:main
-  if (/:main$/.test(key)) {
+  if (key.endsWith(":main")) {
     return { group: "pinned", shortLabel: "main" };
   }
   // FORK: tinker tab sessions — canonical "agent:main:tinker:xxx" or short "tinker:xxx"
@@ -3685,19 +4102,25 @@ function updateSessionsPanel() {
   const groups = new Map<string, Array<{ session: any; shortLabel: string }>>();
   for (const s of sessions) {
     const { group, shortLabel } = classifySession(s.key);
-    if (!groups.has(group)) groups.set(group, []);
+    if (!groups.has(group)) {
+      groups.set(group, []);
+    }
     groups.get(group)!.push({ session: s, shortLabel });
   }
   // FORK: Inject tab sessions not yet on the server
   for (const tab of tabs) {
-    if (tab.id === "tab-main" || !tab.sessionKey) continue;
+    if (tab.id === "tab-main" || !tab.sessionKey) {
+      continue;
+    }
     const serverKeys = sessions.map((s: any) => s.key);
     const hasServer =
       serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
     if (!hasServer) {
       const fakeSession = { key: tab.sessionKey, label: tab.title };
-      if (!groups.has("pinned")) groups.set("pinned", []);
+      if (!groups.has("pinned")) {
+        groups.set("pinned", []);
+      }
       groups.get("pinned")!.push({ session: fakeSession, shortLabel: tab.title });
     }
   }
@@ -3712,7 +4135,9 @@ function updateSessionsPanel() {
 
   for (const groupKey of GROUP_ORDER) {
     const items = groups.get(groupKey);
-    if (!items || items.length === 0) continue;
+    if (!items || items.length === 0) {
+      continue;
+    }
 
     if (groupKey === "pinned") {
       // Pinned sessions render directly, no group header
@@ -3752,9 +4177,13 @@ function updateSessionsPanel() {
       if (delBtn) {
         e.stopPropagation();
         const key = delBtn.dataset.deleteKey;
-        if (!key) return;
+        if (!key) {
+          return;
+        }
         const row = delBtn.closest(".session-row") as HTMLElement | null;
-        if (row) row.style.opacity = "0.3";
+        if (row) {
+          row.style.opacity = "0.3";
+        }
         try {
           await req("sessions.delete", { key });
           // Close any tab that was using this session
@@ -3770,7 +4199,9 @@ function updateSessionsPanel() {
           await loadSessions();
         } catch (err) {
           console.error("Failed to delete session:", err);
-          if (row) row.style.opacity = "1";
+          if (row) {
+            row.style.opacity = "1";
+          }
         }
         return;
       }
@@ -3779,7 +4210,9 @@ function updateSessionsPanel() {
       const row = tgt.closest(".session-row") as HTMLElement | null;
       if (row) {
         const key = row.dataset.sessionKey;
-        if (!key || key === sessionKey) return;
+        if (!key || key === sessionKey) {
+          return;
+        }
 
         const activeTab = tabs.find((t) => t.id === activeTabId);
         if (activeTab && !activeTab.isAttached) {
@@ -3797,7 +4230,9 @@ function updateSessionsPanel() {
         newTab.sessionKey = key;
         newTab.isAttached = true;
         const sess = sessions.find((s: any) => s.key === key);
-        if (sess?.label) newTab.title = sess.label.slice(0, 30);
+        if (sess?.label) {
+          newTab.title = sess.label.slice(0, 30);
+        }
         renderTabs();
         switchToTab(newTab.id);
       }
@@ -3822,7 +4257,7 @@ function renderSessionRow(s: any, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
   const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
-  const isMainSession = /:main$/.test(s.key);
+  const isMainSession = s.key.endsWith(":main");
   const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
   const label = isMainSession
     ? mainTab?.title || "🏠 Main"
@@ -3853,7 +4288,9 @@ function scrollChat() {
     if (el) {
       const threshold = 80; // px tolerance
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-      if (atBottom) el.scrollTop = el.scrollHeight;
+      if (atBottom) {
+        el.scrollTop = el.scrollHeight;
+      }
     }
   });
 }
@@ -3931,6 +4368,7 @@ function init() {
           </span>
         </div>
         <div id="prefrontal-graph" class="rpanel-body prefrontal-graph-container"></div>
+        <div id="recipe-progress" class="recipe-progress-container" style="display:none"></div>
       </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
@@ -3957,7 +4395,9 @@ function init() {
 
   function positionHint(target: HTMLElement) {
     const text = target.dataset.hint;
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     hintEl.textContent = text;
     hintEl.style.opacity = "1";
     const rect = target.getBoundingClientRect();
@@ -3978,10 +4418,16 @@ function init() {
       top = rect.bottom + pad;
     }
     // Clamp horizontal to viewport
-    if (left < pad) left = pad;
-    if (left + tw > window.innerWidth - pad) left = window.innerWidth - pad - tw;
+    if (left < pad) {
+      left = pad;
+    }
+    if (left + tw > window.innerWidth - pad) {
+      left = window.innerWidth - pad - tw;
+    }
     // Clamp vertical
-    if (top + th > window.innerHeight - pad) top = window.innerHeight - pad - th;
+    if (top + th > window.innerHeight - pad) {
+      top = window.innerHeight - pad - th;
+    }
 
     hintEl.style.left = `${left}px`;
     hintEl.style.top = `${top}px`;
@@ -4020,7 +4466,9 @@ function init() {
     } catch {}
   });
   // Size to fit restored draft + focus
-  if (ta.value) requestAnimationFrame(autoResizeTA);
+  if (ta.value) {
+    requestAnimationFrame(autoResizeTA);
+  }
   ta.focus();
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -4053,10 +4501,14 @@ function init() {
   // FORK: Auth error badge click — direct OAuth re-auth
   $("budget-panel")?.addEventListener("click", (e) => {
     const badge = (e.target as HTMLElement).closest<HTMLElement>(".model-error-badge");
-    if (!badge) return;
+    if (!badge) {
+      return;
+    }
     e.stopPropagation();
     const profileId = badge.dataset.authProfile;
-    if (!profileId) return;
+    if (!profileId) {
+      return;
+    }
     startOAuthReauthFlow(profileId);
   });
   // FORK: Session/All scope toggle for Models panel
@@ -4065,7 +4517,9 @@ function init() {
     // Click on label or track toggles scope
     const label = el.closest("[data-scope]") as HTMLElement | null;
     const track = el.closest("[data-scope-track]") as HTMLElement | null;
-    if (!label && !track) return;
+    if (!label && !track) {
+      return;
+    }
     if (label) {
       budgetScope = label.dataset.scope as "session" | "all";
     } else {
@@ -4159,7 +4613,9 @@ function init() {
   };
 
   function switchTab(tab: string) {
-    if (tab === activeTab) return;
+    if (tab === activeTab) {
+      return;
+    }
     activeTab = tab;
     // Update nav-btn active states
     document.querySelectorAll(".nav-btn[data-tab]").forEach((btn) => {
@@ -4187,28 +4643,50 @@ function init() {
 
   // ─── Alt-view helpers ───
   function altRelTime(ts: number | string | null | undefined): string {
-    if (!ts) return "—";
+    if (!ts) {
+      return "—";
+    }
     const ms = typeof ts === "string" ? new Date(ts).getTime() : ts;
     const diff = Date.now() - ms;
-    if (diff < 60_000) return "just now";
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    if (diff < 60_000) {
+      return "just now";
+    }
+    if (diff < 3_600_000) {
+      return `${Math.floor(diff / 60_000)}m ago`;
+    }
+    if (diff < 86_400_000) {
+      return `${Math.floor(diff / 3_600_000)}h ago`;
+    }
     return `${Math.floor(diff / 86_400_000)}d ago`;
   }
   function altDuration(ms: number | null | undefined): string {
-    if (!ms) return "—";
-    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+    if (!ms) {
+      return "—";
+    }
+    if (ms < 60_000) {
+      return `${Math.round(ms / 1000)}s`;
+    }
+    if (ms < 3_600_000) {
+      return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+    }
     return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
   }
   function altEsc(s: any): string {
-    if (s == null) return "";
+    if (s == null) {
+      return "";
+    }
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
   function altTokens(n: number | null | undefined): string {
-    if (n == null) return "—";
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    if (n == null) {
+      return "—";
+    }
+    if (n >= 1_000_000) {
+      return `${(n / 1_000_000).toFixed(1)}M`;
+    }
+    if (n >= 1_000) {
+      return `${(n / 1_000).toFixed(1)}K`;
+    }
     return String(n);
   }
   function altJson(obj: any): string {
@@ -4281,13 +4759,18 @@ function init() {
         document.getElementById("alt-debug-params") as HTMLTextAreaElement
       )?.value?.trim();
       const resultEl = document.getElementById("alt-debug-result");
-      if (!method || !resultEl) return;
+      if (!method || !resultEl) {
+        return;
+      }
       let params = {};
       try {
-        if (paramsStr) params = JSON.parse(paramsStr);
+        if (paramsStr) {
+          params = JSON.parse(paramsStr);
+        }
       } catch {
-        if (resultEl)
+        if (resultEl) {
           resultEl.innerHTML = `<span style="color:var(--red)">Invalid JSON params</span>`;
+        }
         return;
       }
       resultEl.innerHTML = `<span class="muted">Calling ${altEsc(method)}…</span>`;
@@ -4397,8 +4880,9 @@ function init() {
       }
     } catch (e) {
       const body = altView.querySelector(".alt-view-body");
-      if (body)
+      if (body) {
         body.innerHTML = `<div class="alt-placeholder"><span style="color:var(--red)">Error: ${altEsc((e as Error).message)}</span></div>`;
+      }
     }
   }
 
@@ -4466,7 +4950,9 @@ function init() {
     const labels: Record<string, string> = snap.channelLabels ?? {};
     const accounts: Record<string, any[]> = snap.channelAccounts ?? {};
     const metaMap: Record<string, any> = {};
-    for (const m of channelMeta) metaMap[m.id] = m;
+    for (const m of channelMeta) {
+      metaMap[m.id] = m;
+    }
 
     // Sort: enabled channels first, then disabled
     const sorted = order
@@ -4475,8 +4961,10 @@ function init() {
         const configured = data.configured ?? data.running ?? data.connected;
         return { ch, configured, order: i };
       })
-      .sort((a, b) => {
-        if (a.configured !== b.configured) return a.configured ? -1 : 1;
+      .toSorted((a, b) => {
+        if (a.configured !== b.configured) {
+          return a.configured ? -1 : 1;
+        }
         return a.order - b.order;
       });
 
@@ -4551,8 +5039,9 @@ function init() {
         const action = (btn as HTMLElement).dataset.action;
         const qrArea = document.getElementById("wa-qr-area");
         if (action === "qr" || action === "relink") {
-          if (qrArea)
+          if (qrArea) {
             qrArea.innerHTML = `<div style="padding:20px;font-size:10px;color:var(--muted)">Requesting QR…</div>`;
+          }
           const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
             message: (err as Error).message,
           }))) as any;
@@ -4663,7 +5152,9 @@ function init() {
 
     // Apply limit
     const totalCount = list.length;
-    if (sessFilterLimit > 0) list = list.slice(0, sessFilterLimit);
+    if (sessFilterLimit > 0) {
+      list = list.slice(0, sessFilterLimit);
+    }
 
     const totalTokens = list.reduce(
       (sum: number, s: any) => sum + (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
@@ -4756,12 +5247,17 @@ function init() {
     container.querySelectorAll(".alt-sess-filter").forEach((el) => {
       const handler = () => {
         const field = (el as HTMLElement).dataset.field;
-        if (field === "active") sessFilterActive = (el as HTMLSelectElement).value;
-        else if (field === "sort") sessSortBy = (el as HTMLSelectElement).value as any;
-        else if (field === "limit")
+        if (field === "active") {
+          sessFilterActive = (el as HTMLSelectElement).value;
+        } else if (field === "sort") {
+          sessSortBy = (el as HTMLSelectElement).value as any;
+        } else if (field === "limit") {
           sessFilterLimit = parseInt((el as HTMLInputElement).value, 10) || 50;
-        else if (field === "global") sessIncludeGlobal = (el as HTMLInputElement).checked;
-        else if (field === "unknown") sessIncludeUnknown = (el as HTMLInputElement).checked;
+        } else if (field === "global") {
+          sessIncludeGlobal = (el as HTMLInputElement).checked;
+        } else if (field === "unknown") {
+          sessIncludeUnknown = (el as HTMLInputElement).checked;
+        }
         renderAltView("sessions");
       };
       el.addEventListener("change", handler);
@@ -4795,12 +5291,18 @@ function init() {
     let topSession = { key: "", tokens: 0 };
     for (const s of sessionUsage) {
       const tok = (s.inputTokens ?? 0) + (s.outputTokens ?? 0);
-      if (s.model) modelMap[s.model] = (modelMap[s.model] ?? 0) + tok;
-      if (s.provider) providerMap[s.provider] = (providerMap[s.provider] ?? 0) + tok;
-      if (tok > topSession.tokens) topSession = { key: s.sessionKey ?? s.key ?? "?", tokens: tok };
+      if (s.model) {
+        modelMap[s.model] = (modelMap[s.model] ?? 0) + tok;
+      }
+      if (s.provider) {
+        providerMap[s.provider] = (providerMap[s.provider] ?? 0) + tok;
+      }
+      if (tok > topSession.tokens) {
+        topSession = { key: s.sessionKey ?? s.key ?? "?", tokens: tok };
+      }
     }
-    const topModel = Object.entries(modelMap).sort((a, b) => b[1] - a[1])[0];
-    const topProvider = Object.entries(providerMap).sort((a, b) => b[1] - a[1])[0];
+    const topModel = Object.entries(modelMap).toSorted((a, b) => b[1] - a[1])[0];
+    const topProvider = Object.entries(providerMap).toSorted((a, b) => b[1] - a[1])[0];
 
     // Daily bar chart data
     const maxDailyCost =
@@ -4838,7 +5340,7 @@ function init() {
         <div class="alt-card"><h3>Breakdown</h3>
           ${
             Object.entries(modelMap)
-              .sort((a, b) => b[1] - a[1])
+              .toSorted((a, b) => b[1] - a[1])
               .slice(0, 5)
               .map(([m, t]) => altRow(altEsc(m), altTokens(t)))
               .join("") || altRow("—", "No data")
@@ -4883,7 +5385,7 @@ function init() {
           </tr></thead>
           <tbody>
             ${sessionUsage
-              .sort(
+              .toSorted(
                 (a: any, b: any) =>
                   (b.inputTokens ?? 0) +
                   (b.outputTokens ?? 0) -
@@ -5537,7 +6039,9 @@ function init() {
       btn.addEventListener("click", () => {
         const key = (btn as HTMLElement).dataset.section!;
         const view = document.getElementById("alt-config-section-view");
-        if (!view) return;
+        if (!view) {
+          return;
+        }
         const sectionData = configObj[key];
         view.innerHTML = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:20px 10px">
           <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">${altEsc(key)}</div>
@@ -5649,7 +6153,7 @@ function init() {
             <div style="max-height:250px;overflow-y:auto">
               ${debugRpcHistory
                 .slice()
-                .reverse()
+                .toReversed()
                 .map(
                   (
                     h,
@@ -5673,7 +6177,9 @@ function init() {
     body.querySelectorAll(".alt-debug-preset").forEach((btn) => {
       btn.addEventListener("click", () => {
         const methodInput = document.getElementById("alt-debug-method") as HTMLInputElement;
-        if (methodInput) methodInput.value = (btn as HTMLElement).dataset.method ?? "";
+        if (methodInput) {
+          methodInput.value = (btn as HTMLElement).dataset.method ?? "";
+        }
       });
     });
     // Wire history items to replay
@@ -5681,16 +6187,23 @@ function init() {
       el.addEventListener("click", () => {
         const idx = parseInt((el as HTMLElement).dataset.idx ?? "0", 10);
         const entry = debugRpcHistory[idx];
-        if (!entry) return;
+        if (!entry) {
+          return;
+        }
         const methodInput = document.getElementById("alt-debug-method") as HTMLInputElement;
         const paramsInput = document.getElementById("alt-debug-params") as HTMLTextAreaElement;
         const resultEl = document.getElementById("alt-debug-result");
-        if (methodInput) methodInput.value = entry.method;
-        if (paramsInput) paramsInput.value = JSON.stringify(entry.params, null, 2);
-        if (resultEl)
+        if (methodInput) {
+          methodInput.value = entry.method;
+        }
+        if (paramsInput) {
+          paramsInput.value = JSON.stringify(entry.params, null, 2);
+        }
+        if (resultEl) {
           resultEl.innerHTML = entry.error
             ? `<span style="color:var(--red)">${altEsc(entry.error)}</span>`
             : altJson(entry.result);
+        }
       });
     });
     // Wire clear history
@@ -5739,8 +6252,11 @@ function init() {
     body.querySelectorAll("[data-level]").forEach((el) => {
       el.addEventListener("click", () => {
         const lv = (el as HTMLElement).dataset.level!;
-        if (logsLevelFilters.has(lv)) logsLevelFilters.delete(lv);
-        else logsLevelFilters.add(lv);
+        if (logsLevelFilters.has(lv)) {
+          logsLevelFilters.delete(lv);
+        } else {
+          logsLevelFilters.add(lv);
+        }
         (el as HTMLElement).style.background = logsLevelFilters.has(lv)
           ? "var(--surface2)"
           : "transparent";
@@ -5749,7 +6265,9 @@ function init() {
     // Export logs
     document.getElementById("alt-logs-export")?.addEventListener("click", () => {
       const stream = document.getElementById("alt-logs-stream");
-      if (!stream) return;
+      if (!stream) {
+        return;
+      }
       const text = stream.innerText;
       const blob = new Blob([text], { type: "text/plain" });
       const a = document.createElement("a");
@@ -5766,7 +6284,9 @@ function init() {
         logsLineCount = 0;
       }
       const counter = document.getElementById("alt-logs-count");
-      if (counter) counter.textContent = "0 lines";
+      if (counter) {
+        counter.textContent = "0 lines";
+      }
     });
     // Initial fetch + polling
     await fetchLogs();
@@ -5786,18 +6306,25 @@ function init() {
       () => null,
     )) as any;
     if (!res?.lines?.length) {
-      if (!logsCursor) stream.innerHTML = `<span class="muted">No logs available</span>`;
+      if (!logsCursor) {
+        stream.innerHTML = `<span class="muted">No logs available</span>`;
+      }
       return;
     }
     logsCursor = res.cursor;
     const filtered = res.lines.filter((line: string) => {
-      if (logsFilterText && !line.toLowerCase().includes(logsFilterText.toLowerCase()))
+      if (logsFilterText && !line.toLowerCase().includes(logsFilterText.toLowerCase())) {
         return false;
+      }
       const lvMatch = line.match(/\b(trace|debug|info|warn|error|fatal)\b/i);
-      if (lvMatch && !logsLevelFilters.has(lvMatch[1].toLowerCase())) return false;
+      if (lvMatch && !logsLevelFilters.has(lvMatch[1].toLowerCase())) {
+        return false;
+      }
       return true;
     });
-    if (!filtered.length) return;
+    if (!filtered.length) {
+      return;
+    }
     const levelColors: Record<string, string> = {
       error: "var(--red)",
       fatal: "var(--red)",
@@ -5835,24 +6362,34 @@ function init() {
     } else {
       stream.insertAdjacentHTML("beforeend", html);
       // Cap DOM nodes to prevent memory leak
-      while (stream.children.length > 2000) stream.removeChild(stream.firstChild!);
+      while (stream.children.length > 2000) {
+        stream.removeChild(stream.firstChild!);
+      }
     }
     // Update line counter
     const counter = document.getElementById("alt-logs-count");
-    if (counter) counter.textContent = `${logsLineCount} lines`;
-    if (logsAutoFollow) stream.scrollTop = stream.scrollHeight;
+    if (counter) {
+      counter.textContent = `${logsLineCount} lines`;
+    }
+    if (logsAutoFollow) {
+      stream.scrollTop = stream.scrollHeight;
+    }
   }
 
   // Delegated click handler for sidebar nav buttons
   document.querySelector(".sidebar")!.addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest(".nav-btn[data-tab]") as HTMLElement | null;
-    if (!btn) return;
+    if (!btn) {
+      return;
+    }
     const tab = btn.dataset.tab!;
     switchTab(tab);
   });
 
   $("new-session-btn")!.addEventListener("click", async () => {
-    if (!connected) return;
+    if (!connected) {
+      return;
+    }
 
     const tab = tabs.find((t) => t.id === activeTabId);
 
@@ -5862,7 +6399,9 @@ function init() {
     lastDeltaLen = 0;
     streamRunId = null;
     sending = false;
-    if (sessionKey) clearPersistedErrors(sessionKey);
+    if (sessionKey) {
+      clearPersistedErrors(sessionKey);
+    }
     updateChat();
     updateBtn();
 
@@ -5905,10 +6444,14 @@ function init() {
 
   // Middle-click to close tab
   $("tab-bar-scroll")!.addEventListener("auxclick", (e) => {
-    if (e.button !== 1) return; // middle button only
+    if (e.button !== 1) {
+      return;
+    } // middle button only
     e.preventDefault();
     const tabEl = (e.target as HTMLElement).closest("[data-tab-id]") as HTMLElement | null;
-    if (tabEl) closeTab(tabEl.dataset.tabId!);
+    if (tabEl) {
+      closeTab(tabEl.dataset.tabId!);
+    }
   });
 
   $("tab-add")!.addEventListener("click", () => {
@@ -5920,18 +6463,24 @@ function init() {
 
   $("tab-nav-left")!.addEventListener("click", () => {
     const scroll = $("tab-bar-scroll");
-    if (scroll) scroll.scrollBy({ left: -150, behavior: "smooth" });
+    if (scroll) {
+      scroll.scrollBy({ left: -150, behavior: "smooth" });
+    }
   });
   $("tab-nav-right")!.addEventListener("click", () => {
     const scroll = $("tab-bar-scroll");
-    if (scroll) scroll.scrollBy({ left: 150, behavior: "smooth" });
+    if (scroll) {
+      scroll.scrollBy({ left: 150, behavior: "smooth" });
+    }
   });
 
   $("tab-bar")!.addEventListener(
     "wheel",
     (e) => {
       const scroll = $("tab-bar-scroll");
-      if (!scroll) return;
+      if (!scroll) {
+        return;
+      }
       e.preventDefault();
       scroll.scrollBy({ left: e.deltaY > 0 ? 80 : -80 });
       checkTabOverflow();
@@ -5945,7 +6494,9 @@ function init() {
   $("messages")!.addEventListener("click", (e) => {
     const stop = (e.target as HTMLElement).closest(".thinking-stop");
     const run = (e.target as HTMLElement).closest(".thinking-run");
-    if (stop && run) abort();
+    if (stop && run) {
+      abort();
+    }
   });
 
   // Mount context treemap into bottom-right panel
@@ -5966,8 +6517,12 @@ function init() {
     const ctxBack = !!(tmCanvas as any).__treemapCanGoBack?.() || !!(tmCanvas as any).__hasOverlay;
     const respBack =
       !!(respCanvas as any).__responseCanGoBack?.() || !!(respCanvas as any).__hasOverlay;
-    if (backCtx) backCtx.style.display = ctxBack ? "" : "none";
-    if (backResp) backResp.style.display = respBack ? "" : "none";
+    if (backCtx) {
+      backCtx.style.display = ctxBack ? "" : "none";
+    }
+    if (backResp) {
+      backResp.style.display = respBack ? "" : "none";
+    }
 
     // Check for scrollbars and adjust back button position to avoid overlap
     const checkScroll = (canvas: HTMLElement, viewId: string) => {
@@ -6026,7 +6581,9 @@ function init() {
         component: type === "context" ? "current_prompt" : "response",
         sessionKey: sessionKey || undefined,
       };
-      if (ts) params.timestamp = ts;
+      if (ts) {
+        params.timestamp = ts;
+      }
       const result = await req("forensic.summarize", params);
       const summary = result?.summary ?? "(no summary)";
       panel.innerHTML = "";
@@ -6069,11 +6626,15 @@ function init() {
           const respCanvas = $("response-canvas")!;
           let h = `<div class="tm-detail" style="padding:12px;font-size:13px;line-height:1.6">`;
           h += `<div style="font-weight:700;margin-bottom:8px;font-size:14px">Response — Round ${sel.roundNumber ?? "?"}</div>`;
-          if (sel.responseTokens)
+          if (sel.responseTokens) {
             h += `<div>Output tokens: <b>${sel.responseTokens.toLocaleString()}</b></div>`;
-          if (sel.durationMs)
+          }
+          if (sel.durationMs) {
             h += `<div>Duration: <b>${(sel.durationMs / 1000).toFixed(1)}s</b></div>`;
-          if (sel.stopReason) h += `<div>Stop reason: <b>${sel.stopReason}</b></div>`;
+          }
+          if (sel.stopReason) {
+            h += `<div>Stop reason: <b>${sel.stopReason}</b></div>`;
+          }
           if (sel.toolsTriggered?.length) {
             h += `<div style="margin-top:8px"><b>Tools triggered (${sel.toolsTriggered.length}):</b></div>`;
             for (const t of sel.toolsTriggered) {
@@ -6110,9 +6671,13 @@ function init() {
 
       // Scroll webchat to the Nth user message matching this group
       const container = $("messages");
-      if (!container) return;
+      if (!container) {
+        return;
+      }
       const userMsgs = container.querySelectorAll(".msg.user");
-      if (groupIndex >= userMsgs.length) return;
+      if (groupIndex >= userMsgs.length) {
+        return;
+      }
       const target = userMsgs[groupIndex] as HTMLElement;
       // Manual smooth scroll within the .messages container
       const targetTop = target.offsetTop - container.offsetTop;
@@ -6122,14 +6687,17 @@ function init() {
       const duration = 350;
       let t0: number | null = null;
       function step(ts: number) {
-        if (!t0) t0 = ts;
+        if (!t0) {
+          t0 = ts;
+        }
         const elapsed = ts - t0;
         const progress = Math.min(elapsed / duration, 1);
         // ease-out cubic
         const ease = 1 - Math.pow(1 - progress, 3);
         container!.scrollTop = start + delta * ease;
-        if (progress < 1) requestAnimationFrame(step);
-        else {
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
           target.classList.add("scroll-highlight");
           setTimeout(() => target.classList.remove("scroll-highlight"), 900);
         }
@@ -6143,10 +6711,14 @@ function init() {
         timelineCtrl?.loadSession(sessionKey);
       }
     },
-    // FORK: Pass auth headers so timeline API calls work in dev mode (Vite proxy
-    // only intercepts relative URLs, but getGatewayBase returns absolute URL)
+    // FORK: Pass auth headers for HTTP fallback
     () => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+    // FORK: Pass WS req function so timeline uses WebSocket instead of HTTP (avoids CORS in dev)
+    req,
   );
+
+  // Initial load is triggered from gwConnect's onopen handler (line ~776)
+  // since sessionKey isn't available until WS handshake completes.
 }
 
 // ─── Prefrontal Tree ───
