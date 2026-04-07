@@ -124,7 +124,7 @@ function resolveFacadeModuleLocationUncached(params: {
             : OPENCLAW_PACKAGE_ROOT,
       };
     }
-    return null;
+    return resolveRegistryPluginModuleLocation(params);
   }
   const modulePath = resolveBundledPluginPublicSurfacePath({
     rootDir: OPENCLAW_PACKAGE_ROOT,
