@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectMime } from "../media/mime.js";
-import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
+import { lowercasePreservingWhitespace } from "../shared/string-coerce.js";
 import { resolveFileWithinRoot } from "./file-resolver.js";
 
 export const A2UI_PATH = "/__openclaw__/a2ui";
@@ -133,7 +133,7 @@ export function injectCanvasLiveReload(html: string): string {
 </script>
 `.trim();
 
-  const idx = normalizeLowercaseStringOrEmpty(html).lastIndexOf("</body>");
+  const idx = lowercasePreservingWhitespace(html).lastIndexOf("</body>");
   if (idx >= 0) {
     return `${html.slice(0, idx)}\n${snippet}\n${html.slice(idx)}`;
   }
@@ -181,7 +181,7 @@ export async function handleA2uiHttpRequest(
   }
 
   try {
-    const lower = normalizeLowercaseStringOrEmpty(result.realPath);
+    const lower = lowercasePreservingWhitespace(result.realPath);
     const mime =
       lower.endsWith(".html") || lower.endsWith(".htm")
         ? "text/html"
