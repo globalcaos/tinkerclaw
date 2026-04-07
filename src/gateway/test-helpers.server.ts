@@ -348,7 +348,7 @@ async function resetGatewayTestState(options: { uniqueConfigRoot: boolean }) {
   }
   resetAgentRunContextForTest();
   const mod = await getServerModule();
-  mod.__resetModelCatalogCacheForTest();
+  await mod.__resetModelCatalogCacheForTest();
   piSdkMock.enabled = false;
   piSdkMock.discoverCalls = 0;
   piSdkMock.models = [];
