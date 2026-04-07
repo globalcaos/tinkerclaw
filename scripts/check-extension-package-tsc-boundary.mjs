@@ -233,12 +233,16 @@ function collectOldestMtime(paths) {
 export function isBoundaryCompileFresh(extensionId, params = {}) {
   const rootDir = params.rootDir ?? repoRoot;
   const extensionRoot = resolve(rootDir, "extensions", extensionId);
-  const newestInputMtimeMs = Math.max(
-    collectNewestMtime(extensionRoot, { includeFile: isRelevantCompileInput }),
-    collectNewestMtime(resolve(rootDir, "extensions", extensionId, "tsconfig.json")),
-    collectNewestMtime(resolve(rootDir, "dist/plugin-sdk")),
-    collectNewestMtime(resolve(rootDir, "packages/plugin-sdk/dist")),
-  );
+  const extensionNewestInputMtimeMs =
+    params.extensionNewestInputMtimeMs ??
+    collectNewestMtime(extensionRoot, { includeFile: isRelevantCompileInput });
+  const sharedNewestInputMtimeMs =
+    params.sharedNewestInputMtimeMs ??
+    Math.max(
+      collectNewestMtime(resolve(rootDir, "dist/plugin-sdk")),
+      collectNewestMtime(resolve(rootDir, "packages/plugin-sdk/dist")),
+    );
+  const newestInputMtimeMs = Math.max(extensionNewestInputMtimeMs, sharedNewestInputMtimeMs);
   const oldestOutputMtimeMs = collectOldestMtime([
     resolveBoundaryTsStampPath(extensionId, rootDir),
   ]);
@@ -550,14 +554,29 @@ async function runCompileCheck(extensionIds) {
   const prepElapsedMs = Date.now() - prepStartedAt;
   const concurrency = resolveCompileConcurrency();
   const verboseFreshLogs = process.env.OPENCLAW_EXTENSION_BOUNDARY_VERBOSE_FRESH === "1";
+  const sharedNewestInputMtimeMs = Math.max(
+    collectNewestMtime(resolve(repoRoot, "dist/plugin-sdk")),
+    collectNewestMtime(resolve(repoRoot, "packages/plugin-sdk/dist")),
+  );
   process.stdout.write(`compile concurrency ${concurrency}\n`);
   const compileStartedAt = Date.now();
   let skippedCompileCount = 0;
   const steps = extensionIds
     .map((extensionId, index) => {
       const tsBuildInfoPath = resolveBoundaryTsBuildInfoPath(extensionId);
+      const extensionNewestInputMtimeMs = collectNewestMtime(
+        resolve(repoRoot, "extensions", extensionId),
+        {
+          includeFile: isRelevantCompileInput,
+        },
+      );
       mkdirSync(dirname(tsBuildInfoPath), { recursive: true });
-      if (isBoundaryCompileFresh(extensionId)) {
+      if (
+        isBoundaryCompileFresh(extensionId, {
+          extensionNewestInputMtimeMs,
+          sharedNewestInputMtimeMs,
+        })
+      ) {
         skippedCompileCount += 1;
         if (verboseFreshLogs) {
           process.stdout.write(

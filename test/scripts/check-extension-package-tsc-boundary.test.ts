@@ -262,6 +262,36 @@ describe("check-extension-package-tsc-boundary", () => {
     expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(false);
   });
 
+  it("accepts cached input mtimes for freshness checks", () => {
+    const { rootDir, extensionRoot } = createTempExtensionRoot();
+    const extensionSourcePath = path.join(extensionRoot, "index.ts");
+    const stampPath = path.join(extensionRoot, "dist", ".boundary-tsc.stamp");
+
+    fs.mkdirSync(path.dirname(extensionSourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(stampPath), { recursive: true });
+    fs.writeFileSync(extensionSourcePath, "export const demo = 1;\n", "utf8");
+    fs.writeFileSync(stampPath, "ok\n", "utf8");
+
+    fs.utimesSync(extensionSourcePath, new Date(1_000), new Date(1_000));
+    fs.utimesSync(stampPath, new Date(3_000), new Date(3_000));
+
+    expect(
+      isBoundaryCompileFresh("demo", {
+        rootDir,
+        extensionNewestInputMtimeMs: 1_000,
+        sharedNewestInputMtimeMs: 2_000,
+      }),
+    ).toBe(true);
+
+    expect(
+      isBoundaryCompileFresh("demo", {
+        rootDir,
+        extensionNewestInputMtimeMs: 1_000,
+        sharedNewestInputMtimeMs: 4_000,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps full failure output on the thrown error for canary detection", async () => {
     await expect(
       runNodeStepAsync(
