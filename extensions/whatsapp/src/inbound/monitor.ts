@@ -6,7 +6,7 @@ import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
-import { jidToE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
+import { jidToE164, resolveJidToE164 } from "../targets-runtime.js";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import * as _wmAdapter from "../baileys-adapter-wm.js";
 // FORK: whatsmeow backend — force bundler to include these modules
