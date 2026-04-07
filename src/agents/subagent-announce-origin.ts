@@ -1,3 +1,5 @@
+import { normalizeOptionalString } from "../shared/string-coerce.js";
+
 export type DeliveryContext = {
   channel?: string;
   to?: string;
@@ -19,16 +21,6 @@ type DeliveryContextSource = {
   deliveryContext?: DeliveryContext;
 };
 
-function normalizeChannel(raw?: string): string | undefined {
-  const value = raw?.trim().toLowerCase();
-  return value || undefined;
-}
-
-function normalizeText(raw?: string): string | undefined {
-  const value = raw?.trim();
-  return value || undefined;
-}
-
 function normalizeThreadId(raw?: string | number): string | number | undefined {
   if (typeof raw === "number" && Number.isFinite(raw)) {
     return Math.trunc(raw);
@@ -45,9 +37,9 @@ function normalizeDeliveryContext(context?: DeliveryContext): DeliveryContext | 
     return undefined;
   }
   const normalized: DeliveryContext = {
-    channel: normalizeChannel(context.channel),
-    to: normalizeText(context.to),
-    accountId: normalizeText(context.accountId),
+    channel: normalizeOptionalString(context.channel)?.toLowerCase(),
+    to: normalizeOptionalString(context.to),
+    accountId: normalizeOptionalString(context.accountId),
   };
   const threadId = normalizeThreadId(context.threadId);
   if (threadId != null) {
@@ -108,7 +100,7 @@ function deliveryContextFromSession(entry?: DeliveryContextSource): DeliveryCont
 }
 
 function isInternalMessageChannel(raw?: string): boolean {
-  return normalizeChannel(raw) === "webchat";
+  return normalizeOptionalString(raw)?.toLowerCase() === "webchat";
 }
 
 function normalizeTelegramAnnounceTarget(target: string | undefined): string | undefined {
@@ -138,7 +130,7 @@ function shouldStripThreadFromAnnounceEntry(
   ) {
     return false;
   }
-  const requesterChannel = normalizeChannel(normalizedRequester.channel);
+  const requesterChannel = normalizeOptionalString(normalizedRequester.channel)?.toLowerCase();
   if (requesterChannel === "telegram") {
     const requesterTarget = normalizeTelegramAnnounceTarget(normalizedRequester.to);
     const entryTarget = normalizeTelegramAnnounceTarget(normalizedEntry?.to);
