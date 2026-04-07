@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -68,6 +68,7 @@ describe("runQaDockerUp", () => {
           repoRoot: "/repo/openclaw",
           outputDir,
           usePrebuiltImage: true,
+          bindUiDist: true,
           skipUiBuild: true,
         },
         {
@@ -88,6 +89,9 @@ describe("runQaDockerUp", () => {
         `docker compose -f ${outputDir}/docker-compose.qa.yml up -d @/repo/openclaw`,
         `docker compose -f ${outputDir}/docker-compose.qa.yml ps --format json openclaw-qa-gateway @/repo/openclaw`,
       ]);
+      const compose = await readFile(path.join(outputDir, "docker-compose.qa.yml"), "utf8");
+      expect(compose).toContain(":/opt/openclaw-qa-lab-ui:ro");
+      expect(compose).toContain("      - --ui-dist-dir");
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }

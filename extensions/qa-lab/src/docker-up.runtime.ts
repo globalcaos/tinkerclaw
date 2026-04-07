@@ -247,6 +247,7 @@ export async function runQaDockerUp(
     providerBaseUrl?: string;
     image?: string;
     usePrebuiltImage?: boolean;
+    bindUiDist?: boolean;
     skipUiBuild?: boolean;
   },
   deps?: {
@@ -282,6 +283,7 @@ export async function runQaDockerUp(
     providerBaseUrl: params.providerBaseUrl,
     imageName: params.image,
     usePrebuiltImage: params.usePrebuiltImage,
+    bindUiDist: params.bindUiDist,
     includeQaLabUi: true,
   });
 
