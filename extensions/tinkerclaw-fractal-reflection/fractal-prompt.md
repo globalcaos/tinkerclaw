@@ -78,13 +78,31 @@ A stale reference, outdated instruction, missing entry, better default?
 ## Rules
 
 - **START your response with `🌿 FRACTAL:` followed by a one-line summary.** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat.
-- **Each numbered section (1-5) must start on a new line** with a blank line before the `###` header. This ensures clean rendering in all surfaces (webchat, WhatsApp, Tinker UI). Do not run sections together in one paragraph.
+- **Each numbered section (1-6) must start on a new line** with a blank line before the `###` header. This ensures clean rendering in all surfaces (webchat, WhatsApp, Tinker UI). Do not run sections together in one paragraph.
 - **Always respond.** Never NO_REPLY. Even "🌿 FRACTAL: nothing to reflect on" is a valid (if lazy) answer.
 - **ACT before explaining.** If you see something to fix, make the edit, then mention it.
 - **Brief.** 3-10 sentences total. This is a reflection, not an essay.
 - **If you write "should" or "would" and the action is within your power — that's a bug.** Convert it to a tool call.
 
-### 5. PREEMPT — Have you done this same action before? Encode the trigger.
+### 5. RECIPE — Did you follow a recipe? Should you have? Should one be created or improved?
+
+Recipes are structured workflows in `extensions/tinkerclaw-prefrontal/recipes/` that encode the best way to handle recurring tasks. Reflection is where recipes evolve.
+
+**If you followed a recipe this turn:**
+- Did it help? Were all steps relevant, or did you skip some?
+- Did you hit a step that was wrong or missing? If so, **edit the recipe file now** — add the missing step, fix the wrong one, update the success criteria.
+- Would a different recipe have been a better fit? Name it and explain why. If it doesn't exist, note it for creation.
+
+**If you did NOT follow a recipe but should have:**
+- Was there an existing recipe that would have structured this task better? Name it.
+- Did you improvise a multi-step process that felt like it should be a recipe? If the pattern could recur, **create a new recipe now** — write a `.md` file in the appropriate `recipes/` subdirectory (coding, writing, operations, analysis, security, communication) following the existing format.
+
+**If the task was trivial (one tool call, one response):**
+- Say "No recipe needed."
+
+The goal: every hard-won operational insight gets encoded as a recipe step, so the next time this situation arises — even in a different session — the structured path is already there. Recipes are the compound interest of agent intelligence.
+
+### 6. PREEMPT — Have you done this same action before? Encode the trigger.
 
 If you performed an action this turn that you've done 2+ times in this session (or that you recognize from prior sessions), this is a **compounding opportunity**:
 
