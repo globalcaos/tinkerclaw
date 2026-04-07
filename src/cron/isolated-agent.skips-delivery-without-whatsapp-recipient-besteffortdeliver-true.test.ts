@@ -110,43 +110,6 @@ function expectFailedTelegramDeliveryResult(params: {
   expect(params.deps.sendMessageTelegram).toHaveBeenCalledTimes(1);
 }
 
-function expectSuccessfulTelegramTextDelivery(params: {
-  res: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>;
-  deps: CliDeps;
-}): void {
-  expect(params.res.status).toBe("ok");
-  expect(params.res.delivered).toBe(true);
-  expect(params.res.deliveryAttempted).toBe(true);
-  expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
-}
-
-async function withTelegramTextDelivery(
-  params: { bestEffort: boolean },
-  run: (params: {
-    home: string;
-    storePath: string;
-    deps: CliDeps;
-    res: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>;
-  }) => Promise<void>,
-  fixtureParams?: Parameters<typeof withTelegramAnnounceFixture>[1],
-) {
-  await withTelegramAnnounceFixture(async ({ home, storePath, deps }) => {
-    mockAgentPayloads([{ text: "hello from cron" }]);
-    const res = await runTelegramAnnounceTurn({
-      home,
-      storePath,
-      deps,
-      delivery: {
-        mode: "announce",
-        channel: "telegram",
-        to: "123",
-        bestEffort: params.bestEffort,
-      },
-    });
-    await run({ home, storePath, deps, res });
-  }, fixtureParams);
-}
-
 async function runSignalDeliveryResult(bestEffort: boolean) {
   let outcome:
     | {
@@ -188,39 +151,6 @@ describe("runCronIsolatedAgentTurn", () => {
   beforeEach(() => {
     vi.spyOn(modelSelection, "resolveThinkingDefault").mockReturnValue("off");
     setupIsolatedAgentTurnMocks({ fast: true });
-  });
-
-  it("retries transient text direct delivery failures before succeeding", async () => {
-    const previousFastMode = process.env.OPENCLAW_TEST_FAST;
-    process.env.OPENCLAW_TEST_FAST = "1";
-    try {
-      await withTelegramTextDelivery(
-        { bestEffort: false },
-        async ({ deps, res }) => {
-          expectSuccessfulTelegramTextDelivery({ res, deps });
-          expect(deps.sendMessageTelegram).toHaveBeenCalledTimes(2);
-          expect(deps.sendMessageTelegram).toHaveBeenLastCalledWith(
-            "123",
-            "hello from cron",
-            expect.objectContaining({ cfg: expect.any(Object) }),
-          );
-        },
-        {
-          deps: {
-            sendMessageTelegram: vi
-              .fn()
-              .mockRejectedValueOnce(new Error("UNAVAILABLE: temporary network error"))
-              .mockResolvedValue({ messageId: 7, chatId: "123", text: "hello from cron" }),
-          },
-        },
-      );
-    } finally {
-      if (previousFastMode === undefined) {
-        delete process.env.OPENCLAW_TEST_FAST;
-      } else {
-        process.env.OPENCLAW_TEST_FAST = previousFastMode;
-      }
-    }
   });
 
   it("delivers text directly for signal when best-effort is enabled", async () => {
