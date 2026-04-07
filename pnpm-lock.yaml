@@ -286,7 +286,11 @@ importers:
 
   extensions/anthropic: {}
 
-  extensions/anthropic-vertex: {}
+  extensions/anthropic-vertex:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/arcee: {}
 
@@ -296,7 +300,11 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/brave: {}
+  extensions/brave:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/browser: {}
 
@@ -304,15 +312,27 @@ importers:
 
   extensions/chutes: {}
 
-  extensions/cloudflare-ai-gateway: {}
+  extensions/cloudflare-ai-gateway:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/comfy: {}
 
-  extensions/copilot-proxy: {}
+  extensions/copilot-proxy:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/deepgram: {}
 
-  extensions/deepseek: {}
+  extensions/deepseek:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/diagnostics-otel:
     dependencies:
@@ -349,6 +369,10 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.40.0
         version: 1.40.0
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/diffs:
     dependencies:
@@ -394,11 +418,19 @@ importers:
         specifier: ^0.10.0
         version: 0.10.0
 
-  extensions/duckduckgo: {}
+  extensions/duckduckgo:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/elevenlabs: {}
 
-  extensions/exa: {}
+  extensions/exa:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/fal: {}
 
@@ -415,9 +447,17 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/firecrawl: {}
+  extensions/firecrawl:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
-  extensions/fireworks: {}
+  extensions/fireworks:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/github-copilot: {}
 
@@ -437,11 +477,19 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/groq: {}
+  extensions/groq:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/huggingface: {}
 
-  extensions/image-generation-core: {}
+  extensions/image-generation-core:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/imessage: {}
 
@@ -457,7 +505,11 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/litellm: {}
+  extensions/litellm:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/llm-task:
     dependencies:
@@ -467,6 +519,10 @@ importers:
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/lobster:
     dependencies:
@@ -515,7 +571,11 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/media-understanding-core: {}
+  extensions/media-understanding-core:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/memory-core:
     devDependencies:
@@ -591,11 +651,19 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/nvidia: {}
+  extensions/nvidia:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/ollama: {}
 
-  extensions/open-prose: {}
+  extensions/open-prose:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/openai:
     dependencies:
@@ -611,7 +679,11 @@ importers:
 
   extensions/openshell: {}
 
-  extensions/perplexity: {}
+  extensions/perplexity:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/qa-channel:
     devDependencies:
@@ -625,7 +697,11 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/qianfan: {}
+  extensions/qianfan:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/qqbot:
     dependencies:
@@ -650,7 +726,11 @@ importers:
 
   extensions/runway: {}
 
-  extensions/searxng: {}
+  extensions/searxng:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/sglang: {}
 
@@ -671,9 +751,17 @@ importers:
 
   extensions/synology-chat: {}
 
-  extensions/synthetic: {}
+  extensions/synthetic:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
-  extensions/tavily: {}
+  extensions/tavily:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/telegram:
     dependencies:
@@ -720,11 +808,19 @@ importers:
         specifier: ^8.1.3
         version: 8.1.3(@twurple/auth@8.1.3)
 
-  extensions/venice: {}
+  extensions/venice:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/vercel-ai-gateway: {}
 
-  extensions/video-generation-core: {}
+  extensions/video-generation-core:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   extensions/vllm: {}
 
