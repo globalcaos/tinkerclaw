@@ -8,10 +8,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getRecipes } from "./recipe-engine.js";
-
 let cachedPrompt: string | null = null;
-let cachedAddendum: string | null = null;
 
 /**
  * Load prefrontal-prompt.md from the extension directory.
@@ -32,68 +29,31 @@ export function loadPrefrontalPrompt(baseDir?: string): string | null {
   }
 }
 
-/**
- * Build the recipe system addendum dynamically from loaded recipes.
- * Groups recipes by category so the model sees the full catalog.
- */
-function buildRecipeAddendum(): string {
-  const recipes = getRecipes();
-  if (recipes.length === 0) {
-    return `
+/** Static addendum — general enough that adding new recipes requires no prompt changes. */
+const RECIPE_ADDENDUM = `
 
 ## Recipe System
-When facing a complex task, describe your approach before acting.`;
-  }
+Structured recipes are available for common task types. Each recipe defines a step-by-step workflow with preconditions, required tools, and success criteria per step. Recipes are organized by category in the \`recipes/\` directory (coding, writing, operations, analysis, security, communication).
 
-  // Group by category
-  const byCategory = new Map<string, typeof recipes>();
-  for (const r of recipes) {
-    const cat = (r as { category?: string }).category ?? "general";
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(r);
-  }
+To activate a recipe, state which one you're following in your response — for example, "following the debug recipe" or "using the upstream-merge recipe." The system will track your progress through the steps and guide you. When you complete a step's success criteria, the next step activates automatically.
 
-  const lines: string[] = [
-    "",
-    "## Recipe System",
-    "When facing a complex task, you can activate a structured recipe by stating which workflow you're following in your response.",
-    "",
-    "**Available recipes:**",
-    "",
-  ];
+If you're unsure which recipe fits, describe the task and the system will suggest one. You can also work without a recipe — they are guides, not constraints.
 
-  for (const [category, catRecipes] of byCategory) {
-    const label = category.charAt(0).toUpperCase() + category.slice(1);
-    const names = catRecipes.map(r => `\`${r.id}\``).join(", ");
-    lines.push(`- **${label}:** ${names}`);
-  }
-
-  lines.push("");
-  lines.push('Activate by mentioning: "following the debug recipe" or "using the upstream-merge recipe". The system tracks your progress through steps.');
-  lines.push("");
-  lines.push("## Planning");
-  lines.push("Before starting complex tasks, describe your approach in your response. This serves as your plan — visible to the user and preserved in context. Don't just act; explain what you're about to do and why.");
-
-  return lines.join("\n");
-}
+## Planning
+Before starting complex tasks, describe your approach in your response. This serves as your plan — visible to the user and preserved in context. Don't just act; explain what you're about to do and why. This is more valuable than any formal planning step.`;
 
 /**
- * Load prefrontal prompt with recipe system and planning instructions appended.
- * The recipe/planning addendum is built dynamically from loaded recipes
- * so the model sees all available workflows, not just a hardcoded subset.
+ * Load prefrontal prompt with recipe system instructions appended.
+ * The addendum is static and general — it doesn't enumerate recipes
+ * so adding new ones never requires editing this prompt.
  */
 export function loadPrefrontalPromptWithAddendum(baseDir?: string): string | null {
   const base = loadPrefrontalPrompt(baseDir);
   if (base === null) return null;
-  // Rebuild addendum if recipes were reloaded (cache cleared on reload)
-  if (cachedAddendum === null) {
-    cachedAddendum = buildRecipeAddendum();
-  }
-  return base + cachedAddendum;
+  return base + RECIPE_ADDENDUM;
 }
 
-/** Clear cached prompt and addendum (for testing / recipe reload). */
+/** Clear cached prompt (for testing). */
 export function _resetPromptCache(): void {
   cachedPrompt = null;
-  cachedAddendum = null;
 }
