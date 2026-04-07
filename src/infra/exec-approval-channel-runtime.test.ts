@@ -35,11 +35,18 @@ beforeEach(() => {
   mockGatewayClientStarts.mockReset();
   mockGatewayClientStops.mockReset();
   mockGatewayClientRequests.mockReset();
-  mockGatewayClientRequests.mockResolvedValue({ ok: true });
+  mockGatewayClientRequests.mockImplementation(async (method: string) =>
+    method.endsWith(".approval.list") ? [] : { ok: true },
+  );
   loggerMocks.debug.mockReset();
   loggerMocks.error.mockReset();
-  mockCreateOperatorApprovalsGatewayClient.mockReset().mockImplementation(async () => ({
-    start: mockGatewayClientStarts,
+  mockCreateOperatorApprovalsGatewayClient.mockReset().mockImplementation(async (params) => ({
+    start: () => {
+      mockGatewayClientStarts();
+      queueMicrotask(() => {
+        params.onHelloOk?.({ type: "hello-ok" } as never);
+      });
+    },
     stop: mockGatewayClientStops,
     request: mockGatewayClientRequests,
   }));
@@ -193,11 +200,18 @@ describe("createExecApprovalChannelRuntime", () => {
 
   it("can retry start after gateway client creation fails", async () => {
     const boom = new Error("boom");
-    mockCreateOperatorApprovalsGatewayClient.mockRejectedValueOnce(boom).mockResolvedValueOnce({
-      start: mockGatewayClientStarts,
-      stop: mockGatewayClientStops,
-      request: mockGatewayClientRequests,
-    });
+    mockCreateOperatorApprovalsGatewayClient
+      .mockRejectedValueOnce(boom)
+      .mockImplementationOnce(async (params) => ({
+        start: () => {
+          mockGatewayClientStarts();
+          queueMicrotask(() => {
+            params.onHelloOk?.({ type: "hello-ok" } as never);
+          });
+        },
+        stop: mockGatewayClientStops,
+        request: mockGatewayClientRequests,
+      }));
     const runtime = createExecApprovalChannelRuntime({
       label: "test/exec-approvals",
       clientDisplayName: "Test Exec Approvals",
@@ -384,6 +398,97 @@ describe("createExecApprovalChannelRuntime", () => {
         entries: [{ id: "plugin:abc" }],
       });
     });
+  });
+
+  it("replays pending approvals after the gateway connection is ready", async () => {
+    mockGatewayClientRequests.mockImplementation(async (method) => {
+      if (method === "exec.approval.list") {
+        return [
+          {
+            id: "abc",
+            request: {
+              command: "echo abc",
+            },
+            createdAtMs: 1000,
+            expiresAtMs: 2000,
+          },
+        ];
+      }
+      return { ok: true };
+    });
+    const deliverRequested = vi.fn(async (request) => [{ id: request.id }]);
+    const runtime = createExecApprovalChannelRuntime({
+      label: "test/replay",
+      clientDisplayName: "Test Replay",
+      cfg: {} as never,
+      isConfigured: () => true,
+      shouldHandle: () => true,
+      deliverRequested,
+      finalizeResolved: async () => undefined,
+    });
+
+    await runtime.start();
+
+    expect(mockGatewayClientRequests).toHaveBeenCalledWith("exec.approval.list", {});
+    expect(deliverRequested).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "abc",
+      }),
+    );
+  });
+
+  it("ignores live duplicate approval events after replay", async () => {
+    mockGatewayClientRequests.mockImplementation(async (method) => {
+      if (method === "plugin.approval.list") {
+        return [
+          {
+            id: "plugin:abc",
+            request: {
+              title: "Plugin approval",
+              description: "Let plugin proceed",
+            },
+            createdAtMs: 1000,
+            expiresAtMs: 2000,
+          },
+        ];
+      }
+      return { ok: true };
+    });
+    const deliverRequested = vi.fn(async (request) => [{ id: request.id }]);
+    const runtime = createExecApprovalChannelRuntime<
+      { id: string },
+      PluginApprovalRequest,
+      PluginApprovalResolved
+    >({
+      label: "test/plugin-replay",
+      clientDisplayName: "Test Plugin Replay",
+      cfg: {} as never,
+      eventKinds: ["plugin"],
+      isConfigured: () => true,
+      shouldHandle: () => true,
+      deliverRequested,
+      finalizeResolved: async () => undefined,
+    });
+
+    await runtime.start();
+    const clientParams = mockCreateOperatorApprovalsGatewayClient.mock.calls[0]?.[0] as
+      | { onEvent?: (evt: { event: string; payload: unknown }) => void }
+      | undefined;
+    clientParams?.onEvent?.({
+      event: "plugin.approval.requested",
+      payload: {
+        id: "plugin:abc",
+        request: {
+          title: "Plugin approval",
+          description: "Let plugin proceed",
+        },
+        createdAtMs: 1000,
+        expiresAtMs: 2000,
+      },
+    });
+    await Promise.resolve();
+
+    expect(deliverRequested).toHaveBeenCalledTimes(1);
   });
 
   it("clears pending state when delivery throws", async () => {
