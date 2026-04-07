@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import { extractPdfContent, type PdfExtractedContent } from "../../media/pdf-extract.js";
 import { loadWebMediaRaw } from "../../media/web-media.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { resolveUserPath } from "../../utils.js";
 import { type ImageModelConfig } from "./image-tool.helpers.js";
 import { resolvePdfModelConfigForTool } from "./pdf-tool.model-config.js";
@@ -323,8 +324,7 @@ export function createPdfTool(options?: {
       const maxBytes = Math.floor(maxBytesMb * 1024 * 1024);
 
       // Parse page range
-      const pagesRaw =
-        typeof record.pages === "string" && record.pages.trim() ? record.pages.trim() : undefined;
+      const pagesRaw = normalizeOptionalString(record.pages);
 
       const sandboxConfig: SandboxedBridgeMediaPathConfig | null =
         options?.sandbox && options.sandbox.root.trim()
