@@ -122,7 +122,7 @@ function toThreadBindingTargetKind(raw: BindingTargetKind): "subagent" | "acp" {
 }
 
 function isDirectConversationBindingId(value?: string | null): boolean {
-  const trimmed = value?.trim();
+  const trimmed = normalizeOptionalString(value);
   return Boolean(trimmed && /^(user:|channel:)/i.test(trimmed));
 }
 
