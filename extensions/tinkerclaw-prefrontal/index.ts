@@ -67,13 +67,17 @@ import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./explor
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
+import { orchestrate, type ActiveRecipeState, type OrchestrationPlan } from "./orchestrator.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
 import { createPrefrontalHttpHandler } from "./prefrontal-http.js";
 import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
 import type { SubagentRunInfo } from "./prefrontal-monitor.js";
+import { loadPrefrontalPrompt } from "./prefrontal-prompt-loader.js";
 import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
+import { formatProgressEvent, type ProgressReport } from "./progress-reporter.js";
+import { formatRecipePrompt, BUILT_IN_RECIPES } from "./recipe-engine.js";
 import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "prefrontal";
@@ -86,6 +90,11 @@ let sharedFaarTracker: ReturnType<typeof createFaarTracker> | null = null;
 const sharedSubagentRuns = new Map<string, SubagentRunInfo>();
 const sharedLastEventTimestamps = new Map<string, number>();
 let sharedPrefrontalSessionKey: string | null = null;
+
+// ─── Recipe Engine State (v3.0) ───
+// Keyed by sessionKey. Persists across turns within a session but NOT across sessions.
+const activeRecipes = new Map<string, ActiveRecipeState>();
+const recipeStartTimes = new Map<string, number>();
 
 export default function register(api: OpenClawPluginApi) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped plugin config
@@ -343,6 +352,58 @@ export default function register(api: OpenClawPluginApi) {
       });
     }
 
+    // v3.0: Recipe step completion detection + progress broadcast
+    if (isEnabled(featureFlags, "recipeEngine")) {
+      const recipeState = activeRecipes.get(sessionKey);
+      if (recipeState) {
+        const recipe = BUILT_IN_RECIPES.find((r) => r.id === recipeState.recipeId);
+        if (recipe) {
+          const currentStep = recipe.steps.find((s) => !recipeState.completedSteps.includes(s.id));
+          // Heuristic: if the LLM output contains the success criteria text,
+          // mark the step as completed and advance
+          if (currentStep?.successCriteria) {
+            const outputText =
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- event shape varies
+              (event as any).text ?? (event as any).content ?? "";
+            if (
+              typeof outputText === "string" &&
+              outputText.toLowerCase().includes(currentStep.successCriteria.toLowerCase())
+            ) {
+              recipeState.completedSteps.push(currentStep.id);
+              log.info?.(
+                `[prefrontal] Recipe step completed: ${currentStep.name} (${recipeState.completedSteps.length}/${recipe.steps.length})`,
+              );
+            }
+          }
+
+          // Broadcast progress event
+          const startTime = recipeStartTimes.get(sessionKey) ?? Date.now();
+          const report: ProgressReport = {
+            recipeId: recipe.id,
+            recipeName: recipe.name,
+            currentStep: currentStep?.id ?? recipeState.completedSteps.at(-1) ?? "",
+            completedSteps: [...recipeState.completedSteps],
+            totalSteps: recipe.steps.length,
+            activeWorkers: subagentRuns.size,
+            stalledWorkers: 0,
+            elapsedMs: Date.now() - startTime,
+          };
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- broadcast not in plugin SDK types
+            (api as any).broadcast?.("agent", {
+              stream: "lifecycle",
+              data: {
+                ...formatProgressEvent(report),
+                ts: Date.now(),
+              },
+            });
+          } catch {
+            // broadcast not available — non-fatal
+          }
+        }
+      }
+    }
+
     // Update last event timestamp for any matching subagent
     for (const [runId, run] of subagentRuns) {
       if (run.childSessionKey === sessionKey) {
@@ -394,6 +455,28 @@ export default function register(api: OpenClawPluginApi) {
       }
       topology.addToolCall(sessionKey, event.toolName);
 
+      // v3.0: Recipe step awareness — gentle reminder if agent is using tools
+      // that don't match the current step (don't block, just guide)
+      if (isEnabled(featureFlags, "recipeEngine")) {
+        const recipeState = activeRecipes.get(sessionKey);
+        if (recipeState) {
+          const recipe = BUILT_IN_RECIPES.find((r) => r.id === recipeState.recipeId);
+          if (recipe) {
+            const currentStep = recipe.steps.find(
+              (s) => !recipeState.completedSteps.includes(s.id),
+            );
+            if (currentStep?.requiredTools && currentStep.requiredTools.length > 0) {
+              const toolAllowed = currentStep.requiredTools.includes(event.toolName);
+              if (!toolAllowed) {
+                log.info?.(
+                  `[prefrontal] Recipe hint: tool ${event.toolName} not in step "${currentStep.name}" tools [${currentStep.requiredTools.join(",")}] — proceeding anyway`,
+                );
+              }
+            }
+          }
+        }
+      }
+
       // Update last event timestamp for any matching subagent
       for (const [runId, run] of subagentRuns) {
         if (run.childSessionKey === sessionKey) {
@@ -404,13 +487,25 @@ export default function register(api: OpenClawPluginApi) {
     },
   );
 
-  // P0: Anti-gold-plating + P3: Forcing questions — inject discipline rules and
-  // structured pre-task thinking prompts into every agent prompt
+  // P0: Anti-gold-plating + P3: Forcing questions + v3.0: Recipe engine —
+  // inject discipline rules, thinking prompts, and recipe workflows
   api.on(
     "before_prompt_build",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped hook event/ctx
-    async (_event: any, ctx: any) => {
+    async (event: any, ctx: any) => {
       const parts: string[] = [];
+
+      // v3.0: Prefrontal system prompt (Iron Laws, debugging protocol, orchestration)
+      if (
+        isEnabled(featureFlags, "recipeEngine") &&
+        ctx?.trigger !== "heartbeat" &&
+        ctx?.trigger !== "cron"
+      ) {
+        const prefrontalPrompt = loadPrefrontalPrompt();
+        if (prefrontalPrompt) {
+          parts.push(prefrontalPrompt);
+        }
+      }
 
       // P0: Anti-gold-plating rules
       if (
@@ -427,10 +522,39 @@ export default function register(api: OpenClawPluginApi) {
         ctx?.trigger !== "heartbeat" &&
         ctx?.trigger !== "cron"
       ) {
-        // We can't access the user message here, so inject forcing questions
-        // unconditionally when enabled — the questions are lightweight guidance
-        // and won't hurt simple tasks
         parts.push(getForcingQuestionsPrompt());
+      }
+
+      // v3.0: Recipe engine — classify task and inject recipe workflow
+      if (
+        isEnabled(featureFlags, "recipeEngine") &&
+        ctx?.trigger !== "heartbeat" &&
+        ctx?.trigger !== "cron"
+      ) {
+        const userMessage = event?.query ?? event?.userMessage ?? event?.prompt ?? "";
+        const sessionKey = ctx?.sessionKey ?? "agent:main:main";
+
+        if (userMessage && typeof userMessage === "string" && userMessage.trim()) {
+          const existingRecipe = activeRecipes.get(sessionKey) ?? null;
+          const plan: OrchestrationPlan = orchestrate({
+            userMessage,
+            activeRecipe: existingRecipe,
+          });
+
+          if (plan.recipe) {
+            // Store recipe state for step tracking
+            if (!existingRecipe || existingRecipe.recipeId !== plan.recipe.id) {
+              activeRecipes.set(sessionKey, {
+                recipeId: plan.recipe.id,
+                completedSteps: [],
+              });
+              recipeStartTimes.set(sessionKey, Date.now());
+            }
+
+            parts.push(formatRecipePrompt(plan.recipe, plan.currentStep ?? undefined));
+            log.info?.(`[prefrontal] Recipe engine: ${plan.reasoning} (session=${sessionKey})`);
+          }
+        }
       }
 
       if (parts.length > 0) {
@@ -477,6 +601,48 @@ export default function register(api: OpenClawPluginApi) {
       monitor.setActiveMain(null);
       rebuildAndBroadcastTree();
     }, 10_000);
+
+    // v3.0: Recipe completion — emit final progress event and record FAAR metric
+    if (isEnabled(featureFlags, "recipeEngine")) {
+      const recipeState = activeRecipes.get(sessionKey);
+      if (recipeState) {
+        const recipe = BUILT_IN_RECIPES.find((r) => r.id === recipeState.recipeId);
+        if (recipe) {
+          const startTime = recipeStartTimes.get(sessionKey) ?? Date.now();
+          const allComplete = recipeState.completedSteps.length >= recipe.steps.length;
+          const report: ProgressReport = {
+            recipeId: recipe.id,
+            recipeName: recipe.name,
+            currentStep: allComplete
+              ? (recipe.steps.at(-1)?.id ?? "")
+              : (recipe.steps.find((s) => !recipeState.completedSteps.includes(s.id))?.id ?? ""),
+            completedSteps: [...recipeState.completedSteps],
+            totalSteps: recipe.steps.length,
+            activeWorkers: 0,
+            stalledWorkers: 0,
+            elapsedMs: Date.now() - startTime,
+          };
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- broadcast not in plugin SDK types
+            (api as any).broadcast?.("agent", {
+              stream: "lifecycle",
+              data: {
+                ...formatProgressEvent(report),
+                ts: Date.now(),
+              },
+            });
+          } catch {
+            // broadcast not available — non-fatal
+          }
+          log.info?.(
+            `[prefrontal] Recipe ${allComplete ? "completed" : "ended"}: ${recipe.name} (${recipeState.completedSteps.length}/${recipe.steps.length} steps)`,
+          );
+        }
+        // Clean up recipe state
+        activeRecipes.delete(sessionKey);
+        recipeStartTimes.delete(sessionKey);
+      }
+    }
 
     // WS6: Track task outcome for FAAR metrics
     if (isEnabled(featureFlags, "faarTracking")) {

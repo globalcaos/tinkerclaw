@@ -9,6 +9,7 @@ export interface PrefrontalFeatureFlags {
   effortRouting: boolean;
   corfTrigger: boolean;
   faarTracking: boolean;
+  recipeEngine: boolean;
 }
 
 export const DEFAULT_FEATURE_FLAGS: PrefrontalFeatureFlags = {
@@ -19,6 +20,7 @@ export const DEFAULT_FEATURE_FLAGS: PrefrontalFeatureFlags = {
   effortRouting: true,
   corfTrigger: true,
   faarTracking: true,
+  recipeEngine: true,
 };
 
 export function resolveFeatureFlags(
