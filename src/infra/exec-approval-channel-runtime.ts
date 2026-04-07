@@ -89,11 +89,22 @@ export function createExecApprovalChannelRuntime<
   let shouldRun = false;
   let startPromise: Promise<void> | null = null;
 
+  const shouldKeepRunning = (): boolean => shouldRun;
+
   const spawn = (label: string, promise: Promise<void>): void => {
     void promise.catch((err: unknown) => {
       const message = formatErrorMessage(err);
       log.error(`${label}: ${message}`);
     });
+  };
+
+  const stopClientIfInactive = (client: GatewayClient): boolean => {
+    if (shouldKeepRunning()) {
+      return false;
+    }
+    gatewayClient = null;
+    client.stop();
+    return true;
   };
 
   const clearPendingEntry = (
@@ -122,7 +133,13 @@ export function createExecApprovalChannelRuntime<
     });
   };
 
-  const handleRequested = async (request: TRequest): Promise<void> => {
+  const handleRequested = async (
+    request: TRequest,
+    opts?: { ignoreIfInactive?: boolean },
+  ): Promise<void> => {
+    if (opts?.ignoreIfInactive && !shouldKeepRunning()) {
+      return;
+    }
     if (!adapter.shouldHandle(request)) {
       return;
     }
@@ -202,11 +219,17 @@ export function createExecApprovalChannelRuntime<
 
   const handleGatewayEvent = (evt: EventFrame): void => {
     if (evt.event === "exec.approval.requested" && eventKinds.has("exec")) {
-      spawn("error handling approval request", handleRequested(evt.payload as TRequest));
+      spawn(
+        "error handling approval request",
+        handleRequested(evt.payload as TRequest, { ignoreIfInactive: true }),
+      );
       return;
     }
     if (evt.event === "plugin.approval.requested" && eventKinds.has("plugin")) {
-      spawn("error handling approval request", handleRequested(evt.payload as TRequest));
+      spawn(
+        "error handling approval request",
+        handleRequested(evt.payload as TRequest, { ignoreIfInactive: true }),
+      );
       return;
     }
     if (evt.event === "exec.approval.resolved" && eventKinds.has("exec")) {
@@ -278,10 +301,22 @@ export function createExecApprovalChannelRuntime<
         try {
           client.start();
           await ready;
+          if (stopClientIfInactive(client)) {
+            return;
+          }
           for (const method of resolveApprovalReplayMethods(eventKinds)) {
+            if (stopClientIfInactive(client)) {
+              return;
+            }
             const pendingRequests = await client.request<Array<TRequest>>(method, {});
+            if (stopClientIfInactive(client)) {
+              return;
+            }
             for (const request of pendingRequests) {
-              await handleRequested(request);
+              if (stopClientIfInactive(client)) {
+                return;
+              }
+              await handleRequested(request, { ignoreIfInactive: true });
             }
           }
           started = true;

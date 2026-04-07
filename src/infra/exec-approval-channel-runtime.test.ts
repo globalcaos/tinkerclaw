@@ -491,6 +491,56 @@ describe("createExecApprovalChannelRuntime", () => {
     expect(deliverRequested).toHaveBeenCalledTimes(1);
   });
 
+  it("does not replay approvals after stop wins once hello is already complete", async () => {
+    const replayDeferred = createDeferred<
+      Array<{
+        id: string;
+        request: { command: string };
+        createdAtMs: number;
+        expiresAtMs: number;
+      }>
+    >();
+    mockGatewayClientRequests.mockImplementation(async (method) => {
+      if (method === "exec.approval.list") {
+        return replayDeferred.promise;
+      }
+      return { ok: true };
+    });
+    const deliverRequested = vi.fn(async (request) => [{ id: request.id }]);
+    const runtime = createExecApprovalChannelRuntime({
+      label: "test/replay-stop-after-ready",
+      clientDisplayName: "Test Replay Stop",
+      cfg: {} as never,
+      isConfigured: () => true,
+      shouldHandle: () => true,
+      deliverRequested,
+      finalizeResolved: async () => undefined,
+    });
+
+    const startPromise = runtime.start();
+    await vi.waitFor(() => {
+      expect(mockGatewayClientRequests).toHaveBeenCalledWith("exec.approval.list", {});
+    });
+
+    const stopPromise = runtime.stop();
+    replayDeferred.resolve([
+      {
+        id: "abc",
+        request: {
+          command: "echo abc",
+        },
+        createdAtMs: 1000,
+        expiresAtMs: 2000,
+      },
+    ]);
+
+    await startPromise;
+    await stopPromise;
+
+    expect(deliverRequested).not.toHaveBeenCalled();
+    expect(mockGatewayClientStops).toHaveBeenCalled();
+  });
+
   it("clears pending state when delivery throws", async () => {
     const deliverRequested = vi
       .fn<() => Promise<Array<{ id: string }>>>()
