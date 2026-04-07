@@ -624,7 +624,7 @@ function resolvePluginBindingDisplayName(binding: {
   pluginId: string;
   pluginName?: string;
 }): string {
-  return binding.pluginName?.trim() || binding.pluginId;
+  return normalizeOptionalString(binding.pluginName) || binding.pluginId;
 }
 
 function buildDetachHintSuffix(detachHint?: string): string {
