@@ -24,6 +24,9 @@ const prepareBoundaryArtifactsBin = resolve(
 const extensionPackageBoundaryBaseConfig = "../tsconfig.package-boundary.base.json";
 const FAILURE_OUTPUT_TAIL_LINES = 40;
 const COMPILE_INPUT_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".json"]);
+const ROOTDIR_BOUNDARY_CANARY_IMPORT_PATH =
+  "../../src/plugins/contracts/rootdir-boundary-canary.ts";
+const ROOTDIR_BOUNDARY_CANARY_OUTPUT_HINT = "src/plugins/contracts/rootdir-boundary-canary.ts";
 
 function parseMode(argv) {
   const modeArg = argv.find((arg) => arg.startsWith("--mode="));
@@ -636,7 +639,12 @@ async function runCanaryCheck(extensionIds) {
       try {
         writeFileSync(
           canaryPath,
-          'import * as foo from "../../src/cli/acp-cli.ts";\nvoid foo;\nexport {};\n',
+          [
+            `import { ROOTDIR_BOUNDARY_CANARY } from "${ROOTDIR_BOUNDARY_CANARY_IMPORT_PATH}";`,
+            "void ROOTDIR_BOUNDARY_CANARY;",
+            "export {};",
+            "",
+          ].join("\n"),
           "utf8",
         );
         writeFileSync(
@@ -666,7 +674,7 @@ async function runCanaryCheck(extensionIds) {
           error instanceof Error && typeof error.fullOutput === "string"
             ? error.fullOutput
             : String(error);
-        if (!output.includes("TS6059") || !output.includes("src/cli/acp-cli.ts")) {
+        if (!output.includes("TS6059") || !output.includes(ROOTDIR_BOUNDARY_CANARY_OUTPUT_HINT)) {
           throw error;
         }
       } finally {
