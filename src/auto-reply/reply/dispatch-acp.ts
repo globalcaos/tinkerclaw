@@ -139,24 +139,6 @@ async function hasBoundConversationForSession(params: {
   });
 }
 
-function resolveDispatchAccountId(params: {
-  cfg: OpenClawConfig;
-  channelRaw: string | undefined;
-  accountIdRaw: string | undefined;
-}): string | undefined {
-  const channel = normalizeOptionalString(params.channelRaw)?.toLowerCase() ?? "";
-  if (!channel) {
-    return normalizeOptionalString(params.accountIdRaw);
-  }
-  const explicit = normalizeOptionalString(params.accountIdRaw);
-  if (explicit) {
-    return explicit;
-  }
-  const channels = params.cfg.channels as Record<string, { defaultAccount?: unknown } | undefined>;
-  const configuredDefaultAccountId = channels?.[channel]?.defaultAccount;
-  return normalizeOptionalString(configuredDefaultAccountId);
-}
-
 export type AcpDispatchAttemptResult = {
   queuedFinal: boolean;
   counts: Record<ReplyDispatchKind, number>;
@@ -357,11 +339,18 @@ export async function tryDispatchAcpReply(params: {
         normalizeOptionalString(params.cfg.acp?.defaultAgent) ??
         resolveAgentIdFromSessionKey(canonicalSessionKey))
       : resolveAgentIdFromSessionKey(canonicalSessionKey);
-  const effectiveDispatchAccountId = resolveDispatchAccountId({
-    cfg: params.cfg,
-    channelRaw: params.ctx.OriginatingChannel ?? params.ctx.Surface ?? params.ctx.Provider,
-    accountIdRaw: params.ctx.AccountId,
-  });
+  const normalizedDispatchChannel =
+    normalizeOptionalString(
+      params.ctx.OriginatingChannel ?? params.ctx.Surface ?? params.ctx.Provider,
+    )?.toLowerCase() ?? "";
+  const explicitDispatchAccountId = normalizeOptionalString(params.ctx.AccountId);
+  const effectiveDispatchAccountId =
+    explicitDispatchAccountId ??
+    normalizeOptionalString(
+      (
+        params.cfg.channels as Record<string, { defaultAccount?: unknown } | undefined> | undefined
+      )?.[normalizedDispatchChannel]?.defaultAccount,
+    );
   const projector = createAcpReplyProjector({
     cfg: params.cfg,
     shouldSendToolSummaries: params.shouldSendToolSummaries,
