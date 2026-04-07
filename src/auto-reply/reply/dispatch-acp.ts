@@ -14,7 +14,10 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import { generateSecureUuid } from "../../infra/secure-random.js";
 import { prefixSystemMessage } from "../../infra/system-message.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import {
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+} from "../../shared/string-coerce.js";
 import { resolveStatusTtsSnapshot } from "../../tts/status-config.js";
 import { resolveConfiguredTtsMode } from "../../tts/tts-config.js";
 import type { FinalizedMsgContext } from "../templating.js";
@@ -113,23 +116,21 @@ async function hasBoundConversationForSession(params: {
   channelRaw: string | undefined;
   accountIdRaw: string | undefined;
 }): Promise<boolean> {
-  const channel = normalizeOptionalString(params.channelRaw)?.toLowerCase() ?? "";
+  const channel = normalizeOptionalLowercaseString(params.channelRaw) ?? "";
   if (!channel) {
     return false;
   }
-  const accountId = normalizeOptionalString(params.accountIdRaw)?.toLowerCase() ?? "";
+  const accountId = normalizeOptionalLowercaseString(params.accountIdRaw) ?? "";
   const channels = params.cfg.channels as Record<string, { defaultAccount?: unknown } | undefined>;
   const configuredDefaultAccountId = channels?.[channel]?.defaultAccount;
   const normalizedAccountId =
-    accountId || normalizeOptionalString(configuredDefaultAccountId)?.toLowerCase() || "default";
+    accountId || normalizeOptionalLowercaseString(configuredDefaultAccountId) || "default";
   const { getSessionBindingService } = await loadDispatchAcpManagerRuntime();
   const bindingService = getSessionBindingService();
   const bindings = bindingService.listBySession(params.sessionKey);
   return bindings.some((binding) => {
-    const bindingChannel =
-      normalizeOptionalString(binding.conversation.channel)?.toLowerCase() ?? "";
-    const bindingAccountId =
-      normalizeOptionalString(binding.conversation.accountId)?.toLowerCase() ?? "";
+    const bindingChannel = normalizeOptionalLowercaseString(binding.conversation.channel) ?? "";
+    const bindingAccountId = normalizeOptionalLowercaseString(binding.conversation.accountId) ?? "";
     const conversationId = normalizeOptionalString(binding.conversation.conversationId) ?? "";
     return (
       bindingChannel === channel &&
