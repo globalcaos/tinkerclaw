@@ -1,5 +1,6 @@
 import type { ChatType } from "../channels/chat-type.js";
 import { parseAgentSessionKey, type ParsedAgentSessionKey } from "../sessions/session-key-utils.js";
+import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "./account-id.js";
 
 export {
@@ -27,7 +28,7 @@ const LEADING_DASH_RE = /^-+/;
 const TRAILING_DASH_RE = /-+$/;
 
 function normalizeToken(value: string | undefined | null): string {
-  return (value ?? "").trim().toLowerCase();
+  return normalizeLowercaseStringOrEmpty(value);
 }
 
 export function scopedHeartbeatWakeOptions<T extends object>(
@@ -152,12 +153,12 @@ export function buildAgentPeerSessionKey(params: {
     }
     peerId = peerId.toLowerCase();
     if (dmScope === "per-account-channel-peer" && peerId) {
-      const channel = (params.channel ?? "").trim().toLowerCase() || "unknown";
+      const channel = normalizeLowercaseStringOrEmpty(params.channel) || "unknown";
       const accountId = normalizeAccountId(params.accountId);
       return `agent:${normalizeAgentId(params.agentId)}:${channel}:${accountId}:direct:${peerId}`;
     }
     if (dmScope === "per-channel-peer" && peerId) {
-      const channel = (params.channel ?? "").trim().toLowerCase() || "unknown";
+      const channel = normalizeLowercaseStringOrEmpty(params.channel) || "unknown";
       return `agent:${normalizeAgentId(params.agentId)}:${channel}:direct:${peerId}`;
     }
     if (dmScope === "per-peer" && peerId) {
@@ -168,7 +169,7 @@ export function buildAgentPeerSessionKey(params: {
       mainKey: params.mainKey,
     });
   }
-  const channel = (params.channel ?? "").trim().toLowerCase() || "unknown";
+  const channel = normalizeLowercaseStringOrEmpty(params.channel) || "unknown";
   const peerId = ((params.peerId ?? "").trim() || "unknown").toLowerCase();
   return `agent:${normalizeAgentId(params.agentId)}:${channel}:${peerKind}:${peerId}`;
 }
