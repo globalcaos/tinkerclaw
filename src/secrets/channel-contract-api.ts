@@ -80,8 +80,5 @@ export type BundledChannelSecurityContractApi = Pick<
 export function loadBundledChannelSecurityContractApi(
   channelId: string,
 ): BundledChannelSecurityContractApi | undefined {
-  return loadBundledChannelPublicArtifact(channelId, [
-    "security-contract-api.js",
-    "contract-api.js",
-  ]);
+  return loadBundledChannelPublicArtifact(channelId, ["security-contract-api.js"]);
 }
