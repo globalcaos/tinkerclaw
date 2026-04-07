@@ -44,6 +44,7 @@ export async function runQaLabSelfCheckCommand(opts: { output?: string }) {
 }
 
 export async function runQaSuiteCommand(opts: {
+  repoRoot?: string;
   outputDir?: string;
   providerMode?: "mock-openai" | "live-frontier";
   primaryModel?: string;
@@ -51,8 +52,10 @@ export async function runQaSuiteCommand(opts: {
   fastMode?: boolean;
   scenarioIds?: string[];
 }) {
+  const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
   const result = await runQaSuite({
-    outputDir: opts.outputDir ? path.resolve(opts.outputDir) : undefined,
+    repoRoot,
+    outputDir: opts.outputDir ? path.resolve(repoRoot, opts.outputDir) : undefined,
     providerMode: opts.providerMode,
     primaryModel: opts.primaryModel,
     alternateModel: opts.alternateModel,
@@ -65,6 +68,7 @@ export async function runQaSuiteCommand(opts: {
 }
 
 export async function runQaManualLaneCommand(opts: {
+  repoRoot?: string;
   providerMode?: "mock-openai" | "live-frontier";
   primaryModel?: string;
   alternateModel?: string;
@@ -72,9 +76,10 @@ export async function runQaManualLaneCommand(opts: {
   message: string;
   timeoutMs?: number;
 }) {
+  const repoRoot = path.resolve(opts.repoRoot ?? process.cwd());
   const model = opts.primaryModel?.trim() || "openai/gpt-5.4";
   const result = await runQaManualLane({
-    repoRoot: process.cwd(),
+    repoRoot,
     providerMode: opts.providerMode ?? "live-frontier",
     primaryModel: model,
     alternateModel: opts.alternateModel?.trim() || model,

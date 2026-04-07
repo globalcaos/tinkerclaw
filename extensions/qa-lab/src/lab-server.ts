@@ -161,14 +161,14 @@ function missingUiHtml() {
 </html>`;
 }
 
-function resolveUiDistDir(overrideDir?: string | null) {
+function resolveUiDistDir(overrideDir?: string | null, repoRoot = process.cwd()) {
   if (overrideDir?.trim()) {
     return overrideDir;
   }
   const candidates = [
+    path.resolve(repoRoot, "extensions/qa-lab/web/dist"),
+    path.resolve(repoRoot, "dist/extensions/qa-lab/web/dist"),
     fileURLToPath(new URL("../web/dist", import.meta.url)),
-    path.resolve(process.cwd(), "extensions/qa-lab/web/dist"),
-    path.resolve(process.cwd(), "dist/extensions/qa-lab/web/dist"),
   ];
   return (
     candidates.find((candidate) => {
@@ -387,8 +387,12 @@ function proxyUpgradeRequest(params: {
   params.socket.on("close", closeBoth);
 }
 
-function tryResolveUiAsset(pathname: string, overrideDir?: string | null): string | null {
-  const distDir = resolveUiDistDir(overrideDir);
+function tryResolveUiAsset(
+  pathname: string,
+  overrideDir?: string | null,
+  repoRoot = process.cwd(),
+): string | null {
+  const distDir = resolveUiDistDir(overrideDir, repoRoot);
   if (!fs.existsSync(distDir)) {
     return null;
   }
@@ -459,6 +463,7 @@ async function startQaGatewayLoop(params: { state: QaBusState; baseUrl: string }
 }
 
 export async function startQaLabServer(params?: {
+  repoRoot?: string;
   host?: string;
   port?: number;
   outputPath?: string;
@@ -472,6 +477,7 @@ export async function startQaLabServer(params?: {
   embeddedGateway?: string;
   sendKickoffOnStart?: boolean;
 }) {
+  const repoRoot = path.resolve(params?.repoRoot ?? process.cwd());
   const state = createQaBusState();
   let latestReport: QaLabLatestReport | null = null;
   let latestScenarioRun: QaLabScenarioRun | null = null;
@@ -513,7 +519,7 @@ export async function startQaLabServer(params?: {
     try {
       const { loadQaRunnerModelOptions } = await import("./model-catalog.runtime.js");
       runnerModelOptions = await loadQaRunnerModelOptions({
-        repoRoot: process.cwd(),
+        repoRoot,
       });
       runnerModelCatalogStatus = "ready";
     } catch {
@@ -736,7 +742,7 @@ export async function startQaLabServer(params?: {
         return;
       }
 
-      const asset = tryResolveUiAsset(url.pathname, params?.uiDistDir);
+      const asset = tryResolveUiAsset(url.pathname, params?.uiDistDir, repoRoot);
       if (!asset) {
         const html = missingUiHtml();
         res.writeHead(200, {
