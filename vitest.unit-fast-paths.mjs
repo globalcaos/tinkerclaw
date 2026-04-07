@@ -58,11 +58,9 @@ const broadUnitFastCandidateSkipGlobs = [
   "**/*.live.test.ts",
   "test/fixtures/**/*.test.ts",
   "test/setup-home-isolation.test.ts",
-  "src/config/schema.base.generated.test.ts",
   "src/gateway/**/*.test.ts",
   "src/security/**/*.test.ts",
   "src/secrets/**/*.test.ts",
-  "src/tasks/**/*.test.ts",
 ];
 
 const disqualifyingPatterns = [
