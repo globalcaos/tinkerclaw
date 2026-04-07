@@ -14,7 +14,7 @@ vi.mock("./reply/dispatch-from-config.js", () => ({
 }));
 
 vi.mock("./reply/inbound-context.js", () => ({
-  finalizeInboundContext: (...args: unknown[]) => hoisted.finalizeInboundContextMock(...args),
+  finalizeInboundContext: (ctx: unknown) => hoisted.finalizeInboundContextMock(ctx),
 }));
 
 vi.mock("./reply/reply-dispatcher.js", async () => {
