@@ -450,15 +450,17 @@ select {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
+  margin: 2px -4px -4px;
+  padding: 6px 4px 10px;
 }
 
 .scenario-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
-  border-radius: 6px;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
   cursor: pointer;
   transition: background 80ms ease;
   min-height: 0;
