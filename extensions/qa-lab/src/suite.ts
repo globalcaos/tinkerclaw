@@ -89,6 +89,15 @@ type QaDreamingStatus = {
   };
 };
 
+type QaRawSessionStoreEntry = {
+  sessionId?: string;
+  status?: string;
+  spawnedBy?: string;
+  label?: string;
+  abortedLastRun?: boolean;
+  updatedAt?: number;
+};
+
 function splitModelRef(ref: string) {
   const slash = ref.indexOf("/");
   if (slash <= 0 || slash === ref.length - 1) {
@@ -295,6 +304,10 @@ function isGatewayRestartRace(error: unknown) {
   );
 }
 
+function isConfigHashConflict(error: unknown) {
+  return formatErrorMessage(error).includes("config changed since last load");
+}
+
 async function readConfigSnapshot(env: QaSuiteEnvironment) {
   const snapshot = (await env.gateway.call(
     "config.get",
@@ -310,6 +323,50 @@ async function readConfigSnapshot(env: QaSuiteEnvironment) {
   } satisfies { hash: string; config: Record<string, unknown> };
 }
 
+async function runConfigMutation(params: {
+  env: QaSuiteEnvironment;
+  action: "config.patch" | "config.apply";
+  raw: string;
+  sessionKey?: string;
+  note?: string;
+  restartDelayMs?: number;
+}) {
+  const restartDelayMs = params.restartDelayMs ?? 1_000;
+  let lastConflict: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const snapshot = await readConfigSnapshot(params.env);
+    try {
+      const result = await params.env.gateway.call(
+        params.action,
+        {
+          raw: params.raw,
+          baseHash: snapshot.hash,
+          ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+          ...(params.note ? { note: params.note } : {}),
+          restartDelayMs,
+        },
+        { timeoutMs: 45_000 },
+      );
+      await waitForConfigRestartSettle(params.env, restartDelayMs);
+      return result;
+    } catch (error) {
+      if (isConfigHashConflict(error)) {
+        lastConflict = error;
+        await waitForGatewayHealthy(params.env, Math.max(15_000, restartDelayMs + 10_000)).catch(
+          () => undefined,
+        );
+        continue;
+      }
+      if (!isGatewayRestartRace(error)) {
+        throw error;
+      }
+      await waitForConfigRestartSettle(params.env, restartDelayMs);
+      return { ok: true, restarted: true };
+    }
+  }
+  throw lastConflict ?? new Error(`${params.action} failed after retrying config hash conflicts`);
+}
+
 async function patchConfig(params: {
   env: QaSuiteEnvironment;
   patch: Record<string, unknown>;
@@ -317,29 +374,14 @@ async function patchConfig(params: {
   note?: string;
   restartDelayMs?: number;
 }) {
-  const snapshot = await readConfigSnapshot(params.env);
-  const restartDelayMs = params.restartDelayMs ?? 1_000;
-  try {
-    const result = await params.env.gateway.call(
-      "config.patch",
-      {
-        raw: JSON.stringify(params.patch, null, 2),
-        baseHash: snapshot.hash,
-        ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-        ...(params.note ? { note: params.note } : {}),
-        restartDelayMs,
-      },
-      { timeoutMs: 45_000 },
-    );
-    await waitForConfigRestartSettle(params.env, restartDelayMs);
-    return result;
-  } catch (error) {
-    if (!isGatewayRestartRace(error)) {
-      throw error;
-    }
-    await waitForConfigRestartSettle(params.env, restartDelayMs);
-    return { ok: true, restarted: true };
-  }
+  return await runConfigMutation({
+    env: params.env,
+    action: "config.patch",
+    raw: JSON.stringify(params.patch, null, 2),
+    sessionKey: params.sessionKey,
+    note: params.note,
+    restartDelayMs: params.restartDelayMs,
+  });
 }
 
 async function applyConfig(params: {
@@ -349,29 +391,14 @@ async function applyConfig(params: {
   note?: string;
   restartDelayMs?: number;
 }) {
-  const snapshot = await readConfigSnapshot(params.env);
-  const restartDelayMs = params.restartDelayMs ?? 1_000;
-  try {
-    const result = await params.env.gateway.call(
-      "config.apply",
-      {
-        raw: JSON.stringify(params.nextConfig, null, 2),
-        baseHash: snapshot.hash,
-        ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-        ...(params.note ? { note: params.note } : {}),
-        restartDelayMs,
-      },
-      { timeoutMs: 45_000 },
-    );
-    await waitForConfigRestartSettle(params.env, restartDelayMs);
-    return result;
-  } catch (error) {
-    if (!isGatewayRestartRace(error)) {
-      throw error;
-    }
-    await waitForConfigRestartSettle(params.env, restartDelayMs);
-    return { ok: true, restarted: true };
-  }
+  return await runConfigMutation({
+    env: params.env,
+    action: "config.apply",
+    raw: JSON.stringify(params.nextConfig, null, 2),
+    sessionKey: params.sessionKey,
+    note: params.note,
+    restartDelayMs: params.restartDelayMs,
+  });
 }
 
 async function createSession(env: QaSuiteEnvironment, label: string, key?: string) {
@@ -430,6 +457,26 @@ async function readSkillStatus(env: QaSuiteEnvironment, agentId = "qa") {
   return payload.skills ?? [];
 }
 
+async function readRawQaSessionStore(env: QaSuiteEnvironment) {
+  const storePath = path.join(
+    env.gateway.tempRoot,
+    "state",
+    "agents",
+    "qa",
+    "sessions",
+    "sessions.json",
+  );
+  try {
+    const raw = await fs.readFile(storePath, "utf8");
+    return JSON.parse(raw) as Record<string, QaRawSessionStoreEntry>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
 async function runQaCli(
   env: QaSuiteEnvironment,
   args: string[],
@@ -474,6 +521,118 @@ async function runQaCli(
   return text ? (JSON.parse(text) as unknown) : {};
 }
 
+function extractMediaPathFromText(text: string | undefined): string | undefined {
+  return /MEDIA:([^\n]+)/.exec(text ?? "")?.[1]?.trim();
+}
+
+async function resolveGeneratedImagePath(params: {
+  env: QaSuiteEnvironment;
+  promptSnippet: string;
+  startedAtMs: number;
+  timeoutMs: number;
+}) {
+  return await waitForCondition(
+    async () => {
+      if (params.env.mock) {
+        const requests = await fetchJson<Array<{ allInputText?: string; toolOutput?: string }>>(
+          `${params.env.mock.baseUrl}/debug/requests`,
+        );
+        for (let index = requests.length - 1; index >= 0; index -= 1) {
+          const request = requests[index];
+          if (!String(request.allInputText ?? "").includes(params.promptSnippet)) {
+            continue;
+          }
+          const mediaPath = extractMediaPathFromText(request.toolOutput);
+          if (mediaPath) {
+            return mediaPath;
+          }
+        }
+      }
+
+      const mediaDir = path.join(params.env.gateway.tempRoot, "media", "tool-image-generation");
+      const entries = await fs.readdir(mediaDir).catch(() => []);
+      const candidates = await Promise.all(
+        entries.map(async (entry) => {
+          const fullPath = path.join(mediaDir, entry);
+          const stat = await fs.stat(fullPath).catch(() => null);
+          if (!stat?.isFile()) {
+            return null;
+          }
+          return {
+            fullPath,
+            mtimeMs: stat.mtimeMs,
+          };
+        }),
+      );
+      return candidates
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .filter((entry) => entry.mtimeMs >= params.startedAtMs - 1_000)
+        .toSorted((left, right) => right.mtimeMs - left.mtimeMs)
+        .at(0)?.fullPath;
+    },
+    params.timeoutMs,
+    250,
+  );
+}
+
+async function startAgentRun(
+  env: QaSuiteEnvironment,
+  params: {
+    sessionKey: string;
+    message: string;
+    to?: string;
+    threadId?: string;
+    provider?: string;
+    model?: string;
+    timeoutMs?: number;
+    attachments?: Array<{
+      mimeType: string;
+      fileName: string;
+      content: string;
+    }>;
+  },
+) {
+  const target = params.to ?? "dm:qa-operator";
+  const started = (await env.gateway.call(
+    "agent",
+    {
+      idempotencyKey: randomUUID(),
+      agentId: "qa",
+      sessionKey: params.sessionKey,
+      message: params.message,
+      deliver: true,
+      channel: "qa-channel",
+      to: target,
+      replyChannel: "qa-channel",
+      replyTo: target,
+      ...(params.threadId ? { threadId: params.threadId } : {}),
+      ...(params.provider ? { provider: params.provider } : {}),
+      ...(params.model ? { model: params.model } : {}),
+      ...(params.attachments ? { attachments: params.attachments } : {}),
+    },
+    {
+      timeoutMs: params.timeoutMs ?? 30_000,
+    },
+  )) as { runId?: string; status?: string };
+  if (!started.runId) {
+    throw new Error(`agent call did not return a runId: ${JSON.stringify(started)}`);
+  }
+  return started;
+}
+
+async function waitForAgentRun(env: QaSuiteEnvironment, runId: string, timeoutMs = 30_000) {
+  return (await env.gateway.call(
+    "agent.wait",
+    {
+      runId,
+      timeoutMs,
+    },
+    {
+      timeoutMs: timeoutMs + 5_000,
+    },
+  )) as { status?: string; error?: string };
+}
+
 async function listCronJobs(env: QaSuiteEnvironment) {
   const payload = (await env.gateway.call(
     "cron.list",
@@ -511,14 +670,22 @@ async function forceMemoryIndex(params: {
   await runQaCli(params.env, ["memory", "index", "--agent", "qa", "--force"], {
     timeoutMs: liveTurnTimeoutMs(params.env, 60_000),
   });
-  const payload = (await runQaCli(
-    params.env,
-    ["memory", "search", "--agent", "qa", "--json", "--query", params.query],
-    {
-      timeoutMs: liveTurnTimeoutMs(params.env, 60_000),
-      json: true,
+  const payload = await waitForCondition(
+    async () => {
+      const result = (await runQaCli(
+        params.env,
+        ["memory", "search", "--agent", "qa", "--json", "--query", params.query],
+        {
+          timeoutMs: liveTurnTimeoutMs(params.env, 60_000),
+          json: true,
+        },
+      )) as { results?: Array<{ snippet?: string; text?: string; path?: string }> };
+      const haystack = JSON.stringify(result.results ?? []);
+      return haystack.includes(params.expectedNeedle) ? result : undefined;
     },
-  )) as { results?: Array<{ snippet?: string; text?: string; path?: string }> };
+    liveTurnTimeoutMs(params.env, 20_000),
+    500,
+  );
   const haystack = JSON.stringify(payload.results ?? []);
   if (!haystack.includes(params.expectedNeedle)) {
     throw new Error(`memory index missing expected fact after reindex: ${haystack}`);
@@ -591,41 +758,8 @@ async function runAgentPrompt(
     }>;
   },
 ) {
-  const target = params.to ?? "dm:qa-operator";
-  const started = (await env.gateway.call(
-    "agent",
-    {
-      idempotencyKey: randomUUID(),
-      agentId: "qa",
-      sessionKey: params.sessionKey,
-      message: params.message,
-      deliver: true,
-      channel: "qa-channel",
-      to: target,
-      replyChannel: "qa-channel",
-      replyTo: target,
-      ...(params.threadId ? { threadId: params.threadId } : {}),
-      ...(params.provider ? { provider: params.provider } : {}),
-      ...(params.model ? { model: params.model } : {}),
-      ...(params.attachments ? { attachments: params.attachments } : {}),
-    },
-    {
-      timeoutMs: params.timeoutMs ?? 30_000,
-    },
-  )) as { runId?: string; status?: string };
-  if (!started.runId) {
-    throw new Error(`agent call did not return a runId: ${JSON.stringify(started)}`);
-  }
-  const waited = (await env.gateway.call(
-    "agent.wait",
-    {
-      runId: started.runId,
-      timeoutMs: params.timeoutMs ?? 30_000,
-    },
-    {
-      timeoutMs: (params.timeoutMs ?? 30_000) + 5_000,
-    },
-  )) as { status?: string; error?: string };
+  const started = await startAgentRun(env, params);
+  const waited = await waitForAgentRun(env, started.runId!, params.timeoutMs ?? 30_000);
   if (waited.status !== "ok") {
     throw new Error(
       `agent.wait returned ${String(waited.status ?? "unknown")}: ${waited.error ?? "no error"}`,
@@ -635,6 +769,69 @@ async function runAgentPrompt(
     started,
     waited,
   };
+}
+
+async function ensureImageGenerationConfigured(env: QaSuiteEnvironment) {
+  const imageModelRef = "openai/gpt-image-1";
+  await patchConfig({
+    env,
+    patch:
+      env.providerMode === "mock-openai"
+        ? {
+            plugins: {
+              allow: ["memory-core", "openai", "qa-channel"],
+              entries: {
+                openai: {
+                  enabled: true,
+                },
+              },
+            },
+            models: {
+              providers: {
+                openai: {
+                  baseUrl: `${env.mock?.baseUrl}/v1`,
+                  apiKey: "test",
+                  api: "openai-responses",
+                  models: [
+                    {
+                      id: "gpt-image-1",
+                      name: "gpt-image-1",
+                      api: "openai-responses",
+                      reasoning: false,
+                      input: ["text"],
+                      cost: {
+                        input: 0,
+                        output: 0,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                      },
+                      contextWindow: 128_000,
+                      maxTokens: 4096,
+                    },
+                  ],
+                },
+              },
+            },
+            agents: {
+              defaults: {
+                imageGenerationModel: {
+                  primary: imageModelRef,
+                },
+              },
+            },
+          }
+        : {
+            agents: {
+              defaults: {
+                imageGenerationModel: {
+                  primary: imageModelRef,
+                },
+              },
+            },
+          },
+  });
+  await waitForGatewayHealthy(env);
+  await waitForQaChannelReady(env, 60_000);
 }
 
 type QaActionName = "delete" | "edit" | "react" | "thread-create";
@@ -1125,6 +1322,49 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
         ]),
     ],
     [
+      "subagent-fanout-synthesis",
+      async () =>
+        await runScenario("Subagent fanout synthesis", [
+          {
+            name: "spawns sequential workers and folds both results back into the parent reply",
+            run: async () => {
+              await waitForGatewayHealthy(env, 60_000);
+              await waitForQaChannelReady(env, 60_000);
+              await reset();
+              state.addInboundMessage({
+                conversation: { id: "qa-operator", kind: "direct", title: "QA Operator" },
+                senderId: "qa-operator",
+                senderName: "QA Operator",
+                text: "Subagent fanout synthesis check: delegate two bounded subagents sequentially, then report both results together. Do not use ACP.",
+              });
+              const outbound = await waitForOutboundMessage(
+                state,
+                (message) => {
+                  const text = message.text ?? "";
+                  return text.includes("ALPHA-OK") && text.includes("BETA-OK");
+                },
+                liveTurnTimeoutMs(env, 60_000),
+              );
+              if (!env.mock) {
+                return outbound.text;
+              }
+              const store = await readRawQaSessionStore(env);
+              const childRows = Object.values(store).filter(
+                (entry) => entry.spawnedBy === "agent:qa:main",
+              );
+              const sawAlpha = childRows.some((entry) => entry.label === "qa-fanout-alpha");
+              const sawBeta = childRows.some((entry) => entry.label === "qa-fanout-beta");
+              if (!sawAlpha || !sawBeta) {
+                throw new Error(
+                  `fanout child sessions missing (alpha=${String(sawAlpha)} beta=${String(sawBeta)})`,
+                );
+              }
+              return outbound.text;
+            },
+          },
+        ]),
+    ],
+    [
       "thread-follow-up",
       async () =>
         await runScenario("Threaded follow-up", [
@@ -1566,6 +1806,12 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                 if (tools.has("memory_search") || tools.has("memory_get")) {
                   throw new Error("memory tools still present after deny patch");
                 }
+                await runQaCli(env, ["memory", "index", "--agent", "qa", "--force"], {
+                  timeoutMs: liveTurnTimeoutMs(env, 60_000),
+                });
+                await env.gateway.restart();
+                await waitForGatewayHealthy(env, 60_000);
+                await waitForQaChannelReady(env, 60_000);
                 await reset();
                 await runAgentPrompt(env, {
                   sessionKey: "agent:qa:memory-failure",
@@ -1598,6 +1844,232 @@ function buildScenarioMap(env: QaSuiteEnvironment) {
                 await waitForGatewayHealthy(env);
                 await waitForQaChannelReady(env, 60_000);
               }
+            },
+          },
+        ]),
+    ],
+    [
+      "session-memory-ranking",
+      async () =>
+        await runScenario("Session memory ranking", [
+          {
+            name: "prefers the newer transcript-backed fact over the stale durable note",
+            run: async () => {
+              const original = await readConfigSnapshot(env);
+              const originalMemorySearch =
+                original.config.agents &&
+                typeof original.config.agents === "object" &&
+                typeof (original.config.agents as Record<string, unknown>).defaults === "object"
+                  ? (
+                      (original.config.agents as Record<string, unknown>).defaults as Record<
+                        string,
+                        unknown
+                      >
+                    ).memorySearch
+                  : undefined;
+              await patchConfig({
+                env,
+                patch: {
+                  agents: {
+                    defaults: {
+                      memorySearch: {
+                        sources: ["memory", "sessions"],
+                        experimental: {
+                          sessionMemory: true,
+                        },
+                        query: {
+                          minScore: 0,
+                          hybrid: {
+                            enabled: true,
+                            temporalDecay: {
+                              enabled: true,
+                              halfLifeDays: 1,
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              });
+              await waitForGatewayHealthy(env);
+              await waitForQaChannelReady(env, 60_000);
+              try {
+                const memoryPath = path.join(env.gateway.workspaceDir, "MEMORY.md");
+                await fs.writeFile(memoryPath, "Project Nebula stale codename: ORBIT-9.\n", "utf8");
+                const staleAt = new Date("2020-01-01T00:00:00.000Z");
+                await fs.utimes(memoryPath, staleAt, staleAt);
+                const transcriptsDir = resolveSessionTranscriptsDirForAgent(
+                  "qa",
+                  env.gateway.runtimeEnv,
+                  () => env.gateway.runtimeEnv.HOME ?? path.join(env.gateway.tempRoot, "home"),
+                );
+                await fs.mkdir(transcriptsDir, { recursive: true });
+                const transcriptPath = path.join(transcriptsDir, "qa-session-memory-ranking.jsonl");
+                const now = Date.now();
+                await fs.writeFile(
+                  transcriptPath,
+                  [
+                    JSON.stringify({
+                      type: "session",
+                      id: "qa-session-memory-ranking",
+                      timestamp: new Date(now - 120_000).toISOString(),
+                    }),
+                    JSON.stringify({
+                      type: "message",
+                      message: {
+                        role: "user",
+                        timestamp: new Date(now - 90_000).toISOString(),
+                        content: [
+                          {
+                            type: "text",
+                            text: "What is the current Project Nebula codename?",
+                          },
+                        ],
+                      },
+                    }),
+                    JSON.stringify({
+                      type: "message",
+                      message: {
+                        role: "assistant",
+                        timestamp: new Date(now - 60_000).toISOString(),
+                        content: [
+                          {
+                            type: "text",
+                            text: "The current Project Nebula codename is ORBIT-10.",
+                          },
+                        ],
+                      },
+                    }),
+                  ].join("\n") + "\n",
+                  "utf8",
+                );
+                await forceMemoryIndex({
+                  env,
+                  query: "current Project Nebula codename ORBIT-10",
+                  expectedNeedle: "ORBIT-10",
+                });
+                await reset();
+                await runAgentPrompt(env, {
+                  sessionKey: "agent:qa:session-memory-ranking",
+                  message:
+                    "Session memory ranking check: what is the current Project Nebula codename? Use memory tools first.",
+                  timeoutMs: liveTurnTimeoutMs(env, 45_000),
+                });
+                const outbound = await waitForOutboundMessage(
+                  state,
+                  (candidate) =>
+                    candidate.conversation.id === "qa-operator" &&
+                    candidate.text.includes("ORBIT-10"),
+                  liveTurnTimeoutMs(env, 45_000),
+                );
+                if (outbound.text.includes("ORBIT-9")) {
+                  throw new Error(`stale durable fact leaked through: ${outbound.text}`);
+                }
+                if (env.mock) {
+                  const requests = await fetchJson<
+                    Array<{ allInputText?: string; plannedToolName?: string }>
+                  >(`${env.mock.baseUrl}/debug/requests`);
+                  const relevant = requests.filter((request) =>
+                    String(request.allInputText ?? "").includes("Session memory ranking check"),
+                  );
+                  if (!relevant.some((request) => request.plannedToolName === "memory_search")) {
+                    throw new Error("expected memory_search in session memory ranking flow");
+                  }
+                }
+                return outbound.text;
+              } finally {
+                await patchConfig({
+                  env,
+                  patch: {
+                    agents: {
+                      defaults: {
+                        memorySearch:
+                          originalMemorySearch === undefined
+                            ? null
+                            : structuredClone(originalMemorySearch),
+                      },
+                    },
+                  },
+                });
+                await waitForGatewayHealthy(env);
+                await waitForQaChannelReady(env, 60_000);
+              }
+            },
+          },
+        ]),
+    ],
+    [
+      "thread-memory-isolation",
+      async () =>
+        await runScenario("Thread memory isolation", [
+          {
+            name: "answers the memory-backed fact inside the thread only",
+            run: async () => {
+              await reset();
+              await fs.writeFile(
+                path.join(env.gateway.workspaceDir, "MEMORY.md"),
+                "Thread-hidden codename: ORBIT-22.\n",
+                "utf8",
+              );
+              await forceMemoryIndex({
+                env,
+                query: "hidden thread codename ORBIT-22",
+                expectedNeedle: "ORBIT-22",
+              });
+              const threadPayload = (await handleQaAction({
+                env,
+                action: "thread-create",
+                args: {
+                  channelId: "qa-room",
+                  title: "Thread memory QA",
+                },
+              })) as { thread?: { id?: string } } | undefined;
+              const threadId = threadPayload?.thread?.id;
+              if (!threadId) {
+                throw new Error("missing thread id for memory isolation check");
+              }
+              const beforeCursor = state.getSnapshot().messages.length;
+              state.addInboundMessage({
+                conversation: { id: "qa-room", kind: "channel", title: "QA Room" },
+                senderId: "alice",
+                senderName: "Alice",
+                text: "@openclaw Thread memory check: what is the hidden thread codename stored only in memory? Use memory tools first and reply only in this thread.",
+                threadId,
+                threadTitle: "Thread memory QA",
+              });
+              const outbound = await waitForOutboundMessage(
+                state,
+                (candidate) =>
+                  candidate.conversation.id === "qa-room" &&
+                  candidate.threadId === threadId &&
+                  candidate.text.includes("ORBIT-22"),
+                liveTurnTimeoutMs(env, 45_000),
+              );
+              const leaked = state
+                .getSnapshot()
+                .messages.slice(beforeCursor)
+                .some(
+                  (candidate) =>
+                    candidate.direction === "outbound" &&
+                    candidate.conversation.id === "qa-room" &&
+                    !candidate.threadId,
+                );
+              if (leaked) {
+                throw new Error("threaded memory answer leaked into root channel");
+              }
+              if (env.mock) {
+                const requests = await fetchJson<
+                  Array<{ allInputText?: string; plannedToolName?: string }>
+                >(`${env.mock.baseUrl}/debug/requests`);
+                const relevant = requests.filter((request) =>
+                  String(request.allInputText ?? "").includes("Thread memory check"),
+                );
+                if (!relevant.some((request) => request.plannedToolName === "memory_search")) {
+                  throw new Error("expected memory_search in thread memory flow");
+                }
+              }
+              return outbound.text;
             },
           },
         ]),
@@ -1790,65 +2262,7 @@ When the user asks for the hot install marker exactly, reply with exactly: HOT-I
           {
             name: "enables image_generate and saves a real media artifact",
             run: async () => {
-              const imageModelRef = "openai/gpt-image-1";
-              await patchConfig({
-                env,
-                patch:
-                  env.providerMode === "mock-openai"
-                    ? {
-                        plugins: {
-                          allow: ["memory-core", "openai", "qa-channel"],
-                          entries: {
-                            openai: {
-                              enabled: true,
-                            },
-                          },
-                        },
-                        models: {
-                          providers: {
-                            openai: {
-                              baseUrl: `${env.mock?.baseUrl}/v1`,
-                              apiKey: "test",
-                              api: "openai-responses",
-                              models: [
-                                {
-                                  id: "gpt-image-1",
-                                  name: "gpt-image-1",
-                                  api: "openai-responses",
-                                  reasoning: false,
-                                  input: ["text"],
-                                  cost: {
-                                    input: 0,
-                                    output: 0,
-                                    cacheRead: 0,
-                                    cacheWrite: 0,
-                                  },
-                                  contextWindow: 128_000,
-                                  maxTokens: 4096,
-                                },
-                              ],
-                            },
-                          },
-                        },
-                        agents: {
-                          defaults: {
-                            imageGenerationModel: {
-                              primary: "openai/gpt-image-1",
-                            },
-                          },
-                        },
-                      }
-                    : {
-                        agents: {
-                          defaults: {
-                            imageGenerationModel: {
-                              primary: imageModelRef,
-                            },
-                          },
-                        },
-                      },
-              });
-              await waitForGatewayHealthy(env);
+              await ensureImageGenerationConfigured(env);
               const sessionKey = await createSession(env, "Image generation");
               const tools = await readEffectiveTools(env, sessionKey);
               if (!tools.has("image_generate")) {
@@ -1900,6 +2314,81 @@ When the user asks for the hot install marker exactly, reply with exactly: HOT-I
                 return `${outbound.text}\nIMAGE_PROMPT:${generated.prompt ?? ""}`;
               }
               return outbound.text;
+            },
+          },
+        ]),
+    ],
+    [
+      "image-generation-roundtrip",
+      async () =>
+        await runScenario("Image generation roundtrip", [
+          {
+            name: "reattaches the generated media artifact on the follow-up turn",
+            run: async () => {
+              await ensureImageGenerationConfigured(env);
+              const sessionKey = "agent:qa:image-roundtrip";
+              await createSession(env, "Image roundtrip", sessionKey);
+              await reset();
+              const generatedStartedAtMs = Date.now();
+              await runAgentPrompt(env, {
+                sessionKey,
+                message:
+                  "Image generation check: generate a QA lighthouse image and summarize it in one short sentence.",
+                timeoutMs: liveTurnTimeoutMs(env, 45_000),
+              });
+              const mediaPath = await resolveGeneratedImagePath({
+                env,
+                promptSnippet: "Image generation check",
+                startedAtMs: generatedStartedAtMs,
+                timeoutMs: liveTurnTimeoutMs(env, 45_000),
+              });
+              const imageBuffer = await fs.readFile(mediaPath);
+              await runAgentPrompt(env, {
+                sessionKey,
+                message:
+                  "Roundtrip image inspection check: describe the generated lighthouse attachment in one short sentence.",
+                attachments: [
+                  {
+                    mimeType: "image/png",
+                    fileName: path.basename(mediaPath),
+                    content: imageBuffer.toString("base64"),
+                  },
+                ],
+                timeoutMs: liveTurnTimeoutMs(env, 45_000),
+              });
+              const outbound = await waitForCondition(
+                () =>
+                  state
+                    .getSnapshot()
+                    .messages.filter(
+                      (candidate) =>
+                        candidate.direction === "outbound" &&
+                        candidate.conversation.id === "qa-operator" &&
+                        candidate.text.toLowerCase().includes("lighthouse"),
+                    )
+                    .at(-1),
+                liveTurnTimeoutMs(env, 45_000),
+              );
+              if (env.mock) {
+                const requests = await fetchJson<
+                  Array<{ prompt?: string; imageInputCount?: number; plannedToolName?: string }>
+                >(`${env.mock.baseUrl}/debug/requests`);
+                const generatedCall = requests.find(
+                  (request) =>
+                    request.plannedToolName === "image_generate" &&
+                    String(request.prompt ?? "").includes("Image generation check"),
+                );
+                const inspectionCall = requests.find((request) =>
+                  String(request.prompt ?? "").includes("Roundtrip image inspection check"),
+                );
+                if (!generatedCall) {
+                  throw new Error("expected image_generate call before roundtrip inspection");
+                }
+                if ((inspectionCall?.imageInputCount ?? 0) < 1) {
+                  throw new Error("expected generated artifact to be reattached on follow-up turn");
+                }
+              }
+              return `MEDIA:${mediaPath}\n${outbound.text}`;
             },
           },
         ]),
@@ -2097,6 +2586,111 @@ When the user asks for the hot disable marker exactly, reply with exactly: HOT-P
                 );
               });
               return `${outbound.conversation.id}: ${outbound.text}`;
+            },
+          },
+        ]),
+    ],
+    [
+      "config-restart-capability-flip",
+      async () =>
+        await runScenario("Config restart capability flip", [
+          {
+            name: "restores image_generate after restart and uses it in the same session",
+            run: async () => {
+              await ensureImageGenerationConfigured(env);
+              const original = await readConfigSnapshot(env);
+              const originalTools =
+                original.config.tools && typeof original.config.tools === "object"
+                  ? (original.config.tools as Record<string, unknown>)
+                  : null;
+              const originalToolsDeny = originalTools
+                ? Object.prototype.hasOwnProperty.call(originalTools, "deny")
+                  ? structuredClone(originalTools.deny)
+                  : undefined
+                : undefined;
+              const denied = Array.isArray(originalToolsDeny)
+                ? originalToolsDeny.map((entry) => String(entry))
+                : [];
+              const deniedWithImage = denied.includes("image_generate")
+                ? denied
+                : [...denied, "image_generate"];
+              const sessionKey = "agent:qa:capability-flip";
+              await createSession(env, "Capability flip", sessionKey);
+              try {
+                await patchConfig({
+                  env,
+                  patch: {
+                    tools: {
+                      deny: deniedWithImage,
+                    },
+                  },
+                });
+                await waitForGatewayHealthy(env);
+                await waitForQaChannelReady(env, 60_000);
+                await runAgentPrompt(env, {
+                  sessionKey,
+                  message:
+                    "Capability flip setup: acknowledge this setup so restart wake-up has a route.",
+                  timeoutMs: liveTurnTimeoutMs(env, 30_000),
+                });
+                const beforeTools = await readEffectiveTools(env, sessionKey);
+                if (beforeTools.has("image_generate")) {
+                  throw new Error("image_generate still present before capability flip");
+                }
+                const wakeMarker = `QA-CAPABILITY-${randomUUID().slice(0, 8)}`;
+                await patchConfig({
+                  env,
+                  patch: {
+                    tools: {
+                      deny: originalToolsDeny === undefined ? null : originalToolsDeny,
+                    },
+                    agents: {
+                      defaults: {
+                        imageGenerationModel: {
+                          primary: "openai/gpt-image-1",
+                        },
+                      },
+                    },
+                  },
+                  sessionKey,
+                  note: wakeMarker,
+                });
+                await waitForGatewayHealthy(env, 60_000);
+                await waitForQaChannelReady(env, 60_000);
+                const afterTools = await waitForCondition(
+                  async () => {
+                    const tools = await readEffectiveTools(env, sessionKey);
+                    return tools.has("image_generate") ? tools : undefined;
+                  },
+                  liveTurnTimeoutMs(env, 45_000),
+                  500,
+                );
+                const imageStartedAtMs = Date.now();
+                await runAgentPrompt(env, {
+                  sessionKey,
+                  message:
+                    "Capability flip image check: generate a QA lighthouse image now and keep the media path in the reply.",
+                  timeoutMs: liveTurnTimeoutMs(env, 45_000),
+                });
+                const mediaPath = await resolveGeneratedImagePath({
+                  env,
+                  promptSnippet: "Capability flip image check",
+                  startedAtMs: imageStartedAtMs,
+                  timeoutMs: liveTurnTimeoutMs(env, 45_000),
+                });
+                return `${wakeMarker}\nimage_generate=${String(afterTools.has("image_generate"))}\nMEDIA:${mediaPath}`;
+              } finally {
+                await patchConfig({
+                  env,
+                  patch: {
+                    tools: {
+                      deny: originalToolsDeny === undefined ? null : originalToolsDeny,
+                    },
+                  },
+                });
+                await waitForGatewayHealthy(env);
+                await waitForQaChannelReady(env, 60_000);
+              }
             },
           },
         ]),

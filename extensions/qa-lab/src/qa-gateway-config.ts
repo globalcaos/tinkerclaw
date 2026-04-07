@@ -249,6 +249,11 @@ export function buildQaGatewayConfig(params: {
         mode: "token",
         token: params.gatewayToken,
       },
+      reload: {
+        // QA restart scenarios need deterministic reload timing instead of the
+        // much longer production deferral window.
+        deferralTimeoutMs: 1_000,
+      },
       controlUi: {
         enabled: params.controlUiEnabled ?? true,
         ...((params.controlUiEnabled ?? true) && params.controlUiRoot
