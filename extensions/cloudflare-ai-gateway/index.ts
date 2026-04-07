@@ -7,7 +7,6 @@ import {
   listProfilesForProvider,
   normalizeApiKeyInput,
   normalizeOptionalSecretInput,
-  type SecretInput,
   upsertAuthProfile,
   validateApiKeyInput,
 } from "openclaw/plugin-sdk/provider-auth";
@@ -83,7 +82,7 @@ export default definePluginEntry({
               gatewayId: normalizeOptionalSecretInput(ctx.opts?.cloudflareAiGatewayGatewayId),
               prompter: ctx.prompter,
             });
-            let capturedSecretInput: SecretInput | undefined;
+            let capturedSecretInput: Parameters<typeof buildApiKeyCredential>[1] = "";
             let capturedCredential = false;
             let capturedMode: "plaintext" | "ref" | undefined;
             await ensureApiKeyFromOptionEnvOrPrompt({
