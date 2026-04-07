@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import {
+  formatErrorMessage,
   formatThreadBindingDurationLabel,
   registerSessionBindingAdapter,
   resolveThreadBindingConversationIdFromBindingId,
@@ -607,7 +608,7 @@ export function createTelegramThreadBindingManager(
           conversationId = `${result.chatId}:topic:${result.topicId}`;
         } catch (err) {
           logVerbose(
-            `telegram: child thread-binding failed for ${chatId}: ${err instanceof Error ? err.message : String(err)}`,
+            `telegram: child thread-binding failed for ${chatId}: ${formatErrorMessage(err)}`,
           );
           return null;
         }
