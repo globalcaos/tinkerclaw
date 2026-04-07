@@ -289,20 +289,22 @@ function resolveGatewayCallTimeout(timeoutValue: unknown): {
 }
 
 function resolveGatewayCallContext(opts: CallGatewayBaseOptions): ResolvedGatewayCallContext {
-  const config = opts.config ?? loadGatewayConfig();
-  const configPath = opts.configPath ?? resolveGatewayConfigPath(process.env);
-  const isRemoteMode = config.gateway?.mode === "remote";
-  const remote = isRemoteMode
-    ? (config.gateway?.remote as GatewayRemoteSettings | undefined)
-    : undefined;
   const cliUrlOverride = trimToUndefined(opts.url);
+  const explicitAuth = resolveExplicitGatewayAuth({ token: opts.token, password: opts.password });
   const envUrlOverride = cliUrlOverride
     ? undefined
     : trimToUndefined(process.env.OPENCLAW_GATEWAY_URL);
   const urlOverride = cliUrlOverride ?? envUrlOverride;
   const urlOverrideSource = cliUrlOverride ? "cli" : envUrlOverride ? "env" : undefined;
+  const canSkipConfigLoad =
+    !opts.config && urlOverride && (explicitAuth.token || explicitAuth.password);
+  const config = opts.config ?? (canSkipConfigLoad ? ({} as OpenClawConfig) : loadGatewayConfig());
+  const configPath = opts.configPath ?? resolveGatewayConfigPath(process.env);
+  const isRemoteMode = config.gateway?.mode === "remote";
+  const remote = isRemoteMode
+    ? (config.gateway?.remote as GatewayRemoteSettings | undefined)
+    : undefined;
   const remoteUrl = trimToUndefined(remote?.url);
-  const explicitAuth = resolveExplicitGatewayAuth({ token: opts.token, password: opts.password });
   return {
     config,
     configPath,

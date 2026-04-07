@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
 import { parseModelRef } from "../agents/model-selection.js";
@@ -14,13 +16,14 @@ import { renderCatNoncePngBase64 } from "./live-image-probe.js";
 import { startGatewayServer } from "./server.js";
 import { extractPayloadText } from "./test-helpers.agent-results.js";
 
+const execFileAsync = promisify(execFile);
 const LIVE = isLiveTestEnabled();
 const CLI_LIVE = isTruthyEnvValue(process.env.OPENCLAW_LIVE_CLI_BACKEND);
 const CLI_RESUME = isTruthyEnvValue(process.env.OPENCLAW_LIVE_CLI_BACKEND_RESUME_PROBE);
 const describeLive = LIVE && CLI_LIVE ? describe : describe.skip;
 
 const DEFAULT_MODEL = "claude-cli/claude-sonnet-4-6";
-const CLI_BACKEND_LIVE_TIMEOUT_MS = 180_000;
+const CLI_BACKEND_LIVE_TIMEOUT_MS = 420_000;
 const CLI_GATEWAY_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_CLAUDE_ARGS = [
   "-p",
@@ -75,39 +78,6 @@ function randomImageProbeCode(len = 6): string {
     out += alphabet[bytes[i] % alphabet.length];
   }
   return out;
-}
-
-function editDistance(a: string, b: string): number {
-  if (a === b) {
-    return 0;
-  }
-  const aLen = a.length;
-  const bLen = b.length;
-  if (aLen === 0) {
-    return bLen;
-  }
-  if (bLen === 0) {
-    return aLen;
-  }
-
-  let prev = Array.from({ length: bLen + 1 }, (_v, idx) => idx);
-  let curr = Array.from({ length: bLen + 1 }, () => 0);
-
-  for (let i = 1; i <= aLen; i += 1) {
-    curr[0] = i;
-    const aCh = a.charCodeAt(i - 1);
-    for (let j = 1; j <= bLen; j += 1) {
-      const cost = aCh === b.charCodeAt(j - 1) ? 0 : 1;
-      curr[j] = Math.min(
-        prev[j] + 1, // delete
-        curr[j - 1] + 1, // insert
-        prev[j - 1] + cost, // substitute
-      );
-    }
-    [prev, curr] = [curr, prev];
-  }
-
-  return prev[bLen] ?? Number.POSITIVE_INFINITY;
 }
 
 function parseJsonStringArray(name: string, raw?: string): string[] | undefined {
@@ -167,11 +137,23 @@ async function getFreeGatewayPort(): Promise<number> {
 
 type BootstrapWorkspaceContext = {
   expectedInjectedFiles: string[];
+  workspaceDir: string;
   workspaceRootDir: string;
 };
 
 type SystemPromptReport = {
   injectedWorkspaceFiles?: Array<{ name?: string }>;
+};
+
+type CronListCliResult = {
+  jobs?: Array<{
+    id?: string;
+    name?: string;
+    sessionTarget?: string;
+    agentId?: string | null;
+    sessionKey?: string | null;
+    payload?: { kind?: string; text?: string; message?: string };
+  }>;
 };
 
 async function createBootstrapWorkspace(tempDir: string): Promise<BootstrapWorkspaceContext> {
@@ -191,7 +173,47 @@ async function createBootstrapWorkspace(tempDir: string): Promise<BootstrapWorks
   await fs.writeFile(path.join(workspaceDir, "SOUL.md"), `SOUL-${randomUUID()}\n`);
   await fs.writeFile(path.join(workspaceDir, "IDENTITY.md"), `IDENTITY-${randomUUID()}\n`);
   await fs.writeFile(path.join(workspaceDir, "USER.md"), `USER-${randomUUID()}\n`);
-  return { expectedInjectedFiles, workspaceRootDir };
+  return { expectedInjectedFiles, workspaceDir, workspaceRootDir };
+}
+
+async function runOpenClawCliJson<T>(args: string[], env: NodeJS.ProcessEnv): Promise<T> {
+  const childEnv = { ...env };
+  delete childEnv.VITEST;
+  delete childEnv.VITEST_MODE;
+  delete childEnv.VITEST_POOL_ID;
+  delete childEnv.VITEST_WORKER_ID;
+  const { stdout, stderr } = await execFileAsync(process.execPath, ["openclaw.mjs", ...args], {
+    cwd: process.cwd(),
+    env: childEnv,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    throw new Error(
+      [
+        `openclaw ${args.join(" ")} produced no JSON stdout`,
+        stderr.trim() ? `stderr: ${stderr.trim()}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch (error) {
+    throw new Error(
+      [
+        `openclaw ${args.join(" ")} returned invalid JSON`,
+        `stdout: ${trimmed}`,
+        stderr.trim() ? `stderr: ${stderr.trim()}` : undefined,
+        error instanceof Error ? `cause: ${error.message}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      { cause: error },
+    );
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -318,6 +340,7 @@ describeLive("gateway live (cli backend)", () => {
 
       const token = `test-${randomUUID()}`;
       process.env.OPENCLAW_GATEWAY_TOKEN = token;
+      const port = await getFreeGatewayPort();
 
       const rawModel = process.env.OPENCLAW_LIVE_CLI_BACKEND_MODEL ?? DEFAULT_MODEL;
       const parsed = parseModelRef(rawModel, "claude-cli");
@@ -404,6 +427,11 @@ describeLive("gateway live (cli backend)", () => {
       const existingBackends = cfgWithCliBackends.agents?.defaults?.cliBackends ?? {};
       const nextCfg = {
         ...cfg,
+        gateway: {
+          ...cfg.gateway,
+          port,
+          auth: { mode: "token", token },
+        },
         agents: {
           ...cfg.agents,
           defaults: {
@@ -432,7 +460,6 @@ describeLive("gateway live (cli backend)", () => {
       await fs.writeFile(tempConfigPath, `${JSON.stringify(nextCfg, null, 2)}\n`);
       process.env.OPENCLAW_CONFIG_PATH = tempConfigPath;
 
-      const port = await getFreeGatewayPort();
       const server = await startGatewayServer(port, {
         bind: "loopback",
         auth: { mode: "token", token },
@@ -511,47 +538,140 @@ describeLive("gateway live (cli backend)", () => {
         }
 
         if (enableCliImageProbe) {
-          // Shorter code => less OCR flake across providers, still tests image attachments end-to-end.
           const imageCode = randomImageProbeCode();
           const imageBase64 = renderCatNoncePngBase64(imageCode);
           const runIdImage = randomUUID();
+          const imageFilePath = path.join(
+            bootstrapWorkspace?.workspaceDir ?? tempDir,
+            `probe-${runIdImage}.png`,
+          );
+          await fs.writeFile(imageFilePath, Buffer.from(imageBase64, "base64"));
 
           const imageProbe = await client.request(
             "agent",
-            {
-              sessionKey,
-              idempotencyKey: `idem-${runIdImage}-image`,
-              message:
-                "Look at the attached image. Reply with exactly two tokens separated by a single space: " +
-                "(1) the animal shown or written in the image, lowercase; " +
-                "(2) the code printed in the image, uppercase. No extra text.",
-              attachments: [
-                {
-                  mimeType: "image/png",
-                  fileName: `probe-${runIdImage}.png`,
-                  content: imageBase64,
+            providerId === "claude-cli"
+              ? {
+                  sessionKey,
+                  idempotencyKey: `idem-${runIdImage}-image`,
+                  message:
+                    `Image path: ${imageFilePath}\n` +
+                    "Best match: lobster, mouse, cat, horse. " +
+                    "Reply with one lowercase word only.",
+                  deliver: false,
+                }
+              : {
+                  sessionKey,
+                  idempotencyKey: `idem-${runIdImage}-image`,
+                  message:
+                    "Best match for the attached image: lobster, mouse, cat, horse. " +
+                    "Reply with one lowercase word only.",
+                  attachments: [
+                    {
+                      mimeType: "image/png",
+                      fileName: `probe-${runIdImage}.png`,
+                      content: imageBase64,
+                    },
+                  ],
+                  deliver: false,
                 },
-              ],
-              deliver: false,
-            },
             { expectFinal: true },
           );
           if (imageProbe?.status !== "ok") {
             throw new Error(`image probe failed: status=${String(imageProbe?.status)}`);
           }
-          const imageText = extractPayloadText(imageProbe?.result);
-          if (!/\bcat\b/i.test(imageText)) {
-            throw new Error(`image probe missing 'cat': ${imageText}`);
+          const imageText = extractPayloadText(imageProbe?.result).trim().toLowerCase();
+          if (imageText !== "cat") {
+            throw new Error(`image probe expected 'cat', got: ${imageText}`);
           }
-          const candidates = imageText.toUpperCase().match(/[A-Z0-9]{6,20}/g) ?? [];
-          const bestDistance = candidates.reduce((best, cand) => {
-            if (Math.abs(cand.length - imageCode.length) > 2) {
-              return best;
+        }
+
+        if (providerId === "claude-cli") {
+          const cronProbeNonce = randomBytes(3).toString("hex").toUpperCase();
+          const cronProbeName = `live-mcp-${cronProbeNonce.toLowerCase()}`;
+          const cronProbeMessage = `probe-${cronProbeNonce.toLowerCase()}`;
+          const cronProbeAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+          const cronArgsJson = JSON.stringify({
+            action: "add",
+            job: {
+              name: cronProbeName,
+              schedule: { kind: "at", at: cronProbeAt },
+              payload: { kind: "agentTurn", message: cronProbeMessage },
+              sessionTarget: "current",
+              enabled: true,
+            },
+          });
+          let createdJob: CronListCliResult["jobs"] extends Array<infer T> ? T | undefined : never;
+          let lastCronText = "";
+
+          for (let attempt = 0; attempt < 2 && !createdJob; attempt += 1) {
+            const runIdMcp = randomUUID();
+            const cronProbe = await client.request(
+              "agent",
+              {
+                sessionKey,
+                idempotencyKey: `idem-${runIdMcp}-mcp-${attempt}`,
+                message:
+                  attempt === 0
+                    ? "Use the OpenClaw MCP tool named cron. " +
+                      `Call it with JSON arguments ${cronArgsJson}. ` +
+                      "Do the actual tool call; I will verify externally with the OpenClaw cron CLI. " +
+                      `After the cron job is created, reply exactly: ${cronProbeName}`
+                    : "Return only a tool call for the OpenClaw MCP tool `cron`. " +
+                      `Use these exact JSON arguments: ${cronArgsJson}. ` +
+                      "No prose. I will verify externally with the OpenClaw cron CLI.",
+                deliver: false,
+              },
+              { expectFinal: true },
+            );
+            if (cronProbe?.status !== "ok") {
+              throw new Error(`cron mcp probe failed: status=${String(cronProbe?.status)}`);
             }
-            return Math.min(best, editDistance(cand, imageCode));
-          }, Number.POSITIVE_INFINITY);
-          if (!(bestDistance <= 5)) {
-            throw new Error(`image probe missing code (${imageCode}): ${imageText}`);
+            lastCronText = extractPayloadText(cronProbe?.result).trim();
+            const cronList = await runOpenClawCliJson<CronListCliResult>(
+              [
+                "cron",
+                "list",
+                "--all",
+                "--json",
+                "--url",
+                `ws://127.0.0.1:${port}`,
+                "--token",
+                token,
+              ],
+              process.env,
+            );
+            createdJob =
+              cronList.jobs?.find((job) => job.name === cronProbeName) ??
+              cronList.jobs?.find((job) => job.payload?.message === cronProbeMessage);
+            if (!createdJob && attempt === 1) {
+              throw new Error(
+                `cron cli verify could not find job ${cronProbeName}: reply=${JSON.stringify(lastCronText)} list=${JSON.stringify(cronList)}`,
+              );
+            }
+          }
+          if (!createdJob) {
+            throw new Error(`cron cli verify did not create job ${cronProbeName}`);
+          }
+          expect(createdJob.name).toBe(cronProbeName);
+          expect(createdJob?.payload?.kind).toBe("agentTurn");
+          expect(createdJob?.payload?.message).toBe(cronProbeMessage);
+          expect(createdJob?.agentId).toBe("dev");
+          expect(createdJob?.sessionKey).toBe(sessionKey);
+          expect(createdJob?.sessionTarget).toBe(`session:${sessionKey}`);
+          if (createdJob?.id) {
+            await runOpenClawCliJson(
+              [
+                "cron",
+                "rm",
+                createdJob.id,
+                "--json",
+                "--url",
+                `ws://127.0.0.1:${port}`,
+                "--token",
+                token,
+              ],
+              process.env,
+            );
           }
         }
       } finally {

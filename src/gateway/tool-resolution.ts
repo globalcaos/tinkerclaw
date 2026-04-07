@@ -30,6 +30,7 @@ export function resolveGatewayScopedTools(params: {
   agentThreadId?: string;
   allowGatewaySubagentBinding?: boolean;
   allowMediaInvokeCommands?: boolean;
+  applyDefaultGatewayHttpDeny?: boolean;
   excludeToolNames?: Iterable<string>;
   disablePluginTools?: boolean;
 }) {
@@ -112,9 +113,9 @@ export function resolveGatewayScopedTools(params: {
   });
 
   const gatewayToolsCfg = params.cfg.gateway?.tools;
-  const defaultGatewayDeny = DEFAULT_GATEWAY_HTTP_TOOL_DENY.filter(
-    (name) => !gatewayToolsCfg?.allow?.includes(name),
-  );
+  const defaultGatewayDeny = params.applyDefaultGatewayHttpDeny
+    ? DEFAULT_GATEWAY_HTTP_TOOL_DENY.filter((name) => !gatewayToolsCfg?.allow?.includes(name))
+    : [];
   const gatewayDenySet = new Set([
     ...defaultGatewayDeny,
     ...(Array.isArray(gatewayToolsCfg?.deny) ? gatewayToolsCfg.deny : []),
