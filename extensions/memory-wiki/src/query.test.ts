@@ -152,6 +152,74 @@ describe("searchMemoryWiki", () => {
     });
   });
 
+  it("ranks fresh supported claims ahead of stale contested claims", async () => {
+    const { rootDir, config } = await createQueryVault({
+      initialize: true,
+    });
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha-fresh.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha.fresh",
+          title: "Alpha Fresh",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+          claims: [
+            {
+              id: "claim.alpha.db.fresh",
+              text: "Alpha uses PostgreSQL for production writes.",
+              status: "supported",
+              confidence: 0.91,
+              evidence: [
+                {
+                  sourceId: "source.alpha",
+                  lines: "4-7",
+                  updatedAt: "2026-04-01T00:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        },
+        body: "# Alpha Fresh\n\nsummary without the keyword\n",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha-stale.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha.stale",
+          title: "Alpha Stale",
+          updatedAt: "2025-10-01T00:00:00.000Z",
+          claims: [
+            {
+              id: "claim.alpha.db.stale",
+              text: "Alpha uses PostgreSQL for production writes.",
+              status: "contested",
+              confidence: 0.92,
+              evidence: [
+                {
+                  sourceId: "source.alpha.old",
+                  lines: "1-2",
+                  updatedAt: "2025-10-01T00:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        },
+        body: "# Alpha Stale\n\nsummary without the keyword\n",
+      }),
+      "utf8",
+    );
+
+    const results = await searchMemoryWiki({ config, query: "postgresql" });
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.path).toBe("entities/alpha-fresh.md");
+    expect(results[1]?.path).toBe("entities/alpha-stale.md");
+  });
+
   it("surfaces bridge provenance for imported source pages", async () => {
     const { rootDir, config } = await createQueryVault({
       initialize: true,
