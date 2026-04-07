@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect } from "vitest";
+import { resolveCliBackendLiveTest } from "../agents/cli-backends.js";
 import {
   loadOrCreateDeviceIdentity,
   publicKeyRawBase64UrlFromPem,
@@ -23,50 +24,6 @@ import { extractPayloadText } from "./test-helpers.agent-results.js";
 
 const execFileAsync = promisify(execFile);
 const CLI_GATEWAY_CONNECT_TIMEOUT_MS = 30_000;
-
-export const DEFAULT_CLAUDE_ARGS = [
-  "-p",
-  "--output-format",
-  "stream-json",
-  "--include-partial-messages",
-  "--verbose",
-  "--setting-sources",
-  "user",
-  "--permission-mode",
-  "bypassPermissions",
-];
-
-export const DEFAULT_CODEX_ARGS = [
-  "exec",
-  "--json",
-  "--color",
-  "never",
-  "--sandbox",
-  "read-only",
-  "--skip-git-repo-check",
-];
-
-export const DEFAULT_CLEAR_ENV = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_API_KEY_OLD",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_UNIX_SOCKET",
-  "CLAUDE_CONFIG_DIR",
-  "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
-  "CLAUDE_CODE_ENTRYPOINT",
-  "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
-  "CLAUDE_CODE_OAUTH_SCOPES",
-  "CLAUDE_CODE_OAUTH_TOKEN",
-  "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
-  "CLAUDE_CODE_PLUGIN_CACHE_DIR",
-  "CLAUDE_CODE_PLUGIN_SEED_DIR",
-  "CLAUDE_CODE_REMOTE",
-  "CLAUDE_CODE_USE_COWORK_PLUGINS",
-  "CLAUDE_CODE_USE_BEDROCK",
-  "CLAUDE_CODE_USE_FOUNDRY",
-  "CLAUDE_CODE_USE_VERTEX",
-];
 
 export type BootstrapWorkspaceContext = {
   expectedInjectedFiles: string[];
@@ -147,7 +104,7 @@ export function shouldRunCliImageProbe(providerId: string): boolean {
   if (raw) {
     return isTruthyEnvValue(raw);
   }
-  return providerId === "claude-cli";
+  return resolveCliBackendLiveTest(providerId)?.defaultImageProbe === true;
 }
 
 export function matchesCliBackendReply(text: string, expected: string): boolean {

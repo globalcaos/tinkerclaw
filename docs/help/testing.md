@@ -253,17 +253,17 @@ openclaw models list
 openclaw models list --json
 ```
 
-## Live: CLI backend smoke (Codex CLI or other local CLIs)
+## Live: CLI backend smoke (Claude, Codex, Gemini, or other local CLIs)
 
 - Test: `src/gateway/gateway-cli-backend.live.test.ts`
 - Goal: validate the Gateway + agent pipeline using a local CLI backend, without touching your default config.
+- Backend-specific smoke defaults live with the owning extension's `cli-backend.ts` definition.
 - Enable:
   - `pnpm test:live` (or `OPENCLAW_LIVE_TEST=1` if invoking Vitest directly)
   - `OPENCLAW_LIVE_CLI_BACKEND=1`
 - Defaults:
-  - Model: `codex-cli/gpt-5.4`
-  - Command: `codex`
-  - Args: `["exec","--json","--color","never","--sandbox","read-only","--skip-git-repo-check"]`
+  - Default provider/model: `claude-cli/claude-sonnet-4-6`
+  - Command/args/image behavior come from the owning CLI backend plugin metadata.
 - Overrides (optional):
   - `OPENCLAW_LIVE_CLI_BACKEND_MODEL="codex-cli/gpt-5.4"`
   - `OPENCLAW_LIVE_CLI_BACKEND_COMMAND="/full/path/to/codex"`
@@ -287,11 +287,19 @@ Docker recipe:
 pnpm test:docker:live-cli-backend
 ```
 
+Single-provider Docker recipes:
+
+```bash
+pnpm test:docker:live-cli-backend:claude
+pnpm test:docker:live-cli-backend:codex
+pnpm test:docker:live-cli-backend:gemini
+```
+
 Notes:
 
 - The Docker runner lives at `scripts/test-live-cli-backend-docker.sh`.
 - It runs the live CLI-backend smoke inside the repo Docker image as the non-root `node` user.
-- For `codex-cli`, it installs the Linux `@openai/codex` package into a cached writable prefix at `OPENCLAW_DOCKER_CLI_TOOLS_DIR` (default: `~/.cache/openclaw/docker-cli-tools`).
+- It resolves CLI smoke metadata from the owning extension, then installs the matching Linux CLI package (`@anthropic-ai/claude-code`, `@openai/codex`, or `@google/gemini-cli`) into a cached writable prefix at `OPENCLAW_DOCKER_CLI_TOOLS_DIR` (default: `~/.cache/openclaw/docker-cli-tools`).
 
 ## Live: ACP bind smoke (`/acp spawn ... --bind here`)
 
