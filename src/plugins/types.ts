@@ -2024,6 +2024,20 @@ export type CliBackendPlugin = {
   /** Default backend config before user overrides from `agents.defaults.cliBackends`. */
   config: CliBackendConfig;
   /**
+   * Optional live-smoke metadata owned by the backend plugin.
+   *
+   * Keep provider-specific test wiring here instead of scattering it across
+   * Docker wrappers, docs, and gateway live tests.
+   */
+  liveTest?: {
+    defaultModelRef?: string;
+    defaultImageProbe?: boolean;
+    docker?: {
+      npmPackage?: string;
+      binaryName?: string;
+    };
+  };
+  /**
    * Whether OpenClaw should inject bundle MCP config for this backend.
    *
    * Keep this opt-in. Only backends that explicitly consume an MCP config file
