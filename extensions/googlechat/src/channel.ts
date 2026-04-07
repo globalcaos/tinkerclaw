@@ -17,6 +17,7 @@ import {
   formatAllowFromEntry,
   googlechatDirectoryAdapter,
   googlechatGroupsAdapter,
+  loadGoogleChatChannelRuntime,
   googlechatOutboundAdapter,
   googlechatPairingTextAdapter,
   googlechatSecurityAdapter,

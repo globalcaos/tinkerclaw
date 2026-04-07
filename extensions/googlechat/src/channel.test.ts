@@ -58,7 +58,7 @@ function resolveGoogleChatAccountImpl(params: { cfg: OpenClawConfig; accountId?:
     name: typeof config.name === "string" ? config.name : undefined,
     enabled: channelConfig.enabled !== false && scoped.enabled !== false,
     config,
-    credentialSource: serviceAccount ? "inline" : "none",
+    credentialSource: serviceAccount ? ("inline" as const) : ("none" as const),
   };
 }
 
@@ -360,8 +360,6 @@ describe("googlechatPlugin outbound resolveTarget", () => {
   it("resolves valid chat targets", () => {
     const result = resolveTarget({
       to: "spaces/AAA",
-      mode: "explicit",
-      allowFrom: [],
     });
 
     expect(result.ok).toBe(true);
@@ -374,8 +372,6 @@ describe("googlechatPlugin outbound resolveTarget", () => {
   it("resolves email targets", () => {
     const result = resolveTarget({
       to: "user@example.com",
-      mode: "explicit",
-      allowFrom: [],
     });
 
     expect(result.ok).toBe(true);
@@ -388,8 +384,6 @@ describe("googlechatPlugin outbound resolveTarget", () => {
   it("errors on invalid targets", () => {
     const result = resolveTarget({
       to: "   ",
-      mode: "explicit",
-      allowFrom: [],
     });
 
     expect(result.ok).toBe(false);
@@ -402,8 +396,6 @@ describe("googlechatPlugin outbound resolveTarget", () => {
   it("errors when no target is provided", () => {
     const result = resolveTarget({
       to: undefined,
-      mode: "explicit",
-      allowFrom: [],
     });
 
     expect(result.ok).toBe(false);
@@ -433,7 +425,7 @@ describe("googlechatPlugin outbound cfg threading", () => {
     const account = {
       accountId: "work",
       config: {},
-      credentialSource: "inline",
+      credentialSource: "inline" as const,
     };
     resolveGoogleChatAccountMock.mockReturnValue(account);
     resolveGoogleChatOutboundSpaceMock.mockResolvedValue("spaces/WORK");
@@ -474,7 +466,7 @@ describe("googlechatPlugin outbound cfg threading", () => {
     const account = {
       accountId: "default",
       config: {},
-      credentialSource: "inline",
+      credentialSource: "inline" as const,
     };
     resolveGoogleChatAccountMock.mockReturnValue(account);
     resolveGoogleChatOutboundSpaceMock.mockResolvedValue("spaces/AAA");
@@ -516,7 +508,7 @@ describe("googlechatPlugin outbound cfg threading", () => {
     const account = {
       accountId: "default",
       config: { mediaMaxMb: 20 },
-      credentialSource: "inline",
+      credentialSource: "inline" as const,
     };
     const { fetchRemoteMedia } = setupRuntimeMediaMocks({
       loadFileName: "unused.png",
