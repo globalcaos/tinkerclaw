@@ -651,6 +651,7 @@ export async function startQaLabServer(params?: {
           state,
           cfg: gateway?.cfg ?? createQaLabConfig(listenUrl),
           outputPath: params?.outputPath,
+          repoRoot,
         });
         latestScenarioRun = withQaLabRunCounts({
           kind: "self-check",
@@ -698,7 +699,7 @@ export async function startQaLabServer(params?: {
             const { runQaSuiteFromRuntime } = await import("./suite-launch.runtime.js");
             const result = await runQaSuiteFromRuntime({
               lab: labHandle ?? undefined,
-              outputDir: createQaRunOutputDir(),
+              outputDir: createQaRunOutputDir(repoRoot),
               providerMode: selection.providerMode,
               primaryModel: selection.primaryModel,
               alternateModel: selection.alternateModel,
