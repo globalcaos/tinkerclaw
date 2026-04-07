@@ -60,6 +60,10 @@
       "types": "./dist/src/plugin-sdk/secret-input.d.ts",
       "default": "./src/secret-input.ts"
     },
+    "./text-runtime": {
+      "types": "./dist/src/plugin-sdk/text-runtime.d.ts",
+      "default": "./src/text-runtime.ts"
+    },
     "./testing": {
       "types": "./dist/src/plugin-sdk/testing.d.ts",
       "default": "./src/testing.ts"
