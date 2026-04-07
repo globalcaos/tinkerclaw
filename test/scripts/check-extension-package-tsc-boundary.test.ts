@@ -9,6 +9,7 @@ import {
   formatBoundaryCheckSuccessSummary,
   formatStepFailure,
   installCanaryArtifactCleanup,
+  isBoundaryCompileFresh,
   resolveBoundaryCheckLockPath,
   resolveCanaryArtifactPaths,
   runNodeStepAsync,
@@ -138,7 +139,8 @@ describe("check-extension-package-tsc-boundary", () => {
     expect(
       formatBoundaryCheckSuccessSummary({
         mode: "all",
-        compileCount: 97,
+        compileCount: 84,
+        skippedCompileCount: 13,
         canaryCount: 12,
         prepElapsedMs: 12_345,
         compileElapsedMs: 54_321,
@@ -149,7 +151,8 @@ describe("check-extension-package-tsc-boundary", () => {
       [
         "extension package boundary check passed",
         "mode: all",
-        "compiled plugins: 97",
+        "compiled plugins: 84",
+        "skipped plugins: 13",
         "canary plugins: 12",
         "prep elapsed: 12345ms",
         "compile elapsed: 54321ms",
@@ -165,6 +168,7 @@ describe("check-extension-package-tsc-boundary", () => {
       formatBoundaryCheckSuccessSummary({
         mode: "compile",
         compileCount: 97,
+        skippedCompileCount: 0,
         canaryCount: 0,
         prepElapsedMs: 12_345,
         compileElapsedMs: 54_321,
@@ -183,6 +187,62 @@ describe("check-extension-package-tsc-boundary", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  it("treats a plugin compile as fresh only when its outputs are newer than plugin and sdk inputs", () => {
+    const { rootDir, extensionRoot } = createTempExtensionRoot();
+    const extensionSourcePath = path.join(extensionRoot, "index.ts");
+    const extensionTsconfigPath = path.join(extensionRoot, "tsconfig.json");
+    const buildInfoPath = path.join(extensionRoot, "dist", ".boundary-tsc.tsbuildinfo");
+    const rootSdkBuildInfoPath = path.join(rootDir, "dist", "plugin-sdk", ".tsbuildinfo");
+    const packageSdkBuildInfoPath = path.join(
+      rootDir,
+      "packages",
+      "plugin-sdk",
+      "dist",
+      ".tsbuildinfo",
+    );
+    const entryShimStampPath = path.join(
+      rootDir,
+      "dist",
+      "plugin-sdk",
+      ".boundary-entry-shims.stamp",
+    );
+
+    fs.mkdirSync(path.dirname(extensionSourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(buildInfoPath), { recursive: true });
+    fs.mkdirSync(path.dirname(rootSdkBuildInfoPath), { recursive: true });
+    fs.mkdirSync(path.dirname(packageSdkBuildInfoPath), { recursive: true });
+
+    fs.writeFileSync(extensionSourcePath, "export const demo = 1;\n", "utf8");
+    fs.writeFileSync(
+      extensionTsconfigPath,
+      '{ "extends": "../tsconfig.package-boundary.base.json" }\n',
+      "utf8",
+    );
+    fs.writeFileSync(buildInfoPath, "ok\n", "utf8");
+    fs.writeFileSync(rootSdkBuildInfoPath, "ok\n", "utf8");
+    fs.writeFileSync(packageSdkBuildInfoPath, "ok\n", "utf8");
+    fs.writeFileSync(entryShimStampPath, "ok\n", "utf8");
+
+    fs.utimesSync(extensionSourcePath, new Date(1_000), new Date(1_000));
+    fs.utimesSync(extensionTsconfigPath, new Date(1_000), new Date(1_000));
+    fs.utimesSync(rootSdkBuildInfoPath, new Date(2_000), new Date(2_000));
+    fs.utimesSync(packageSdkBuildInfoPath, new Date(2_000), new Date(2_000));
+    fs.utimesSync(entryShimStampPath, new Date(2_000), new Date(2_000));
+    fs.utimesSync(buildInfoPath, new Date(3_000), new Date(3_000));
+
+    expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
+
+    fs.utimesSync(rootSdkBuildInfoPath, new Date(500), new Date(500));
+    fs.utimesSync(packageSdkBuildInfoPath, new Date(500), new Date(500));
+    fs.utimesSync(entryShimStampPath, new Date(500), new Date(500));
+
+    expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
+
+    fs.utimesSync(rootSdkBuildInfoPath, new Date(4_000), new Date(4_000));
+
+    expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(false);
   });
 
   it("keeps full failure output on the thrown error for canary detection", async () => {
