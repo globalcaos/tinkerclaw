@@ -12,9 +12,9 @@ import type {
 } from "../plugins/types.js";
 import { sortWebFetchProvidersForAutoDetect } from "../plugins/web-fetch-providers.shared.js";
 import {
-  resolveBundledWebFetchProvidersFromPublicArtifacts,
-  resolveBundledWebSearchProvidersFromPublicArtifacts,
-} from "../plugins/web-provider-public-artifacts.js";
+  resolveBundledExplicitWebFetchProvidersFromPublicArtifacts,
+  resolveBundledExplicitWebSearchProvidersFromPublicArtifacts,
+} from "../plugins/web-provider-public-artifacts.explicit.js";
 import { sortWebSearchProvidersForAutoDetect } from "../plugins/web-search-providers.shared.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
@@ -48,6 +48,10 @@ export type {
 const loadRuntimeWebToolsFallbackProviders = createLazyRuntimeSurface(
   () => import("./runtime-web-tools-fallback.runtime.js"),
   ({ runtimeWebToolsFallbackProviders }) => runtimeWebToolsFallbackProviders,
+);
+const loadRuntimeWebToolsPublicArtifacts = createLazyRuntimeSurface(
+  () => import("./runtime-web-tools-public-artifacts.runtime.js"),
+  (mod) => mod,
 );
 
 type FetchConfig = NonNullable<OpenClawConfig["tools"]>["web"] extends infer Web
@@ -283,12 +287,7 @@ async function resolveBundledWebSearchProviders(params: {
         ? [...new Set(params.onlyPluginIds)].toSorted((left, right) => left.localeCompare(right))
         : undefined;
   if (onlyPluginIds && onlyPluginIds.length > 0) {
-    const bundled = resolveBundledWebSearchProvidersFromPublicArtifacts({
-      config: params.sourceConfig,
-      env,
-      bundledAllowlistCompat: true,
-      onlyPluginIds,
-    });
+    const bundled = resolveBundledExplicitWebSearchProvidersFromPublicArtifacts({ onlyPluginIds });
     if (bundled && bundled.length > 0) {
       return bundled;
     }
@@ -302,6 +301,8 @@ async function resolveBundledWebSearchProviders(params: {
     });
   }
   if (!params.hasCustomWebSearchPluginRisk) {
+    const { resolveBundledWebSearchProvidersFromPublicArtifacts } =
+      await loadRuntimeWebToolsPublicArtifacts();
     const bundled = resolveBundledWebSearchProvidersFromPublicArtifacts({
       config: params.sourceConfig,
       env,
@@ -333,10 +334,7 @@ async function resolveBundledWebFetchProviders(params: {
 }): Promise<PluginWebFetchProviderEntry[]> {
   const env = { ...process.env, ...params.context.env };
   if (params.configuredBundledPluginId) {
-    const bundled = resolveBundledWebFetchProvidersFromPublicArtifacts({
-      config: params.sourceConfig,
-      env,
-      bundledAllowlistCompat: true,
+    const bundled = resolveBundledExplicitWebFetchProvidersFromPublicArtifacts({
       onlyPluginIds: [params.configuredBundledPluginId],
     });
     if (bundled && bundled.length > 0) {
@@ -351,6 +349,8 @@ async function resolveBundledWebFetchProviders(params: {
       origin: "bundled",
     });
   }
+  const { resolveBundledWebFetchProvidersFromPublicArtifacts } =
+    await loadRuntimeWebToolsPublicArtifacts();
   const bundled = resolveBundledWebFetchProvidersFromPublicArtifacts({
     config: params.sourceConfig,
     env,
