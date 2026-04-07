@@ -96,10 +96,12 @@ export type CliBackendLiveEnvSnapshot = {
   stateDir?: string;
   token?: string;
   skipChannels?: string;
+  skipProviders?: string;
   skipGmail?: string;
   skipCron?: string;
   skipCanvas?: string;
   skipBrowserControl?: string;
+  bundledPluginsDir?: string;
   minimalGateway?: string;
   anthropicApiKey?: string;
   anthropicApiKeyOld?: string;
@@ -338,10 +340,12 @@ export function snapshotCliBackendLiveEnv(): CliBackendLiveEnvSnapshot {
     stateDir: process.env.OPENCLAW_STATE_DIR,
     token: process.env.OPENCLAW_GATEWAY_TOKEN,
     skipChannels: process.env.OPENCLAW_SKIP_CHANNELS,
+    skipProviders: process.env.OPENCLAW_SKIP_PROVIDERS,
     skipGmail: process.env.OPENCLAW_SKIP_GMAIL_WATCHER,
     skipCron: process.env.OPENCLAW_SKIP_CRON,
     skipCanvas: process.env.OPENCLAW_SKIP_CANVAS_HOST,
     skipBrowserControl: process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER,
+    bundledPluginsDir: process.env.OPENCLAW_BUNDLED_PLUGINS_DIR,
     minimalGateway: process.env.OPENCLAW_TEST_MINIMAL_GATEWAY,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     anthropicApiKeyOld: process.env.ANTHROPIC_API_KEY_OLD,
@@ -350,10 +354,13 @@ export function snapshotCliBackendLiveEnv(): CliBackendLiveEnvSnapshot {
 
 export function applyCliBackendLiveEnv(preservedEnv: ReadonlySet<string>): void {
   process.env.OPENCLAW_SKIP_CHANNELS = "1";
+  process.env.OPENCLAW_SKIP_PROVIDERS = "1";
   process.env.OPENCLAW_SKIP_GMAIL_WATCHER = "1";
   process.env.OPENCLAW_SKIP_CRON = "1";
   process.env.OPENCLAW_SKIP_CANVAS_HOST = "1";
   process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER = "1";
+  process.env.OPENCLAW_BUNDLED_PLUGINS_DIR =
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR ?? "openclaw-live-test-no-bundled-extensions";
   process.env.OPENCLAW_TEST_MINIMAL_GATEWAY = "1";
   if (!preservedEnv.has("ANTHROPIC_API_KEY")) {
     delete process.env.ANTHROPIC_API_KEY;
@@ -368,10 +375,12 @@ export function restoreCliBackendLiveEnv(snapshot: CliBackendLiveEnvSnapshot): v
   restoreEnvVar("OPENCLAW_STATE_DIR", snapshot.stateDir);
   restoreEnvVar("OPENCLAW_GATEWAY_TOKEN", snapshot.token);
   restoreEnvVar("OPENCLAW_SKIP_CHANNELS", snapshot.skipChannels);
+  restoreEnvVar("OPENCLAW_SKIP_PROVIDERS", snapshot.skipProviders);
   restoreEnvVar("OPENCLAW_SKIP_GMAIL_WATCHER", snapshot.skipGmail);
   restoreEnvVar("OPENCLAW_SKIP_CRON", snapshot.skipCron);
   restoreEnvVar("OPENCLAW_SKIP_CANVAS_HOST", snapshot.skipCanvas);
   restoreEnvVar("OPENCLAW_SKIP_BROWSER_CONTROL_SERVER", snapshot.skipBrowserControl);
+  restoreEnvVar("OPENCLAW_BUNDLED_PLUGINS_DIR", snapshot.bundledPluginsDir);
   restoreEnvVar("OPENCLAW_TEST_MINIMAL_GATEWAY", snapshot.minimalGateway);
   restoreEnvVar("ANTHROPIC_API_KEY", snapshot.anthropicApiKey);
   restoreEnvVar("ANTHROPIC_API_KEY_OLD", snapshot.anthropicApiKeyOld);
