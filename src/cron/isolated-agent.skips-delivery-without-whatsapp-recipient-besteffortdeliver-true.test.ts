@@ -243,56 +243,10 @@ async function runSignalDeliveryResult(bestEffort: boolean) {
   return outcome;
 }
 
-async function assertExplicitTelegramTargetDelivery(params: {
-  home: string;
-  storePath: string;
-  deps: CliDeps;
-  payloads: Array<Record<string, unknown>>;
-  expectedTexts: string[];
-}): Promise<void> {
-  mockAgentPayloads(params.payloads);
-  const res = await runExplicitTelegramAnnounceTurn({
-    home: params.home,
-    storePath: params.storePath,
-    deps: params.deps,
-  });
-
-  expectDeliveredOk(res);
-  expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
-  if (params.expectedTexts.length === 1) {
-    expectDirectTelegramDelivery(params.deps, {
-      chatId: "123",
-      text: params.expectedTexts[0] ?? "",
-    });
-    return;
-  }
-  expect(params.deps.sendMessageTelegram).toHaveBeenCalledTimes(params.expectedTexts.length);
-  for (const [index, text] of params.expectedTexts.entries()) {
-    expect(params.deps.sendMessageTelegram).toHaveBeenNthCalledWith(
-      index + 1,
-      "123",
-      text,
-      expect.objectContaining({ cfg: expect.any(Object) }),
-    );
-  }
-}
-
 describe("runCronIsolatedAgentTurn", () => {
   beforeEach(() => {
     vi.spyOn(modelSelection, "resolveThinkingDefault").mockReturnValue("off");
     setupIsolatedAgentTurnMocks({ fast: true });
-  });
-
-  it("delivers explicit targets with direct text", async () => {
-    await withTelegramAnnounceFixture(async ({ home, storePath, deps }) => {
-      await assertExplicitTelegramTargetDelivery({
-        home,
-        storePath,
-        deps,
-        payloads: [{ text: "hello from cron" }],
-        expectedTexts: ["hello from cron"],
-      });
-    });
   });
 
   it("delivers explicit targets directly with per-channel-peer session scoping", async () => {
