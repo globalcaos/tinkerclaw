@@ -1,11 +1,17 @@
 // extensions/prefrontal/recipe-engine.ts
 // FORK: Prefrontal v3.0 recipe execution engine — selects and manages
 // structured workflows for agent tasks. Matches user intent to built-in
-// recipes (debug, feature, investigate, refactor, review) and formats
-// step-by-step prompts for injection into the agent context.
+// recipes (debug, feature, investigate, refactor, review, and 12 more) and
+// formats step-by-step prompts for injection into the agent context.
+//
+// Recipes are loaded from disk (recipes/ directory, YAML frontmatter + markdown)
+// with hardcoded fallback if disk loading fails.
 //
 // Wired in by: orchestrator.ts (selectRecipe, formatRecipePrompt)
 // Used from: index.ts before_prompt_build hook
+
+import { readFileSync, readdirSync, statSync } from "fs";
+import { join, basename } from "path";
 
 export type RecipeStep = {
   id: string;
@@ -25,7 +31,154 @@ export type Recipe = {
   steps: RecipeStep[];
 };
 
-export const BUILT_IN_RECIPES: Recipe[] = [
+/** Parse YAML frontmatter from a recipe markdown file. */
+function parseFrontmatter(content: string): { meta: Record<string, unknown>; body: string } | null {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return null;
+
+  const yamlBlock = match[1];
+  const body = match[2];
+  const meta: Record<string, unknown> = {};
+
+  for (const line of yamlBlock.split("\n")) {
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    let value: unknown = line.slice(colonIdx + 1).trim();
+
+    // Parse arrays: [item1, item2, "item 3"]
+    if (typeof value === "string" && value.startsWith("[") && value.endsWith("]")) {
+      value = value
+        .slice(1, -1)
+        .split(",")
+        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean);
+    }
+
+    meta[key] = value;
+  }
+
+  return { meta, body };
+}
+
+/** Extract steps from the markdown body of a recipe file. */
+function parseStepsFromBody(body: string): RecipeStep[] {
+  const steps: RecipeStep[] = [];
+  // Match ### N. StepName patterns
+  const stepPattern = /### \d+\.\s+(.+)\n([\s\S]*?)(?=### \d+\.|## Constraints|## Safety|## Failures|## When|$)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = stepPattern.exec(body)) !== null) {
+    const name = match[1].trim();
+    const content = match[2].trim();
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "");
+
+    // Extract tools line
+    const toolsMatch = content.match(/\*\*Tools:\*\*\s*(.+)/);
+    const requiredTools = toolsMatch
+      ? toolsMatch[1].split(",").map((t) => t.trim()).filter(Boolean)
+      : undefined;
+
+    // Extract done-when line
+    const doneMatch = content.match(/\*\*Done when:\*\*\s*(.+)/);
+    const successCriteria = doneMatch ? doneMatch[1].trim() : undefined;
+
+    // First paragraph after metadata lines is the description
+    const descLines = content
+      .split("\n")
+      .filter((l) => !l.startsWith("**Tools:") && !l.startsWith("**Done when:") && l.trim())
+      .slice(0, 2);
+    const description = descLines.join(" ").trim() || name;
+
+    steps.push({
+      id,
+      name,
+      description,
+      ...(requiredTools && { requiredTools }),
+      ...(successCriteria && { successCriteria }),
+    });
+  }
+
+  return steps;
+}
+
+/** Convert a parsed recipe file into a Recipe object. */
+function fileToRecipe(meta: Record<string, unknown>, body: string): Recipe | null {
+  const id = meta.id as string;
+  const name = (meta.title as string) || id;
+  const description = (meta.summary as string) || "";
+  const triggers = (meta.triggers as string[]) || [];
+
+  if (!id || triggers.length === 0) return null;
+
+  const steps = parseStepsFromBody(body);
+  if (steps.length === 0) return null;
+
+  return { id, name, description, triggers, steps };
+}
+
+/**
+ * Load all recipe .md files from the recipes/ subdirectories.
+ * Returns parsed Recipe objects for each valid file found.
+ */
+export function loadRecipesFromDisk(recipesDir?: string): Recipe[] {
+  const dir = recipesDir || join(__dirname, "recipes");
+  const recipes: Recipe[] = [];
+
+  try {
+    const entries = readdirSync(dir);
+    for (const entry of entries) {
+      const entryPath = join(dir, entry);
+      let stat;
+      try {
+        stat = statSync(entryPath);
+      } catch {
+        continue;
+      }
+
+      if (stat.isDirectory()) {
+        // Read .md files in subdirectory
+        try {
+          const files = readdirSync(entryPath);
+          for (const file of files) {
+            if (!file.endsWith(".md")) continue;
+            try {
+              const content = readFileSync(join(entryPath, file), "utf-8");
+              const parsed = parseFrontmatter(content);
+              if (!parsed) continue;
+              const recipe = fileToRecipe(parsed.meta, parsed.body);
+              if (recipe) recipes.push(recipe);
+            } catch {
+              // Skip unreadable files
+            }
+          }
+        } catch {
+          // Skip unreadable directories
+        }
+      } else if (entry.endsWith(".md") && entry !== "CATALOG.md") {
+        // Top-level recipe file
+        try {
+          const content = readFileSync(entryPath, "utf-8");
+          const parsed = parseFrontmatter(content);
+          if (!parsed) continue;
+          const recipe = fileToRecipe(parsed.meta, parsed.body);
+          if (recipe) recipes.push(recipe);
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    }
+  } catch {
+    // Directory not found or unreadable — fall through to empty
+  }
+
+  return recipes;
+}
+
+// ─── Hardcoded fallback recipes ───────────────────────────────────────────────
+// Used when disk loading fails or returns no recipes.
+
+const HARDCODED_RECIPES: Recipe[] = [
   {
     id: "debug",
     name: "Debug & Fix",
@@ -223,16 +376,62 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   },
 ];
 
+// ─── Recipe loading ───────────────────────────────────────────────────────────
+
+let _loadedRecipes: Recipe[] | null = null;
+
+/**
+ * Get all available recipes. Loads from disk on first call, falls back to
+ * hardcoded recipes if disk loading fails or returns nothing.
+ */
+function getRecipes(): Recipe[] {
+  if (_loadedRecipes !== null) return _loadedRecipes;
+
+  const diskRecipes = loadRecipesFromDisk();
+  if (diskRecipes.length > 0) {
+    _loadedRecipes = diskRecipes;
+  } else {
+    _loadedRecipes = HARDCODED_RECIPES;
+  }
+
+  return _loadedRecipes;
+}
+
+/** Force reload recipes from disk (e.g. after adding new recipe files). */
+export function reloadRecipes(): void {
+  _loadedRecipes = null;
+}
+
+/**
+ * Exported recipe list. Uses getter to ensure lazy loading.
+ * For backward compatibility, this is a const that delegates to getRecipes().
+ */
+export const BUILT_IN_RECIPES: Recipe[] = new Proxy([] as Recipe[], {
+  get(target, prop, receiver) {
+    const recipes = getRecipes();
+    if (prop === "length") return recipes.length;
+    if (prop === Symbol.iterator) return recipes[Symbol.iterator].bind(recipes);
+    if (typeof prop === "string" && !isNaN(Number(prop))) return recipes[Number(prop)];
+    if (typeof prop === "string" && prop in Array.prototype) {
+      const val = (recipes as unknown as Record<string, unknown>)[prop];
+      if (typeof val === "function") return val.bind(recipes);
+      return val;
+    }
+    return Reflect.get(recipes, prop, receiver);
+  },
+});
+
 /**
  * Classify user intent and select a recipe.
  * Returns null if no recipe matches (agent handles it directly).
  */
 export function selectRecipe(userMessage: string): Recipe | null {
   const lower = userMessage.toLowerCase();
+  const recipes = getRecipes();
   let bestMatch: Recipe | null = null;
   let bestScore = 0;
 
-  for (const recipe of BUILT_IN_RECIPES) {
+  for (const recipe of recipes) {
     let score = 0;
     for (const trigger of recipe.triggers) {
       if (lower.includes(trigger)) {
@@ -301,18 +500,19 @@ export function detectRecipeActivation(text: string): string | null {
   // Patterns: "following the X recipe", "using the X recipe",
   // "X recipe step", "starting the X workflow", "activating the X recipe"
   const patterns = [
-    /following the (\w+) recipe/,
-    /using the (\w+) recipe/,
-    /(\w+) recipe step/,
-    /starting the (\w+) (?:recipe|workflow)/,
-    /activating the (\w+) recipe/,
+    /following the ([\w-]+) recipe/,
+    /using the ([\w-]+) recipe/,
+    /([\w-]+) recipe step/,
+    /starting the ([\w-]+) (?:recipe|workflow)/,
+    /activating the ([\w-]+) recipe/,
   ];
 
+  const recipes = getRecipes();
   for (const pattern of patterns) {
     const match = lower.match(pattern);
     if (match) {
       const candidateId = match[1];
-      const recipe = BUILT_IN_RECIPES.find((r) => r.id === candidateId);
+      const recipe = recipes.find((r) => r.id === candidateId);
       if (recipe) return recipe.id;
     }
   }
