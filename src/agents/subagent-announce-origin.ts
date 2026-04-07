@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { isInternalMessageChannel } from "../utils/message-channel.js";
 
 export type DeliveryContext = {
   channel?: string;
@@ -97,10 +98,6 @@ function deliveryContextFromSession(entry?: DeliveryContextSource): DeliveryCont
     accountId: entry.deliveryContext?.accountId ?? entry.lastAccountId ?? entry.origin?.accountId,
     threadId: entry.deliveryContext?.threadId ?? entry.lastThreadId ?? entry.origin?.threadId,
   });
-}
-
-function isInternalMessageChannel(raw?: string): boolean {
-  return normalizeOptionalString(raw)?.toLowerCase() === "webchat";
 }
 
 function normalizeTelegramAnnounceTarget(target: string | undefined): string | undefined {
