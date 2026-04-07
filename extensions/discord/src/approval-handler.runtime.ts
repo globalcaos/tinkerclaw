@@ -19,7 +19,6 @@ import type {
   PluginApprovalResolvedView,
 } from "openclaw/plugin-sdk/approval-handler-runtime";
 import { createChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-runtime";
-import { buildChannelApprovalNativeTargetKey } from "openclaw/plugin-sdk/approval-native-runtime";
 import type { DiscordExecApprovalConfig, OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import type {
   ExecApprovalActionDescriptor,
@@ -512,7 +511,7 @@ export const discordApprovalNativeRuntime = createChannelApprovalNativeRuntimeAd
             ? plannedTarget.target.threadId.trim()
             : plannedTarget.target.to;
         return {
-          dedupeKey: buildChannelApprovalNativeTargetKey(plannedTarget.target),
+          dedupeKey: destinationId,
           target: {
             discordChannelId: destinationId,
           },
