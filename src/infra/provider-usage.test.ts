@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createProviderUsageFetch } from "../test-utils/provider-usage-fetch.js";
 import {
   formatUsageReportLines,
   formatUsageSummaryLine,
   loadProviderUsageSummary,
   type UsageSummary,
 } from "./provider-usage.js";
-import { createProviderUsageFetch } from "../test-utils/provider-usage-fetch.js";
 import { loadUsageWithAuth } from "./provider-usage.test-support.js";
+import type { ProviderUsageSnapshot } from "./provider-usage.types.js";
 
-const resolveProviderUsageSnapshotWithPluginMock = vi.fn(async () => null);
+const resolveProviderUsageSnapshotWithPluginMock = vi.hoisted(() =>
+  vi.fn<typeof import("../plugins/provider-runtime.js").resolveProviderUsageSnapshotWithPlugin>(
+    async () => null,
+  ),
+);
 
 vi.mock("../config/config.js", () => ({
   loadConfig: () => ({}),
@@ -20,8 +25,7 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   );
   return {
     ...actual,
-    resolveProviderUsageSnapshotWithPlugin: (...args: unknown[]) =>
-      resolveProviderUsageSnapshotWithPluginMock(...args),
+    resolveProviderUsageSnapshotWithPlugin: resolveProviderUsageSnapshotWithPluginMock,
   };
 });
 
@@ -91,32 +95,34 @@ describe("provider usage formatting", () => {
 
 describe("provider usage loading", () => {
   it("loads usage snapshots with injected auth", async () => {
-    resolveProviderUsageSnapshotWithPluginMock.mockImplementation(async ({ provider }) => {
-      switch (provider) {
-        case "anthropic":
-          return {
-            provider,
-            displayName: "Claude",
-            windows: [{ label: "5h", usedPercent: 20 }],
-          };
-        case "minimax":
-          return {
-            provider,
-            displayName: "MiniMax",
-            windows: [{ label: "5h", usedPercent: 75 }],
-            plan: "Coding Plan",
-          };
-        case "zai":
-          return {
-            provider,
-            displayName: "Z.ai",
-            windows: [{ label: "3h", usedPercent: 25 }],
-            plan: "Pro",
-          };
-        default:
-          return null;
-      }
-    });
+    resolveProviderUsageSnapshotWithPluginMock.mockImplementation(
+      async ({ provider }): Promise<ProviderUsageSnapshot | null> => {
+        switch (provider) {
+          case "anthropic":
+            return {
+              provider,
+              displayName: "Claude",
+              windows: [{ label: "5h", usedPercent: 20 }],
+            };
+          case "minimax":
+            return {
+              provider,
+              displayName: "MiniMax",
+              windows: [{ label: "5h", usedPercent: 75 }],
+              plan: "Coding Plan",
+            };
+          case "zai":
+            return {
+              provider,
+              displayName: "Z.ai",
+              windows: [{ label: "3h", usedPercent: 25 }],
+              plan: "Pro",
+            };
+          default:
+            return null;
+        }
+      },
+    );
     const mockFetch = createProviderUsageFetch(async () => {
       throw new Error("legacy fetch should not run");
     });
