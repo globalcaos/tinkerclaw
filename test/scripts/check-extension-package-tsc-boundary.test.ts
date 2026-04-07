@@ -299,7 +299,7 @@ describe("check-extension-package-tsc-boundary", () => {
         [
           "--eval",
           [
-            "console.log('src/cli/acp-cli.ts');",
+            "console.log('src/plugins/contracts/rootdir-boundary-canary.ts');",
             "for (let index = 1; index <= 45; index += 1) console.log(`stdout ${index}`);",
             "console.error('TS6059');",
             "process.exit(2);",
@@ -309,7 +309,7 @@ describe("check-extension-package-tsc-boundary", () => {
       ),
     ).rejects.toMatchObject({
       message: expect.stringContaining("[... 6 earlier lines omitted ...]"),
-      fullOutput: expect.stringContaining("src/cli/acp-cli.ts"),
+      fullOutput: expect.stringContaining("src/plugins/contracts/rootdir-boundary-canary.ts"),
       kind: "nonzero-exit",
       elapsedMs: expect.any(Number),
     });
