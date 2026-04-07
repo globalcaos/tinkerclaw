@@ -30,6 +30,28 @@ export function loadPrefrontalPrompt(baseDir?: string): string | null {
   }
 }
 
+/** Appended to the base prompt — recipe system and planning instructions. */
+const RECIPE_SYSTEM_PROMPT = `
+
+## Recipe System
+When facing a complex task (debugging, building a feature, investigating, refactoring, or reviewing code), you can request a structured recipe by stating which workflow you're following. Available recipes: debug, feature, investigate, refactor, review. When you choose one, the recipe steps will guide your execution.
+
+Simply mention "following the debug recipe" or "using the feature recipe" in your response, and the system will track your progress through the steps.
+
+## Planning
+Before starting complex tasks, describe your approach in your response. This serves as your plan — visible to the user and preserved in context. Don't just act; explain what you're about to do and why. This is more valuable than any formal planning step.`;
+
+/**
+ * Load prefrontal prompt with recipe system and planning instructions appended.
+ * The recipe/planning addendum is always included since it teaches the model
+ * how to demand-activate recipes on its own terms.
+ */
+export function loadPrefrontalPromptWithAddendum(baseDir?: string): string | null {
+  const base = loadPrefrontalPrompt(baseDir);
+  if (base === null) return null;
+  return base + RECIPE_SYSTEM_PROMPT;
+}
+
 /** Clear cached prompt (for testing). */
 export function _resetPromptCache(): void {
   cachedPrompt = null;

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { selectRecipe, formatRecipePrompt, BUILT_IN_RECIPES } from "../recipe-engine.js";
+import {
+  selectRecipe,
+  formatRecipePrompt,
+  BUILT_IN_RECIPES,
+  isToolAllowedByCurrentStep,
+  detectRecipeActivation,
+} from "../recipe-engine.js";
 
 describe("selectRecipe", () => {
   it("selects debug recipe for error-related messages", () => {
@@ -148,5 +154,78 @@ describe("BUILT_IN_RECIPES", () => {
       const ids = recipe.steps.map((s) => s.id);
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+});
+
+describe("isToolAllowedByCurrentStep", () => {
+  const debugRecipe = BUILT_IN_RECIPES.find((r) => r.id === "debug")!;
+
+  it("allows a tool listed in the step's requiredTools", () => {
+    expect(isToolAllowedByCurrentStep(debugRecipe, "reproduce", "Read")).toBe(true);
+    expect(isToolAllowedByCurrentStep(debugRecipe, "reproduce", "Grep")).toBe(true);
+    expect(isToolAllowedByCurrentStep(debugRecipe, "reproduce", "Bash")).toBe(true);
+  });
+
+  it("rejects a tool NOT listed in the step's requiredTools", () => {
+    expect(isToolAllowedByCurrentStep(debugRecipe, "reproduce", "Edit")).toBe(false);
+    expect(isToolAllowedByCurrentStep(debugRecipe, "reproduce", "Write")).toBe(false);
+  });
+
+  it("allows mutating tools when the step requires them", () => {
+    expect(isToolAllowedByCurrentStep(debugRecipe, "fix", "Edit")).toBe(true);
+    expect(isToolAllowedByCurrentStep(debugRecipe, "fix", "Write")).toBe(true);
+  });
+
+  it("allows any tool when step has no requiredTools", () => {
+    const investigateRecipe = BUILT_IN_RECIPES.find((r) => r.id === "investigate")!;
+    // "scope" step has no requiredTools
+    expect(isToolAllowedByCurrentStep(investigateRecipe, "scope", "Edit")).toBe(true);
+    expect(isToolAllowedByCurrentStep(investigateRecipe, "scope", "Bash")).toBe(true);
+  });
+
+  it("returns true for unknown step ID", () => {
+    expect(isToolAllowedByCurrentStep(debugRecipe, "nonexistent", "Edit")).toBe(true);
+  });
+});
+
+describe("detectRecipeActivation", () => {
+  it("detects 'following the debug recipe' pattern", () => {
+    expect(detectRecipeActivation("I'll be following the debug recipe to fix this issue.")).toBe(
+      "debug",
+    );
+  });
+
+  it("detects 'using the feature recipe' pattern", () => {
+    expect(detectRecipeActivation("I'm using the feature recipe to build this.")).toBe("feature");
+  });
+
+  it("detects 'starting the investigate workflow' pattern", () => {
+    expect(detectRecipeActivation("Starting the investigate workflow now.")).toBe("investigate");
+  });
+
+  it("detects 'refactor recipe step' pattern", () => {
+    expect(detectRecipeActivation("Moving to the next refactor recipe step.")).toBe("refactor");
+  });
+
+  it("detects 'activating the review recipe' pattern", () => {
+    expect(detectRecipeActivation("Activating the review recipe for this PR.")).toBe("review");
+  });
+
+  it("returns null for text with no recipe pattern", () => {
+    expect(detectRecipeActivation("Let me just read the file.")).toBeNull();
+    expect(detectRecipeActivation("")).toBeNull();
+  });
+
+  it("returns null for unknown recipe names", () => {
+    expect(detectRecipeActivation("Following the foobar recipe.")).toBeNull();
+  });
+
+  it("is case-insensitive", () => {
+    expect(detectRecipeActivation("Following the DEBUG recipe now.")).toBe("debug");
+  });
+
+  it("handles null/undefined gracefully", () => {
+    expect(detectRecipeActivation(null as unknown as string)).toBeNull();
+    expect(detectRecipeActivation(undefined as unknown as string)).toBeNull();
   });
 });
