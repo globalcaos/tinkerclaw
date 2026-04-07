@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { listBundledChannelPlugins } from "../channels/plugins/bundled.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { createConfigIO } from "../config/config.js";
@@ -245,6 +244,26 @@ function applyConfigFixes(params: { cfg: OpenClawConfig; env: NodeJS.ProcessEnv 
   return { cfg: next, changes };
 }
 
+export async function applySecurityFixConfigMutations(params: {
+  cfg: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+  channelPlugins?: ChannelPlugin[];
+}): Promise<{
+  cfg: OpenClawConfig;
+  changes: string[];
+}> {
+  const fixed = applyConfigFixes({ cfg: params.cfg, env: params.env });
+  const channelFixes = await collectChannelSecurityConfigFixMutation({
+    cfg: fixed.cfg,
+    env: params.env,
+    channelPlugins: params.channelPlugins,
+  });
+  return {
+    cfg: channelFixes.cfg,
+    changes: [...fixed.changes, ...channelFixes.changes],
+  };
+}
+
 async function collectChannelSecurityConfigFixMutation(params: {
   cfg: OpenClawConfig;
   env: NodeJS.ProcessEnv;
@@ -252,7 +271,7 @@ async function collectChannelSecurityConfigFixMutation(params: {
 }) {
   let nextCfg = params.cfg;
   const changes: string[] = [];
-  const collectPlugins = (): ChannelPlugin[] => {
+  const collectPlugins = async (): Promise<ChannelPlugin[]> => {
     if (params.channelPlugins) {
       return params.channelPlugins;
     }
@@ -262,13 +281,14 @@ async function collectChannelSecurityConfigFixMutation(params: {
         return [];
       }
       const wanted = new Set(pluginIds);
+      const { listBundledChannelPlugins } = await import("../channels/plugins/bundled.js");
       return listBundledChannelPlugins().filter((plugin) => wanted.has(plugin.id));
     } catch {
       return [];
     }
   };
 
-  for (const plugin of collectPlugins()) {
+  for (const plugin of await collectPlugins()) {
     const mutation = await plugin.security?.applyConfigFixes?.({
       cfg: nextCfg,
       env: params.env,
@@ -382,17 +402,16 @@ export async function fixSecurityFootguns(opts?: {
   let configWritten = false;
   let changes: string[] = [];
   if (snap.valid) {
-    const fixed = applyConfigFixes({ cfg: snap.config, env });
-    const channelFixes = await collectChannelSecurityConfigFixMutation({
-      cfg: fixed.cfg,
+    const fixed = await applySecurityFixConfigMutations({
+      cfg: snap.config,
       env,
       channelPlugins: opts?.channelPlugins,
     });
-    changes = [...fixed.changes, ...channelFixes.changes];
+    changes = fixed.changes;
 
     if (changes.length > 0) {
       try {
-        await io.writeConfigFile(channelFixes.cfg);
+        await io.writeConfigFile(fixed.cfg);
         configWritten = true;
       } catch (err) {
         errors.push(`writeConfigFile failed: ${String(err)}`);
