@@ -77,9 +77,8 @@ describe("mattermost setup", () => {
         if (api.registrationMode === "full") {
           api.registerHttpRoute({
             path: "/api/channels/mattermost/command",
-            method: "POST",
             auth: "plugin",
-            handler: async () => new Response(null, { status: 204 }),
+            handler: async () => true,
           });
         }
       },
