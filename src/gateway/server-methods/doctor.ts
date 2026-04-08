@@ -506,6 +506,7 @@ async function loadDreamingStoreStats(
         shortTermCount: 0,
         recallSignalCount: 0,
         dailySignalCount: 0,
+        groundedSignalCount: 0,
         totalSignalCount: 0,
         phaseSignalCount: 0,
         lightPhaseHitCount: 0,
@@ -523,6 +524,7 @@ async function loadDreamingStoreStats(
       shortTermCount: 0,
       recallSignalCount: 0,
       dailySignalCount: 0,
+      groundedSignalCount: 0,
       totalSignalCount: 0,
       phaseSignalCount: 0,
       lightPhaseHitCount: 0,
@@ -543,6 +545,7 @@ function mergeDreamingStoreStats(stats: DreamingStoreStats[]): DreamingStoreStat
   let shortTermCount = 0;
   let recallSignalCount = 0;
   let dailySignalCount = 0;
+  let groundedSignalCount = 0;
   let totalSignalCount = 0;
   let phaseSignalCount = 0;
   let lightPhaseHitCount = 0;
@@ -563,6 +566,7 @@ function mergeDreamingStoreStats(stats: DreamingStoreStats[]): DreamingStoreStat
     shortTermCount += stat.shortTermCount;
     recallSignalCount += stat.recallSignalCount;
     dailySignalCount += stat.dailySignalCount;
+    groundedSignalCount += stat.groundedSignalCount;
     totalSignalCount += stat.totalSignalCount;
     phaseSignalCount += stat.phaseSignalCount;
     lightPhaseHitCount += stat.lightPhaseHitCount;
@@ -595,6 +599,7 @@ function mergeDreamingStoreStats(stats: DreamingStoreStats[]): DreamingStoreStat
     shortTermCount,
     recallSignalCount,
     dailySignalCount,
+    groundedSignalCount,
     totalSignalCount,
     phaseSignalCount,
     lightPhaseHitCount,
@@ -797,6 +802,7 @@ export const doctorHandlers: GatewayRequestHandlers = {
               shortTermCount: 0,
               recallSignalCount: 0,
               dailySignalCount: 0,
+              groundedSignalCount: 0,
               totalSignalCount: 0,
               phaseSignalCount: 0,
               lightPhaseHitCount: 0,

@@ -647,7 +647,9 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       purpose: managerPurpose,
       run: async (manager) => {
         const deep = Boolean(opts.deep || opts.index);
-        let embeddingProbe: { ok?: boolean; error?: string } | undefined;
+        let embeddingProbe:
+          | Awaited<ReturnType<MemoryManager["probeEmbeddingAvailability"]>>
+          | undefined;
         let indexError: string | undefined;
         const syncFn = manager.sync ? manager.sync.bind(manager) : undefined;
         if (deep) {
