@@ -826,7 +826,7 @@ verify_version_contains() {
   local needle="$1"
   local version
   version="$(
-    guest_current_user_exec "$GUEST_OPENCLAW_BIN" --version
+    guest_current_user_exec "$GUEST_OPENCLAW_BIN" --version 2>&1
   )"
   printf '%s\n' "$version"
   case "$version" in
