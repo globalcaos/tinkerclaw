@@ -1005,6 +1005,10 @@
       "types": "./dist/plugin-sdk/tlon.d.ts",
       "default": "./dist/plugin-sdk/tlon.js"
     },
+    "./plugin-sdk/tool-payload": {
+      "types": "./dist/plugin-sdk/tool-payload.d.ts",
+      "default": "./dist/plugin-sdk/tool-payload.js"
+    },
     "./plugin-sdk/tool-send": {
       "types": "./dist/plugin-sdk/tool-send.d.ts",
       "default": "./dist/plugin-sdk/tool-send.js"
