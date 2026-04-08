@@ -174,6 +174,19 @@ describe("scripts/test-projects changed-target routing", () => {
       },
     ]);
   });
+
+  it("routes the gateway e2e fixture to the e2e lane", () => {
+    const plans = buildVitestRunPlans(["src/gateway/gateway.test.ts"], process.cwd());
+
+    expect(plans).toEqual([
+      {
+        config: "vitest.e2e.config.ts",
+        forwardedArgs: ["src/gateway/gateway.test.ts"],
+        includePatterns: null,
+        watchMode: false,
+      },
+    ]);
+  });
 });
 
 describe("scripts/test-projects full-suite sharding", () => {
