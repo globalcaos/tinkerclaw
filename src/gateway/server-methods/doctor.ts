@@ -141,7 +141,7 @@ function extractIsoDayFromPath(filePath: string): string | null {
 function groundedMarkdownToDiaryLines(markdown: string): string[] {
   return markdown
     .split("\n")
-    .map((line) => line.trimEnd())
+    .map((line) => line.replace(/^##\s+/, "").trimEnd())
     .filter((line, index, lines) => line.length > 0 || (index > 0 && lines[index - 1]?.length > 0));
 }
 
@@ -239,6 +239,18 @@ function resolveDreamingConfig(
 
 function normalizeMemoryPath(rawPath: string): string {
   return rawPath.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
+function normalizeMemoryPathForWorkspace(workspaceDir: string, rawPath: string): string {
+  const normalized = normalizeMemoryPath(rawPath);
+  const workspaceNormalized = normalizeMemoryPath(workspaceDir);
+  if (
+    path.isAbsolute(rawPath) &&
+    normalized.startsWith(`${workspaceNormalized}/`)
+  ) {
+    return normalized.slice(workspaceNormalized.length + 1);
+  }
+  return normalized;
 }
 
 function isShortTermMemoryPath(filePath: string): boolean {
@@ -403,14 +415,15 @@ async function loadDreamingStoreStats(
       const dailyCount = toNonNegativeInt(entry.dailyCount);
       const groundedCount = toNonNegativeInt(entry.groundedCount);
       const totalEntrySignalCount = recallCount + dailyCount + groundedCount;
+      const normalizedEntryPath = normalizeMemoryPathForWorkspace(workspaceDir, entryPath);
       const snippet =
         normalizeTrimmedString(entry.snippet) ??
         normalizeTrimmedString(entry.summary) ??
-        normalizeMemoryPath(entryPath);
+        normalizedEntryPath;
       const lastRecalledAt = normalizeTrimmedString(entry.lastRecalledAt);
       const detail: DoctorMemoryDreamingEntryPayload = {
         key: entryKey,
-        path: normalizeMemoryPath(entryPath),
+        path: normalizedEntryPath,
         startLine: range.startLine,
         endLine: Math.max(range.startLine, range.endLine),
         snippet,
@@ -865,6 +878,20 @@ export const doctorHandlers: GatewayRequestHandlers = {
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const memoryDir = path.join(workspaceDir, "memory");
     const sourceFiles = await listWorkspaceDailyFiles(memoryDir);
+    if (sourceFiles.length === 0) {
+      const dreamDiary = await readDreamDiary(workspaceDir);
+      const payload: DoctorMemoryDreamDiaryActionPayload = {
+        agentId,
+        path: dreamDiary.path,
+        action: "backfill",
+        found: dreamDiary.found,
+        scannedFiles: 0,
+        written: 0,
+        replaced: 0,
+      };
+      respond(true, payload, undefined);
+      return;
+    }
     const grounded = await previewGroundedRemMarkdown({
       workspaceDir,
       inputPaths: sourceFiles,
