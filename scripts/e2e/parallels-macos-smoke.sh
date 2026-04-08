@@ -671,7 +671,7 @@ run_logged_guest_current_user_sh() {
   runner_body="$(cat <<EOF
 set -eu
 set -o pipefail
-trap "rc=\$?; printf '%s\n' \"\$rc\" > $(shell_quote "$done_path"); exit \"\$rc\"" EXIT
+trap 'status=$?; printf "%s\n" "$status" > "$done_path"; exit "$status"' EXIT
 umask 022
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
 if [ -z "\${HOME:-}" ]; then export HOME="/Users/\$(id -un)"; fi
