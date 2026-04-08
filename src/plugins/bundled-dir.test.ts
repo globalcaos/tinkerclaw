@@ -253,7 +253,7 @@ describe("resolveBundledPluginsDir", () => {
       repoRoot,
       expectedRelativeDir: expectation.expectedRelativeDir,
       ...("vitest" in expectation ? { vitest: expectation.vitest } : {}),
-      ...("execArgv" in expectation ? { execArgv: expectation.execArgv } : {}),
+      ...("execArgv" in expectation ? { execArgv: [...expectation.execArgv] } : {}),
     });
   });
 
