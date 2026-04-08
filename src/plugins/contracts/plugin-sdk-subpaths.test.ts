@@ -394,6 +394,10 @@ describe("plugin-sdk subpath exports", () => {
         "wrapExternalContent",
       ],
     });
+    expectSourceContract("tool-payload", {
+      mentions: ["extractToolPayload", "ToolPayloadCarrier"],
+      omits: ["createAnthropicToolPayloadCompatibilityWrapper", "extractToolSend"],
+    });
     expectSourceMentions("compat", [
       "createPluginRuntimeStore",
       "createScopedChannelConfigAdapter",

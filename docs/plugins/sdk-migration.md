@@ -262,6 +262,7 @@ Current bundled provider examples:
   | `plugin-sdk/request-url` | Request URL helpers | Extract string URLs from request-like inputs |
   | `plugin-sdk/run-command` | Timed command helpers | Timed command runner with normalized stdout/stderr |
   | `plugin-sdk/param-readers` | Param readers | Common tool/CLI param readers |
+  | `plugin-sdk/tool-payload` | Tool payload extraction | Extract normalized payloads from tool result objects |
   | `plugin-sdk/tool-send` | Tool send extraction | Extract canonical send target fields from tool args |
   | `plugin-sdk/temp-path` | Temp path helpers | Shared temp-download path helpers |
   | `plugin-sdk/logging-core` | Logging helpers | Subsystem logger and redaction helpers |
