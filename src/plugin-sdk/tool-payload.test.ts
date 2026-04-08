@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractToolPayload } from "./tool-payload.js";
+import { extractToolPayload, type ToolPayloadCarrier } from "./tool-payload.js";
 
 describe("extractToolPayload", () => {
   it("returns undefined for missing results", () => {
@@ -39,7 +39,7 @@ describe("extractToolPayload", () => {
       }),
     ).toBe(content);
 
-    const result = { status: "ok" };
+    const result = { status: "ok" } as ToolPayloadCarrier & { status: string };
     expect(extractToolPayload(result)).toBe(result);
   });
 });
