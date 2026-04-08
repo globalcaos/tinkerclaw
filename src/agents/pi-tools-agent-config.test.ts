@@ -8,6 +8,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createSessionConversationTestRegistry } from "../test-utils/session-conversation-registry.js";
 import { createOpenClawCodingTools } from "./pi-tools.js";
+import { resolveEffectiveToolPolicy } from "./pi-tools.policy.js";
 import type { SandboxDockerConfig } from "./sandbox.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import { createRestrictedAgentSandboxConfig } from "./test-helpers/sandbox-agent-config-fixtures.js";
@@ -340,7 +341,7 @@ describe("Agent-specific tool filtering", () => {
     expect(toolNames).toEqual(["session_status"]);
   });
 
-  it("should allow different tool policies for different agents", () => {
+  it("should resolve different tool policies for different agents", () => {
     const cfg: OpenClawConfig = {
       agents: {
         list: [
@@ -361,32 +362,24 @@ describe("Agent-specific tool filtering", () => {
       },
     };
 
-    // main agent: all tools
-    const mainTools = createOpenClawCodingTools({
+    // main agent: no override
+    const mainPolicy = resolveEffectiveToolPolicy({
       config: cfg,
       sessionKey: "agent:main:main",
-      workspaceDir: "/tmp/test-main",
-      agentDir: "/tmp/agent-main",
     });
-    const mainToolNames = mainTools.map((t) => t.name);
-    expect(mainToolNames).toContain("exec");
-    expect(mainToolNames).toContain("write");
-    expect(mainToolNames).toContain("edit");
-    expect(mainToolNames).not.toContain("apply_patch");
+    expect(mainPolicy.agentId).toBe("main");
+    expect(mainPolicy.agentPolicy).toBeUndefined();
 
     // family agent: restricted
-    const familyTools = createOpenClawCodingTools({
+    const familyPolicy = resolveEffectiveToolPolicy({
       config: cfg,
       sessionKey: "agent:family:whatsapp:group:123",
-      workspaceDir: "/tmp/test-family",
-      agentDir: "/tmp/agent-family",
     });
-    const familyToolNames = familyTools.map((t) => t.name);
-    expect(familyToolNames).toContain("read");
-    expect(familyToolNames).not.toContain("exec");
-    expect(familyToolNames).not.toContain("write");
-    expect(familyToolNames).not.toContain("edit");
-    expect(familyToolNames).not.toContain("apply_patch");
+    expect(familyPolicy.agentId).toBe("family");
+    expect(familyPolicy.agentPolicy).toEqual({
+      allow: ["read"],
+      deny: ["exec", "write", "edit", "process"],
+    });
   });
 
   it("should apply group tool policy overrides (group-specific beats wildcard)", () => {
