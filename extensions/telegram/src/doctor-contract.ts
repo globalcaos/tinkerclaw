@@ -97,6 +97,7 @@ export function normalizeCompatibilityConfig({
     entry: updated,
     pathPrefix: "channels.telegram",
     changes,
+    includePreviewChunk: true,
     resolvedMode: resolveTelegramPreviewStreamMode(updated),
     includePreviewChunk: true,
   });
@@ -116,6 +117,7 @@ export function normalizeCompatibilityConfig({
         entry: account,
         pathPrefix: `channels.telegram.accounts.${accountId}`,
         changes,
+        includePreviewChunk: true,
         resolvedMode: resolveTelegramPreviewStreamMode(account),
         includePreviewChunk: true,
       });
