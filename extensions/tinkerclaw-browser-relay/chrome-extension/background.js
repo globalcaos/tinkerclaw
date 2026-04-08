@@ -148,22 +148,41 @@ async function saveSharedTabs() {
 }
 
 async function restoreSharedTabs() {
+  // Strategy 1: Try restoring by saved tab IDs (same browser session)
   const { tinkerSharedTabs } = await chrome.storage.local.get("tinkerSharedTabs");
-  if (!tinkerSharedTabs || !Array.isArray(tinkerSharedTabs)) {
-    return;
-  }
-
-  for (const tabId of tinkerSharedTabs) {
-    try {
-      const tab = await chrome.tabs.get(tabId);
-      if (tab) {
-        await attachTab(tabId, { skipAttachedEvent: true });
-        await addTabToGroup(tabId);
+  if (tinkerSharedTabs && Array.isArray(tinkerSharedTabs)) {
+    for (const tabId of tinkerSharedTabs) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab) {
+          await attachTab(tabId, { skipAttachedEvent: true });
+          await addTabToGroup(tabId);
+        }
+      } catch {
+        // Tab no longer exists — skip
       }
-    } catch {
-      // Tab no longer exists — skip
     }
   }
+
+  // Strategy 2: Find tabs in existing "Tinker Shared" group (survives browser restart)
+  try {
+    const groups = await chrome.tabGroups.query({ title: TAB_GROUP_NAME });
+    for (const group of groups) {
+      const groupTabs = await chrome.tabs.query({ groupId: group.id });
+      for (const tab of groupTabs) {
+        if (tab.id && !tabs.has(tab.id)) {
+          try {
+            await attachTab(tab.id, { skipAttachedEvent: true });
+          } catch {
+            // Tab may not be attachable (chrome:// pages, etc.)
+          }
+        }
+      }
+    }
+  } catch {
+    // tabGroups API might not be available
+  }
+
   await saveSharedTabs(); // Clean up stale IDs
   updateGlobalBadge();
 }
@@ -260,6 +279,8 @@ async function ensureRelayConnection() {
   }
 }
 
+let reconnectTimer = null;
+
 function onRelayClosed(reason) {
   relayWs = null;
   for (const [id, p] of pending.entries()) {
@@ -267,19 +288,27 @@ function onRelayClosed(reason) {
     p.reject(new Error(`Relay disconnected (${reason})`));
   }
 
+  // Don't clear tabs — keep them attached for reconnect
   for (const tabId of tabs.keys()) {
-    void chrome.debugger.detach({ tabId }).catch(() => {});
     setBadge(tabId, "connecting");
-    void chrome.action.setTitle({
-      tabId,
-      title: "Tinkerclaw Browser Relay: disconnected (click to re-attach)",
-    });
   }
-  tabs.clear();
-  tabBySession.clear();
-  childSessionToTab.clear();
   updateGlobalBadge();
-  void saveSharedTabs();
+
+  // Auto-reconnect after 5 seconds if we have shared tabs
+  if (tabs.size > 0 && !reconnectTimer) {
+    console.log("Tinkerclaw: relay disconnected, reconnecting in 5s...");
+    reconnectTimer = setTimeout(async () => {
+      reconnectTimer = null;
+      try {
+        await ensureRelayConnection();
+        console.log("Tinkerclaw: relay reconnected with", tabs.size, "tabs still attached");
+      } catch (err) {
+        console.warn("Tinkerclaw: reconnect failed:", err.message);
+        // Try again
+        onRelayClosed("reconnect_failed");
+      }
+    }, 5000);
+  }
 }
 
 function sendToRelay(payload) {
