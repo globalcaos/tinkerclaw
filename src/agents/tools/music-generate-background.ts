@@ -19,13 +19,21 @@ const musicGenerationTaskLifecycle = createMediaGenerationTaskLifecycle({
   completionLabel: "music",
 });
 
-export const createMusicGenerationTaskRun = musicGenerationTaskLifecycle.createTaskRun;
+export const createMusicGenerationTaskRun = (
+  ...params: Parameters<typeof musicGenerationTaskLifecycle.createTaskRun>
+) => musicGenerationTaskLifecycle.createTaskRun(...params);
 
-export const recordMusicGenerationTaskProgress = musicGenerationTaskLifecycle.recordTaskProgress;
+export const recordMusicGenerationTaskProgress = (
+  ...params: Parameters<typeof musicGenerationTaskLifecycle.recordTaskProgress>
+) => musicGenerationTaskLifecycle.recordTaskProgress(...params);
 
-export const completeMusicGenerationTaskRun = musicGenerationTaskLifecycle.completeTaskRun;
+export const completeMusicGenerationTaskRun = (
+  ...params: Parameters<typeof musicGenerationTaskLifecycle.completeTaskRun>
+) => musicGenerationTaskLifecycle.completeTaskRun(...params);
 
-export const failMusicGenerationTaskRun = musicGenerationTaskLifecycle.failTaskRun;
+export const failMusicGenerationTaskRun = (
+  ...params: Parameters<typeof musicGenerationTaskLifecycle.failTaskRun>
+) => musicGenerationTaskLifecycle.failTaskRun(...params);
 
 export async function wakeMusicGenerationTaskCompletion(params: {
   config?: OpenClawConfig;

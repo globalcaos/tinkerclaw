@@ -19,13 +19,21 @@ const videoGenerationTaskLifecycle = createMediaGenerationTaskLifecycle({
   completionLabel: "video",
 });
 
-export const createVideoGenerationTaskRun = videoGenerationTaskLifecycle.createTaskRun;
+export const createVideoGenerationTaskRun = (
+  ...params: Parameters<typeof videoGenerationTaskLifecycle.createTaskRun>
+) => videoGenerationTaskLifecycle.createTaskRun(...params);
 
-export const recordVideoGenerationTaskProgress = videoGenerationTaskLifecycle.recordTaskProgress;
+export const recordVideoGenerationTaskProgress = (
+  ...params: Parameters<typeof videoGenerationTaskLifecycle.recordTaskProgress>
+) => videoGenerationTaskLifecycle.recordTaskProgress(...params);
 
-export const completeVideoGenerationTaskRun = videoGenerationTaskLifecycle.completeTaskRun;
+export const completeVideoGenerationTaskRun = (
+  ...params: Parameters<typeof videoGenerationTaskLifecycle.completeTaskRun>
+) => videoGenerationTaskLifecycle.completeTaskRun(...params);
 
-export const failVideoGenerationTaskRun = videoGenerationTaskLifecycle.failTaskRun;
+export const failVideoGenerationTaskRun = (
+  ...params: Parameters<typeof videoGenerationTaskLifecycle.failTaskRun>
+) => videoGenerationTaskLifecycle.failTaskRun(...params);
 
 export async function wakeVideoGenerationTaskCompletion(params: {
   config?: OpenClawConfig;

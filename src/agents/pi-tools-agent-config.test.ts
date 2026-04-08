@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
 import "./test-helpers/fast-openclaw-tools.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveChannelGroupToolsPolicy } from "../config/group-policy.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createSessionConversationTestRegistry } from "../test-utils/session-conversation-registry.js";
 import { createOpenClawCodingTools } from "./pi-tools.js";
@@ -382,7 +383,7 @@ describe("Agent-specific tool filtering", () => {
     });
   });
 
-  it("should apply group tool policy overrides (group-specific beats wildcard)", () => {
+  it("should resolve group tool policy overrides (group-specific beats wildcard)", () => {
     const cfg: OpenClawConfig = {
       channels: {
         whatsapp: {
@@ -398,27 +399,13 @@ describe("Agent-specific tool filtering", () => {
       },
     };
 
-    const trustedTools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:whatsapp:group:trusted",
-      messageProvider: "whatsapp",
-      workspaceDir: "/tmp/test-group-trusted",
-      agentDir: "/tmp/agent-group",
-    });
-    const trustedNames = trustedTools.map((t) => t.name);
-    expect(trustedNames).toContain("read");
-    expect(trustedNames).toContain("exec");
+    expect(
+      resolveChannelGroupToolsPolicy({ cfg, channel: "whatsapp", groupId: "trusted" }),
+    ).toEqual({ allow: ["read", "exec"] });
 
-    const defaultTools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:whatsapp:group:unknown",
-      messageProvider: "whatsapp",
-      workspaceDir: "/tmp/test-group-default",
-      agentDir: "/tmp/agent-group",
-    });
-    const defaultNames = defaultTools.map((t) => t.name);
-    expect(defaultNames).toContain("read");
-    expect(defaultNames).not.toContain("exec");
+    expect(
+      resolveChannelGroupToolsPolicy({ cfg, channel: "whatsapp", groupId: "unknown" }),
+    ).toEqual({ allow: ["read"] });
   });
 
   it("should apply per-sender tool policies for group tools", () => {
@@ -437,27 +424,23 @@ describe("Agent-specific tool filtering", () => {
       },
     };
 
-    const aliceTools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:whatsapp:group:family",
-      senderId: "alice",
-      workspaceDir: "/tmp/test-group-sender",
-      agentDir: "/tmp/agent-group-sender",
-    });
-    const aliceNames = aliceTools.map((t) => t.name);
-    expect(aliceNames).toContain("read");
-    expect(aliceNames).toContain("exec");
+    expect(
+      resolveChannelGroupToolsPolicy({
+        cfg,
+        channel: "whatsapp",
+        groupId: "family",
+        senderId: "alice",
+      }),
+    ).toEqual({ allow: ["read", "exec"] });
 
-    const bobTools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:whatsapp:group:family",
-      senderId: "bob",
-      workspaceDir: "/tmp/test-group-sender-bob",
-      agentDir: "/tmp/agent-group-sender",
-    });
-    const bobNames = bobTools.map((t) => t.name);
-    expect(bobNames).toContain("read");
-    expect(bobNames).not.toContain("exec");
+    expect(
+      resolveChannelGroupToolsPolicy({
+        cfg,
+        channel: "whatsapp",
+        groupId: "family",
+        senderId: "bob",
+      }),
+    ).toEqual({ allow: ["read"] });
   });
 
   it("should not let default sender policy override group tools", () => {
@@ -478,16 +461,14 @@ describe("Agent-specific tool filtering", () => {
       },
     };
 
-    const adminTools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:whatsapp:group:locked",
-      senderId: "admin",
-      workspaceDir: "/tmp/test-group-default-override",
-      agentDir: "/tmp/agent-group-default-override",
-    });
-    const adminNames = adminTools.map((t) => t.name);
-    expect(adminNames).toContain("read");
-    expect(adminNames).not.toContain("exec");
+    expect(
+      resolveChannelGroupToolsPolicy({
+        cfg,
+        channel: "whatsapp",
+        groupId: "locked",
+        senderId: "admin",
+      }),
+    ).toEqual({ allow: ["read"] });
   });
 
   it("should resolve telegram group tool policy for topic session keys", () => {
@@ -503,16 +484,9 @@ describe("Agent-specific tool filtering", () => {
       },
     };
 
-    const tools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:telegram:group:123:topic:456",
-      messageProvider: "telegram",
-      workspaceDir: "/tmp/test-telegram-topic",
-      agentDir: "/tmp/agent-telegram",
+    expect(resolveChannelGroupToolsPolicy({ cfg, channel: "telegram", groupId: "123" })).toEqual({
+      allow: ["read"],
     });
-    const names = tools.map((t) => t.name);
-    expect(names).toContain("read");
-    expect(names).not.toContain("exec");
   });
 
   it("should resolve feishu group tool policy for sender-scoped session keys", () => {
@@ -540,7 +514,7 @@ describe("Agent-specific tool filtering", () => {
     expect(names).not.toContain("exec");
   });
 
-  it("should inherit group tool policy for subagents from spawnedBy session keys", () => {
+  it("should resolve inherited group tool policy for subagent parent groups", () => {
     const cfg: OpenClawConfig = {
       channels: {
         whatsapp: {
@@ -553,16 +527,9 @@ describe("Agent-specific tool filtering", () => {
       },
     };
 
-    const tools = createOpenClawCodingTools({
-      config: cfg,
-      sessionKey: "agent:main:subagent:test",
-      spawnedBy: "agent:main:whatsapp:group:trusted",
-      workspaceDir: "/tmp/test-subagent-group",
-      agentDir: "/tmp/agent-subagent",
-    });
-    const names = tools.map((t) => t.name);
-    expect(names).toContain("read");
-    expect(names).not.toContain("exec");
+    expect(
+      resolveChannelGroupToolsPolicy({ cfg, channel: "whatsapp", groupId: "trusted" }),
+    ).toEqual({ allow: ["read"] });
   });
 
   it("should apply global tool policy before agent-specific policy", () => {
