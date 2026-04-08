@@ -26,6 +26,7 @@ Docs: https://docs.openclaw.ai
 - Plugin SDK/context engines: pass `availableTools` and `citationsMode` into `assemble()`, and expose memory-artifact and memory-prompt seams so companion plugins and non-legacy context engines can consume active memory state without reaching into internals. Thanks @vincentkoc.
 - ACP/ACPX plugin: bump the bundled `acpx` pin to `0.5.1` so plugin-local installs and strict version checks pick up the latest published runtime release. (#62148) Thanks @onutc.
 - Discord/events: allow `event-create` to accept a cover image URL or local file path, load and validate PNG/JPG/GIF event cover media, and pass the encoded image payload through Discord admin action/runtime paths. (#60883) Thanks @bittoby.
+- Plugins/provider-auth: expose runtime-ready provider auth through `openclaw/plugin-sdk/provider-auth-runtime` so native plugins and context engines can resolve request-ready credentials after provider-owned runtime exchanges like GitHub Copilot device-token-to-bearer flows. (#62753) Thanks @jalehman.
 
 ### Fixes
 
