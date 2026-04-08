@@ -666,12 +666,14 @@ run_logged_guest_current_user_sh() {
   local done_path="$3"
   local timeout_s="$4"
   local runner_path="$5"
-  local deadline rc runner_body
+  local deadline rc runner_body launch_python
+  local runner_body_json runner_path_json log_path_json
+  local launch_python_b64
   guest_current_user_exec /bin/rm -f "$log_path" "$done_path" "$runner_path"
   runner_body="$(cat <<EOF
 set -eu
 set -o pipefail
-trap 'rc=\$?; printf "%s\n" "\$rc" > $(shell_quote "$done_path"); exit "\$rc"' EXIT
+trap "rc=\$?; printf '%s\n' \"\$rc\" > $(shell_quote "$done_path"); exit \"\$rc\"" EXIT
 umask 022
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
 if [ -z "\${HOME:-}" ]; then export HOME="/Users/\$(id -un)"; fi
@@ -679,14 +681,15 @@ cd "\$HOME"
 $script
 EOF
 )"
-  guest_current_user_sh "$(cat <<EOF
-cat > $(shell_quote "$runner_path") <<'__OPENCLAW_BG__'
-$runner_body
-__OPENCLAW_BG__
-/bin/chmod +x $(shell_quote "$runner_path")
-nohup /bin/bash $(shell_quote "$runner_path") > $(shell_quote "$log_path") 2>&1 < /dev/null &
-EOF
-)"
+  runner_body_json="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$runner_body")"
+  runner_path_json="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$runner_path")"
+  log_path_json="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$log_path")"
+  launch_python="import os, pathlib, subprocess; runner_path = $runner_path_json; log_path = $log_path_json; runner_body = $runner_body_json; pathlib.Path(runner_path).write_text(runner_body); os.chmod(runner_path, 0o755); log = open(log_path, 'ab', buffering=0); subprocess.Popen(['/bin/bash', runner_path], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)"
+  launch_python_b64="$(printf '%s' "$launch_python" | /usr/bin/base64 | tr -d '\n')"
+  guest_current_user_exec /usr/bin/env \
+    "OPENCLAW_LAUNCH_PY_B64=$launch_python_b64" \
+    /usr/bin/python3 \
+    -c "import base64, os; exec(base64.b64decode(os.environ['OPENCLAW_LAUNCH_PY_B64']).decode())"
   deadline=$((SECONDS + timeout_s))
   while (( SECONDS < deadline )); do
     if guest_current_user_exec /bin/test -f "$done_path" >/dev/null 2>&1; then
