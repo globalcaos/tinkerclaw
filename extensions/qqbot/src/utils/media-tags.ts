@@ -54,17 +54,19 @@ const RIGHT_BRACKET = "(?:[>＞>]|&gt;)";
 /** Match self-closing media-tag syntax with file/src/path/url attributes. */
 export const SELF_CLOSING_TAG_REGEX = new RegExp(
   "`?" +
-    LEFT_BRACKET + "\\s*(" +
+    LEFT_BRACKET +
+    "\\s*(" +
     TAG_NAME_PATTERN +
     ")" +
     "(?:\\s+(?!file|src|path|url)[a-z_-]+\\s*=\\s*[\"']?[^\"'/>＞>]*?[\"']?)*" +
     "\\s+(?:file|src|path|url)\\s*=\\s*" +
     "[\"']?" +
-    "([^\"'/>＞>]+?)" +
+    "([^\"'\\s>＞]+?)" +
     "[\"']?" +
     "(?:\\s+[a-z_-]+\\s*=\\s*[\"']?[^\"'/>＞>]*?[\"']?)*" +
     "\\s*/?" +
-    "\\s*" + RIGHT_BRACKET +
+    "\\s*" +
+    RIGHT_BRACKET +
     "`?",
   "gi",
 );
@@ -72,15 +74,19 @@ export const SELF_CLOSING_TAG_REGEX = new RegExp(
 /** Match malformed wrapped media tags that should be normalized. */
 export const FUZZY_MEDIA_TAG_REGEX = new RegExp(
   "`?" +
-    LEFT_BRACKET + "\\s*(" +
+    LEFT_BRACKET +
+    "\\s*(" +
     TAG_NAME_PATTERN +
-    ")\\s*" + RIGHT_BRACKET +
+    ")\\s*" +
+    RIGHT_BRACKET +
     "[\"']?\\s*" +
     "([^<＜<＞>\"'`]+?)" +
     "\\s*[\"']?" +
-    LEFT_BRACKET + "\\s*/?\\s*(?:" +
+    LEFT_BRACKET +
+    "\\s*/?\\s*(?:" +
     TAG_NAME_PATTERN +
-    ")\\s*" + RIGHT_BRACKET +
+    ")\\s*" +
+    RIGHT_BRACKET +
     "`?",
   "gi",
 );
@@ -96,13 +102,21 @@ function resolveTagName(raw: string): (typeof VALID_TAGS)[number] {
 
 /** Match wrapped tags whose bodies need newline and tab cleanup. */
 const MULTILINE_TAG_CLEANUP = new RegExp(
-  "(" + LEFT_BRACKET + "\\s*(?:" +
+  "(" +
+    LEFT_BRACKET +
+    "\\s*(?:" +
     TAG_NAME_PATTERN +
-    ")\\s*" + RIGHT_BRACKET + ")" +
+    ")\\s*" +
+    RIGHT_BRACKET +
+    ")" +
     "([\\s\\S]*?)" +
-    "(" + LEFT_BRACKET + "\\s*/?\\s*(?:" +
+    "(" +
+    LEFT_BRACKET +
+    "\\s*/?\\s*(?:" +
     TAG_NAME_PATTERN +
-    ")\\s*" + RIGHT_BRACKET + ")",
+    ")\\s*" +
+    RIGHT_BRACKET +
+    ")",
   "gi",
 );
 
