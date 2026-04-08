@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import "./test-helpers/fast-core-tools.js";
+import "./test-helpers/fast-openclaw-tools-shell.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
 
 function readToolByName() {
