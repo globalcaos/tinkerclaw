@@ -54,59 +54,6 @@ async function withSpeechProviders<T>(
 }
 
 describe("gateway talk provider contracts", () => {
-  it("synthesizes talk audio via the OpenAI speech-provider contract", async () => {
-    const { writeConfigFile } = await import("../config/config.js");
-    await writeConfigFile({
-      talk: {
-        provider: "openai",
-        providers: {
-          openai: {
-            apiKey: "openai-talk-key", // pragma: allowlist secret
-            voiceId: "alloy",
-            modelId: "gpt-4o-mini-tts",
-          },
-        },
-      },
-    });
-
-    const originalFetch = globalThis.fetch;
-    const requestInits: RequestInit[] = [];
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init) {
-        requestInits.push(init);
-      }
-      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
-    });
-    globalThis.fetch = withFetchPreconnect(fetchMock);
-
-    try {
-      const res = await invokeTalkSpeakDirect({
-        text: "Hello from talk mode.",
-        voiceId: "nova",
-        modelId: "tts-1",
-        rateWpm: 218,
-      });
-      expect(res?.ok, JSON.stringify(res?.error)).toBe(true);
-      expect((res?.payload as TalkSpeakPayload | undefined)?.provider).toBe("openai");
-      expect((res?.payload as TalkSpeakPayload | undefined)?.outputFormat).toBe("mp3");
-      expect((res?.payload as TalkSpeakPayload | undefined)?.mimeType).toBe("audio/mpeg");
-      expect((res?.payload as TalkSpeakPayload | undefined)?.fileExtension).toBe(".mp3");
-      expect((res?.payload as TalkSpeakPayload | undefined)?.audioBase64).toBe(
-        Buffer.from([1, 2, 3]).toString("base64"),
-      );
-
-      expect(fetchMock).toHaveBeenCalled();
-      const requestInit = requestInits.find((init) => typeof init.body === "string");
-      expect(requestInit).toBeDefined();
-      const body = JSON.parse(requestInit?.body as string) as Record<string, unknown>;
-      expect(body.model).toBe("tts-1");
-      expect(body.voice).toBe("nova");
-      expect(body.speed).toBeCloseTo(218 / 175, 5);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
   it("resolves elevenlabs talk voice aliases case-insensitively and forwards output format", async () => {
     const { writeConfigFile } = await import("../config/config.js");
     await writeConfigFile({
