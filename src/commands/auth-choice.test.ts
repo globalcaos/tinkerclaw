@@ -1628,16 +1628,10 @@ describe("applyAuthChoice", () => {
   it("does not persist literal 'undefined' when API key prompts return undefined", async () => {
     const scenarios = [
       {
-        authChoice: "apiKey" as const,
-        envKey: "ANTHROPIC_API_KEY",
-        profileId: "anthropic:default",
-        provider: "anthropic",
-      },
-      {
-        authChoice: "openrouter-api-key" as const,
-        envKey: "OPENROUTER_API_KEY",
-        profileId: "openrouter:default",
-        provider: "openrouter",
+        authChoice: "synthetic-api-key" as const,
+        envKey: "SYNTHETIC_API_KEY",
+        profileId: "synthetic:default",
+        provider: "synthetic",
       },
     ];
 
