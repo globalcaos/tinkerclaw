@@ -1,0 +1,11 @@
+{
+  "id": "tinkerclaw-browser-relay",
+  "name": "Tinkerclaw Browser Relay",
+  "description": "Chrome extension for sharing browser tabs with Jarvis. Tabs are grouped in a brown 'Tinker Shared' tab group.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
