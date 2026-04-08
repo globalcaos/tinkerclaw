@@ -934,9 +934,21 @@ describe("resolveModel", () => {
       (params: { workspaceDir?: string; context: { agentDir?: string } }) =>
         params.workspaceDir === "/tmp/workspace" && params.context.agentDir === "/tmp/agent-state",
     );
+    const runProviderDynamicModel = vi.fn(
+      (params: { workspaceDir?: string; context: { provider: string; modelId: string } }) =>
+        params.workspaceDir === "/tmp/workspace" &&
+        params.context.provider === "openai-codex" &&
+        params.context.modelId === "gpt-5.4"
+          ? ({
+              ...buildOpenAICodexForwardCompatExpectation("gpt-5.4"),
+              name: "GPT-5.4",
+            } as ReturnType<typeof buildOpenAICodexForwardCompatExpectation>)
+          : undefined,
+    );
     const runtimeHooks = {
       ...createRuntimeHooks(),
       shouldPreferProviderRuntimeResolvedModel: shouldPreferRuntimeResolvedModel,
+      runProviderDynamicModel,
     };
     const cfg = {
       agents: {
@@ -959,6 +971,17 @@ describe("resolveModel", () => {
         context: expect.objectContaining({
           agentDir: "/tmp/agent-state",
           workspaceDir: "/tmp/workspace",
+        }),
+      }),
+    );
+    expect(runProviderDynamicModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai-codex",
+        workspaceDir: "/tmp/workspace",
+        context: expect.objectContaining({
+          agentDir: "/tmp/agent-state",
+          modelId: "gpt-5.4",
+          provider: "openai-codex",
         }),
       }),
     );
