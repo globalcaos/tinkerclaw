@@ -5,6 +5,7 @@ import { loadOpenClawPluginCliRegistry, loadOpenClawPlugins } from "./loader.js"
 import {
   cleanupPluginLoaderFixturesForTest,
   EMPTY_PLUGIN_SCHEMA,
+  inlineChannelPluginEntryFactorySource,
   makeTempDir,
   resetPluginLoaderTestStateForTest,
   useNoBundledPlugins,
@@ -18,33 +19,6 @@ afterEach(() => {
 afterAll(() => {
   cleanupPluginLoaderFixturesForTest();
 });
-
-function inlineChannelPluginEntryFactorySource(): string {
-  return `function defineChannelPluginEntry(options) {
-  return {
-    id: options.id,
-    name: options.name,
-    description: options.description,
-    configSchema: { schema: { type: "object" } },
-    channelPlugin: options.plugin,
-    setChannelRuntime: options.setRuntime,
-    register(api) {
-      if (api.registrationMode === "cli-metadata") {
-        options.registerCliMetadata?.(api);
-        return;
-      }
-      options.setRuntime?.(api.runtime);
-      api.registerChannel({ plugin: options.plugin });
-      if (api.registrationMode !== "full") {
-        return;
-      }
-      options.registerCliMetadata?.(api);
-      options.registerFull?.(api);
-    },
-  };
-}
-`;
-}
 
 describe("plugin loader CLI metadata", () => {
   it("suppresses trust warning logs during CLI metadata loads", async () => {
