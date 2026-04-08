@@ -1260,8 +1260,23 @@ export function attachGatewayWsMessageHandler(params: {
           for (const nodeId of nodeIdsForPairing) {
             void updatePairedNodeMetadata(nodeId, {
               lastConnectedAtMs: nodeSession.connectedAtMs,
+              lastSeenAtMs: nodeSession.connectedAtMs,
+              lastSeenReason: "connect",
             }).catch((err) =>
               logGateway.warn(`failed to record last connect for ${nodeId}: ${formatForLog(err)}`),
+            );
+          }
+          if (device?.id) {
+            void updatePairedDeviceMetadata(device.id, {
+              clientId: nodeSession.clientId,
+              clientMode: nodeSession.clientMode,
+              remoteIp: nodeSession.remoteIp,
+              lastSeenAtMs: nodeSession.connectedAtMs,
+              lastSeenReason: "connect",
+            }).catch((err) =>
+              logGateway.warn(
+                `failed to record device last seen for ${device.id}: ${formatForLog(err)}`,
+              ),
             );
           }
           recordRemoteNodeInfo({

@@ -1131,10 +1131,20 @@ export const nodeHandlers: GatewayRequestHandlers = {
         loadGatewayModelCatalog: context.loadGatewayModelCatalog,
         logGateway: { warn: context.logGateway.warn },
       };
-      await handleNodeEvent(nodeContext, nodeId, {
-        event: p.event,
-        payloadJSON,
-      });
+      const nodePairingIds = new Set<string>([nodeId]);
+      const instanceId = normalizeOptionalString(client?.connect?.client?.instanceId) ?? "";
+      if (instanceId) {
+        nodePairingIds.add(instanceId);
+      }
+      await handleNodeEvent(
+        nodeContext,
+        nodeId,
+        {
+          event: p.event,
+          payloadJSON,
+        },
+        { nodePairingIds: [...nodePairingIds] },
+      );
       respond(true, { ok: true }, undefined);
     });
   },

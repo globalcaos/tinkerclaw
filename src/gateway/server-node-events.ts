@@ -20,6 +20,8 @@ import {
   loadSessionEntry,
   migrateAndPruneGatewaySessionStoreKey,
   normalizeChannelId,
+  updatePairedDeviceMetadata,
+  updatePairedNodeMetadata,
   normalizeMainKey,
   normalizeRpcAttachmentsToChatAttachments,
   parseMessageWithAttachments,
@@ -263,7 +265,12 @@ async function sendReceiptAck(params: {
   });
 }
 
-export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt: NodeEvent) => {
+export const handleNodeEvent = async (
+  ctx: NodeEventContext,
+  nodeId: string,
+  evt: NodeEvent,
+  opts?: { nodePairingIds?: readonly string[] },
+) => {
   switch (evt.event) {
     case "voice.transcript": {
       const obj = parsePayloadObject(evt.payloadJSON);
@@ -675,6 +682,35 @@ export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt
         }
       } catch (err) {
         ctx.logGateway.warn(`push apns register failed node=${nodeId}: ${formatForLog(err)}`);
+      }
+      return;
+    }
+    case "node.presence.alive": {
+      const obj = parsePayloadObject(evt.payloadJSON);
+      if (!obj) {
+        return;
+      }
+      const trigger = normalizeOptionalString(obj.trigger) ?? "background";
+      const receivedAtMs = Date.now();
+      const nodePairingIds = new Set<string>(
+        opts?.nodePairingIds?.length ? opts.nodePairingIds : [nodeId],
+      );
+      try {
+        await Promise.all([
+          ...[...nodePairingIds].map(
+            async (pairedNodeId) =>
+              await updatePairedNodeMetadata(pairedNodeId, {
+                lastSeenAtMs: receivedAtMs,
+                lastSeenReason: trigger,
+              }),
+          ),
+          updatePairedDeviceMetadata(nodeId, {
+            lastSeenAtMs: receivedAtMs,
+            lastSeenReason: trigger,
+          }),
+        ]);
+      } catch (err) {
+        ctx.logGateway.warn(`node presence alive failed node=${nodeId}: ${formatForLog(err)}`);
       }
       return;
     }
