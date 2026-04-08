@@ -707,10 +707,16 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
 
       if (pathname === "/extension") {
-        const token = getRelayAuthTokenFromRequest(req, url);
-        if (!token || !relayAuthTokens.has(token)) {
-          rejectUpgrade(socket, 401, "Unauthorized");
-          return;
+        // FORK: Allow chrome-extension:// origins on loopback without token.
+        // The origin check above + loopback check is sufficient for local security.
+        const isTrustedExtensionOrigin =
+          origin && origin.startsWith("chrome-extension://") && isLoopbackAddress(remote);
+        if (!isTrustedExtensionOrigin) {
+          const token = getRelayAuthTokenFromRequest(req, url);
+          if (!token || !relayAuthTokens.has(token)) {
+            rejectUpgrade(socket, 401, "Unauthorized");
+            return;
+          }
         }
         // MV3 worker reconnect races can leave a stale non-OPEN socket reference.
         if (extensionWs && extensionWs.readyState !== WebSocket.OPEN) {
