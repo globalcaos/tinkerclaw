@@ -78,8 +78,6 @@ export type PairedDevice = {
   tokens?: Record<string, DeviceAuthToken>;
   createdAtMs: number;
   approvedAtMs: number;
-  lastSeenAtMs?: number;
-  lastSeenReason?: string;
 };
 
 export type DevicePairingList = {
@@ -745,8 +743,6 @@ export async function updatePairedDeviceMetadata(
       role: patch.role ?? existing.role,
       roles,
       scopes,
-      lastSeenAtMs: patch.lastSeenAtMs ?? existing.lastSeenAtMs,
-      lastSeenReason: patch.lastSeenReason ?? existing.lastSeenReason,
     };
     await persistState(state, baseDir);
   });
