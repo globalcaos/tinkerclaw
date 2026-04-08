@@ -1,5 +1,20 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+async function resetProviderRuntimeState() {
+  const [
+    { clearPluginManifestRegistryCache },
+    { resetProviderRuntimeHookCacheForTest },
+    { resetPluginLoaderTestStateForTest },
+  ] = await Promise.all([
+    import("../plugins/manifest-registry.js"),
+    import("../plugins/provider-runtime.js"),
+    import("../plugins/loader.test-fixtures.js"),
+  ]);
+  resetPluginLoaderTestStateForTest();
+  clearPluginManifestRegistryCache();
+  resetProviderRuntimeHookCacheForTest();
+}
+
 let createProviderAuthResolver: typeof import("./models-config.providers.secrets.js").createProviderAuthResolver;
 
 async function loadSecretsModule() {
@@ -7,6 +22,7 @@ async function loadSecretsModule() {
   vi.doUnmock("../plugins/provider-runtime.js");
   vi.doUnmock("../secrets/provider-env-vars.js");
   vi.resetModules();
+  await resetProviderRuntimeState();
   ({ createProviderAuthResolver } = await import("./models-config.providers.secrets.js"));
 }
 
