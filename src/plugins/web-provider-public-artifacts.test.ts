@@ -1,14 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { resolveBundledContractSnapshotPluginIds } from "./contracts/inventory/bundled-capability-metadata.js";
 import { resolveManifestContractPluginIds } from "./manifest-registry.js";
 import {
   resolveBundledWebFetchProvidersFromPublicArtifacts,
   resolveBundledWebSearchProvidersFromPublicArtifacts,
 } from "./web-provider-public-artifacts.js";
 
+function uniquePluginIds(entries: readonly { pluginId: string }[] | null): string[] {
+  return [...new Set((entries ?? []).map((entry) => entry.pluginId))].toSorted((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
 describe("web provider public artifacts", () => {
   it("covers every bundled web search provider declared in manifests", () => {
-    expect(resolveBundledContractSnapshotPluginIds("webSearchProviderIds")).toEqual(
+    expect(
+      uniquePluginIds(
+        resolveBundledWebSearchProvidersFromPublicArtifacts({
+          bundledAllowlistCompat: true,
+        }),
+      ),
+    ).toEqual(
       resolveManifestContractPluginIds({
         contract: "webSearchProviders",
         origin: "bundled",
@@ -17,7 +28,13 @@ describe("web provider public artifacts", () => {
   });
 
   it("covers every bundled web fetch provider declared in manifests", () => {
-    expect(resolveBundledContractSnapshotPluginIds("webFetchProviderIds")).toEqual(
+    expect(
+      uniquePluginIds(
+        resolveBundledWebFetchProvidersFromPublicArtifacts({
+          bundledAllowlistCompat: true,
+        }),
+      ),
+    ).toEqual(
       resolveManifestContractPluginIds({
         contract: "webFetchProviders",
         origin: "bundled",
