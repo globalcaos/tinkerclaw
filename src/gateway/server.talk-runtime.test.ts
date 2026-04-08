@@ -217,9 +217,7 @@ describe("gateway talk runtime", () => {
 
         expect(res?.ok, JSON.stringify(res?.error)).toBe(true);
         expect((res?.payload as TalkSpeakTestPayload | undefined)?.provider).toBe("elevenlabs");
-        expect((res?.payload as TalkSpeakTestPayload | undefined)?.outputFormat).toBe(
-          "pcm_44100",
-        );
+        expect((res?.payload as TalkSpeakTestPayload | undefined)?.outputFormat).toBe("pcm_44100");
         expect((res?.payload as TalkSpeakTestPayload | undefined)?.audioBase64).toBe(
           Buffer.from([4, 5, 6]).toString("base64"),
         );
