@@ -166,3 +166,11 @@ export const BUNDLED_AUTO_ENABLE_PROVIDER_PLUGIN_IDS = Object.fromEntries(
     ]),
   ).toSorted(([left], [right]) => left.localeCompare(right)),
 ) as Readonly<Record<string, string>>;
+
+export function resolveBundledContractSnapshotPluginIds(
+  key: keyof Omit<BundledPluginContractSnapshot, "pluginId">,
+): string[] {
+  return BUNDLED_PLUGIN_CONTRACT_SNAPSHOTS.filter((entry) => entry[key].length > 0)
+    .map((entry) => entry.pluginId)
+    .toSorted((left, right) => left.localeCompare(right));
+}
