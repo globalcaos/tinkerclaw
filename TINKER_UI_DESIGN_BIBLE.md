@@ -1070,6 +1070,47 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Audience:** New users' AI agents — written for step-by-step execution, not human reading.
 - **Planned automation:** `scripts/fork-setup.sh` (one-command setup), auto-detect Ollama, auto-patch config. Plan at `jarvis-icu/docs/superpowers/plans/2026-04-03-fork-onboarding-automation.md`.
 
+### 5.61 Multi-Extension Browser Relay (Fork-Only, Retained) (2026-04-06)
+
+- **Status:** `DEPLOYED` (retained despite upstream deletion)
+- **What:** `src/browser/extension-relay.ts` — server-side CDP relay that the Chrome extension connects to via WebSocket. Upstream deleted this (2026-04-02 merge) and replaced with MCP-based browser control that requires reauthentication on every reconnect and gives the agent unrestricted access to all logged-in browser sessions.
+- **Why we keep it:** Upstream's MCP replacement is impractical for production — reauthenticating every browser extension reconnect breaks workflow, and granting the agent unrestricted access to all logged-in sessions is a security risk. Our relay scopes access to explicitly shared tabs only.
+- **Architecture:** Gateway plugin (`~/.openclaw/extensions/tinkerclaw-browser-relay/`) starts an inline WebSocket relay on port 18792. The Chrome extension (`extensions/tinkerclaw-browser-relay/chrome-extension/`) connects to it, shares user-selected tabs via `chrome.debugger.attach()`, and forwards CDP commands between the relay and shared tabs.
+- **CDP over debugger API (deliberate choice):** We use `chrome.debugger` instead of standard extension APIs because CDP provides capabilities essential for security testing that standard APIs deliberately prevent: request/response body interception and modification, CSP bypass (`Page.setBypassCSP`), WebSocket frame capture, cross-origin frame access, SSL certificate error ignoring, closed Shadow DOM piercing, full-page screenshots at arbitrary resolution, and raw input event synthesis. Standard APIs are designed to be safe — CDP is designed to be powerful.
+- **"Started debugging" banner:** Chrome shows a security banner when `chrome.debugger.attach()` is used. Suppressed with `google-chrome --silent-debugger-extension-api`. Cannot be removed programmatically — it's a Chrome security feature.
+- **Tab group:** Shared tabs are grouped in a Chrome tab group named "Tinker Shared" (grey color — Chrome's closest to brown). Tab group survives browser restarts.
+- **Persistence:** Shared tab IDs saved to `chrome.storage.local`. On browser restart, extension finds tabs in the existing "Tinker Shared" group and re-attaches.
+- **Auto-reconnect:** When the relay disconnects (gateway restart), extension retries every 5s. Tabs stay attached to the debugger during reconnect — no manual re-sharing needed.
+- **Auth:** Chrome-extension:// origins on loopback are trusted without token (HMAC-SHA256 derived tokens still accepted for non-extension CDP clients).
+- **Install:** Developer mode required (`chrome://extensions/` → Load unpacked). Options page for relay token configuration (auto-discovery for loopback).
+- **Brown icons:** Sandstone (#c19a6b) on dark (#2a2318) matching Tinkerclaw earth theme.
+- **Files:** `extensions/tinkerclaw-browser-relay/chrome-extension/` (MV3 extension), `~/.openclaw/extensions/tinkerclaw-browser-relay/index.ts` (gateway plugin), `src/browser/extension-relay.ts` (CDP relay server), `extensions/browser/src/browser/extension-relay.ts` (bundled version), `extensions/browser/src/browser/extension-relay-auth.ts` (HMAC auth)
+
+### 5.62 Plugin Rename — prefrontal and hippocampus (2026-04-06)
+
+- **Status:** `DEPLOYED`
+- **What:** Renamed `extensions/prefrontal/` → `extensions/tinkerclaw-prefrontal/` and `extensions/hippocampus/` → `extensions/tinkerclaw-hippocampus/` for naming consistency with all other fork extensions (`tinkerclaw-*` prefix).
+
+### 5.63 Prefrontal v3.0 Recipe Engine (2026-04-07)
+
+- **Status:** `DEPLOYED`
+- **What:** Transforms Prefrontal from a guard system (exploration gate, anti-goldplating) into a recipe execution engine. 17 recipes across 6 categories (coding, writing, operations, analysis, security, communication) in Journey Kit format (YAML frontmatter + markdown body).
+- **Architecture:** Demand-driven — the model activates recipes by mentioning them in its output ("following the debug recipe"). Recipe steps guide execution with preconditions, required tools, and success criteria. Fractal Reflection evaluates and evolves recipes post-turn. No separate orchestrator LLM call — the recipe is injected into the same prompt (evidence from Claude Code analysis shows single-call harness optimization outperforms separate planning calls).
+- **Paper:** `~/Documents/AI_reports/Papers/J13_prefrontal/2026-04-07-prefrontal-v3.0.md`
+- **Files:** `extensions/tinkerclaw-prefrontal/recipes/` (17 recipe .md files), `recipe-engine.ts`, `orchestrator.ts`, `progress-reporter.ts`, `prefrontal-prompt-loader.ts`
+
+### 5.64 Recipes Tab (2026-04-07)
+
+- **Status:** `DEPLOYED`
+- **What:** New sidebar tab (🧾 icon, sandstone #d4a574) showing all recipes organized by category with hierarchical child recipes, step flow arrows, summaries, and click-to-edit via Vite dev server `xdg-open` endpoint.
+- **Files:** `tinker-ui/src/app.ts` (renderRecipesTab), `tinker-ui/src/styles/base.css`, `tinker-ui/vite.config.ts` (openFilePlugin)
+
+### 5.65 Recipe Visual Indicators (2026-04-08)
+
+- **Status:** `DEPLOYED`
+- **What:** When a recipe is active, three visual indicators appear: (1) persistent recipe banner below topbar showing recipe name + step progress with category color, (2) thinking indicator annotation showing current step alongside model name, (3) assistant message tags showing which recipe step produced each message. Zero extra tokens — all from hook state.
+- **Files:** `extensions/tinkerclaw-prefrontal/index.ts` (prefrontal-recipe-status broadcast), `tinker-ui/src/app.ts` (banner + thinking + tags), `tinker-ui/src/styles/base.css`
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
