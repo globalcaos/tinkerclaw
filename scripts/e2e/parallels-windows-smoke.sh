@@ -1583,7 +1583,9 @@ try {
   $shortTemp = Join-Path $shortRoot 'tmp'
   $bootstrapRoot = Join-Path $shortRoot 'bootstrap'
   $bootstrapBin = Join-Path $bootstrapRoot 'node_modules\.bin'
-  $env:PATH = "$portableGit\cmd;$portableGit\mingw64\bin;$portableGit\usr\bin;$env:PATH"
+  $env:PATH = "$bootstrapBin;$portableGit\cmd;$portableGit\mingw64\bin;$env:PATH"
+  $env:ComSpec = Join-Path $env:SystemRoot 'System32\cmd.exe'
+  $env:npm_config_script_shell = $env:ComSpec
   $openclaw = Join-Path $env:APPDATA 'npm\openclaw.cmd'
   $gitRoot = Join-Path $env:USERPROFILE 'openclaw'
   $gitEntry = Join-Path $gitRoot 'openclaw.mjs'
@@ -1596,8 +1598,8 @@ try {
   New-Item -ItemType Directory -Path $bootstrapRoot -Force | Out-Null
   $env:TEMP = $shortTemp
   $env:TMP = $shortTemp
-  $env:PATH = "$bootstrapBin;$env:PATH"
   Write-LoggedLine ("TEMP=" + $env:TEMP)
+  Write-LoggedLine ("npm_config_script_shell=" + $env:npm_config_script_shell)
 
   Write-ProgressLog 'update.where-pnpm-pre'
   $pnpmPre = Get-Command pnpm -ErrorAction SilentlyContinue
