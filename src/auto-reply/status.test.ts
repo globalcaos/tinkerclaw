@@ -11,8 +11,16 @@ import {
   buildCommandsMessage,
   buildCommandsMessagePaginated,
   buildHelpMessage,
-  buildStatusMessage,
+  buildStatusMessage as buildStatusMessageRaw,
 } from "./status.js";
+import type { buildStatusMessage as BuildStatusMessage } from "./status.js";
+
+const buildStatusMessage: typeof BuildStatusMessage = (args) =>
+  buildStatusMessageRaw({
+    modelAuth: "api-key",
+    activeModelAuth: "api-key",
+    ...args,
+  });
 
 const { listPluginCommands } = vi.hoisted(() => ({
   listPluginCommands: vi.fn(
