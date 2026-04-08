@@ -45,6 +45,7 @@ Docs: https://docs.openclaw.ai
 - Security/dependency audit: force `basic-ftp` to `5.2.1` to pick up the CRLF command-injection fix from GHSA-chqc-8p9q-pq6q.
 - Security/dependency audit: bump Hono to `4.12.12` and `@hono/node-server` to `1.19.13` in production resolution paths.
 - Slack/partial streaming: keep the final fallback reply path active when preview finalization fails so stale preview text cannot suppress the actual final answer. (#62859) Thanks @gumadeiras.
+- Plugins/contracts: keep test-only helpers out of production contract barrels, load shared contract harnesses through bundled test surfaces, and harden guardrails so indirect re-exports and canonical `*.test.ts` files stay blocked. (#63311) Thanks @altaywtf.
 
 ## 2026.4.8
 
