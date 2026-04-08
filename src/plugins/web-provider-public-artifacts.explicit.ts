@@ -1,4 +1,7 @@
-import { loadBundledPluginPublicArtifactModuleSync } from "./public-surface-loader.js";
+import {
+  loadBundledPluginPublicArtifactModuleSync,
+  resolveBundledPluginPublicArtifactPath,
+} from "./public-surface-loader.js";
 import type {
   PluginWebFetchProviderEntry,
   PluginWebSearchProviderEntry,
@@ -185,4 +188,27 @@ export function resolveBundledExplicitWebFetchProvidersFromPublicArtifacts(param
     providers.push(...loadedProviders);
   }
   return providers;
+}
+
+function hasBundledPublicArtifactCandidate(params: {
+  dirName: string;
+  artifactCandidates: readonly string[];
+}): boolean {
+  return params.artifactCandidates.some((artifactBasename) =>
+    Boolean(resolveBundledPluginPublicArtifactPath({ dirName: params.dirName, artifactBasename })),
+  );
+}
+
+export function hasBundledWebSearchProviderPublicArtifact(pluginId: string): boolean {
+  return hasBundledPublicArtifactCandidate({
+    dirName: pluginId,
+    artifactCandidates: WEB_SEARCH_ARTIFACT_CANDIDATES,
+  });
+}
+
+export function hasBundledWebFetchProviderPublicArtifact(pluginId: string): boolean {
+  return hasBundledPublicArtifactCandidate({
+    dirName: pluginId,
+    artifactCandidates: WEB_FETCH_ARTIFACT_CANDIDATES,
+  });
 }
