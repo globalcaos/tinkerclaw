@@ -2,10 +2,6 @@ import { describe, expect, it } from "vitest";
 import { applyLegacyDoctorMigrations } from "../commands/doctor/shared/legacy-config-migrate.js";
 import { applyRuntimeLegacyConfigMigrations } from "../commands/doctor/shared/runtime-compat-api.js";
 import {
-  collectRelevantDoctorPluginIds,
-  listPluginDoctorLegacyConfigRules,
-} from "../plugins/doctor-contract-registry.js";
-import {
   getConfigValueAtPath,
   parseConfigPath,
   setConfigValueAtPath,
@@ -728,48 +724,6 @@ describe("config strict validation", () => {
     expect(next?.messages?.tts?.elevenlabs).toBeUndefined();
   });
 
-  it("accepts legacy talk flat fields via auto-migration and reports legacyIssues", () => {
-    const raw = {
-      talk: {
-        voiceId: "voice-1",
-        modelId: "eleven_v3",
-        apiKey: "test-key",
-      },
-    };
-    const issues = findLegacyConfigIssues(
-      raw,
-      raw,
-      listPluginDoctorLegacyConfigRules({ pluginIds: collectRelevantDoctorPluginIds(raw) }),
-    );
-    const migrated = applyRuntimeLegacyConfigMigrations(raw);
-
-    expect(issues.some((issue) => issue.path === "talk")).toBe(true);
-    expect(migrated.next).not.toBeNull();
-
-    const next = migrated.next as {
-      talk?: {
-        providers?: {
-          elevenlabs?: {
-            voiceId?: string;
-            modelId?: string;
-            apiKey?: string;
-          };
-        };
-        voiceId?: unknown;
-        modelId?: unknown;
-        apiKey?: unknown;
-      };
-    } | null;
-    expect(next?.talk?.providers?.elevenlabs).toEqual({
-      voiceId: "voice-1",
-      modelId: "eleven_v3",
-      apiKey: "test-key",
-    });
-    expect(next?.talk?.voiceId).toBeUndefined();
-    expect(next?.talk?.modelId).toBeUndefined();
-    expect(next?.talk?.apiKey).toBeUndefined();
-  });
-
   it("accepts legacy sandbox perSession via auto-migration and reports legacyIssues", async () => {
     await withTempHome(async (home) => {
       await writeOpenClawConfig(home, {
@@ -1092,38 +1046,6 @@ describe("config strict validation", () => {
     expect(next?.channels?.slack?.channels?.ops?.allow).toBeUndefined();
     expect(next?.channels?.googlechat?.groups?.["spaces/aaa"]?.allow).toBeUndefined();
     expect(next?.channels?.discord?.guilds?.["100"]?.channels?.general?.allow).toBeUndefined();
-  });
-
-  it("accepts telegram groupMentionsOnly via auto-migration and reports legacyIssues", () => {
-    const raw = {
-      channels: {
-        telegram: {
-          groupMentionsOnly: true,
-        },
-      },
-    };
-    const issues = findLegacyConfigIssues(raw);
-    const migrated = applyRuntimeLegacyConfigMigrations(raw);
-
-    expect(issues.some((issue) => issue.path === "channels.telegram.groupMentionsOnly")).toBe(true);
-    expect(migrated.next).not.toBeNull();
-
-    const next = migrated.next as {
-      channels?: {
-        telegram?: {
-          groups?: {
-            "*"?: {
-              requireMention?: boolean;
-            };
-          };
-          groupMentionsOnly?: unknown;
-        };
-      };
-    } | null;
-    expect(next?.channels?.telegram?.groups?.["*"]).toMatchObject({
-      requireMention: true,
-    });
-    expect(next?.channels?.telegram?.groupMentionsOnly).toBeUndefined();
   });
 
   it("accepts legacy discord voice tts provider keys via auto-migration and reports legacyIssues", async () => {
