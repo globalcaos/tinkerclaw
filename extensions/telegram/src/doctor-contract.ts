@@ -99,7 +99,6 @@ export function normalizeCompatibilityConfig({
     changes,
     includePreviewChunk: true,
     resolvedMode: resolveTelegramPreviewStreamMode(updated),
-    includePreviewChunk: true,
   });
   updated = streaming.entry;
   changed = changed || streaming.changed;
@@ -119,7 +118,6 @@ export function normalizeCompatibilityConfig({
         changes,
         includePreviewChunk: true,
         resolvedMode: resolveTelegramPreviewStreamMode(account),
-        includePreviewChunk: true,
       });
       if (accountStreaming.changed) {
         accounts[accountId] = accountStreaming.entry;
