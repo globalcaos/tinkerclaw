@@ -47,17 +47,22 @@ function pruneStaleRuntimeSymlinks() {
   removeDistPluginNodeModulesSymlinks(path.join(cwd, "dist-runtime"));
 }
 
-function pruneSourceCheckoutBundledPluginNodeModules() {
-  const cwd = process.cwd();
+export function pruneSourceCheckoutBundledPluginNodeModules(params = {}) {
+  const cwd = params.cwd ?? process.cwd();
+  const logger = params.logger ?? console;
   if (!isSourceCheckoutRoot({ packageRoot: cwd, existsSync: fs.existsSync })) {
     return;
   }
-  pruneBundledPluginSourceNodeModules({
-    extensionsDir: path.join(cwd, "extensions"),
-    existsSync: fs.existsSync,
-    readdirSync: fs.readdirSync,
-    rmSync: fs.rmSync,
-  });
+  try {
+    pruneBundledPluginSourceNodeModules({
+      extensionsDir: path.join(cwd, "extensions"),
+      existsSync: fs.existsSync,
+      readdirSync: fs.readdirSync,
+      rmSync: fs.rmSync,
+    });
+  } catch (error) {
+    logger.warn(`tsdown: could not prune bundled plugin source node_modules: ${String(error)}`);
+  }
 }
 
 function findFatalUnresolvedImport(lines) {
