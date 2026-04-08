@@ -4,6 +4,10 @@ Docs: https://docs.openclaw.ai
 
 ## Unreleased
 
+### Fixes
+
+- Agents/exec: keep `/exec` current-default reporting aligned with real runtime behavior so `host=auto` sessions surface the correct host-aware fallback policy (`full/off` on gateway or node, `deny/off` on sandbox) instead of stale stricter defaults.
+
 ## 2026.4.7
 
 ### Changes
