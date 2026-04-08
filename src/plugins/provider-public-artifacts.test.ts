@@ -1,8 +1,4 @@
 import { describe, expect, it } from "vitest";
-import {
-  applyAnthropicConfigDefaults,
-  normalizeAnthropicProviderConfig,
-} from "../../extensions/anthropic/config-defaults.js";
 import type { ModelDefinitionConfig, ModelProviderConfig } from "../config/types.models.js";
 import { resolveBundledProviderPolicySurface } from "./provider-public-artifacts.js";
 
@@ -23,10 +19,17 @@ function createModel(id: string, name: string): ModelDefinitionConfig {
   };
 }
 describe("provider public artifacts", () => {
-  it("uses the bundled anthropic policy hooks without loading the public artifact", () => {
-    const normalized = normalizeAnthropicProviderConfig({
-      baseUrl: "https://api.anthropic.com",
-      models: [createModel("claude-sonnet-4-6", "Claude Sonnet 4.6")],
+  it("uses the bundled anthropic policy hooks from the public artifact", () => {
+    const surface = resolveBundledProviderPolicySurface("anthropic");
+    expect(surface?.normalizeConfig).toBeTypeOf("function");
+    expect(surface?.applyConfigDefaults).toBeTypeOf("function");
+
+    const normalized = surface?.normalizeConfig?.({
+      provider: "anthropic",
+      providerConfig: {
+        baseUrl: "https://api.anthropic.com",
+        models: [createModel("claude-sonnet-4-6", "Claude Sonnet 4.6")],
+      },
     });
 
     expect(normalized).toMatchObject({
@@ -34,7 +37,8 @@ describe("provider public artifacts", () => {
       baseUrl: "https://api.anthropic.com",
     });
 
-    const nextConfig = applyAnthropicConfigDefaults({
+    const nextConfig = surface?.applyConfigDefaults?.({
+      provider: "anthropic",
       config: {
         auth: {
           profiles: {
