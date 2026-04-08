@@ -337,6 +337,30 @@ describe("scripts/test-projects full-suite sharding", () => {
     }
   });
 
+  it("expands full-suite shards before running them in parallel", () => {
+    const previousLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
+    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
+    delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
+    process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = "6";
+    try {
+      const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
+
+      expect(configs).toContain("vitest.extension-telegram.config.ts");
+      expect(configs).not.toContain("vitest.full-extensions.config.ts");
+    } finally {
+      if (previousLeafShards === undefined) {
+        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
+      } else {
+        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = previousLeafShards;
+      }
+      if (previousParallel === undefined) {
+        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
+      } else {
+        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
+      }
+    }
+  });
+
   it("keeps untargeted watch mode on the native root config", () => {
     expect(buildFullSuiteVitestRunPlans(["--watch"], process.cwd())).toEqual([
       {

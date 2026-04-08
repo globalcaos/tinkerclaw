@@ -620,7 +620,10 @@ export function buildFullSuiteVitestRunPlans(args, cwd = process.cwd()) {
       },
     ];
   }
-  const expandToProjectConfigs = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS === "1";
+  const parallelShardCount = Number.parseInt(process.env.OPENCLAW_TEST_PROJECTS_PARALLEL ?? "", 10);
+  const expandToProjectConfigs =
+    process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS === "1" ||
+    (Number.isFinite(parallelShardCount) && parallelShardCount > 1);
   return fullSuiteVitestShards.flatMap((shard) => {
     if (
       process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD === "1" &&
