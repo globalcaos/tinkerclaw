@@ -42,6 +42,7 @@ Docs: https://docs.openclaw.ai
 - Browser/security: re-run blocked-destination safety checks after interaction-driven main-frame navigations from click, evaluate, hook-triggered click, and batched action flows, so browser interactions cannot bypass the SSRF quarantine when they land on forbidden URLs. (#63226) Thanks @eleqtrizit.
 - Security/dotenv: expand workspace `.env` filtering to block runtime-control variables like gateway routing, ClawHub endpoints/tokens, browser executable overrides, and skip/disable control families, so untrusted repositories cannot steer OpenClaw runtime behavior through repo-local dotenv files. (#62660) Thanks @eleqtrizit.
 - Browser/security: block browser-control module override and skip-server env vars from untrusted workspace `.env` files, and reject unsafe URL-style browser control override specifiers before lazy loading, so repo-local dotenv state cannot steer browser control module loading. (#62663) Thanks @eleqtrizit.
+- Security/dependency audit: force `basic-ftp` to `5.2.1` to pick up the CRLF command-injection fix from GHSA-chqc-8p9q-pq6q.
 - Security/dependency audit: bump Hono to `4.12.12` and `@hono/node-server` to `1.19.13` in production resolution paths.
 
 ## 2026.4.8
