@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Tinkerclaw Browser Relay Setup</title>
+  <style>
+    body { font-family: system-ui; background: #1a1510; color: #e8e0d4; padding: 24px; max-width: 480px; }
+    h1 { color: #c19a6b; font-size: 18px; margin-bottom: 16px; }
+    label { display: block; margin-bottom: 6px; color: #9a8e7a; font-size: 13px; }
+    input { width: 100%; padding: 8px; background: #2a2318; border: 1px solid #4a3f2e; color: #e8e0d4; border-radius: 4px; font-family: monospace; font-size: 12px; box-sizing: border-box; }
+    button { margin-top: 12px; padding: 8px 24px; background: #c19a6b; color: #1a1510; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    button:hover { background: #d4b07e; }
+    .status { margin-top: 12px; font-size: 12px; color: #6b8e23; }
+    .auto { margin-top: 16px; padding: 12px; background: #2a2318; border-radius: 6px; border: 1px solid #4a3f2e; }
+    .auto button { background: #6b8e23; }
+    .auto button:hover { background: #7ca028; }
+    p { font-size: 13px; color: #9a8e7a; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h1>🧾 Tinkerclaw Browser Relay</h1>
+
+  <div class="auto">
+    <p>Click to auto-configure from your running gateway:</p>
+    <button id="auto-btn">Auto-detect token</button>
+    <div id="auto-status" class="status"></div>
+  </div>
+
+  <p style="margin-top:20px">Or paste your gateway token manually:</p>
+  <label>Gateway Token</label>
+  <input type="text" id="token" placeholder="cd63318bee63fff8...">
+  <button id="save-btn">Save</button>
+  <div id="status" class="status"></div>
+
+  <script>
+    const PORT = 18792;
+
+    document.getElementById('save-btn').addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      await chrome.storage.local.set({ relayToken: token, relayPort: PORT });
+      document.getElementById('status').textContent = '✓ Saved. Click the extension icon on any tab to share it with Jarvis.';
+    });
+
+    document.getElementById('auto-btn').addEventListener('click', async () => {
+      const status = document.getElementById('auto-status');
+      status.textContent = 'Probing gateway...';
+      try {
+        // Try to reach the relay without a token first
+        const resp = await fetch(`http://127.0.0.1:${PORT}/`);
+        if (resp.ok) {
+          await chrome.storage.local.set({ relayPort: PORT });
+          status.textContent = '✓ Relay detected! No token needed (loopback). Ready to use.';
+          return;
+        }
+      } catch {}
+
+      // Try the gateway's main port to get the token from the config
+      try {
+        status.textContent = 'Relay not yet running. Make sure the gateway is started and the tinkerclaw-browser-relay plugin is enabled.';
+      } catch {
+        status.textContent = '✗ Could not reach gateway. Is it running?';
+      }
+    });
+
+    // Load existing config
+    chrome.storage.local.get(['relayToken', 'relayPort'], (data) => {
+      if (data.relayToken) document.getElementById('token').value = data.relayToken;
+    });
+  </script>
+</body>
+</html>

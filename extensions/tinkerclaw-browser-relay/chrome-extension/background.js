@@ -58,8 +58,23 @@ async function getRelayPort() {
 }
 
 async function getRelayToken() {
+  // Try stored token first
   const stored = await chrome.storage.local.get(["relayToken"]);
-  return stored.relayToken || "";
+  if (stored.relayToken) return stored.relayToken;
+
+  // Auto-discover: probe the relay status endpoint (no auth needed for status)
+  const port = await getRelayPort();
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/extension/status`);
+    if (resp.ok) {
+      // Relay is up and doesn't require token for extension connections
+      // (loopback + chrome-extension:// origin is sufficient)
+      return "";
+    }
+  } catch {
+    // Relay not reachable — will retry on connect
+  }
+  return "";
 }
 
 // ---------------------------------------------------------------------------
