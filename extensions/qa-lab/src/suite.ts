@@ -200,6 +200,37 @@ function recentOutboundSummary(state: QaBusState, limit = 5) {
     .join(" | ");
 }
 
+function formatConversationTranscript(
+  state: QaBusState,
+  params: {
+    conversationId: string;
+    threadId?: string;
+    limit?: number;
+  },
+) {
+  const messages = state
+    .getSnapshot()
+    .messages.filter(
+      (message) =>
+        message.conversation.id === params.conversationId &&
+        (params.threadId ? message.threadId === params.threadId : true),
+    );
+  const selected = params.limit ? messages.slice(-params.limit) : messages;
+  return selected
+    .map((message) => {
+      const direction = message.direction === "inbound" ? "user" : "assistant";
+      const speaker = message.senderName?.trim() || message.senderId;
+      const attachmentSummary =
+        message.attachments && message.attachments.length > 0
+          ? ` [attachments: ${message.attachments
+              .map((attachment) => `${attachment.kind}:${attachment.fileName ?? attachment.id}`)
+              .join(", ")}]`
+          : "";
+      return `${direction.toUpperCase()} ${speaker}: ${message.text}${attachmentSummary}`;
+    })
+    .join("\n\n");
+}
+
 async function runScenario(name: string, steps: QaSuiteStep[]): Promise<QaSuiteScenarioResult> {
   const stepResults: QaReportCheck[] = [];
   for (const step of steps) {
@@ -932,6 +963,7 @@ type QaScenarioFlowApi = {
   waitForOutboundMessage: typeof waitForOutboundMessage;
   waitForNoOutbound: typeof waitForNoOutbound;
   recentOutboundSummary: typeof recentOutboundSummary;
+  formatConversationTranscript: typeof formatConversationTranscript;
   fetchJson: typeof fetchJson;
   waitForGatewayHealthy: typeof waitForGatewayHealthy;
   waitForQaChannelReady: typeof waitForQaChannelReady;
@@ -998,6 +1030,7 @@ function createScenarioFlowApi(
     waitForOutboundMessage,
     waitForNoOutbound,
     recentOutboundSummary,
+    formatConversationTranscript,
     fetchJson,
     waitForGatewayHealthy,
     waitForQaChannelReady,
