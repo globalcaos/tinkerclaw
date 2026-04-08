@@ -354,6 +354,7 @@ describe("plugin-sdk subpath exports", () => {
     });
     expectSourceContract("provider-web-search-contract", {
       mentions: [
+        "createWebSearchProviderContractFields",
         "enablePluginInConfig",
         "getScopedCredentialValue",
         "resolveProviderWebSearchPluginConfig",
