@@ -1,65 +1,31 @@
 import type { OpenClawConfig } from "../../config/config.js";
-import type { DeliveryContext } from "../../utils/delivery-context.js";
 import { VIDEO_GENERATION_TASK_KIND } from "../video-generation-task-status.js";
 import {
-  completeMediaGenerationTaskRun,
-  createMediaGenerationTaskRun,
-  failMediaGenerationTaskRun,
-  recordMediaGenerationTaskProgress,
-  wakeMediaGenerationTaskCompletion,
+  createMediaGenerationTaskLifecycle,
   type MediaGenerationTaskHandle,
 } from "./media-generate-background-shared.js";
 
 export type VideoGenerationTaskHandle = MediaGenerationTaskHandle;
 
-export function createVideoGenerationTaskRun(params: {
-  sessionKey?: string;
-  requesterOrigin?: DeliveryContext;
-  prompt: string;
-  providerId?: string;
-}): VideoGenerationTaskHandle | null {
-  return createMediaGenerationTaskRun({
-    sessionKey: params.sessionKey,
-    requesterOrigin: params.requesterOrigin,
-    prompt: params.prompt,
-    providerId: params.providerId,
-    toolName: "video_generate",
-    taskKind: VIDEO_GENERATION_TASK_KIND,
-    label: "Video generation",
-    queuedProgressSummary: "Queued video generation",
-  });
-}
+const videoGenerationTaskLifecycle = createMediaGenerationTaskLifecycle({
+  toolName: "video_generate",
+  taskKind: VIDEO_GENERATION_TASK_KIND,
+  label: "Video generation",
+  queuedProgressSummary: "Queued video generation",
+  generatedLabel: "video",
+  failureProgressSummary: "Video generation failed",
+  eventSource: "video_generation",
+  announceType: "video generation task",
+  completionLabel: "video",
+});
 
-export function recordVideoGenerationTaskProgress(params: {
-  handle: VideoGenerationTaskHandle | null;
-  progressSummary: string;
-  eventSummary?: string;
-}) {
-  recordMediaGenerationTaskProgress(params);
-}
+export const createVideoGenerationTaskRun = videoGenerationTaskLifecycle.createTaskRun;
 
-export function completeVideoGenerationTaskRun(params: {
-  handle: VideoGenerationTaskHandle | null;
-  provider: string;
-  model: string;
-  count: number;
-  paths: string[];
-}) {
-  completeMediaGenerationTaskRun({
-    ...params,
-    generatedLabel: "video",
-  });
-}
+export const recordVideoGenerationTaskProgress = videoGenerationTaskLifecycle.recordTaskProgress;
 
-export function failVideoGenerationTaskRun(params: {
-  handle: VideoGenerationTaskHandle | null;
-  error: unknown;
-}) {
-  failMediaGenerationTaskRun({
-    ...params,
-    progressSummary: "Video generation failed",
-  });
-}
+export const completeVideoGenerationTaskRun = videoGenerationTaskLifecycle.completeTaskRun;
+
+export const failVideoGenerationTaskRun = videoGenerationTaskLifecycle.failTaskRun;
 
 export async function wakeVideoGenerationTaskCompletion(params: {
   config?: OpenClawConfig;
@@ -70,17 +36,5 @@ export async function wakeVideoGenerationTaskCompletion(params: {
   mediaUrls?: string[];
   statsLine?: string;
 }) {
-  await wakeMediaGenerationTaskCompletion({
-    config: params.config,
-    handle: params.handle,
-    status: params.status,
-    statusLabel: params.statusLabel,
-    result: params.result,
-    mediaUrls: params.mediaUrls,
-    statsLine: params.statsLine,
-    eventSource: "video_generation",
-    announceType: "video generation task",
-    toolName: "video_generate",
-    completionLabel: "video",
-  });
+  await videoGenerationTaskLifecycle.wakeTaskCompletion(params);
 }
