@@ -743,10 +743,15 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
 
       if (pathname === "/extension") {
-        const token = getRelayAuthTokenFromRequest(req, url);
-        if (!token || !relayAuthTokens.has(token)) {
-          rejectUpgrade(socket, 401, "Unauthorized");
-          return;
+        // FORK: Allow chrome-extension:// origins on loopback without token.
+        const isTrustedExtensionOrigin =
+          origin && origin.startsWith("chrome-extension://") && isLoopbackAddress(remote);
+        if (!isTrustedExtensionOrigin) {
+          const token = getRelayAuthTokenFromRequest(req, url);
+          if (!token || !relayAuthTokens.has(token)) {
+            rejectUpgrade(socket, 401, "Unauthorized");
+            return;
+          }
         }
         // FORK: Multi-extension — no 409 rejection, multiple extensions can connect simultaneously.
         wssExtension.handleUpgrade(req, socket, head, (ws) => {
