@@ -15,6 +15,7 @@ Docs: https://docs.openclaw.ai
 - Control UI: guard stale session-history reloads during fast session switches so the selected session and rendered transcript stay in sync. (#62975) Thanks @scoootscooob.
 - Agents/failover: classify Z.ai vendor code `1311` as billing and `1113` as auth, including long wrapped `1311` payloads, so these errors stop falling through to generic failover handling. (#49552) Thanks @1bcMax.
 - npm packaging: mirror bundled Slack, Telegram, Discord, and Feishu channel runtime deps at the root and harden published-install verification so fresh installs fail fast on manifest drift instead of missing-module crashes. (#63065) Thanks @scoootscooob.
+- Agents/timeouts: make the LLM idle timeout inherit `agents.defaults.timeoutSeconds` when configured, disable the unconfigured idle watchdog for cron runs, and point idle-timeout errors at `agents.defaults.llm.idleTimeoutSeconds`. Thanks @drvoss.
 
 ## 2026.4.8
 
