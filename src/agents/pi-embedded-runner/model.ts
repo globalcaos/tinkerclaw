@@ -420,14 +420,16 @@ function resolvePluginDynamicModelWithRegistry(params: {
   modelRegistry: ModelRegistry;
   cfg?: OpenClawConfig;
   agentDir?: string;
+  workspaceDir?: string;
   runtimeHooks?: ProviderRuntimeHooks;
 }): Model<Api> | undefined {
-  const { provider, modelId, modelRegistry, cfg, agentDir } = params;
+  const { provider, modelId, modelRegistry, cfg, agentDir, workspaceDir } = params;
   const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
   const providerConfig = resolveConfiguredProviderConfig(cfg, provider);
   const pluginDynamicModel = runtimeHooks.runProviderDynamicModel({
     provider,
     config: cfg,
+    workspaceDir,
     context: {
       config: cfg,
       agentDir,
@@ -536,20 +538,20 @@ function shouldCompareProviderRuntimeResolvedModel(params: {
   modelId: string;
   cfg?: OpenClawConfig;
   agentDir?: string;
+  workspaceDir?: string;
   runtimeHooks: ProviderRuntimeHooks;
 }): boolean {
-  const workspaceDir = params.cfg?.agents?.defaults?.workspace;
   return (
     params.runtimeHooks.shouldPreferProviderRuntimeResolvedModel?.({
       provider: params.provider,
       config: params.cfg,
-      workspaceDir,
+      workspaceDir: params.workspaceDir,
       context: {
         provider: params.provider,
         modelId: params.modelId,
         config: params.cfg,
         agentDir: params.agentDir,
-        workspaceDir,
+        workspaceDir: params.workspaceDir,
       },
     }) ?? false
   );
@@ -586,6 +588,7 @@ export function resolveModelWithRegistry(params: {
     modelId: normalizedRef.model,
   };
   const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  const workspaceDir = normalizedParams.cfg?.agents?.defaults?.workspace;
   const explicitModel = resolveExplicitModelWithRegistry(normalizedParams);
   if (explicitModel?.kind === "suppressed") {
     return undefined;
@@ -597,12 +600,16 @@ export function resolveModelWithRegistry(params: {
         modelId: normalizedParams.modelId,
         cfg: normalizedParams.cfg,
         agentDir: normalizedParams.agentDir,
+        workspaceDir,
         runtimeHooks,
       })
     ) {
       return explicitModel.model;
     }
-    const pluginDynamicModel = resolvePluginDynamicModelWithRegistry(normalizedParams);
+    const pluginDynamicModel = resolvePluginDynamicModelWithRegistry({
+      ...normalizedParams,
+      workspaceDir,
+    });
     return preferProviderRuntimeResolvedModel({
       explicitModel: explicitModel.model,
       runtimeResolvedModel: pluginDynamicModel,
