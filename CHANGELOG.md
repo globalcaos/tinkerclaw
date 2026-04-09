@@ -7,7 +7,7 @@ Docs: https://docs.openclaw.ai
 ### Changes
 
 - macOS/Talk: add an experimental local MLX speech provider for Talk Mode, with explicit provider selection, local utterance playback, interruption handling, and system-voice fallback. (#63539) Thanks @ImLukeF.
-- Docs i18n: chunk raw doc translation, reject truncated tagged outputs, and recover from terminated Pi translation sessions without changing the default `openai/gpt-5.4` path. (#62969) Thanks @hxy91819.
+- Docs i18n: chunk raw doc translation, reject truncated tagged outputs, avoid ambiguous body-only wrapper unwrapping, and recover from terminated Pi translation sessions without changing the default `openai/gpt-5.4` path. (#62969, #63808) Thanks @hxy91819.
 
 ### Fixes
 
