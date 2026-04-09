@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import { isMatrixLegacyCryptoInspectorAvailable } from "./legacy-crypto-inspector-availability.js";
 import { detectLegacyMatrixCrypto } from "./legacy-crypto.js";
 import { detectLegacyMatrixState } from "./legacy-state.js";
 import {
@@ -7,10 +8,6 @@ import {
   resolveMatrixMigrationSnapshotOutputDir,
   type MatrixMigrationSnapshotResult,
 } from "./migration-snapshot-backup.js";
-
-function isMatrixLegacyCryptoInspectorAvailable(): boolean {
-  return true;
-}
 
 export function hasPendingMatrixMigration(params: {
   cfg: OpenClawConfig;
