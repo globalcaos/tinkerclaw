@@ -199,7 +199,12 @@ describe("config io write", () => {
           origin: "bundled",
           channels: [],
           providers: [],
-          kind: ["tool"],
+          cliBackends: [],
+          skills: [],
+          hooks: [],
+          rootDir: "/tmp/openclaw-test-required-plugin",
+          source: "/tmp/openclaw-test-required-plugin/index.ts",
+          manifestPath: "/tmp/openclaw-test-required-plugin/openclaw.plugin.json",
           configSchema: {
             type: "object",
             properties: {
