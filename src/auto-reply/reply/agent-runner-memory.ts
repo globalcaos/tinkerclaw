@@ -46,6 +46,7 @@ import type { ReplyOperation } from "./reply-run-registry.js";
 import { incrementCompactionCount } from "./session-updates.js";
 
 const memoryDeps = {
+  compactEmbeddedPiSession,
   runWithModelFallback,
   runEmbeddedPiAgent,
   registerAgentRunContext,
@@ -59,6 +60,7 @@ const memoryDeps = {
 export function setAgentRunnerMemoryTestDeps(overrides?: Partial<typeof memoryDeps>): void {
   Object.assign(memoryDeps, {
     runWithModelFallback,
+    compactEmbeddedPiSession,
     runEmbeddedPiAgent,
     registerAgentRunContext,
     refreshQueuedFollowupSession,
@@ -432,7 +434,7 @@ export async function runPreflightCompactionIfNeeded(params: {
     params.sessionKey ?? params.followupRun.run.sessionKey,
     { storePath: params.storePath },
   );
-  const result = await compactEmbeddedPiSession({
+  const result = await memoryDeps.compactEmbeddedPiSession({
     sessionId: entry.sessionId,
     sessionKey: params.sessionKey,
     allowGatewaySubagentBinding: true,
