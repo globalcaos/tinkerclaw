@@ -21,10 +21,21 @@ describe("Ollama auto-discovery", () => {
     delete process.env.OLLAMA_API_KEY;
   });
 
+  function createCleanProviderDiscoveryEnv(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    delete env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+    delete env.OPENCLAW_DISABLE_BUNDLED_PLUGINS;
+    delete env.OPENCLAW_SKIP_PROVIDERS;
+    delete env.OPENCLAW_SKIP_CHANNELS;
+    delete env.OPENCLAW_SKIP_CRON;
+    delete env.OPENCLAW_TEST_MINIMAL_GATEWAY;
+    return env;
+  }
+
   function createCatalogLoadEnv(): NodeJS.ProcessEnv {
     originalFetch = globalThis.fetch;
     return {
-      ...process.env,
+      ...createCleanProviderDiscoveryEnv(),
       OPENCLAW_TEST_ONLY_PROVIDER_PLUGIN_IDS: "ollama",
       VITEST: "1",
       NODE_ENV: "test",
@@ -33,7 +44,7 @@ describe("Ollama auto-discovery", () => {
 
   function createDiscoveryRunEnv(): NodeJS.ProcessEnv {
     return {
-      ...process.env,
+      ...createCleanProviderDiscoveryEnv(),
       OPENCLAW_TEST_ONLY_PROVIDER_PLUGIN_IDS: "ollama",
       VITEST: "",
       NODE_ENV: "development",
