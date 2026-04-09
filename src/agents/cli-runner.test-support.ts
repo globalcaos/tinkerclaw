@@ -370,15 +370,6 @@ export function setupCliRunnerTestRegistry() {
   });
 }
 
-export async function setupClaudeCliRunnerTestModule() {
-  const runCliAgent = await setupCliRunnerTestModule();
-  return (params: Parameters<typeof import("./claude-cli-runner.js").runClaudeCliAgent>[0]) =>
-    runCliAgent({
-      ...params,
-      provider: params.provider ?? "claude-cli",
-    });
-}
-
 export function stubBootstrapContext(params: {
   bootstrapFiles: WorkspaceBootstrapFile[];
   contextFiles: EmbeddedContextFile[];
