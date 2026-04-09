@@ -207,15 +207,8 @@ export function resolveIMessageInboundDecision(params: {
   const chatIdentifierNormalized = normalizeIMessageHandle(chatIdentifier ?? "") || undefined;
   const destinationCallerIdNormalized =
     normalizeIMessageHandle(destinationCallerId ?? "") || undefined;
-  const chatParticipantHandles = new Set(
-    (params.message.participants ?? [])
-      .map((participant) => normalizeIMessageHandle(participant))
-      .filter((participant): participant is string => participant.length > 0),
-  );
   const matchesSelfChatDestination =
-    destinationCallerIdNormalized == null ||
-    destinationCallerIdNormalized === senderNormalized ||
-    chatParticipantHandles.has(destinationCallerIdNormalized);
+    destinationCallerIdNormalized == null || destinationCallerIdNormalized === senderNormalized;
   const isSelfChat =
     !isGroup &&
     chatIdentifierNormalized != null &&
