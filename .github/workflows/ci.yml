@@ -1095,7 +1095,9 @@ jobs:
           set -euo pipefail
           case "$TASK" in
             test)
-              pnpm test
+              # Linux owns the full repo test suite. Keep macOS CI focused on
+              # launchd/Homebrew/runtime path coverage and the process-group wrapper.
+              pnpm test:macos:ci
               ;;
             *)
               echo "Unsupported macOS node task: $TASK" >&2

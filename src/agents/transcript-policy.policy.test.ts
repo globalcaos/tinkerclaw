@@ -1,13 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
 
 vi.unmock("../plugins/provider-runtime.js");
 vi.unmock("../plugins/provider-runtime.runtime.js");
+vi.unmock("../plugins/providers.runtime.js");
 
 let resolveTranscriptPolicy: typeof import("./transcript-policy.js").resolveTranscriptPolicy;
+const MISTRAL_PLUGIN_CONFIG = {
+  plugins: {
+    entries: {
+      mistral: { enabled: true },
+    },
+  },
+} as OpenClawConfig;
 
 beforeEach(async () => {
   vi.resetModules();
   vi.doUnmock("../plugins/provider-runtime.js");
+  vi.doUnmock("../plugins/provider-runtime.runtime.js");
+  vi.doUnmock("../plugins/providers.runtime.js");
   ({ resolveTranscriptPolicy } = await import("./transcript-policy.js"));
 });
 
@@ -27,6 +38,7 @@ describe("resolveTranscriptPolicy e2e smoke", () => {
     const policy = resolveTranscriptPolicy({
       provider: "mistral",
       modelId: "mistral-large-latest",
+      config: MISTRAL_PLUGIN_CONFIG,
     });
     expect(policy.sanitizeToolCallIds).toBe(true);
     expect(policy.toolCallIdMode).toBe("strict9");
