@@ -194,6 +194,7 @@ Docs: https://docs.openclaw.ai
 - Cron/isolated: resolve auth profiles without treating every isolated run as a brand-new auth session, so profile-based providers (for example OpenRouter) keep a stable credential choice instead of rotating or ignoring stored keys. (#62783) Thanks @neeravmakwana.
 - CLI/tasks: `openclaw tasks cancel` now records operator cancellation for CLI runtime tasks instead of returning "Task runtime does not support cancellation yet", so stuck `running` CLI tasks can be cleared. (#62419) Thanks @neeravmakwana.
 - Sessions/context: resolve context window limits using the active provider plus model (not bare model id alone) when persisting session usage, applying inline directives, and sizing memory-flush / preflight compaction thresholds, so duplicate model ids across providers no longer leak the wrong `contextTokens` into the session store or `/status`. (#62472) Thanks @neeravmakwana.
+- Channels/setup: exclude workspace shadow entries from channel setup catalog lookups and align trust checks with auto-enable so workspace-scoped overrides no longer bypass the trusted catalog. (`GHSA-82qx-6vj7-p8m2`) Thanks @zsxsoft.
 
 ## 2026.4.5
 
