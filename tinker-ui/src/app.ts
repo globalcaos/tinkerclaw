@@ -618,7 +618,15 @@ function scheduleUnconfirmedPrune() {
     unconfirmedRuns.clear();
     if (changed) {
       saveActiveRuns();
+      // FORK: Also reset sending and update UI — without this, the thinking
+      // indicator stays visible after pruning stale runs on reconnect.
+      if (activeRuns.size === 0) {
+        sending = false;
+      }
       updateBudgetPanel();
+      updatePrefrontalTree();
+      updateChat();
+      updateBtn();
     }
   }, 5000);
 }
@@ -1232,6 +1240,30 @@ function onEvent(evt: any) {
       frozenTextEnd = 0;
       lastDeltaLen = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
+      // FORK: Chat final/error is authoritative — if the lifecycle "end" agent event
+      // was missed (dropped frame, JS error, session key mismatch), activeRuns would
+      // keep a stale entry forever. Schedule a safety-net cleanup so the thinking
+      // indicator clears even when the lifecycle event never arrives.
+      if (p.state === "final" || p.state === "aborted") {
+        const finalRunId = p.runId;
+        if (activeRuns.has(finalRunId) && !pendingRunDeletes.has(finalRunId)) {
+          const safetyTimeout = setTimeout(() => {
+            pendingRunDeletes.delete(finalRunId);
+            if (activeRuns.has(finalRunId)) {
+              activeRuns.delete(finalRunId);
+              saveActiveRuns();
+              if (activeRuns.size === 0) {
+                sending = false;
+              }
+              updateBudgetPanel();
+              updatePrefrontalTree();
+              updateChat();
+              updateBtn();
+            }
+          }, 5000);
+          pendingRunDeletes.set(finalRunId, safetyTimeout);
+        }
+      }
       if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
         sending = false;
       }
@@ -2718,14 +2750,51 @@ function renderThinkingIndicator(): string {
   return "";
 }
 
+/** FORK: Max age (ms) before a stale activeRun is force-cleared by the watchdog.
+ * If the lifecycle "end" event was missed, this ensures the thinking indicator
+ * doesn't persist forever. 5 minutes is generous — real runs rarely exceed this,
+ * and even if they do the next lifecycle event will re-register the run. */
+const STALE_RUN_WATCHDOG_MS = 5 * 60 * 1000;
+
 function startThinkingTick() {
   if (thinkingTickInterval) {
     return;
   }
   thinkingTickInterval = setInterval(() => {
     if (activeRuns.size === 0) {
+      // FORK: Also clear sending as safety net — if activeRuns is empty but sending
+      // is true (e.g. after stale run cleanup), the "sending..." indicator persists.
+      if (sending) {
+        sending = false;
+        updateChat();
+        updateBtn();
+      }
       clearInterval(thinkingTickInterval!);
       thinkingTickInterval = null;
+      return;
+    }
+    // FORK: Watchdog — force-clear runs older than STALE_RUN_WATCHDOG_MS.
+    // Catches any case where the lifecycle "end" event was missed (dropped frame,
+    // JS error, session key mismatch, server-side bug, etc.).
+    const now = Date.now();
+    let stalePruned = false;
+    for (const [runId, info] of activeRuns) {
+      if (now - info.startedAt > STALE_RUN_WATCHDOG_MS) {
+        console.warn(`[thinking-watchdog] force-clearing stale run ${runId} (age=${Math.round((now - info.startedAt) / 1000)}s model=${info.model})`);
+        activeRuns.delete(runId);
+        pendingRunDeletes.delete(runId);
+        stalePruned = true;
+      }
+    }
+    if (stalePruned) {
+      saveActiveRuns();
+      if (activeRuns.size === 0) {
+        sending = false;
+      }
+      updateBudgetPanel();
+      updatePrefrontalTree();
+      updateChat();
+      updateBtn();
       return;
     }
     document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
