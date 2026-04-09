@@ -53,6 +53,7 @@ Docs: https://docs.openclaw.ai
 - Heartbeats/sessions: remove stale accumulated isolated heartbeat session keys when the next tick converges them back to the canonical sibling, so repaired sessions stop showing orphaned `:heartbeat:heartbeat` variants in session listings. (#59606) Thanks @rogerdigital.
 - Control UI/dreaming: keep the Dreaming trace area contained and scrollable so overlays no longer cover tabs or blow out the page layout.
 - Cron/Telegram: collapse isolated announce delivery to the final assistant-visible text only for Telegram targets, while preserving existing multi-message direct delivery semantics for other channels. (#63228) Thanks @welfo-beo.
+- Gateway/thread routing: preserve Slack, Telegram, and Mattermost thread-child delivery targets so bound subagent completion messages land in the originating thread instead of top-level channels. (#54840) Thanks @yzzymt.
 
 ## 2026.4.9
 
