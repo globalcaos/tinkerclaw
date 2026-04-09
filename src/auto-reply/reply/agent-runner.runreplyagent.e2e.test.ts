@@ -86,8 +86,17 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  state.compactEmbeddedPiSessionMock.mockClear();
-  state.runEmbeddedPiAgentMock.mockClear();
+  state.compactEmbeddedPiSessionMock.mockReset();
+  state.compactEmbeddedPiSessionMock.mockResolvedValue({
+    ok: true,
+    compacted: false,
+    reason: "test-default",
+  });
+  state.runEmbeddedPiAgentMock.mockReset();
+  state.runEmbeddedPiAgentMock.mockResolvedValue({
+    payloads: [{ text: "final" }],
+    meta: { agentMeta: { usage: { input: 1, output: 1 } } },
+  });
   vi.mocked(enqueueFollowupRun).mockClear();
   vi.mocked(refreshQueuedFollowupSession).mockClear();
   vi.mocked(scheduleFollowupDrain).mockClear();
