@@ -8,7 +8,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
-## 2026.4.9-beta.1
+## 2026.4.9
 
 ### Changes
 
