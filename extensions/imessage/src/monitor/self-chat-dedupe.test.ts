@@ -393,7 +393,7 @@ describe("self-chat is_from_me=true handling (Bruce Phase 2 fix)", () => {
     expect(decision.kind).toBe("dispatch");
   });
 
-  it("preserves self-chat when destination_caller_id is another local handle", () => {
+  it("drops DM false positives even when participant lists include the local handle", () => {
     const echoCache = createSentMessageCache();
     const selfChatCache = createSelfChatCache();
 
@@ -405,18 +405,18 @@ describe("self-chat is_from_me=true handling (Bruce Phase 2 fix)", () => {
           chat_identifier: "+15551234567",
           destination_caller_id: "me@icloud.com",
           participants: ["+15551234567", "me@icloud.com"],
-          text: "Hello from my other local handle",
+          text: "Hello from a normal DM row",
           is_from_me: true,
           is_group: false,
         },
-        messageText: "Hello from my other local handle",
-        bodyText: "Hello from my other local handle",
+        messageText: "Hello from a normal DM row",
+        bodyText: "Hello from a normal DM row",
         echoCache,
         selfChatCache,
       }),
     );
 
-    expect(decision.kind).toBe("dispatch");
+    expect(decision).toEqual({ kind: "drop", reason: "from me" });
   });
 
   it("drops agent reply echo in self-chat (is_from_me=true, echo cache text match)", () => {
