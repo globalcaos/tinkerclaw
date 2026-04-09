@@ -1,4 +1,5 @@
 import { resolveInboundMentionDecision } from "openclaw/plugin-sdk/channel-inbound";
+import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import {
   buildPendingHistoryContextFromMap,
   clearHistoryEntriesIfEnabled,
@@ -441,6 +442,21 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
         id: isDirectMessage ? senderId : conversationId,
       },
     });
+
+    // Isolate channel thread sessions: each thread gets its own session key so
+    // context does not bleed across threads. Prefer conversationMessageId (the
+    // ;messageid= portion of conversation.id, i.e. the thread root) over
+    // activity.replyToId (which may point to a non-root parent in deep threads).
+    // DMs and group chats are unaffected — only channel thread replies fork.
+    const channelThreadId = isChannel
+      ? (conversationMessageId ?? activity.replyToId ?? undefined)
+      : undefined;
+    const threadKeys = resolveThreadSessionKeys({
+      baseSessionKey: route.sessionKey,
+      threadId: channelThreadId,
+      parentSessionKey: channelThreadId ? route.sessionKey : undefined,
+    });
+    route.sessionKey = threadKeys.sessionKey;
 
     const preview = rawBody.replace(/\s+/g, " ").slice(0, 160);
     const inboundLabel = isDirectMessage
