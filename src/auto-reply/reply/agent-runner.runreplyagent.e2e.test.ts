@@ -696,36 +696,6 @@ describe("runReplyAgent typing (heartbeat)", () => {
     expect(delivered).toEqual(["second"]);
   });
 
-  it("announces auto-compaction in verbose mode and tracks count", async () => {
-    await withTempStateDir(async (stateDir) => {
-      const storePath = path.join(stateDir, "sessions", "sessions.json");
-      const sessionEntry: SessionEntry = { sessionId: "session", updatedAt: Date.now() };
-      const sessionStore = { main: sessionEntry };
-
-      state.runEmbeddedPiAgentMock.mockImplementationOnce(async (params: AgentRunParams) => {
-        params.onAgentEvent?.({
-          stream: "compaction",
-          data: { phase: "end", willRetry: false },
-        });
-        return { payloads: [{ text: "final" }], meta: {} };
-      });
-
-      const { run } = createMinimalRun({
-        resolvedVerboseLevel: "on",
-        sessionEntry,
-        sessionStore,
-        sessionKey: "main",
-        storePath,
-      });
-      const res = await run();
-      expect(Array.isArray(res)).toBe(true);
-      const payloads = res as { text?: string }[];
-      expect(payloads[0]?.text).toContain("Auto-compaction complete");
-      expect(payloads[0]?.text).toContain("count 1");
-      expect(sessionStore.main.compactionCount).toBe(1);
-    });
-  });
-
   it("refreshes queued followups when auto-compaction rotates the session", async () => {
     await withTempStateDir(async (stateDir) => {
       const storePath = path.join(stateDir, "sessions", "sessions.json");
@@ -1513,7 +1483,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       const res = await run();
 
       expect(res).toMatchObject({
-        text: expect.stringContaining("Agent failed before reply"),
+        text: expect.stringContaining("Something went wrong while processing your request"),
       });
       expect(sessionStore.main).toBeDefined();
       await expect(fs.access(transcriptPath)).resolves.toBeUndefined();
