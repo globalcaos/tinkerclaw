@@ -16,6 +16,7 @@ Docs: https://docs.openclaw.ai
 - Config/plugins: let config writes keep disabled plugin entries without forcing required plugin config schemas or crashing raw plugin validation, so slot switches and similar plugin-state updates persist cleanly. (#63296) Thanks @fuller-stack-dev.
 - WhatsApp/outbound queue: drain queued WhatsApp deliveries when the listener reconnects without dropping reconnect-delayed sends after a special TTL or rewriting retry history, so disconnect-window outbound messages can recover once the channel is ready again. (#46299) Thanks @manuel-claw.
 - Tools/web_fetch: add an opt-in `tools.web.fetch.ssrfPolicy.allowRfc2544BenchmarkRange` config so fake-IP proxy environments that resolve public sites into `198.18.0.0/15` can use `web_fetch` without weakening the default SSRF block. (#61830) Thanks @xing-xing-coder.
+- Config validation: surface the actual offending field for strict-schema union failures in bindings, including top-level unexpected keys on the matching ACP branch. (#40841) Thanks @Hollychou924.
 
 ## 2026.4.9
 
