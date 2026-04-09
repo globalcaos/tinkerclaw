@@ -9,6 +9,7 @@ import {
   runProviderCatalog,
 } from "../plugins/provider-discovery.js";
 import type { ProviderPlugin } from "../plugins/types.js";
+import { withFetchPreconnect } from "../test-utils/fetch-mock.js";
 import type { ProviderConfig } from "./models-config.providers.js";
 
 describe("Ollama auto-discovery", () => {
@@ -90,31 +91,31 @@ describe("Ollama auto-discovery", () => {
   }
 
   function mockOllamaUnreachable() {
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(
-        new Error("connect ECONNREFUSED 127.0.0.1:11434"),
-      ) as unknown as typeof fetch;
+    globalThis.fetch = withFetchPreconnect(
+      vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:11434")),
+    ) as typeof fetch;
   }
 
   it("auto-registers ollama provider when models are discovered locally", async () => {
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
-      if (String(url).includes("/api/tags")) {
-        return {
-          ok: true,
-          json: async () => ({
-            models: [{ name: "deepseek-r1:latest" }, { name: "llama3.3:latest" }],
-          }),
-        };
-      }
-      if (String(url).includes("/api/show")) {
-        return {
-          ok: true,
-          json: async () => ({ model_info: {} }),
-        };
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as unknown as typeof fetch;
+    globalThis.fetch = withFetchPreconnect(
+      vi.fn().mockImplementation(async (url: string | URL) => {
+        if (String(url).includes("/api/tags")) {
+          return {
+            ok: true,
+            json: async () => ({
+              models: [{ name: "deepseek-r1:latest" }, { name: "llama3.3:latest" }],
+            }),
+          };
+        }
+        if (String(url).includes("/api/show")) {
+          return {
+            ok: true,
+            json: async () => ({ model_info: {} }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    ) as typeof fetch;
 
     const provider = await runOllamaCatalog();
 
@@ -149,7 +150,7 @@ describe("Ollama auto-discovery", () => {
     await runOllamaCatalog({
       explicitProviders: {
         ollama: {
-          baseUrl: "http://gpu-node-server:11434/v1",
+          baseUrl: "http://127.0.0.1:11435/v1",
           api: "openai-completions",
           models: [],
         },
