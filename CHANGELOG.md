@@ -52,6 +52,7 @@ Docs: https://docs.openclaw.ai
 - Memory/lancedb: accept `dreaming` config when `memory-lancedb` owns the memory slot so Dreaming surfaces can read slot-owner settings without schema rejection. (#63874) Thanks @mbelinky.
 - Heartbeats/sessions: remove stale accumulated isolated heartbeat session keys when the next tick converges them back to the canonical sibling, so repaired sessions stop showing orphaned `:heartbeat:heartbeat` variants in session listings. (#59606) Thanks @rogerdigital.
 - Control UI/dreaming: keep the Dreaming trace area contained and scrollable so overlays no longer cover tabs or blow out the page layout.
+- Cron/Telegram: collapse isolated announce delivery to the final assistant-visible text only for Telegram targets, while preserving existing multi-message direct delivery semantics for other channels. (#63228) Thanks @welfo-beo.
 
 ## 2026.4.9
 
