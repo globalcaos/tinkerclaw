@@ -1343,9 +1343,7 @@ export async function startGatewayServer(
 
     const canvasHostServerPort = (canvasHostServer as CanvasHostServer | null)?.port;
 
-    const unavailableGatewayMethods = new Set<string>(
-      minimalTestGateway ? [] : ["chat.history"],
-    );
+    const unavailableGatewayMethods = new Set<string>(minimalTestGateway ? [] : ["chat.history"]);
     const gatewayRequestContext: import("./server-methods/types.js").GatewayRequestContext = {
       deps,
       cron,
@@ -1489,21 +1487,6 @@ export async function startGatewayServer(
       broadcast,
       context: gatewayRequestContext,
     });
-
-    if (!minimalTestGateway) {
-      log.info("starting channels and sidecars...");
-      ({ pluginServices } = await startGatewaySidecars({
-        cfg: gatewayPluginConfigAtStart,
-        pluginRegistry,
-        defaultWorkspaceDir,
-        deps,
-        startChannels,
-        log,
-        logHooks,
-        logChannels,
-      }));
-      unavailableGatewayMethods.delete("chat.history");
-    }
     logGatewayStartup({
       cfg: cfgAtStart,
       bindHost,
@@ -1535,6 +1518,21 @@ export async function startGatewayServer(
           controlUiBasePath,
           logTailscale,
         });
+
+    if (!minimalTestGateway) {
+      log.info("starting channels and sidecars...");
+      ({ pluginServices } = await startGatewaySidecars({
+        cfg: gatewayPluginConfigAtStart,
+        pluginRegistry,
+        defaultWorkspaceDir,
+        deps,
+        startChannels,
+        log,
+        logHooks,
+        logChannels,
+      }));
+      unavailableGatewayMethods.delete("chat.history");
+    }
 
     // Run gateway_start plugin hook (fire-and-forget)
     if (!minimalTestGateway) {
