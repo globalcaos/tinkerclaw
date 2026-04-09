@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -211,7 +212,10 @@ describe("qa multipass runtime", () => {
       outputDir,
       scenarioIds: ["channel-chat-baseline"],
     }).vmName;
-    const expectedTransferDir = path.join(os.tmpdir(), `${expectedVmName}-qa-suite-`);
+    const expectedTransferDir = path.join(
+      resolvePreferredOpenClawTmpDir(),
+      `${expectedVmName}-qa-suite-`,
+    );
 
     await expect(
       runQaMultipass({
@@ -222,7 +226,7 @@ describe("qa multipass runtime", () => {
     ).rejects.toThrow("Multipass is not installed on this host.");
 
     const tempEntries = fs
-      .readdirSync(os.tmpdir())
+      .readdirSync(resolvePreferredOpenClawTmpDir())
       .filter((entry) => entry.startsWith(path.basename(expectedTransferDir)));
     expect(tempEntries).toEqual([]);
     fs.rmSync(outputDir, { recursive: true, force: true });

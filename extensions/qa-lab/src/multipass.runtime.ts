@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { access, appendFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 
 const MULTIPASS_MOUNTED_REPO_PATH = "/workspace/openclaw-host";
 const MULTIPASS_GUEST_REPO_PATH = "/workspace/openclaw";
@@ -667,7 +668,7 @@ export async function runQaMultipass(params: {
   }
 
   const hostTransferDirPath = await fs.promises.mkdtemp(
-    path.join(os.tmpdir(), `${plan.vmName}-qa-suite-`),
+    path.join(resolvePreferredOpenClawTmpDir(), `${plan.vmName}-qa-suite-`),
   );
   const hostTransferScriptPath = path.join(hostTransferDirPath, "guest-run.sh");
   await writeFile(hostTransferScriptPath, renderQaMultipassGuestScript(plan), {
