@@ -111,11 +111,12 @@ describe("mcp loopback server", () => {
 
   it("threads senderIsOwner through loopback request context and cache separation", async () => {
     server = await startMcpLoopbackServer(0);
+    const activeServer = server;
     const runtime = getActiveMcpLoopbackRuntime();
 
     const sendToolsList = async (senderIsOwner: "true" | "false") =>
       await sendRaw({
-        port: server.port,
+        port: activeServer.port,
         token: runtime?.token,
         headers: {
           "content-type": "application/json",
