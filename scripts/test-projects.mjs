@@ -162,6 +162,7 @@ async function runVitestSpecsParallel(specs, concurrency) {
       console.error(`[test] starting ${spec.config}`);
       const result = await runVitestSpec(spec);
       if (result.signal) {
+        console.error(`[test] ${spec.config} exited by signal ${result.signal}`);
         releaseLockOnce();
         process.kill(process.pid, result.signal);
         return;
@@ -237,8 +238,10 @@ async function main() {
 
   let exitCode = 0;
   for (const spec of runSpecs) {
+    console.error(`[test] starting ${spec.config}`);
     const result = await runVitestSpec(spec);
     if (result.signal) {
+      console.error(`[test] ${spec.config} exited by signal ${result.signal}`);
       releaseLockOnce();
       process.kill(process.pid, result.signal);
       return;
