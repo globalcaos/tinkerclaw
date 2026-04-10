@@ -83,6 +83,7 @@ Docs: https://docs.openclaw.ai
 - Browser/plugin SDK: route browser auth, profile, host-inspection, and doctor readiness helpers through browser plugin public facades so core compatibility helpers stop carrying duplicate runtime implementations. (#63957) Thanks @joshavant.
 - Agents/failover: allow cooldown probes for `timeout` (including network outage classifications) so the primary model can recover after failover without a gateway restart. (#63996) Thanks @neeravmakwana.
 - iMessage (imsg): strip an accidental protobuf length-delimited UTF-8 field wrapper from inbound `text` and `reply_to_text` when it fully consumes the field, fixing leading garbage before the real message. (#63868) Thanks @neeravmakwana.
+- Gateway/pairing: fail closed for paired device records that have no device tokens, and reject pairing approvals whose requested scopes do not match the requested device roles.
 
 ## 2026.4.9
 
