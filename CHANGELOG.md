@@ -94,6 +94,7 @@ Docs: https://docs.openclaw.ai
 - Commands/btw: keep tool-less side questions from sending injected empty `tools` arrays on strict OpenAI-compatible providers, so `/btw` continues working after prior tool-call history. (#64219) Thanks @ngutman.
 - Agents/Bedrock: let `/btw` side questions use `auth: "aws-sdk"` without a static API key so Bedrock IAM and instance-role sessions stop failing before the side question runs. (#64218) Thanks @SnowSky1.
 - Agents/failover: detect llama.cpp slot context overflows as context-overflow errors so compaction can retry self-hosted OpenAI-compatible runs instead of surfacing the raw upstream 400. (#64196) Thanks @alexander-applyinnovations.
+- Claude CLI/skills: pass eligible OpenClaw skills into CLI runs, including native Claude Code skill resolution via a temporary plugin plus per-run skill env/API key injection. (#62686, #62723) Thanks @zomars.
 
 ## 2026.4.9
 
