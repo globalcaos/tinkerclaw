@@ -38,7 +38,7 @@ vi.mock("./channel-react-action.runtime.js", async () => {
         }
         return undefined;
       }
-      const text = String(value);
+      const text = typeof value === "string" ? value : "";
       if (!options?.allowEmpty && !text.trim()) {
         if (options?.required) {
           const err = new Error(`${key} required`);

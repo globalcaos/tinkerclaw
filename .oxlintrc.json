@@ -59,7 +59,6 @@
         "**/*test-support.ts"
       ],
       "rules": {
-        "typescript/no-base-to-string": "off",
         "typescript/no-explicit-any": "off",
         "typescript/no-redundant-type-constituents": "off",
         "typescript/unbound-method": "off",
