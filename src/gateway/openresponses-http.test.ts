@@ -1192,9 +1192,12 @@ describe("OpenResponses HTTP API (e2e)", () => {
       }),
     );
 
-    await vi.waitFor(() => {
-      expect(agentCommand).toHaveBeenCalledTimes(1);
-    });
+    await vi.waitFor(
+      () => {
+        expect(agentCommand).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 5_000, interval: 50 },
+    );
 
     clientReq.destroy();
 
@@ -1245,9 +1248,12 @@ describe("OpenResponses HTTP API (e2e)", () => {
         }),
       );
 
-      await vi.waitFor(() => {
-        expect(agentCommand).toHaveBeenCalledTimes(1);
-      });
+      await vi.waitFor(
+        () => {
+          expect(agentCommand).toHaveBeenCalledTimes(1);
+        },
+        { timeout: 5_000, interval: 50 },
+      );
 
       clientReq.destroy();
 

@@ -12,6 +12,7 @@ const VALID_MODES = new Set(["all", "package-boundary"]);
 const ROOT_DTS_INPUTS = [
   "tsconfig.json",
   "tsconfig.plugin-sdk.dts.json",
+  "src/channels/plugins",
   "src/plugin-sdk",
   "src/video-generation/dashscope-compatible.ts",
   "src/video-generation/types.ts",
@@ -20,6 +21,7 @@ const ROOT_DTS_INPUTS = [
 const PACKAGE_DTS_INPUTS = [
   "tsconfig.json",
   "packages/plugin-sdk/tsconfig.json",
+  "src/channels/plugins",
   "src/plugin-sdk",
   "src/video-generation/dashscope-compatible.ts",
   "src/video-generation/types.ts",
