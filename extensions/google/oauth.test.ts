@@ -607,7 +607,7 @@ describe("loginGeminiCliOAuth", () => {
       note: async () => {},
       prompt: async () => {
         const state = new URL(authUrl).searchParams.get("state");
-        return `${"http://localhost:8085/oauth2callback"}?code=oauth-code&state=${state}`;
+        return `http://localhost:8085/oauth2callback?code=oauth-code&state=${state}`;
       },
       progress: { update: () => {}, stop: () => {} },
     });
