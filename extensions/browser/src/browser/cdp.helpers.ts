@@ -251,17 +251,16 @@ export async function fetchCdpChecked(
     // Block redirects on all CDP HTTP paths (not just probes) because a
     // redirect to an internal host is an SSRF vector regardless of whether
     // the call is /json/version, /json/list, /json/activate, or /json/close.
-    const currentFetch = globalThis.fetch;
-    const guarded = await fetchWithSsrFGuard({
-      url,
-      fetchImpl: async (input, guardedInit) =>
-        await withNoProxyForCdpUrl(url, () => currentFetch(input, guardedInit)),
-      init: { ...init, headers },
-      maxRedirects: 0,
-      policy: { allowPrivateNetwork: true },
-      signal: ctrl.signal,
-      auditContext: "browser-cdp",
-    });
+    const guarded = await withNoProxyForCdpUrl(url, () =>
+      fetchWithSsrFGuard({
+        url,
+        init: { ...init, headers },
+        maxRedirects: 0,
+        policy: { allowPrivateNetwork: true },
+        signal: ctrl.signal,
+        auditContext: "browser-cdp",
+      }),
+    );
     release = guarded.release;
     const res = guarded.response;
     if (res.status >= 300 && res.status < 400) {
@@ -273,6 +272,9 @@ export async function fetchCdpChecked(
         throw new Error(`${resolveBrowserRateLimitMessage(url)} Do NOT retry the browser tool.`);
       }
       throw new Error(`HTTP ${res.status}`);
+    }
+    if (typeof res.arrayBuffer !== "function") {
+      return res;
     }
     const body = await res.arrayBuffer();
     return new Response(body, {
