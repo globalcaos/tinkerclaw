@@ -110,7 +110,12 @@ export const zaloDmPolicy: ChannelSetupDmPolicy = {
       },
     };
   },
-  promptAllowFrom: promptZaloAllowFrom,
+  promptAllowFrom: async ({ cfg, prompter, accountId }) =>
+    promptZaloAllowFrom({
+      cfg,
+      prompter,
+      accountId: accountId ?? resolveDefaultZaloAccountId(cfg),
+    }),
 };
 
 export function createZaloSetupWizardProxy(
