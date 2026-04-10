@@ -38,6 +38,9 @@ describe("qa scenario catalog", () => {
     const discovery = readQaScenarioById("source-docs-discovery-report");
     const discoveryConfig = readQaScenarioExecutionConfig("source-docs-discovery-report");
     const fallbackConfig = readQaScenarioExecutionConfig("memory-failure-fallback");
+    const fanoutConfig = readQaScenarioExecutionConfig("subagent-fanout-synthesis") as
+      | { expectedReplyGroups?: unknown[][] }
+      | undefined;
 
     expect(discovery.title).toBe("Source and docs discovery report");
     expect((discoveryConfig?.requiredFiles as string[] | undefined)?.[0]).toBe(
@@ -46,6 +49,8 @@ describe("qa scenario catalog", () => {
     expect(fallbackConfig?.gracefulFallbackAny as string[] | undefined).toContain(
       "will not reveal",
     );
+    expect(fanoutConfig?.expectedReplyGroups?.flat()).toContain("subagent-1: ok");
+    expect(fanoutConfig?.expectedReplyGroups?.flat()).toContain("subagent-2: ok");
   });
 
   it("keeps the character eval scenario natural and task-shaped", () => {
