@@ -12,6 +12,7 @@ import {
   resolveSessionTranscriptsDirForAgent,
 } from "openclaw/plugin-sdk/memory-core";
 import { buildAgentSessionKey } from "openclaw/plugin-sdk/routing";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/text-runtime";
 import type { QaBusState } from "./bus-state.js";
 import { waitForCronRunCompletion } from "./cron-run-wait.js";
@@ -338,19 +339,35 @@ async function runScenario(name: string, steps: QaSuiteStep[]): Promise<QaSuiteS
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`request failed ${response.status}: ${url}`);
+  const { response, release } = await fetchWithSsrFGuard({
+    url,
+    policy: { allowPrivateNetwork: true },
+    auditContext: "qa-lab-suite-fetch-json",
+  });
+  try {
+    if (!response.ok) {
+      throw new Error(`request failed ${response.status}: ${url}`);
+    }
+    return (await response.json()) as T;
+  } finally {
+    await release();
   }
-  return (await response.json()) as T;
 }
 
 async function waitForGatewayHealthy(env: QaSuiteEnvironment, timeoutMs = 45_000) {
   await waitForCondition(
     async () => {
       try {
-        const response = await fetch(`${env.gateway.baseUrl}/readyz`);
-        return response.ok ? true : undefined;
+        const { response, release } = await fetchWithSsrFGuard({
+          url: `${env.gateway.baseUrl}/readyz`,
+          policy: { allowPrivateNetwork: true },
+          auditContext: "qa-lab-suite-wait-for-gateway-healthy",
+        });
+        try {
+          return response.ok ? true : undefined;
+        } finally {
+          await release();
+        }
       } catch {
         return undefined;
       }
