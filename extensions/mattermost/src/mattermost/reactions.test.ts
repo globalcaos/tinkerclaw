@@ -7,6 +7,7 @@ import {
 import {
   createMattermostReactionFetchMock,
   createMattermostTestConfig,
+  requestUrl,
 } from "./reactions.test-helpers.js";
 
 describe("mattermost reactions", () => {
@@ -97,12 +98,7 @@ describe("mattermost reactions", () => {
     });
 
     const usersMeCalls = fetchMock.mock.calls.filter((call) =>
-      (typeof call[0] === "string"
-        ? call[0]
-        : call[0] instanceof URL
-          ? call[0].toString()
-          : call[0].url
-      ).endsWith("/api/v4/users/me"),
+      requestUrl(call[0]).endsWith("/api/v4/users/me"),
     );
     expect(addResult).toEqual({ ok: true });
     expect(removeResult).toEqual({ ok: true });
