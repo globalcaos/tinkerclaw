@@ -36,11 +36,8 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "./runtime-api.js";
 import { getZaloRuntime } from "./runtime.js";
-
-export type ZaloRuntimeEnv = {
-  log?: (message: string) => void;
-  error?: (message: string) => void;
-};
+export type { ZaloRuntimeEnv } from "./monitor.types.js";
+import type { ZaloRuntimeEnv } from "./monitor.types.js";
 
 export type ZaloMonitorOptions = {
   token: string;

@@ -24,7 +24,7 @@
  * that ack; these helpers encapsulate token exchange and persistence.
  */
 
-import type { MSTeamsAccessTokenProvider } from "./monitor-handler.js";
+import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsSsoTokenStore } from "./sso-token-store.js";
 import { buildUserAgent } from "./user-agent.js";
 
