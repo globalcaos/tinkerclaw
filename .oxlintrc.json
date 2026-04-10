@@ -59,7 +59,6 @@
         "**/*test-support.ts"
       ],
       "rules": {
-        "typescript/await-thenable": "off",
         "typescript/no-base-to-string": "off",
         "typescript/no-explicit-any": "off",
         "typescript/no-floating-promises": "off",
