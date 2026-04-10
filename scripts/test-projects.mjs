@@ -218,6 +218,9 @@ async function main() {
         `[test] running ${parallelSpecs.length} Vitest shards with parallelism ${concurrency}`,
       );
       const parallelExitCode = await runVitestSpecsParallel(parallelSpecs, concurrency);
+      console.error(
+        `[test] completed ${parallelSpecs.length} Vitest shards; Vitest summaries above are per-shard, not aggregate totals.`,
+      );
       releaseLockOnce();
       if (parallelExitCode !== 0) {
         process.exit(parallelExitCode);
