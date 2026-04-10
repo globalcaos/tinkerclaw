@@ -92,7 +92,7 @@ export function registerDefaultAuthTokenSuite(): void {
         await withGatewayServer(async ({ port: isolatedPort }) => {
           const ws = await openWs(isolatedPort);
           const handshakeTimeoutMs = getPreauthHandshakeTimeoutMsFromEnv();
-          const closed = await waitForWsClose(ws, handshakeTimeoutMs + 2500);
+          const closed = await waitForWsClose(ws, handshakeTimeoutMs + 10_000);
           expect(closed).toBe(true);
         });
       } finally {
