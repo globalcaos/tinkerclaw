@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { loadBundledProviderPlugin as loadBundledProviderPluginFromTestHelper } from "../../test/helpers/media-generation/bundled-provider-builders.js";
 import {
   registerProviderPlugin,
   requireRegisteredProvider,
@@ -12,7 +13,6 @@ import { isTruthyEnvValue } from "../infra/env.js";
 import { getShellEnvAppliedKeys, loadShellEnvFallback } from "../infra/shell-env.js";
 import { encodePngRgba, fillPixel } from "../media/png-encode.js";
 import { getProviderEnvVars } from "../secrets/provider-env-vars.js";
-import { loadBundledPluginPublicSurfaceSync } from "../test-utils/bundled-plugin-public-surface.js";
 import {
   DEFAULT_LIVE_IMAGE_MODELS,
   parseCaseFilter,
@@ -38,10 +38,6 @@ type LiveProviderCase = {
   providerId: string;
 };
 
-type BundledProviderEntryModule = {
-  default: LiveProviderCase["plugin"];
-};
-
 type LiveImageCase = {
   id: string;
   providerId: string;
@@ -53,10 +49,7 @@ type LiveImageCase = {
 };
 
 function loadBundledProviderPlugin(pluginId: string): LiveProviderCase["plugin"] {
-  return loadBundledPluginPublicSurfaceSync<BundledProviderEntryModule>({
-    pluginId,
-    artifactBasename: "index.js",
-  }).default;
+  return loadBundledProviderPluginFromTestHelper(pluginId);
 }
 
 const PROVIDER_CASES: LiveProviderCase[] = [
