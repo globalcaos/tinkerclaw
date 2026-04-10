@@ -866,6 +866,11 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     }
     const existing = registry.services.find((entry) => entry.service.id === id);
     if (existing) {
+      // Idempotent: the same plugin can hit registration twice across snapshot vs
+      // activating loads (see #62033). Keep the first registration.
+      if (existing.pluginId === record.id) {
+        return;
+      }
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
