@@ -135,7 +135,7 @@ type QaRawSessionStoreEntry = {
   updatedAt?: number;
 };
 
-const DEFAULT_QA_SUITE_CONCURRENCY = 4;
+const DEFAULT_QA_SUITE_CONCURRENCY = 64;
 
 function normalizeQaSuiteConcurrency(value: number | undefined, scenarioCount: number) {
   const envValue = Number(process.env.OPENCLAW_QA_SUITE_CONCURRENCY);
