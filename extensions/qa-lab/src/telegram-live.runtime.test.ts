@@ -1,8 +1,12 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { __testing } from "./telegram-live.runtime.js";
 
 describe("telegram live qa runtime", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("resolves required Telegram QA env vars", () => {
     expect(
       __testing.resolveTelegramQaRuntimeEnv({
@@ -193,6 +197,30 @@ describe("telegram live qa runtime", () => {
     expect(() => __testing.findScenario(["telegram-help-command", "typo-scenario"])).toThrow(
       "unknown Telegram QA scenario id(s): typo-scenario",
     );
+  });
+
+  it("adds an abort deadline to Telegram API requests", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | globalThis.Request, init?: RequestInit) => {
+        signal = init?.signal as AbortSignal | undefined;
+        return new Response(JSON.stringify({ ok: true, result: { id: 42 } }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }),
+    );
+
+    await expect(__testing.callTelegramApi("token", "getMe", undefined, 25)).resolves.toEqual({
+      id: 42,
+    });
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(signal?.aborted).toBe(true);
   });
 
   it("redacts observed message content by default in artifacts", () => {
