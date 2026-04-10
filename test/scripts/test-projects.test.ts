@@ -255,11 +255,15 @@ describe("scripts/test-projects full-suite sharding", () => {
     const previousSerial = process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
     const previousCi = process.env.CI;
     const previousActions = process.env.GITHUB_ACTIONS;
+    const previousVitestMaxWorkers = process.env.OPENCLAW_VITEST_MAX_WORKERS;
+    const previousTestWorkers = process.env.OPENCLAW_TEST_WORKERS;
     delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
     delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
     delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
     delete process.env.CI;
     delete process.env.GITHUB_ACTIONS;
+    delete process.env.OPENCLAW_VITEST_MAX_WORKERS;
+    delete process.env.OPENCLAW_TEST_WORKERS;
     try {
       const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
 
@@ -292,6 +296,16 @@ describe("scripts/test-projects full-suite sharding", () => {
         delete process.env.GITHUB_ACTIONS;
       } else {
         process.env.GITHUB_ACTIONS = previousActions;
+      }
+      if (previousVitestMaxWorkers === undefined) {
+        delete process.env.OPENCLAW_VITEST_MAX_WORKERS;
+      } else {
+        process.env.OPENCLAW_VITEST_MAX_WORKERS = previousVitestMaxWorkers;
+      }
+      if (previousTestWorkers === undefined) {
+        delete process.env.OPENCLAW_TEST_WORKERS;
+      } else {
+        process.env.OPENCLAW_TEST_WORKERS = previousTestWorkers;
       }
     }
   });
