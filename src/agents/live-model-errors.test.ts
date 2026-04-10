@@ -21,6 +21,11 @@ describe("live model error helpers", () => {
     ).toBe(true);
     expect(
       isModelNotFoundErrorMessage(
+        "404 The free model has been deprecated. Transition to qwen/qwen3.6-plus for continued paid access.",
+      ),
+    ).toBe(true);
+    expect(
+      isModelNotFoundErrorMessage(
         "The endpoint has been deprecated. Transition to v2 API for continued access.",
       ),
     ).toBe(false);

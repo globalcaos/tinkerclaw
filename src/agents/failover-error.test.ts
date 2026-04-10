@@ -219,6 +219,15 @@ describe("failover-error", () => {
     ).toBeNull();
   });
 
+  it("classifies model-scoped deprecation transition messages as model_not_found", () => {
+    expect(
+      resolveFailoverReasonFromError({
+        message:
+          "404 The free model has been deprecated. Transition to qwen/qwen3.6-plus for continued paid access.",
+      }),
+    ).toBe("model_not_found");
+  });
+
   it("keeps status-only 503s conservative unless the payload is clearly overloaded", () => {
     expect(
       resolveFailoverReasonFromError({
