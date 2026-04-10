@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -151,6 +151,19 @@ describe("buildQaRuntimeEnv", () => {
     expect(env.OPENCLAW_LIVE_CLI_BACKEND_AUTH_MODE).toBe("subscription");
   });
 
+  it("does not pass QA setup-token values to the gateway child env", () => {
+    const env = buildQaRuntimeEnv({
+      ...createParams({
+        OPENCLAW_LIVE_SETUP_TOKEN_VALUE: `sk-ant-oat01-${"a".repeat(80)}`,
+        OPENCLAW_QA_LIVE_ANTHROPIC_SETUP_TOKEN: `sk-ant-oat01-${"b".repeat(80)}`,
+      }),
+      providerMode: "live-frontier",
+    });
+
+    expect(env.OPENCLAW_LIVE_SETUP_TOKEN_VALUE).toBeUndefined();
+    expect(env.OPENCLAW_QA_LIVE_ANTHROPIC_SETUP_TOKEN).toBeUndefined();
+  });
+
   it("requires an Anthropic key for live Claude CLI API-key mode", async () => {
     const hostHome = await mkdtemp(path.join(os.tmpdir(), "qa-host-home-"));
     cleanups.push(async () => {
@@ -223,6 +236,40 @@ describe("buildQaRuntimeEnv", () => {
     );
     expect(__testing.isRetryableGatewayCallError("service restart in progress")).toBe(true);
     expect(__testing.isRetryableGatewayCallError("permission denied")).toBe(false);
+  });
+
+  it("stages a live Anthropic setup-token profile for isolated QA workers", async () => {
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "qa-setup-token-state-"));
+    cleanups.push(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+    const token = `sk-ant-oat01-${"c".repeat(80)}`;
+
+    const cfg = await __testing.stageQaLiveAnthropicSetupToken({
+      cfg: {},
+      stateDir,
+      env: {
+        OPENCLAW_LIVE_SETUP_TOKEN_VALUE: token,
+      },
+    });
+
+    expect(cfg.auth?.profiles?.["anthropic:qa-setup-token"]).toMatchObject({
+      provider: "anthropic",
+      mode: "token",
+    });
+    const storeRaw = await readFile(
+      path.join(stateDir, "agents", "main", "agent", "auth-profiles.json"),
+      "utf8",
+    );
+    expect(JSON.parse(storeRaw)).toMatchObject({
+      profiles: {
+        "anthropic:qa-setup-token": {
+          type: "token",
+          provider: "anthropic",
+          token,
+        },
+      },
+    });
   });
 });
 
