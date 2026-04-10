@@ -290,6 +290,7 @@ async function callTelegramApi<T>(
   token: string,
   method: string,
   body?: Record<string, unknown>,
+  timeoutMs = 15_000,
 ): Promise<T> {
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
@@ -297,6 +298,7 @@ async function callTelegramApi<T>(
       "content-type": "application/json",
     },
     body: JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const payload = (await response.json()) as TelegramApiEnvelope<T>;
   if (!response.ok || !payload.ok || payload.result === undefined) {
@@ -315,11 +317,16 @@ async function flushTelegramUpdates(token: string) {
   const startedAt = Date.now();
   let offset = 0;
   while (Date.now() - startedAt < 15_000) {
-    const updates = await callTelegramApi<TelegramUpdate[]>(token, "getUpdates", {
-      offset,
-      timeout: 0,
-      allowed_updates: ["message"],
-    });
+    const updates = await callTelegramApi<TelegramUpdate[]>(
+      token,
+      "getUpdates",
+      {
+        offset,
+        timeout: 0,
+        allowed_updates: ["message"],
+      },
+      15_000,
+    );
     if (updates.length === 0) {
       return offset;
     }
@@ -351,11 +358,16 @@ async function waitForObservedMessage(params: {
       Math.min(10_000, params.timeoutMs - (Date.now() - startedAt)),
     );
     const timeoutSeconds = Math.max(1, Math.min(10, Math.floor(remainingMs / 1000)));
-    const updates = await callTelegramApi<TelegramUpdate[]>(params.token, "getUpdates", {
-      offset,
-      timeout: timeoutSeconds,
-      allowed_updates: ["message"],
-    });
+    const updates = await callTelegramApi<TelegramUpdate[]>(
+      params.token,
+      "getUpdates",
+      {
+        offset,
+        timeout: timeoutSeconds,
+        allowed_updates: ["message"],
+      },
+      timeoutSeconds * 1000 + 5_000,
+    );
     if (updates.length === 0) {
       continue;
     }
@@ -824,6 +836,7 @@ export const __testing = {
   buildTelegramQaConfig,
   buildObservedMessagesArtifact,
   canaryFailureMessage,
+  callTelegramApi,
   classifyCanaryReply,
   findScenario,
   normalizeTelegramObservedMessage,
