@@ -20,7 +20,6 @@
     "typescript/consistent-return": "off",
     "typescript/no-explicit-any": "error",
     "typescript/no-extraneous-class": "off",
-    "typescript/no-unnecessary-type-arguments": "off",
     "typescript/no-unnecessary-type-conversion": "off",
     "typescript/no-unsafe-type-assertion": "off",
     "unicorn/consistent-function-scoping": "off",
