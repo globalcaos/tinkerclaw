@@ -138,7 +138,20 @@ function resolveParallelFullSuiteConcurrency(specCount, env) {
   ) {
     return 1;
   }
-  return 1;
+  return Math.min(10, specCount);
+}
+
+function applyDefaultParallelVitestWorkerBudget(specs, env) {
+  if (env.OPENCLAW_VITEST_MAX_WORKERS || env.OPENCLAW_TEST_WORKERS) {
+    return specs;
+  }
+  return specs.map((spec) => ({
+    ...spec,
+    env: {
+      ...spec.env,
+      OPENCLAW_VITEST_MAX_WORKERS: "2",
+    },
+  }));
 }
 
 function orderFullSuiteSpecsForParallelRun(specs) {
@@ -218,7 +231,10 @@ async function main() {
   if (isFullSuiteRun) {
     const concurrency = resolveParallelFullSuiteConcurrency(runSpecs.length, process.env);
     if (concurrency > 1) {
-      const parallelSpecs = orderFullSuiteSpecsForParallelRun(runSpecs);
+      const parallelSpecs = applyDefaultParallelVitestWorkerBudget(
+        orderFullSuiteSpecsForParallelRun(runSpecs),
+        process.env,
+      );
       console.error(
         `[test] running ${parallelSpecs.length} Vitest shards with parallelism ${concurrency}`,
       );
