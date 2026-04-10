@@ -456,9 +456,13 @@ function findScenario(ids?: string[]) {
   if (!ids || ids.length === 0) {
     return [...TELEGRAM_QA_SCENARIOS];
   }
+  const requested = new Set(ids);
   const selected = TELEGRAM_QA_SCENARIOS.filter((scenario) => ids.includes(scenario.id));
-  if (selected.length === 0) {
-    throw new Error(`No Telegram QA scenarios matched: ${ids.join(", ")}`);
+  const missingIds = [...requested].filter(
+    (id) => !selected.some((scenario) => scenario.id === id),
+  );
+  if (missingIds.length > 0) {
+    throw new Error(`unknown Telegram QA scenario id(s): ${missingIds.join(", ")}`);
   }
   return selected;
 }
@@ -821,6 +825,7 @@ export const __testing = {
   buildObservedMessagesArtifact,
   canaryFailureMessage,
   classifyCanaryReply,
+  findScenario,
   normalizeTelegramObservedMessage,
   resolveTelegramQaRuntimeEnv,
 };
