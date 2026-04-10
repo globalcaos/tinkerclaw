@@ -185,13 +185,16 @@ async function inspectNodeModulesSymlinkTarget(params: {
   }
 
   const resolvedTargetRelativePath = path.relative(params.rootRealPath, resolvedTargetPath);
+  const resolvedTargetStat = await fs.lstat(resolvedTargetPath);
   return {
     blockedDirectoryFinding: findBlockedPackageDirectoryInPath({
       pathRelativeToRoot: resolvedTargetRelativePath,
     }),
-    blockedFileFinding: findBlockedPackageFileAliasInPath({
-      pathRelativeToRoot: resolvedTargetRelativePath,
-    }),
+    blockedFileFinding: resolvedTargetStat.isFile()
+      ? findBlockedPackageFileAliasInPath({
+          pathRelativeToRoot: resolvedTargetRelativePath,
+        })
+      : undefined,
   };
 }
 
