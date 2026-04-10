@@ -3,6 +3,38 @@ import { createQaBusState } from "./bus-state.js";
 import { qaSuiteTesting } from "./suite.js";
 
 describe("qa suite failure reply handling", () => {
+  it("normalizes suite concurrency to a bounded integer", () => {
+    const previous = process.env.OPENCLAW_QA_SUITE_CONCURRENCY;
+    delete process.env.OPENCLAW_QA_SUITE_CONCURRENCY;
+    try {
+      expect(qaSuiteTesting.normalizeQaSuiteConcurrency(undefined, 10)).toBe(4);
+      expect(qaSuiteTesting.normalizeQaSuiteConcurrency(2.8, 10)).toBe(2);
+      expect(qaSuiteTesting.normalizeQaSuiteConcurrency(20, 3)).toBe(3);
+      expect(qaSuiteTesting.normalizeQaSuiteConcurrency(0, 3)).toBe(1);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_QA_SUITE_CONCURRENCY;
+      } else {
+        process.env.OPENCLAW_QA_SUITE_CONCURRENCY = previous;
+      }
+    }
+  });
+
+  it("maps suite work with bounded concurrency while preserving order", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const result = await qaSuiteTesting.mapQaSuiteWithConcurrency([1, 2, 3, 4], 2, async (item) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      return item * 10;
+    });
+
+    expect(maxActive).toBe(2);
+    expect(result).toEqual([10, 20, 30, 40]);
+  });
+
   it("detects classified failure replies before a success-only outbound predicate matches", async () => {
     const state = createQaBusState();
     state.addOutboundMessage({
