@@ -283,4 +283,45 @@ describe("handleAgentEnd", () => {
       },
     });
   });
+
+  it("emits lifecycle end when block reply flush rejects", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(undefined, { onAgentEvent });
+    ctx.flushBlockReplyBuffer = vi.fn().mockRejectedValue(new Error("flush failed"));
+
+    await expect(handleAgentEnd(ctx)).rejects.toThrow("flush failed");
+
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: { phase: "end" },
+    });
+  });
+
+  it("emits lifecycle end when channel flush rejects", async () => {
+    const onAgentEvent = vi.fn();
+    const onBlockReplyFlush = vi.fn().mockRejectedValue(new Error("channel flush failed"));
+    const ctx = createContext(undefined, { onAgentEvent, onBlockReplyFlush });
+
+    await expect(handleAgentEnd(ctx)).rejects.toThrow("channel flush failed");
+
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: { phase: "end" },
+    });
+  });
+
+  it("emits lifecycle end when block reply flush throws", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(undefined, { onAgentEvent });
+    ctx.flushBlockReplyBuffer = vi.fn(() => {
+      throw new Error("flush exploded");
+    });
+
+    expect(() => handleAgentEnd(ctx)).toThrow("flush exploded");
+
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: { phase: "end" },
+    });
+  });
 });

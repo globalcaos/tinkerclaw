@@ -145,17 +145,31 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
     }
   };
 
-  const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer();
-  finalizeAgentEnd();
-  if (isPromiseLike<void>(flushBlockReplyBufferResult)) {
-    return flushBlockReplyBufferResult
-      .then(() => flushPendingMediaAndChannel())
-      .then(() => emitLifecycleTerminal());
+  let lifecycleTerminalEmitted = false;
+  const emitLifecycleTerminalOnce = () => {
+    if (lifecycleTerminalEmitted) {
+      return;
+    }
+    lifecycleTerminalEmitted = true;
+    emitLifecycleTerminal();
+  };
+
+  try {
+    const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer();
+    finalizeAgentEnd();
+    const flushPendingMediaAndChannelResult = isPromiseLike<void>(flushBlockReplyBufferResult)
+      ? Promise.resolve(flushBlockReplyBufferResult).then(() => flushPendingMediaAndChannel())
+      : flushPendingMediaAndChannel();
+
+    if (isPromiseLike<void>(flushPendingMediaAndChannelResult)) {
+      return Promise.resolve(flushPendingMediaAndChannelResult).finally(() => {
+        emitLifecycleTerminalOnce();
+      });
+    }
+  } catch (error) {
+    emitLifecycleTerminalOnce();
+    throw error;
   }
 
-  const flushPendingMediaAndChannelResult = flushPendingMediaAndChannel();
-  if (isPromiseLike<void>(flushPendingMediaAndChannelResult)) {
-    return flushPendingMediaAndChannelResult.then(() => emitLifecycleTerminal());
-  }
-  emitLifecycleTerminal();
+  emitLifecycleTerminalOnce();
 }
