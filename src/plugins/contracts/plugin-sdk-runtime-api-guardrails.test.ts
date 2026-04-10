@@ -60,7 +60,7 @@ const RUNTIME_API_EXPORT_GUARDS: Record<string, readonly string[]> = {
     'export { sendMessageIMessage } from "./src/send.js";',
     'export { setIMessageRuntime } from "./src/runtime.js";',
     'export { chunkTextForOutbound } from "./src/channel-api.js";',
-    'export type { IMessageAccountConfig } from "./src/account-types.js";',
+    'export type IMessageAccountConfig = Omit< NonNullable<NonNullable<RuntimeApiOpenClawConfig["channels"]>["imessage"]>, "accounts" | "defaultAccount" >;',
   ],
   [bundledPluginFile("googlechat", "runtime-api.ts")]: [
     'export { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";',
