@@ -63,7 +63,6 @@
         "typescript/no-explicit-any": "off",
         "typescript/no-floating-promises": "off",
         "typescript/no-redundant-type-constituents": "off",
-        "typescript/no-unnecessary-template-expression": "off",
         "typescript/unbound-method": "off",
         "eslint/no-unsafe-optional-chaining": "off"
       }

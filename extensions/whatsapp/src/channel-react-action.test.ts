@@ -17,7 +17,7 @@ vi.mock("./channel-react-action.runtime.js", async () => {
       toolContext?: { currentMessageId?: string | number | null };
     }) => args.messageId ?? toolContext?.currentMessageId ?? null,
     normalizeWhatsAppTarget: (value?: string | null) => {
-      const raw = `${value ?? ""}`.trim();
+      const raw = (value ?? "").trim();
       if (!raw) {
         return null;
       }
