@@ -90,7 +90,10 @@ function createMockResponse(): ServerResponse & {
   _getData: () => string;
   _getStatusCode: () => number;
 } {
-  const res = new ServerResponse({} as IncomingMessage);
+  const res = new ServerResponse({} as IncomingMessage) as ServerResponse & {
+    _getData: () => string;
+    _getStatusCode: () => number;
+  };
 
   let data = "";
   let statusCode = 200;
