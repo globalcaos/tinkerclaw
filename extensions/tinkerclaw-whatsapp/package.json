@@ -1,0 +1,32 @@
+{
+  "name": "@tinkerclaw/whatsapp",
+  "version": "1.0.0",
+  "description": "TinkerClaw WhatsApp channel plugin — whatsmeow-node backend",
+  "type": "module",
+  "dependencies": {
+    "@whatsmeow-node/whatsmeow-node": "0.5.3",
+    "@whiskeysockets/baileys": "7.0.0-rc.9"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.5"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "whatsapp",
+      "label": "WhatsApp",
+      "selectionLabel": "WhatsApp (whatsmeow)",
+      "detailLabel": "WhatsApp via whatsmeow-node"
+    }
+  }
+}
