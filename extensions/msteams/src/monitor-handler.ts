@@ -6,6 +6,8 @@ import { buildFileInfoCard, parseFileConsentInvoke, uploadToConsentUrl } from ".
 import { extractMSTeamsConversationMessageId, normalizeMSTeamsConversationId } from "./inbound.js";
 import { resolveMSTeamsSenderAccess } from "./monitor-handler/access.js";
 import { createMSTeamsMessageHandler } from "./monitor-handler/message-handler.js";
+export type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
+import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { getPendingUpload, removePendingUpload } from "./pending-uploads.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
@@ -14,17 +16,12 @@ import type { MSTeamsTurnContext } from "./sdk-types.js";
 import {
   handleSigninTokenExchangeInvoke,
   handleSigninVerifyStateInvoke,
-  type MSTeamsSsoDeps,
   parseSigninTokenExchangeValue,
   parseSigninVerifyStateValue,
 } from "./sso.js";
 import { buildGroupWelcomeText, buildWelcomeCard } from "./welcome-card.js";
 export type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
 import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
-
-export type MSTeamsAccessTokenProvider = {
-  getAccessToken: (scope: string) => Promise<string>;
-};
 
 export type MSTeamsActivityHandler = {
   onMessage: (
