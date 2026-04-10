@@ -701,7 +701,13 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
 
       const origin = headerValue(req.headers.origin);
-      if (origin && !origin.startsWith("chrome-extension://")) {
+      // FORK: Only enforce origin check on /extension path — authenticated /cdp
+      // connections from Node.js (ws library) send a non-chrome-extension origin.
+      if (
+        pathname === "/extension" &&
+        origin &&
+        !origin.startsWith("chrome-extension://")
+      ) {
         rejectUpgrade(socket, 403, "Forbidden: invalid origin");
         return;
       }
