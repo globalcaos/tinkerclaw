@@ -217,12 +217,20 @@ export function resolveIMessageInboundDecision(params: {
     chatIdentifierNormalized != null &&
     senderNormalized === chatIdentifierNormalized &&
     matchesSelfChatDestination;
+  const isAmbiguousSelfThread =
+    !isGroup &&
+    chatIdentifierNormalized != null &&
+    senderNormalized === chatIdentifierNormalized &&
+    destinationCallerIdNormalized == null;
   let skipSelfChatHasCheck = false;
   const inboundMessageIds = resolveInboundEchoMessageIds(params.message);
   const inboundMessageId = inboundMessageIds[0];
   const hasInboundGuid = Boolean(normalizeReplyField(params.message.guid));
 
   if (params.message.is_from_me) {
+    if (isAmbiguousSelfThread) {
+      params.selfChatCache?.remember(selfChatLookup);
+    }
     if (isSelfChat) {
       params.selfChatCache?.remember(selfChatLookup);
       const echoScope = buildIMessageEchoScope({

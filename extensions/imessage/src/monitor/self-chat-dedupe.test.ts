@@ -630,7 +630,7 @@ describe("self-chat is_from_me=true handling (Bruce Phase 2 fix)", () => {
     expect(decision).toEqual({ kind: "drop", reason: "from me" });
   });
 
-  it("does not drop reflected inbound when destination_caller_id is absent (#63980)", () => {
+  it("drops reflected inbound when destination_caller_id is absent (#63980)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-24T12:00:00Z"));
 
@@ -674,7 +674,7 @@ describe("self-chat is_from_me=true handling (Bruce Phase 2 fix)", () => {
       }),
     );
 
-    expect(reflection.kind).toBe("dispatch");
+    expect(reflection).toEqual({ kind: "drop", reason: "self-chat echo" });
   });
 
   it("normal DM is_from_me=true is still dropped (regression test)", () => {
