@@ -12,12 +12,7 @@
 import { createClient, type WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
-
-// TODO(task-3): uncomment after history module is moved
-// import { bindWmHistoryCapture } from "../src/history/live-capture-wm.js";
-function bindWmHistoryCapture(_client: WhatsmeowClient): void {
-  // no-op stub — will be replaced in Task 3
-}
+import { bindWmHistoryCapture } from "./history/live-capture.js";
 
 export type { WhatsmeowClient };
 
@@ -76,7 +71,6 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
 
   // ── Bind history capture ──
   try {
-    // TODO(task-3): uncomment after history module is moved
     bindWmHistoryCapture(client);
     logger.info("whatsmeow history live-capture bound");
   } catch (err) {
