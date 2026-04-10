@@ -1816,3 +1816,49 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Why:** Anthropic disabled the `api.anthropic.com/api/oauth/usage` endpoint in January 2026. All budget-panel Anthropic usage data went to zero/null. Rate limit headers (`anthropic-ratelimit-unified-5h-utilization`, `7d-utilization`) are returned on every API response and contain the same utilization percentages.
 - **Pipeline:** `anthropic-vertex-stream.ts` (fetch wrapper) → `ratelimit-store.ts` (in-memory keyed by authProfileId) → `emitAgentEvent("ratelimit-update")` → Tinker UI `onEvent()` → `renderUsageBarsOnly()`
 - **Files:** `src/agents/pi-embedded-runner/anthropic-vertex-stream.ts`, `src/agents/auth-profiles/ratelimit-store.ts` (new), `src/agents/pi-embedded-runner/attempt-hooks.ts`, `tinker-ui/src/app.ts`
+
+---
+
+## 12. Workspace Architecture (2026-04-09)
+
+### 12.1 Workspace Unification — Symlinked Code + Private Data
+
+- **Status:** `DEPLOYED`
+- **What:** The gateway workspace (`~/.openclaw/workspace/`) is the **jarvis-brain** repo (GitLab private). Code directories and config files are **symlinks** pointing into `~/src/tinkerclaw/` (GitHub public). Private data (memory, bank, skills, personal docs) are real files tracked by jarvis-brain.
+- **Why:** Previously two separate git repos with full copies of the code drifted apart, causing build failures (`setPhase` crash) and data loss. This layout ensures one copy of code, one copy of private data, no drift.
+- **Structure:**
+  - `~/.openclaw/workspace/.git` → jarvis-brain (GitLab, private data)
+  - `~/.openclaw/workspace/src` → `~/src/tinkerclaw/src` (symlink)
+  - `~/.openclaw/workspace/extensions` → `~/src/tinkerclaw/extensions` (symlink)
+  - `~/.openclaw/workspace/dist` → `~/src/tinkerclaw/dist` (symlink)
+  - `~/.openclaw/workspace/memory/` → real dir, tracked by jarvis-brain
+  - `~/.openclaw/workspace/bank/` → real dir, tracked by jarvis-brain
+  - `~/.openclaw/workspace/skills/` → real dir, tracked by jarvis-brain
+- **Privacy rules:**
+  - Prudence NNs: public, tracked by tinkerclaw (`models/amygdala/prudence-*.onnx`)
+  - Personality NNs: private, gitignored by tinkerclaw (`models/amygdala/personality-*.onnx`)
+  - Fractal prompt: public, tracked by tinkerclaw (`extensions/tinkerclaw-fractal-reflection/`)
+  - Skills: private by default in jarvis-brain. Promoted to public by copying to tinkerclaw and committing.
+- **Merge cron:** Operates on `~/src/tinkerclaw/` for upstream code merges. jarvis-brain backup is a separate phase.
+- **Builds:** Always from tinkerclaw (`cd ~/src/tinkerclaw && npx tsdown`). Never from workspace directly.
+- **Full plan:** `jarvis-icu/docs/superpowers/plans/2026-04-09-workspace-unification-plan.md`
+
+### 12.2 Stuck Thinking Indicator Fix (2026-04-08)
+
+- **Status:** `DEPLOYED`
+- **What:** Three-layer defense against the thinking indicator persisting forever when the lifecycle "end" agent event is missed.
+- **Layer 1:** Chat "final" safety-net — when the chat final event arrives, schedules `activeRuns` cleanup after 5s as a fallback if the lifecycle event was dropped.
+- **Layer 2:** Stale run watchdog — `startThinkingTick()` force-clears any `activeRuns` entry older than 5 minutes with a console warning.
+- **Layer 3:** `scheduleUnconfirmedPrune` fix — after reconnect, properly resets `sending` and triggers UI updates when stale runs are pruned.
+- **Root cause:** The thinking indicator is driven by two independent event streams (chat final + agent lifecycle end). Both must fire for cleanup. If the lifecycle event was missed, there was no safety net — the indicator persisted forever.
+- **Files:** `tinker-ui/src/app.ts` (all three fixes)
+
+### 12.3 Browser Relay CDP Access (2026-04-09)
+
+- **Status:** `DEPLOYED`
+- **What:** The gateway's built-in browser extension relay on port 18792 now accepts CDP WebSocket connections from Jarvis/agents. Previously, a blanket origin check rejected all non-`chrome-extension://` origins, blocking Node.js ws library connections.
+- **Fix:** Origin check scoped to `/extension` path only. `/cdp` path accepts any origin with valid token auth.
+- **Connection:** `ws://127.0.0.1:18792/cdp?token=<gateway.auth.token>`
+- **Status check:** `GET http://127.0.0.1:18792/extension/status`
+- **Legacy plugin:** `tinkerclaw-browser-relay` in `~/.openclaw/extensions/` is disabled — the built-in relay handles everything.
+- **Files:** `extensions/browser/src/browser/extension-relay.ts` (origin check), `~/.openclaw/extensions/tinkerclaw-browser-relay/index.ts` (CDP proxy for fallback)
