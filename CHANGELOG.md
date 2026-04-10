@@ -119,6 +119,7 @@ Docs: https://docs.openclaw.ai
 - Agents/exec: keep sandboxed `tools.exec.host=auto` sessions from honoring per-call `host=node` or `host=gateway` overrides while a sandbox runtime is active, and stop advertising node routing in that state so exec stays on the sandbox host. (#63880)
 - Gateway/restart sentinel: route restart notices only from stored canonical delivery metadata and skip outbound guessing from lossy session keys, avoiding misdelivery on case-sensitive channels like Matrix. (#64391) Thanks @gumadeiras.
 
+- Cron/isolated agent: run scheduled agent turns as non-owner senders so owner-only tools stay unavailable during cron execution. (#63878)
 ## 2026.4.9
 
 ### Changes
