@@ -227,7 +227,7 @@ function loadLegacyBotSdkMetadata(cryptoRootDir: string): MatrixLegacyBotSdkMeta
 function resolveMatrixLegacyCryptoPlans(params: {
   cfg: OpenClawConfig;
   env: NodeJS.ProcessEnv;
-}): MatrixLegacyCryptoDetection {
+}): Omit<MatrixLegacyCryptoDetection, "inspectorAvailable"> {
   const warnings: string[] = [];
   const plans: MatrixLegacyCryptoPlan[] = [];
 
@@ -351,6 +351,8 @@ export async function autoPrepareLegacyMatrixCrypto(params: {
   const detection = params.deps?.inspectLegacyStore
     ? resolveMatrixLegacyCryptoPlans({ cfg: params.cfg, env })
     : detectLegacyMatrixCrypto({ cfg: params.cfg, env });
+  const inspectorAvailable =
+    "inspectorAvailable" in detection ? detection.inspectorAvailable : true;
   const warnings = [...detection.warnings];
   const changes: string[] = [];
   const writeJsonFileAtomically =
@@ -367,7 +369,7 @@ export async function autoPrepareLegacyMatrixCrypto(params: {
       warnings,
     };
   }
-  if (!params.deps?.inspectLegacyStore && !detection.inspectorAvailable) {
+  if (!params.deps?.inspectLegacyStore && !inspectorAvailable) {
     if (warnings.length > 0) {
       params.log?.warn?.(
         `matrix: legacy encrypted-state warnings:\n${warnings.map((entry) => `- ${entry}`).join("\n")}`,

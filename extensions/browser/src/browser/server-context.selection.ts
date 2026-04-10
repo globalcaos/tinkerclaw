@@ -49,6 +49,7 @@ export function createProfileSelectionOps({
 
   const ensureTabAvailable = async (targetId?: string): Promise<BrowserTab> => {
     await ensureBrowserAvailable();
+    await assertProfileCdpEndpointAllowed();
     const profileState = getProfileState();
     const tabs1 = await listTabs();
     if (tabs1.length === 0) {
@@ -93,6 +94,7 @@ export function createProfileSelectionOps({
   };
 
   const resolveTargetIdOrThrow = async (targetId: string): Promise<string> => {
+    await assertProfileCdpEndpointAllowed();
     const tabs = await listTabs();
     const resolved = resolveTargetIdFromTabs(targetId, tabs);
     if (!resolved.ok) {
