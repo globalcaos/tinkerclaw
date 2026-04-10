@@ -644,6 +644,9 @@ export function buildFullSuiteVitestRunPlans(args, cwd = process.cwd()) {
 }
 
 export function shouldUseLocalFullSuiteParallelByDefault(env = process.env) {
+  if (hasConservativeVitestWorkerBudget(env)) {
+    return false;
+  }
   return (
     env.OPENCLAW_TEST_PROJECTS_SERIAL !== "1" && env.CI !== "true" && env.GITHUB_ACTIONS !== "true"
   );
@@ -652,6 +655,13 @@ export function shouldUseLocalFullSuiteParallelByDefault(env = process.env) {
 function parsePositiveInt(value) {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function hasConservativeVitestWorkerBudget(env) {
+  const workerBudget = parsePositiveInt(
+    env.OPENCLAW_VITEST_MAX_WORKERS ?? env.OPENCLAW_TEST_WORKERS,
+  );
+  return workerBudget !== null && workerBudget <= 1;
 }
 
 export function resolveParallelFullSuiteConcurrency(specCount, env = process.env) {
@@ -665,10 +675,7 @@ export function resolveParallelFullSuiteConcurrency(specCount, env = process.env
   if (env.CI === "true" || env.GITHUB_ACTIONS === "true") {
     return 1;
   }
-  const workerBudget = parsePositiveInt(
-    env.OPENCLAW_VITEST_MAX_WORKERS ?? env.OPENCLAW_TEST_WORKERS,
-  );
-  if (workerBudget !== null && workerBudget <= 1) {
+  if (hasConservativeVitestWorkerBudget(env)) {
     return 1;
   }
   if (

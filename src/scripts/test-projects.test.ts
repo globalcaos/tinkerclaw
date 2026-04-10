@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 const {
+  buildFullSuiteVitestRunPlans,
   buildVitestArgs,
   buildVitestRunPlans,
   createVitestRunSpecs,
   parseTestProjectsArgs,
   resolveParallelFullSuiteConcurrency,
 } = (await import("../../scripts/test-projects.test-support.mjs")) as unknown as {
+  buildFullSuiteVitestRunPlans: (
+    args: string[],
+    cwd?: string,
+  ) => Array<{
+    config: string;
+    forwardedArgs: string[];
+    includePatterns: string[] | null;
+    watchMode: boolean;
+  }>;
   buildVitestArgs: (args: string[], cwd?: string) => string[];
   buildVitestRunPlans: (
     args: string[],
@@ -409,6 +419,45 @@ describe("test-projects args", () => {
         OPENCLAW_TEST_WORKERS: "1",
       }),
     ).toBe(1);
+  });
+
+  it("keeps conservative full-suite runs on aggregate shards", () => {
+    const originalVitestMaxWorkers = process.env.OPENCLAW_VITEST_MAX_WORKERS;
+    const originalTestWorkers = process.env.OPENCLAW_TEST_WORKERS;
+    const originalProjectParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
+    const originalLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
+    try {
+      process.env.OPENCLAW_VITEST_MAX_WORKERS = "1";
+      delete process.env.OPENCLAW_TEST_WORKERS;
+      delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
+      delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
+
+      const configs = buildFullSuiteVitestRunPlans([]).map((plan) => plan.config);
+
+      expect(configs).toContain("vitest.full-agentic.config.ts");
+      expect(configs).not.toContain("vitest.plugins.config.ts");
+    } finally {
+      if (originalVitestMaxWorkers === undefined) {
+        delete process.env.OPENCLAW_VITEST_MAX_WORKERS;
+      } else {
+        process.env.OPENCLAW_VITEST_MAX_WORKERS = originalVitestMaxWorkers;
+      }
+      if (originalTestWorkers === undefined) {
+        delete process.env.OPENCLAW_TEST_WORKERS;
+      } else {
+        process.env.OPENCLAW_TEST_WORKERS = originalTestWorkers;
+      }
+      if (originalProjectParallel === undefined) {
+        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
+      } else {
+        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = originalProjectParallel;
+      }
+      if (originalLeafShards === undefined) {
+        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
+      } else {
+        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = originalLeafShards;
+      }
+    }
   });
 
   it("keeps explicit project-level parallelism authoritative", () => {
