@@ -159,7 +159,7 @@ export function resolveDefaultVitestPool(
   return "threads";
 }
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 const isWindows = process.platform === "win32";
 const defaultPool = resolveDefaultVitestPool();
@@ -179,6 +179,7 @@ if (!isCI && localScheduling.throttledBySystem && shouldPrintVitestThrottle(proc
 }
 
 export const sharedVitestConfig = {
+  root: repoRoot,
   resolve: {
     alias: [
       {
@@ -200,6 +201,7 @@ export const sharedVitestConfig = {
     ],
   },
   test: {
+    dir: repoRoot,
     testTimeout: 120_000,
     hookTimeout: isWindows ? 180_000 : 120_000,
     unstubEnvs: true,
