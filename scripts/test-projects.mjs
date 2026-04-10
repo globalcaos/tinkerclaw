@@ -3,6 +3,7 @@ import { acquireLocalHeavyCheckLockSync } from "./lib/local-heavy-check-runtime.
 import { spawnPnpmRunner } from "./pnpm-runner.mjs";
 import { resolveVitestCliEntry, resolveVitestNodeArgs } from "./run-vitest.mjs";
 import {
+  applyParallelVitestCachePaths,
   buildFullSuiteVitestRunPlans,
   createVitestRunSpecs,
   parseTestProjectsArgs,
@@ -130,7 +131,7 @@ function applyDefaultParallelVitestWorkerBudget(specs, env) {
     ...spec,
     env: {
       ...spec.env,
-      OPENCLAW_VITEST_MAX_WORKERS: "2",
+      OPENCLAW_VITEST_MAX_WORKERS: "1",
     },
   }));
 }
@@ -213,7 +214,10 @@ async function main() {
     const concurrency = resolveParallelFullSuiteConcurrency(runSpecs.length, process.env);
     if (concurrency > 1) {
       const parallelSpecs = applyDefaultParallelVitestWorkerBudget(
-        orderFullSuiteSpecsForParallelRun(runSpecs),
+        applyParallelVitestCachePaths(orderFullSuiteSpecsForParallelRun(runSpecs), {
+          cwd: process.cwd(),
+          env: process.env,
+        }),
         process.env,
       );
       console.error(
