@@ -137,6 +137,8 @@ Docs: https://docs.openclaw.ai
 - Browser/security: reject strict-policy hostname navigation unless the hostname is an explicit allowlist exception or IP literal, and route CDP HTTP discovery through the pinned SSRF fetch path. (#64367) Thanks @eleqtrizit.
 - Plugins/ACPX: wrap plugin tools on the MCP bridge with the shared `before_tool_call` handler so block and approval hooks fire consistently across all execution paths. (#63886) Thanks @eleqtrizit.
 
+- Logging/security: redact Gmail watcher `--hook-token` values from startup logging and `logs.tail` output. (#62661) Thanks @eleqtrizit.
+
 ## 2026.4.9
 
 ### Changes
