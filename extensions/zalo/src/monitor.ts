@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { MarkdownTableMode, OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
+import type { OutboundReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import type { ResolvedZaloAccount } from "./accounts.js";
 import {
   ZaloApiError,
@@ -20,7 +22,6 @@ import {
   resolveZaloRuntimeGroupPolicy,
 } from "./group-access.js";
 import { resolveZaloProxyFetch } from "./proxy.js";
-import type { MarkdownTableMode, OpenClawConfig, OutboundReplyPayload } from "./runtime-api.js";
 import {
   createChannelPairingController,
   createChannelReplyPipeline,
