@@ -11,6 +11,8 @@ export type StoredConversationReference = {
   lastSeenAt?: string;
   /** Activity ID from the last message */
   activityId?: string;
+  /** Channel thread root activity ID for threaded replies. */
+  threadId?: string;
   /** User who sent the message */
   user?: { id?: string; name?: string; aadObjectId?: string };
   /** Agent/bot that received the message */

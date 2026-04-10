@@ -558,12 +558,15 @@ describe("msteams monitor handler authz", () => {
     } as unknown as Parameters<typeof handler>[0]);
 
     expect(conversationStore.upsert).toHaveBeenCalledTimes(1);
-    const storedArg = conversationStore.upsert.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(storedArg).toBeDefined();
     // Top-level tenantId must not be present when no source is available.
-    expect(storedArg.tenantId).toBeUndefined();
-    // aadObjectId still captured from `from.aadObjectId` when present.
-    expect(storedArg.aadObjectId).toBe("sender-aad");
+    expect(conversationStore.upsert).toHaveBeenCalledWith(
+      "19:no-tenant@thread.tacv2",
+      expect.not.objectContaining({ tenantId: expect.anything() }),
+    );
+    expect(conversationStore.upsert).toHaveBeenCalledWith(
+      "19:no-tenant@thread.tacv2",
+      expect.objectContaining({ aadObjectId: "sender-aad" }),
+    );
   });
 
   it("logs an info drop reason when dmPolicy allowlist rejects a sender", async () => {
