@@ -1010,7 +1010,11 @@ export async function forceDisconnectPlaywrightForTarget(opts: {
   // disconnect Playwright's CDP connection.
   const targetId = normalizeOptionalString(opts.targetId) ?? "";
   if (targetId) {
-    await tryTerminateExecutionViaCdp({ cdpUrl: normalized, targetId, ssrfPolicy: opts.ssrfPolicy }).catch(() => {});
+    await tryTerminateExecutionViaCdp({
+      cdpUrl: normalized,
+      targetId,
+      ssrfPolicy: opts.ssrfPolicy,
+    }).catch(() => {});
   }
 
   // Fire-and-forget: don't await because browser.close() may hang on the stuck CDP pipe.
