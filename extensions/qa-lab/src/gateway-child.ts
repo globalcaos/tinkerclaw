@@ -308,8 +308,28 @@ function isRetryableGatewayCallError(details: string): boolean {
   );
 }
 
+async function fetchLocalGatewayHealth(params: {
+  baseUrl: string;
+  healthPath: "/readyz" | "/healthz";
+}): Promise<boolean> {
+  const { response, release } = await fetchWithSsrFGuard({
+    url: `${params.baseUrl}${params.healthPath}`,
+    init: {
+      signal: AbortSignal.timeout(2_000),
+    },
+    policy: { allowPrivateNetwork: true },
+    auditContext: "qa-lab-gateway-child-health",
+  });
+  try {
+    return response.ok;
+  } finally {
+    await release();
+  }
+}
+
 export const __testing = {
   buildQaRuntimeEnv,
+  fetchLocalGatewayHealth,
   isRetryableGatewayCallError,
   readQaLiveProviderConfigOverrides,
   resolveQaLiveAnthropicSetupToken,
@@ -614,22 +634,10 @@ async function waitForGatewayReady(params: {
         `gateway exited before becoming healthy (exitCode=${String(params.child.exitCode)}, signal=${String(params.child.signalCode)}):\n${params.logs()}`,
       );
     }
-    for (const healthPath of ["/readyz", "/healthz"]) {
+    for (const healthPath of ["/readyz", "/healthz"] as const) {
       try {
-        const { response, release } = await fetchWithSsrFGuard({
-          url: `${params.baseUrl}${healthPath}`,
-          init: {
-            signal: AbortSignal.timeout(2_000),
-          },
-          policy: { allowPrivateNetwork: true },
-          auditContext: "qa-lab-gateway-child-health",
-        });
-        try {
-          if (response.ok) {
-            return;
-          }
-        } finally {
-          await release();
+        if (await fetchLocalGatewayHealth({ baseUrl: params.baseUrl, healthPath })) {
+          return;
         }
       } catch {
         // retry until timeout
