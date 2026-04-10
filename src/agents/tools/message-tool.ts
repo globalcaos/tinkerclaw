@@ -428,10 +428,15 @@ type MessageToolDiscoveryParams = {
   senderIsOwner?: boolean;
 };
 
+type MessageActionDiscoveryInput = Omit<ChannelMessageActionDiscoveryInput, "cfg" | "channel"> & {
+  cfg: OpenClawConfig;
+  channel?: string;
+};
+
 function buildMessageActionDiscoveryInput(
   params: MessageToolDiscoveryParams,
   channel?: string,
-): ChannelMessageActionDiscoveryInput {
+): MessageActionDiscoveryInput {
   return {
     cfg: params.cfg,
     ...(channel ? { channel } : {}),
@@ -500,7 +505,7 @@ function buildMessageToolSchema(params: MessageToolDiscoveryParams) {
   const extraProperties = resolveChannelMessageToolSchemaProperties(
     buildMessageActionDiscoveryInput(
       params,
-      normalizeMessageChannel(params.currentChannelProvider),
+      normalizeMessageChannel(params.currentChannelProvider) ?? undefined,
     ),
   );
   return buildMessageToolSchemaFromActions(actions.length > 0 ? actions : ["send"], {
