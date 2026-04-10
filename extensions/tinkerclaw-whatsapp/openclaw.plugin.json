@@ -1,0 +1,11 @@
+{
+  "id": "tinkerclaw-whatsapp",
+  "name": "TinkerClaw WhatsApp",
+  "description": "WhatsApp channel plugin using whatsmeow-node. Replaces upstream Baileys-based WhatsApp with direct Go protocol bridge, 4-tier access control, SQLite history, reconnect backfill, and multi-agent support.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
