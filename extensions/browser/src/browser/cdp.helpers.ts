@@ -254,18 +254,17 @@ export async function fetchCdpChecked(
   try {
     const headers = getHeadersWithAuth(url, (init?.headers as Record<string, string>) || {});
     const res = await withNoProxyForCdpUrl(url, async () => {
-      if (ssrfPolicy) {
-        const guarded = await fetchWithSsrFGuard({
-          url,
-          init: { ...init, headers },
-          signal: ctrl.signal,
-          policy: ssrfPolicy,
-          auditContext: "browser-cdp",
-        });
-        guardedRelease = guarded.release;
-        return guarded.response;
-      }
-      return await fetch(url, { ...init, headers, signal: ctrl.signal });
+      const currentFetch = globalThis.fetch;
+      const guarded = await fetchWithSsrFGuard({
+        url,
+        init: { ...init, headers },
+        signal: ctrl.signal,
+        policy: ssrfPolicy ?? { allowPrivateNetwork: true },
+        auditContext: "browser-cdp",
+        fetchImpl: (input, requestInit) => currentFetch(input, requestInit),
+      });
+      guardedRelease = guarded.release;
+      return guarded.response;
     });
     if (!res.ok) {
       if (res.status === 429) {
