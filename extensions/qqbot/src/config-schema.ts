@@ -72,10 +72,22 @@ const QQBotAccountSchema = z
   })
   .passthrough();
 
+const QQBotNamedAccountSchema = QQBotAccountSchema.superRefine((value, ctx) => {
+  for (const key of ["tts", "stt"] as const) {
+    if (key in value) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `channels.qqbot.accounts entries do not support ${key} overrides`,
+      });
+    }
+  }
+});
+
 export const QQBotConfigSchema = QQBotAccountSchema.extend({
   tts: QQBotTtsSchema,
   stt: QQBotSttSchema,
-  accounts: z.object({}).catchall(QQBotAccountSchema.passthrough()).optional(),
+  accounts: z.object({}).catchall(QQBotNamedAccountSchema).optional(),
   defaultAccount: z.string().optional(),
 }).passthrough();
 export const qqbotChannelConfigSchema = buildChannelConfigSchema(QQBotConfigSchema);
