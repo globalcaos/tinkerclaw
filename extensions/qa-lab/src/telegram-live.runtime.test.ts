@@ -189,6 +189,12 @@ describe("telegram live qa runtime", () => {
     ).toBe("match");
   });
 
+  it("fails when any requested Telegram scenario id is unknown", () => {
+    expect(() => __testing.findScenario(["telegram-help-command", "typo-scenario"])).toThrow(
+      "unknown Telegram QA scenario id(s): typo-scenario",
+    );
+  });
+
   it("redacts observed message content by default in artifacts", () => {
     expect(
       __testing.buildObservedMessagesArtifact({
