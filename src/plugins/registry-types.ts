@@ -17,7 +17,6 @@ import type {
   OpenClawPluginCommandDefinition,
   OpenClawPluginGatewayRuntimeScopeSurface,
   OpenClawPluginHttpRouteAuth,
-  OpenClawPluginGatewayRuntimeScopeSurface,
   OpenClawPluginHttpRouteHandler,
   OpenClawPluginHttpRouteMatch,
   OpenClawPluginReloadRegistration,
