@@ -15,6 +15,7 @@ import type {
   OpenClawPluginCliCommandDescriptor,
   OpenClawPluginCliRegistrar,
   OpenClawPluginCommandDefinition,
+  OpenClawPluginGatewayRuntimeScopeSurface,
   OpenClawPluginHttpRouteAuth,
   OpenClawPluginGatewayRuntimeScopeSurface,
   OpenClawPluginHttpRouteHandler,
