@@ -414,6 +414,7 @@ describe("test-projects args", () => {
   it("keeps explicit project-level parallelism authoritative", () => {
     expect(
       resolveParallelFullSuiteConcurrency(58, {
+        GITHUB_ACTIONS: "true",
         OPENCLAW_TEST_PROJECTS_PARALLEL: "3",
         OPENCLAW_VITEST_MAX_WORKERS: "1",
       }),
