@@ -2,7 +2,7 @@ import { expect, vi } from "vitest";
 import type { OpenClawConfig } from "../../runtime-api.js";
 import type { MattermostFetch } from "./client.js";
 
-function requestUrl(url: string | URL | Request): string {
+export function requestUrl(url: string | URL | Request): string {
   return typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
 }
 
