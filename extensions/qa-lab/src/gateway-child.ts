@@ -70,6 +70,9 @@ const QA_MOCK_BLOCKED_ENV_KEY_PATTERNS = Object.freeze([
 const QA_LIVE_PROVIDER_CONFIG_PATH_ENV = "OPENCLAW_QA_LIVE_PROVIDER_CONFIG_PATH";
 const QA_OPENAI_PLUGIN_ID = "openai";
 const QA_LIVE_CLI_BACKEND_PRESERVE_ENV = "OPENCLAW_LIVE_CLI_BACKEND_PRESERVE_ENV";
+const QA_LIVE_CLI_BACKEND_AUTH_MODE_ENV = "OPENCLAW_LIVE_CLI_BACKEND_AUTH_MODE";
+
+export type QaCliBackendAuthMode = "auto" | "api-key" | "subscription";
 
 async function getFreePort() {
   return await new Promise<number>((resolve, reject) => {
@@ -117,29 +120,51 @@ export function normalizeQaProviderModeEnv(
 
 function resolveQaLiveCliAuthEnv(
   baseEnv: NodeJS.ProcessEnv,
-  opts?: { forwardHostHomeForClaudeCli?: boolean },
+  opts?: {
+    forwardHostHomeForClaudeCli?: boolean;
+    claudeCliAuthMode?: QaCliBackendAuthMode;
+  },
 ) {
-  const preserveCliEnv = (key: string) => {
+  const parsePreservedCliEnv = () => {
     const raw = baseEnv[QA_LIVE_CLI_BACKEND_PRESERVE_ENV]?.trim();
-    const values = raw?.startsWith("[")
-      ? (() => {
-          try {
-            const parsed = JSON.parse(raw) as unknown;
-            return Array.isArray(parsed)
-              ? parsed.filter((entry): entry is string => typeof entry === "string")
-              : [];
-          } catch {
-            return [];
-          }
-        })()
-      : (raw ?? "").split(/[,\s]+/).filter((entry) => entry.length > 0);
-    return JSON.stringify([...new Set([...values, key])]);
+    if (raw?.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        return Array.isArray(parsed)
+          ? parsed.filter((entry): entry is string => typeof entry === "string")
+          : [];
+      } catch {
+        return [];
+      }
+    }
+    return (raw ?? "").split(/[,\s]+/).filter((entry) => entry.length > 0);
   };
-  const claudeCliEnv =
-    opts?.forwardHostHomeForClaudeCli &&
-    (baseEnv.ANTHROPIC_API_KEY?.trim() || baseEnv.OPENCLAW_LIVE_ANTHROPIC_KEY?.trim())
-      ? { [QA_LIVE_CLI_BACKEND_PRESERVE_ENV]: preserveCliEnv("ANTHROPIC_API_KEY") }
-      : {};
+  const renderPreservedCliEnv = (values: string[]) => JSON.stringify([...new Set(values)]);
+  const authMode = opts?.claudeCliAuthMode ?? "auto";
+  const hasAnthropicKey = Boolean(
+    baseEnv.ANTHROPIC_API_KEY?.trim() || baseEnv.OPENCLAW_LIVE_ANTHROPIC_KEY?.trim(),
+  );
+  if (opts?.forwardHostHomeForClaudeCli && authMode === "api-key" && !hasAnthropicKey) {
+    throw new Error(
+      "Claude CLI API-key QA mode requires ANTHROPIC_API_KEY or OPENCLAW_LIVE_ANTHROPIC_KEY",
+    );
+  }
+  const preserveEnvValues = (() => {
+    if (!opts?.forwardHostHomeForClaudeCli) {
+      return undefined;
+    }
+    const values = parsePreservedCliEnv().filter((entry) => entry !== "ANTHROPIC_API_KEY");
+    if (authMode === "api-key" || (authMode === "auto" && hasAnthropicKey)) {
+      values.push("ANTHROPIC_API_KEY");
+    }
+    return renderPreservedCliEnv(values);
+  })();
+  const claudeCliEnv = opts?.forwardHostHomeForClaudeCli
+    ? {
+        [QA_LIVE_CLI_BACKEND_AUTH_MODE_ENV]: authMode,
+        ...(preserveEnvValues ? { [QA_LIVE_CLI_BACKEND_PRESERVE_ENV]: preserveEnvValues } : {}),
+      }
+    : {};
   const configuredCodexHome = baseEnv.CODEX_HOME?.trim();
   if (configuredCodexHome) {
     return {
@@ -175,6 +200,7 @@ export function buildQaRuntimeEnv(params: {
   providerMode?: "mock-openai" | "live-frontier";
   baseEnv?: NodeJS.ProcessEnv;
   forwardHostHomeForClaudeCli?: boolean;
+  claudeCliAuthMode?: QaCliBackendAuthMode;
 }) {
   const baseEnv = params.baseEnv ?? process.env;
   const env: NodeJS.ProcessEnv = {
@@ -183,6 +209,7 @@ export function buildQaRuntimeEnv(params: {
     ...(params.providerMode === "live-frontier"
       ? resolveQaLiveCliAuthEnv(baseEnv, {
           forwardHostHomeForClaudeCli: params.forwardHostHomeForClaudeCli,
+          claudeCliAuthMode: params.claudeCliAuthMode,
         })
       : {}),
     OPENCLAW_HOME: params.homeDir,
@@ -580,6 +607,7 @@ export async function startQaGatewayChild(params: {
   alternateModel?: string;
   fastMode?: boolean;
   thinkingDefault?: QaThinkingLevel;
+  claudeCliAuthMode?: QaCliBackendAuthMode;
   controlUiEnabled?: boolean;
 }) {
   const tempRoot = await fs.mkdtemp(
@@ -686,6 +714,7 @@ export async function startQaGatewayChild(params: {
     compatibilityHostVersion: runtimeHostVersion,
     providerMode: params.providerMode,
     forwardHostHomeForClaudeCli: liveProviderIds.includes("claude-cli"),
+    claudeCliAuthMode: params.claudeCliAuthMode,
   });
 
   const child = spawn(
