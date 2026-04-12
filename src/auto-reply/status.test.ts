@@ -795,17 +795,17 @@ describe("buildStatusMessage", () => {
             {
               attachmentIndex: 0,
               attempts: [
-              {
-                type: "provider",
-                outcome: "skipped",
-                reason: "empty output",
-              },
-              {
-                type: "provider",
-                outcome: "failed",
-                reason: "Error: Audio transcription response missing text",
-              },
-            ],
+                {
+                  type: "provider",
+                  outcome: "skipped",
+                  reason: "empty output",
+                },
+                {
+                  type: "provider",
+                  outcome: "failed",
+                  reason: "Error: Audio transcription response missing text",
+                },
+              ],
             },
           ],
         },
