@@ -32,6 +32,7 @@ Docs: https://docs.openclaw.ai
 - Gateway/cron: preserve requested isolated-agent config across runtime reloads so subagent jobs and heartbeat overrides keep the right workspace and heartbeat settings when the hot-loaded snapshot is stale. Thanks @l0cka and @vincentkoc.
 - Gateway/plugins: always send a non-empty `idempotencyKey` for plugin subagent runs, so dreaming narrative jobs stop failing gateway schema validation. (#65354) Thanks @CodeForgeNet and @vincentkoc.
 - Dreaming/promotion: raise phase reinforcement enough for repeated dreaming-only revisits to clear the default durable-memory gate after multiple days, instead of stalling just below the score threshold. Thanks @vincentkoc.
+- Dreaming/light-sleep: compute staged candidate confidence from all recorded short-term signals instead of recall-only counts, so dreaming-only entries stop rendering as `confidence: 0.00`. Thanks @vincentkoc.
 - CLI/plugins: honor `memory-wiki` when `plugins.allow` is set for `openclaw wiki`, and register `wiki` as the plugin-owned command alias so doctor/config stop treating it as stale. (#64779) Thanks @feiskyer and @vincentkoc.
 - Cron/isolated sessions: persist the right transcript path for each isolated run, including fresh session rollovers, so cron runs stop appending to stale session files. Thanks @samrusani and @vincentkoc.
 - CLI/memory-wiki: pass the active app config into the metadata registrar so built `openclaw wiki` commands resolve the live wiki plugin config instead of silently falling back to defaults. (#65012) Thanks @leonardsellem and @vincentkoc.
