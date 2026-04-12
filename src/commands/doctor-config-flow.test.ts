@@ -1022,7 +1022,7 @@ describe("doctor config flow", () => {
         };
       };
     };
-    expect(cfg.channels.discord.streaming).toBe(true);
+    expect(cfg.channels.discord.streaming).toEqual({ mode: "partial" });
     expect(cfg.channels.discord.streamMode).toBeUndefined();
     expect(cfg.channels.discord.lifecycle).toEqual({
       enabled: true,
