@@ -258,7 +258,14 @@ export function runBundledPluginPostinstall(params = {}) {
         existsSync: pathExists,
         platform: params.platform,
         comSpec: params.comSpec,
-        npmArgs: ["install", "--omit=dev", "--no-save", "--package-lock=false", ...missingSpecs],
+        npmArgs: [
+          "install",
+          "--omit=dev",
+          "--no-save",
+          "--package-lock=false",
+          "--legacy-peer-deps",
+          ...missingSpecs,
+        ],
       });
     const result = spawn(npmRunner.command, npmRunner.args, {
       cwd: packageRoot,
