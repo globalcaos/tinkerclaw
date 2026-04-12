@@ -260,7 +260,7 @@ describe("directive behavior", () => {
 
   it("shows current trace level and persists trace directives", async () => {
     const { text: currentText } = await runDirectiveStatus("/trace", {
-      sessionEntry: { traceLevel: "on" },
+      sessionEntry: { sessionId: "trace", updatedAt: Date.now(), traceLevel: "on" },
     });
     expect(currentText).toContain("Current trace level: on");
 
@@ -269,7 +269,7 @@ describe("directive behavior", () => {
     expect(enabled.sessionEntry.traceLevel).toBe("on");
 
     const disabled = await runDirectiveStatus("/trace off", {
-      sessionEntry: { traceLevel: "on" },
+      sessionEntry: { sessionId: "trace", updatedAt: Date.now(), traceLevel: "on" },
     });
     expect(disabled.text).toContain("Plugin trace disabled.");
     expect(disabled.sessionEntry.traceLevel).toBe("off");
