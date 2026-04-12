@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { monitorIMessageProvider } from "./monitor.js";
 
-const waitForTransportReadyMock = vi.hoisted(() => vi.fn(async () => {}));
-const createIMessageRpcClientMock = vi.hoisted(() => vi.fn());
-const attachIMessageMonitorAbortHandlerMock = vi.hoisted(() => vi.fn(() => () => {}));
+const waitForTransportReadyMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}),
+);
+const createIMessageRpcClientMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => unknown>());
+const attachIMessageMonitorAbortHandlerMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => () => void>(() => () => {}),
+);
 
 vi.mock("openclaw/plugin-sdk/infra-runtime", () => ({
   waitForTransportReady: (...args: unknown[]) => waitForTransportReadyMock(...args),
