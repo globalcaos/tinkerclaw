@@ -7,7 +7,7 @@ import {
 } from "openclaw/plugin-sdk/reply-payload";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { loadWebMedia } from "../../../whatsapp/src/media.js";
-import { newConnectionId } from "../../../whatsapp/src/reconnect.js";
+import { newConnectionId } from "../reconnect.js";
 import { formatError } from "../session.js";
 import { convertMarkdownTables, sleep } from "../text-runtime.js";
 import { markdownToWhatsApp } from "../text-runtime.js";

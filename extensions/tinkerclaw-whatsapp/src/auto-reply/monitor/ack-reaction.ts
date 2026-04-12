@@ -3,7 +3,7 @@ import type { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { getSenderIdentity } from "../../../../whatsapp/src/identity.js";
 import { resolveWhatsAppReactionLevel } from "../../../../whatsapp/src/reaction-level.js";
-import { sendReactionWhatsApp } from "../../../../whatsapp/src/send.js";
+import { sendReactionWhatsApp } from "../../send.js";
 import { formatError } from "../../session.js";
 import type { WebInboundMsg } from "../types.js";
 import { resolveGroupActivationFor } from "./group-activation.js";
