@@ -64,21 +64,22 @@ These files are resolved with `--theirs` (accept upstream version), then
 
 These paths are always resolved with `--ours` during merge.
 
-| Path                          | Reason                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| src/fork/\*\*                 | Fork hook implementations                                                         |
-| src/memory/\*\*               | Embeddings (ollama, model-limits) — cortex/limbic/synapse extracted to extensions |
-| src/whatsapp-history/\*\*     | WhatsApp history import                                                           |
-| src/agents/pi-extensions/\*\* | Retrieval runtime + tools                                                         |
-| src/agents/tools/\*\*         | Fork custom tools                                                                 |
-| extensions/manus/\*\*         | Manus extension                                                                   |
-| extensions/budget-panel/\*\*  | Budget panel extension                                                            |
-| extensions/tinker/\*\*        | Tinker Command Center plugin                                                      |
-| extensions/hippocampus/\*\*   | Hippocampus memory search                                                         |
-| extensions/overseer/\*\*      | Overseer sub-agent monitor                                                        |
-| tinker-ui/\*\*                | Fork webchat UI (Vite+Lit)                                                        |
-| FORK_PATCHES.md               | This file                                                                         |
-| TINKER_UI_DESIGN_BIBLE.md     | Fork documentation                                                                |
+| Path                                | Reason                                                                            |
+| ----------------------------------- | --------------------------------------------------------------------------------- |
+| src/fork/\*\*                       | Fork hook implementations                                                         |
+| src/memory/\*\*                     | Embeddings (ollama, model-limits) — cortex/limbic/synapse extracted to extensions |
+| src/whatsapp-history/\*\*           | WhatsApp history import                                                           |
+| src/agents/pi-extensions/\*\*       | Retrieval runtime + tools                                                         |
+| src/agents/tools/\*\*               | Fork custom tools                                                                 |
+| extensions/manus/\*\*               | Manus extension                                                                   |
+| extensions/budget-panel/\*\*        | Budget panel extension                                                            |
+| extensions/tinker/\*\*              | Tinker Command Center plugin                                                      |
+| extensions/hippocampus/\*\*         | Hippocampus memory search                                                         |
+| extensions/overseer/\*\*            | Overseer sub-agent monitor                                                        |
+| extensions/tinkerclaw-whatsapp/\*\* | Standalone WhatsApp plugin (whatsmeow backend, 4-tier access control, 2026-04-12) |
+| tinker-ui/\*\*                      | Fork webchat UI (Vite+Lit)                                                        |
+| FORK_PATCHES.md                     | This file                                                                         |
+| TINKER_UI_DESIGN_BIBLE.md           | Fork documentation                                                                |
 
 ## MANUAL — Require Human Review After Merge
 
@@ -108,3 +109,14 @@ These files are generated or local-only.
 | dist/\*\*         | Build output |
 | .cache/\*\*       | Build cache  |
 | node_modules/\*\* | Dependencies |
+
+## New Fork Extensions
+
+### tinkerclaw-whatsapp (2026-04-12)
+
+- **Path:** `extensions/tinkerclaw-whatsapp/`
+- **Purpose:** Standalone WhatsApp plugin extracting all fork WhatsApp code from upstream `extensions/whatsapp/`. whatsmeow-node (Go subprocess) as the only backend; Baileys adapter maps events so existing processing code works unchanged. Includes SQLite history (FTS5), multi-agent routing/congestion/budget/lifecycle, and the 4-tier access control model (self-chat, owner DM, agent group by name, authorized DM with prefix, everything else).
+- **Status:** Created and builds. NOT yet wired into gateway config — upstream `extensions/whatsapp/` still runs. Channel ID `whatsapp` collides with upstream; enabling requires disabling the upstream extension.
+- **Deferred tasks:** (10) delete upstream fork files after consumer migration; (11) remove `triggerPrefixExempt` from `~/.openclaw/openclaw.json`, drop `OPENCLAW_WHATSAPP_BACKEND` env; (12) integration test with upstream disabled.
+- **Known caveats:** plugin currently re-exports `whatsappPlugin` and `monitorWebInbox` from upstream (full localization deferred); `send.ts` still imports `loadOutboundMediaFromUrl` from upstream.
+- **Docs:** `~/.openclaw/workspace/memory/knowledge/tinkerclaw-whatsapp-plugin.md`
