@@ -175,7 +175,6 @@ function buildCommandParams(params?: {
     invalidExecNode: false,
     hasStatusDirective: false,
     hasModelDirective: false,
-    hasTraceDirective: false,
     hasQueueDirective: false,
     queueReset: false,
     hasQueueOptions: false,
