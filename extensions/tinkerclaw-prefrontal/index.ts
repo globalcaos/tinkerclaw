@@ -77,10 +77,15 @@ import { loadPrefrontalPromptWithAddendum } from "./prefrontal-prompt-loader.js"
 import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
 import { formatProgressEvent, type ProgressReport } from "./progress-reporter.js";
-import { formatRecipePrompt, BUILT_IN_RECIPES, isToolAllowedByCurrentStep, detectRecipeActivation } from "./recipe-engine.js";
+import {
+  formatRecipePrompt,
+  BUILT_IN_RECIPES,
+  isToolAllowedByCurrentStep,
+  detectRecipeActivation,
+} from "./recipe-engine.js";
 import { TopologyStore } from "./topology.js";
 
-const PLUGIN_ID = "prefrontal";
+const PLUGIN_ID = "tinkerclaw-prefrontal";
 
 // Module-level singletons — shared across all register() calls.
 // The gateway loads this plugin multiple times (gateway + per-agent),
@@ -457,7 +462,10 @@ export default function register(api: OpenClawPluginApi) {
               const currentStep = recipe.steps.find(
                 (s) => !recipeState.completedSteps.includes(s.id),
               );
-              if (currentStep && isToolAllowedByCurrentStep(recipe, currentStep.id, event.toolName)) {
+              if (
+                currentStep &&
+                isToolAllowedByCurrentStep(recipe, currentStep.id, event.toolName)
+              ) {
                 bypassGate = true;
               }
             }
@@ -606,7 +614,7 @@ export default function register(api: OpenClawPluginApi) {
                   currentStepName: nextStep?.name ?? "complete",
                   completedSteps: [...existingRecipe.completedSteps],
                   totalSteps: recipe.steps.length,
-                  category: (recipe as any).category ?? "coding",
+                  category: (recipe as unknown as { category?: string }).category ?? "coding",
                   startedAt: recipeStartTimes.get(sessionKey) ?? Date.now(),
                   ts: Date.now(),
                 },
