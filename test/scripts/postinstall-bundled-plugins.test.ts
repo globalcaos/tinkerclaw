@@ -33,7 +33,14 @@ async function writePluginPackage(
 
 describe("bundled plugin postinstall", () => {
   function createNpmInstallArgs(...packages: string[]) {
-    return ["install", "--omit=dev", "--no-save", "--package-lock=false", ...packages];
+    return [
+      "install",
+      "--omit=dev",
+      "--no-save",
+      "--package-lock=false",
+      "--legacy-peer-deps",
+      ...packages,
+    ];
   }
 
   function createBareNpmRunner(packages: string[]) {
