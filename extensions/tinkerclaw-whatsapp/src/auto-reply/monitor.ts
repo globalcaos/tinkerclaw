@@ -13,16 +13,16 @@ import {
   formatDurationPrecise,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk/runtime-env";
-import { setActiveWebListener } from "../../../whatsapp/src/active-listener.js";
+import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "../accounts.js";
+import { setActiveWebListener } from "../active-listener.js";
+import { monitorWebInbox } from "../inbound/monitor.js";
 import {
   computeBackoff,
   newConnectionId,
   resolveHeartbeatSeconds,
   resolveReconnectPolicy,
   sleepWithAbort,
-} from "../../../whatsapp/src/reconnect.js";
-import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "../accounts.js";
-import { monitorWebInbox } from "../inbound/monitor.js";
+} from "../reconnect.js";
 import { formatError, getWebAuthAgeMs, readWebSelfId } from "../session.js";
 import { loadConfig } from "./config.runtime.js";
 import { whatsappHeartbeatLog, whatsappLog } from "./loggers.js";

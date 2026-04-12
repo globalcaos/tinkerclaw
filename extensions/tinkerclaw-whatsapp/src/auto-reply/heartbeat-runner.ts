@@ -1,4 +1,4 @@
-import { newConnectionId } from "../../../whatsapp/src/reconnect.js";
+import { newConnectionId } from "../reconnect.js";
 import {
   DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
   HEARTBEAT_TOKEN,

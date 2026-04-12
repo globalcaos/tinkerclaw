@@ -1,5 +1,5 @@
-import type { ReconnectPolicy } from "../../../whatsapp/src/reconnect.js";
 import type { monitorWebInbox } from "../inbound/monitor.js";
+import type { ReconnectPolicy } from "../reconnect.js";
 
 export type WebChannelHealthState =
   | "starting"

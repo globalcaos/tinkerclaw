@@ -68,3 +68,19 @@ export async function createMonitorSocket(options: {
 
   return { adapter, client };
 }
+
+/**
+ * FORK: Re-export of upstream monitorWebInbox for Task 8.
+ *
+ * The auto-reply monitor imports monitorWebInbox from this file via
+ * `../inbound/monitor.js`. The full whatsmeow-native pipeline (access
+ * control, dedupe, media extract, send-api, lifecycle, etc) lives in
+ * upstream `extensions/whatsapp/src/inbound/monitor.ts` and will be
+ * localized into this plugin in Task 10 (pipeline migration).
+ *
+ * For now we re-export upstream's implementation so our auto-reply
+ * layer has a working listener factory. The upstream monitor already
+ * supports the whatsmeow backend via OPENCLAW_WHATSAPP_BACKEND=whatsmeow,
+ * so this is a functional path, not a stub.
+ */
+export { monitorWebInbox } from "../../../whatsapp/src/inbound/monitor.js";
