@@ -1207,16 +1207,16 @@ async function readActiveMemorySearchDebug(
         continue;
       }
       return {
-        backend: normalizeOptionalString(debug.backend),
-        configuredMode: normalizeOptionalString(debug.configuredMode),
-        effectiveMode: normalizeOptionalString(debug.effectiveMode),
-        fallback: normalizeOptionalString(debug.fallback),
+        backend: normalizeOptionalString(debug?.backend),
+        configuredMode: normalizeOptionalString(debug?.configuredMode),
+        effectiveMode: normalizeOptionalString(debug?.effectiveMode),
+        fallback: normalizeOptionalString(debug?.fallback),
         searchMs:
-          typeof debug.searchMs === "number" && Number.isFinite(debug.searchMs)
+          typeof debug?.searchMs === "number" && Number.isFinite(debug.searchMs)
             ? debug.searchMs
             : undefined,
         hits:
-          typeof debug.hits === "number" && Number.isFinite(debug.hits) ? debug.hits : undefined,
+          typeof debug?.hits === "number" && Number.isFinite(debug.hits) ? debug.hits : undefined,
         warning,
         action,
         error,
