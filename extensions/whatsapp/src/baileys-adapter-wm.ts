@@ -165,6 +165,13 @@ export function createBaileysAdapter(opts: BaileysAdapterOptions) {
         participants: info.participants.map((p) => ({ id: p.jid })),
       };
     },
+
+    // FORK: whatsmeow-node has no bulk "fetch all participating groups" call;
+    // return empty so upstream's pre-warm step succeeds. Groups still resolve
+    // lazily via groupMetadata above.
+    groupFetchAllParticipating: async () => {
+      return {};
+    },
   };
 
   return adapter;

@@ -19,12 +19,12 @@
 import { defineBundledChannelEntry } from "openclaw/plugin-sdk/channel-entry-contract";
 
 export default defineBundledChannelEntry({
-  id: "whatsapp",
+  id: "tinkerclaw-whatsapp",
   name: "WhatsApp (TinkerClaw)",
   description: "WhatsApp channel via whatsmeow-node — 4-tier access control, history, multi-agent",
   importMetaUrl: import.meta.url,
   plugin: {
-    specifier: "./src/channel.js",
+    specifier: "./channel-plugin-api.js",
     exportName: "whatsappPlugin",
   },
   runtime: {
