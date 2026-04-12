@@ -30,7 +30,7 @@ async function expectSymlinkSwapDuringPreflightToAvoidErrors(params: {
 
     let swapped = false;
     __setFsSafeTestHooksForTest({
-      [params.hookName]: async (target) => {
+      [params.hookName]: async (target: string) => {
         if (swapped || path.resolve(target) !== scriptRealPath) {
           return;
         }
