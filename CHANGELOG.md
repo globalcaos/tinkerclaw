@@ -6,7 +6,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
-- Plugins/loading: narrow CLI, provider, and channel activation to manifest-declared needs so startup, command discovery, and runtime activation avoid loading unrelated plugin runtime. (#65120, #65259, #65429)
+- Plugins/loading: narrow CLI, provider, and channel activation to manifest-declared needs, preserve explicit scope and trust boundaries, and centralize manifest-owner policy so startup, command discovery, and runtime activation avoid loading unrelated plugin runtime. (#65120, #65259, #65298, #65429, #65459) Thanks @vincentkoc.
 - Memory/active-memory: default QMD recall to search and surface better search-path telemetry so memory-backed recall works more predictably out of the box. (#65068) Thanks @Takhoffman.
 - Docs/providers: expand bundled provider docs with richer capability, env-var, and setup guidance across provider pages.
 - Docs/memory-wiki: add the recommended QMD + bridge-mode hybrid recipe plus zero-artifact troubleshooting guidance for `memory-wiki` bridge setups. (#63165) Thanks @sercada and @vincentkoc.
