@@ -28,10 +28,10 @@ vi.mock("../logging/subsystem.js", () => ({
 }));
 
 const { createGatewayCloseHandler } = await import("./server-close.js");
+type GatewayCloseHandlerParams = Parameters<typeof createGatewayCloseHandler>[0];
+type GatewayCloseClient = GatewayCloseHandlerParams["clients"] extends Set<infer T> ? T : never;
 
-function createGatewayCloseTestDeps(
-  overrides: Partial<Parameters<typeof createGatewayCloseHandler>[0]> = {},
-) {
+function createGatewayCloseTestDeps(overrides: Partial<GatewayCloseHandlerParams> = {}) {
   return {
     bonjourStop: null,
     tailscaleCleanup: null,
@@ -54,8 +54,12 @@ function createGatewayCloseTestDeps(
     transcriptUnsub: null,
     lifecycleUnsub: null,
     chatRunState: { clear: vi.fn() },
-    clients: new Set(),
+    clients: new Set<GatewayCloseClient>(),
     configReloader: { stop: vi.fn(async () => undefined) },
+    wss: {
+      clients: new Set(),
+      close: (cb: () => void) => cb(),
+    } as never,
     httpServer: {
       close: (cb: (err?: Error | null) => void) => cb(null),
       closeIdleConnections: vi.fn(),
@@ -96,7 +100,7 @@ describe("createGatewayCloseHandler", () => {
       transcriptUnsub: null,
       lifecycleUnsub,
       chatRunState: { clear: vi.fn() },
-      clients: new Set(),
+      clients: new Set<GatewayCloseClient>(),
       configReloader: { stop: vi.fn(async () => undefined) },
       wss: { close: (cb: () => void) => cb() } as never,
       httpServer: {
