@@ -8,12 +8,7 @@ import { danger, info, success } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { resolveWhatsAppAccount } from "./accounts.js";
 import { renderQrPngBase64 } from "./qr-image.js";
-import {
-  createWmClient,
-  connectWmClient,
-  disconnectWmClient,
-  type WhatsmeowClient,
-} from "./session-wm.js";
+import { createWmClient, disconnectWmClient, type WhatsmeowClient } from "./session-wm.js";
 
 interface ActiveWmLogin {
   accountId: string;
@@ -109,7 +104,9 @@ export async function startWebLoginWithQr(
             message: "QR ready. Scan it in WhatsApp → Linked Devices.",
           };
         }
-        if (updated?.error) break;
+        if (updated?.error) {
+          break;
+        }
       }
       return {
         message: "QR generation timed out. Click Relink to try again.",
@@ -158,7 +155,7 @@ export async function startWebLoginWithQr(
   // FORK: Import live-capture directly to ensure it's bound during bootstrap
   let bindCapture: ((c: WhatsmeowClient) => void) | null = null;
   try {
-    const captureMod = await import("../../../src/whatsapp-history/live-capture-wm.js");
+    const captureMod = await import("../../tinkerclaw-whatsapp/src/history/live-capture.js");
     bindCapture = captureMod.bindWmHistoryCapture;
   } catch {
     // Will fall back to session-wm.ts binding
@@ -183,7 +180,9 @@ export async function startWebLoginWithQr(
           runtime.log(info("WhatsApp QR refreshed (whatsmeow)."));
           void renderQrPngBase64(code).then((b64) => {
             const c = activeLogins.get(account.accountId);
-            if (c && c.qr === code) c.qrDataUrl = `data:image/png;base64,${b64}`;
+            if (c && c.qr === code) {
+              c.qrDataUrl = `data:image/png;base64,${b64}`;
+            }
           });
         }
       },
@@ -240,7 +239,9 @@ export async function startWebLoginWithQr(
       if (initialConnected) {
         // Connected without 515 — great, we're done
         const cur = activeLogins.get(account.accountId);
-        if (cur?.id === login.id) cur.connected = true;
+        if (cur?.id === login.id) {
+          cur.connected = true;
+        }
         return;
       }
 
@@ -275,15 +276,21 @@ export async function startWebLoginWithQr(
 
       if (reconnected) {
         const cur2 = activeLogins.get(account.accountId);
-        if (cur2?.id === login.id) cur2.connected = true;
+        if (cur2?.id === login.id) {
+          cur2.connected = true;
+        }
         runtime.log(success("WhatsApp reconnected after 515 restart."));
       } else {
         const cur2 = activeLogins.get(account.accountId);
-        if (cur2?.id === login.id) cur2.error = "Connection timed out after 515 restart";
+        if (cur2?.id === login.id) {
+          cur2.error = "Connection timed out after 515 restart";
+        }
       }
     } catch (err) {
       const cur = activeLogins.get(account.accountId);
-      if (cur?.id === login.id) cur.error = String(err);
+      if (cur?.id === login.id) {
+        cur.error = String(err);
+      }
     }
   })();
 
@@ -318,7 +325,9 @@ export async function waitForWebLoginWm(
   const account = resolveWhatsAppAccount({ cfg, accountId: opts.accountId });
   const login = activeLogins.get(account.accountId);
 
-  if (!login) return { connected: false, message: "No active WhatsApp login in progress." };
+  if (!login) {
+    return { connected: false, message: "No active WhatsApp login in progress." };
+  }
   if (!isLoginFresh(login)) {
     await resetActiveLogin(account.accountId);
     return { connected: false, message: "The login QR expired. Ask me to generate a new one." };

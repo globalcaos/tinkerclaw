@@ -1600,8 +1600,12 @@ function onEvent(evt: any) {
         progressEl.textContent = "";
         // Set category color
         const colors: Record<string, string> = {
-          coding: "#6b8e23", writing: "#8b5cf6", operations: "#f59e0b",
-          analysis: "#3b82f6", security: "#ef4444", communication: "#10b981",
+          coding: "#6b8e23",
+          writing: "#8b5cf6",
+          operations: "#f59e0b",
+          analysis: "#3b82f6",
+          security: "#ef4444",
+          communication: "#10b981",
         };
         banner.style.borderLeftColor = colors[d.category as string] || "#c19a6b";
       }
@@ -1964,6 +1968,34 @@ async function send(text: string) {
     return;
   }
 
+  // FORK: /clear — wipe visual chat immediately, then send to gateway for backend reset
+  if (text.trim() === "/clear") {
+    messages = [];
+    streamMsgIdx = -1;
+    streamRunId = null;
+    frozenTextEnd = 0;
+    lastDeltaLen = 0;
+    sending = false;
+    currentTurnNumber = 0;
+    expandedTools = new Set();
+    // Clear tab state too
+    const clearTab = tabs.find((t) => t.id === activeTabId);
+    if (clearTab) {
+      const ts = tabStates.get(clearTab.id);
+      if (ts) {
+        ts.messages = [];
+        ts.currentTurnNumber = 0;
+      }
+    }
+    updateChat();
+    scrollChat();
+    // Send /clear to gateway for backend context reset
+    await req("chat.send", { sessionKey, message: "/clear", idempotencyKey: uuid() }).catch(
+      () => {},
+    );
+    return;
+  }
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   // If no session (unattached tab), create one by generating a key
@@ -2068,13 +2100,12 @@ async function abort() {
 }
 
 async function loadBudget() {
-  const [b, s, mc, bu] = await Promise.all([
-    req("usage.budget", {}).catch(() => null),
+  const [s, mc, bu] = await Promise.all([
     req("budget.status", {}).catch(() => null),
     req("config.models", {}).catch(() => null),
     req("budget.usage", {}).catch(() => null),
   ]);
-  budgetData = { budget: b, status: s };
+  budgetData = { budget: null, status: s };
   if (mc) {
     modelConfigData = mc;
   }
@@ -2659,7 +2690,10 @@ function renderMsg(
           h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
         } else {
           // FORK: Add recipe step tag below assistant messages when a recipe is active
-          const stepTag = activeRecipeStep && !isThinking ? `<div class="recipe-step-tag">${esc(activeRecipeStep)}</div>` : "";
+          const stepTag =
+            activeRecipeStep && !isThinking
+              ? `<div class="recipe-step-tag">${esc(activeRecipeStep)}</div>`
+              : "";
           h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${stepTag}</div>`;
         }
       } else {
@@ -2780,7 +2814,9 @@ function startThinkingTick() {
     let stalePruned = false;
     for (const [runId, info] of activeRuns) {
       if (now - info.startedAt > STALE_RUN_WATCHDOG_MS) {
-        console.warn(`[thinking-watchdog] force-clearing stale run ${runId} (age=${Math.round((now - info.startedAt) / 1000)}s model=${info.model})`);
+        console.warn(
+          `[thinking-watchdog] force-clearing stale run ${runId} (age=${Math.round((now - info.startedAt) / 1000)}s model=${info.model})`,
+        );
         activeRuns.delete(runId);
         pendingRunDeletes.delete(runId);
         stalePruned = true;
@@ -6567,37 +6603,197 @@ function init() {
 
   const RECIPE_CATALOG: Recipe[] = [
     // ── Coding ──
-    { category: "coding", id: "debug", name: "Debug & Fix", summary: "Reproduce the failure, trace root cause through code, apply minimal fix, verify with tests", trigger: "bug, error, crash, broken", steps: ["reproduce", "diagnose", "fix", "verify"], children: [
-      { name: "Memory Leak Debug", trigger: "memory leak, heap, OOM" },
-      { name: "API Error Debug", trigger: "API error, 500, timeout" },
-      { name: "UI Regression Debug", trigger: "UI regression, layout, render" },
-    ]},
-    { category: "coding", id: "feature", name: "Build Feature", summary: "Explore existing patterns, design the approach, write failing tests first, implement minimal code, verify", trigger: "feature, implement, add", steps: ["explore", "design", "test", "implement", "verify"] },
-    { category: "coding", id: "refactor", name: "Refactor", summary: "Understand current structure, ensure tests pass as baseline, restructure without behavior change, verify tests still pass", trigger: "refactor, clean, simplify", steps: ["understand", "baseline-tests", "refactor", "verify"] },
-    { category: "coding", id: "code-review", name: "Code Review", summary: "Read the diff, understand surrounding context, assess correctness and security, report findings", trigger: "review, PR, diff", steps: ["read-changes", "context", "assess", "report"] },
-    { category: "coding", id: "upstream-merge", name: "Upstream Merge", summary: "Fetch upstream, merge with intelligent conflict resolution, re-wire fork hooks, build, test, push", trigger: "merge, upstream, sync", steps: ["fetch", "merge", "resolve-conflicts", "wire", "build", "test", "push"] },
-    { category: "coding", id: "fork-patch", name: "Fork Patch", summary: "Identify upstream target file, accept their version, re-apply fork hooks via wiring script, build, verify", trigger: "fork, patch, re-wire", steps: ["identify-target", "accept-upstream", "re-wire-hooks", "build", "verify"] },
+    {
+      category: "coding",
+      id: "debug",
+      name: "Debug & Fix",
+      summary:
+        "Reproduce the failure, trace root cause through code, apply minimal fix, verify with tests",
+      trigger: "bug, error, crash, broken",
+      steps: ["reproduce", "diagnose", "fix", "verify"],
+      children: [
+        { name: "Memory Leak Debug", trigger: "memory leak, heap, OOM" },
+        { name: "API Error Debug", trigger: "API error, 500, timeout" },
+        { name: "UI Regression Debug", trigger: "UI regression, layout, render" },
+      ],
+    },
+    {
+      category: "coding",
+      id: "feature",
+      name: "Build Feature",
+      summary:
+        "Explore existing patterns, design the approach, write failing tests first, implement minimal code, verify",
+      trigger: "feature, implement, add",
+      steps: ["explore", "design", "test", "implement", "verify"],
+    },
+    {
+      category: "coding",
+      id: "refactor",
+      name: "Refactor",
+      summary:
+        "Understand current structure, ensure tests pass as baseline, restructure without behavior change, verify tests still pass",
+      trigger: "refactor, clean, simplify",
+      steps: ["understand", "baseline-tests", "refactor", "verify"],
+    },
+    {
+      category: "coding",
+      id: "code-review",
+      name: "Code Review",
+      summary:
+        "Read the diff, understand surrounding context, assess correctness and security, report findings",
+      trigger: "review, PR, diff",
+      steps: ["read-changes", "context", "assess", "report"],
+    },
+    {
+      category: "coding",
+      id: "upstream-merge",
+      name: "Upstream Merge",
+      summary:
+        "Fetch upstream, merge with intelligent conflict resolution, re-wire fork hooks, build, test, push",
+      trigger: "merge, upstream, sync",
+      steps: ["fetch", "merge", "resolve-conflicts", "wire", "build", "test", "push"],
+    },
+    {
+      category: "coding",
+      id: "fork-patch",
+      name: "Fork Patch",
+      summary:
+        "Identify upstream target file, accept their version, re-apply fork hooks via wiring script, build, verify",
+      trigger: "fork, patch, re-wire",
+      steps: ["identify-target", "accept-upstream", "re-wire-hooks", "build", "verify"],
+    },
     // ── Writing & Research ──
-    { category: "writing", id: "write-paper", name: "Write Paper", summary: "Review literature, build outline from thesis, draft sections, create figures, peer review, revise", trigger: "paper, article, publication", steps: ["literature-review", "outline", "draft", "figures", "review", "revise"] },
-    { category: "writing", id: "brainstorm", name: "Brainstorm", summary: "Explore project context, clarify user intent, propose 2-3 approaches with tradeoffs, present design for approval", trigger: "brainstorm, ideate, explore", steps: ["explore-context", "clarify-intent", "propose-approaches", "present-design", "write-spec"], children: [
-      { name: "Feature Brainstorm", trigger: "feature idea, new capability" },
-      { name: "Architecture Brainstorm", trigger: "architecture, system design" },
-    ]},
-    { category: "writing", id: "write-plan", name: "Write Plan", summary: "Read the spec, map file structure, decompose into bite-sized tasks with tests, write implementation steps", trigger: "plan, spec, implementation", steps: ["read-spec", "map-files", "define-tasks", "write-tests", "implementation-steps"] },
+    {
+      category: "writing",
+      id: "write-paper",
+      name: "Write Paper",
+      summary:
+        "Review literature, build outline from thesis, draft sections, create figures, peer review, revise",
+      trigger: "paper, article, publication",
+      steps: ["literature-review", "outline", "draft", "figures", "review", "revise"],
+    },
+    {
+      category: "writing",
+      id: "brainstorm",
+      name: "Brainstorm",
+      summary:
+        "Explore project context, clarify user intent, propose 2-3 approaches with tradeoffs, present design for approval",
+      trigger: "brainstorm, ideate, explore",
+      steps: [
+        "explore-context",
+        "clarify-intent",
+        "propose-approaches",
+        "present-design",
+        "write-spec",
+      ],
+      children: [
+        { name: "Feature Brainstorm", trigger: "feature idea, new capability" },
+        { name: "Architecture Brainstorm", trigger: "architecture, system design" },
+      ],
+    },
+    {
+      category: "writing",
+      id: "write-plan",
+      name: "Write Plan",
+      summary:
+        "Read the spec, map file structure, decompose into bite-sized tasks with tests, write implementation steps",
+      trigger: "plan, spec, implementation",
+      steps: ["read-spec", "map-files", "define-tasks", "write-tests", "implementation-steps"],
+    },
     // ── Operations ──
-    { category: "operations", id: "gateway-restart", name: "Gateway Restart", summary: "Check for active LLM sessions, save state, SIGUSR1 graceful restart, verify health endpoint and WhatsApp", trigger: "restart, gateway, reload", steps: ["check-active-sessions", "save-state", "restart", "verify-health", "verify-whatsapp"] },
-    { category: "operations", id: "security-audit", name: "Security Audit", summary: "Scan for API keys and tokens, check git history for leaks, scan PII, verify gitignore, produce report", trigger: "audit, secrets, scan", steps: ["scan-secrets", "check-git-history", "scan-PII", "check-gitignore", "report"] },
-    { category: "operations", id: "deploy", name: "Deploy", summary: "Build from clean state, run full test suite, backup current state, deploy, smoke test, monitor for errors", trigger: "deploy, release, ship", steps: ["build", "test", "backup", "deploy", "smoke-test", "monitor"] },
+    {
+      category: "operations",
+      id: "gateway-restart",
+      name: "Gateway Restart",
+      summary:
+        "Check for active LLM sessions, save state, SIGUSR1 graceful restart, verify health endpoint and WhatsApp",
+      trigger: "restart, gateway, reload",
+      steps: ["check-active-sessions", "save-state", "restart", "verify-health", "verify-whatsapp"],
+    },
+    {
+      category: "operations",
+      id: "security-audit",
+      name: "Security Audit",
+      summary:
+        "Scan for API keys and tokens, check git history for leaks, scan PII, verify gitignore, produce report",
+      trigger: "audit, secrets, scan",
+      steps: ["scan-secrets", "check-git-history", "scan-PII", "check-gitignore", "report"],
+    },
+    {
+      category: "operations",
+      id: "deploy",
+      name: "Deploy",
+      summary:
+        "Build from clean state, run full test suite, backup current state, deploy, smoke test, monitor for errors",
+      trigger: "deploy, release, ship",
+      steps: ["build", "test", "backup", "deploy", "smoke-test", "monitor"],
+    },
     // ── Analysis ──
-    { category: "analysis", id: "investigate", name: "Investigate", summary: "Define the question, gather evidence from multiple sources in parallel, synthesize findings, present report", trigger: "investigate, dig, explore", steps: ["scope", "gather", "analyze", "report"] },
-    { category: "analysis", id: "performance-audit", name: "Performance Audit", summary: "Profile the system, identify bottlenecks with measurements, optimize hot paths, verify improvement", trigger: "performance, slow, profile", steps: ["profile", "identify-bottlenecks", "measure", "optimize", "verify"] },
-    { category: "analysis", id: "dependency-analysis", name: "Dependency Analysis", summary: "Inventory all dependencies, check versions against latest, assess risk of outdated packages, plan updates", trigger: "dependencies, outdated, risk", steps: ["inventory", "check-versions", "assess-risk", "update-plan"] },
+    {
+      category: "analysis",
+      id: "investigate",
+      name: "Investigate",
+      summary:
+        "Define the question, gather evidence from multiple sources in parallel, synthesize findings, present report",
+      trigger: "investigate, dig, explore",
+      steps: ["scope", "gather", "analyze", "report"],
+    },
+    {
+      category: "analysis",
+      id: "performance-audit",
+      name: "Performance Audit",
+      summary:
+        "Profile the system, identify bottlenecks with measurements, optimize hot paths, verify improvement",
+      trigger: "performance, slow, profile",
+      steps: ["profile", "identify-bottlenecks", "measure", "optimize", "verify"],
+    },
+    {
+      category: "analysis",
+      id: "dependency-analysis",
+      name: "Dependency Analysis",
+      summary:
+        "Inventory all dependencies, check versions against latest, assess risk of outdated packages, plan updates",
+      trigger: "dependencies, outdated, risk",
+      steps: ["inventory", "check-versions", "assess-risk", "update-plan"],
+    },
     // ── Security ──
-    { category: "security", id: "incident-response", name: "Incident Response", summary: "Detect the breach scope, contain the damage, investigate root cause, remediate, write postmortem", trigger: "incident, breach, compromise", steps: ["detect", "contain", "investigate", "remediate", "postmortem"] },
-    { category: "security", id: "credential-rotation", name: "Credential Rotation", summary: "Inventory all credentials, generate new ones, update all configs atomically, verify access, revoke old", trigger: "rotate, credentials, keys", steps: ["inventory", "generate-new", "update-configs", "verify", "revoke-old"] },
+    {
+      category: "security",
+      id: "incident-response",
+      name: "Incident Response",
+      summary:
+        "Detect the breach scope, contain the damage, investigate root cause, remediate, write postmortem",
+      trigger: "incident, breach, compromise",
+      steps: ["detect", "contain", "investigate", "remediate", "postmortem"],
+    },
+    {
+      category: "security",
+      id: "credential-rotation",
+      name: "Credential Rotation",
+      summary:
+        "Inventory all credentials, generate new ones, update all configs atomically, verify access, revoke old",
+      trigger: "rotate, credentials, keys",
+      steps: ["inventory", "generate-new", "update-configs", "verify", "revoke-old"],
+    },
     // ── Communication ──
-    { category: "communication", id: "daily-report", name: "Daily Report", summary: "Gather status across all systems, analyze what changed and why, format as structured report, deliver", trigger: "daily, status, standup", steps: ["gather-status", "analyze-changes", "format", "deliver"] },
-    { category: "communication", id: "jarvis-report", name: "Jarvis Report", summary: "Summarize incident, analyze root cause, list all changes with rationale, suggest next actions", trigger: "report, incident, summary", steps: ["incident-summary", "root-cause", "changes", "rationale", "suggested-actions"] },
+    {
+      category: "communication",
+      id: "daily-report",
+      name: "Daily Report",
+      summary:
+        "Gather status across all systems, analyze what changed and why, format as structured report, deliver",
+      trigger: "daily, status, standup",
+      steps: ["gather-status", "analyze-changes", "format", "deliver"],
+    },
+    {
+      category: "communication",
+      id: "jarvis-report",
+      name: "Jarvis Report",
+      summary:
+        "Summarize incident, analyze root cause, list all changes with rationale, suggest next actions",
+      trigger: "report, incident, summary",
+      steps: ["incident-summary", "root-cause", "changes", "rationale", "suggested-actions"],
+    },
   ];
 
   function renderRecipesTab(body: Element, sub: Element) {
@@ -6611,7 +6807,9 @@ function init() {
     let html = '<div class="recipes-view">';
     for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
       const recipes = grouped.get(catKey) ?? [];
-      if (!recipes.length) continue;
+      if (!recipes.length) {
+        continue;
+      }
       html += `<div class="recipe-category" style="--cat-color:${cat.color}">`;
       html += `<div class="recipe-cat-header">`;
       html += `<span class="recipe-cat-icon">${cat.icon}</span>`;
@@ -6628,7 +6826,9 @@ function init() {
         html += `<div class="recipe-summary">${altEsc(r.summary)}</div>`;
         html += `<div class="recipe-steps">`;
         r.steps.forEach((s, i) => {
-          if (i > 0) html += `<span class="recipe-step-arrow">\u2192</span>`;
+          if (i > 0) {
+            html += `<span class="recipe-step-arrow">\u2192</span>`;
+          }
           html += `<span class="recipe-step">${altEsc(s)}</span>`;
         });
         html += `</div>`;
@@ -6654,15 +6854,21 @@ function init() {
     // Click to open recipe file in native OS markdown editor
     body.addEventListener("click", (e) => {
       const card = (e.target as HTMLElement).closest("[data-recipe-file]") as HTMLElement | null;
-      if (!card) return;
+      if (!card) {
+        return;
+      }
       const file = card.dataset.recipeFile;
-      if (!file) return;
+      if (!file) {
+        return;
+      }
       // POST to Vite dev server's open-file endpoint (calls xdg-open server-side)
       fetch("/api/open-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: file }),
-      }).catch(() => { /* silent — editor may not open in prod mode */ });
+      }).catch(() => {
+        /* silent — editor may not open in prod mode */
+      });
     });
   }
 

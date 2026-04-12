@@ -9,7 +9,7 @@
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/memory-core";
 
 const hippocampusPlugin = {
-  id: "hippocampus",
+  id: "tinkerclaw-hippocampus",
   name: "Hippocampus",
   description:
     "Concept-index memory enhancement with importance scoring, deduplication, and episodic buffer",
