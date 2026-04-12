@@ -1,6 +1,6 @@
 import type { waitForTransportReady } from "openclaw/plugin-sdk/infra-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { createIMessageRpcClient } from "./client.js";
+import type { createIMessageRpcClient, IMessageRpcClient } from "./client.js";
 import { monitorIMessageProvider } from "./monitor.js";
 import type { attachIMessageMonitorAbortHandler } from "./monitor/abort-handler.js";
 
@@ -31,11 +31,17 @@ function createRuntime() {
   };
 }
 
+type MockIMessageRpcClient = IMessageRpcClient & {
+  request: ReturnType<typeof vi.fn<(method: string) => Promise<unknown>>>;
+  waitForClose: ReturnType<typeof vi.fn<() => Promise<void>>>;
+  stop: ReturnType<typeof vi.fn<() => Promise<void>>>;
+};
+
 function createRpcClient(overrides?: {
   request?: (method: string) => Promise<unknown>;
   waitForClose?: () => Promise<void>;
-}) {
-  return {
+}): MockIMessageRpcClient {
+  const client = {
     request: vi.fn(
       overrides?.request ??
         (async () => {
@@ -50,6 +56,7 @@ function createRpcClient(overrides?: {
     ),
     stop: vi.fn(async () => {}),
   };
+  return client as unknown as MockIMessageRpcClient;
 }
 
 describe("monitorIMessageProvider watch.subscribe startup retry", () => {
