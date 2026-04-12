@@ -10,7 +10,7 @@ import {
   importExportFile,
   importDirectory,
   formatImportResults,
-} from "../../whatsapp-history/index.js";
+} from "../../../extensions/tinkerclaw-whatsapp/src/history/index.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam, readNumberParam, readBooleanParam } from "./common.js";
 

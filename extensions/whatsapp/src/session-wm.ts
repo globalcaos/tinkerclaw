@@ -6,7 +6,7 @@
 import { createClient, type WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
-import { bindWmHistoryCapture } from "../../../src/whatsapp-history/live-capture-wm.js";
+import { bindWmHistoryCapture } from "../../tinkerclaw-whatsapp/src/history/live-capture.js";
 
 export type { WhatsmeowClient };
 
@@ -95,11 +95,15 @@ export async function connectWmClient(client: WhatsmeowClient, timeoutMs = 60_00
 /** Gracefully disconnect. */
 export async function disconnectWmClient(client?: WhatsmeowClient): Promise<void> {
   const c = client ?? activeClient;
-  if (!c) return;
+  if (!c) {
+    return;
+  }
   try {
     await c.disconnect();
   } catch {
     // best-effort
   }
-  if (c === activeClient) activeClient = null;
+  if (c === activeClient) {
+    activeClient = null;
+  }
 }
