@@ -1117,28 +1117,28 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.
 
-| File                               | Patch                                                         | Auto-applied                     | Guardian Check                                            |
-| ---------------------------------- | ------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------- |
-| `server-chat.ts`                   | Enrich lifecycle with `model`/`modelProvider`                 | Yes (`apply-fork-wiring.mjs`)    | `resolveSessionModelRef`                                  |
-| `run.ts`                           | 6x `emitAgentEvent` for `fallback-profile-error`              | Yes                              | `fallback-profile-error`                                  |
-| `model-fallback.ts`                | `onError` callback for provider-level cooldown skips          | Yes                              | `onError`                                                 |
-| `followup-runner.ts`               | `failedProfileId` extraction + `onError` for `fallback-error` | Yes                              | `failedProfileId`                                         |
-| `agent-runner-execution.ts`        | Same as followup-runner                                       | Yes                              | `failedProfileId`                                         |
-| `attempt.ts`                       | Pass `authProfileId` through lifecycle events                 | Yes                              | `authProfileId`                                           |
-| `sessions.ts`                      | "Allow webchat delete" bypass                                 | Yes (`patchSessions()`)          | `Allow webchat delete`                                    |
-| `tsdown.config.ts`                 | `external: ["better-sqlite3", "bindings"]` on all 8 entries   | Yes (`patchTsdownConfig()`)      | `external`                                                |
-| `get-reply-run.ts`                 | `import { getSessionResetPrompt }`                            | Yes                              | `session-reset-prompt`                                    |
-| `config-state.ts`                  | `"tinker"` in `BUNDLED_ENABLED_BY_DEFAULT`                    | Manual                           | `tinker` in config-state                                  |
-| `extensions/tinker/index.ts`       | `/tinker/api/file-read` endpoint                              | Fork-only (no merge risk)        | —                                                         |
-| `extensions/budget-panel/index.ts` | `writeCredentialFile` + `resolveCredentialFilePath` (generic) | Fork-only (no merge risk)        | `writeCredentialFile`                                     |
-| `credential-file.ts`               | Generic credential file I/O + Anthropic OAuth refresh         | Fork-only (no merge risk)        | `resolveCredentialFilePath`, `refreshAnthropicOAuthToken` |
-| ~~`proactive-refresh.ts`~~         | ~~Proactive OAuth refresh~~ REMOVED (2026-04-06) — upstream native `claude-cli` auth | —                        | —                                                         |
-| `get-reply.ts`                     | `clearSessionResume` moved after `runPreparedReply`           | Manual                           | `clearSessionResume` after `runPreparedReply`             |
-| `server-startup.ts`                | Session resume via `agentCommand` (not heartbeat)             | Manual                           | `agentCommand` in server-startup                          |
-| `context-anatomy-db.ts`            | SQLite persistence for timeline (replaces JSONL)              | Fork-only (no merge risk)        | `anatomy-timeline.db`                                     |
-| `context-anatomy.ts`               | Extended `ContextAnatomyEvent` type + JSONL functions removed | Yes (type may need re-extension) | `responseThinkingTokens`                                  |
-| `attempt-hooks.ts`                 | `insertAnatomyEvent` + `updateAnatomyResponse` calls          | Yes (write path may revert)      | `insertAnatomyEvent`                                      |
-| `pi-embedded-subscribe.ts`         | `responseBreakdown` char counters                             | Yes (state may revert)           | `responseBreakdown`                                       |
+| File                               | Patch                                                                                | Auto-applied                     | Guardian Check                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------- | --------------------------------------------------------- |
+| `server-chat.ts`                   | Enrich lifecycle with `model`/`modelProvider`                                        | Yes (`apply-fork-wiring.mjs`)    | `resolveSessionModelRef`                                  |
+| `run.ts`                           | 6x `emitAgentEvent` for `fallback-profile-error`                                     | Yes                              | `fallback-profile-error`                                  |
+| `model-fallback.ts`                | `onError` callback for provider-level cooldown skips                                 | Yes                              | `onError`                                                 |
+| `followup-runner.ts`               | `failedProfileId` extraction + `onError` for `fallback-error`                        | Yes                              | `failedProfileId`                                         |
+| `agent-runner-execution.ts`        | Same as followup-runner                                                              | Yes                              | `failedProfileId`                                         |
+| `attempt.ts`                       | Pass `authProfileId` through lifecycle events                                        | Yes                              | `authProfileId`                                           |
+| `sessions.ts`                      | "Allow webchat delete" bypass                                                        | Yes (`patchSessions()`)          | `Allow webchat delete`                                    |
+| `tsdown.config.ts`                 | `external: ["better-sqlite3", "bindings"]` on all 8 entries                          | Yes (`patchTsdownConfig()`)      | `external`                                                |
+| `get-reply-run.ts`                 | `import { getSessionResetPrompt }`                                                   | Yes                              | `session-reset-prompt`                                    |
+| `config-state.ts`                  | `"tinker"` in `BUNDLED_ENABLED_BY_DEFAULT`                                           | Manual                           | `tinker` in config-state                                  |
+| `extensions/tinker/index.ts`       | `/tinker/api/file-read` endpoint                                                     | Fork-only (no merge risk)        | —                                                         |
+| `extensions/budget-panel/index.ts` | `writeCredentialFile` + `resolveCredentialFilePath` (generic)                        | Fork-only (no merge risk)        | `writeCredentialFile`                                     |
+| `credential-file.ts`               | Generic credential file I/O + Anthropic OAuth refresh                                | Fork-only (no merge risk)        | `resolveCredentialFilePath`, `refreshAnthropicOAuthToken` |
+| ~~`proactive-refresh.ts`~~         | ~~Proactive OAuth refresh~~ REMOVED (2026-04-06) — upstream native `claude-cli` auth | —                                | —                                                         |
+| `get-reply.ts`                     | `clearSessionResume` moved after `runPreparedReply`                                  | Manual                           | `clearSessionResume` after `runPreparedReply`             |
+| `server-startup.ts`                | Session resume via `agentCommand` (not heartbeat)                                    | Manual                           | `agentCommand` in server-startup                          |
+| `context-anatomy-db.ts`            | SQLite persistence for timeline (replaces JSONL)                                     | Fork-only (no merge risk)        | `anatomy-timeline.db`                                     |
+| `context-anatomy.ts`               | Extended `ContextAnatomyEvent` type + JSONL functions removed                        | Yes (type may need re-extension) | `responseThinkingTokens`                                  |
+| `attempt-hooks.ts`                 | `insertAnatomyEvent` + `updateAnatomyResponse` calls                                 | Yes (write path may revert)      | `insertAnatomyEvent`                                      |
+| `pi-embedded-subscribe.ts`         | `responseBreakdown` char counters                                                    | Yes (state may revert)           | `responseBreakdown`                                       |
 
 ---
 
@@ -1628,28 +1628,36 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **senderE164 Resolution:** Resolves sender phone number for `fromMe` group messages where Baileys lacks the `participant` field.
 - **Files:** `extensions/whatsapp/src/`, `src/whatsapp-history/`
 
-### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30)
+### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30, updated 2026-04-12)
 
 - **Status:** `DEPLOYED`
-- **File:** `extensions/whatsapp/src/inbound/access-control.ts`
-- **Config keys:** `channels.whatsapp.triggerPrefix`, `channels.whatsapp.triggerPrefixExempt`, `channels.whatsapp.allowFrom`, `channels.whatsapp.groupAllowFrom`, `channels.whatsapp.dmPolicy`, `channels.whatsapp.groupPolicy`
-- **Unified model:** One decision tree for both DMs and groups. The triggerPrefix ("jarvis") is the universal gate for non-self-chat interactions.
+- **File:** `extensions/whatsapp/src/inbound/access-control.ts` (upstream) — being migrated to `extensions/tinkerclaw-whatsapp/` (plugin created, not yet wired)
+- **Config keys:** `channels.whatsapp.triggerPrefix`, `channels.whatsapp.allowFrom`, `channels.whatsapp.groupAllowFrom`, `channels.whatsapp.dmPolicy`, `channels.whatsapp.groupPolicy`
+- **Unified model:** One decision tree for both DMs and groups. The `triggerPrefix` (configured per-agent, no hardcoded name) is the universal gate for non-self-chat interactions.
+
+**4-Tier Access Control Model (2026-04-12):** First match wins. Agent identity is configured via `triggerPrefix` — no hardcoded "jarvis". Group exemption is **dynamic** (group name contains `triggerPrefix`, case-insensitive), not a static JID list. The old `triggerPrefixExempt` JID array is **deprecated** and will be removed from config in a future task.
+
+1. **Self-chat** — sender phone equals linked account phone → allowed, no prefix required.
+2. **Tier 1 — Owner DM** — `isFromMe` and not a group → allowed, no prefix required.
+3. **Tier 2 — Agent group** — group name contains `triggerPrefix` (case-insensitive) → allowed for senders in `groupAllowFrom`, no prefix required.
+4. **Tier 3 — Authorized DM** — sender in `allowFrom` → allowed WITH prefix.
+5. **Tier 4 — Everything else** — owner only, WITH prefix.
 
 **Decision table:**
 
-| Who                | Where                 | Prefix needed? | Result                                      |
-| ------------------ | --------------------- | -------------- | ------------------------------------------- |
-| the user (self-chat)  | Message yourself      | No             | Always triggers                             |
-| the user (fromMe)     | Exempt group          | No             | Always triggers                             |
-| the user (fromMe)     | Any other DM or group | "jarvis ..."   | Triggers                                    |
-| the user (fromMe)     | Anywhere, no prefix   | —              | Ignored                                     |
-| Allowlisted person | Exempt group          | No             | Triggers (sender must be in groupAllowFrom) |
-| Allowlisted person | Non-exempt group      | "jarvis ..."   | Triggers (sender must be in groupAllowFrom) |
-| Allowlisted person | DM                    | "jarvis ..."   | Triggers (sender must be in allowFrom)      |
-| Allowlisted person | Anywhere, no prefix   | —              | Ignored (unless exempt group)               |
-| Anyone else        | Anywhere              | —              | Always blocked, even with prefix            |
+| Who                | Where                    | Prefix needed? | Result                                         |
+| ------------------ | ------------------------ | -------------- | ---------------------------------------------- |
+| Self-chat          | Message yourself         | No             | Always triggers                                |
+| the user (fromMe)     | Any DM                   | No             | Always triggers (Tier 1)                       |
+| the user (fromMe)     | Agent group (name match) | No             | Triggers (Tier 2, bypasses prefix)             |
+| the user (fromMe)     | Non-agent group          | "jarvis ..."   | Triggers (Tier 4)                              |
+| Allowlisted person | Agent group (name match) | No             | Triggers (sender must be in groupAllowFrom)    |
+| Allowlisted person | Non-agent group          | "jarvis ..."   | Triggers (sender must be in groupAllowFrom)    |
+| Allowlisted person | DM                       | "jarvis ..."   | Triggers (Tier 3, sender must be in allowFrom) |
+| Allowlisted person | Anywhere, no prefix      | —              | Ignored (unless agent group)                   |
+| Anyone else        | Anywhere                 | —              | Always blocked, even with prefix               |
 
-**Exempt groups** (`triggerPrefixExempt`): Dedicated agent-to-agent conversation groups where all participants (including other OpenClaw agents) can talk without prefix. Messages still require the sender to be in `groupAllowFrom`. Currently 10 groups configured.
+**New standalone plugin — `extensions/tinkerclaw-whatsapp/` (2026-04-12):** Fork WhatsApp code extracted into a self-contained plugin. Uses whatsmeow-node (Go subprocess) as the only backend; Baileys adapter translates events so existing message processing code works unchanged. Includes SQLite history with FTS5, multi-agent routing/congestion/budget/lifecycle, and the 4-tier access model above. **Status:** created and builds, not yet wired into gateway config — upstream `extensions/whatsapp/` still runs. Enabling the new plugin requires disabling the upstream extension (both claim channel ID `whatsapp`). Full localization deferred: plugin currently re-exports `whatsappPlugin` and `monitorWebInbox` from upstream. See `~/.openclaw/workspace/memory/knowledge/tinkerclaw-whatsapp-plugin.md`.
 
 **Multi-agent congestion control** (`extensions/whatsapp/src/multi-agent/congestion.ts`):
 
@@ -1862,3 +1870,37 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Status check:** `GET http://127.0.0.1:18792/extension/status`
 - **Legacy plugin:** `tinkerclaw-browser-relay` in `~/.openclaw/extensions/` is disabled — the built-in relay handles everything.
 - **Files:** `extensions/browser/src/browser/extension-relay.ts` (origin check), `~/.openclaw/extensions/tinkerclaw-browser-relay/index.ts` (CDP proxy for fallback)
+
+---
+
+## 13. Conventions & Standards
+
+### 13.1 Plugin Naming Convention
+
+- **Rule:** Every fork plugin MUST use the `tinkerclaw-` prefix in both its plugin ID (in `index.ts` and `openclaw.plugin.json`) and its directory name.
+- **Why:** Fork plugins may be installed independently by other users. The prefix avoids ID collisions with upstream bundled plugins that share the same logical name.
+- **Example:** `extensions/tinkerclaw-prefrontal/` → `"id": "tinkerclaw-prefrontal"` (not `"prefrontal"`)
+- **Four places to check:** The plugin ID must match in all four:
+  1. `extensions/<name>/index.ts` — the exported plugin object's `id` field
+  2. `extensions/<name>/openclaw.plugin.json` — the manifest `"id"` field
+  3. `dist-runtime/extensions/<name>/openclaw.plugin.json` — the pre-built manifest
+  4. `openclaw.json` — the config entry key under `plugins.entries`
+- **Upstream plugins** (in `extensions/` without `tinkerclaw-` prefix) keep their upstream IDs unchanged. They coexist alongside fork plugins with different IDs.
+- **Current fork plugins:** `tinkerclaw-prefrontal`, `tinkerclaw-hippocampus`, `tinkerclaw-fractal-reflection`, `tinkerclaw-learned-intuition`, `tinkerclaw-identity-persistence`, `tinkerclaw-computational-humor`, `tinkerclaw-round-table`, `tinkerclaw-total-recall`, `tinkerclaw-browser-relay` (disabled)
+
+### 13.2 Build Rules
+
+- **Always build from tinkerclaw:** `cd ~/src/tinkerclaw && npx tsdown`. Never run tsdown from `~/.openclaw/workspace/` — its `.git` is jarvis-brain, not tinkerclaw.
+- **After build, restart gateway:** SIGUSR1 (`openclaw-restart`) for config changes. Full restart (`openclaw-restart --full`) for dist/code changes — SIGUSR1 doesn't re-import cached ES modules.
+- **pnpm install in tinkerclaw:** `cd ~/src/tinkerclaw && pnpm install`. The workspace `node_modules/` is a symlink to tinkerclaw's.
+- **Control UI:** Built separately with `cd ~/src/tinkerclaw && pnpm ui:build`. Not rebuilt by tsdown.
+- **Tinker UI:** Vite dev server serves from source with HMR. Only `vite build` needed for production builds. Gateway caches `index.html` — restart after Tinker UI builds.
+
+### 13.3 Gateway Config Cleanup (2026-04-10)
+
+- **Status:** `DEPLOYED`
+- **Removed extensions:** `modelstudio` and `qwen-portal-auth` from `~/.openclaw/extensions/` — missing `chalk` dependency, not used, spammed errors on every plugin load cycle.
+- **Removed stale config entries:** `tinkerclaw-prefrontal` (renamed), `tinkerclaw-hippocampus` (renamed), `tinkerclaw-browser-relay` (disabled legacy) — all removed from `plugins.entries` in `openclaw.json`.
+- **Control UI auth:** Changed from `dangerouslyDisableDeviceAuth: true` to `allowInsecureAuth: true`. Same effect (allows Tinker UI WebSocket on localhost HTTP), but `allowInsecureAuth` is the upstream-intended flag for local non-HTTPS deployments. Both produce a security warning in logs — this is by design in upstream's security audit system and not worth patching.
+- **Removed dead RPC:** `usage.budget` call removed from Tinker UI `loadBudget()` — method doesn't exist on the server, was producing `INVALID_REQUEST` errors every 5 minutes.
+- **Remaining warning:** `gateway.controlUi.allowInsecureAuth=true` security flag — required for Tinker UI on loopback HTTP. Informational only, no actual security risk on localhost.
