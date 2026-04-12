@@ -234,6 +234,15 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
     },
   });
 
+  let client: IMessageRpcClient | undefined;
+  let detachAbortHandler = () => {};
+  const getActiveClient = () => {
+    if (!client) {
+      throw new Error("imessage monitor client not initialized");
+    }
+    return client;
+  };
+
   async function handleMessageNow(message: IMessagePayload) {
     const messageText = (message.text ?? "").trim();
 
@@ -343,7 +352,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         },
         sendPairingReply: async (text) => {
           await sendMessageIMessage(sender, text, {
-            client,
+            client: getActiveClient(),
             maxBytes: mediaMaxBytes,
             accountId: accountInfo.accountId,
             ...(chatId ? { chatId } : {}),
@@ -443,7 +452,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         await deliverReplies({
           replies: [payload],
           target,
-          client,
+          client: getActiveClient(),
           accountId: accountInfo.accountId,
           runtime,
           maxBytes: mediaMaxBytes,
@@ -539,14 +548,11 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
       },
     });
 
-  let client: IMessageRpcClient | null = null;
-  let detachAbortHandler = () => {};
-
   for (let attempt = 1; attempt <= WATCH_SUBSCRIBE_MAX_ATTEMPTS; attempt++) {
     if (abort?.aborted) {
       return;
     }
-    let attemptClient: IMessageRpcClient | null = null;
+    let attemptClient: IMessageRpcClient | undefined;
     let attemptDetachAbortHandler = () => {};
     let keepAttemptClient = false;
     try {
