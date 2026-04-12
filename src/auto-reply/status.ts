@@ -27,7 +27,10 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readLatestSessionUsageFromTranscript } from "../gateway/session-utils.fs.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
 import { resolveCommitHash } from "../infra/git-commit.js";
-import { findDecisionReason, summarizeDecisionReason } from "../media-understanding/runner.entries.js";
+import {
+  findDecisionReason,
+  summarizeDecisionReason,
+} from "../media-understanding/runner.entries.js";
 import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import {
