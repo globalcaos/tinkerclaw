@@ -31,7 +31,9 @@ const { createGatewayCloseHandler } = await import("./server-close.js");
 type GatewayCloseHandlerParams = Parameters<typeof createGatewayCloseHandler>[0];
 type GatewayCloseClient = GatewayCloseHandlerParams["clients"] extends Set<infer T> ? T : never;
 
-function createGatewayCloseTestDeps(overrides: Partial<GatewayCloseHandlerParams> = {}) {
+function createGatewayCloseTestDeps(
+  overrides: Partial<GatewayCloseHandlerParams> = {},
+): GatewayCloseHandlerParams {
   return {
     bonjourStop: null,
     tailscaleCleanup: null,
