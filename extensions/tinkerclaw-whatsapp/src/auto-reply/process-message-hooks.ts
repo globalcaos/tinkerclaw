@@ -9,7 +9,7 @@
  * re-exporting from outside the plugin boundary is fragile.
  */
 
-import { sendReactionWhatsApp } from "../../../whatsapp/src/send.js";
+import { sendReactionWhatsApp } from "../send.js";
 
 // ---------------------------------------------------------------------------
 // Hook: Offline recovery annotation

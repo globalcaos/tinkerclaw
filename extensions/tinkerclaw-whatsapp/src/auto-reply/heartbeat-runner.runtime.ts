@@ -28,6 +28,6 @@ export { normalizeMainKey } from "openclaw/plugin-sdk/routing";
 export { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 export { redactIdentifier } from "openclaw/plugin-sdk/text-runtime";
 export { resolveWhatsAppHeartbeatRecipients } from "../../../whatsapp/src/runtime-api.js";
-export { sendMessageWhatsApp } from "../../../whatsapp/src/send.js";
+export { sendMessageWhatsApp } from "../send.js";
 export { formatError } from "../session.js";
 export { whatsappHeartbeatLog } from "./loggers.js";

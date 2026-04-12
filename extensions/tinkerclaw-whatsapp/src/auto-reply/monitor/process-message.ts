@@ -3,8 +3,8 @@ import {
   getSelfIdentity,
   getSenderIdentity,
 } from "../../../../whatsapp/src/identity.js";
-import { newConnectionId } from "../../../../whatsapp/src/reconnect.js";
 import { resolveWhatsAppAccount } from "../../accounts.js";
+import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog } from "../loggers.js";
