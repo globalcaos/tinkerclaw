@@ -29,9 +29,7 @@ import {
 } from "./run-session-state.js";
 import {
   DEFAULT_CONTEXT_TOKENS,
-  buildSafeExternalPrompt,
   deriveSessionTotalTokens,
-  detectSuspiciousPatterns,
   ensureAgentWorkspace,
   hasNonzeroUsage,
   isCliProvider,
@@ -61,6 +59,9 @@ let sessionStoreRuntimePromise:
   | Promise<typeof import("../../config/sessions/store.runtime.js")>
   | undefined;
 let cronExecutorRuntimePromise: Promise<typeof import("./run-executor.runtime.js")> | undefined;
+let cronExternalContentRuntimePromise:
+  | Promise<typeof import("./run-external-content.runtime.js")>
+  | undefined;
 let cronAuthProfileRuntimePromise:
   | Promise<typeof import("./run-auth-profile.runtime.js")>
   | undefined;
@@ -77,6 +78,11 @@ async function loadSessionStoreRuntime() {
 async function loadCronExecutorRuntime() {
   cronExecutorRuntimePromise ??= import("./run-executor.runtime.js");
   return await cronExecutorRuntimePromise;
+}
+
+async function loadCronExternalContentRuntime() {
+  cronExternalContentRuntimePromise ??= import("./run-external-content.runtime.js");
+  return await cronExternalContentRuntimePromise;
 }
 
 async function loadCronAuthProfileRuntime() {
@@ -407,6 +413,7 @@ async function prepareCronRunContext(params: {
   let commandBody: string;
 
   if (isExternalHook) {
+    const { detectSuspiciousPatterns } = await loadCronExternalContentRuntime();
     const suspiciousPatterns = detectSuspiciousPatterns(input.message);
     if (suspiciousPatterns.length > 0) {
       logWarn(
@@ -417,6 +424,7 @@ async function prepareCronRunContext(params: {
   }
 
   if (shouldWrapExternal) {
+    const { buildSafeExternalPrompt } = await loadCronExternalContentRuntime();
     const hookType = mapHookExternalContentSource(hookExternalContentSource ?? "webhook");
     const safeContent = buildSafeExternalPrompt({
       content: input.message,

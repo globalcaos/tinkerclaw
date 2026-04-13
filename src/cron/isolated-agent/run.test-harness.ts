@@ -116,12 +116,15 @@ vi.mock("./run.runtime.js", () => ({
   setCliSessionId: vi.fn(),
   logWarn: (...args: unknown[]) => logWarnMock(...args),
   normalizeAgentId: vi.fn((id: string) => id),
-  buildSafeExternalPrompt: buildSafeExternalPromptMock,
-  detectSuspiciousPatterns: detectSuspiciousPatternsMock,
   mapHookExternalContentSource: mapHookExternalContentSourceMock,
   isExternalHookSession: isExternalHookSessionMock,
   resolveHookExternalContentSource: resolveHookExternalContentSourceMock,
   getRemoteSkillEligibility: getRemoteSkillEligibilityMock,
+}));
+
+vi.mock("./run-external-content.runtime.js", () => ({
+  buildSafeExternalPrompt: buildSafeExternalPromptMock,
+  detectSuspiciousPatterns: detectSuspiciousPatternsMock,
 }));
 
 vi.mock("./run-context.runtime.js", () => ({
