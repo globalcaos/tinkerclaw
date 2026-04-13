@@ -11,7 +11,7 @@ export {
   listDescendantRunsForRequester,
 } from "../../agents/subagent-registry.js";
 export { normalizeVerboseLevel } from "../../auto-reply/thinking.js";
-export { resolveSessionTranscriptPath } from "../../config/sessions.js";
+export { resolveSessionTranscriptPath } from "../../config/sessions/paths.js";
 export { registerAgentRunContext } from "../../infra/agent-events.js";
 export { logWarn } from "../../logger.js";
 

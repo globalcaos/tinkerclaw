@@ -28,12 +28,8 @@ export { deriveSessionTotalTokens, hasNonzeroUsage } from "../../agents/usage.js
 export { DEFAULT_IDENTITY_FILENAME, ensureAgentWorkspace } from "../../agents/workspace.js";
 export { normalizeThinkLevel, supportsXHighThinking } from "../../auto-reply/thinking.js";
 export { createOutboundSendDeps } from "../../cli/outbound-send-deps.js";
-export {
-  resolveAgentMainSessionKey,
-  resolveSessionTranscriptPath,
-  setSessionRuntimeModel,
-  updateSessionStore,
-} from "../../config/sessions.js";
+export { resolveSessionTranscriptPath } from "../../config/sessions/paths.js";
+export { setSessionRuntimeModel } from "../../config/sessions/types.js";
 export { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 export { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
 export { logWarn } from "../../logger.js";
