@@ -264,6 +264,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBotInstance
   // We only persist a watermark that is strictly less than the smallest pending update_id,
   // so we never write an offset that would skip an update still waiting to run.
   const pendingUpdateIds = new Set<number>();
+  const failedUpdateIds = new Set<number>();
   let highestCompletedUpdateId: number | null = initialUpdateId;
   let highestPersistedUpdateId: number | null = initialUpdateId;
   const maybePersistSafeWatermark = () => {
@@ -283,6 +284,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBotInstance
       }
       if (minPending !== null) {
         safe = Math.min(safe, minPending - 1);
+      }
+    }
+    if (failedUpdateIds.size > 0) {
+      let minFailed: number | null = null;
+      for (const id of failedUpdateIds) {
+        if (minFailed === null || id < minFailed) {
+          minFailed = id;
+        }
+      }
+      if (minFailed !== null) {
+        safe = Math.min(safe, minFailed - 1);
       }
     }
     if (highestPersistedUpdateId !== null && safe <= highestPersistedUpdateId) {
@@ -312,18 +324,25 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBotInstance
 
   bot.use(async (ctx, next) => {
     const updateId = resolveTelegramUpdateId(ctx);
+    let completed = false;
     if (typeof updateId === "number") {
+      failedUpdateIds.delete(updateId);
       pendingUpdateIds.add(updateId);
     }
     try {
       await next();
+      completed = true;
     } finally {
       if (typeof updateId === "number") {
         pendingUpdateIds.delete(updateId);
-        if (highestCompletedUpdateId === null || updateId > highestCompletedUpdateId) {
-          highestCompletedUpdateId = updateId;
+        if (completed) {
+          if (highestCompletedUpdateId === null || updateId > highestCompletedUpdateId) {
+            highestCompletedUpdateId = updateId;
+          }
+          maybePersistSafeWatermark();
+        } else {
+          failedUpdateIds.add(updateId);
         }
-        maybePersistSafeWatermark();
       }
     }
   });

@@ -1049,6 +1049,72 @@ describe("createTelegramBot", () => {
     }
   });
 
+  it("does not persist failed updates into the watermark", async () => {
+    sequentializeSpy.mockImplementationOnce(
+      () => async (_ctx: unknown, next: () => Promise<void>) => {
+        await next();
+      },
+    );
+
+    const onUpdateId = vi.fn();
+
+    createTelegramBot({
+      token: "tok",
+      updateOffset: {
+        lastUpdateId: 200,
+        onUpdateId,
+      },
+    });
+
+    type Middleware = (
+      ctx: Record<string, unknown>,
+      next: () => Promise<void>,
+    ) => Promise<void> | void;
+
+    const middlewares = middlewareUseSpy.mock.calls
+      .map((call) => call[0])
+      .filter((fn): fn is Middleware => typeof fn === "function");
+
+    const runMiddlewareChain = async (
+      ctx: Record<string, unknown>,
+      finalNext: () => Promise<void>,
+    ) => {
+      let idx = -1;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= idx) {
+          throw new Error("middleware dispatch called multiple times");
+        }
+        idx = i;
+        const fn = middlewares[i];
+        if (!fn) {
+          await finalNext();
+          return;
+        }
+        await fn(ctx, async () => dispatch(i + 1));
+      };
+      await dispatch(0);
+    };
+
+    await expect(
+      runMiddlewareChain({ update: { update_id: 201 } }, async () => {
+        throw new Error("middleware boom");
+      }),
+    ).rejects.toThrow("middleware boom");
+
+    await runMiddlewareChain({ update: { update_id: 202 } }, async () => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onUpdateId).not.toHaveBeenCalled();
+    expect(onUpdateId).not.toHaveBeenCalledWith(201);
+    expect(onUpdateId).not.toHaveBeenCalledWith(202);
+
+    await runMiddlewareChain({ update: { update_id: 201 } }, async () => {});
+
+    await vi.waitFor(() => {
+      expect(onUpdateId).toHaveBeenCalledWith(202);
+    });
+  });
+
   it("allows distinct callback_query ids without update_id", async () => {
     loadConfig.mockReturnValue({
       channels: {
