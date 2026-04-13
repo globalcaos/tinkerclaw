@@ -66,6 +66,25 @@ export function releaseFeishuMessageProcessing(
   processingClaims.delete(resolveEventDedupeKey(namespace, messageId));
 }
 
+export async function claimUnprocessedFeishuMessage(params: {
+  messageId: string | undefined | null;
+  namespace?: string;
+  log?: (...args: unknown[]) => void;
+}): Promise<"claimed" | "duplicate" | "inflight" | "invalid"> {
+  const { messageId, namespace = "global", log } = params;
+  const normalizedMessageId = normalizeMessageId(messageId);
+  if (!normalizedMessageId) {
+    return "invalid";
+  }
+  if (await hasProcessedFeishuMessage(normalizedMessageId, namespace, log)) {
+    return "duplicate";
+  }
+  if (!tryBeginFeishuMessageProcessing(normalizedMessageId, namespace)) {
+    return "inflight";
+  }
+  return "claimed";
+}
+
 export async function finalizeFeishuMessageProcessing(params: {
   messageId: string | undefined | null;
   namespace?: string;
