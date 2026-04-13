@@ -136,9 +136,9 @@ Rules:
 - Dist-tag sync mode must use a stable or correction tag,
   `preflight_only=false`, an empty `preflight_run_id`, `npm_dist_tag=latest`,
   and `promote_beta_to_latest=false`
-- Promotion and dist-tag sync modes also require a valid `NPM_TOKEN` in the
-  `npm-release` environment because `npm dist-tag add` still needs regular npm
-  auth
+- Promotion and dist-tag sync modes also require a valid `NPM_TOKEN` because
+  `npm dist-tag add` still needs regular npm auth; trusted publishing covers
+  the package publish path only
 
 ## Stable npm release sequence
 
@@ -166,7 +166,7 @@ When cutting a stable npm release:
    `preflight_only=false`, `preflight_run_id` empty, and `npm_dist_tag=latest`
 
 The promotion and dist-tag sync modes still require the `npm-release`
-environment approval and a valid `NPM_TOKEN` in that environment.
+environment approval and a valid `NPM_TOKEN` accessible to that workflow run.
 
 That keeps the direct publish path and the beta-first promotion path both
 documented and operator-visible.
