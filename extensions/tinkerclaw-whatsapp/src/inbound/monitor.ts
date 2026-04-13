@@ -17,6 +17,8 @@ const createWmClient = _wmSession.createWmClient;
 const connectWmClient = _wmSession.connectWmClient;
 const createBaileysAdapter = _wmAdapter.createBaileysAdapter;
 import { readWebSelfIdentity } from "../auth-store.js";
+// FORK: register dynamic group-name fetcher for 4-tier agent-group detection
+import { setGroupMetadataFetcher } from "../group-name-cache.js";
 import { getPrimaryIdentityId } from "../identity.js";
 import { checkInboundAccessControl } from "./access-control.js";
 import {
@@ -230,6 +232,14 @@ export async function monitorWebInbox(options: {
       return { expires: Date.now() + GROUP_META_TTL_MS };
     }
   };
+
+  // FORK: register the group-name fetcher used by access-control's 4-tier
+  // agent-group detection. Wraps sock.groupMetadata with a thin shim that
+  // only returns {subject} — the cache layer handles TTL + stale fallback.
+  setGroupMetadataFetcher(async (jid: string) => {
+    const meta = await sock.groupMetadata(jid);
+    return { subject: meta.subject ?? "" };
+  });
 
   type NormalizedInboundMessage = {
     id?: string;
