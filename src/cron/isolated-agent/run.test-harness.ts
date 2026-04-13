@@ -199,15 +199,13 @@ vi.mock("../delivery-plan.js", () => ({
   resolveCronDeliveryPlan: resolveCronDeliveryPlanMock,
 }));
 
-vi.mock("./delivery-target.js", () => ({
-  resolveDeliveryTarget: resolveDeliveryTargetMock,
-}));
-
-vi.mock("./delivery-dispatch.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./delivery-dispatch.js")>("./delivery-dispatch.js");
+vi.mock("./run-delivery.runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("./run-delivery.runtime.js")>(
+    "./run-delivery.runtime.js",
+  );
   return {
     ...actual,
+    resolveDeliveryTarget: resolveDeliveryTargetMock,
     dispatchCronDelivery: dispatchCronDeliveryMock,
   };
 });
