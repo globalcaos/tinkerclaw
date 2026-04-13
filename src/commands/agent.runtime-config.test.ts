@@ -4,7 +4,7 @@ import "./agent-command.test-mocks.js";
 import "../cron/isolated-agent.mocks.js";
 import { __testing as agentCommandTesting } from "../agents/agent-command.js";
 import { resolveSession } from "../agents/command/session.js";
-import * as commandConfigResolutionModule from "../cli/command-config-resolution.js";
+import * as commandConfigResolutionRuntimeModule from "../cli/command-config-resolution.runtime.js";
 import * as configIoModule from "../config/io.js";
 import * as runtimeSnapshotModule from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -102,7 +102,7 @@ describe("agentCommand runtime config", () => {
         writeOptions: {},
       } as Awaited<ReturnType<typeof configIoModule.readConfigFileSnapshotForWrite>>);
       const resolveConfigWithSecretsSpy = vi
-        .spyOn(commandConfigResolutionModule, "resolveCommandConfigWithSecrets")
+        .spyOn(commandConfigResolutionRuntimeModule, "resolveCommandConfigWithSecrets")
         .mockResolvedValueOnce({
           resolvedConfig,
           effectiveConfig: resolvedConfig,
@@ -131,8 +131,13 @@ describe("agentCommand runtime config", () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions.json");
       const loadedConfig = mockConfig(home, store);
+      loadedConfig.channels = {
+        telegram: {
+          botToken: { source: "env", provider: "default", id: "TELEGRAM_BOT_TOKEN" },
+        },
+      } as OpenClawConfig["channels"];
       const resolveConfigWithSecretsSpy = vi
-        .spyOn(commandConfigResolutionModule, "resolveCommandConfigWithSecrets")
+        .spyOn(commandConfigResolutionRuntimeModule, "resolveCommandConfigWithSecrets")
         .mockResolvedValueOnce({
           resolvedConfig: loadedConfig,
           effectiveConfig: loadedConfig,
@@ -145,6 +150,22 @@ describe("agentCommand runtime config", () => {
 
       const targetIds = resolveConfigWithSecretsSpy.mock.calls[0]?.[0].targetIds;
       expect(targetIds.has("channels.telegram.botToken")).toBe(true);
+    });
+  });
+
+  it("skips command secret resolution when no relevant SecretRef values exist", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      const loadedConfig = mockConfig(home, store);
+      const resolveConfigWithSecretsSpy = vi.spyOn(
+        commandConfigResolutionRuntimeModule,
+        "resolveCommandConfigWithSecrets",
+      );
+
+      const prepared = await agentCommandTesting.resolveAgentRuntimeConfig(runtime);
+
+      expect(resolveConfigWithSecretsSpy).not.toHaveBeenCalled();
+      expect(prepared.cfg).toBe(loadedConfig);
     });
   });
 
