@@ -1,6 +1,7 @@
 import type { LegacyConfigRule } from "../../config/legacy.shared.js";
 import { listPluginDoctorLegacyConfigRules } from "../../plugins/doctor-contract-registry.js";
 import { getBootstrapChannelPlugin } from "./bootstrap-registry.js";
+import { loadBundledChannelDoctorContractApi } from "./doctor-contract-api.js";
 import type { ChannelId } from "./types.public.js";
 
 function collectConfiguredChannelIds(raw: unknown): ChannelId[] {
@@ -19,14 +20,25 @@ function collectConfiguredChannelIds(raw: unknown): ChannelId[] {
 export function collectChannelLegacyConfigRules(raw?: unknown): LegacyConfigRule[] {
   const channelIds = collectConfiguredChannelIds(raw);
   const rules: LegacyConfigRule[] = [];
+  const unresolvedChannelIds: ChannelId[] = [];
   for (const channelId of channelIds) {
-    const plugin = getBootstrapChannelPlugin(channelId);
-    if (!plugin) {
+    const contractRules = loadBundledChannelDoctorContractApi(channelId)?.legacyConfigRules;
+    if (Array.isArray(contractRules) && contractRules.length > 0) {
+      rules.push(...contractRules);
       continue;
     }
-    rules.push(...(plugin.doctor?.legacyConfigRules ?? []));
+
+    const plugin = getBootstrapChannelPlugin(channelId);
+    if (plugin?.doctor?.legacyConfigRules?.length) {
+      rules.push(...plugin.doctor.legacyConfigRules);
+      continue;
+    }
+
+    unresolvedChannelIds.push(channelId);
   }
-  rules.push(...listPluginDoctorLegacyConfigRules({ pluginIds: channelIds }));
+  if (unresolvedChannelIds.length > 0) {
+    rules.push(...listPluginDoctorLegacyConfigRules({ pluginIds: unresolvedChannelIds }));
+  }
 
   const seen = new Set<string>();
   return rules.filter((rule) => {
