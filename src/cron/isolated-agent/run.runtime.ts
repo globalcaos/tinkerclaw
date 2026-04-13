@@ -5,10 +5,8 @@ export {
   resolveDefaultAgentId,
   resolveAgentSkillsFilter,
 } from "../../agents/agent-scope.js";
-export { lookupContextTokens } from "../../agents/context.js";
 export { resolveCronStyleNow } from "../../agents/current-time.js";
 export { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
-export { loadModelCatalog } from "../../agents/model-catalog.js";
 export { isCliProvider, resolveThinkingDefault } from "../../agents/model-selection.js";
 export { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
 export { getSkillsSnapshotVersion } from "../../agents/skills/refresh.js";
