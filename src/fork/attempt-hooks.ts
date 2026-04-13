@@ -571,8 +571,11 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     (m) => (m as { role?: string }).role === "user",
   ).length;
 
-  // FRACTAL REFLECTION v4 — inject via gateway sessions.send RPC
-  if (params.sessionKey && isInlineMode("fractal")) {
+  // FRACTAL REFLECTION v4 — DISABLED: moved to tinkerclaw-fractal-reflection plugin.
+  // The inline path here caused double-firing when the plugin was also active.
+  // Config fork.cognitive.fractal="extension" should prevent this, but
+  // isInlineMode() falls back to true on import errors in the bundled dist.
+  if (false && params.sessionKey && isInlineMode("fractal")) {
     import("./fractal-inject.js")
       .then((mod) => {
         mod
