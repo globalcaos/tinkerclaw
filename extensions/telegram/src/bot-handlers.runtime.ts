@@ -1417,15 +1417,20 @@ export const registerTelegramHandlers = ({
         }
 
         const agentId = paginationMatch[2]?.trim() || resolveDefaultAgentId(runtimeCfg);
-        const skillCommands = telegramDeps.listSkillCommandsForAgents({
-          cfg: runtimeCfg,
-          agentIds: [agentId],
-        });
-        const result = buildCommandsMessagePaginated(runtimeCfg, skillCommands, {
-          page,
-          forcePaginatedList: true,
-          surface: "telegram",
-        });
+        let result: ReturnType<typeof buildCommandsMessagePaginated>;
+        try {
+          const skillCommands = telegramDeps.listSkillCommandsForAgents({
+            cfg: runtimeCfg,
+            agentIds: [agentId],
+          });
+          result = buildCommandsMessagePaginated(runtimeCfg, skillCommands, {
+            page,
+            forcePaginatedList: true,
+            surface: "telegram",
+          });
+        } catch (err) {
+          throw new TelegramRetryableCallbackError(err);
+        }
 
         const keyboard =
           result.totalPages > 1
