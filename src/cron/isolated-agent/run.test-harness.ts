@@ -160,6 +160,12 @@ vi.mock("./run-auth-profile.runtime.js", () => ({
   resolveSessionAuthProfileOverride: resolveSessionAuthProfileOverrideMock,
 }));
 
+vi.mock("./run-embedded.runtime.js", () => ({
+  resolveFastModeState: resolveFastModeStateMock,
+  resolveNestedAgentLane: resolveNestedAgentLaneMock,
+  runEmbeddedPiAgent: runEmbeddedPiAgentMock,
+}));
+
 vi.mock("./run-subagent-registry.runtime.js", () => ({
   countActiveDescendantRuns: countActiveDescendantRunsMock,
   listDescendantRunsForRequester: listDescendantRunsForRequesterMock,
