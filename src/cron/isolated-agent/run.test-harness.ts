@@ -98,10 +98,8 @@ vi.mock("./run.runtime.js", () => ({
   resolveAgentWorkspaceDir: vi.fn().mockReturnValue("/tmp/workspace"),
   resolveDefaultAgentId: vi.fn().mockReturnValue("default"),
   resolveAgentSkillsFilter: resolveAgentSkillsFilterMock,
-  lookupContextTokens: lookupContextTokensMock,
   resolveCronStyleNow: resolveCronStyleNowMock,
   DEFAULT_CONTEXT_TOKENS: 128000,
-  loadModelCatalog: loadModelCatalogMock,
   isCliProvider: isCliProviderMock,
   resolveThinkingDefault: resolveThinkingDefaultMock,
   buildWorkspaceSkillSnapshot: buildWorkspaceSkillSnapshotMock,
@@ -124,6 +122,14 @@ vi.mock("./run.runtime.js", () => ({
   isExternalHookSession: isExternalHookSessionMock,
   resolveHookExternalContentSource: resolveHookExternalContentSourceMock,
   getRemoteSkillEligibility: getRemoteSkillEligibilityMock,
+}));
+
+vi.mock("./run-context.runtime.js", () => ({
+  lookupContextTokens: lookupContextTokensMock,
+}));
+
+vi.mock("./run-model-catalog.runtime.js", () => ({
+  loadModelCatalog: loadModelCatalogMock,
 }));
 
 vi.mock("./run-model-selection.runtime.js", () => ({
