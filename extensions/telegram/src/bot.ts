@@ -256,6 +256,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBotInstance
   });
 
   const recentUpdates = createTelegramUpdateDedupe();
+  const pendingUpdateKeys = new Set<string>();
+  const activeHandledUpdateKeys = new Map<string, boolean>();
   const initialUpdateId =
     typeof opts.updateOffset?.lastUpdateId === "number" ? opts.updateOffset.lastUpdateId : null;
 
@@ -308,6 +310,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBotInstance
       });
   };
 
+  const logSkippedUpdate = (key: string) => {
+    if (shouldLogVerbose()) {
+      logVerbose(`telegram dedupe: skipped ${key}`);
+    }
+  };
+
   const shouldSkipUpdate = (ctx: TelegramUpdateKeyContext) => {
     const updateId = resolveTelegramUpdateId(ctx);
     const skipCutoff = highestPersistedUpdateId ?? initialUpdateId;
@@ -315,24 +323,55 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBotInstance
       return true;
     }
     const key = buildTelegramUpdateKey(ctx);
+    if (!key) {
+      return false;
+    }
+    const handled = activeHandledUpdateKeys.get(key);
+    if (handled != null) {
+      if (handled) {
+        logSkippedUpdate(key);
+        return true;
+      }
+      activeHandledUpdateKeys.set(key, true);
+      return false;
+    }
     const skipped = recentUpdates.check(key);
-    if (skipped && key && shouldLogVerbose()) {
-      logVerbose(`telegram dedupe: skipped ${key}`);
+    if (skipped) {
+      logSkippedUpdate(key);
     }
     return skipped;
   };
 
   bot.use(async (ctx, next) => {
     const updateId = resolveTelegramUpdateId(ctx);
+    const updateKey = buildTelegramUpdateKey(ctx);
     let completed = false;
     if (typeof updateId === "number") {
       failedUpdateIds.delete(updateId);
       pendingUpdateIds.add(updateId);
     }
+    if (updateKey) {
+      if (pendingUpdateKeys.has(updateKey) || recentUpdates.peek(updateKey)) {
+        logSkippedUpdate(updateKey);
+        if (typeof updateId === "number") {
+          pendingUpdateIds.delete(updateId);
+        }
+        return;
+      }
+      pendingUpdateKeys.add(updateKey);
+      activeHandledUpdateKeys.set(updateKey, false);
+    }
     try {
       await next();
       completed = true;
     } finally {
+      if (updateKey) {
+        activeHandledUpdateKeys.delete(updateKey);
+        if (completed) {
+          recentUpdates.check(updateKey);
+        }
+        pendingUpdateKeys.delete(updateKey);
+      }
       if (typeof updateId === "number") {
         pendingUpdateIds.delete(updateId);
         if (completed) {
