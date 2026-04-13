@@ -77,7 +77,10 @@ A stale reference, outdated instruction, missing entry, better default?
 
 ## Rules
 
-- **START your response with `🌿 FRACTAL:` followed by a one-line summary, then a brief list of any actions taken (edits, file writes, rule encodings).** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat. Example: `🌿 FRACTAL: Fixed stale path in README. ✉️ Updated ripple-tracker, encoded preempt rule for path renames.`
+- **START your response with `🌿 FRACTAL:` followed by a one-line summary.** This is mandatory — the UI uses this prefix to detect and collapse fractal reflections. Without it, your reflection renders as a normal message and clutters the chat.
+  - **If you took an action** (edited a file, ran a command, wrote to memory, fixed something): start with `🌿 FRACTAL ACTION:` followed by a brief description of what you did. Example: `🌿 FRACTAL ACTION: Fixed stale path in README, updated ripple-tracker.`
+  - **If no action was taken** (reflection only): start with `🌿 FRACTAL:` followed by a summary of the reflection. Example: `🌿 FRACTAL: Routine turn, no changes needed.`
+  - The ACTION/no-action distinction lets your human supervise at a glance without expanding the reflection. If they see ACTION, they know something changed. If they don't, nothing did.
 - **Each numbered section (1-7) must start on a new line** with a blank line before the `###` header. This ensures clean rendering in all surfaces (webchat, WhatsApp, Tinker UI). Do not run sections together in one paragraph.
 - **Always respond.** Never NO_REPLY. Even "🌿 FRACTAL: nothing to reflect on" is a valid (if lazy) answer.
 - **ACT before explaining.** If you see something to fix, make the edit, then mention it.
