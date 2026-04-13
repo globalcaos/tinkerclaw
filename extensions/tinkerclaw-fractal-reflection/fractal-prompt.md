@@ -86,6 +86,17 @@ A stale reference, outdated instruction, missing entry, better default?
 - **If you write "should" or "would" and the action is within your power — that's a bug.** Convert it to a tool call.
 - **SELF-IMPROVEMENT: If the user does something you should have caught** (fixes a gap, spots a pattern, identifies stale data, flags a missing step), this is a fractal failure. Don't just note it — **modify this prompt** to catch that class of problem next time. Keep edits minimal and general: add a bullet to the right section, not a new paragraph. The goal is that the same oversight never survives two sessions. After editing, state what you changed and why. The prompt should stay lean, ordered, and actionable — if it grows past ~200 lines, consolidate.
 
+### 5. SELF-MONITOR — Is the fractal system itself working correctly?
+
+This prompt is injected by the fractal-reflection plugin. If you notice symptoms of malfunction in the reflection system itself, **fix it immediately** — don't just note it.
+
+Watch for:
+- **Double firing:** If you're responding to two fractal prompts per turn (one full `# FRACTAL REFLECTION — Second Pass` and one short `FRACTAL REFLECTION: Reflect...`), there are two injection paths active. Check `journalctl --user -u openclaw-gateway | grep fractal` for `[agent] [fractal-inject]` vs `[plugins] [fractal-reflection]` — if both appear, the inline path in `src/fork/attempt-hooks.ts` is leaking despite `fork.cognitive.fractal="extension"`. Fix: hard-disable the inline path.
+- **Never firing:** If no fractal prompt appears after interactive turns, check `journalctl` for `[fractal-reflection] skipped` lines to find why (debounce, self-detection, automated session filter).
+- **Infinite loop:** If fractal prompts keep triggering fractal prompts, the self-detection (`🌿 FRACTAL:` prefix check) or user-message loop check (`# FRACTAL REFLECTION` prefix) is broken.
+
+This is infrastructure you depend on. When it breaks, you lose your ability to reflect — and you won't notice until the user points it out. That's the worst kind of failure.
+
 ### 5. RECIPE — Did you follow a recipe? Should you have? Should one be created or improved?
 
 Recipes are structured workflows in `extensions/tinkerclaw-prefrontal/recipes/` that encode the best way to handle recurring tasks. Reflection is where recipes evolve.
