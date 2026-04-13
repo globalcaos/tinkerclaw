@@ -502,3 +502,54 @@ export async function runWithConcurrency<T>(
   }
   return results;
 }
+
+/**
+ * FORK: granularity + topic-cluster detectors ported from `src/memory/internal.ts`.
+ * Upstream added these to the memory SDK host but the merge copy of this file
+ * in `src/memory-host-sdk/host/` was not updated, breaking the re-export chain
+ * from `src/plugin-sdk/memory-core-host-engine-storage.ts` that the
+ * `memory-core` extension depends on.
+ */
+export function detectGranularity(relPath: string): "detail" | "topic" | "global" {
+  const normalized = normalizeRelPath(relPath);
+  if (/^memory\/\d{4}-\d{2}-\d{2}\.md$/.test(normalized)) {
+    return "detail";
+  }
+  if (normalized === "MEMORY.md" || normalized === "memory.md") {
+    return "global";
+  }
+  if (normalized === "memory/memory-index.md") {
+    return "global";
+  }
+  if (normalized.endsWith("/index.md") && !normalized.includes("/projects/")) {
+    return "global";
+  }
+  if (normalized.startsWith("memory/topics/") || normalized.startsWith("bank/")) {
+    return "topic";
+  }
+  if (normalized.includes("/projects/") && normalized.endsWith("/index.md")) {
+    return "topic";
+  }
+  return "detail";
+}
+
+export function detectTopicCluster(relPath: string): string {
+  const normalized = normalizeRelPath(relPath);
+  const entityMatch = normalized.match(/bank\/entities\/(\w+)\.md$/);
+  if (entityMatch) {
+    return `entity_${entityMatch[1].toLowerCase()}`;
+  }
+  const topicMatch = normalized.match(/memory\/topics\/(\w+)\.md$/);
+  if (topicMatch) {
+    return topicMatch[1];
+  }
+  const projectMatch = normalized.match(/memory\/projects\/([^/]+)/);
+  if (projectMatch) {
+    return `project_${projectMatch[1]}`;
+  }
+  const bankMatch = normalized.match(/bank\/(\w+)\.md$/);
+  if (bankMatch) {
+    return bankMatch[1];
+  }
+  return "";
+}
