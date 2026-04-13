@@ -67,20 +67,20 @@ vi.mock("../../bootstrap/node-startup-env.js", () => ({
 
 vi.mock("../../config/io.js", () => ({
   loadConfig: loadConfigMock,
-  readBestEffortConfig: loadConfigMock,
+  readConfigFileSnapshotForWrite: vi.fn(async () => ({
+    snapshot: await readConfigFileSnapshotMock(),
+    writeOptions: { expectedConfigPath: "/tmp/openclaw.json" },
+  })),
 }));
 
 vi.mock("../../config/paths.js", () => ({
   resolveGatewayPort: resolveGatewayPortMock,
+  resolveIsNixMode: resolveIsNixModeMock,
 }));
 
 vi.mock("../../commands/gateway-install-token.persist.runtime.js", () => ({
   readConfigFileSnapshot: readConfigFileSnapshotMock,
   replaceConfigFile: replaceConfigFileMock,
-}));
-
-vi.mock("../../config/paths.js", () => ({
-  resolveIsNixMode: resolveIsNixModeMock,
 }));
 
 vi.mock("../../config/types.secrets.js", () => ({
@@ -190,7 +190,12 @@ describe("runDaemonInstall", () => {
     actionState.failed.length = 0;
 
     loadConfigMock.mockReturnValue({ gateway: { auth: { mode: "token" } } });
-    readConfigFileSnapshotMock.mockResolvedValue({ exists: false, valid: true, config: {} });
+    readConfigFileSnapshotMock.mockResolvedValue({
+      exists: false,
+      valid: true,
+      config: {},
+      sourceConfig: { gateway: { auth: { mode: "token" } } },
+    });
     resolveGatewayPortMock.mockReturnValue(18789);
     resolveIsNixModeMock.mockReturnValue(false);
     resolveSecretInputRefMock.mockReturnValue({ ref: undefined });
@@ -274,6 +279,7 @@ describe("runDaemonInstall", () => {
       exists: true,
       valid: true,
       config: { gateway: { auth: { mode: "token" } } },
+      sourceConfig: { gateway: { auth: { mode: "token" } } },
     });
 
     await runDaemonInstall({ json: true });
