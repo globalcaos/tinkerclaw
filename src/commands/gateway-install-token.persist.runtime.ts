@@ -1,2 +1,5 @@
-export { readConfigFileSnapshot } from "../config/io.js";
-export { replaceConfigFile } from "../config/mutate.js";
+export {
+  readConfigFileSnapshot,
+  readConfigFileSnapshotForWrite,
+  writeConfigFile,
+} from "../config/io.js";
