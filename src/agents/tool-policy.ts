@@ -74,12 +74,33 @@ export const TOOL_GROUPS: Record<string, string[]> = {
   ],
 };
 
+export type OwnerOnlyToolApprovalClass = "control_plane" | "exec_capable" | "interactive";
+
 const OWNER_ONLY_TOOL_NAME_FALLBACKS = new Set<string>([
   "whatsapp_login",
   "cron",
   "gateway",
   "nodes",
 ]);
+
+/**
+ * FORK: ported from upstream PR #59255 ("fix: share ACP owner-only approval
+ * classes"). Maps fallback owner-only tool names to their approval class so
+ * `src/acp/approval-classifier.ts` can route them correctly without a whole-
+ * file replacement of `tool-policy.ts`.
+ */
+const OWNER_ONLY_TOOL_APPROVAL_CLASS_FALLBACKS = new Map<string, OwnerOnlyToolApprovalClass>([
+  ["whatsapp_login", "interactive"],
+  ["cron", "control_plane"],
+  ["gateway", "control_plane"],
+  ["nodes", "exec_capable"],
+]);
+
+export function resolveOwnerOnlyToolApprovalClass(
+  name: string,
+): OwnerOnlyToolApprovalClass | undefined {
+  return OWNER_ONLY_TOOL_APPROVAL_CLASS_FALLBACKS.get(normalizeToolName(name));
+}
 
 const TOOL_PROFILES: Record<ToolProfileId, ToolProfilePolicy> = {
   minimal: {
@@ -147,6 +168,12 @@ export type AllowlistResolution = {
   policy: ToolPolicyLike | undefined;
   unknownAllowlist: string[];
   strippedAllowlist: boolean;
+  /**
+   * FORK: alias of `strippedAllowlist` introduced upstream in PR #58476
+   * (`analyzeAllowlistByToolType`). Kept as additional field so callers
+   * using either name see consistent results.
+   */
+  pluginOnlyAllowlist: boolean;
 };
 
 export function expandToolGroups(list?: string[]) {
@@ -250,11 +277,11 @@ export function stripPluginOnlyAllowlist(
   coreTools: Set<string>,
 ): AllowlistResolution {
   if (!policy?.allow || policy.allow.length === 0) {
-    return { policy, unknownAllowlist: [], strippedAllowlist: false };
+    return { policy, unknownAllowlist: [], strippedAllowlist: false, pluginOnlyAllowlist: false };
   }
   const normalized = normalizeToolList(policy.allow);
   if (normalized.length === 0) {
-    return { policy, unknownAllowlist: [], strippedAllowlist: false };
+    return { policy, unknownAllowlist: [], strippedAllowlist: false, pluginOnlyAllowlist: false };
   }
   const pluginIds = new Set(groups.byPlugin.keys());
   const pluginTools = new Set(groups.all);
@@ -287,8 +314,18 @@ export function stripPluginOnlyAllowlist(
     policy: strippedAllowlist ? { ...policy, allow: undefined } : policy,
     unknownAllowlist: Array.from(new Set(unknownAllowlist)),
     strippedAllowlist,
+    pluginOnlyAllowlist: strippedAllowlist,
   };
 }
+
+/**
+ * FORK: alias of {@link stripPluginOnlyAllowlist} introduced upstream in
+ * PR #58476 ("fix(policy): preserve restrictive tool allowlists"). The fork
+ * keeps the legacy stripping behaviour (see commit history); the new export
+ * exists so upstream-aligned consumers compile without porting the full
+ * semantic change.
+ */
+export const analyzeAllowlistByToolType = stripPluginOnlyAllowlist;
 
 export function resolveToolProfilePolicy(profile?: string): ToolProfilePolicy | undefined {
   if (!profile) {
