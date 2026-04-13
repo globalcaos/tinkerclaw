@@ -210,6 +210,7 @@ export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServe
   const readBody = opts.readBody ?? readNextcloudTalkWebhookBody;
   const isBackendAllowed = opts.isBackendAllowed;
   const shouldProcessMessage = opts.shouldProcessMessage;
+  const processMessage = opts.processMessage;
   const webhookAuthRateLimiter = createAuthRateLimiter({
     maxAttempts: WEBHOOK_RATE_LIMIT_DEFAULTS.maxRequests,
     windowMs: WEBHOOK_RATE_LIMIT_DEFAULTS.windowMs,
@@ -275,6 +276,16 @@ export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServe
       }
 
       const message = decoded.message;
+      if (processMessage) {
+        writeJsonResponse(res, 200);
+        try {
+          await processMessage(message);
+        } catch (err) {
+          onError?.(err instanceof Error ? err : new Error(formatError(err)));
+        }
+        return;
+      }
+
       if (shouldProcessMessage) {
         const shouldProcess = await shouldProcessMessage(message);
         if (!shouldProcess) {
@@ -392,38 +403,53 @@ export async function monitorNextcloudTalkProvider(
       const backendOrigin = normalizeOrigin(backend);
       return backendOrigin === expectedBackendOrigin;
     },
-    shouldProcessMessage: async (message) => {
-      const shouldProcess = await replayGuard.shouldProcessMessage({
+    processMessage: async (message) => {
+      const claim = await replayGuard.claimMessage({
         accountId: account.accountId,
         roomToken: message.roomToken,
         messageId: message.messageId,
       });
-      if (!shouldProcess) {
+      if (claim !== "claimed") {
         logger.warn(
           `[nextcloud-talk:${account.accountId}] replayed webhook ignored room=${message.roomToken} messageId=${message.messageId}`,
         );
-      }
-      return shouldProcess;
-    },
-    onMessage: async (message) => {
-      core.channel.activity.record({
-        channel: "nextcloud-talk",
-        accountId: account.accountId,
-        direction: "inbound",
-        at: message.timestamp,
-      });
-      if (opts.onMessage) {
-        await opts.onMessage(message);
         return;
       }
-      await handleNextcloudTalkInbound({
-        message,
-        account,
-        config: cfg,
-        runtime,
-        statusSink: opts.statusSink,
-      });
+
+      try {
+        core.channel.activity.record({
+          channel: "nextcloud-talk",
+          accountId: account.accountId,
+          direction: "inbound",
+          at: message.timestamp,
+        });
+        if (opts.onMessage) {
+          await opts.onMessage(message);
+        } else {
+          await handleNextcloudTalkInbound({
+            message,
+            account,
+            config: cfg,
+            runtime,
+            statusSink: opts.statusSink,
+          });
+        }
+        await replayGuard.commitMessage({
+          accountId: account.accountId,
+          roomToken: message.roomToken,
+          messageId: message.messageId,
+        });
+      } catch (error) {
+        replayGuard.releaseMessage({
+          accountId: account.accountId,
+          roomToken: message.roomToken,
+          messageId: message.messageId,
+          error,
+        });
+        throw error;
+      }
     },
+    onMessage: async () => {},
     onError: (error) => {
       logger.error(`[nextcloud-talk:${account.accountId}] webhook error: ${error.message}`);
     },
