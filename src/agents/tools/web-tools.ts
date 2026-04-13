@@ -9,5 +9,5 @@
  *
  * Wired in by: direct import from tool registration code (e.g. agent tool setup)
  */
-export { createWebFetchTool, extractReadableContent, fetchFirecrawlContent } from "./web-fetch.js";
+export { createWebFetchTool, extractReadableContent } from "./web-fetch.js";
 export { createWebSearchTool } from "./web-search.js";
