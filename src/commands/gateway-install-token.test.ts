@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.js";
 import { resolveGatewayInstallToken } from "./gateway-install-token.js";
 
 const readConfigFileSnapshotMock = vi.hoisted(() => vi.fn());
@@ -28,7 +28,7 @@ const resolveSecretRefValuesMock = vi.hoisted(() => vi.fn());
 const secretRefKeyMock = vi.hoisted(() => vi.fn(() => "env:default:OPENCLAW_GATEWAY_TOKEN"));
 const randomTokenMock = vi.hoisted(() => vi.fn(() => "generated-token"));
 
-vi.mock("../config/config.js", () => ({
+vi.mock("./gateway-install-token.persist.runtime.js", () => ({
   readConfigFileSnapshot: readConfigFileSnapshotMock,
   replaceConfigFile: replaceConfigFileMock,
 }));
@@ -54,7 +54,7 @@ vi.mock("../secrets/resolve.js", () => ({
   resolveSecretRefValues: resolveSecretRefValuesMock,
 }));
 
-vi.mock("./onboard-helpers.js", () => ({
+vi.mock("./random-token.js", () => ({
   randomToken: randomTokenMock,
 }));
 

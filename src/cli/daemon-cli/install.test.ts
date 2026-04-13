@@ -68,9 +68,12 @@ vi.mock("../../bootstrap/node-startup-env.js", () => ({
 vi.mock("../../config/config.js", () => ({
   loadConfig: loadConfigMock,
   readBestEffortConfig: loadConfigMock,
+  resolveGatewayPort: resolveGatewayPortMock,
+}));
+
+vi.mock("../../commands/gateway-install-token.persist.runtime.js", () => ({
   readConfigFileSnapshot: readConfigFileSnapshotMock,
   replaceConfigFile: replaceConfigFileMock,
-  resolveGatewayPort: resolveGatewayPortMock,
 }));
 
 vi.mock("../../config/paths.js", () => ({
@@ -90,7 +93,7 @@ vi.mock("../../secrets/resolve.js", () => ({
   resolveSecretRefValues: resolveSecretRefValuesMock,
 }));
 
-vi.mock("../../commands/onboard-helpers.js", () => ({
+vi.mock("../../commands/random-token.js", () => ({
   randomToken: randomTokenMock,
 }));
 
