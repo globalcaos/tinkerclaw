@@ -1498,7 +1498,11 @@ export const registerTelegramHandlers = ({
 
         if (modelCallback.type === "providers" || modelCallback.type === "back") {
           if (providers.length === 0) {
-            await editMessageWithButtons("No providers available.", []);
+            try {
+              await editMessageWithButtons("No providers available.", []);
+            } catch (err) {
+              throw new TelegramRetryableCallbackError(err);
+            }
             return;
           }
           const providerInfos: ProviderInfo[] = providers.map((p) => ({
@@ -1506,7 +1510,11 @@ export const registerTelegramHandlers = ({
             count: byProvider.get(p)?.size ?? 0,
           }));
           const buttons = buildProviderKeyboard(providerInfos);
-          await editMessageWithButtons("Select a provider:", buttons);
+          try {
+            await editMessageWithButtons("Select a provider:", buttons);
+          } catch (err) {
+            throw new TelegramRetryableCallbackError(err);
+          }
           return;
         }
 
@@ -1520,10 +1528,14 @@ export const registerTelegramHandlers = ({
               count: byProvider.get(p)?.size ?? 0,
             }));
             const buttons = buildProviderKeyboard(providerInfos);
-            await editMessageWithButtons(
-              `Unknown provider: ${provider}\n\nSelect a provider:`,
-              buttons,
-            );
+            try {
+              await editMessageWithButtons(
+                `Unknown provider: ${provider}\n\nSelect a provider:`,
+                buttons,
+              );
+            } catch (err) {
+              throw new TelegramRetryableCallbackError(err);
+            }
             return;
           }
           const models = [...modelSet].toSorted();
@@ -1549,7 +1561,11 @@ export const registerTelegramHandlers = ({
             agentDir: resolveAgentDir(cfg, sessionState.agentId),
             sessionEntry: sessionState.sessionEntry,
           });
-          await editMessageWithButtons(text, buttons);
+          try {
+            await editMessageWithButtons(text, buttons);
+          } catch (err) {
+            throw new TelegramRetryableCallbackError(err);
+          }
           return;
         }
 
@@ -1565,19 +1581,27 @@ export const registerTelegramHandlers = ({
               count: byProvider.get(p)?.size ?? 0,
             }));
             const buttons = buildProviderKeyboard(providerInfos);
-            await editMessageWithButtons(
-              `Could not resolve model "${selection.model}".\n\nSelect a provider:`,
-              buttons,
-            );
+            try {
+              await editMessageWithButtons(
+                `Could not resolve model "${selection.model}".\n\nSelect a provider:`,
+                buttons,
+              );
+            } catch (err) {
+              throw new TelegramRetryableCallbackError(err);
+            }
             return;
           }
 
           const modelSet = byProvider.get(selection.provider);
           if (!modelSet?.has(selection.model)) {
-            await editMessageWithButtons(
-              `❌ Model "${selection.provider}/${selection.model}" is not allowed.`,
-              [],
-            );
+            try {
+              await editMessageWithButtons(
+                `❌ Model "${selection.provider}/${selection.model}" is not allowed.`,
+                [],
+              );
+            } catch (err) {
+              throw new TelegramRetryableCallbackError(err);
+            }
             return;
           }
 
