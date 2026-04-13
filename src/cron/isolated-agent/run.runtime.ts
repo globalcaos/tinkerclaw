@@ -17,9 +17,7 @@ export { setSessionRuntimeModel } from "../../config/sessions/types.js";
 export { logWarn } from "../../logger.js";
 export { normalizeAgentId } from "../../routing/session-key.js";
 export {
-  buildSafeExternalPrompt,
-  detectSuspiciousPatterns,
   isExternalHookSession,
   mapHookExternalContentSource,
   resolveHookExternalContentSource,
-} from "../../security/external-content.js";
+} from "../../security/external-content-source.js";
