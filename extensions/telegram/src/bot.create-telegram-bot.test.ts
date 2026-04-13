@@ -9,6 +9,7 @@ const {
   botCtorSpy,
   commandSpy,
   dispatchReplyWithBufferedBlockDispatcher,
+  enqueueSystemEventSpy,
   getLoadWebMediaMock,
   getChatSpy,
   getLoadConfigMock,
@@ -2803,5 +2804,59 @@ describe("createTelegramBot", () => {
 
     expect(loadConfigCallsAfterFailure).toBe(loadConfigCallsBeforeRetry + 1);
     expect(loadConfig.mock.calls.length).toBeGreaterThan(loadConfigCallsAfterFailure);
+  });
+
+  it("retries reaction updates after a bubbled enqueue failure", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: { dmPolicy: "open", reactionNotifications: "all" },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const reactionHandler = getOnHandler("message_reaction");
+    const middlewares = middlewareUseSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (fn): fn is (ctx: Record<string, unknown>, next: () => Promise<void>) => Promise<void> =>
+          typeof fn === "function",
+      );
+    const runMiddlewareChain = async (ctx: Record<string, unknown>) => {
+      let idx = -1;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= idx) {
+          throw new Error("middleware dispatch called multiple times");
+        }
+        idx = i;
+        const fn = middlewares[i];
+        if (!fn) {
+          await reactionHandler(ctx);
+          return;
+        }
+        await fn(ctx, async () => dispatch(i + 1));
+      };
+      await dispatch(0);
+    };
+
+    const ctx = {
+      update: { update_id: 555 },
+      messageReaction: {
+        chat: { id: 1234, type: "private" },
+        message_id: 42,
+        user: { id: 9, first_name: "Ada", username: "ada_bot" },
+        date: 1736380800,
+        old_reaction: [],
+        new_reaction: [{ type: "emoji", emoji: "\u{1F44D}" }],
+      },
+    };
+
+    enqueueSystemEventSpy.mockImplementationOnce(() => {
+      throw new Error("queue boom");
+    });
+    await expect(runMiddlewareChain(ctx)).rejects.toThrow("queue boom");
+    await runMiddlewareChain(ctx);
+
+    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(2);
+    expect(enqueueSystemEventSpy.mock.calls.at(-1)?.[0]).toContain("Telegram reaction added:");
   });
 });
