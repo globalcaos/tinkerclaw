@@ -156,7 +156,7 @@ describe("Config-to-code integrity", () => {
   it("selfChatMode code path exists in WhatsApp plugin", () => {
     // Our config has channels.whatsapp.selfChatMode: true
     // Check the WhatsApp plugin still references it
-    const pluginDir = resolve(srcRoot, "../extensions/whatsapp");
+    const pluginDir = resolve(srcRoot, "../extensions/tinkerclaw-whatsapp");
     const exists = existsSync(pluginDir);
     expect(exists).toBe(true);
   });

@@ -23,7 +23,9 @@ const AGREEMENT_PATTERNS = [
 
 /** Cosine similarity between two vectors. Returns 0 if either is empty/zero-length. */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
+  if (a.length !== b.length || a.length === 0) {
+    return 0;
+  }
   let dot = 0;
   let magA = 0;
   let magB = 0;
@@ -93,7 +95,9 @@ export class ConversationLifecycleManager {
   getStalenessScore(chatId: string): number {
     const state = this.getState(chatId);
     const embeddings = state.recentEmbeddings;
-    if (embeddings.length < 2) return 0;
+    if (embeddings.length < 2) {
+      return 0;
+    }
 
     let totalSim = 0;
     let pairs = 0;
@@ -107,14 +111,18 @@ export class ConversationLifecycleManager {
   /** Check if the conversation is stale (high similarity + enough turns). */
   isStale(chatId: string): boolean {
     const state = this.getState(chatId);
-    if (state.recentEmbeddings.length < 3) return false;
+    if (state.recentEmbeddings.length < 3) {
+      return false;
+    }
     return this.getStalenessScore(chatId) > this.config.stalenessThreshold;
   }
 
   /** Detect agreement loops in recent texts (no new information being added). */
   detectAgreementLoop(chatId: string): boolean {
     const state = this.getState(chatId);
-    if (state.recentTexts.length < 3) return false;
+    if (state.recentTexts.length < 3) {
+      return false;
+    }
 
     // Check last 3 messages: if majority match agreement patterns, it's a loop.
     const lastN = state.recentTexts.slice(-3);

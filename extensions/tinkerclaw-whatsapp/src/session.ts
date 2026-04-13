@@ -177,9 +177,8 @@ export async function createWaSocket(
 
   // FORK: add waitForConnection method expected by upstream channel startup
   // Wraps the event-based connection waiting as a method on the socket.
-  (sock as unknown as Record<string, unknown>).waitForConnection = (
-    timeoutMs?: number,
-  ) => waitForWaConnection(sock).then(() => true);
+  (sock as unknown as Record<string, unknown>).waitForConnection = (_timeoutMs?: number) =>
+    waitForWaConnection(sock).then(() => true);
 
   return sock;
 }

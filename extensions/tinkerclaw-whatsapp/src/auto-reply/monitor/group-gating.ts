@@ -1,21 +1,14 @@
-import { resolveMentionGating } from "openclaw/plugin-sdk/channel-inbound";
 import { hasControlCommand } from "openclaw/plugin-sdk/command-detection";
 import type { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { recordPendingHistoryEntryIfEnabled } from "openclaw/plugin-sdk/reply-history";
 import { parseActivationCommand } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
-import {
-  getPrimaryIdentityId,
-  getReplyContext,
-  getSelfIdentity,
-  getSenderIdentity,
-  identitiesOverlap,
-} from "../../identity.js";
+import { getPrimaryIdentityId, getSelfIdentity, getSenderIdentity } from "../../identity.js";
 import type { MentionConfig } from "../mentions.js";
 import { buildMentionConfig, debugMention, resolveOwnerList } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { stripMentionsForCommand } from "./commands.js";
-import { resolveGroupActivationFor, resolveGroupPolicyFor } from "./group-activation.js";
+import { resolveGroupPolicyFor } from "./group-activation.js";
 import { noteGroupMember } from "./group-members.js";
 
 export type GroupHistoryEntry = {

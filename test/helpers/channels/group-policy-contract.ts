@@ -1,4 +1,4 @@
-export { resolveWhatsAppRuntimeGroupPolicy } from "../../../extensions/whatsapp/test-api.js";
+export { resolveWhatsAppRuntimeGroupPolicy } from "../../../extensions/tinkerclaw-whatsapp/test-api.js";
 export {
   evaluateZaloGroupAccess,
   resolveZaloRuntimeGroupPolicy,

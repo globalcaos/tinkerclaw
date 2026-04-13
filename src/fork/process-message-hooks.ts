@@ -4,7 +4,7 @@
  * - Offline recovery annotation
  * - Thinking reaction lifecycle
  */
-import { createThinkingReaction } from "../../extensions/whatsapp/src/auto-reply/monitor/thinking-reaction.js";
+import { createThinkingReaction } from "../../extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/thinking-reaction.js";
 
 // ---------------------------------------------------------------------------
 // Hook: Offline recovery annotation

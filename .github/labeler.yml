@@ -107,7 +107,7 @@
 "channel: whatsapp-web":
   - changed-files:
       - any-glob-to-any-file:
-          - "extensions/whatsapp/**"
+          - "extensions/tinkerclaw-whatsapp/**"
           - "docs/channels/whatsapp.md"
 "channel: zalo":
   - changed-files:
