@@ -4,6 +4,8 @@ Docs: https://docs.openclaw.ai
 
 ## Unreleased
 
+- fix(ui): replace marked.js with markdown-it to fix ReDoS UI freeze (#46707) thanks @zhangfnf
+
 ### Changes
 
 - Telegram/forum topics: surface human topic names in agent context, prompt metadata, and plugin hook metadata by learning names from Telegram forum service messages. (#65973) Thanks @ptahdunbar.
