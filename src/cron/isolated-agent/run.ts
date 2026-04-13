@@ -19,7 +19,6 @@ import {
 } from "./helpers.js";
 import { resolveCronModelSelection } from "./model-selection.js";
 import { buildCronAgentDefaultsConfig } from "./run-config.js";
-import { executeCronRun, type CronExecutionResult } from "./run-executor.js";
 import {
   createPersistCronSessionEntry,
   markCronSessionPreRun,
@@ -61,6 +60,7 @@ import { resolveCronSkillsSnapshot } from "./skills-snapshot.js";
 let sessionStoreRuntimePromise:
   | Promise<typeof import("../../config/sessions/store.runtime.js")>
   | undefined;
+let cronExecutorRuntimePromise: Promise<typeof import("./run-executor.runtime.js")> | undefined;
 let cronAuthProfileRuntimePromise:
   | Promise<typeof import("./run-auth-profile.runtime.js")>
   | undefined;
@@ -72,6 +72,11 @@ let cronModelCatalogRuntimePromise:
 async function loadSessionStoreRuntime() {
   sessionStoreRuntimePromise ??= import("../../config/sessions/store.runtime.js");
   return await sessionStoreRuntimePromise;
+}
+
+async function loadCronExecutorRuntime() {
+  cronExecutorRuntimePromise ??= import("./run-executor.runtime.js");
+  return await cronExecutorRuntimePromise;
 }
 
 async function loadCronAuthProfileRuntime() {
@@ -102,6 +107,8 @@ function resolveNonNegativeNumber(value: number | undefined): number | undefined
 
 export type { RunCronAgentTurnResult } from "./run.types.js";
 
+type CronExecutionRuntime = typeof import("./run-executor.runtime.js");
+type CronExecutionResult = Awaited<ReturnType<CronExecutionRuntime["executeCronRun"]>>;
 type ResolvedCronDeliveryTarget = Awaited<ReturnType<typeof resolveDeliveryTarget>>;
 type CronModelCatalogRuntime = typeof import("./run-model-catalog.runtime.js");
 
@@ -716,6 +723,7 @@ export async function runCronIsolatedAgentTurn(params: {
   }
 
   try {
+    const { executeCronRun } = await loadCronExecutorRuntime();
     const execution = await executeCronRun({
       cfg: params.cfg,
       cfgWithAgentDefaults: prepared.context.cfgWithAgentDefaults,
