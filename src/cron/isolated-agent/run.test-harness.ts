@@ -97,7 +97,6 @@ vi.mock("./run.runtime.js", () => ({
   resolveAgentModelFallbacksOverride: resolveAgentModelFallbacksOverrideMock,
   resolveAgentWorkspaceDir: vi.fn().mockReturnValue("/tmp/workspace"),
   resolveDefaultAgentId: vi.fn().mockReturnValue("default"),
-  resolveAgentSkillsFilter: resolveAgentSkillsFilterMock,
   resolveCronStyleNow: resolveCronStyleNowMock,
   DEFAULT_CONTEXT_TOKENS: 128000,
   isCliProvider: isCliProviderMock,
@@ -140,6 +139,7 @@ vi.mock("./skills-snapshot.runtime.js", () => ({
   canExecRequestNode: vi.fn(() => false),
   getRemoteSkillEligibility: getRemoteSkillEligibilityMock,
   getSkillsSnapshotVersion: getSkillsSnapshotVersionMock,
+  resolveAgentSkillsFilter: resolveAgentSkillsFilterMock,
 }));
 
 vi.mock("./run-model-selection.runtime.js", () => ({
