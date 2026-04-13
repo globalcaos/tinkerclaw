@@ -68,8 +68,12 @@ export function resolveBudgetMode(ctx: BudgetContext, config?: Partial<BudgetCon
     return "burn";
   }
 
-  if (ctx.usagePercent > 0.85) return "conservative";
-  if (ctx.usagePercent > 0.6) return "moderate";
+  if (ctx.usagePercent > 0.85) {
+    return "conservative";
+  }
+  if (ctx.usagePercent > 0.6) {
+    return "moderate";
+  }
   return "aggressive";
 }
 

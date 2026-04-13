@@ -45,7 +45,9 @@ describe("CongestionController", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
 
     // Mia sends 5 messages, Luna sends 1
-    for (let i = 0; i < 5; i++) ctrl.recordMessage("chat1", "mia");
+    for (let i = 0; i < 5; i++) {
+      ctrl.recordMessage("chat1", "mia");
+    }
     ctrl.recordMessage("chat1", "luna");
 
     // Mia: 5 messages, fair share = 6/2 = 3, 5 > 3 * 1.5 = 4.5 → backpressure 2x

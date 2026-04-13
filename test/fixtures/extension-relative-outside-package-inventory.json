@@ -168,7 +168,7 @@
     "reason": "re-exports plugin-sdk via relative path; use openclaw/plugin-sdk/<subpath>"
   },
   {
-    "file": "extensions/whatsapp/src/runtime-api.ts",
+    "file": "extensions/tinkerclaw-whatsapp/src/runtime-api.ts",
     "line": 19,
     "kind": "export",
     "specifier": "../../../src/plugin-sdk/whatsapp-core.js",
@@ -176,7 +176,7 @@
     "reason": "re-exports plugin-sdk via relative path; use openclaw/plugin-sdk/<subpath>"
   },
   {
-    "file": "extensions/whatsapp/src/runtime-api.ts",
+    "file": "extensions/tinkerclaw-whatsapp/src/runtime-api.ts",
     "line": 34,
     "kind": "export",
     "specifier": "../../../src/plugin-sdk/whatsapp-shared.js",

@@ -5,7 +5,6 @@ import {
   type Contact,
   type WAMessage,
   jidNormalizedUser,
-  toNumber,
 } from "@whiskeysockets/baileys";
 
 export interface BaileysStore {
@@ -17,7 +16,7 @@ export interface BaileysStore {
   readFromFile: (path: string) => void;
 }
 
-export function makeInMemoryStore(config: { logger?: any }): BaileysStore {
+export function makeInMemoryStore(_config: { logger?: unknown }): BaileysStore {
   const chats: BaileysStore["chats"] = {};
   const contacts: BaileysStore["contacts"] = {};
   const messages: BaileysStore["messages"] = {};
@@ -42,7 +41,9 @@ export function makeInMemoryStore(config: { logger?: any }): BaileysStore {
           const msgId = m.key.id;
           if (jid && msgId) {
             const normJid = jidNormalizedUser(jid);
-            if (!messages[normJid]) messages[normJid] = {};
+            if (!messages[normJid]) {
+              messages[normJid] = {};
+            }
             messages[normJid][msgId] = m;
           }
         }
@@ -94,7 +95,9 @@ export function makeInMemoryStore(config: { logger?: any }): BaileysStore {
           const msgId = m.key.id;
           if (jid && msgId) {
             const normJid = jidNormalizedUser(jid);
-            if (!messages[normJid]) messages[normJid] = {};
+            if (!messages[normJid]) {
+              messages[normJid] = {};
+            }
             messages[normJid][msgId] = m;
 
             // Update unread count if notify?

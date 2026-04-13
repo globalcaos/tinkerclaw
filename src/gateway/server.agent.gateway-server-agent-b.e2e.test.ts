@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
-import { whatsappPlugin } from "../../extensions/whatsapp/src/channel.js";
+import { whatsappPlugin } from "../../extensions/tinkerclaw-whatsapp/src/channel.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import { emitAgentEvent, registerAgentRunContext } from "../infra/agent-events.js";
 import type { PluginRegistry } from "../plugins/registry.js";

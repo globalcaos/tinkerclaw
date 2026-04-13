@@ -23,7 +23,9 @@ export { createWmClient, connectWmClient, disconnectWmClient, createBaileysAdapt
  */
 function hasStoredSession(storePath: string): boolean {
   const resolved = resolveUserPath(storePath);
-  if (!existsSync(resolved)) return false;
+  if (!existsSync(resolved)) {
+    return false;
+  }
   const stat = statSync(resolved);
   // Empty schema is ~4KB. A linked session is much larger.
   return stat.size > 8192;

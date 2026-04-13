@@ -87,7 +87,9 @@ export class CongestionController {
 
   private pruneWindow(chatId: string): void {
     const records = this.recentMessages.get(chatId);
-    if (!records) return;
+    if (!records) {
+      return;
+    }
     const cutoff = Date.now() - this.config.windowMs;
     const pruned = records.filter((m) => m.timestamp > cutoff);
     if (pruned.length === 0) {

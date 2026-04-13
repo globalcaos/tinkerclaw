@@ -1,10 +1,5 @@
 import { buildDmGroupAccountAllowlistAdapter } from "openclaw/plugin-sdk/allowlist-config-edit";
-import { resolveReactionMessageId } from "openclaw/plugin-sdk/channel-actions";
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
-import {
-  createAsyncComputedAccountStatusAdapter,
-  createDefaultChannelRuntimeState,
-} from "openclaw/plugin-sdk/status-helpers";
 // FORK: whatsmeow login — side-effect import forces bundler inclusion
 import "./login-qr-wm.js";
 // WhatsApp-specific imports from local extension code (moved from src/web/ and src/channels/plugins/)
@@ -15,7 +10,6 @@ import {
 } from "./accounts.js";
 import { handleWhatsAppAction } from "./action-runtime.js";
 import { createWhatsAppLoginTool } from "./agent-tools-login.js";
-import { whatsappApprovalAuth } from "./approval-auth.js";
 import type { WebChannelStatus } from "./auto-reply/types.js";
 import {
   listWhatsAppDirectoryGroupsFromConfig,
@@ -52,7 +46,6 @@ import {
   createWhatsAppPluginBase,
   loadWhatsAppChannelRuntime,
   whatsappSetupWizardProxy,
-  WHATSAPP_CHANNEL,
 } from "./shared.js";
 import { collectWhatsAppStatusIssues } from "./status-issues.js";
 

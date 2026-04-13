@@ -1,5 +1,5 @@
 {
-  "id": "whatsapp",
+  "id": "tinkerclaw-whatsapp",
   "channels": ["whatsapp"],
   "configSchema": {
     "type": "object",
