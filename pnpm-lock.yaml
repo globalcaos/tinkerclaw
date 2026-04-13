@@ -324,6 +324,9 @@ importers:
       '@matrix-org/matrix-sdk-crypto-nodejs':
         specifier: ^0.4.0
         version: 0.4.0
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
       openshell:
         specifier: 0.1.0
         version: 0.1.0
