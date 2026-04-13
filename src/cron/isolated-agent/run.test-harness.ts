@@ -101,15 +101,8 @@ vi.mock("./run.runtime.js", () => ({
   lookupContextTokens: lookupContextTokensMock,
   resolveCronStyleNow: resolveCronStyleNowMock,
   DEFAULT_CONTEXT_TOKENS: 128000,
-  DEFAULT_MODEL: "gpt-4",
-  DEFAULT_PROVIDER: "openai",
   loadModelCatalog: loadModelCatalogMock,
-  getModelRefStatus: getModelRefStatusMock,
   isCliProvider: isCliProviderMock,
-  normalizeModelSelection: normalizeModelSelectionForTest,
-  resolveAllowedModelRef: resolveAllowedModelRefMock,
-  resolveConfiguredModelRef: resolveConfiguredModelRefMock,
-  resolveHooksGmailModel: resolveHooksGmailModelMock,
   resolveThinkingDefault: resolveThinkingDefaultMock,
   buildWorkspaceSkillSnapshot: buildWorkspaceSkillSnapshotMock,
   getSkillsSnapshotVersion: getSkillsSnapshotVersionMock,
@@ -133,6 +126,17 @@ vi.mock("./run.runtime.js", () => ({
   getRemoteSkillEligibility: getRemoteSkillEligibilityMock,
 }));
 
+vi.mock("./run-model-selection.runtime.js", () => ({
+  DEFAULT_MODEL: "gpt-4",
+  DEFAULT_PROVIDER: "openai",
+  loadModelCatalog: loadModelCatalogMock,
+  getModelRefStatus: getModelRefStatusMock,
+  normalizeModelSelection: normalizeModelSelectionForTest,
+  resolveAllowedModelRef: resolveAllowedModelRefMock,
+  resolveConfiguredModelRef: resolveConfiguredModelRefMock,
+  resolveHooksGmailModel: resolveHooksGmailModelMock,
+}));
+
 vi.mock("./run-execution.runtime.js", () => ({
   resolveEffectiveModelFallbacks: resolveEffectiveModelFallbacksMock,
   resolveBootstrapWarningSignaturesSeen: resolveBootstrapWarningSignaturesSeenMock,
@@ -154,6 +158,11 @@ vi.mock("./run-execution.runtime.js", () => ({
 
 vi.mock("./run-auth-profile.runtime.js", () => ({
   resolveSessionAuthProfileOverride: resolveSessionAuthProfileOverrideMock,
+}));
+
+vi.mock("./run-subagent-registry.runtime.js", () => ({
+  countActiveDescendantRuns: countActiveDescendantRunsMock,
+  listDescendantRunsForRequester: listDescendantRunsForRequesterMock,
 }));
 
 vi.mock("../../agents/cli-runner.runtime.js", () => ({

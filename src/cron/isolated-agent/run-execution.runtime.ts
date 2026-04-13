@@ -6,10 +6,6 @@ export { LiveSessionModelSwitchError } from "../../agents/live-model-switch.js";
 export { runWithModelFallback } from "../../agents/model-fallback.js";
 export { isCliProvider } from "../../agents/model-selection.js";
 export { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
-export {
-  countActiveDescendantRuns,
-  listDescendantRunsForRequester,
-} from "../../agents/subagent-registry.js";
 export { normalizeVerboseLevel } from "../../auto-reply/thinking.js";
 export { resolveSessionTranscriptPath } from "../../config/sessions/paths.js";
 export { registerAgentRunContext } from "../../infra/agent-events.js";

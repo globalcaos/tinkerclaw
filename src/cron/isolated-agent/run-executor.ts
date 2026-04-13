@@ -5,10 +5,8 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CronJob } from "../types.js";
 import { resolveCronPayloadOutcome } from "./helpers.js";
 import {
-  countActiveDescendantRuns,
   getCliSessionId,
   isCliProvider,
-  listDescendantRunsForRequester,
   LiveSessionModelSwitchError,
   logWarn,
   normalizeVerboseLevel,
@@ -32,6 +30,14 @@ import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 
 type AgentTurnPayload = Extract<CronJob["payload"], { kind: "agentTurn" }> | null;
 type CronPromptRunResult = Awaited<ReturnType<typeof runCliAgent>>;
+type CronSubagentRegistryRuntime = typeof import("./run-subagent-registry.runtime.js");
+
+let cronSubagentRegistryRuntimePromise: Promise<CronSubagentRegistryRuntime> | undefined;
+
+async function loadCronSubagentRegistryRuntime() {
+  cronSubagentRegistryRuntimePromise ??= import("./run-subagent-registry.runtime.js");
+  return await cronSubagentRegistryRuntimePromise;
+}
 
 export type CronExecutionResult = {
   runResult: CronPromptRunResult;
@@ -321,15 +327,22 @@ export async function executeCronRun(params: {
       !runResult.didSendViaMessagingTool &&
       !interimPayloadHasStructuredContent &&
       !interimPayloads.some((payload) => payload?.isError === true) &&
-      !listDescendantRunsForRequester(params.agentSessionKey).some((entry) => {
+      isLikelyInterimCronMessage(interimText);
+
+    let hasFreshDescendants = false;
+    let hasActiveDescendants = false;
+    if (shouldRetryInterimAck) {
+      const { countActiveDescendantRuns, listDescendantRunsForRequester } =
+        await loadCronSubagentRegistryRuntime();
+      hasFreshDescendants = listDescendantRunsForRequester(params.agentSessionKey).some((entry) => {
         const descendantStartedAt =
           typeof entry.startedAt === "number" ? entry.startedAt : entry.createdAt;
         return typeof descendantStartedAt === "number" && descendantStartedAt >= runStartedAt;
-      }) &&
-      countActiveDescendantRuns(params.agentSessionKey) === 0 &&
-      isLikelyInterimCronMessage(interimText);
+      });
+      hasActiveDescendants = countActiveDescendantRuns(params.agentSessionKey) > 0;
+    }
 
-    if (shouldRetryInterimAck) {
+    if (shouldRetryInterimAck && !hasFreshDescendants && !hasActiveDescendants) {
       const continuationPrompt = [
         "Your previous response was only an acknowledgement and did not complete this cron task.",
         "Complete the original task now.",
