@@ -5,7 +5,6 @@ export {
   resolveDefaultAgentId,
   type ResolvedAgentConfig,
 } from "../../agents/agent-scope-config.js";
-export { resolveAgentSkillsFilter } from "../../agents/agent-scope.js";
 export { resolveCronStyleNow } from "../../agents/current-time.js";
 export { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 export { isCliProvider } from "../../agents/model-selection-cli.js";
