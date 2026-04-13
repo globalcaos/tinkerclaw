@@ -105,4 +105,34 @@ describe("collectChannelLegacyConfigRules", () => {
       pluginIds: ["custom-chat"],
     });
   });
+
+  it("scopes channel legacy scans to touched channels during dry-run validation", () => {
+    loadBundledChannelDoctorContractApiMock.mockImplementation((channelId: string) => ({
+      legacyConfigRules: [
+        {
+          path: ["channels", channelId],
+          message: `legacy ${channelId} rule`,
+        },
+      ],
+    }));
+
+    const rules = collectChannelLegacyConfigRules(
+      {
+        channels: {
+          discord: {},
+          telegram: {},
+        },
+      },
+      [["channels", "discord", "token"]],
+    );
+
+    expect(rules).toEqual([
+      {
+        path: ["channels", "discord"],
+        message: "legacy discord rule",
+      },
+    ]);
+    expect(loadBundledChannelDoctorContractApiMock).toHaveBeenCalledTimes(1);
+    expect(loadBundledChannelDoctorContractApiMock).toHaveBeenCalledWith("discord");
+  });
 });
