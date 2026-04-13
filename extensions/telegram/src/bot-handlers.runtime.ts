@@ -1384,10 +1384,7 @@ export const registerTelegramHandlers = ({
           logVerbose(
             `telegram: failed to resolve approval callback ${approvalCallback.approvalId}: ${errStr}`,
           );
-          await replyToCallbackChat(
-            "❌ Failed to submit approval. Please try again or contact an admin.",
-          );
-          return;
+          throw new TelegramRetryableCallbackError(resolveErr);
         }
         try {
           await clearCallbackButtons();

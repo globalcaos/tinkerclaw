@@ -26,6 +26,7 @@ const {
   middlewareUseSpy,
   onSpy,
   replySpy,
+  resolveExecApprovalSpy,
   sendAnimationSpy,
   sendChatActionSpy,
   sendMessageSpy,
@@ -3104,6 +3105,72 @@ describe("createTelegramBot", () => {
     expect(editMessageReplyMarkupSpy).toHaveBeenCalledTimes(1);
     expect(sendMessageSpy).toHaveBeenCalledTimes(1);
     expect(sendMessageSpy.mock.calls[0]?.[1]).toContain("plugin bind approval");
+  });
+
+  it("retries exec approval callbacks after a bubbled resolution failure", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          allowFrom: ["*"],
+          execApprovals: {
+            enabled: true,
+            approvers: ["9"],
+            target: "dm",
+          },
+        },
+      },
+    });
+    createTelegramBot({ token: "tok" });
+    const callbackHandler = getOnHandler("callback_query");
+    const middlewares = middlewareUseSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (fn): fn is (ctx: Record<string, unknown>, next: () => Promise<void>) => Promise<void> =>
+          typeof fn === "function",
+      );
+    const runMiddlewareChain = async (ctx: Record<string, unknown>) => {
+      let idx = -1;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= idx) {
+          throw new Error("middleware dispatch called multiple times");
+        }
+        idx = i;
+        const fn = middlewares[i];
+        if (!fn) {
+          await callbackHandler(ctx);
+          return;
+        }
+        await fn(ctx, async () => dispatch(i + 1));
+      };
+      await dispatch(0);
+    };
+
+    resolveExecApprovalSpy.mockRejectedValueOnce(new Error("approval boom"));
+
+    const ctx = {
+      update: { update_id: 8895 },
+      callbackQuery: {
+        id: "cbq-approval-retry-1",
+        data: "/approve 138e9b8c allow-once",
+        from: { id: 9, first_name: "Ada", username: "ada_bot" },
+        message: {
+          chat: { id: 1234, type: "private" },
+          date: 1736380800,
+          message_id: 231,
+          text: "Approval required.",
+        },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    };
+
+    await expect(runMiddlewareChain(ctx)).rejects.toThrow("approval boom");
+    await runMiddlewareChain(ctx);
+
+    expect(resolveExecApprovalSpy).toHaveBeenCalledTimes(2);
+    expect(editMessageReplyMarkupSpy).toHaveBeenCalledTimes(1);
+    expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
   it("retries model provider callbacks after a bubbled edit failure", async () => {
