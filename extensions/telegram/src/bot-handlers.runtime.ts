@@ -899,6 +899,7 @@ export const registerTelegramHandlers = ({
       }
     } catch (err) {
       runtime.error?.(danger(`telegram reaction handler failed: ${String(err)}`));
+      throw err;
     }
   });
   const processInboundMessage = async (params: {
