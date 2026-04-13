@@ -1434,7 +1434,7 @@ export const registerTelegramHandlers = ({
         } catch (editErr) {
           const errStr = String(editErr);
           if (!errStr.includes("message is not modified")) {
-            throw editErr;
+            throw new TelegramRetryableCallbackError(editErr);
           }
         }
         return;
