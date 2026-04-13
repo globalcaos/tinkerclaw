@@ -105,6 +105,41 @@ describe("createNextcloudTalkWebhookServer replay handling", () => {
     expect(shouldProcessMessage).toHaveBeenCalledTimes(2);
     expect(onMessage).toHaveBeenCalledTimes(1);
   });
+
+  it("allows a retry after processMessage fails before replay commit", async () => {
+    let attempts = 0;
+    const onError = vi.fn();
+    const processMessage = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("transient nextcloud failure");
+      }
+    });
+    const harness = await startWebhookServer({
+      path: "/nextcloud-replay-process",
+      processMessage,
+      onMessage: vi.fn(),
+      onError,
+    });
+
+    const { body, headers } = createSignedCreateMessageRequest();
+
+    const first = await fetch(harness.webhookUrl, {
+      method: "POST",
+      headers,
+      body,
+    });
+    const second = await fetch(harness.webhookUrl, {
+      method: "POST",
+      headers,
+      body,
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(processMessage).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createNextcloudTalkWebhookServer payload validation", () => {
