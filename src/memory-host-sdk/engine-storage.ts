@@ -5,6 +5,8 @@ export {
   buildMultimodalChunkForIndexing,
   chunkMarkdown,
   cosineSimilarity,
+  detectGranularity,
+  detectTopicCluster,
   ensureDir,
   hashText,
   listMemoryFiles,
