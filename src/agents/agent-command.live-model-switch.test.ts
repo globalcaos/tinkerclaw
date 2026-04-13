@@ -30,7 +30,7 @@ vi.mock("./command/attempt-execution.runtime.js", () => ({
   sessionFileHasContent: vi.fn(async () => false),
 }));
 
-vi.mock("./command/delivery.js", () => ({
+vi.mock("./command/delivery.runtime.js", () => ({
   deliverAgentCommandResult: (...args: unknown[]) => state.deliverAgentCommandResultMock(...args),
 }));
 

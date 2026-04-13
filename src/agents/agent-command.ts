@@ -50,7 +50,6 @@ import {
   persistSessionEntry as persistSessionEntryBase,
   prependInternalEventContext,
 } from "./command/attempt-execution.shared.js";
-import { deliverAgentCommandResult } from "./command/delivery.js";
 import { resolveAgentRunContext } from "./command/run-context.js";
 import { updateSessionStoreAfterAgentRun } from "./command/session-store.js";
 import { resolveSession } from "./command/session.js";
@@ -79,14 +78,21 @@ import { ensureAgentWorkspace } from "./workspace.js";
 
 const log = createSubsystemLogger("agents/agent-command");
 type AttemptExecutionRuntime = typeof import("./command/attempt-execution.runtime.js");
+type DeliveryRuntime = typeof import("./command/delivery.runtime.js");
 type TranscriptResolveRuntime = typeof import("../config/sessions/transcript-resolve.runtime.js");
 
 let attemptExecutionRuntimePromise: Promise<AttemptExecutionRuntime> | undefined;
+let deliveryRuntimePromise: Promise<DeliveryRuntime> | undefined;
 let transcriptResolveRuntimePromise: Promise<TranscriptResolveRuntime> | undefined;
 
 function loadAttemptExecutionRuntime(): Promise<AttemptExecutionRuntime> {
   attemptExecutionRuntimePromise ??= import("./command/attempt-execution.runtime.js");
   return attemptExecutionRuntimePromise;
+}
+
+function loadDeliveryRuntime(): Promise<DeliveryRuntime> {
+  deliveryRuntimePromise ??= import("./command/delivery.runtime.js");
+  return deliveryRuntimePromise;
 }
 
 function loadTranscriptResolveRuntime(): Promise<TranscriptResolveRuntime> {
@@ -557,6 +563,7 @@ async function agentCommandInternal(
         abortSignal: opts.abortSignal,
       });
       const payloads = result.payloads;
+      const { deliverAgentCommandResult } = await loadDeliveryRuntime();
 
       return await deliverAgentCommandResult({
         cfg,
@@ -1031,6 +1038,7 @@ async function agentCommandInternal(
     }
 
     const payloads = result.payloads ?? [];
+    const { deliverAgentCommandResult } = await loadDeliveryRuntime();
     return await deliverAgentCommandResult({
       cfg,
       deps,
