@@ -14,14 +14,11 @@ import { resolveCommandConfigWithSecrets } from "../cli/command-config-resolutio
 import { formatCliCommand } from "../cli/command-format.js";
 import { getAgentRuntimeCommandSecretTargetIds } from "../cli/command-secret-targets.js";
 import { type CliDeps, createDefaultDeps } from "../cli/deps.js";
-import {
-  loadConfig,
-  readConfigFileSnapshotForWrite,
-  setRuntimeConfigSnapshot,
-  type OpenClawConfig,
-} from "../config/config.js";
-import { resolveAgentIdFromSessionKey, type SessionEntry } from "../config/sessions.js";
+import { loadConfig, readConfigFileSnapshotForWrite } from "../config/io.js";
+import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { resolveSessionTranscriptFile } from "../config/sessions/transcript.js";
+import type { SessionEntry } from "../config/sessions/types.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   clearAgentRunContext,
   emitAgentEvent,
@@ -32,6 +29,7 @@ import { buildOutboundSessionContext } from "../infra/outbound/session-context.j
 import { getRemoteSkillEligibility } from "../infra/skills-remote.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeAgentId } from "../routing/session-key.js";
+import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
