@@ -178,10 +178,20 @@ describe("qa-channel plugin", () => {
         timeoutMs: 15_000,
       });
 
-      expect(dispatchedCtx?.MediaPath).toEqual(expect.stringContaining("red-top-blue-bottom"));
-      expect(dispatchedCtx?.MediaType).toBe("image/png");
-      expect(dispatchedCtx?.MediaPaths).toEqual([dispatchedCtx?.MediaPath]);
-      expect(dispatchedCtx?.MediaTypes).toEqual(["image/png"]);
+      expect(dispatchedCtx).not.toBeNull();
+      if (!dispatchedCtx) {
+        throw new Error("expected dispatched context");
+      }
+      const mediaCtx: {
+        MediaPath?: string;
+        MediaPaths?: string[];
+        MediaType?: string;
+        MediaTypes?: string[];
+      } = dispatchedCtx;
+      expect(mediaCtx.MediaPath).toEqual(expect.stringContaining("red-top-blue-bottom"));
+      expect(mediaCtx.MediaType).toBe("image/png");
+      expect(mediaCtx.MediaPaths).toEqual([mediaCtx.MediaPath]);
+      expect(mediaCtx.MediaTypes).toEqual(["image/png"]);
     } finally {
       abort.abort();
       await task;
