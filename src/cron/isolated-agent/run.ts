@@ -424,7 +424,7 @@ async function prepareCronRunContext(params: {
   }
   commandBody = appendCronDeliveryInstruction({ commandBody, deliveryRequested });
 
-  const skillsSnapshot = resolveCronSkillsSnapshot({
+  const skillsSnapshot = await resolveCronSkillsSnapshot({
     workspaceDir,
     config: cfgWithAgentDefaults,
     agentId,
