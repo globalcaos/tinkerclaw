@@ -21,7 +21,7 @@ import {
 import {
   listWhatsAppDirectoryGroupsFromConfig,
   listWhatsAppDirectoryPeersFromConfig,
-} from "../../../extensions/whatsapp/api.js";
+} from "../../../extensions/tinkerclaw-whatsapp/api.js";
 import type {
   BaseProbeResult,
   BaseTokenResolution,

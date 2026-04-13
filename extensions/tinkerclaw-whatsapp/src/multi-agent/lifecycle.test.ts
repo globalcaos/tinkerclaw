@@ -129,7 +129,7 @@ describe("ConversationLifecycleManager", () => {
     mgr.recordTurn("chat1", "b", "2", [1, 0.11, 0.21]);
     mgr.recordTurn("chat1", "c", "3", [1, 0.09, 0.19]);
 
-    const score = mgr.getStalenessScore("chat1");
+    const _score = mgr.getStalenessScore("chat1");
     // With threshold 0.85, it's stale
     expect(mgr.isStale("chat1")).toBe(true);
 

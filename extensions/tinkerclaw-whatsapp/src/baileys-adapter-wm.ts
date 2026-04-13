@@ -47,7 +47,7 @@ class BaileysEventBridge extends EventEmitter {
     });
 
     // Map whatsmeow connection events → Baileys "connection.update"
-    this.wmClient.on("connected", ({ jid }) => {
+    this.wmClient.on("connected", () => {
       this.emit("connection.update", { connection: "open", qr: undefined });
     });
 
@@ -59,7 +59,7 @@ class BaileysEventBridge extends EventEmitter {
     });
 
     this.wmClient.on("logged_out", ({ reason }) => {
-      const err = new Error(reason) as any;
+      const err = new Error(reason) as unknown as { output?: { statusCode: number } };
       err.output = { statusCode: 401 };
       this.emit("connection.update", {
         connection: "close",

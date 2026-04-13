@@ -11,7 +11,9 @@ export function trackSentMessageId(id: string): void {
   // Trim oldest entries
   if (sentIds.size > MAX_TRACKED) {
     const first = sentIds.values().next().value;
-    if (first) sentIds.delete(first);
+    if (first) {
+      sentIds.delete(first);
+    }
   }
 }
 

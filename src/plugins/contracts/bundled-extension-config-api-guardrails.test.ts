@@ -28,7 +28,7 @@ const BUNDLED_EXTENSION_CONFIG_IMPORT_GUARDS = [
     allowedSpecifier: "../config-api.js",
   },
   {
-    path: "extensions/whatsapp/src/config-schema.ts",
+    path: "extensions/tinkerclaw-whatsapp/src/config-schema.ts",
     allowedSpecifier: "../config-api.js",
   },
   {

@@ -120,7 +120,7 @@
     "reason": "imports core src path outside plugin-sdk from an extension"
   },
   {
-    "file": "extensions/whatsapp/src/auto-reply/monitor/process-message.ts",
+    "file": "extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/process-message.ts",
     "line": 38,
     "kind": "import",
     "specifier": "../../../../../src/fork/process-message-hooks.js",
@@ -128,7 +128,7 @@
     "reason": "imports core src path outside plugin-sdk from an extension"
   },
   {
-    "file": "extensions/whatsapp/src/session.ts",
+    "file": "extensions/tinkerclaw-whatsapp/src/session.ts",
     "line": 17,
     "kind": "import",
     "specifier": "../../../src/whatsapp-history/live-capture.js",
@@ -136,7 +136,7 @@
     "reason": "imports core src path outside plugin-sdk from an extension"
   },
   {
-    "file": "extensions/whatsapp/src/session-wm.ts",
+    "file": "extensions/tinkerclaw-whatsapp/src/session-wm.ts",
     "line": 9,
     "kind": "import",
     "specifier": "../../../src/whatsapp-history/live-capture-wm.js",
@@ -144,7 +144,7 @@
     "reason": "imports core src path outside plugin-sdk from an extension"
   },
   {
-    "file": "extensions/whatsapp/src/login-qr-wm.ts",
+    "file": "extensions/tinkerclaw-whatsapp/src/login-qr-wm.ts",
     "line": 161,
     "kind": "dynamic-import",
     "specifier": "../../../src/whatsapp-history/live-capture-wm.js",

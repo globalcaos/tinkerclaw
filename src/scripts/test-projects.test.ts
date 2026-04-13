@@ -453,11 +453,11 @@ describe("test-projects args", () => {
   });
 
   it("routes whatsapp extension tests to the whatsapp config", () => {
-    expect(buildVitestRunPlans(["extensions/whatsapp/src/send.test.ts"])).toEqual([
+    expect(buildVitestRunPlans(["extensions/tinkerclaw-whatsapp/src/send.test.ts"])).toEqual([
       {
         config: "vitest.extension-whatsapp.config.ts",
         forwardedArgs: [],
-        includePatterns: ["extensions/whatsapp/src/send.test.ts"],
+        includePatterns: ["extensions/tinkerclaw-whatsapp/src/send.test.ts"],
         watchMode: false,
       },
     ]);
