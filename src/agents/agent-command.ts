@@ -51,7 +51,6 @@ import {
   prependInternalEventContext,
 } from "./command/attempt-execution.shared.js";
 import { resolveAgentRunContext } from "./command/run-context.js";
-import { updateSessionStoreAfterAgentRun } from "./command/session-store.js";
 import { resolveSession } from "./command/session.js";
 import type { AgentCommandIngressOpts, AgentCommandOpts } from "./command/types.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
@@ -79,10 +78,12 @@ import { ensureAgentWorkspace } from "./workspace.js";
 const log = createSubsystemLogger("agents/agent-command");
 type AttemptExecutionRuntime = typeof import("./command/attempt-execution.runtime.js");
 type DeliveryRuntime = typeof import("./command/delivery.runtime.js");
+type SessionStoreRuntime = typeof import("./command/session-store.runtime.js");
 type TranscriptResolveRuntime = typeof import("../config/sessions/transcript-resolve.runtime.js");
 
 let attemptExecutionRuntimePromise: Promise<AttemptExecutionRuntime> | undefined;
 let deliveryRuntimePromise: Promise<DeliveryRuntime> | undefined;
+let sessionStoreRuntimePromise: Promise<SessionStoreRuntime> | undefined;
 let transcriptResolveRuntimePromise: Promise<TranscriptResolveRuntime> | undefined;
 
 function loadAttemptExecutionRuntime(): Promise<AttemptExecutionRuntime> {
@@ -93,6 +94,11 @@ function loadAttemptExecutionRuntime(): Promise<AttemptExecutionRuntime> {
 function loadDeliveryRuntime(): Promise<DeliveryRuntime> {
   deliveryRuntimePromise ??= import("./command/delivery.runtime.js");
   return deliveryRuntimePromise;
+}
+
+function loadSessionStoreRuntime(): Promise<SessionStoreRuntime> {
+  sessionStoreRuntimePromise ??= import("./command/session-store.runtime.js");
+  return sessionStoreRuntimePromise;
 }
 
 function loadTranscriptResolveRuntime(): Promise<TranscriptResolveRuntime> {
@@ -1022,6 +1028,7 @@ async function agentCommandInternal(
 
     // Update token+model fields in the session store.
     if (sessionStore && sessionKey) {
+      const { updateSessionStoreAfterAgentRun } = await loadSessionStoreRuntime();
       await updateSessionStoreAfterAgentRun({
         cfg,
         contextTokensOverride: agentCfg?.contextTokens,

@@ -48,7 +48,7 @@ vi.mock("./command/run-context.js", () => ({
   }),
 }));
 
-vi.mock("./command/session-store.js", () => ({
+vi.mock("./command/session-store.runtime.js", () => ({
   updateSessionStoreAfterAgentRun: (...args: unknown[]) =>
     state.updateSessionStoreAfterAgentRunMock(...args),
 }));
