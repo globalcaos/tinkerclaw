@@ -9,7 +9,7 @@ import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-id-resolut
 import { tryResolveLoadedOutboundTarget } from "../../infra/outbound/targets-loaded.js";
 import { resolveSessionDeliveryTarget } from "../../infra/outbound/targets-session.js";
 import type { OutboundChannel } from "../../infra/outbound/targets.js";
-import { readChannelAllowFromStoreSync } from "../../pairing/pairing-store.js";
+import { readChannelAllowFromStoreEntriesSync } from "../../pairing/allow-from-store-read.js";
 import { mapAllowFromEntries } from "../../plugin-sdk/channel-config-helpers.js";
 import { buildChannelAccountBindings } from "../../routing/bindings.js";
 import { normalizeAccountId, normalizeAgentId } from "../../routing/session-key.js";
@@ -186,8 +186,10 @@ export async function resolveDeliveryTarget(
   const configuredAllowFrom = configuredAllowFromRaw
     ? mapAllowFromEntries(configuredAllowFromRaw)
     : [];
-  const storeAllowFrom = mapAllowFromEntries(
-    readChannelAllowFromStoreSync(channel, process.env, resolvedAccountId),
+  const storeAllowFrom = readChannelAllowFromStoreEntriesSync(
+    channel,
+    process.env,
+    resolvedAccountId,
   );
   const allowFromOverride = [...new Set([...configuredAllowFrom, ...storeAllowFrom])];
   const effectiveAllowFrom = mode === "implicit" ? allowFromOverride : undefined;
