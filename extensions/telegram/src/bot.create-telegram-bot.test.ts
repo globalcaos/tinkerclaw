@@ -2746,4 +2746,62 @@ describe("createTelegramBot", () => {
     expect(loadConfigCallsAfterFailure).toBe(loadConfigCallsBeforeRetry + 1);
     expect(loadConfig.mock.calls.length).toBeGreaterThan(loadConfigCallsAfterFailure);
   });
+
+  it("retries group migration updates after a bubbled handler failure", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          groups: {
+            "-1001": {
+              enabled: true,
+            },
+          },
+        },
+      },
+    });
+
+    createTelegramBot({ token: "tok" });
+    const migrationHandler = getOnHandler("message:migrate_to_chat_id");
+    const middlewares = middlewareUseSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (fn): fn is (ctx: Record<string, unknown>, next: () => Promise<void>) => Promise<void> =>
+          typeof fn === "function",
+      );
+    const runMiddlewareChain = async (ctx: Record<string, unknown>) => {
+      let idx = -1;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= idx) {
+          throw new Error("middleware dispatch called multiple times");
+        }
+        idx = i;
+        const fn = middlewares[i];
+        if (!fn) {
+          await migrationHandler(ctx);
+          return;
+        }
+        await fn(ctx, async () => dispatch(i + 1));
+      };
+      await dispatch(0);
+    };
+
+    const ctx = {
+      update: { update_id: 444 },
+      message: {
+        chat: { id: -1001, type: "supergroup", title: "Old Group" },
+        migrate_to_chat_id: -1002,
+      },
+    };
+
+    const loadConfigCallsBeforeRetry = loadConfig.mock.calls.length;
+    loadConfig.mockImplementationOnce(() => {
+      throw new Error("cfg boom");
+    });
+    await expect(runMiddlewareChain(ctx)).rejects.toThrow("cfg boom");
+    const loadConfigCallsAfterFailure = loadConfig.mock.calls.length;
+    await runMiddlewareChain(ctx);
+
+    expect(loadConfigCallsAfterFailure).toBe(loadConfigCallsBeforeRetry + 1);
+    expect(loadConfig.mock.calls.length).toBeGreaterThan(loadConfigCallsAfterFailure);
+  });
 });
