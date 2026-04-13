@@ -12,11 +12,8 @@ import {
   normalizeVerboseLevel,
   registerAgentRunContext,
   resolveBootstrapWarningSignaturesSeen,
-  resolveFastModeState,
-  resolveNestedAgentLane,
   resolveSessionTranscriptPath,
   runCliAgent,
-  runEmbeddedPiAgent,
   runWithModelFallback,
 } from "./run-execution.runtime.js";
 import { resolveCronFallbacksOverride } from "./run-fallback-policy.js";
@@ -30,9 +27,16 @@ import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 
 type AgentTurnPayload = Extract<CronJob["payload"], { kind: "agentTurn" }> | null;
 type CronPromptRunResult = Awaited<ReturnType<typeof runCliAgent>>;
+type CronEmbeddedRuntime = typeof import("./run-embedded.runtime.js");
 type CronSubagentRegistryRuntime = typeof import("./run-subagent-registry.runtime.js");
 
+let cronEmbeddedRuntimePromise: Promise<CronEmbeddedRuntime> | undefined;
 let cronSubagentRegistryRuntimePromise: Promise<CronSubagentRegistryRuntime> | undefined;
+
+async function loadCronEmbeddedRuntime() {
+  cronEmbeddedRuntimePromise ??= import("./run-embedded.runtime.js");
+  return await cronEmbeddedRuntimePromise;
+}
 
 async function loadCronSubagentRegistryRuntime() {
   cronSubagentRegistryRuntimePromise ??= import("./run-subagent-registry.runtime.js");
@@ -135,6 +139,8 @@ export function createCronPromptExecutor(params: {
           );
           return result;
         }
+        const { resolveFastModeState, resolveNestedAgentLane, runEmbeddedPiAgent } =
+          await loadCronEmbeddedRuntime();
         const result = await runEmbeddedPiAgent({
           sessionId: params.cronSession.sessionEntry.sessionId,
           sessionKey: params.agentSessionKey,
