@@ -1,7 +1,7 @@
 import { defineBundledChannelEntry } from "openclaw/plugin-sdk/channel-entry-contract";
 
 export default defineBundledChannelEntry({
-  id: "whatsapp",
+  id: "tinkerclaw-whatsapp",
   name: "WhatsApp",
   description: "WhatsApp channel plugin",
   importMetaUrl: import.meta.url,
