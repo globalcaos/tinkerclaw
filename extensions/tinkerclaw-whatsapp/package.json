@@ -38,7 +38,7 @@
       }
     },
     "install": {
-      "npmSpec": "@openclaw/whatsapp",
+      "npmSpec": "@openclaw/tinkerclaw-whatsapp",
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.4.5"
     },
