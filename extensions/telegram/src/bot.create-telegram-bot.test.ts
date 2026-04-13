@@ -20,6 +20,7 @@ const {
   getOnHandler,
   getReadChannelAllowFromStoreMock,
   getUpsertChannelPairingRequestMock,
+  listSkillCommandsForAgents,
   makeForumGroupMessageCtx,
   middlewareUseSpy,
   onSpy,
@@ -2984,6 +2985,62 @@ describe("createTelegramBot", () => {
     await runMiddlewareChain(ctx);
 
     expect(editMessageTextSpy).toHaveBeenCalledTimes(2);
+    expect(editMessageTextSpy.mock.calls.at(-1)?.[2]).toContain("Commands (2/");
+  });
+
+  it("retries command pagination callbacks after a bubbled preflight failure", async () => {
+    const listSkillCommandsMock = listSkillCommandsForAgents as unknown as ReturnType<typeof vi.fn>;
+    listSkillCommandsMock.mockClear();
+
+    createTelegramBot({ token: "tok" });
+    const callbackHandler = getOnHandler("callback_query");
+    const middlewares = middlewareUseSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (fn): fn is (ctx: Record<string, unknown>, next: () => Promise<void>) => Promise<void> =>
+          typeof fn === "function",
+      );
+    const runMiddlewareChain = async (ctx: Record<string, unknown>) => {
+      let idx = -1;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= idx) {
+          throw new Error("middleware dispatch called multiple times");
+        }
+        idx = i;
+        const fn = middlewares[i];
+        if (!fn) {
+          await callbackHandler(ctx);
+          return;
+        }
+        await fn(ctx, async () => dispatch(i + 1));
+      };
+      await dispatch(0);
+    };
+
+    const ctx = {
+      update: { update_id: 778 },
+      callbackQuery: {
+        id: "cbq-commands-retry-2",
+        data: "commands_page_2:main",
+        from: { id: 9, first_name: "Ada", username: "ada_bot" },
+        message: {
+          chat: { id: 1234, type: "private" },
+          date: 1736380800,
+          message_id: 21,
+        },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    };
+
+    listSkillCommandsMock.mockImplementationOnce(() => {
+      throw new Error("commands boom");
+    });
+    await expect(runMiddlewareChain(ctx)).rejects.toThrow("commands boom");
+    await runMiddlewareChain(ctx);
+
+    expect(listSkillCommandsMock).toHaveBeenCalledTimes(2);
+    expect(editMessageTextSpy).toHaveBeenCalledTimes(1);
     expect(editMessageTextSpy.mock.calls.at(-1)?.[2]).toContain("Commands (2/");
   });
 
