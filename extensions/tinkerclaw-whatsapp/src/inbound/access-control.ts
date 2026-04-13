@@ -11,6 +11,8 @@ import {
   resolveDmGroupAccessWithLists,
 } from "openclaw/plugin-sdk/security-runtime";
 import { resolveWhatsAppAccount } from "../accounts.js";
+// FORK: dynamic "agent group" detection — replaces hardcoded triggerPrefixExempt JID list
+import { isAgentGroup } from "../group-name-cache.js";
 import { resolveWhatsAppRuntimeGroupPolicy } from "../runtime-group-policy.js";
 import { isSelfChatMode, normalizeE164 } from "../text-runtime.js";
 
@@ -133,10 +135,15 @@ export async function checkInboundAccessControl(params: {
   const bodyTrimmed = (params.messageBody ?? "").trim().toLowerCase();
   const prefixMatches = triggerPrefix ? bodyTrimmed.startsWith(triggerPrefix.toLowerCase()) : false;
 
-  // Exempt groups: agent-to-agent chats where prefix is not required.
-  // These are dedicated conversation groups where agents talk freely.
-  const exemptGroups: string[] = cfg.channels?.whatsapp?.triggerPrefixExempt ?? [];
-  const isExemptGroup = params.group && exemptGroups.includes(params.remoteJid);
+  // FORK: Exempt groups ("agent groups") — dedicated conversation groups where
+  // agents talk freely without requiring the triggerPrefix on each message.
+  // Detection is DYNAMIC via group-name-cache: any group whose subject contains
+  // the configured triggerPrefix is treated as an agent group. This replaces
+  // the previous hardcoded `triggerPrefixExempt` JID allowlist, which was
+  // brittle and required manual config updates whenever a new agent group was
+  // created or renamed.
+  const isExemptGroup =
+    params.group && triggerPrefix ? await isAgentGroup(params.remoteJid, triggerPrefix) : false;
 
   // Owner (isFromMe) in any chat (DM or group): require prefix, unless exempt group.
   if (params.isFromMe) {
