@@ -132,6 +132,13 @@ vi.mock("./run-model-catalog.runtime.js", () => ({
   loadModelCatalog: loadModelCatalogMock,
 }));
 
+vi.mock("./skills-snapshot.runtime.js", () => ({
+  buildWorkspaceSkillSnapshot: buildWorkspaceSkillSnapshotMock,
+  canExecRequestNode: vi.fn(() => false),
+  getRemoteSkillEligibility: getRemoteSkillEligibilityMock,
+  getSkillsSnapshotVersion: getSkillsSnapshotVersionMock,
+}));
+
 vi.mock("./run-model-selection.runtime.js", () => ({
   DEFAULT_MODEL: "gpt-4",
   DEFAULT_PROVIDER: "openai",
