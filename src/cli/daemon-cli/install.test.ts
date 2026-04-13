@@ -65,9 +65,12 @@ vi.mock("../../bootstrap/node-startup-env.js", () => ({
   resolveNodeStartupTlsEnvironment: resolveNodeStartupTlsEnvironmentMock,
 }));
 
-vi.mock("../../config/config.js", () => ({
+vi.mock("../../config/io.js", () => ({
   loadConfig: loadConfigMock,
   readBestEffortConfig: loadConfigMock,
+}));
+
+vi.mock("../../config/paths.js", () => ({
   resolveGatewayPort: resolveGatewayPortMock,
 }));
 

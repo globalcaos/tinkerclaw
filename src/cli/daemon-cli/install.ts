@@ -5,7 +5,8 @@ import {
   isGatewayDaemonRuntime,
 } from "../../commands/daemon-runtime.js";
 import { resolveGatewayInstallToken } from "../../commands/gateway-install-token.js";
-import { readBestEffortConfig, resolveGatewayPort } from "../../config/config.js";
+import { readBestEffortConfig } from "../../config/io.js";
+import { resolveGatewayPort } from "../../config/paths.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { isNonFatalSystemdInstallProbeError } from "../../daemon/systemd.js";
 import { defaultRuntime } from "../../runtime.js";
