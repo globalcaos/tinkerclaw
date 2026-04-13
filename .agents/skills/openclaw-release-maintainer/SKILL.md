@@ -182,7 +182,10 @@ node --import tsx scripts/openclaw-npm-postpublish-verify.ts <published-version>
   plan does not yet support required reviewers there, do not assume the
   environment alone is the approval boundary; rely on private repo access and
   CODEOWNERS until those settings can be enabled.
-- Do not use `NPM_TOKEN` or the plugin OTP flow for OpenClaw releases.
+- Do not use `NPM_TOKEN` or the plugin OTP flow for the OpenClaw package
+  publish path; package publishing uses trusted publishing.
+- Use `NPM_TOKEN` only for explicit npm dist-tag management modes, because npm
+  does not support trusted publishing for `npm dist-tag add`.
 - `@openclaw/*` plugin publishes use a separate maintainer-only flow.
 - Only publish plugins that already exist on npm; bundled disk-tree-only plugins stay unpublished.
 
