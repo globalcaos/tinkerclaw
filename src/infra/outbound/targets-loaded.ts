@@ -1,4 +1,4 @@
-import { getLoadedChannelPluginForRead } from "../../channels/plugins/registry-read.js";
+import { getLoadedChannelPluginForRead } from "../../channels/plugins/registry-loaded-read.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.plugin.js";
 import type { ChannelOutboundTargetMode } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
