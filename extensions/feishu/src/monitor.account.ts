@@ -662,6 +662,11 @@ function registerEventHandlers(
             if (syntheticMessageId) {
               await recordProcessedFeishuMessage(syntheticMessageId, accountId, log);
             }
+          } catch (err) {
+            if (syntheticMessageId && !isFeishuRetryableSyntheticEventError(err)) {
+              await recordProcessedFeishuMessage(syntheticMessageId, accountId, log);
+            }
+            throw err;
           } finally {
             if (syntheticMessageId) {
               releaseFeishuMessageProcessing(syntheticMessageId, accountId);
