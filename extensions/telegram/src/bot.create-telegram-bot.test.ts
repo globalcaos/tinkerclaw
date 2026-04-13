@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { escapeRegExp, formatEnvelopeTimestamp } from "../../../test/helpers/envelope-timestamp.js";
 const harness = await import("./bot.create-telegram-bot.test-harness.js");
 const conversationRuntime = await import("openclaw/plugin-sdk/conversation-runtime");
+const configRuntime = await import("openclaw/plugin-sdk/config-runtime");
 const EYES_EMOJI = "\u{1F440}";
 const {
   answerCallbackQuerySpy,
@@ -3155,5 +3156,68 @@ describe("createTelegramBot", () => {
 
     expect(editMessageTextSpy).toHaveBeenCalledTimes(2);
     expect(editMessageTextSpy.mock.calls.at(-1)?.[2]).toContain("Select a provider:");
+  });
+
+  it("retries model selection callbacks after a bubbled session-store failure", async () => {
+    createTelegramBot({ token: "tok" });
+    const callbackHandler = getOnHandler("callback_query");
+    const middlewares = middlewareUseSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (fn): fn is (ctx: Record<string, unknown>, next: () => Promise<void>) => Promise<void> =>
+          typeof fn === "function",
+      );
+    const runMiddlewareChain = async (ctx: Record<string, unknown>) => {
+      let idx = -1;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= idx) {
+          throw new Error("middleware dispatch called multiple times");
+        }
+        idx = i;
+        const fn = middlewares[i];
+        if (!fn) {
+          await callbackHandler(ctx);
+          return;
+        }
+        await fn(ctx, async () => dispatch(i + 1));
+      };
+      await dispatch(0);
+    };
+
+    const updateSessionStoreSpy = vi.spyOn(configRuntime, "updateSessionStore");
+    updateSessionStoreSpy.mockRejectedValueOnce(new Error("session store boom"));
+
+    const ctx = {
+      update: { update_id: 890 },
+      callbackQuery: {
+        id: "cbq-model-select-retry-1",
+        data: "mdl_sel_openai/gpt-5.4",
+        from: { id: 9, first_name: "Ada", username: "ada_bot" },
+        message: {
+          chat: { id: 1234, type: "private" },
+          date: 1736380800,
+          message_id: 24,
+        },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    };
+
+    try {
+      await expect(runMiddlewareChain(ctx)).rejects.toThrow("session store boom");
+      await runMiddlewareChain(ctx);
+    } finally {
+      updateSessionStoreSpy.mockRestore();
+    }
+
+    expect(editMessageTextSpy).toHaveBeenCalledTimes(1);
+    expect(String(editMessageTextSpy.mock.calls.at(-1)?.[2] ?? "")).toContain(
+      "This model will be used for your next message.",
+    );
+    expect(
+      editMessageTextSpy.mock.calls.some((call) =>
+        String(call[2] ?? "").includes("Failed to change model"),
+      ),
+    ).toBe(false);
   });
 });

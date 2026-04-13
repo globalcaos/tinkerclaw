@@ -1625,19 +1625,23 @@ export const registerTelegramHandlers = ({
               selection.provider === resolvedDefault.provider &&
               selection.model === resolvedDefault.model;
 
-            await updateSessionStore(storePath, (store) => {
-              const sessionKey = sessionState.sessionKey;
-              const entry = store[sessionKey] ?? {};
-              store[sessionKey] = entry;
-              applyModelOverrideToSessionEntry({
-                entry,
-                selection: {
-                  provider: selection.provider,
-                  model: selection.model,
-                  isDefault: isDefaultSelection,
-                },
+            try {
+              await updateSessionStore(storePath, (store) => {
+                const sessionKey = sessionState.sessionKey;
+                const entry = store[sessionKey] ?? {};
+                store[sessionKey] = entry;
+                applyModelOverrideToSessionEntry({
+                  entry,
+                  selection: {
+                    provider: selection.provider,
+                    model: selection.model,
+                    isDefault: isDefaultSelection,
+                  },
+                });
               });
-            });
+            } catch (err) {
+              throw new TelegramRetryableCallbackError(err);
+            }
 
             // Update message to show success with visual feedback
             const escapeHtml = (text: string) =>
@@ -1651,6 +1655,9 @@ export const registerTelegramHandlers = ({
               { parse_mode: "HTML" },
             );
           } catch (err) {
+            if (err instanceof TelegramRetryableCallbackError) {
+              throw err;
+            }
             await editMessageWithButtons(`❌ Failed to change model: ${String(err)}`, []);
           }
           return;
