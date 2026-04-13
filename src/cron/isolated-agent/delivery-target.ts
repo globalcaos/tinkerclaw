@@ -11,8 +11,8 @@ import { resolveSessionDeliveryTarget } from "../../infra/outbound/targets-sessi
 import type { OutboundChannel } from "../../infra/outbound/targets.js";
 import { readChannelAllowFromStoreEntriesSync } from "../../pairing/allow-from-store-read.js";
 import { mapAllowFromEntries } from "../../plugin-sdk/channel-config-helpers.js";
-import { buildChannelAccountBindings } from "../../routing/bindings.js";
-import { normalizeAccountId, normalizeAgentId } from "../../routing/session-key.js";
+import { resolveFirstBoundAccountId } from "../../routing/bound-account-read.js";
+import { normalizeAccountId } from "../../routing/session-key.js";
 
 export type DeliveryTargetResolution =
   | {
@@ -140,12 +140,7 @@ export async function resolveDeliveryTarget(
       : undefined;
   let accountId = explicitAccountId ?? resolved.accountId;
   if (!accountId && channel) {
-    const bindings = buildChannelAccountBindings(cfg);
-    const byAgent = bindings.get(channel);
-    const boundAccounts = byAgent?.get(normalizeAgentId(agentId));
-    if (boundAccounts && boundAccounts.length > 0) {
-      accountId = boundAccounts[0];
-    }
+    accountId = resolveFirstBoundAccountId({ cfg, channelId: channel, agentId });
   }
 
   // job.delivery.accountId takes highest precedence — explicitly set by the job author.
