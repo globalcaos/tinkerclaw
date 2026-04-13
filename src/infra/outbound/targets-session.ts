@@ -9,11 +9,11 @@ import { deliveryContextFromSession } from "../../utils/delivery-context.shared.
 import type {
   DeliverableMessageChannel,
   GatewayMessageChannel,
-} from "../../utils/message-channel.js";
+} from "../../utils/message-channel-normalize.js";
 import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
-} from "../../utils/message-channel.js";
+} from "../../utils/message-channel-normalize.js";
 
 export type SessionDeliveryTarget = {
   channel?: DeliverableMessageChannel;
