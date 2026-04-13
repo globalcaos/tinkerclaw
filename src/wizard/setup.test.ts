@@ -346,6 +346,7 @@ describe("runSetupWizard", () => {
     );
 
     expect(select).not.toHaveBeenCalled();
+    expect(ensureAuthProfileStore).not.toHaveBeenCalled();
     expect(setupChannels).not.toHaveBeenCalled();
     expect(setupSkills).not.toHaveBeenCalled();
     expect(healthCommand).not.toHaveBeenCalled();
