@@ -573,11 +573,10 @@ export function validateConfigObjectRaw(
   raw: unknown,
 ): { ok: true; config: OpenClawConfig } | { ok: false; issues: ConfigValidationIssue[] } {
   const policyIssues = collectUnsupportedSecretRefPolicyIssues(raw);
-  const legacyIssues = findLegacyConfigIssues(
-    raw,
-    raw,
-    listPluginDoctorLegacyConfigRules({ pluginIds: collectRelevantDoctorPluginIds(raw) }),
-  );
+  const extraLegacyRules = listPluginDoctorLegacyConfigRules({
+    pluginIds: collectRelevantDoctorPluginIds(raw),
+  });
+  const legacyIssues = findLegacyConfigIssues(raw, raw, extraLegacyRules);
   if (legacyIssues.length > 0) {
     return {
       ok: false,
