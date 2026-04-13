@@ -327,6 +327,9 @@ importers:
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
+      music-metadata:
+        specifier: ^11.12.3
+        version: 11.12.3
       openshell:
         specifier: 0.1.0
         version: 0.1.0
