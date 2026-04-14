@@ -11,15 +11,20 @@ fi
 tool="$1"
 shift
 
-if [[ -f "$ROOT_DIR/pnpm-lock.yaml" ]] && command -v pnpm >/dev/null 2>&1; then
+# Package managers need both a lockfile AND package.json. Without package.json,
+# pnpm-lock.yaml alone (e.g. a stale or cross-repo symlink — the jarvis-brain
+# workspace symlinks tinkerclaw's lockfile but has no package.json of its own)
+# leads pnpm into ERR_PNPM_RECURSIVE_EXEC_NO_PACKAGE and breaks pre-commit.
+# Fall through to npx which can run ad-hoc without a local package.
+if [[ -f "$ROOT_DIR/pnpm-lock.yaml" ]] && [[ -f "$ROOT_DIR/package.json" ]] && command -v pnpm >/dev/null 2>&1; then
   exec pnpm exec "$tool" "$@"
 fi
 
-if { [[ -f "$ROOT_DIR/bun.lockb" ]] || [[ -f "$ROOT_DIR/bun.lock" ]]; } && command -v bun >/dev/null 2>&1; then
+if { [[ -f "$ROOT_DIR/bun.lockb" ]] || [[ -f "$ROOT_DIR/bun.lock" ]]; } && [[ -f "$ROOT_DIR/package.json" ]] && command -v bun >/dev/null 2>&1; then
   exec bunx --bun "$tool" "$@"
 fi
 
-if command -v npm >/dev/null 2>&1; then
+if [[ -f "$ROOT_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
   exec npm exec -- "$tool" "$@"
 fi
 
