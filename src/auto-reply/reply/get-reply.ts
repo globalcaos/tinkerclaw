@@ -138,22 +138,6 @@ export async function getReplyFromConfig(
   opts?: GetReplyOptions,
   configOverride?: OpenClawConfig,
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
-  // FORK: lightweight ingress stage tracer. The full timing helper
-  // (shouldLogCoreIngressTiming + per-stage logger) was removed by an
-  // upstream cleanup; we keep a gated no-op so the existing call sites
-  // continue to compile and can be re-enabled by setting the env flag.
-  const ingressTimingEnabled = process.env.OPENCLAW_INGRESS_TIMING === "1";
-  const ingressStartMs = ingressTimingEnabled ? Date.now() : 0;
-  const logIngressStage = (stage: string, extra?: string) => {
-    if (!ingressTimingEnabled) {
-      return;
-    }
-    const sessionKey = ctx.SessionKey?.trim() || "(no-session)";
-    const suffix = extra ? ` ${extra}` : "";
-    defaultRuntime.log?.(
-      `[ingress] session=${sessionKey} stage=${stage} elapsedMs=${Date.now() - ingressStartMs}${suffix}`,
-    );
-  };
   const isFastTestEnv = process.env.OPENCLAW_TEST_FAST === "1";
   const cfg =
     configOverride == null
@@ -372,7 +356,6 @@ export async function getReplyFromConfig(
     skillFilter: mergedSkillFilter,
   });
   if (directiveResult.kind === "reply") {
-    logIngressStage("early-reply");
     await clearSessionResume(agentSessionKey).catch(() => {});
     return directiveResult.reply;
   }
