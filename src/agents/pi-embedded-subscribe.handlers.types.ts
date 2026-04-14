@@ -128,6 +128,11 @@ export type EmbeddedPiSubscribeContext = {
   getCompactionCount: () => number;
   getResponseBreakdown: () => { thinkingChars: number; textChars: number; toolCallChars: number };
   resetResponseBreakdown: () => void;
+  /** FORK: Direct emit a block reply (consumes pending tool media into the payload). */
+  emitBlockReply: (
+    payload: BlockReplyPayload,
+    options?: { assistantMessageIndex?: number },
+  ) => void;
 };
 
 /**

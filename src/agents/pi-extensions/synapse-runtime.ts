@@ -6,6 +6,7 @@
  * gets one SynapseRuntime keyed off the EventStore instance.
  */
 
+import { dirname, join } from "node:path";
 import {
   measureCDI,
   DEFAULT_PROVIDER_PROFILES,
@@ -139,7 +140,13 @@ function computeDiversityScore(
 // ── Runtime factory ────────────────────────────────────────────────────────
 
 export function createSynapseRuntime(eventStore: EventStore): SynapseRuntime {
-  const deliberation = createPersistentDeliberation({ eventStore });
+  // FORK: round-table's createPersistentDeliberation takes JSONL paths, not an EventStore.
+  // Derive sibling debate-trace/conclusion files from the EventStore session file location.
+  const eventsDir = dirname(eventStore.filePath);
+  const synapseDir = join(dirname(eventsDir), "synapse");
+  const tracesPath = join(synapseDir, `${eventStore.sessionKey}.traces.jsonl`);
+  const conclusionsPath = join(synapseDir, `${eventStore.sessionKey}.conclusions.jsonl`);
+  const deliberation = createPersistentDeliberation({ tracesPath, conclusionsPath });
 
   return {
     async debate(topic: string, options: DebateOptions = {}): Promise<DebateResult> {
