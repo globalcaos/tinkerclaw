@@ -7,11 +7,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
+// FORK: synapse-runtime lives in the top-level src tree, not inside the
+// memory-host-sdk package. The April upstream merge restored this test with
+// a stale relative path; point it at the real location until the runtime
+// is itself moved into the SDK.
 import {
   createSynapseRuntime,
   setSynapseRuntime,
   getSynapseRuntime,
-} from "../../agents/pi-extensions/synapse-runtime.js";
+} from "../../../../../src/agents/pi-extensions/synapse-runtime.js";
 import { createEventStore } from "../engram/event-store.js";
 import { DEFAULT_PROVIDER_PROFILES } from "./cognitive-diversity.js";
 import { createPersistentDeliberation } from "./persistent-deliberation.js";
