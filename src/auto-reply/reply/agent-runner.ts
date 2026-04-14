@@ -96,6 +96,9 @@ export async function runReplyAgent(params: {
   sessionCtx: TemplateContext;
   shouldInjectGroupIntro: boolean;
   typingMode: TypingMode;
+  // FORK: resetTriggered flows through from session-reset detection in
+  // get-reply-run.ts so downstream reply-operation/reset hooks can react.
+  resetTriggered?: boolean;
 }): Promise<ReplyPayload | ReplyPayload[] | undefined> {
   const {
     commandBody,

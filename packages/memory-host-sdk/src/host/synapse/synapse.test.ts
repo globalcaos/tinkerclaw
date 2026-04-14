@@ -39,6 +39,7 @@ import {
   DEFAULT_DEBATE_CONFIG,
   type DebateParticipant,
   type DebateConfig,
+  type DebateResult,
 } from "./raac-protocol.js";
 
 // ── Mock Participants ──
@@ -499,7 +500,7 @@ describe("Phase 7D: Persistent Deliberation", () => {
   });
 
   it("deliberation memory accumulates across debates", () => {
-    const makeResult = (converged: boolean, rounds: number, cost: number): unknown => ({
+    const makeResult = (converged: boolean, rounds: number, cost: number): DebateResult => ({
       task: "Task",
       rounds: Array.from({ length: rounds }, (_, i) => ({
         roundNumber: i + 1,

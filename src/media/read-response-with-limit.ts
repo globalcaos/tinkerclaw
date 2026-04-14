@@ -1,6 +1,10 @@
 async function readChunkWithIdleTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   chunkTimeoutMs: number,
+  // FORK: optional caller-supplied error factory so download stalls produce
+  // a domain-specific error (e.g. media-fetch retry classification) instead
+  // of the generic "Media download stalled" string.
+  onIdleTimeout?: (params: { chunkTimeoutMs: number }) => Error,
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;

@@ -9,6 +9,10 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+// FORK: applyMergePatch supports the `configOverride` parameter on
+// getReplyFromConfig, allowing callers (tests, harness) to deep-merge over
+// the on-disk config without mutating it.
+import { applyMergePatch } from "../../config/merge-patch.js";
 import { writeSessionResume, clearSessionResume } from "../../infra/session-resume.js";
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
@@ -134,6 +138,22 @@ export async function getReplyFromConfig(
   opts?: GetReplyOptions,
   configOverride?: OpenClawConfig,
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
+  // FORK: lightweight ingress stage tracer. The full timing helper
+  // (shouldLogCoreIngressTiming + per-stage logger) was removed by an
+  // upstream cleanup; we keep a gated no-op so the existing call sites
+  // continue to compile and can be re-enabled by setting the env flag.
+  const ingressTimingEnabled = process.env.OPENCLAW_INGRESS_TIMING === "1";
+  const ingressStartMs = ingressTimingEnabled ? Date.now() : 0;
+  const logIngressStage = (stage: string, extra?: string) => {
+    if (!ingressTimingEnabled) {
+      return;
+    }
+    const sessionKey = ctx.SessionKey?.trim() || "(no-session)";
+    const suffix = extra ? ` ${extra}` : "";
+    defaultRuntime.log?.(
+      `[ingress] session=${sessionKey} stage=${stage} elapsedMs=${Date.now() - ingressStartMs}${suffix}`,
+    );
+  };
   const isFastTestEnv = process.env.OPENCLAW_TEST_FAST === "1";
   const cfg =
     configOverride == null
