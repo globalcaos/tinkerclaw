@@ -55,11 +55,7 @@ import { ensureOpenClawModelsJson } from "../models-config.js";
 import { resolveOwnerDisplaySetting } from "../owner-display.js";
 import { createBundleLspToolRuntime } from "../pi-bundle-lsp-runtime.js";
 import { createBundleMcpToolRuntime } from "../pi-bundle-mcp-tools.js";
-import {
-  ensureSessionHeader,
-  validateAnthropicTurns,
-  validateGeminiTurns,
-} from "../pi-embedded-helpers.js";
+import { ensureSessionHeader } from "../pi-embedded-helpers.js";
 import { createCortexRuntime } from "../pi-extensions/cortex-runtime.js";
 import {
   consumeCompactionSafeguardCancelReason,
@@ -796,7 +792,8 @@ export async function compactEmbeddedPiSessionDirect(
         });
         // Apply validated transcript to the live session even when no history limit is configured,
         // so compaction and hook metrics are based on the same message set.
-        session.agent.replaceMessages(validated);
+        // Upstream removed `Agent.replaceMessages`; assigning `state.messages` copies the array.
+        session.agent.state.messages = validated;
         // "Original" compaction metrics should describe the validated transcript that enters
         // limiting/compaction, not the raw on-disk session snapshot.
         const originalMessages = session.messages.slice();
@@ -813,7 +810,8 @@ export async function compactEmbeddedPiSessionDirect(
             })
           : truncated;
         if (limited.length > 0) {
-          session.agent.replaceMessages(limited);
+          // Upstream removed `Agent.replaceMessages`; assigning `state.messages` copies the array.
+          session.agent.state.messages = limited;
         }
         const hookRunner = asCompactionHookRunner(getGlobalHookRunner());
         const observedTokenCount = normalizeObservedTokenCount(params.currentTokenCount);
