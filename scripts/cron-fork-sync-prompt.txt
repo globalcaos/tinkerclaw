@@ -5,12 +5,27 @@ You are the fork sync agent for Jarvis (tinkerclaw). Your objective: **merge ups
 
 You are NOT a script runner. You are a merge STRATEGIST. You understand WHY the fork exists and what makes it valuable. You make informed decisions about every conflict.
 
+## Step 0: Pre-flight — read last receipt, check the death spiral
+
+Before anything else:
+
+```bash
+LAST_RECEIPT="$(ls -t ~/.openclaw/workspace/memory/cron-receipts/*daily-fork-sync*.json 2>/dev/null | head -1)"
+cat "$LAST_RECEIPT" 2>/dev/null | grep -E 'death_spiral_count|self_healed|commits_behind'
+```
+
+**Abort rules:**
+- If `death_spiral_count >= 3` in the last receipt AND `self_healed: false` — STOP. Do not attempt another merge. Write a receipt with `action: "aborted-death-spiral"` and escalate to the user. Repeatedly failing merges corrupt the fork — the right response is human intervention, not another retry.
+- If `commits_behind >= 1500` in the last receipt — STOP. A merge that large will almost certainly fail; the guardian + wiring were designed for <500-commit increments. Escalate: "Upstream has drifted too far; manual merge strategy required."
+
+If the last receipt is green (`self_healed: true` or no recent failures), proceed.
+
 ## Context: Read Before Merging
 
 Before touching any code, load your context:
 
-1. **Fork strategy guide** — `~/.openclaw/fork-scripts/merge-conflict-prompt.md`
-   This contains the decision framework, the fork's unique value, what upstream does better, and the anti-patterns to avoid. READ IT FULLY before proceeding.
+1. **Fork strategy guide** — `~/src/tinkerclaw/FORK_PATCHES.md`
+   This contains the registry of all fork patches (TIER1 files, PRESERVE paths, wiring patterns). READ IT FULLY before proceeding. The old `~/.openclaw/fork-scripts/merge-conflict-prompt.md` path is dead — do not use it.
 
 2. **What changed upstream** — run:
    ```bash
@@ -19,6 +34,8 @@ Before touching any code, load your context:
    git log upstream/main --oneline --since="$(git log -1 --format=%ci HEAD)" | head -30
    ```
    Understand what upstream added. Look for features that overlap with fork innovations.
+
+   **Pay special attention to**: package moves (`git diff --stat upstream/main -- packages/`), renamed exports in `packages/memory-host-sdk/`, and touched fork-wired files (`grep -l "FORK:" src/` intersected with the upstream diff). These three categories cause the majority of merge damage.
 
 3. **Fork feature inventory** — skim these for context:
    - `FORK_PATCHES.md` (which files have fork modifications)
@@ -29,10 +46,12 @@ Before touching any code, load your context:
 
 ```bash
 cd ~/src/tinkerclaw
-bash ~/.openclaw/fork-scripts/safe-cron-merge.sh --no-backup --no-companion 2>&1
+bash ~/.openclaw/workspace/scripts/safe-cron-merge.sh --no-backup --no-companion 2>&1
 ```
 
 The script handles TIER1 files (accept upstream + re-wire), package.json restoration, and fork directory preservation. It will stop if there are unresolved conflicts.
+
+**Note:** the canonical script location is `~/.openclaw/workspace/scripts/`. The previously-documented `~/.openclaw/fork-scripts/` path does not exist — do not use it.
 
 ## Step 2: Resolve Conflicts Intelligently
 
@@ -72,14 +91,82 @@ This is the interesting case. Examples from 2026-04-06:
 
 The rule: **if upstream's version is a superset, take it. If fork adds unique value, keep that value on top of upstream's base.**
 
-## Step 3: Run wiring + build
+## Step 3: Run wiring, then HARD-GATED typecheck + build
+
+### 3a. Wire + count patch failures (not just warn about them)
 
 ```bash
-node ~/.openclaw/fork-scripts/apply-fork-wiring.mjs
-pnpm build
+node ~/.openclaw/workspace/scripts/apply-fork-wiring.mjs 2>&1 | tee /tmp/wiring.log
+FAILED_PATCHES=$(grep -cE '⚠️|warn|skip|not found|no match' /tmp/wiring.log || echo 0)
+echo "wiring: $FAILED_PATCHES suspicious lines"
 ```
 
-If the build fails, the wiring script's regex anchors likely need updating. Check which patches failed (warnings in wiring output) and fix them — don't skip the fork feature.
+**If `FAILED_PATCHES > 0`, do not proceed to build yet.** Open `/tmp/wiring.log`, identify which patch function(s) failed (the warnings name them), and for each one:
+- Read the target file from the current tree and the upstream diff (`git diff HEAD^ <file>`)
+- Find what changed: was the anchor line reformatted? split? commented? moved?
+- **Update the regex anchor** in `~/.openclaw/workspace/scripts/apply-fork-wiring.mjs` to match the new shape — do not hand-patch the target file instead.
+- Re-run `node ~/.openclaw/workspace/scripts/apply-fork-wiring.mjs` until FAILED_PATCHES = 0.
+
+The point of updating the wiring script, not the target file, is that the next merge will need the same patch again. Patches handed to the file decay immediately.
+
+### 3b. Fast typecheck BEFORE full build
+
+Full `pnpm build` takes minutes. `tsc --noEmit` is ~30s and gives structured errors:
+
+```bash
+cd ~/src/tinkerclaw
+npx tsc --noEmit 2>&1 | tee /tmp/tsc.log
+ERR_COUNT=$(grep -cE 'error TS[0-9]+' /tmp/tsc.log || echo 0)
+echo "tsc: $ERR_COUNT errors"
+```
+
+**If ERR_COUNT is 0, proceed to 3d.** If >0, continue to 3c.
+
+### 3c. Bucket errors by root-cause class, dispatch parallel fixes
+
+Every merge-damage TS error falls into one of three classes. Classify each error in `/tmp/tsc.log` before fixing anything:
+
+| Class | Signature | How to tell |
+|---|---|---|
+| **1. Fork erosion** | `Property 'X' does not exist on type 'Y'` where X is a fork-added field/method | `git log -S 'X' --all --oneline` shows prior fork commits adding it; grep `FORK:` comments in sibling files; the symbol name is specific to fork features (amygdala, fractal, cortex, engram, synapse, hasFractalHook, amygdalaNudge, etc.) |
+| **2. Upstream API drift** | `Property 'X' does not exist on type 'Y'` where Y is an upstream type; `Expected N arguments, but got M`; signature/arity mismatches on fn calls into `@mariozechner/pi-*` or `openclaw/*` | grep the upstream type def in `node_modules/@mariozechner/pi-coding-agent/dist/` or `packages/*/src/`; find the rename (often `getX` → `getXAndHeaders`, `runX` → `xCompact`, added required fields) |
+| **3. Structural move** | `Cannot find module '../../foo'`; `Cannot find module '../backfill/index.js'`; cross-package relative path errors | `find` the actual file location; count `../` depth from the importing file; the target usually exists but at a new depth |
+
+**Then dispatch parallel sub-agents, one per cluster of related errors.** Do NOT try to fix everything sequentially — merge damage comes in groups of 5–30 errors across 6 clusters, and a single-pass agent will thrash. Group errors by directory/feature (e.g., `pi-embedded-runner/*`, `memory-host-sdk/*`, `auth-profiles/*`) and fire one sub-agent per group with explicit instructions:
+
+> "You are fixing Cluster X (auth-profiles + bash-tools). Errors: [list]. Root-cause class: [1/2/3]. Method: classify each error, find the original fork source via git log -S, restore properly. NO `as any`, NO `@ts-ignore`, NO deleting fork features. Verify with `npx tsc --noEmit <your files>`."
+
+### 3d. Full build (the real gate)
+
+```bash
+cd ~/src/tinkerclaw
+pnpm build 2>&1 | tee /tmp/build.log
+BUILD_OK=$?
+```
+
+**If `BUILD_OK != 0`, the merge DOES NOT LAND.** Either:
+- Continue the 3a → 3b → 3c → 3d loop up to 2 more times (total 3 attempts), each time analyzing what changed.
+- Or hard-rollback: `git reset --hard ORIG_HEAD` (the pre-merge state from Phase 1). Write a receipt with `action: "rolled-back-build-failure"` and the full error summary. Escalate to the user.
+
+**Do NOT commit or push a tree that fails to build.** A broken tree in `main` makes every subsequent session slower because Jarvis can't self-heal from an unknown state. The right move is always rollback → human decides.
+
+### 3e. Cross-package import sanity check
+
+One more pass before declaring victory — cross-package imports are the silent killers:
+
+```bash
+cd ~/src/tinkerclaw
+# Find broken relative imports into src/ from packages/
+grep -rn "from ['\"]\.\./\.\./" packages/*/src/ --include='*.ts' 2>/dev/null | \
+  while IFS=: read file line rest; do
+    imp=$(echo "$rest" | grep -oP "from ['\"][^'\"]+['\"]" | tr -d '"'"'"'"'")
+    resolved="$(dirname "$file")/${imp#from }"
+    # Resolve relative, strip .js → .ts, check existence
+    :
+  done
+```
+
+If `packages/memory-host-sdk` or any other workspace package shows a broken `../../src/...` import, the package was moved (deeper or shallower) and the climb depth is wrong. Fix the relative paths — do not `as any` the import.
 
 ## Step 4: Verify Gateway Starts
 
@@ -98,12 +185,15 @@ If it crashes with `ReferenceError: X is not defined`:
 Write a report to: `$HOME/Documents/AI_reports/Cron_Tasks/0445_Daily_Fork_Sync_Report/YYYY-MM-DD-report.md`
 
 Include:
-- Commits merged
+- Commits merged (or "ROLLED BACK" if build failed)
 - Conflicts resolved (list each with reasoning)
+- **Wiring patch failures** — for each patch that needed an anchor update, record the old regex, the new regex, and which upstream commit changed the anchor
+- **Typecheck errors bucketed by class** (Class 1 Fork erosion / Class 2 Upstream drift / Class 3 Structural move) with counts and the subagent that fixed each cluster
+- **Upstream API renames detected** — if `getApiKey` → `getApiKeyAndHeaders`-style changes happened, record them in a machine-readable section at the bottom of FORK_PATCHES.md so future merges know
 - Upstream features adopted (things upstream does better now)
 - Fork features preserved (things we keep because they're superior)
 - Guardian result
-- Build result
+- Build result + final TS error count (should be 0)
 - Gateway health
 - Any features where upstream is CONVERGING on fork innovations (these are PR candidates)
 
@@ -124,6 +214,25 @@ done
 
 Write to: `~/.openclaw/workspace/memory/cron-receipts/YYYY-MM-DD-daily-fork-sync-report.json`
 
-## The Cardinal Rule
+## The Cardinal Rules
 
-**Never sacrifice agent capability for merge convenience.** If a fork feature makes the agent smarter, safer, or more capable, it survives the merge — even if that means more work to integrate. The fork exists because these features matter. Protect them.
+### 1. Never sacrifice agent capability for merge convenience
+If a fork feature makes the agent smarter, safer, or more capable, it survives the merge — even if that means more work to integrate. The fork exists because these features matter. Protect them.
+
+### 2. Never land a tree that doesn't build
+A merge commit that compiles cleanly is the absolute minimum. If you can't get there in 3 attempts, roll back and escalate. A broken `main` is worse than a stale `main` because every session after it has to work around the damage.
+
+### 3. Fix the wiring script, not the file
+When a patch function fails its anchor regex, update the regex. If you hand-patch the target file instead, the next merge re-breaks it and you'll be back here tomorrow. The wiring script is the durable asset — the file is ephemeral.
+
+### 4. No `as any`, no `@ts-ignore`, no deleting tests
+These three moves *always* mean you didn't understand the error. Every shortcut now is a cluster of debugging sessions later. If you're tempted, dispatch a sub-agent to investigate instead.
+
+### 5. Cluster-and-parallelize multi-file damage
+If you see more than 10 errors across more than 3 files after wiring, STOP and bucket them by class (fork erosion / upstream drift / structural move) and by directory. Then dispatch parallel sub-agents per cluster. Sequential fixing on >10 errors produces thrash, not progress.
+
+### 6. Update FORK_PATCHES.md in the same commit as the fix
+If you added a wiring patch, add an entry. If you discovered an upstream rename, record old → new. The registry only works if it's kept current. A fix that doesn't update the registry is half a fix.
+
+### 7. Abort on death spiral
+If `death_spiral_count >= 3` in the last receipt, do not attempt a fresh merge. Escalate. Repeatedly merging into a broken fork compounds the damage — the correct response is human intervention.
