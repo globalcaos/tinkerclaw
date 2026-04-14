@@ -257,8 +257,10 @@ describe("SYNAPSE Benchmark: Debate Quality & Cognitive Diversity", () => {
         domain: scenario.domain,
         cdi: Number(cdiScore.toFixed(4)),
         cdiConfidenceInterval: [Number(cdiCI[0].toFixed(4)), Number(cdiCI[1].toFixed(4))],
-        convergenceRound:
-          (debateResult as unknown as Record<string, unknown>).convergenceRound ?? null,
+        convergenceRound: (() => {
+          const raw = (debateResult as unknown as Record<string, unknown>).convergenceRound;
+          return typeof raw === "number" ? raw : null;
+        })(),
         totalRounds: debateRounds?.length ?? debateResult.rounds,
         consensusQuality: Number(consensusQuality.toFixed(4)),
         perspectiveCoverage: Number(coverage.toFixed(4)),

@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import needlesFixture from "./__fixtures__/needles.json";
+import needlesFixture from "./__fixtures__/needles.json" with { type: "json" };
 import {
   createArtifactStore,
   generatePreview,

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { HybridKeywordResult, HybridVectorResult } from "../../../../../src/memory/hybrid.js";
 import { buildFtsQuery, bm25RankToScore, mergeHybridResults } from "../hybrid.js";
 import { searchVector, searchKeyword } from "../manager-search.js";
 import { ensureMemoryIndexSchema } from "../memory-schema.js";
@@ -48,6 +49,7 @@ export class SQLiteMemoryStore implements MemoryStore {
     const schemaResult = ensureMemoryIndexSchema({
       db: this.db,
       embeddingCacheTable: this.embeddingCacheTable,
+      cacheEnabled: true,
       ftsTable: this.ftsTable,
       ftsEnabled: this.ftsEnabled,
     });
@@ -214,12 +216,12 @@ export class SQLiteMemoryStore implements MemoryStore {
     // Build source filters
     const sourceFilter = this.buildSourceFilter(sources);
 
-    let vectorResults: unknown[] = [];
-    let keywordResults: unknown[] = [];
+    let vectorResults: HybridVectorResult[] = [];
+    let keywordResults: HybridKeywordResult[] = [];
 
     // 1. Vector Search
     if (queryVec && queryVec.length > 0) {
-      vectorResults = await searchVector({
+      const rows = await searchVector({
         db: this.db,
         vectorTable: this.vectorTable,
         providerModel,
@@ -230,11 +232,20 @@ export class SQLiteMemoryStore implements MemoryStore {
         sourceFilterVec: sourceFilter,
         sourceFilterChunks: sourceFilter,
       });
+      vectorResults = rows.map((r) => ({
+        id: r.id,
+        path: r.path,
+        startLine: r.startLine,
+        endLine: r.endLine,
+        source: r.source,
+        snippet: r.snippet,
+        vectorScore: r.score,
+      }));
     }
 
     // 2. Keyword Search
     if (queryText && this.ftsEnabled && this.ftsAvailable) {
-      keywordResults = await searchKeyword({
+      const rows = await searchKeyword({
         db: this.db,
         ftsTable: this.ftsTable,
         providerModel,
@@ -245,27 +256,57 @@ export class SQLiteMemoryStore implements MemoryStore {
         buildFtsQuery,
         bm25RankToScore,
       });
+      keywordResults = rows.map((r) => ({
+        id: r.id,
+        path: r.path,
+        startLine: r.startLine,
+        endLine: r.endLine,
+        source: r.source,
+        snippet: r.snippet,
+        textScore: r.textScore,
+      }));
     }
 
     // 3. Merge
     if (vectorResults.length > 0 && keywordResults.length > 0) {
-      const merged = mergeHybridResults({
+      const merged = await mergeHybridResults({
         vector: vectorResults,
         keyword: keywordResults,
         vectorWeight: params.hybridWeights?.vector ?? 0.7,
         textWeight: params.hybridWeights?.text ?? 0.3,
       });
       return merged.map((r) => ({
-        id: "", // merged result might not have single ID if logic changes, but currently it does
-        ...r,
+        id: "", // merged result might not carry a single ID once re-ranked
+        path: r.path,
+        startLine: r.startLine,
+        endLine: r.endLine,
+        score: r.score,
+        snippet: r.snippet,
+        source: r.source,
       })) as SearchResult[];
     }
 
     if (vectorResults.length > 0) {
-      return vectorResults;
+      return vectorResults.map((r) => ({
+        id: r.id,
+        path: r.path,
+        startLine: r.startLine,
+        endLine: r.endLine,
+        score: r.vectorScore,
+        snippet: r.snippet,
+        source: r.source,
+      })) as SearchResult[];
     }
     if (keywordResults.length > 0) {
-      return keywordResults.map((r) => ({ ...r, score: r.textScore }));
+      return keywordResults.map((r) => ({
+        id: r.id,
+        path: r.path,
+        startLine: r.startLine,
+        endLine: r.endLine,
+        score: r.textScore,
+        snippet: r.snippet,
+        source: r.source,
+      })) as SearchResult[];
     }
 
     return [];

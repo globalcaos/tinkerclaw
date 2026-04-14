@@ -9,11 +9,14 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createHumorTrigger, type HumorTrigger } from "../../agents/pi-extensions/humor-trigger.js";
+import {
+  createHumorTrigger,
+  type HumorTrigger,
+} from "../../../../../src/agents/pi-extensions/humor-trigger.js";
 import {
   createLimbicRuntime,
   type LimbicRuntime,
-} from "../../agents/pi-extensions/limbic-runtime.js";
+} from "../../../../../src/agents/pi-extensions/limbic-runtime.js";
 import type { EventStore } from "../engram/event-store.js";
 import type { MemoryEvent, EventKind } from "../engram/event-types.js";
 

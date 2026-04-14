@@ -15,15 +15,15 @@ import {
   type CortexRuntime,
   type SyncScoreResult,
   type DriftAssessment,
-} from "../../agents/pi-extensions/cortex-runtime.js";
+} from "../../../../../src/agents/pi-extensions/cortex-runtime.js";
 import {
   applyMidContextReinject,
   evaluateTurnSyncScore,
-} from "../../agents/pi-extensions/mid-context-reinject.js";
+} from "../../../../../src/agents/pi-extensions/mid-context-reinject.js";
 import {
   createObservationExtractor,
   DEFAULT_OBSERVATION_THRESHOLD,
-} from "../../agents/pi-extensions/observation-runtime.js";
+} from "../../../../../src/agents/pi-extensions/observation-runtime.js";
 import { createEventStore } from "../engram/event-store.js";
 import type { PersonaState } from "./persona-state.js";
 
@@ -39,6 +39,7 @@ function makeMockRuntime(
   const mockPersona = {
     name: "MockBot",
     version: 1,
+    lastUpdated: new Date(0).toISOString(),
     identityStatement: "Test persona",
     hardRules: [],
     traits: [],
@@ -46,7 +47,7 @@ function makeMockRuntime(
       humorFrequency: 0,
       sensitivityThreshold: 0.5,
       preferredPatterns: [],
-      avoidPatterns: [],
+      audienceModel: {},
     },
     voiceMarkers: {
       avgSentenceLength: 15,

@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { CompactionManifest } from "../../agents/pi-extensions/pointer-compaction-runtime.js";
+import type { CompactionManifest } from "../../../../../src/agents/pi-extensions/pointer-compaction-runtime.js";
 import { createCompactionReflector, type CompactionReflection } from "./compaction-reflection.js";
 import { createEventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";

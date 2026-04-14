@@ -1,5 +1,5 @@
 // Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
-import type { SsrFPolicy } from "../infra/net/ssrf.js";
+import type { SsrFPolicy } from "../../../../src/infra/net/ssrf.js";
 
 export type BatchHttpClientConfig = {
   baseUrl?: string;
