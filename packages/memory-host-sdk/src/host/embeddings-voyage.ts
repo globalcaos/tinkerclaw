@@ -1,5 +1,5 @@
 // Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
-import type { SsrFPolicy } from "../infra/net/ssrf.js";
+import type { SsrFPolicy } from "../../../../src/infra/net/ssrf.js";
 import { normalizeEmbeddingModelWithPrefixes } from "./embeddings-model-normalize.js";
 import { resolveRemoteEmbeddingBearerClient } from "./embeddings-remote-client.js";
 import { fetchRemoteEmbeddingVectors } from "./embeddings-remote-fetch.js";

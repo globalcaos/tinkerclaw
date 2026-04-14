@@ -25,7 +25,7 @@ async function runTest() {
     await store.setMeta("test_key", { foo: "bar" });
     const meta = await store.getMeta("test_key");
     console.log("Meta retrieved:", meta);
-    if (meta.foo !== "bar") {
+    if (!meta || typeof meta !== "object" || (meta as { foo?: unknown }).foo !== "bar") {
       throw new Error("Metadata mismatch");
     }
 

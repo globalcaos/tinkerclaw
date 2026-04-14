@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   createPointerCompactionHandler,
   type CompactionManifest,
-} from "../../agents/pi-extensions/pointer-compaction-runtime.js";
+} from "../../../../../src/agents/pi-extensions/pointer-compaction-runtime.js";
 import { createEventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
 import { pointerCompact } from "./pointer-compaction.js";
@@ -256,7 +256,9 @@ describe("topic hint extraction", () => {
     // Topic tags should appear in hints; "constraint" would be excluded but is not present here
     expect(manifest.topicHints.length).toBeGreaterThan(0);
     // Verify no obviously invalid values
-    expect(manifest.topicHints.every((h) => typeof h === "string" && h.length > 0)).toBe(true);
+    expect(manifest.topicHints.every((h: string) => typeof h === "string" && h.length > 0)).toBe(
+      true,
+    );
   });
 
   it("topic hints are capped at 3", () => {

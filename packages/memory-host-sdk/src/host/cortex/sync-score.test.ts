@@ -18,7 +18,7 @@ import {
   SYNC_SCORE_ALPHA,
   SYNC_SCORE_DRIFT_THRESHOLD,
   type SyncScoreResult,
-} from "../../agents/pi-extensions/cortex-runtime.js";
+} from "../../../../../src/agents/pi-extensions/cortex-runtime.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
