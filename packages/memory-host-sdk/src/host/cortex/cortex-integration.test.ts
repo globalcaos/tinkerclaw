@@ -13,11 +13,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createCortexRuntime } from "../../agents/pi-extensions/cortex-runtime.js";
+import { createCortexRuntime } from "../../../../../src/agents/pi-extensions/cortex-runtime.js";
 import {
   createObservationExtractor,
   DEFAULT_OBSERVATION_THRESHOLD,
-} from "../../agents/pi-extensions/observation-runtime.js";
+} from "../../../../../src/agents/pi-extensions/observation-runtime.js";
 import { createEventStore } from "../engram/event-store.js";
 
 // ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ describe("CORTEX Integration: ObservationExtractor", () => {
     ];
     const obs = extractor.extractObservations(messages, 1);
     expect(obs.length).toBeGreaterThan(0);
-    expect(obs.some((o) => o.type === "fact")).toBe(true);
+    expect(obs.some((o: { type: string }) => o.type === "fact")).toBe(true);
   });
 
   it("extracts preferences from messages when threshold is forced to 1", () => {
@@ -237,7 +237,7 @@ describe("CORTEX Integration: ObservationExtractor", () => {
     const extractor = createObservationExtractor(store);
     const messages = ["I prefer concise answers over lengthy explanations."];
     const obs = extractor.extractObservations(messages, 1);
-    expect(obs.some((o) => o.type === "preference")).toBe(true);
+    expect(obs.some((o: { type: string }) => o.type === "preference")).toBe(true);
   });
 
   it("stores extracted observations in event store as system_event with 'observation' tag", () => {

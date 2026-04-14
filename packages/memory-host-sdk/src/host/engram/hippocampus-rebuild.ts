@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
-import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { createSubsystemLogger } from "../../../../../src/logging/subsystem.js";
 import type { MemoryEvent } from "./event-types.js";
 import {
   enhanceIndex,

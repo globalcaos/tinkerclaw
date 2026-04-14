@@ -8,7 +8,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CompactionManifest } from "../../agents/pi-extensions/pointer-compaction-runtime.js";
+import type { CompactionManifest } from "../../../../../src/agents/pi-extensions/pointer-compaction-runtime.js";
 import type { EventStore } from "./event-store.js";
 
 // ---------------------------------------------------------------------------

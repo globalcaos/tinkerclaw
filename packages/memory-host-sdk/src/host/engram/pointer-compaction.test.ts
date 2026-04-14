@@ -11,7 +11,7 @@ import {
   buildManifest,
   renderManifest,
   type CompactionManifest,
-} from "../../agents/pi-extensions/pointer-compaction-runtime.js";
+} from "../../../../../src/agents/pi-extensions/pointer-compaction-runtime.js";
 import type { MemoryEvent } from "./event-types.js";
 
 // ---------------------------------------------------------------------------

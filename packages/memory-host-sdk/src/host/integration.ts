@@ -26,7 +26,7 @@ import { estimateTokens } from "./engram/event-store.js";
 import type { MemoryEvent } from "./engram/event-types.js";
 import type { MetricsCollector } from "./engram/metrics.js";
 import {
-  runPointerCompaction,
+  pointerCompact,
   estimateCacheTokens,
   type ContextCache,
   type CompactionBudgets,
@@ -215,7 +215,12 @@ export class CognitiveOrchestrator {
       const t0 = performance.now();
       try {
         const probeResults = loadProbeResults(this.store, 10);
-        const driftScore = computeDriftScore(this.driftState, this.turnNumber, probeResults);
+        const driftScore = computeDriftScore(
+          userMessage,
+          probeResults,
+          this.driftState,
+          this.turnNumber,
+        );
 
         if (driftScore.ewmaScore > 0.5) {
           const severity = driftScore.ewmaScore > 0.75 ? "severe" : "moderate";
@@ -450,7 +455,8 @@ export class CognitiveOrchestrator {
             hotTailTurns: 4,
             markerSoftCap: 10,
           };
-          this.contextCache = runPointerCompaction(this.contextCache, budgets, this.metrics);
+          // pointerCompact mutates the cache in place and returns the number of cycles performed.
+          pointerCompact(this.contextCache, budgets, undefined, this.metrics);
           this.metrics.record("engram", "compaction_triggered", cacheTokens);
         }
       } catch (err) {

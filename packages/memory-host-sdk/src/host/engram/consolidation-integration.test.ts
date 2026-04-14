@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type EpisodeSummaryPayload,
   createConsolidationRunner,
-} from "../../agents/pi-extensions/consolidation-runtime.js";
+} from "../../../../../src/agents/pi-extensions/consolidation-runtime.js";
 import { createEventStore, type EventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
 
