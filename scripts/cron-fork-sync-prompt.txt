@@ -150,23 +150,14 @@ BUILD_OK=$?
 
 **Do NOT commit or push a tree that fails to build.** A broken tree in `main` makes every subsequent session slower because Jarvis can't self-heal from an unknown state. The right move is always rollback → human decides.
 
-### 3e. Cross-package import sanity check
+### 3e. Cross-package import sanity (already handled by wiring script)
 
-One more pass before declaring victory — cross-package imports are the silent killers:
+As of 2026-04-14, `apply-fork-wiring.mjs` runs two structural guards at the end of Step 3a:
 
-```bash
-cd ~/src/tinkerclaw
-# Find broken relative imports into src/ from packages/
-grep -rn "from ['\"]\.\./\.\./" packages/*/src/ --include='*.ts' 2>/dev/null | \
-  while IFS=: read file line rest; do
-    imp=$(echo "$rest" | grep -oP "from ['\"][^'\"]+['\"]" | tr -d '"'"'"'"'")
-    resolved="$(dirname "$file")/${imp#from }"
-    # Resolve relative, strip .js → .ts, check existence
-    :
-  done
-```
+- `checkPreservePaths` — verifies `extensions/tinkerclaw-whatsapp/src/backfill/index.ts` and `extensions/tinkerclaw-whatsapp/src/history/` still exist and are non-empty. If upstream refactors them away, the script exits non-zero with a `⚠️` line and the Step 3a grep counts it.
+- `checkCrossPackageImports` — walks `packages/memory-host-sdk/src/` and resolves every relative `../..` climb into `src/agents/` or `src/infra/`. A missing target prints `⚠️` and exits non-zero.
 
-If `packages/memory-host-sdk` or any other workspace package shows a broken `../../src/...` import, the package was moved (deeper or shallower) and the climb depth is wrong. Fix the relative paths — do not `as any` the import.
+If your Step 3a log shows `preserve:` or `cross-package:` warnings, the wiring-script guard has already detected the issue — do NOT silently create stubs or `as any` the imports. For preserve-path misses, restore from the most recent `preserve/*` tag (`git ls-tree -r preserve/... | grep <name>`). For cross-package climb-depth mismatches, fix the relative path in every affected file and add a regex-based updater to `apply-fork-wiring.mjs` so the next merge patches it automatically.
 
 ## Step 4: Verify Gateway Starts
 
