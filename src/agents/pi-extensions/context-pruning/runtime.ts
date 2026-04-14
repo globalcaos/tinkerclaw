@@ -17,6 +17,8 @@ export type ContextPruningRuntimeValue = {
   settings: EffectiveContextPruningSettings;
   contextWindowTokens?: number | null;
   isToolPrunable: (toolName: string) => boolean;
+  /** FORK: drop thinking blocks during pruning when the active replay policy requires it. */
+  dropThinkingBlocks?: boolean;
   lastCacheTouchAt?: number | null;
 };
 
