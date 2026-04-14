@@ -311,6 +311,8 @@ export async function runEmbeddedPiAgent(
         setThinkLevel: (next) => {
           thinkLevel = next;
         },
+        runId: params.runId,
+        sessionKey: params.sessionKey ?? params.sessionId,
         log,
       });
 

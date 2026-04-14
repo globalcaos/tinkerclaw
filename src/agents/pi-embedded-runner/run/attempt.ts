@@ -2240,6 +2240,7 @@ export async function runEmbeddedAttempt(
       // FORK: fire-and-forget post-turn processing (context anatomy, ENGRAM, SyncScore, observations)
       _forkAttemptHooks
         .onTurnComplete({
+          runId: params.runId,
           sessionManager:
             activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
           sessionKey: params.sessionKey,

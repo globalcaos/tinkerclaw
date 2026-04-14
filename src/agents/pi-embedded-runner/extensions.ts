@@ -218,7 +218,8 @@ export function buildEmbeddedExtensionFactories(params: {
             const origAppend = eventStore!.append.bind(eventStore!);
             eventStore!.append = (event) => {
               const result = origAppend(event);
-              worker.enqueue(event);
+              // FORK: enqueue the materialized event (with id/timestamp), not the input draft.
+              worker.enqueue(result);
               return result;
             };
           }
