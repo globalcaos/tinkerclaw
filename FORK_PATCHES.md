@@ -17,17 +17,52 @@ When a conflict occurs during upstream merge, it passes through these resolvers 
 5. **Wiring script** — `apply-fork-wiring.mjs` re-applies fork hooks post-merge
 6. **LLM agent** — cron agent (opus, 60min) resolves remaining conflicts
 
-## Post-Modularization Audit (2026-03-28)
+## 2026-04-14 — April 6 merge damage (restored)
 
-| Metric                                               | Count | Notes                                                    |
-| ---------------------------------------------------- | ----- | -------------------------------------------------------- |
-| FORK: marker files (src/, excl. src/fork/ and tests) | 57    | Upstream-touching files with fork modifications          |
-| FORK: marker occurrences total                       | 119   | Across 63 files (incl. src/fork/)                        |
-| Patch functions (apply-fork-wiring.mjs)              | 14    | Auto-applied after --theirs merge                        |
-| Guardian checks (merge-guardian.sh)                  | 50    | Wiring + build verification points                       |
-| TIER1 files                                          | 14    | Accept upstream + re-wire (matches patch function count) |
-| MANUAL files                                         | 10    | Require human review                                     |
-| PRESERVE paths                                       | 13    | Always keep fork version                                 |
+The 2026-04-06 upstream merge silently dropped nine fork additions across the
+type and helper layer. They were restored by hand on 2026-04-14 in commits
+`9223a3cb9e` `e06283b94e` `62ae6c6ab3` `fbd5b51e20` `39d331ac8a` `88d361e8fa`,
+and registered as wiring-script patches the same day so the next merge can
+auto-restore them. The wiring script also gained a structural PRESERVE guard
+and a cross-package import guard.
+
+| #   | File                                               | Symbol                            | Patch fn                    | Restored in |
+| --- | -------------------------------------------------- | --------------------------------- | --------------------------- | ----------- |
+| 1   | src/config/types.auth.ts                           | AuthProfileConfig.displayName     | patchAuthProfileDisplayName | 9223a3cb9e  |
+| 2   | src/agents/bash-tools.exec-host-shared.ts          | obfuscationDetected (×2 fns)      | patchObfuscationDetected    | 9223a3cb9e  |
+| 3   | src/infra/heartbeat-runner.ts                      | hasFractalHook (type+ret+dst)     | patchHeartbeatFractalHook   | 9223a3cb9e  |
+| 4   | src/agents/system-prompt.ts                        | amygdalaNudge (param+block)       | patchAmygdalaNudge          | e06283b94e  |
+| 5   | src/agents/pi-embedded-subscribe.types.ts          | modelId + modelProvider           | patchSubscribeModelFields   | 62ae6c6ab3  |
+| 6   | src/agents/pi-embedded-subscribe.handlers.types.ts | emitBlockReply on context         | patchEmitBlockReply         | 62ae6c6ab3  |
+| 7   | src/auto-reply/reply/agent-runner.ts               | resetTriggered                    | patchResetTriggered         | fbd5b51e20  |
+| 8   | src/auto-reply/reply/get-reply.ts                  | applyMergePatch + logIngressStage | patchGetReplyHelpers        | fbd5b51e20  |
+| 9   | src/media/read-response-with-limit.ts              | onIdleTimeout                     | patchOnIdleTimeout          | fbd5b51e20  |
+
+Structural guards added in the same wiring-script change:
+
+- **`checkPreservePaths()`** — verifies `extensions/tinkerclaw-whatsapp/src/backfill/index.ts`
+  and `extensions/tinkerclaw-whatsapp/src/history/` survived the merge. Both
+  were dropped during the modularization extraction and restored from
+  `preserve/tinkerclaw-whatsapp-*` tags. On miss, the script prints `⚠️`
+  and sets exit code 1 — does NOT silently stub.
+- **`checkCrossPackageImports()`** — walks `packages/memory-host-sdk/src/`
+  for `../..`-style relative imports that resolve into `src/agents/` or
+  `src/infra/`. The April merge moved memory-host-sdk one level deeper but
+  left several test files at the old climb depth (4 levels instead of 5),
+  silently breaking 9 imports. Guard prints `⚠️` for any unresolved spec.
+
+## Post-Modularization Audit (2026-03-28, updated 2026-04-14)
+
+| Metric                                               | Count | Notes                                                              |
+| ---------------------------------------------------- | ----- | ------------------------------------------------------------------ |
+| FORK: marker files (src/, excl. src/fork/ and tests) | 57    | Upstream-touching files with fork modifications                    |
+| FORK: marker occurrences total                       | 119   | Across 63 files (incl. src/fork/)                                  |
+| Patch functions (apply-fork-wiring.mjs)              | 23    | 14 original + 9 added 2026-04-14 (April 6 merge damage)            |
+| Structural guards (apply-fork-wiring.mjs)            | 2     | checkPreservePaths + checkCrossPackageImports (added 2026-04-14)   |
+| Guardian checks (merge-guardian.sh)                  | 50    | Wiring + build verification points                                 |
+| TIER1 files                                          | 14    | Accept upstream + re-wire (original list; 9 new files use --merge) |
+| MANUAL files                                         | 10    | Require human review                                               |
+| PRESERVE paths                                       | 13    | Always keep fork version                                           |
 
 Cognitive extraction status:
 
