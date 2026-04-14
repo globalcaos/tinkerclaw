@@ -484,6 +484,8 @@ type HeartbeatPromptResolution = {
   prompt: string;
   hasExecCompletion: boolean;
   hasCronEvents: boolean;
+  /** FORK: Fractal reflection hook — true when pending events include FRACTAL REFLECTION. */
+  hasFractalHook: boolean;
 };
 
 function appendHeartbeatWorkspacePathHint(prompt: string, workspaceDir: string): string {
@@ -552,7 +554,7 @@ function resolveHeartbeatRunPrompt(params: {
         : resolveHeartbeatPrompt(params.cfg, params.heartbeat);
   const prompt = appendHeartbeatWorkspacePathHint(basePrompt, params.workspaceDir);
 
-  return { prompt, hasExecCompletion, hasCronEvents };
+  return { prompt, hasExecCompletion, hasCronEvents, hasFractalHook };
 }
 
 export async function runHeartbeatOnce(opts: {
@@ -674,7 +676,7 @@ export async function runHeartbeatOnce(opts: {
     delivery.channel !== "none" && delivery.to && visibility.showAlerts,
   );
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  const { prompt, hasExecCompletion, hasCronEvents } = resolveHeartbeatRunPrompt({
+  const { prompt, hasExecCompletion, hasCronEvents, hasFractalHook } = resolveHeartbeatRunPrompt({
     cfg,
     heartbeat,
     preflight,

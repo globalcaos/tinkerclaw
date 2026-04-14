@@ -164,6 +164,8 @@ export function createDefaultExecApprovalRequestContext(params: {
 export function resolveBaseExecApprovalDecision(params: {
   decision: string | null;
   askFallback: ResolvedExecApprovals["agent"]["askFallback"];
+  /** FORK: Obfuscation gating — fork restores host-level obfuscation denial. */
+  obfuscationDetected?: boolean;
 }): {
   approvedByAsk: boolean;
   deniedReason: string | null;
@@ -173,6 +175,13 @@ export function resolveBaseExecApprovalDecision(params: {
     return { approvedByAsk: false, deniedReason: "user-denied", timedOut: false };
   }
   if (!params.decision) {
+    if (params.obfuscationDetected) {
+      return {
+        approvedByAsk: false,
+        deniedReason: "approval-timeout (obfuscation-detected)",
+        timedOut: true,
+      };
+    }
     if (params.askFallback === "full") {
       return { approvedByAsk: true, deniedReason: null, timedOut: true };
     }
@@ -329,10 +338,13 @@ export function buildExecApprovalFollowupTarget(
 export function createExecApprovalDecisionState(params: {
   decision: string | null | undefined;
   askFallback: ResolvedExecApprovals["agent"]["askFallback"];
+  /** FORK: Obfuscation gating — fork restores host-level obfuscation denial. */
+  obfuscationDetected?: boolean;
 }) {
   const baseDecision = resolveBaseExecApprovalDecision({
     decision: params.decision ?? null,
     askFallback: params.askFallback,
+    obfuscationDetected: params.obfuscationDetected,
   });
   return {
     baseDecision,

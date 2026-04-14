@@ -8,6 +8,7 @@ export type AuthProfileConfig = {
    */
   mode: "api_key" | "oauth" | "token";
   email?: string;
+  displayName?: string;
   /**
    * FORK: Path to an external JSON file containing credentials for this profile.
    * Supports `~` expansion. When set, credentials are read from this file instead
