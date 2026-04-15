@@ -124,7 +124,7 @@ const VideoGenerateToolSchema = Type.Object({
   ),
   resolution: Type.Optional(
     Type.String({
-      description: "Optional resolution hint: 480P, 720P, or 1080P.",
+      description: "Optional resolution hint: 480P, 720P, 768P, or 1080P.",
     }),
   ),
   durationSeconds: Type.Optional(
@@ -175,10 +175,15 @@ function normalizeResolution(raw: string | undefined): VideoGenerationResolution
   if (!normalized) {
     return undefined;
   }
-  if (normalized === "480P" || normalized === "720P" || normalized === "1080P") {
+  if (
+    normalized === "480P" ||
+    normalized === "720P" ||
+    normalized === "768P" ||
+    normalized === "1080P"
+  ) {
     return normalized;
   }
-  throw new ToolInputError("resolution must be one of 480P, 720P, or 1080P");
+  throw new ToolInputError("resolution must be one of 480P, 720P, 768P, or 1080P");
 }
 
 function normalizeAspectRatio(raw: string | undefined): string | undefined {
@@ -281,6 +286,12 @@ function validateVideoGenerationCapabilities(params: {
     inputImageCount: params.inputImageCount,
     inputVideoCount: params.inputVideoCount,
   });
+  if (!caps && mode === "imageToVideo" && params.inputVideoCount === 0) {
+    throw new ToolInputError(`${provider.id} does not support image-to-video reference inputs.`);
+  }
+  if (!caps && mode === "videoToVideo" && params.inputImageCount === 0) {
+    throw new ToolInputError(`${provider.id} does not support video-to-video reference inputs.`);
+  }
   if (!caps) {
     return;
   }
