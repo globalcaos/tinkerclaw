@@ -225,8 +225,8 @@ function recordFailedCandidateAttempt(params: {
   candidate: ModelCandidate;
   error: unknown;
   runId?: string;
-  requestedProvider?: string;
-  requestedModel?: string;
+  requestedProvider: string;
+  requestedModel: string;
   attempt: number;
   total: number;
   nextCandidate?: ModelCandidate;
