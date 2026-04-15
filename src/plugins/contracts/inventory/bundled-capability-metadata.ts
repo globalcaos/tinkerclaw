@@ -172,9 +172,11 @@ export const BUNDLED_LEGACY_PLUGIN_ID_ALIASES = Object.fromEntries(
 // FORK: config-state.ts imports this for normalizePluginId() provider lookups.
 // Maps provider IDs (e.g., "anthropic", "google") to their plugin IDs.
 export const BUNDLED_PROVIDER_PLUGIN_ID_ALIASES = Object.fromEntries(
-  BUNDLED_PLUGIN_METADATA_FOR_CAPABILITIES.flatMap(({ manifest }) =>
-    (manifest.providers ?? []).map((providerId) => [providerId, manifest.id] as const),
-  ).toSorted(([left], [right]) => left.localeCompare(right)),
+  BUNDLED_CAPABILITY_MANIFESTS.flatMap((manifest: BundledCapabilityManifest) =>
+    (manifest.providers ?? []).map(
+      (providerId: string) => [providerId, manifest.id] as [string, string],
+    ),
+  ).toSorted((a, b) => a[0].localeCompare(b[0])),
 ) as Readonly<Record<string, string>>;
 
 export const BUNDLED_AUTO_ENABLE_PROVIDER_PLUGIN_IDS = Object.fromEntries(

@@ -2,6 +2,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
+// FORK: engram/hybrid-retrieval runtime wiring. These imports back the
+// `compactionMode === "engram"` branch below and were lost in the 2026-04-15
+// stratified upstream merge.
+import { createOllamaEmbeddingProvider } from "../../memory/embeddings-ollama.js";
+import { createEmbeddingCache } from "../../memory/engram/embedding-cache.js";
+import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
+import { createEventStore } from "../../memory/engram/event-store.js";
+import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
+import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
@@ -90,11 +99,14 @@ function buildContextPruningFactory(params: {
   return contextPruningExtension;
 }
 
-function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" {
+function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
   const compaction = cfg?.agents?.defaults?.compaction;
   // A registered compaction provider requires the safeguard extension path
   if (compaction?.provider) {
     return "safeguard";
+  }
+  if (compaction?.mode === "engram") {
+    return "engram";
   }
   return compaction?.mode === "safeguard" ? "safeguard" : "default";
 }
@@ -185,7 +197,7 @@ export function buildEmbeddedExtensionFactories(params: {
         model: "mxbai-embed-large",
         fallback: "none",
       })
-        .then(({ provider }) => {
+        .then(({ provider }: { provider: import("../../memory/embeddings.js").EmbeddingProvider }) => {
           if (needsLimbic) {
             const semanticRuntime = createLimbicRuntime(
               eventStore!,
@@ -201,7 +213,7 @@ export function buildEmbeddedExtensionFactories(params: {
               texts,
             ) => {
               const vectors = await provider.embedBatch(texts);
-              return vectors.map((v) => new Float32Array(v));
+              return vectors.map((v: number[]) => new Float32Array(v));
             };
             setRetrievalRuntime(params.sessionManager, {
               eventStore: eventStore!,
@@ -214,10 +226,10 @@ export function buildEmbeddedExtensionFactories(params: {
               cache: embCache,
               batchSize: 16,
               batchTimeoutMs: 10000,
-              onError: (err) => console.warn(`[engram] Embedding worker error: ${err.message}`),
+              onError: (err: Error) => console.warn(`[engram] Embedding worker error: ${err.message}`),
             });
             const origAppend = eventStore!.append.bind(eventStore!);
-            eventStore!.append = (event) => {
+            eventStore!.append = (event: Parameters<typeof origAppend>[0]) => {
               const result = origAppend(event);
               // FORK: enqueue the materialized event (with id/timestamp), not the input draft.
               worker.enqueue(result);
@@ -226,7 +238,7 @@ export function buildEmbeddedExtensionFactories(params: {
           }
           console.log("[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)");
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           console.warn(`[fork] Ollama embedding unavailable, FTS-only retrieval: ${err}`);
         });
     }

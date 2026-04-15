@@ -8,6 +8,8 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
 import { hasAnyAuthProfileStoreSource } from "./auth-profiles/source-check.js";
+// FORK: cost-aware model routing — see ~/.openclaw/workspace/memory/knowledge/cost-aware-model-routing.md
+import { isCandidateAllowed } from "./billing-gate.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {

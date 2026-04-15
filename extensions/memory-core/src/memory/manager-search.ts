@@ -334,9 +334,4 @@ export async function searchKeyword(params: {
       source: row.source,
     };
   });
-  trackAccess(
-    params.db,
-    keywordResults.map((r) => r.id),
-  );
-  return keywordResults;
 }

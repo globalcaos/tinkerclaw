@@ -108,6 +108,8 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
     ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId} isError=${isError}`);
   }
 
+  const rateLimit =
+    ctx.params.modelProvider === "anthropic" ? getRateLimitSnapshot() : undefined;
   const emitLifecycleTerminal = () => {
     if (isError) {
       emitAgentEvent({

@@ -16,7 +16,10 @@ import { DEFAULT_HEARTBEAT_FILENAME } from "../agents/workspace.js";
 import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
 import {
   DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+  type HeartbeatTask,
   isHeartbeatContentEffectivelyEmpty,
+  isTaskDue,
+  parseHeartbeatTasks,
   resolveHeartbeatPrompt as resolveHeartbeatPromptText,
   stripHeartbeatToken,
 } from "../auto-reply/heartbeat.js";
@@ -28,11 +31,10 @@ import type { ChannelHeartbeatDeps } from "../channels/plugins/types.public.js";
 import { loadConfig } from "../config/config.js";
 import {
   canonicalizeMainSessionAlias,
-  loadSessionStore,
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
 } from "../config/sessions/main-session.js";
-import { resolveStorePath } from "../config/sessions/paths.js";
+import { resolveSessionFilePath, resolveStorePath } from "../config/sessions/paths.js";
 import { loadSessionStore } from "../config/sessions/store-load.js";
 import {
   archiveRemovedSessionTranscripts,
@@ -100,6 +102,8 @@ import {
 } from "./outbound/targets.js";
 import {
   consumeSystemEventEntries,
+  drainSystemEventEntries,
+  enqueueSystemEvent,
   peekSystemEventEntries,
   resolveSystemEventDeliveryContext,
 } from "./system-events.js";
@@ -549,6 +553,8 @@ type HeartbeatPreflight = HeartbeatReasonFlags & {
   turnSourceDeliveryContext: ReturnType<typeof resolveSystemEventDeliveryContext>;
   hasTaggedCronEvents: boolean;
   shouldInspectPendingEvents: boolean;
+  /** FORK: parsed tasks from HEARTBEAT.md (YAML `tasks:` block). */
+  tasks: HeartbeatTask[];
   skipReason?: HeartbeatSkipReason;
 };
 
@@ -614,6 +620,7 @@ async function resolveHeartbeatPreflight(params: {
     turnSourceDeliveryContext,
     hasTaggedCronEvents,
     shouldInspectPendingEvents,
+    tasks: [] as HeartbeatTask[],
   } satisfies Omit<HeartbeatPreflight, "skipReason">;
 
   if (shouldBypassFileGates) {
@@ -630,6 +637,8 @@ async function resolveHeartbeatPreflight(params: {
         skipReason: "empty-heartbeat-file",
       };
     }
+    // FORK: parse HEARTBEAT.md YAML tasks block so task-scheduler can gate runs.
+    basePreflight.tasks = parseHeartbeatTasks(heartbeatFileContent);
   } catch (err: unknown) {
     if (hasErrnoCode(err, "ENOENT")) {
       // Missing HEARTBEAT.md is intentional in some setups (for example, when
@@ -796,22 +805,6 @@ export async function runHeartbeatOnce(opts: {
   // sending the full conversation history (~100K tokens) to the LLM.
   // Delivery routing still uses the main session entry (lastChannel, lastTo).
   const useIsolatedSession = heartbeat?.isolatedSession === true;
-  let runSessionKey = sessionKey;
-  let runStorePath = storePath;
-  if (useIsolatedSession) {
-    const isolatedKey = `${sessionKey}:heartbeat`;
-    const cronSession = resolveCronSession({
-      cfg,
-      sessionKey: isolatedKey,
-      agentId,
-      nowMs: startedAt,
-      forceNew: true,
-    });
-    cronSession.store[isolatedKey] = cronSession.sessionEntry;
-    await saveSessionStore(cronSession.storePath, cronSession.store);
-    runSessionKey = isolatedKey;
-    runStorePath = cronSession.storePath;
-  }
 
   const delivery = resolveHeartbeatDeliveryTarget({
     cfg,
@@ -1065,9 +1058,15 @@ export async function runHeartbeatOnce(opts: {
       timeoutOverrideSeconds,
       bootstrapContextMode,
     };
-    const getReplyFromConfig =
-      opts.deps?.getReplyFromConfig ?? (await loadHeartbeatRunnerRuntime()).getReplyFromConfig;
-    const replyResult = await getReplyFromConfig(ctx, replyOpts, cfg);
+    // FORK: capture transcript size before the heartbeat run so we can
+    // truncate HEARTBEAT_OK/duplicate turns back off the .jsonl on skip paths.
+    const transcriptState = await captureTranscriptState({
+      storePath,
+      sessionKey: runSessionKey,
+      agentId,
+    });
+    const replyFn = opts.deps?.getReplyFromConfig ?? getReplyFromConfig;
+    const replyResult = await replyFn(ctx, replyOpts, cfg);
     const replyPayload = resolveHeartbeatReplyPayload(replyResult);
     const includeReasoning = heartbeat?.includeReasoning === true;
     const reasoningPayloads = includeReasoning
