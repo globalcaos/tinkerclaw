@@ -8,6 +8,10 @@ import {
 import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
+import { readStringValue } from "../shared/string-coerce.js";
+import type { ApplyPatchSummary } from "./apply-patch.js";
+import type { ExecToolDetails } from "./bash-tools.exec-types.js";
+import { parseExecApprovalResultText } from "./exec-approval-result.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
 import { isMessagingTool, isMessagingToolSendAction } from "./pi-embedded-messaging.js";
 import type {
@@ -204,9 +208,9 @@ function readExecApprovalPendingDetails(result: unknown): {
       : undefined,
     host,
     command,
-    cwd: typeof details.cwd === "string" ? details.cwd : undefined,
-    nodeId: typeof details.nodeId === "string" ? details.nodeId : undefined,
-    warningText: typeof details.warningText === "string" ? details.warningText : undefined,
+    cwd: readStringValue(details.cwd),
+    nodeId: readStringValue(details.nodeId),
+    warningText: readStringValue(details.warningText),
   };
 }
 
@@ -238,8 +242,10 @@ function readExecApprovalUnavailableDetails(result: unknown): {
   }
   return {
     reason,
-    warningText: typeof details.warningText === "string" ? details.warningText : undefined,
-    channelLabel: typeof details.channelLabel === "string" ? details.channelLabel : undefined,
+    warningText: readStringValue(details.warningText),
+    channel: readStringValue(details.channel),
+    channelLabel: readStringValue(details.channelLabel),
+    accountId: readStringValue(details.accountId),
     sentApproverDms: details.sentApproverDms === true,
   };
 }
@@ -371,7 +377,7 @@ export function handleToolExecutionStart(
             : "";
       const filePath = filePathValue.trim();
       if (!filePath) {
-        const argsPreview = typeof args === "string" ? args.slice(0, 200) : undefined;
+        const argsPreview = readStringValue(args)?.slice(0, 200);
         ctx.log.warn(
           `read tool called without path: toolCallId=${toolCallId} argsType=${typeof args}${argsPreview ? ` argsPreview=${argsPreview}` : ""}`,
         );

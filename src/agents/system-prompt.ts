@@ -124,10 +124,11 @@ function buildSkillsSection(params: { skillsPrompt?: string; readToolName: strin
 
 function buildMemorySection(params: {
   isMinimal: boolean;
+  includeMemorySection?: boolean;
   availableTools: Set<string>;
   citationsMode?: MemoryCitationsMode;
 }) {
-  if (params.isMinimal) {
+  if (params.isMinimal || params.includeMemorySection === false) {
     return [];
   }
   return buildMemoryPromptSection({
@@ -329,10 +330,6 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
-  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
-  personaBlock?: string;
-  /** FORK: AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
-  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -358,6 +355,8 @@ export function buildAgentSystemPrompt(params: {
     level: "minimal" | "extensive";
     channel: string;
   };
+  /** Whether to include the active memory plugin prompt guidance in the base system prompt. Defaults to true. */
+  includeMemorySection?: boolean;
   memoryCitationsMode?: MemoryCitationsMode;
   promptContribution?: ProviderSystemPromptContribution;
 }) {
@@ -466,6 +465,7 @@ export function buildAgentSystemPrompt(params: {
   });
   const memorySection = buildMemorySection({
     isMinimal,
+    includeMemorySection: params.includeMemorySection,
     availableTools,
     citationsMode: params.memoryCitationsMode,
   });
@@ -489,17 +489,6 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant operating inside OpenClaw.",
     "",
-    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached.
-    ...(params.personaBlock ? [params.personaBlock, ""] : []),
-    // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
-    ...(params.amygdalaNudge?.length
-      ? [
-          "## AMYGDALA Personality Nudge (active)",
-          "The Personality networks detected drift from your target personality. Adjustments:",
-          ...params.amygdalaNudge.map((a) => `- ${a}`),
-          "",
-        ]
-      : []),
     "## Tooling",
     "Structured tool definitions are the source of truth for tool names, descriptions, and parameters.",
     "Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.",
@@ -766,12 +755,10 @@ export function buildAgentSystemPrompt(params: {
     lines.push(
       "## Heartbeats",
       `Heartbeat prompt: ${heartbeatPrompt}`,
-      // FORK: HEARTBEAT_OK must be scoped STRICTLY to heartbeat polls — the model
-      // otherwise generalizes it to fractal reflection prompts and system injections.
-      'If AND ONLY IF you receive a user message whose text is literally (or near-literally) the heartbeat prompt shown above, and there is nothing that needs attention, reply exactly "HEARTBEAT_OK".',
-      'Do NOT emit "HEARTBEAT_OK" in response to any other kind of message — in particular NOT to fractal reflection prompts, system injections, skill invocations, or ordinary user turns. The sentinel is scoped exclusively to heartbeat polls that match the heartbeat prompt text above.',
+      "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
+      "HEARTBEAT_OK",
       'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
-      'If a heartbeat poll arrives and something actually needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
+      'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
       "",
     );
   }

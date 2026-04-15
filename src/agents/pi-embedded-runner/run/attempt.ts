@@ -7,8 +7,8 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
-import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import {
@@ -57,6 +57,7 @@ import {
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
+import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { buildModelAliasLines } from "../../model-alias-lines.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
@@ -97,6 +98,7 @@ import {
   applySkillEnvOverridesFromSnapshot,
   resolveSkillsPromptForRun,
 } from "../../skills.js";
+import { resolveSystemPromptOverride } from "../../system-prompt-override.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../../tool-call-id.js";
@@ -151,7 +153,7 @@ import {
   normalizeProviderToolSchemas,
 } from "../tool-schema-runtime.js";
 import { splitSdkTools } from "../tool-split.js";
-import { describeUnknownError, mapThinkingLevel } from "../utils.js";
+import { mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import {
   assembleAttemptContextEngine,
@@ -212,8 +214,6 @@ import {
   shouldPreemptivelyCompactBeforePrompt,
 } from "./preemptive-compaction.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
-import { getRetrievalRuntime } from "../../pi-extensions/retrieval-runtime.js"; // FORK: still used inline for retrieval pack
-import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 
 export {
   appendAttemptCacheTtlIfNeeded,
@@ -696,10 +696,17 @@ export async function runEmbeddedAttempt(
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
     const heartbeatPrompt = shouldInjectHeartbeatPrompt({
+      config: params.config,
+      agentId: sessionAgentId,
+      defaultAgentId,
       isDefaultAgent,
       trigger: params.trigger,
     })
-      ? resolveHeartbeatPrompt(params.config?.agents?.defaults?.heartbeat?.prompt)
+      ? resolveHeartbeatPromptForSystemPrompt({
+          config: params.config,
+          agentId: sessionAgentId,
+          defaultAgentId,
+        })
       : undefined;
     const promptContribution = resolveProviderSystemPromptContribution({
       provider: params.provider,
@@ -718,38 +725,41 @@ export async function runEmbeddedAttempt(
       },
     });
 
-        // FORK: persona block injection from CORTEX/SOUL.md
-    const personaBlock = _forkAttemptHooks.getPersonaBlock(effectiveWorkspace);
-
-const appendPrompt = buildEmbeddedSystemPrompt({
-      workspaceDir: effectiveWorkspace,
-      defaultThinkLevel: params.thinkLevel,
-      reasoningLevel: params.reasoningLevel ?? "off",
-      extraSystemPrompt: params.extraSystemPrompt,
-      ownerNumbers: params.ownerNumbers,
-      ownerDisplay: ownerDisplay.ownerDisplay,
-      ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
-      reasoningTagHint,
-      heartbeatPrompt,
-      skillsPrompt: effectiveSkillsPrompt,
-      docsPath: docsPath ?? undefined,
-      ttsHint,
-      workspaceNotes,
-      reactionGuidance,
-      promptMode: effectivePromptMode,
-      acpEnabled: params.config?.acp?.enabled !== false,
-      runtimeInfo,
-      messageToolHints,
-      sandboxInfo,
-      tools: effectiveTools,
-      modelAliasLines: buildModelAliasLines(params.config),
-      userTimezone,
-      userTime,
-      userTimeFormat,
-      contextFiles,
-      memoryCitationsMode: params.config?.memory?.citations,
-      promptContribution,
-    });
+    const appendPrompt =
+      resolveSystemPromptOverride({
+        config: params.config,
+        agentId: sessionAgentId,
+      }) ??
+      buildEmbeddedSystemPrompt({
+        workspaceDir: effectiveWorkspace,
+        defaultThinkLevel: params.thinkLevel,
+        reasoningLevel: params.reasoningLevel ?? "off",
+        extraSystemPrompt: params.extraSystemPrompt,
+        ownerNumbers: params.ownerNumbers,
+        ownerDisplay: ownerDisplay.ownerDisplay,
+        ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
+        reasoningTagHint,
+        heartbeatPrompt,
+        skillsPrompt: effectiveSkillsPrompt,
+        docsPath: docsPath ?? undefined,
+        ttsHint,
+        workspaceNotes,
+        reactionGuidance,
+        promptMode: effectivePromptMode,
+        acpEnabled: params.config?.acp?.enabled !== false,
+        runtimeInfo,
+        messageToolHints,
+        sandboxInfo,
+        tools: effectiveTools,
+        modelAliasLines: buildModelAliasLines(params.config),
+        userTimezone,
+        userTime,
+        userTimeFormat,
+        contextFiles,
+        includeMemorySection: !params.contextEngine || params.contextEngine.info.id === "legacy",
+        memoryCitationsMode: params.config?.memory?.citations,
+        promptContribution,
+      });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
       generatedAt: Date.now(),
@@ -1261,6 +1271,8 @@ const appendPrompt = buildEmbeddedSystemPrompt({
               sessionKey: params.sessionKey,
               messages: activeSession.messages,
               tokenBudget: params.contextTokenBudget,
+              availableTools: new Set(effectiveTools.map((tool) => tool.name)),
+              citationsMode: params.config?.memory?.citations,
               modelId: params.modelId,
               ...(params.prompt !== undefined ? { prompt: params.prompt } : {}),
             });
@@ -1848,19 +1860,7 @@ const appendPrompt = buildEmbeddedSystemPrompt({
               inFlightPrompt: effectivePrompt,
             });
 
-                      // FORK: mid-context persona re-injection when SyncScore drops
-          {
-            const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
-              activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-              systemPromptText ?? "",
-              log,
-            );
-            if (reinjectResult.reinjected && systemPromptText != null) {
-              systemPromptText = reinjectResult.systemPromptText;
-            }
-          }
-
-// Only pass images option if there are actually images to pass
+            // Only pass images option if there are actually images to pass
             // This avoids potential issues with models that don't expect the images parameter
             if (imageResult.images.length > 0) {
               await abortable(
@@ -2009,7 +2009,7 @@ const appendPrompt = buildEmbeddedSystemPrompt({
               provider: params.provider,
               model: params.modelId,
               api: params.model.api,
-              error: describeUnknownError(promptError),
+              error: formatErrorMessage(promptError),
             });
           } catch (entryErr) {
             log.warn(`failed to persist prompt error entry: ${String(entryErr)}`);
@@ -2088,7 +2088,7 @@ const appendPrompt = buildEmbeddedSystemPrompt({
               {
                 messages: messagesSnapshot,
                 success: !aborted && !promptError,
-                error: promptError ? describeUnknownError(promptError) : undefined,
+                error: promptError ? formatErrorMessage(promptError) : undefined,
                 durationMs: Date.now() - promptStartedAt,
               },
               {
@@ -2105,24 +2105,6 @@ const appendPrompt = buildEmbeddedSystemPrompt({
             .catch((err) => {
               log.warn(`agent_end hook failed: ${err}`);
             });
-        }
-
-        // FORK: text-tool-call interception for local providers (ollama/lmstudio/vllm)
-        if (!promptError && !aborted && tools.length > 0) {
-          const ttcResult = await _forkAttemptHooks.interceptTextToolCalls({
-            provider: params.provider,
-            activeSession: activeSession as never,
-            tools: tools as never,
-            toolMetas: toolMetas as never,
-            promptError,
-            aborted,
-            abortSignal: params.abortSignal,
-            abortable,
-            log,
-          });
-          if (ttcResult.promptError) {
-            promptError = ttcResult.promptError;
-          }
         }
       } finally {
         clearTimeout(abortTimer);
