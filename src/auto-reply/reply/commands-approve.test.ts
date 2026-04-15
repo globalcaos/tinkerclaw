@@ -301,8 +301,9 @@ const telegramApproveTestPlugin: ChannelPlugin = {
     },
     config: {
       listAccountIds: listConfiguredTelegramAccountIds,
-      resolveAccount: (cfg, accountId) => resolveTelegramTestAccount(cfg, accountId),
-      defaultAccountId: (cfg) =>
+      resolveAccount: (cfg: OpenClawConfig, accountId?: string | null) =>
+        resolveTelegramTestAccount(cfg, accountId),
+      defaultAccountId: (cfg: OpenClawConfig) =>
         (cfg.channels?.telegram as TelegramTestSectionConfig | undefined)?.defaultAccount ??
         DEFAULT_ACCOUNT_ID,
     },
