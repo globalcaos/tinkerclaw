@@ -24,16 +24,6 @@ function normalizeFutureEpochSeconds(value: unknown): number | undefined {
   return undefined;
 }
 
-function normalizeFutureEpochSeconds(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.trunc(value);
-  }
-  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-    return Number.parseInt(value.trim(), 10);
-  }
-  return undefined;
-}
-
 export function decodeCodexJwtPayload(accessToken: string): CodexJwtPayload | null {
   const parts = accessToken.split(".");
   if (parts.length !== 3) {

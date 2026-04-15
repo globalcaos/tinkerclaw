@@ -1,3 +1,4 @@
+import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
 import type { AnyMessageContent, proto, WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { createInboundDebouncer, formatLocationText } from "openclaw/plugin-sdk/channel-inbound";
 import { recordChannelActivity } from "openclaw/plugin-sdk/channel-runtime";
