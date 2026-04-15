@@ -15,6 +15,8 @@ import { type OpenClawConfig, loadConfig } from "../../config/config.js";
 // the on-disk config without mutating it.
 import { applyMergePatch } from "../../config/merge-patch.js";
 import { defaultRuntime } from "../../runtime.js";
+// FORK: session resume helpers persist gateway state across restarts.
+import { clearSessionResume, writeSessionResume } from "../../infra/session-resume.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import type { MsgContext } from "../templating.js";
