@@ -1,3 +1,4 @@
+import { normalizeLowercaseStringOrEmpty } from "../../../../src/shared/string-coerce.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
 const DEFAULT_EMBEDDING_MAX_INPUT_TOKENS = 8192;
@@ -28,7 +29,7 @@ export function resolveEmbeddingMaxInputTokens(provider: EmbeddingProvider): num
 
   // Provider/model mapping is best-effort; different providers use different
   // limits and we prefer to be conservative when we don't know.
-  const key = `${provider.id}:${provider.model}`.toLowerCase();
+  const key = normalizeLowercaseStringOrEmpty(`${provider.id}:${provider.model}`);
   const known = KNOWN_EMBEDDING_MAX_INPUT_TOKENS[key];
   if (typeof known === "number") {
     return known;
@@ -36,13 +37,10 @@ export function resolveEmbeddingMaxInputTokens(provider: EmbeddingProvider): num
 
   // Provider-specific conservative fallbacks. This prevents us from accidentally
   // using the OpenAI default for providers with much smaller limits.
-  if (provider.id.toLowerCase() === "gemini") {
+  if (normalizeLowercaseStringOrEmpty(provider.id) === "gemini") {
     return 2048;
   }
-  if (provider.id.toLowerCase() === "ollama") {
-    return 1400; // Most ollama embed models have 512-token context ≈ ~1400 bytes
-  }
-  if (provider.id.toLowerCase() === "local") {
+  if (normalizeLowercaseStringOrEmpty(provider.id) === "local") {
     return DEFAULT_LOCAL_EMBEDDING_MAX_INPUT_TOKENS;
   }
 

@@ -1,3 +1,11 @@
+import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
+import {
+  expandToolGroups,
+  normalizeToolList,
+  normalizeToolName,
+  resolveToolProfilePolicy,
+  TOOL_GROUPS,
+} from "./tool-policy-shared.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
 // Keep tool-policy browser-safe: do not import tools/common at runtime.
@@ -222,7 +230,10 @@ export function buildPluginToolGroups<T extends { name: string }>(params: {
     }
     const name = normalizeToolName(tool.name);
     all.push(name);
-    const pluginId = meta.pluginId.toLowerCase();
+    const pluginId = normalizeOptionalLowercaseString(meta.pluginId);
+    if (!pluginId) {
+      continue;
+    }
     const list = byPlugin.get(pluginId) ?? [];
     list.push(name);
     byPlugin.set(pluginId, list);

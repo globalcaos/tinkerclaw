@@ -210,7 +210,8 @@ const mattermostMessageActions: ChannelMessageActionAdapter = {
     const message = typeof params.message === "string" ? params.message : "";
     // Match the shared runner semantics: trim empty reply IDs away before
     // falling back from replyToId to replyTo on direct plugin calls.
-    const replyToId = readMattermostReplyToId(params);
+    const replyToId =
+      normalizeOptionalString(params.replyToId) ?? normalizeOptionalString(params.replyTo);
     const resolvedAccountId = accountId || undefined;
 
     const mediaUrl =
@@ -264,10 +265,6 @@ function parseMattermostReactActionParams(params: Record<string, unknown>): {
     emojiName,
     remove: params.remove === true,
   };
-}
-
-function readMattermostReplyToId(params: Record<string, unknown>): string | undefined {
-  return normalizeOptionalString(params.replyToId) ?? normalizeOptionalString(params.replyTo);
 }
 
 export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = createChatChannelPlugin({

@@ -8,6 +8,7 @@ import {
   parseApiErrorInfo,
   parseApiErrorPayload,
 } from "../../shared/assistant-error-format.js";
+import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
 export {
   extractLeadingHttpStatus,
   formatRawAssistantErrorForUi,
@@ -105,11 +106,6 @@ function extractProviderRateLimitMessage(raw: string): string | undefined {
 }
 
 function formatRateLimitOrOverloadedErrorCopy(raw: string): string | undefined {
-  // FORK: Early billing check for Anthropic spending cap — must come BEFORE
-  // rateLimit because "usage limits" also matches rate_limit patterns.
-  if (/regain access/i.test(raw) || /specified.*usage limits/i.test(raw)) {
-    return "billing";
-  }
   if (isRateLimitErrorMessage(raw)) {
     // Surface the provider's specific message when it contains actionable
     // details (reset time, plan name, quota info) instead of the generic copy.
@@ -488,7 +484,7 @@ function hasRetryable402TransientSignal(text: string): boolean {
 }
 
 function normalize402Message(raw: string): string {
-  return raw.trim().toLowerCase().replace(LEADING_402_WRAPPER_RE, "").trim();
+  return normalizeOptionalLowercaseString(raw)?.replace(LEADING_402_WRAPPER_RE, "").trim() ?? "";
 }
 
 function classify402Message(message: string): PaymentRequiredFailoverReason {
@@ -669,7 +665,7 @@ function classifyFailoverReasonFromCode(raw: string | undefined): FailoverReason
 }
 
 function isProvider(provider: string | undefined, match: string): boolean {
-  const normalized = provider?.trim().toLowerCase();
+  const normalized = normalizeOptionalLowercaseString(provider);
   return Boolean(normalized && normalized.includes(match));
 }
 
@@ -899,7 +895,7 @@ export function isRawApiErrorPayload(raw?: string): boolean {
 }
 
 function isLikelyProviderErrorType(type?: string): boolean {
-  const normalized = type?.trim().toLowerCase();
+  const normalized = normalizeOptionalLowercaseString(type);
   if (!normalized) {
     return false;
   }

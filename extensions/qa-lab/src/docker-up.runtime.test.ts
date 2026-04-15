@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -68,6 +67,7 @@ describe("runQaDockerUp", () => {
           repoRoot: "/repo/openclaw",
           outputDir,
           usePrebuiltImage: true,
+          bindUiDist: true,
           skipUiBuild: true,
         },
         {
@@ -88,24 +88,35 @@ describe("runQaDockerUp", () => {
         `docker compose -f ${outputDir}/docker-compose.qa.yml up -d @/repo/openclaw`,
         `docker compose -f ${outputDir}/docker-compose.qa.yml ps --format json openclaw-qa-gateway @/repo/openclaw`,
       ]);
+      const compose = await readFile(path.join(outputDir, "docker-compose.qa.yml"), "utf8");
+      expect(compose).toContain(":/opt/openclaw-qa-lab-ui:ro");
+      expect(compose).toContain("      - --ui-dist-dir");
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }
   });
 
   it("falls back to free host ports when defaults are already occupied", async () => {
-    const gatewayServer = createServer();
-    const labServer = createServer();
     const outputDir = await mkdtemp(path.join(os.tmpdir(), "qa-docker-up-"));
-
-    await new Promise<void>((resolve) => gatewayServer.listen(18789, "127.0.0.1", () => resolve()));
-    await new Promise<void>((resolve) => labServer.listen(43124, "127.0.0.1", () => resolve()));
+    const gatewayPort = 18789;
+    const qaLabPort = 43124;
+    const resolveHostPort = vi.fn(async (preferredPort: number) => {
+      if (preferredPort === gatewayPort) {
+        return 28001;
+      }
+      if (preferredPort === qaLabPort) {
+        return 28002;
+      }
+      return preferredPort;
+    });
 
     try {
       const result = await runQaDockerUp(
         {
           repoRoot: "/repo/openclaw",
           outputDir,
+          gatewayPort,
+          qaLabPort,
           skipUiBuild: true,
           usePrebuiltImage: true,
         },
@@ -118,18 +129,15 @@ describe("runQaDockerUp", () => {
           },
           fetchImpl: vi.fn(async () => ({ ok: true })),
           sleepImpl: vi.fn(async () => {}),
+          resolveHostPortImpl: resolveHostPort,
         },
       );
 
-      expect(result.gatewayUrl).not.toBe("http://127.0.0.1:18789/");
-      expect(result.qaLabUrl).not.toBe("http://127.0.0.1:43124");
+      expect(result.gatewayUrl).not.toBe(`http://127.0.0.1:${gatewayPort}/`);
+      expect(result.qaLabUrl).not.toBe(`http://127.0.0.1:${qaLabPort}`);
+      expect(result.gatewayUrl).toBe("http://127.0.0.1:28001/");
+      expect(result.qaLabUrl).toBe("http://127.0.0.1:28002");
     } finally {
-      await new Promise<void>((resolve, reject) =>
-        gatewayServer.close((error) => (error ? reject(error) : resolve())),
-      );
-      await new Promise<void>((resolve, reject) =>
-        labServer.close((error) => (error ? reject(error) : resolve())),
-      );
       await rm(outputDir, { recursive: true, force: true });
     }
   });
