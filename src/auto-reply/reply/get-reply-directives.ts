@@ -8,6 +8,7 @@ import type { SkillCommandSpec } from "../../agents/skills.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { shouldHandleTextCommands } from "../commands-text-routing.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "../thinking.js";
@@ -82,7 +83,7 @@ function resolveConfiguredDirectiveAliases(params: {
     return [];
   }
   return Object.values(params.cfg.agents?.defaults?.models ?? {})
-    .map((entry) => entry.alias?.trim())
+    .map((entry) => normalizeOptionalString(entry.alias))
     .filter((alias): alias is string => Boolean(alias))
     .filter((alias) => !params.reservedCommands.has(alias.toLowerCase()));
 }
@@ -371,7 +372,9 @@ export async function resolveReplyDirectives(params: {
   sessionCtx.BodyStripped = cleanedBody;
 
   const messageProviderKey =
-    sessionCtx.Provider?.trim().toLowerCase() ?? ctx.Provider?.trim().toLowerCase() ?? "";
+    normalizeOptionalString(sessionCtx.Provider)?.toLowerCase() ??
+    normalizeOptionalString(ctx.Provider)?.toLowerCase() ??
+    "";
   const elevated = resolveElevatedPermissions({
     cfg,
     agentId,
@@ -456,8 +459,8 @@ export async function resolveReplyDirectives(params: {
     useFastReplyRuntime &&
     !directives.hasModelDirective &&
     !hasResolvedHeartbeatModelOverride &&
-    !sessionEntry?.modelOverride?.trim() &&
-    !sessionEntry?.providerOverride?.trim()
+    !normalizeOptionalString(sessionEntry?.modelOverride) &&
+    !normalizeOptionalString(sessionEntry?.providerOverride)
       ? createFastTestModelSelectionState({
           agentCfg,
           provider,
@@ -527,7 +530,9 @@ export async function resolveReplyDirectives(params: {
     alias ? `Model switched to ${alias} (${label}).` : `Model switched to ${label}.`;
   const isModelListAlias =
     directives.hasModelDirective &&
-    ["status", "list"].includes(directives.rawModelDirective?.trim().toLowerCase() ?? "");
+    ["status", "list"].includes(
+      normalizeOptionalString(directives.rawModelDirective)?.toLowerCase() ?? "",
+    );
   const effectiveModelDirective = isModelListAlias ? undefined : directives.rawModelDirective;
 
   const inlineStatusRequested = hasInlineStatus && allowTextCommands && command.isAuthorizedSender;

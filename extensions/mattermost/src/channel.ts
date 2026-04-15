@@ -16,6 +16,7 @@ import {
   createComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
 } from "openclaw/plugin-sdk/status-helpers";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import { mattermostApprovalAuth } from "./approval-auth.js";
 import {
   chunkTextForOutbound,
@@ -242,25 +243,18 @@ const mattermostMessageActions: ChannelMessageActionAdapter = {
   },
 };
 
-function readTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed || undefined;
-}
-
 function parseMattermostReactActionParams(params: Record<string, unknown>): {
   postId: string;
   emojiName: string;
   remove: boolean;
 } {
-  const postId = readTrimmedString(params.messageId) ?? readTrimmedString(params.postId);
+  const postId =
+    normalizeOptionalString(params.messageId) ?? normalizeOptionalString(params.postId);
   if (!postId) {
     throw new Error("Mattermost react requires messageId (post id)");
   }
 
-  const emojiName = readTrimmedString(params.emoji)?.replace(/^:+|:+$/g, "");
+  const emojiName = normalizeOptionalString(params.emoji)?.replace(/^:+|:+$/g, "");
   if (!emojiName) {
     throw new Error("Mattermost react requires emoji");
   }
@@ -273,7 +267,7 @@ function parseMattermostReactActionParams(params: Record<string, unknown>): {
 }
 
 function readMattermostReplyToId(params: Record<string, unknown>): string | undefined {
-  return readTrimmedString(params.replyToId) ?? readTrimmedString(params.replyTo);
+  return normalizeOptionalString(params.replyToId) ?? normalizeOptionalString(params.replyTo);
 }
 
 export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = createChatChannelPlugin({
