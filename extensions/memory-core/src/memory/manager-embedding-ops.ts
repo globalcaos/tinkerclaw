@@ -40,6 +40,9 @@ import { deleteMemoryFtsRows } from "./manager-fts-state.js";
 import { MemoryManagerSyncOps } from "./manager-sync-ops.js";
 import { replaceMemoryVectorRow } from "./manager-vector-write.js";
 
+const vectorToBlob = (embedding: number[]): Buffer =>
+  Buffer.from(new Float32Array(embedding).buffer);
+
 const VECTOR_TABLE = "chunks_vec";
 const FTS_TABLE = "chunks_fts";
 const EMBEDDING_CACHE_TABLE = "embedding_cache";
