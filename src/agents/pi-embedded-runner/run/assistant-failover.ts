@@ -24,6 +24,7 @@ type AssistantFailoverOutcome =
       action: "retry";
       overloadProfileRotations: number;
       lastRetryFailoverReason: FailoverReason | null;
+      retryKind?: "same_model_idle_timeout";
     }
   | {
       action: "throw";
@@ -38,7 +39,9 @@ export async function handleAssistantFailover(params: {
   failoverFailure: boolean;
   failoverReason: FailoverReason | null;
   timedOut: boolean;
+  idleTimedOut: boolean;
   timedOutDuringCompaction: boolean;
+  allowSameModelIdleTimeoutRetry: boolean;
   assistantProfileFailureReason: AuthProfileFailureReason | null;
   lastProfileId?: string;
   modelId: string;
@@ -75,6 +78,21 @@ export async function handleAssistantFailover(params: {
 }): Promise<AssistantFailoverOutcome> {
   let overloadProfileRotations = params.overloadProfileRotations;
   let decision = params.initialDecision;
+  const sameModelIdleTimeoutRetry = (): AssistantFailoverOutcome => {
+    params.warn(
+      `[llm-idle-timeout] ${sanitizeForLog(params.provider)}/${sanitizeForLog(params.modelId)} produced no reply before the idle watchdog; retrying same model`,
+    );
+    return {
+      action: "retry",
+      overloadProfileRotations,
+      retryKind: "same_model_idle_timeout",
+      lastRetryFailoverReason: mergeRetryFailoverReason({
+        previous: params.previousRetryFailoverReason,
+        failoverReason: params.failoverReason,
+        timedOut: true,
+      }),
+    };
+  };
 
   if (decision.action === "rotate_profile") {
     if (params.lastProfileId) {
@@ -144,6 +162,9 @@ export async function handleAssistantFailover(params: {
         }),
       };
     }
+    if (params.idleTimedOut && params.allowSameModelIdleTimeoutRetry) {
+      return sameModelIdleTimeoutRetry();
+    }
 
     decision = resolveRunFailoverDecision({
       stage: "assistant",
@@ -198,49 +219,10 @@ export async function handleAssistantFailover(params: {
   }
 
   if (decision.action === "surface_error") {
-    // FORK: surface_error used to fall through to continue_normal, which swallowed
-    // timeouts silently — the UI saw nothing when no profile rotation and no
-    // fallback model were available. Now it throws a FailoverError mirroring the
-    // fallback_model branch so the error reaches the user-facing emission path.
-    const message =
-      (params.lastAssistant
-        ? formatAssistantErrorText(params.lastAssistant, {
-            cfg: params.config,
-            sessionKey: params.sessionKey,
-            provider: params.activeErrorContext.provider,
-            model: params.activeErrorContext.model,
-          })
-        : undefined) ||
-      params.lastAssistant?.errorMessage?.trim() ||
-      (params.timedOut
-        ? "LLM request timed out."
-        : params.rateLimitFailure
-          ? "LLM request rate limited."
-          : params.billingFailure
-            ? formatBillingErrorMessage(
-                params.activeErrorContext.provider,
-                params.activeErrorContext.model,
-              )
-            : params.authFailure
-              ? "LLM request unauthorized."
-              : "LLM request failed.");
-    const surfaceErrorReason: FailoverReason =
-      decision.reason ?? (params.timedOut ? "timeout" : "unknown");
-    const status =
-      resolveFailoverStatus(surfaceErrorReason) ??
-      (isTimeoutErrorMessage(message) ? 408 : undefined);
-    params.logAssistantFailoverDecision("surface_error", { status });
-    return {
-      action: "throw",
-      overloadProfileRotations,
-      error: new FailoverError(message, {
-        reason: surfaceErrorReason,
-        provider: params.activeErrorContext.provider,
-        model: params.activeErrorContext.model,
-        profileId: params.lastProfileId,
-        status,
-      }),
-    };
+    if (params.idleTimedOut && params.allowSameModelIdleTimeoutRetry) {
+      return sameModelIdleTimeoutRetry();
+    }
+    params.logAssistantFailoverDecision("surface_error");
   }
 
   return {

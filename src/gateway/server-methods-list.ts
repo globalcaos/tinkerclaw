@@ -47,6 +47,7 @@ const BASE_METHODS = [
   "talk.config",
   "talk.speak",
   "talk.mode",
+  "commands.list",
   "models.list",
   "tools.catalog",
   "tools.effective",
