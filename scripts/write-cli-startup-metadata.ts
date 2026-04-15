@@ -1,6 +1,10 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { RootHelpRenderOptions } from "../src/cli/program/root-help.js";
+import type { OpenClawConfig } from "../src/config/config.js";
 
 function dedupe(values: string[]): string[] {
   const seen = new Set<string>();
@@ -39,10 +43,38 @@ type ExtensionChannelEntry = {
   label: string;
 };
 
-export function readBundledChannelCatalogIds(
+type BundledChannelCatalog = {
+  ids: string[];
+  signature: string;
+};
+
+type RootHelpRenderContext = Pick<RootHelpRenderOptions, "config" | "env">;
+
+function resolveRootHelpBundleIdentity(
+  distDirOverride: string = distDir,
+): { bundleName: string; signature: string } | null {
+  const bundleName = readdirSync(distDirOverride).find(
+    (entry) =>
+      entry.startsWith("root-help-") &&
+      !entry.startsWith("root-help-metadata-") &&
+      entry.endsWith(".js"),
+  );
+  if (!bundleName) {
+    return null;
+  }
+  const bundlePath = path.join(distDirOverride, bundleName);
+  const raw = readFileSync(bundlePath, "utf8");
+  return {
+    bundleName,
+    signature: createHash("sha1").update(raw).digest("hex"),
+  };
+}
+
+export function readBundledChannelCatalog(
   extensionsDirOverride: string = extensionsDir,
-): string[] {
+): BundledChannelCatalog {
   const entries: ExtensionChannelEntry[] = [];
+  const signature = createHash("sha1");
   for (const dirEntry of readdirSync(extensionsDirOverride, { withFileTypes: true })) {
     if (!dirEntry.isDirectory()) {
       continue;
@@ -50,6 +82,7 @@ export function readBundledChannelCatalogIds(
     const packageJsonPath = path.join(extensionsDirOverride, dirEntry.name, "package.json");
     try {
       const raw = readFileSync(packageJsonPath, "utf8");
+      signature.update(`${dirEntry.name}\0${raw}\0`);
       const parsed = JSON.parse(raw) as {
         openclaw?: {
           channel?: {
@@ -74,42 +107,69 @@ export function readBundledChannelCatalogIds(
       // Ignore malformed or missing extension package manifests.
     }
   }
-  return entries
-    .toSorted((a, b) => (a.order === b.order ? a.label.localeCompare(b.label) : a.order - b.order))
-    .map((entry) => entry.id);
+  return {
+    ids: entries
+      .toSorted((a, b) =>
+        a.order === b.order ? a.label.localeCompare(b.label) : a.order - b.order,
+      )
+      .map((entry) => entry.id),
+    signature: signature.digest("hex"),
+  };
 }
 
-async function captureStdout(action: () => void | Promise<void>): Promise<string> {
-  let output = "";
-  const originalWrite = process.stdout.write.bind(process.stdout);
-  const captureWrite: typeof process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += String(chunk);
-    return true;
-  }) as typeof process.stdout.write;
-  process.stdout.write = captureWrite;
-  try {
-    await action();
-  } finally {
-    process.stdout.write = originalWrite;
-  }
-  return output;
+export function readBundledChannelCatalogIds(
+  extensionsDirOverride: string = extensionsDir,
+): string[] {
+  return readBundledChannelCatalog(extensionsDirOverride).ids;
+}
+
+function createIsolatedRootHelpRenderContext(
+  bundledPluginsDir: string = extensionsDir,
+): RootHelpRenderContext {
+  const stateDir = path.join(rootDir, ".openclaw-build-root-help");
+  const workspaceDir = path.join(stateDir, "workspace");
+  const homeDir = path.join(stateDir, "home");
+  const env: NodeJS.ProcessEnv = {
+    HOME: homeDir,
+    LOGNAME: process.env.LOGNAME ?? process.env.USER ?? "openclaw-build",
+    USER: process.env.USER ?? process.env.LOGNAME ?? "openclaw-build",
+    PATH: process.env.PATH ?? "",
+    TMPDIR: process.env.TMPDIR ?? "/tmp",
+    LANG: process.env.LANG ?? "C.UTF-8",
+    LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
+    TERM: process.env.TERM ?? "dumb",
+    NO_COLOR: "1",
+    OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+    OPENCLAW_DISABLE_BUNDLED_PLUGINS: "",
+    OPENCLAW_DISABLE_PLUGIN_DISCOVERY_CACHE: "1",
+    OPENCLAW_DISABLE_PLUGIN_MANIFEST_CACHE: "1",
+    OPENCLAW_PLUGIN_DISCOVERY_CACHE_MS: "0",
+    OPENCLAW_PLUGIN_MANIFEST_CACHE_MS: "0",
+    OPENCLAW_STATE_DIR: stateDir,
+  };
+  const config: OpenClawConfig = {
+    agents: {
+      defaults: {
+        workspace: workspaceDir,
+      },
+    },
+    plugins: {
+      loadPaths: [],
+    },
+  };
+  return { config, env };
 }
 
 export async function renderBundledRootHelpText(
-  distDirOverride: string = distDir,
+  _distDirOverride: string = distDir,
+  renderContext: RootHelpRenderContext = createIsolatedRootHelpRenderContext(
+    existsSync(path.join(_distDirOverride, "extensions"))
+      ? path.join(_distDirOverride, "extensions")
+      : extensionsDir,
+  ),
 ): Promise<string> {
-  // FORK: exclude the `root-help-metadata-*` bundle added upstream
-  // ~2026-04-10. It shares the `root-help-` prefix but does NOT export
-  // `outputRootHelp`, and because readdirSync returns alphabetically the
-  // metadata bundle gets picked first. Without this filter the build
-  // fails with "Bundle root-help-metadata-*.js does not export outputRootHelp".
-  const bundleName = readdirSync(distDirOverride).find(
-    (entry) =>
-      entry.startsWith("root-help-") &&
-      !entry.startsWith("root-help-metadata-") &&
-      entry.endsWith(".js"),
-  );
-  if (!bundleName) {
+  const bundleIdentity = resolveRootHelpBundleIdentity(_distDirOverride);
+  if (!bundleIdentity) {
     throw new Error("No root-help bundle found in dist; cannot write CLI startup metadata.");
   }
   const moduleUrl = pathToFileURL(path.join(_distDirOverride, bundleIdentity.bundleName)).href;
@@ -134,6 +194,15 @@ export async function renderBundledRootHelpText(
   if (result.error) {
     throw result.error;
   }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    throw new Error(
+      `Failed to render bundled root help from ${bundleIdentity.bundleName}` +
+        (stderr ? `: ${stderr}` : result.signal ? `: terminated by ${result.signal}` : ""),
+    );
+  }
+  return result.stdout ?? "";
+}
 
 function renderSourceRootHelpText(
   renderContext: RootHelpRenderContext = createIsolatedRootHelpRenderContext(),
@@ -184,9 +253,36 @@ export async function writeCliStartupMetadata(options?: {
   const resolvedDistDir = options?.distDir ?? distDir;
   const resolvedOutputPath = options?.outputPath ?? outputPath;
   const resolvedExtensionsDir = options?.extensionsDir ?? extensionsDir;
-  const catalog = readBundledChannelCatalogIds(resolvedExtensionsDir);
-  const channelOptions = dedupe([...CORE_CHANNEL_ORDER, ...catalog]);
-  const rootHelpText = await renderBundledRootHelpText(resolvedDistDir);
+  const channelCatalog = readBundledChannelCatalog(resolvedExtensionsDir);
+  const bundleIdentity = resolveRootHelpBundleIdentity(resolvedDistDir);
+  const bundledPluginsDir = path.join(resolvedDistDir, "extensions");
+  const renderContext = createIsolatedRootHelpRenderContext(
+    existsSync(bundledPluginsDir) ? bundledPluginsDir : resolvedExtensionsDir,
+  );
+  const channelOptions = dedupe([...CORE_CHANNEL_ORDER, ...channelCatalog.ids]);
+
+  try {
+    const existing = JSON.parse(readFileSync(resolvedOutputPath, "utf8")) as {
+      rootHelpBundleSignature?: unknown;
+      channelCatalogSignature?: unknown;
+    };
+    if (
+      bundleIdentity &&
+      existing.rootHelpBundleSignature === bundleIdentity.signature &&
+      existing.channelCatalogSignature === channelCatalog.signature
+    ) {
+      return;
+    }
+  } catch {
+    // Missing or malformed existing metadata means we should regenerate it.
+  }
+
+  let rootHelpText: string;
+  try {
+    rootHelpText = await renderBundledRootHelpText(resolvedDistDir, renderContext);
+  } catch {
+    rootHelpText = renderSourceRootHelpText(renderContext);
+  }
 
   mkdirSync(resolvedDistDir, { recursive: true });
   writeFileSync(
@@ -195,6 +291,8 @@ export async function writeCliStartupMetadata(options?: {
       {
         generatedBy: "scripts/write-cli-startup-metadata.ts",
         channelOptions,
+        channelCatalogSignature: channelCatalog.signature,
+        rootHelpBundleSignature: bundleIdentity?.signature ?? null,
         rootHelpText,
       },
       null,
@@ -206,8 +304,5 @@ export async function writeCliStartupMetadata(options?: {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   await writeCliStartupMetadata();
-  // The root-help bundle pulls in the full plugin loader graph which leaves
-  // Sockets and MessagePorts alive (jiti workers, SDK internals).  Explicit
-  // exit prevents the process from hanging indefinitely after the file is written.
   process.exit(0);
 }

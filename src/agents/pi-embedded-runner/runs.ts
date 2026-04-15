@@ -36,9 +36,13 @@ export type EmbeddedRunModelSwitchRequest = {
  */
 const EMBEDDED_RUN_STATE_KEY = Symbol.for("openclaw.embeddedRunState");
 
+// FORK: sessionIdsByKey maps session-key → sessionId so cross-session routing
+// can resolve a live run by either handle. Upstream doesn't track this on the
+// singleton, so every merge drops it; restored here and in the initializer.
 const embeddedRunState = resolveGlobalSingleton(EMBEDDED_RUN_STATE_KEY, () => ({
   activeRuns: new Map<string, EmbeddedPiQueueHandle>(),
   snapshots: new Map<string, ActiveEmbeddedRunSnapshot>(),
+  sessionIdsByKey: new Map<string, string>(),
   waiters: new Map<string, Set<EmbeddedRunWaiter>>(),
   modelSwitchRequests: new Map<string, EmbeddedRunModelSwitchRequest>(),
 }));
