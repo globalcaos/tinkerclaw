@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import type { MemorySource } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 type StatusProvider = {
@@ -12,7 +12,11 @@ type StatusAggregateRow = {
   c: number;
 };
 
-type StatusAggregateDb = Pick<DatabaseSync, "prepare">;
+type StatusAggregateDb = {
+  prepare: (sql: string) => {
+    all: (...args: SQLInputValue[]) => StatusAggregateRow[];
+  };
+};
 
 export const MEMORY_STATUS_AGGREGATE_SQL =
   `SELECT 'files' AS kind, source, COUNT(*) as c FROM files WHERE 1=1__FILTER__ GROUP BY source\n` +

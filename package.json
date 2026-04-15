@@ -580,6 +580,10 @@
       "types": "./dist/plugin-sdk/image-generation.d.ts",
       "default": "./dist/plugin-sdk/image-generation.js"
     },
+    "./plugin-sdk/image-generation-runtime": {
+      "types": "./dist/plugin-sdk/image-generation-runtime.d.ts",
+      "default": "./dist/plugin-sdk/image-generation-runtime.js"
+    },
     "./plugin-sdk/image-generation-core": {
       "types": "./dist/plugin-sdk/image-generation-core.d.ts",
       "default": "./dist/plugin-sdk/image-generation-core.js"
@@ -891,6 +895,10 @@
     "./plugin-sdk/provider-web-fetch": {
       "types": "./dist/plugin-sdk/provider-web-fetch.d.ts",
       "default": "./dist/plugin-sdk/provider-web-fetch.js"
+    },
+    "./plugin-sdk/provider-web-search-contract": {
+      "types": "./dist/plugin-sdk/provider-web-search-contract.d.ts",
+      "default": "./dist/plugin-sdk/provider-web-search-contract.js"
     },
     "./plugin-sdk/provider-web-search": {
       "types": "./dist/plugin-sdk/provider-web-search.d.ts",
@@ -1302,8 +1310,7 @@
     "tsdown": "0.21.7",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vitest": "^4.1.2",
-    "@types/better-sqlite3": "^7.6.12"
+    "vitest": "^4.1.2"
   },
   "peerDependencies": {
     "@napi-rs/canvas": "^0.1.89",

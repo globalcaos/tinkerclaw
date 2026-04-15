@@ -32,6 +32,7 @@ import {
   shouldUseReplyFastDirectiveExecution,
   resolveGetReplyConfig,
   shouldUseReplyFastTestBootstrap,
+  shouldUseReplyFastTestRuntime,
 } from "./get-reply-fast-path.js";
 import { handleInlineActions } from "./get-reply-inline-actions.js";
 import { runPreparedReply } from "./get-reply-run.js";
@@ -159,6 +160,10 @@ export async function getReplyFromConfig(
   const useFastTestBootstrap = shouldUseReplyFastTestBootstrap({
     isFastTestEnv,
     configOverride,
+  });
+  const useFastTestRuntime = shouldUseReplyFastTestRuntime({
+    cfg,
+    isFastTestEnv,
   });
   const targetSessionKey =
     ctx.CommandSource === "native" ? ctx.CommandTargetSessionKey?.trim() : undefined;
@@ -352,7 +357,7 @@ export async function getReplyFromConfig(
 
   if (
     shouldUseReplyFastDirectiveExecution({
-      isFastTestBootstrap: useFastTestBootstrap,
+      isFastTestBootstrap: useFastTestRuntime,
       isGroup,
       isHeartbeat: opts?.isHeartbeat === true,
       resetTriggered,

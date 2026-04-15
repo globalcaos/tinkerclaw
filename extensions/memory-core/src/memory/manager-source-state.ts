@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import type { MemorySource } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 export type MemorySourceFileStateRow = {
@@ -6,7 +6,12 @@ export type MemorySourceFileStateRow = {
   hash: string;
 };
 
-type MemorySourceStateDb = Pick<DatabaseSync, "prepare">;
+type MemorySourceStateDb = {
+  prepare: (sql: string) => {
+    all: (...args: SQLInputValue[]) => unknown;
+    get: (...args: SQLInputValue[]) => unknown;
+  };
+};
 
 export const MEMORY_SOURCE_FILE_STATE_SQL = `SELECT path, hash FROM files WHERE source = ?`;
 export const MEMORY_SOURCE_FILE_HASH_SQL = `SELECT hash FROM files WHERE path = ? AND source = ?`;
