@@ -4,6 +4,8 @@ import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
+import { resolveAssistantMessagePhase } from "../shared/chat-message-content.js";
+import { normalizeOptionalString } from "../shared/string-coerce.js";
 import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
@@ -68,8 +70,8 @@ function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage | undefi
   if (!message || message.role !== "assistant") {
     return false;
   }
-  const provider = typeof message.provider === "string" ? message.provider.trim() : "";
-  const model = typeof message.model === "string" ? message.model.trim() : "";
+  const provider = normalizeOptionalString(message.provider) ?? "";
+  const model = normalizeOptionalString(message.model) ?? "";
   return provider === "openclaw" && (model === "delivery-mirror" || model === "gateway-injected");
 }
 
@@ -202,9 +204,12 @@ export function handleMessageUpdate(
   }
 
   ctx.noteLastAssistant(msg);
-  if (ctx.state.deterministicApprovalPromptSent) {
+  const suppressVisibleAssistantOutput = shouldSuppressAssistantVisibleOutput(msg);
+  if (suppressVisibleAssistantOutput) {
     return;
   }
+  const suppressDeterministicApprovalOutput =
+    ctx.state.deterministicApprovalPromptPending || ctx.state.deterministicApprovalPromptSent;
 
   const assistantEvent = evt.assistantMessageEvent;
   const assistantRecord =
@@ -350,7 +355,7 @@ export function handleMessageUpdate(
     ctx.state.lastStreamedAssistant = next;
     ctx.state.lastStreamedAssistantCleaned = cleanedText;
 
-    if (ctx.params.silentExpected) {
+    if (ctx.params.silentExpected || suppressDeterministicApprovalOutput) {
       shouldEmit = false;
     }
 
@@ -379,6 +384,7 @@ export function handleMessageUpdate(
 
   if (
     !ctx.params.silentExpected &&
+    !suppressDeterministicApprovalOutput &&
     ctx.params.onBlockReply &&
     ctx.blockChunking &&
     ctx.state.blockReplyBreak === "text_end"
@@ -388,6 +394,7 @@ export function handleMessageUpdate(
 
   if (
     !ctx.params.silentExpected &&
+    !suppressDeterministicApprovalOutput &&
     evtType === "text_end" &&
     ctx.state.blockReplyBreak === "text_end"
   ) {
@@ -409,29 +416,12 @@ export function handleMessageEnd(
   }
 
   const assistantMessage = msg;
+  const suppressVisibleAssistantOutput = shouldSuppressAssistantVisibleOutput(assistantMessage);
+  const suppressDeterministicApprovalOutput =
+    ctx.state.deterministicApprovalPromptPending || ctx.state.deterministicApprovalPromptSent;
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
-  // Count tool_use input chars from assistant message content blocks
-  const assistantContent = (assistantMessage as { content?: unknown }).content;
-  if (Array.isArray(assistantContent)) {
-    for (const block of assistantContent) {
-      if (
-        block &&
-        typeof block === "object" &&
-        (block as Record<string, unknown>).type === "tool_use" &&
-        (block as Record<string, unknown>).input !== undefined
-      ) {
-        try {
-          ctx.state.responseBreakdown.toolCallChars += JSON.stringify(
-            (block as Record<string, unknown>).input,
-          ).length;
-        } catch {
-          // ignore serialization errors
-        }
-      }
-    }
-  }
-  if (ctx.state.deterministicApprovalPromptSent) {
+  if (suppressVisibleAssistantOutput) {
     return;
   }
   promoteThinkingTagsToBlocks(assistantMessage);
@@ -460,21 +450,37 @@ export function handleMessageEnd(
   let cleanedText = parsedText?.text ?? "";
   let { mediaUrls, hasMedia } = resolveSendableOutboundReplyParts(parsedText ?? {});
 
-  if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
-    const rawTrimmed = coerceText(rawText).trim();
-    const rawStrippedFinal = rawTrimmed.replace(/<\s*\/?\s*final\s*>/gi, "").trim();
-    const rawCandidate = rawStrippedFinal || rawTrimmed;
-    if (rawCandidate) {
-      const parsedFallback = parseReplyDirectives(stripTrailingDirective(rawCandidate));
-      cleanedText = parsedFallback.text ?? rawCandidate;
-      ({ mediaUrls, hasMedia } = resolveSendableOutboundReplyParts(parsedFallback));
-    }
-  }
+  const finalizeMessageEnd = () => {
+    ctx.state.deltaBuffer = "";
+    ctx.state.blockBuffer = "";
+    ctx.blockChunker?.reset();
+    ctx.state.blockState.thinking = false;
+    ctx.state.blockState.final = false;
+    ctx.state.blockState.inlineCode = createInlineCodeState();
+    ctx.state.lastStreamedAssistant = undefined;
+    ctx.state.lastStreamedAssistantCleaned = undefined;
+    ctx.state.reasoningStreamOpen = false;
+  };
+
+  const previousStreamedText = ctx.state.lastStreamedAssistantCleaned ?? "";
+  const shouldReplaceFinalStream = Boolean(
+    previousStreamedText && cleanedText && !cleanedText.startsWith(previousStreamedText),
+  );
+  const didTextChangeWithinCurrentMessage = Boolean(
+    previousStreamedText && cleanedText !== previousStreamedText,
+  );
+  const finalStreamDelta = shouldReplaceFinalStream
+    ? ""
+    : cleanedText.slice(previousStreamedText.length);
 
   if (
     !ctx.params.silentExpected &&
-    !ctx.state.emittedAssistantUpdate &&
-    (cleanedText || hasMedia)
+    !suppressDeterministicApprovalOutput &&
+    (cleanedText || hasMedia) &&
+    (!ctx.state.emittedAssistantUpdate ||
+      shouldReplaceFinalStream ||
+      didTextChangeWithinCurrentMessage ||
+      hasMedia)
   ) {
     const data = buildAssistantStreamData({
       text: cleanedText,
@@ -507,6 +513,7 @@ export function handleMessageEnd(
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
     !ctx.params.silentExpected &&
+    !suppressDeterministicApprovalOutput &&
     ctx.state.includeReasoning &&
     formattedReasoning &&
     onBlockReply &&
@@ -555,6 +562,9 @@ export function handleMessageEnd(
 
   if (
     !ctx.params.silentExpected &&
+    !suppressDeterministicApprovalOutput &&
+    text &&
+    onBlockReply &&
     (ctx.state.blockReplyBreak === "message_end" ||
       (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
     text &&
