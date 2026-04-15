@@ -57,6 +57,7 @@ vi.mock("./docker-up.runtime.js", () => ({
 }));
 
 import {
+  __testing,
   runQaLabSelfCheckCommand,
   runQaDockerBuildImageCommand,
   runQaDockerScaffoldCommand,
@@ -183,6 +184,29 @@ describe("qa cli runtime", () => {
       scenarioIds: ["telegram-help-command"],
       sutAccountId: "sut-live",
     });
+  });
+
+  it("rejects output dirs that escape the repo root", () => {
+    expect(() =>
+      __testing.resolveRepoRelativeOutputDir("/tmp/openclaw-repo", "../outside"),
+    ).toThrow("--output-dir must stay within the repo root.");
+    expect(() =>
+      __testing.resolveRepoRelativeOutputDir("/tmp/openclaw-repo", "/tmp/outside"),
+    ).toThrow("--output-dir must be a relative path inside the repo root.");
+  });
+
+  it("defaults telegram qa runs onto the live provider lane", async () => {
+    await runQaTelegramCommand({
+      repoRoot: "/tmp/openclaw-repo",
+      scenarioIds: ["telegram-help-command"],
+    });
+
+    expect(runTelegramQaLive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoRoot: path.resolve("/tmp/openclaw-repo"),
+        providerMode: "live-frontier",
+      }),
+    );
   });
 
   it("normalizes legacy live-openai suite runs onto the frontier provider mode", async () => {

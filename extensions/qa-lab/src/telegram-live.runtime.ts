@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { startQaGatewayChild } from "./gateway-child.js";
 import {
   defaultQaModelForMode,
@@ -42,6 +43,11 @@ type TelegramObservedMessage = {
   timestamp: number;
   inlineButtons: string[];
   mediaKinds: string[];
+};
+
+type TelegramObservedMessageArtifact = Omit<TelegramObservedMessage, "text" | "caption"> & {
+  text?: string;
+  caption?: string;
 };
 
 type TelegramQaScenarioResult = {
@@ -95,7 +101,8 @@ function isTelegramQaCanaryError(error: unknown): error is TelegramQaCanaryError
     (typeof error === "object" &&
       error !== null &&
       typeof (error as { phase?: unknown }).phase === "string" &&
-      typeof (error as { context?: unknown }).context === "object")
+      typeof (error as { context?: unknown }).context === "object" &&
+      (error as { context?: unknown }).context !== null)
   );
 }
 
@@ -284,21 +291,32 @@ async function callTelegramApi<T>(
   token: string,
   method: string,
   body?: Record<string, unknown>,
+  timeoutMs = 15_000,
 ): Promise<T> {
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
+  const { response, release } = await fetchWithSsrFGuard({
+    url: `https://api.telegram.org/bot${token}/${method}`,
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
     },
-    body: JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(timeoutMs),
+    policy: { hostnameAllowlist: ["api.telegram.org"] },
+    auditContext: "qa-lab-telegram-live",
   });
-  const payload = (await response.json()) as TelegramApiEnvelope<T>;
-  if (!response.ok || !payload.ok || payload.result === undefined) {
-    throw new Error(
-      payload.description?.trim() || `${method} failed with status ${response.status}`,
-    );
+  try {
+    const payload = (await response.json()) as TelegramApiEnvelope<T>;
+    if (!response.ok || !payload.ok || payload.result === undefined) {
+      throw new Error(
+        payload.description?.trim() || `${method} failed with status ${response.status}`,
+      );
+    }
+    return payload.result;
+  } finally {
+    await release();
   }
-  return payload.result;
 }
 
 async function getBotIdentity(token: string) {
@@ -306,18 +324,25 @@ async function getBotIdentity(token: string) {
 }
 
 async function flushTelegramUpdates(token: string) {
+  const startedAt = Date.now();
   let offset = 0;
-  while (true) {
-    const updates = await callTelegramApi<TelegramUpdate[]>(token, "getUpdates", {
-      offset,
-      timeout: 0,
-      allowed_updates: ["message"],
-    });
+  while (Date.now() - startedAt < 15_000) {
+    const updates = await callTelegramApi<TelegramUpdate[]>(
+      token,
+      "getUpdates",
+      {
+        offset,
+        timeout: 0,
+        allowed_updates: ["message"],
+      },
+      15_000,
+    );
     if (updates.length === 0) {
       return offset;
     }
     offset = (updates.at(-1)?.update_id ?? offset) + 1;
   }
+  throw new Error("timed out after 15000ms draining Telegram updates");
 }
 
 async function sendGroupMessage(token: string, groupId: string, text: string) {
@@ -343,11 +368,16 @@ async function waitForObservedMessage(params: {
       Math.min(10_000, params.timeoutMs - (Date.now() - startedAt)),
     );
     const timeoutSeconds = Math.max(1, Math.min(10, Math.floor(remainingMs / 1000)));
-    const updates = await callTelegramApi<TelegramUpdate[]>(params.token, "getUpdates", {
-      offset,
-      timeout: timeoutSeconds,
-      allowed_updates: ["message"],
-    });
+    const updates = await callTelegramApi<TelegramUpdate[]>(
+      params.token,
+      "getUpdates",
+      {
+        offset,
+        timeout: timeoutSeconds,
+        allowed_updates: ["message"],
+      },
+      timeoutSeconds * 1000 + 5_000,
+    );
     if (updates.length === 0) {
       continue;
     }
@@ -422,15 +452,58 @@ function renderTelegramQaMarkdown(params: {
   return lines.join("\n");
 }
 
+function buildObservedMessagesArtifact(params: {
+  observedMessages: TelegramObservedMessage[];
+  includeContent: boolean;
+}) {
+  return params.observedMessages.map<TelegramObservedMessageArtifact>((message) =>
+    params.includeContent
+      ? { ...message }
+      : {
+          updateId: message.updateId,
+          messageId: message.messageId,
+          chatId: message.chatId,
+          senderId: message.senderId,
+          senderIsBot: message.senderIsBot,
+          senderUsername: message.senderUsername,
+          replyToMessageId: message.replyToMessageId,
+          timestamp: message.timestamp,
+          inlineButtons: message.inlineButtons,
+          mediaKinds: message.mediaKinds,
+        },
+  );
+}
+
 function findScenario(ids?: string[]) {
   if (!ids || ids.length === 0) {
     return [...TELEGRAM_QA_SCENARIOS];
   }
+  const requested = new Set(ids);
   const selected = TELEGRAM_QA_SCENARIOS.filter((scenario) => ids.includes(scenario.id));
-  if (selected.length === 0) {
-    throw new Error(`No Telegram QA scenarios matched: ${ids.join(", ")}`);
+  const missingIds = [...requested].filter(
+    (id) => !selected.some((scenario) => scenario.id === id),
+  );
+  if (missingIds.length > 0) {
+    throw new Error(`unknown Telegram QA scenario id(s): ${missingIds.join(", ")}`);
   }
   return selected;
+}
+
+function classifyCanaryReply(params: {
+  message: TelegramObservedMessage;
+  groupId: string;
+  sutBotId: number;
+  driverMessageId: number;
+}) {
+  if (
+    params.message.chatId !== Number(params.groupId) ||
+    params.message.senderId !== params.sutBotId
+  ) {
+    return "ignore" as const;
+  }
+  return params.message.replyToMessageId === params.driverMessageId
+    ? ("match" as const)
+    : ("unthreaded" as const);
 }
 
 async function runCanary(params: {
@@ -446,6 +519,9 @@ async function runCanary(params: {
     params.groupId,
     `/help@${params.sutUsername}`,
   );
+  let firstUnthreadedReply:
+    | Pick<TelegramObservedMessage, "messageId" | "replyToMessageId" | "text">
+    | undefined;
   let sutObserved: Awaited<ReturnType<typeof waitForObservedMessage>>;
   try {
     sutObserved = await waitForObservedMessage({
@@ -453,10 +529,41 @@ async function runCanary(params: {
       initialOffset: offset,
       timeoutMs: 30_000,
       observedMessages: params.observedMessages,
-      predicate: (message) =>
-        message.chatId === Number(params.groupId) && message.senderId === params.sutBotId,
+      predicate: (message) => {
+        const classification = classifyCanaryReply({
+          message,
+          groupId: params.groupId,
+          sutBotId: params.sutBotId,
+          driverMessageId: driverMessage.message_id,
+        });
+        if (classification === "ignore") {
+          return false;
+        }
+        if (classification === "unthreaded") {
+          firstUnthreadedReply ??= {
+            messageId: message.messageId,
+            replyToMessageId: message.replyToMessageId,
+            text: message.text,
+          };
+          return false;
+        }
+        return classification === "match";
+      },
     });
   } catch (error) {
+    if (firstUnthreadedReply) {
+      throw new TelegramQaCanaryError(
+        "sut_reply_not_threaded",
+        "SUT bot replied, but not as a reply to the canary driver message.",
+        {
+          groupId: params.groupId,
+          sutBotId: params.sutBotId,
+          driverMessageId: driverMessage.message_id,
+          sutMessageId: firstUnthreadedReply.messageId,
+          sutReplyToMessageId: firstUnthreadedReply.replyToMessageId,
+        },
+      );
+    }
     throw new TelegramQaCanaryError(
       "sut_reply_timeout",
       "SUT bot did not send any group reply after the canary command within 30s.",
@@ -465,19 +572,6 @@ async function runCanary(params: {
         sutBotId: params.sutBotId,
         driverMessageId: driverMessage.message_id,
         cause: formatErrorMessage(error),
-      },
-    );
-  }
-  if (sutObserved.message.replyToMessageId !== driverMessage.message_id) {
-    throw new TelegramQaCanaryError(
-      "sut_reply_not_threaded",
-      "SUT bot replied, but not as a reply to the canary driver message.",
-      {
-        groupId: params.groupId,
-        sutBotId: params.sutBotId,
-        driverMessageId: driverMessage.message_id,
-        sutMessageId: sutObserved.message.messageId,
-        sutReplyToMessageId: sutObserved.message.replyToMessageId,
       },
     );
   }
@@ -580,12 +674,13 @@ export async function runTelegramQaLive(params: {
   await fs.mkdir(outputDir, { recursive: true });
 
   const runtimeEnv = resolveTelegramQaRuntimeEnv();
-  const providerMode = normalizeQaProviderMode(params.providerMode ?? "mock-openai");
+  const providerMode = normalizeQaProviderMode(params.providerMode ?? "live-frontier");
   const primaryModel = params.primaryModel?.trim() || defaultQaModelForMode(providerMode);
   const alternateModel = params.alternateModel?.trim() || defaultQaModelForMode(providerMode, true);
   const sutAccountId = params.sutAccountId?.trim() || "sut";
   const scenarios = findScenario(params.scenarioIds);
   const observedMessages: TelegramObservedMessage[] = [];
+  const includeObservedMessageContent = process.env.OPENCLAW_QA_TELEGRAM_CAPTURE_CONTENT === "1";
   const startedAt = new Date().toISOString();
 
   const driverIdentity = await getBotIdentity(runtimeEnv.driverToken);
@@ -713,13 +808,23 @@ export async function runTelegramQaLive(params: {
       finishedAt,
       scenarios: scenarioResults,
     })}\n`,
-    "utf8",
+    { encoding: "utf8", mode: 0o600 },
   );
-  await fs.writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  await fs.writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await fs.writeFile(
     observedMessagesPath,
-    `${JSON.stringify(observedMessages, null, 2)}\n`,
-    "utf8",
+    `${JSON.stringify(
+      buildObservedMessagesArtifact({
+        observedMessages,
+        includeContent: includeObservedMessageContent,
+      }),
+      null,
+      2,
+    )}\n`,
+    { encoding: "utf8", mode: 0o600 },
   );
   if (canaryFailure) {
     throw new Error(
@@ -739,7 +844,11 @@ export async function runTelegramQaLive(params: {
 export const __testing = {
   TELEGRAM_QA_SCENARIOS,
   buildTelegramQaConfig,
+  buildObservedMessagesArtifact,
   canaryFailureMessage,
+  callTelegramApi,
+  classifyCanaryReply,
+  findScenario,
   normalizeTelegramObservedMessage,
   resolveTelegramQaRuntimeEnv,
 };

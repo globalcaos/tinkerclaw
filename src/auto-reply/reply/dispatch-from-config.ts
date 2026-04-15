@@ -176,7 +176,7 @@ const createShouldEmitVerboseProgress = (params: {
       try {
         const store = loadSessionStore(params.storePath);
         const entry = resolveSessionStoreEntry({ store, sessionKey: params.sessionKey }).existing;
-        const currentLevel = normalizeVerboseLevel(String(entry?.verboseLevel ?? ""));
+        const currentLevel = normalizeVerboseLevel(entry?.verboseLevel ?? "");
         if (currentLevel) {
           return currentLevel !== "off";
         }
@@ -206,7 +206,7 @@ export async function dispatchReplyFromConfig(params: {
 }): Promise<DispatchFromConfigResult> {
   const { ctx, cfg, dispatcher } = params;
   const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
-  const channel = normalizeLowercaseStringOrEmpty(String(ctx.Surface ?? ctx.Provider ?? "unknown"));
+  const channel = normalizeLowercaseStringOrEmpty(ctx.Surface ?? ctx.Provider ?? "unknown");
   const chatId = ctx.To ?? ctx.From;
   const messageId = ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
   const sessionKey = ctx.SessionKey;
@@ -272,12 +272,10 @@ export async function dispatchReplyFromConfig(params: {
     storePath: sessionStoreEntry.storePath,
     fallbackLevel:
       normalizeVerboseLevel(
-        String(
-          sessionStoreEntry.entry?.verboseLevel ??
-            sessionAgentCfg?.verboseDefault ??
-            cfg.agents?.defaults?.verboseDefault ??
-            "",
-        ),
+        sessionStoreEntry.entry?.verboseLevel ??
+          sessionAgentCfg?.verboseDefault ??
+          cfg.agents?.defaults?.verboseDefault ??
+          "",
       ) ?? "off",
   });
   // Restore route thread context only from the active turn or the thread-scoped session key.
@@ -351,6 +349,10 @@ export async function dispatchReplyFromConfig(params: {
       to: originatingTo,
       sessionKey: ctx.SessionKey,
       accountId: ctx.AccountId,
+      requesterSenderId: ctx.SenderId,
+      requesterSenderName: ctx.SenderName,
+      requesterSenderUsername: ctx.SenderUsername,
+      requesterSenderE164: ctx.SenderE164,
       threadId: routeThreadId,
       cfg,
       abortSignal,
@@ -374,6 +376,10 @@ export async function dispatchReplyFromConfig(params: {
         to: originatingTo,
         sessionKey: ctx.SessionKey,
         accountId: ctx.AccountId,
+        requesterSenderId: ctx.SenderId,
+        requesterSenderName: ctx.SenderName,
+        requesterSenderUsername: ctx.SenderUsername,
+        requesterSenderE164: ctx.SenderE164,
         threadId: routeThreadId,
         cfg,
         isGroup,
@@ -530,6 +536,10 @@ export async function dispatchReplyFromConfig(params: {
           to: originatingTo,
           sessionKey: ctx.SessionKey,
           accountId: ctx.AccountId,
+          requesterSenderId: ctx.SenderId,
+          requesterSenderName: ctx.SenderName,
+          requesterSenderUsername: ctx.SenderUsername,
+          requesterSenderE164: ctx.SenderE164,
           threadId: routeThreadId,
           cfg,
           isGroup,
@@ -587,6 +597,10 @@ export async function dispatchReplyFromConfig(params: {
           to: originatingTo,
           sessionKey: ctx.SessionKey,
           accountId: ctx.AccountId,
+          requesterSenderId: ctx.SenderId,
+          requesterSenderName: ctx.SenderName,
+          requesterSenderUsername: ctx.SenderUsername,
+          requesterSenderE164: ctx.SenderE164,
           threadId: routeThreadId,
           cfg,
           isGroup,
@@ -711,7 +725,7 @@ export async function dispatchReplyFromConfig(params: {
       }
       return parts.join("\n\n").trim() || "Planning next steps.";
     };
-    const maybeSendWorkingStatus = (label: string) => {
+    const maybeSendWorkingStatus = async (label: string): Promise<void> => {
       const normalizedLabel = normalizeWorkingLabel(label);
       if (
         !shouldEmitVerboseProgress() ||
@@ -728,11 +742,15 @@ export async function dispatchReplyFromConfig(params: {
         text: `Working: ${normalizedLabel}`,
       };
       if (shouldRouteToOriginating) {
-        return sendPayloadAsync(payload, undefined, false);
+        await sendPayloadAsync(payload, undefined, false);
+        return;
       }
       dispatcher.sendToolResult(payload);
     };
-    const sendPlanUpdate = (payload: { explanation?: string; steps?: string[] }) => {
+    const sendPlanUpdate = async (payload: {
+      explanation?: string;
+      steps?: string[];
+    }): Promise<void> => {
       if (!shouldEmitVerboseProgress()) {
         return;
       }
@@ -740,7 +758,8 @@ export async function dispatchReplyFromConfig(params: {
         text: formatPlanUpdateText(payload),
       };
       if (shouldRouteToOriginating) {
-        return sendPayloadAsync(replyPayload, undefined, false);
+        await sendPayloadAsync(replyPayload, undefined, false);
+        return;
       }
       dispatcher.sendToolResult(replyPayload);
     };
@@ -850,13 +869,13 @@ export async function dispatchReplyFromConfig(params: {
           };
           return run();
         },
-        onPlanUpdate: ({ phase, explanation, steps }) => {
+        onPlanUpdate: async ({ phase, explanation, steps }) => {
           if (phase !== "update") {
             return;
           }
-          return sendPlanUpdate({ explanation, steps });
+          await sendPlanUpdate({ explanation, steps });
         },
-        onApprovalEvent: ({ phase, status, command, message }) => {
+        onApprovalEvent: async ({ phase, status, command, message }) => {
           if (phase !== "requested") {
             return;
           }
@@ -864,9 +883,9 @@ export async function dispatchReplyFromConfig(params: {
           if (!label) {
             return;
           }
-          return maybeSendWorkingStatus(label);
+          await maybeSendWorkingStatus(label);
         },
-        onPatchSummary: ({ phase, summary, title }) => {
+        onPatchSummary: async ({ phase, summary, title }) => {
           if (phase !== "end") {
             return;
           }
@@ -874,7 +893,7 @@ export async function dispatchReplyFromConfig(params: {
           if (!label) {
             return;
           }
-          return maybeSendWorkingStatus(label);
+          await maybeSendWorkingStatus(label);
         },
         onBlockReply: (payload: ReplyPayload, context?: BlockReplyContext) => {
           const run = async () => {
@@ -1012,6 +1031,10 @@ export async function dispatchReplyFromConfig(params: {
               to: originatingTo,
               sessionKey: ctx.SessionKey,
               accountId: ctx.AccountId,
+              requesterSenderId: ctx.SenderId,
+              requesterSenderName: ctx.SenderName,
+              requesterSenderUsername: ctx.SenderUsername,
+              requesterSenderE164: ctx.SenderE164,
               threadId: routeThreadId,
               cfg,
               isGroup,

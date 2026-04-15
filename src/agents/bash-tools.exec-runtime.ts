@@ -228,7 +228,10 @@ export function isRequestedExecTargetAllowed(params: {
     return true;
   }
   if (params.configuredTarget === "auto") {
-    if (params.sandboxAvailable && params.requestedTarget === "gateway") {
+    if (
+      params.sandboxAvailable &&
+      (params.requestedTarget === "gateway" || params.requestedTarget === "node")
+    ) {
       return false;
     }
     return true;
@@ -254,9 +257,13 @@ export function resolveExecTarget(params: {
   ) {
     const allowedConfig = Array.from(
       new Set(
-        requestedTarget === "gateway" && !params.sandboxAvailable
-          ? ["gateway", "auto"]
-          : [renderExecTargetLabel(requestedTarget), "auto"],
+        configuredTarget === "auto" &&
+          params.sandboxAvailable &&
+          (requestedTarget === "gateway" || requestedTarget === "node")
+          ? [renderExecTargetLabel(requestedTarget)]
+          : requestedTarget === "gateway" && !params.sandboxAvailable
+            ? ["gateway", "auto"]
+            : [renderExecTargetLabel(requestedTarget), "auto"],
       ),
     ).join(" or ");
     throw new Error(
@@ -458,6 +465,7 @@ export function formatExecFailureReason(params: {
     case "aborted":
       return "Command aborted before exit code was captured";
   }
+  throw new Error("Unsupported exec failure kind");
 }
 
 export function buildExecExitOutcome(params: {
