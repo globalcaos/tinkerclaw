@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { createWarnLogCapture } from "../logging/test-helpers/warn-log-capture.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
+import * as authProfileSourceCheckModule from "./auth-profiles/source-check.js";
 import * as authProfileStoreModule from "./auth-profiles/store.js";
 import { saveAuthProfileStore } from "./auth-profiles/store.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
@@ -21,6 +22,8 @@ vi.mock("../plugins/provider-runtime.js", () => ({
 }));
 
 const makeCfg = makeModelFallbackCfg;
+const OPENROUTER_MODEL_NOT_FOUND_PAYLOAD =
+  '{"error":{"message":"Healer Alpha was a stealth model revealed on March 18th as an early testing version of MiMo-V2-Omni. Find it here: https://openrouter.ai/xiaomi/mimo-v2-omni","code":404},"user_id":"user_33GTyP8uDSYYbaeBO48AGHXyuMC"}';
 
 function makeFallbacksOnlyCfg(): OpenClawConfig {
   return {
@@ -200,7 +203,7 @@ const CONNECTION_ERROR_MESSAGE = "Connection error.";
 describe("runWithModelFallback", () => {
   it("skips auth store bootstrap when no auth profile sources exist", async () => {
     const hasSourcesSpy = vi
-      .spyOn(authProfileStoreModule, "hasAnyAuthProfileStoreSource")
+      .spyOn(authProfileSourceCheckModule, "hasAnyAuthProfileStoreSource")
       .mockReturnValue(false);
     const ensureStoreSpy = vi.spyOn(authProfileStoreModule, "ensureAuthProfileStore");
     const run = vi.fn().mockResolvedValueOnce("ok");
@@ -566,6 +569,26 @@ describe("runWithModelFallback", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1]?.[0]).toBe("anthropic");
     expect(run.mock.calls[1]?.[1]).toBe("claude-haiku-3-5");
+  });
+
+  it("falls back on JSON-wrapped OpenRouter stealth-model 404s", async () => {
+    const cfg = makeCfg();
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error(OPENROUTER_MODEL_NOT_FOUND_PAYLOAD))
+      .mockResolvedValueOnce("ok");
+
+    const result = await runWithModelFallback({
+      cfg,
+      provider: "openrouter",
+      model: "openrouter/healer-alpha",
+      run,
+    });
+
+    expect(result.result).toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1]?.[0]).toBe("openai");
+    expect(run.mock.calls[1]?.[1]).toBe("gpt-4.1-mini");
   });
 
   it("warns when falling back due to model_not_found", async () => {

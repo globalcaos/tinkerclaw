@@ -1,11 +1,3 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { resetConfiguredBindingTargetInPlace } from "../../channels/plugins/binding-targets.js";
-import { logVerbose } from "../../globals.js";
-import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
-import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { resolveBoundAcpThreadSessionKey } from "./commands-acp/targets.js";
 import type {
@@ -335,18 +327,8 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
     }
   }
 
-  const targetSessionEntry = params.sessionStore?.[params.sessionKey] ?? params.sessionEntry;
-  const sendPolicy = resolveSendPolicy({
-    cfg: params.cfg,
-    entry: targetSessionEntry,
-    sessionKey: params.sessionKey,
-    channel: targetSessionEntry?.channel ?? params.command.channel,
-    chatType: targetSessionEntry?.chatType,
-  });
-  if (sendPolicy === "deny") {
-    logVerbose(`Send blocked by policy for session ${params.sessionKey ?? "unknown"}`);
-    return { shouldContinue: false };
-  }
-
+  // sendPolicy "deny" is now handled downstream in dispatch-from-config.ts
+  // by suppressing outbound delivery while still allowing the agent to process
+  // the inbound message (context, memory, tool calls). See #53328.
   return { shouldContinue: true };
 }
