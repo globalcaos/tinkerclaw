@@ -128,6 +128,12 @@ const explicitNeverBundleDependencies = [
   "@lancedb/lancedb",
   "@matrix-org/matrix-sdk-crypto-nodejs",
   "matrix-js-sdk",
+  // FORK: native addons — never bundle, always external at runtime.
+  // context-anatomy-db.ts imports better-sqlite3 which uses `bindings`
+  // at load time; bundling either one breaks ESM `__filename` resolution.
+  "better-sqlite3",
+  "bindings",
+  "@whatsmeow-node/whatsmeow-node",
   ...bundledPluginRuntimeDependencies,
 ].toSorted((left, right) => left.localeCompare(right));
 

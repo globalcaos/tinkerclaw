@@ -10,7 +10,20 @@
  * Wired in: session.ts calls bindWmHistoryCapture(client) after client creation.
  */
 
-import type { WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
+// FORK: whatsmeow-node is an optional Go-native addon; its types may be
+// absent at type-check time. The client instance is supplied by session.ts
+// at bind time, so we only need a loose structural shape that accepts the
+// methods we actually call. Intersecting with Record keeps tsc happy for
+// any downstream utility that poke at additional properties (e.g. the
+// backfill module's WhatsmeowLikeClient). Runtime behavior unchanged.
+type WhatsmeowClient = {
+  // biome-ignore lint/suspicious/noExplicitAny: deliberate structural escape for optional Go addon
+  on(event: string, handler: (payload: any) => void): void;
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic shape — the actual implementation lives in whatsmeow-node
+  buildHistorySyncRequest(...args: any[]): any;
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic shape — the actual implementation lives in whatsmeow-node
+  sendPeerMessage(...args: any[]): any;
+} & Record<string, unknown>;
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { insertMessage, upsertChat, type MessageRecord } from "./db.js";
 
@@ -121,7 +134,18 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
   }
   logger.info("Binding whatsmeow history capture");
 
-  client.on("message", ({ info, message }) => {
+  // FORK: whatsmeow-node payload shapes are dynamic — treat via Record casts.
+  type WmMessageInfo = {
+    id: string;
+    chat: string;
+    sender: string;
+    pushName?: string;
+    isFromMe: boolean;
+    isGroup: boolean;
+    timestamp: number;
+  };
+  type WmMessagePayload = { info: WmMessageInfo; message: Record<string, unknown> };
+  client.on("message", ({ info, message }: WmMessagePayload) => {
     const { text, type } = extractText(message);
     const { quotedId, quotedText } = extractQuotedInfo(message);
 
@@ -151,7 +175,7 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
     }
   });
 
-  client.on("history_sync", ({ type }) => {
+  client.on("history_sync", ({ type }: { type: string }) => {
     logger.info({ type }, "History sync event received (whatsmeow)");
     // whatsmeow-node delivers history_sync as a notification;
     // individual messages arrive via the "message" event after sync completes.
@@ -159,7 +183,7 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
 
   let connectedJid: string | null = null;
 
-  client.on("connected", ({ jid }) => {
+  client.on("connected", ({ jid }: { jid: string }) => {
     logger.info({ jid }, "Connected — history capture active (wm)");
     connectedJid = jid;
     void loadBackfill().then((mod) => {
