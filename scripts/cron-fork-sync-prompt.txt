@@ -249,6 +249,52 @@ This is the interesting case. Examples from 2026-04-06:
 
 The rule: **if upstream's version is a superset, take it. If fork adds unique value, keep that value on top of upstream's base, then register the splice as a patch in `apply-fork-wiring.mjs`.**
 
+### e) Adoption criteria — the decision framework the user wants applied
+
+The fork exists to maximize **Jarvis's operational performance** — response speed, retrieval quality, reasoning depth, uptime. It does NOT exist to be different from upstream for the sake of it. Apply this decision framework on every non-trivial fork-vs-upstream choice:
+
+1. **Measurable wins stay.** If the fork version is demonstrably faster, more accurate, or more reliable than upstream's on a metric that matters for Jarvis, keep the fork version and wire it. Record the metric in FORK_PATCHES.md so the decision is auditable.
+
+2. **In equality, adopt upstream.** When fork and upstream do roughly the same thing and neither has a measurable edge, **take upstream**. Upstream has more contributors, more eyes, more CI coverage, and more bug fixes landing every day. The fork pays for every file it diverges on — that cost compounds forever. Default to adopting upstream on ties; defaulting to the fork is a debt you finance with your own time.
+
+3. **Gray area → theory comparison → informed decision.** When neither side has measurable data (for example: upstream's Memory-Wiki vs. the fork's engram + hippocampus), do not guess and do not default. Instead:
+   a. Read the design doc or PR description for the upstream version (one-paragraph summary).
+   b. Read the fork's own design doc or the first comment of the original PR.
+   c. Compare the two on: retrieval topology (flat vs. graph vs. hybrid), update cost, cold-start cost, how well the agent can *modify its own memory* at runtime, and how well it survives when the store is partially corrupted.
+   d. Write a 5-sentence verdict into `memory/knowledge/merge-debt.md` under a `## Gray-area decisions` heading. Each verdict names the file(s) affected, the chosen direction, and a one-line reason. If you cannot defend your choice in one sentence, escalate to the user — do not guess.
+   e. If the verdict is "adopt upstream", schedule the fork version for removal in THIS merge (step f below). If the verdict is "keep fork", add a wiring-script patch so the next merge doesn't re-break it.
+
+4. **Every fork feature dropped must be LOUDLY reported.** If this merge adopts upstream in place of an existing fork feature, that feature is LOST from the fork. the user must know. For every dropped fork feature:
+   - Name the feature in plain language (not the file path). Example: "the fork's own billing gate around model selection" — not "patchBillingGate in model-fallback.ts".
+   - One sentence on why the fork version is being dropped (measurement tie → upstream default; theory comparison → upstream wins; etc.).
+   - One sentence on what the user would notice change if the new upstream version behaves differently.
+   - Add the entry to Section 5a of the report (the grandma-proof section) under a subhead `## What we gave up today` — this subhead is mandatory on any merge that drops fork code. If nothing was dropped, write "we gave up nothing — all fork features preserved".
+   - Also append the same entry to `memory/knowledge/fork-losses.md` with date and commit SHA, so the user has a running log of fork-feature attrition over time.
+
+5. **Plugin marketplace as a value lever.** Upstream is building toward a hosted offering with a plugin marketplace (ClawHub). the user has authored several `tinkerclaw-*` plugins that could get traction the way his skills did. When deciding whether to keep a fork feature as a monolithic `src/` patch vs. extracting it into a plugin, **prefer the plugin form whenever the extension interfaces can support it** — even if the extraction costs a couple of extra hours this merge. A plugin is portable, shippable, marketable, and has a near-zero collision surface with upstream. A `src/` patch accumulates merge debt forever.
+
+### f) Plugin extraction — the real merge-debt reduction
+
+A fork-hotspot file (identified in Step 5.5) should not just get a refactor recommendation in `merge-debt.md`. When the merge budget allows, the cron agent should **actually extract** the fork code into a plugin during this same run. This is how the cron self-improves.
+
+The extraction criteria:
+- The fork code in the hotspot is **isolated in scope** — it adds a feature or hook rather than rewiring upstream's core logic.
+- The upstream file offers a **plugin surface** (a hook, an event emit, a registration API) that the fork code can attach to instead of being inlined.
+- Extracting does not break upstream's behavior if the plugin is unloaded.
+
+The extraction protocol:
+1. Create a new directory under `extensions/tinkerclaw-<feature>/` with `package.json`, `openclaw.plugin.json`, `index.ts`, and the feature source files. Use an existing fork plugin (e.g. `tinkerclaw-fractal-reflection`) as the template.
+2. Move the fork logic from the hotspot file into the new extension, keeping the fork feature's behavior identical.
+3. In the hotspot file, remove the `// FORK:` inlined block. If a hook call is needed, use upstream's existing hook/event API — do not add a new one unless upstream already has the shape for it.
+4. Update `apply-fork-wiring.mjs`: remove the now-dead patch function for that hotspot and add a new patch that verifies the extension directory still exists (structural guard).
+5. Update `openclaw.json` `plugins.allow` to include the new plugin.
+6. Run the full Step 3 (wire + typecheck + build + smoke test) to verify.
+7. Log the extraction in BOTH the grandma-proof report ("we moved the fork's X into its own plugin so upstream can stop colliding with it") and FORK_PATCHES.md (entry in the new "Extracted to plugin" section).
+
+Extraction is not a refactor; it's a collision-surface reduction. Each one permanently lowers the fork's merge tax. If a merge has room in its time budget, **extract at least one hotspot** — the compounding benefit over many future merges pays back the extra cost within 2-3 merges.
+
+This task turns the cron from "a git merge" into "a merging of two ideas, two pieces of code with their intentions behind" — the fork and upstream converging on the *best* expression of each feature, regardless of which side originally shipped it.
+
 ## Step 3: HARD-GATED wiring + typecheck + build
 
 ### 3a. Wire + count patch failures
