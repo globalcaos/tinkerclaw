@@ -24,6 +24,7 @@ const COMMON_AUTH_ERROR_PATTERNS = [
   "invalid token",
   "authentication",
   "re-authenticate",
+    /oauth.*(?:not supported|disabled|rejected)/i, // FORK: OAuth API rejection
   "oauth token refresh failed",
   "unauthorized",
   "forbidden",
@@ -130,6 +131,8 @@ const ERROR_PATTERNS = {
     "credit balance",
     "plans & billing",
     "insufficient balance",
+    /regain access/i, // FORK: Anthropic spending cap message
+    /specified.*usage limits/i, // FORK: Anthropic API usage limit message
     "insufficient usd or diem balance",
     /requires?\s+more\s+credits/i,
     /out of extra usage/i,

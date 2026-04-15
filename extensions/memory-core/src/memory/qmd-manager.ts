@@ -1058,6 +1058,12 @@ export class QmdMemoryManager implements MemorySearchManager {
       rawResults = await runSearchAttempt(false);
     }
     const results = await this.mapRawResultsToSearchResults(rawResults, opts?.minScore ?? 0);
+    opts?.onDebug?.({
+      backend: "qmd",
+      configuredMode: qmdSearchCommand,
+      effectiveMode: effectiveSearchMode,
+      fallback: searchFallbackReason,
+    });
     return this.clampResultsByInjectedChars(this.diversifyResultsBySource(results, limit));
   }
 
@@ -1090,13 +1096,7 @@ export class QmdMemoryManager implements MemorySearchManager {
         source: doc.source,
       });
     }
-    opts?.onDebug?.({
-      backend: "qmd",
-      configuredMode: qmdSearchCommand,
-      effectiveMode: effectiveSearchMode,
-      fallback: searchFallbackReason,
-    });
-    return this.clampResultsByInjectedChars(this.diversifyResultsBySource(results, limit));
+    return results;
   }
 
   async sync(params?: {
