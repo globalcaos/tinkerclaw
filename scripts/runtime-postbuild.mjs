@@ -31,6 +31,15 @@ export const STATIC_EXTENSION_ASSETS = [
     src: "extensions/diffs/assets/viewer-runtime.js",
     dest: "dist/extensions/diffs/assets/viewer-runtime.js",
   },
+  // FORK: tinkerclaw-fractal-reflection reads fractal-prompt.md via
+  // readFileSync(join(extensionDir, "fractal-prompt.md")) at load time. Without
+  // this entry the staging pipeline silently drops the prompt and the plugin
+  // falls back to a one-line hard-coded stub that breaks the UI formatting and
+  // lets HEARTBEAT_OK leak into fractal responses.
+  {
+    src: "extensions/tinkerclaw-fractal-reflection/fractal-prompt.md",
+    dest: "dist/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md",
+  },
 ];
 
 export function listStaticExtensionAssetOutputs(params = {}) {
@@ -86,9 +95,16 @@ export function runRuntimePostBuild(params = {}) {
   copyBundledPluginMetadata(params);
   writeOfficialChannelCatalog(params);
   stageBundledPluginRuntimeDeps(params);
+  // FORK: copyStaticExtensionAssets must run BEFORE stageBundledPluginRuntime,
+  // not after. Upstream ordering placed it at the end, which meant assets in
+  // STATIC_EXTENSION_ASSETS landed in dist/extensions/ but were never mirrored
+  // into dist-runtime/extensions/ — silently breaking every extension that
+  // relies on a runtime asset (acpx/mcp-proxy.mjs, diffs/viewer-runtime.js,
+  // tinkerclaw-fractal-reflection/fractal-prompt.md). Moving it up fixes all
+  // three through a single code path.
+  copyStaticExtensionAssets(params);
   stageBundledPluginRuntime(params);
   writeStableRootRuntimeAliases(params);
-  copyStaticExtensionAssets(params);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
