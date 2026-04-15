@@ -398,6 +398,10 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
+  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
+  personaBlock?: string;
+  /** FORK: amygdala safety nudge lines — injected as priority safety context for the agent. */
+  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -631,6 +635,8 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant running inside OpenClaw.",
     "",
+    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top for identity reinforcement.
+    ...(params.personaBlock ? [params.personaBlock, ""] : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",

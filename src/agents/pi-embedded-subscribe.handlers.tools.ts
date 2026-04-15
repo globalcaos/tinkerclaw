@@ -13,6 +13,7 @@ import {
   emitAgentPatchSummaryEvent,
 } from "../infra/agent-events.js";
 import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
+import { emitToolExec } from "../fork/attempt-hooks.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
 import { normalizeOptionalLowercaseString, readStringValue } from "../shared/string-coerce.js";
 import type { ApplyPatchSummary } from "./apply-patch.js";
@@ -33,6 +34,7 @@ import {
   extractToolResultText,
   filterToolResultMediaUrls,
   isToolResultError,
+  isToolResultTimedOut,
   sanitizeToolResult,
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
@@ -96,6 +98,110 @@ function buildToolCallSummary(toolName: string, args: unknown, meta?: string): T
     mutatingAction: mutation.mutatingAction,
     actionFingerprint: mutation.actionFingerprint,
   };
+}
+
+function buildToolItemId(toolCallId: string): string {
+  return `tool:${toolCallId}`;
+}
+
+function buildToolItemTitle(toolName: string, meta?: string): string {
+  return meta ? `${toolName} ${meta}` : toolName;
+}
+
+function isExecToolName(toolName: string): boolean {
+  return toolName === "exec" || toolName === "bash";
+}
+
+function isPatchToolName(toolName: string): boolean {
+  return toolName === "apply_patch";
+}
+
+function buildCommandItemId(toolCallId: string): string {
+  return `command:${toolCallId}`;
+}
+
+function buildPatchItemId(toolCallId: string): string {
+  return `patch:${toolCallId}`;
+}
+
+function buildCommandItemTitle(toolName: string, meta?: string): string {
+  return meta ? `command ${meta}` : `${toolName} command`;
+}
+
+function buildPatchItemTitle(meta?: string): string {
+  return meta ? `patch ${meta}` : "apply patch";
+}
+
+function emitTrackedItemEvent(ctx: ToolHandlerContext, itemData: AgentItemEventData): void {
+  if (itemData.phase === "start") {
+    ctx.state.itemActiveIds.add(itemData.itemId);
+    ctx.state.itemStartedCount += 1;
+  } else if (itemData.phase === "end") {
+    ctx.state.itemActiveIds.delete(itemData.itemId);
+    ctx.state.itemCompletedCount += 1;
+  }
+  emitAgentItemEvent({
+    runId: ctx.params.runId,
+    ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+    data: itemData,
+  });
+  void ctx.params.onAgentEvent?.({
+    stream: "item",
+    data: itemData,
+  });
+}
+
+function readToolResultDetailsRecord(result: unknown): Record<string, unknown> | undefined {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const details = (result as { details?: unknown }).details;
+  return details && typeof details === "object" && !Array.isArray(details)
+    ? (details as Record<string, unknown>)
+    : undefined;
+}
+
+function readExecToolDetails(result: unknown): ExecToolDetails | null {
+  const details = readToolResultDetailsRecord(result);
+  if (!details || typeof details.status !== "string") {
+    return null;
+  }
+  return details as ExecToolDetails;
+}
+
+function readApplyPatchSummary(result: unknown): ApplyPatchSummary | null {
+  const details = readToolResultDetailsRecord(result);
+  const summary =
+    details?.summary && typeof details.summary === "object" && !Array.isArray(details.summary)
+      ? (details.summary as Record<string, unknown>)
+      : null;
+  if (!summary) {
+    return null;
+  }
+  const added = Array.isArray(summary.added)
+    ? summary.added.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const modified = Array.isArray(summary.modified)
+    ? summary.modified.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const deleted = Array.isArray(summary.deleted)
+    ? summary.deleted.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return { added, modified, deleted };
+}
+
+function buildPatchSummaryText(summary: ApplyPatchSummary): string {
+  const parts: string[] = [];
+  if (summary.added.length > 0) {
+    parts.push(`${summary.added.length} added`);
+  }
+  if (summary.modified.length > 0) {
+    parts.push(`${summary.modified.length} modified`);
+  }
+  if (summary.deleted.length > 0) {
+    parts.push(`${summary.deleted.length} deleted`);
+  }
+  return parts.length > 0 ? parts.join(", ") : "no file changes recorded";
 }
 
 function extendExecMeta(toolName: string, args: unknown, meta?: string): string | undefined {
@@ -290,7 +396,9 @@ function readExecApprovalPendingDetails(result: unknown): {
 function readExecApprovalUnavailableDetails(result: unknown): {
   reason: "initiating-platform-disabled" | "initiating-platform-unsupported" | "no-approval-route";
   warningText?: string;
+  channel?: string;
   channelLabel?: string;
+  accountId?: string;
   sentApproverDms?: boolean;
 } | null {
   if (!result || typeof result !== "object") {
@@ -342,6 +450,7 @@ async function emitToolResultOutput(params: {
       "object" &&
     !Array.isArray((result as { details?: { media?: unknown } }).details?.media);
   const approvalPending = readExecApprovalPendingDetails(result);
+  let emittedToolOutputMediaUrls: string[] = [];
   if (!isToolError && approvalPending) {
     if (!ctx.params.onToolResult) {
       return;
@@ -383,7 +492,9 @@ async function emitToolResultOutput(params: {
         buildExecApprovalUnavailableReplyPayload({
           reason: approvalUnavailable.reason,
           warningText: approvalUnavailable.warningText,
+          channel: approvalUnavailable.channel,
           channelLabel: approvalUnavailable.channelLabel,
+          accountId: approvalUnavailable.accountId,
           sentApproverDms: approvalUnavailable.sentApproverDms,
         }),
       );
@@ -396,8 +507,10 @@ async function emitToolResultOutput(params: {
     return;
   }
 
-  if (ctx.shouldEmitToolOutput()) {
-    const outputText = extractToolResultText(sanitizedResult);
+  const outputText = extractToolResultText(sanitizedResult);
+  const shouldEmitOutput =
+    ctx.shouldEmitToolOutput() || shouldEmitCompactToolOutput({ toolName, result, outputText });
+  if (shouldEmitOutput) {
     if (outputText) {
       ctx.emitToolOutput(toolName, meta, outputText, result);
       if (ctx.params.toolResultFormat === "plain") {
@@ -422,11 +535,15 @@ async function emitToolResultOutput(params: {
     return;
   }
   const mediaUrls = filterToolResultMediaUrls(toolName, mediaReply.mediaUrls, result);
-  if (mediaUrls.length === 0) {
+  const pendingMediaUrls =
+    mediaReply.audioAsVoice || emittedToolOutputMediaUrls.length === 0
+      ? mediaUrls
+      : mediaUrls.filter((url) => !emittedToolOutputMediaUrls.includes(url));
+  if (pendingMediaUrls.length === 0) {
     return;
   }
   queuePendingToolMedia(ctx, {
-    mediaUrls,
+    mediaUrls: pendingMediaUrls,
     ...(mediaReply.audioAsVoice ? { audioAsVoice: true } : {}),
   });
 }
@@ -453,8 +570,9 @@ export function handleToolExecutionStart(
     const args = evt.args;
     const runId = ctx.params.runId;
 
-    // Track start time and args for after_tool_call hook
-    toolStartData.set(buildToolStartKey(runId, toolCallId), { startTime: Date.now(), args });
+    // Track start time and args for after_tool_call hook.
+    const startedAt = Date.now();
+    toolStartData.set(buildToolStartKey(runId, toolCallId), { startTime: startedAt, args });
 
     if (toolName === "read") {
       const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -490,6 +608,18 @@ export function handleToolExecutionStart(
         args: args as Record<string, unknown>,
       },
     });
+    const itemData: AgentItemEventData = {
+      itemId: buildToolItemId(toolCallId),
+      phase: "start",
+      kind: "tool",
+      title: buildToolItemTitle(toolName, meta),
+      status: "running",
+      name: toolName,
+      meta,
+      toolCallId,
+      startedAt,
+    };
+    emitTrackedItemEvent(ctx, itemData);
     // FORK: emit tool-exec-start for timeline round-level tracking
     emitToolExec({
       runId: ctx.params.runId,
@@ -505,6 +635,32 @@ export function handleToolExecutionStart(
       stream: "tool",
       data: { phase: "start", name: toolName, toolCallId },
     });
+
+    if (isExecToolName(toolName)) {
+      emitTrackedItemEvent(ctx, {
+        itemId: buildCommandItemId(toolCallId),
+        phase: "start",
+        kind: "command",
+        title: buildCommandItemTitle(toolName, meta),
+        status: "running",
+        name: toolName,
+        meta,
+        toolCallId,
+        startedAt,
+      });
+    } else if (isPatchToolName(toolName)) {
+      emitTrackedItemEvent(ctx, {
+        itemId: buildPatchItemId(toolCallId),
+        phase: "start",
+        kind: "patch",
+        title: buildPatchItemTitle(meta),
+        status: "running",
+        name: toolName,
+        meta,
+        toolCallId,
+        startedAt,
+      });
+    }
 
     if (
       ctx.params.onToolResult &&
@@ -569,6 +725,17 @@ export function handleToolExecutionUpdate(
       partialResult: sanitized,
     },
   });
+  const itemData: AgentItemEventData = {
+    itemId: buildToolItemId(toolCallId),
+    phase: "update",
+    kind: "tool",
+    title: buildToolItemTitle(toolName, ctx.state.toolMetaById.get(toolCallId)?.meta),
+    status: "running",
+    name: toolName,
+    meta: ctx.state.toolMetaById.get(toolCallId)?.meta,
+    toolCallId,
+  };
+  emitTrackedItemEvent(ctx, itemData);
   void ctx.params.onAgentEvent?.({
     stream: "tool",
     data: {
@@ -577,6 +744,41 @@ export function handleToolExecutionUpdate(
       toolCallId,
     },
   });
+  if (isExecToolName(toolName)) {
+    const output = extractToolResultText(sanitized);
+    const commandData: AgentItemEventData = {
+      itemId: buildCommandItemId(toolCallId),
+      phase: "update",
+      kind: "command",
+      title: buildCommandItemTitle(toolName, ctx.state.toolMetaById.get(toolCallId)?.meta),
+      status: "running",
+      name: toolName,
+      meta: ctx.state.toolMetaById.get(toolCallId)?.meta,
+      toolCallId,
+      ...(output ? { progressText: output } : {}),
+    };
+    emitTrackedItemEvent(ctx, commandData);
+    if (output) {
+      const outputData: AgentCommandOutputEventData = {
+        itemId: commandData.itemId,
+        phase: "delta",
+        title: commandData.title,
+        toolCallId,
+        name: toolName,
+        output,
+        status: "running",
+      };
+      emitAgentCommandOutputEvent({
+        runId: ctx.params.runId,
+        ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+        data: outputData,
+      });
+      void ctx.params.onAgentEvent?.({
+        stream: "command_output",
+        data: outputData,
+      });
+    }
+  }
 }
 
 export async function handleToolExecutionEnd(
@@ -610,6 +812,7 @@ export async function handleToolExecutionEnd(
       toolName,
       meta,
       error: errorMessage,
+      timedOut: isToolResultTimedOut(sanitizedResult) || undefined,
       mutatingAction: callSummary?.mutatingAction,
       actionFingerprint: callSummary?.actionFingerprint,
     };
@@ -692,6 +895,24 @@ export async function handleToolExecutionEnd(
       result: sanitizedResult,
     },
   });
+  const endedAt = Date.now();
+  const itemId = buildToolItemId(toolCallId);
+  const itemData: AgentItemEventData = {
+    itemId,
+    phase: "end",
+    kind: "tool",
+    title: buildToolItemTitle(toolName, meta),
+    status: isToolError ? "failed" : "completed",
+    name: toolName,
+    meta,
+    toolCallId,
+    startedAt: startData?.startTime,
+    endedAt,
+    ...(isToolError && extractToolErrorMessage(sanitizedResult)
+      ? { error: extractToolErrorMessage(sanitizedResult) }
+      : {}),
+  };
+  emitTrackedItemEvent(ctx, itemData);
   void ctx.params.onAgentEvent?.({
     stream: "tool",
     data: {
@@ -854,10 +1075,35 @@ export async function handleToolExecutionEnd(
       name: toolName,
       meta,
       toolCallId,
-      outputChars: typeof result === "string" ? result.length : JSON.stringify(result ?? "").length,
-      durationMs: toolDurationMs,
-      isError: isToolError,
+      startedAt: startData?.startTime,
+      endedAt,
+      ...(summaryText ? { summary: summaryText } : {}),
+      ...(isToolError && extractToolErrorMessage(sanitizedResult)
+        ? { error: extractToolErrorMessage(sanitizedResult) }
+        : {}),
     });
+    if (patchSummary) {
+      const patchData: AgentPatchSummaryEventData = {
+        itemId: patchItemId,
+        phase: "end",
+        title: buildPatchItemTitle(meta),
+        toolCallId,
+        name: toolName,
+        added: patchSummary.added,
+        modified: patchSummary.modified,
+        deleted: patchSummary.deleted,
+        summary: summaryText ?? buildPatchSummaryText(patchSummary),
+      };
+      emitAgentPatchSummaryEvent({
+        runId: ctx.params.runId,
+        ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+        data: patchData,
+      });
+      void ctx.params.onAgentEvent?.({
+        stream: "patch",
+        data: patchData,
+      });
+    }
   }
 
   ctx.log.debug(

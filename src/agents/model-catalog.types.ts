@@ -8,4 +8,6 @@ export type ModelCatalogEntry = {
   contextWindow?: number;
   reasoning?: boolean;
   input?: ModelInputType[];
+  /** FORK: optional display ordering rank from openclaw.json — lower = earlier. Used by Tinker UI model panel. */
+  rank?: number;
 };

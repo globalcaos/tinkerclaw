@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
@@ -24,6 +25,7 @@ import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
   extractAssistantText,
   extractAssistantThinking,
+  extractAssistantVisibleText,
   extractThinkingFromTaggedStream,
   extractThinkingFromTaggedText,
   formatReasoningMessage,
@@ -69,6 +71,10 @@ const coerceText = (value: unknown): string => {
   }
   return "";
 };
+
+function shouldSuppressAssistantVisibleOutput(message: AgentMessage | undefined): boolean {
+  return resolveAssistantMessagePhase(message) === "commentary";
+}
 
 function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage | undefined): boolean {
   if (!message || message.role !== "assistant") {
@@ -696,9 +702,7 @@ export function handleMessageEnd(
     text &&
     onBlockReply &&
     (ctx.state.blockReplyBreak === "message_end" ||
-      (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
-    text &&
-    onBlockReply
+      (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0))
   ) {
     if (ctx.blockChunker?.hasBuffered()) {
       ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
@@ -732,18 +736,6 @@ export function handleMessageEnd(
   if (!ctx.params.silentExpected && ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
     emitSplitResultAsBlockReply(ctx.consumeReplyDirectives("", { final: true }));
   }
-
-  const finalizeMessageEnd = () => {
-    ctx.state.deltaBuffer = "";
-    ctx.state.blockBuffer = "";
-    ctx.blockChunker?.reset();
-    ctx.state.blockState.thinking = false;
-    ctx.state.blockState.final = false;
-    ctx.state.blockState.inlineCode = createInlineCodeState();
-    ctx.state.lastStreamedAssistant = undefined;
-    ctx.state.lastStreamedAssistantCleaned = undefined;
-    ctx.state.reasoningStreamOpen = false;
-  };
 
   if (
     !ctx.params.silentExpected &&
