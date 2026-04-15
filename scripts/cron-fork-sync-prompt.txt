@@ -49,8 +49,9 @@ echo "last: spiral=$DEATH_SPIRAL self_healed=$LAST_SELF_HEALED commits_behind=$L
 ### 0d. Abort rules
 
 - **`DEATH_SPIRAL >= 2` AND `LAST_SELF_HEALED == false`** → STOP. Two consecutive failed merges mean the next one will also fail. Write a receipt with `action: "aborted-death-spiral"` (template below in Step 7) and escalate to the user. Do not attempt another merge.
-- **`LAST_COMMITS_BEHIND >= 1500`** (from the last run) → STOP. The guardian + wiring were designed for <500-commit increments. Escalate: "Upstream has drifted too far; manual merge strategy required."
 - **No receipt AND working tree is dirty** → STOP. A fresh run on a dirty tree is almost always wrong.
+
+There is NO commits-behind abort rule. The main objective is that this cron handles **any** amount of upstream drift. A 4000-commit backlog is not a reason to give up — it's a reason to switch from the fast single-merge path to the stratified (chunked) strategy described in Phase B below.
 
 Otherwise, proceed.
 
@@ -76,10 +77,11 @@ Before touching any code, load your context (but be token-efficient — don't re
    cd ~/src/tinkerclaw
    git fetch upstream
    git log upstream/main --oneline HEAD..upstream/main | tee /tmp/upstream-commits.log
+   git log upstream/main --format='%H%x09%ai%x09%s' HEAD..upstream/main | tee /tmp/upstream-commits-full.log
    UPSTREAM_COUNT=$(wc -l < /tmp/upstream-commits.log)
    echo "$UPSTREAM_COUNT upstream commits to merge"
    ```
-   **Cross-check the drift limit**: if `$UPSTREAM_COUNT >= 1500`, abort per 0d — do not let the merge proceed even if the last receipt was green.
+   The dual log capture is intentional: `/tmp/upstream-commits.log` is for humans to skim; `/tmp/upstream-commits-full.log` has machine-parseable `sha<TAB>iso-date<TAB>subject` for Phase A's theme analysis.
 
 4. **Damage forecast** — run these three probes and read the output before merging. If any return a non-empty result, treat it as a yellow flag and plan Step 3 accordingly:
    ```bash
@@ -96,7 +98,97 @@ Before touching any code, load your context (but be token-efficient — don't re
    - `COGNITIVE_PLUGINS_GUIDE.md`
    - `TINKER_UI_DESIGN_BIBLE.md`
 
-## Step 1: Run the merge script
+## Phase A: Upstream reconnaissance — read the story, then plan the merge
+
+**Top-down first.** Before touching the merge, READ what upstream has been doing since the last sync and understand it as a *story*. You are not a script runner; you are a merge strategist. the user will judge this cron by "what features did we gain today?", not "how many commits landed". The burnt tokens must produce a readable answer to that question.
+
+### A1. Classify every commit by theme
+
+Walk `/tmp/upstream-commits-full.log` and assign each commit to one of these themes. Use your judgment based on the subject line and (when ambiguous) `git show <sha> --stat` to see the files touched. Do not use regex-only classification — upstream commit messages are inconsistent.
+
+Themes (use exactly these keys, they drive the later report):
+
+- `user-facing` — features end-users can see or touch: new channels (Discord, Slack, Teams, Telegram, Matrix, Signal), new models (Anthropic/OpenAI/Google/Fireworks/Codex/etc.), new agent skills or tools, UI/webchat changes, session-management behavior changes.
+- `dev-facing` — features other developers/plugin authors can consume: plugin SDK changes, extension APIs, hook metadata, code connect, CLI subcommand additions, observability/OTEL hooks.
+- `infra` — build system, dependency bumps, CI, test harnesses, bundler/tsdown config, staging scripts, devtools.
+- `fix` — bug fixes (include a one-line summary; do not drop them — the user wants to know what got better quietly).
+- `breaking` — API renames, config migrations, file moves, removed exports, deprecations. These cause the merge-damage classes 1/2/3 and must be surfaced clearly.
+- `chore` — version bumps, formatter/linter runs, doc typo fixes, non-functional. Group and count; do not enumerate each one in the report.
+
+Write the classified set to `/tmp/upstream-themes.json` as:
+
+```json
+{
+  "user-facing": [{"sha":"...","date":"...","subject":"...","note":"optional one-line elaboration"}, ...],
+  "dev-facing":  [...],
+  "infra":       [...],
+  "fix":         [...],
+  "breaking":    [...],
+  "chore_count": 0
+}
+```
+
+### A2. Produce a pre-merge "features expected" narrative
+
+Before merging anything, write a paragraph (4–8 sentences, plain language, no jargon) describing what the user should *expect to gain* from this merge. This narrative goes into the FINAL REPORT even if the merge fails — the user needs to see where the token budget was heading regardless of outcome.
+
+Save to `/tmp/features-expected.md`. Example style — emulate, don't quote:
+
+> Upstream added three new inbound channels (X, Y, Z), a Claude 4.7 provider, and rewrote how session resets are announced in webchat. Dev-facing: the plugin SDK gained a new hook for X so third-party extensions can Y. Infra: the bundler moved from tsdown v0.X to v0.Y, deps bumped across the board. Five breaking changes: the `foo` module moved to `bar`, `getFooAndHeaders` replaced `getFoo`, (...).
+
+Grandma-proof wording. the user needs to be able to read this and go "yes, worth it" or "no, skip" without reading any file paths.
+
+### A3. Preview the likely damage
+
+From the theme list, especially the `breaking` bucket, anticipate which merge-damage classes you'll see (cross-reference the six-class taxonomy in Step 3c). If `breaking` is non-empty AND includes symbol-rename language, expect Class 2 (upstream API drift) for each renamed symbol. If `breaking` mentions file moves or package restructures, expect Class 3 (structural move). Jot a 5-line forecast to `/tmp/damage-forecast.md` so the later debugging has a prior.
+
+## Phase B: Pick a merge strategy — single shot vs stratified
+
+Count the themed commits:
+
+```bash
+CHUNKABLE=$(wc -l < /tmp/upstream-commits.log)
+echo "total upstream commits: $CHUNKABLE"
+```
+
+Decision rule:
+
+- **Fast path (single-shot merge)** if `CHUNKABLE <= 500` AND the `breaking` bucket has `<= 3` entries. Proceed directly to Step 1 (run safe-cron-merge.sh as a single merge) and continue with the existing Steps 2–4 flow.
+- **Stratified path** if `CHUNKABLE > 500` OR `breaking > 3`. Do NOT run safe-cron-merge.sh as a single invocation — it was designed for small increments and will produce an unrecoverable cascade on large drift. Instead use Phase B1 below.
+
+### B1. Stratified merge protocol
+
+The idea: instead of one giant `git merge upstream/main`, advance toward upstream/main in **chunks**, so each intermediate state is buildable. Every chunk is a separate local merge commit that you can roll back individually.
+
+**Choose chunk boundaries.** For each chunk, pick the SHA that is ~300 commits (or one upstream week of history, whichever is smaller) ahead of the current HEAD. Use `git log upstream/main --format='%H %ai' --reverse HEAD..upstream/main` to find boundary SHAs.
+
+Write the boundary plan to `/tmp/chunk-plan.txt` as a newline-separated list of SHAs, in order from oldest to newest. The last line must be `upstream/main` so the final chunk always catches up to HEAD.
+
+**Execute chunks sequentially:**
+
+```
+for each boundary SHA in /tmp/chunk-plan.txt:
+  1. Capture $PRE_CHUNK_SHA = $(git rev-parse HEAD)
+  2. git merge <boundary SHA> --no-ff -m "chunk: advance to <sha>"
+     (use -X theirs only if the script-level conflict resolver is needed; prefer clean merges)
+  3. Run Step 3a wiring against this intermediate state
+  4. Run Step 3b typecheck — NEW_COUNT must be 0 against the pre-chunk baseline
+  5. Run pnpm build — must exit 0
+  6. If any of steps 3–5 fail:
+       a. git reset --hard $PRE_CHUNK_SHA
+       b. Halve the chunk — set a new boundary SHA midway between PRE_CHUNK and the failed boundary, retry.
+       c. If the halved chunk also fails and the remaining distance is < 50 commits, escalate as Class 4 (merge-resolution defect) and run Step 3c bucketed fixes.
+       d. If the halved chunk fails AND you cannot fix the damage via wiring/classes, commit a receipt with action "stratified-partial-success" noting how far you got, and STOP. Partial progress still counts — the user gains everything up to the last good chunk.
+  7. On success: git commit (already done by merge), advance to next boundary.
+```
+
+The stratified path replaces Steps 1 AND 2 of the single-shot protocol. After the last chunk succeeds (HEAD is at or past upstream/main), jump directly to Step 3d (full build) as a final sanity check, then Step 4 (smoke test).
+
+**Why this works when single-shot fails:** single-shot `-X theirs` overwrites hundreds of fork files in one stroke and then asks the wiring script to re-insert every fork feature at once; the wiring script's anchor regexes were written against ONE upstream shape and fail en masse on drifted shapes. Stratified merges keep each step small enough that anchors drift gradually, and each chunk's wiring-script failures are debuggable in isolation.
+
+**Budget discipline:** stratified runs can take hours. Budget aggressively — a 4000-commit sync might need 8+ chunks, each with a 30s typecheck and a 2min build. Do not abort on wall-clock time unless the run exceeds 6 hours. The alternative to "slow but successful" is "fast and unrecoverable".
+
+## Step 1: Run the merge script (single-shot path only — skip if Phase B chose stratified)
 
 ```bash
 cd ~/src/tinkerclaw
@@ -314,19 +406,93 @@ Expected: `sending via sessions.send RPC` followed by `reflection dispatched`. *
 
 Write a report to: `$HOME/Documents/AI_reports/Cron_Tasks/0445_Daily_Fork_Sync_Report/YYYY-MM-DD-report.md`
 
-Format: Markdown. Include:
-- Commits merged (or "ROLLED BACK" if build failed)
+The report has TWO audiences and therefore TWO sections. The first section is for the user — grandma-proof, gaps-first, no jargon, no file paths, no variable names. The second section is for future merge agents — technical detail the user will never read. Order matters: the user's section goes FIRST because the user opens the file, reads the first screen, and decides whether to dig deeper.
+
+### 5a. Section 1 — FOR OSCAR (grandma-proof)
+
+Format: Markdown, ≤ 400 words total, narrative prose broken up by 3–5 clearly-named subheads. No tables unless the user asked for one. No code blocks. No file paths. Plain English, active voice. If you catch yourself writing a variable name, rewrite the sentence.
+
+Required subheads, in order:
+
+1. **Bottom line (1 sentence).** Did the merge succeed, fail, or partially advance? Example: "Merged 347 commits successfully — Jarvis is now current with upstream through yesterday." or "Advanced by 1200 of 4003 commits, then stopped because a breaking change needs a human call. See gap list below." or "Merge failed; rolled back to yesterday's state. Why: [one reason in plain language]."
+
+2. **Features gained today (≤ 8 bullets).** In plain language, what did the user get? Every bullet maps to one or more upstream commits from the `user-facing` / `dev-facing` / `infra` buckets in `/tmp/upstream-themes.json`. Translate each feature into what it DOES for the user, not what code changed. Examples:
+   - ✅ "Jarvis now speaks to Slack with threading — replies go under the original message instead of cluttering the channel."
+   - ✅ "New model available: Claude 4.7 (faster, cheaper than Opus 4.6 for everyday use)."
+   - ✅ "The plugin installer no longer asks for a restart when you add a new extension."
+   - ❌ "refactor: split best-effort network display discovery" ← a commit subject. Bad. Omit or reword.
+   Do not pad with chores/bumps. Prefer 4 vivid bullets over 8 dry ones.
+
+3. **Things upstream broke that we had to fix (≤ 5 bullets).** Name each breaking change in plain language, how long it took to fix, and what it cost. Example: "Upstream renamed 'token store' to 'auth store' everywhere — Jarvis had 9 places still using the old name. Fixed, 20 min." If nothing broke, write "nothing broke — clean merge". Do not list typecheck errors by number; that's for Section 2.
+
+4. **What the user should try / check (≤ 3 bullets).** If user-facing features landed, tell the user what to test. Example: "Try `/slack` in webchat — the new threading should Just Work. Ping the @ me trigger group." Zero-bullet this section if there's nothing actionable.
+
+5. **Gaps (what still needs doing).** Follow the grandma-report rule: this is the most important subhead. What's outstanding? Example: "Morning briefing is still disabled pending prompt rebuild." Short sentences. If the answer is "nothing", write "nothing — we're caught up".
+
+Also deliver Section 1 (and ONLY Section 1) to the user via WhatsApp at the configured delivery channel — it should be readable on a phone in 30 seconds.
+
+### 5b. Section 2 — FOR FUTURE MERGE AGENTS (technical)
+
+Everything below is addressed to the next instance of this cron, not to the user. Format: technical markdown, tables OK, file paths and commit SHAs encouraged. Include:
+
+- Commits merged (or "ROLLED BACK" / "STRATIFIED PARTIAL" if applicable), with from→to SHAs
 - Conflicts resolved (list each with reasoning)
 - **Wiring patch failures** — for each patch that needed an anchor update, record the old regex, the new regex, and which upstream commit changed the anchor
 - **Typecheck errors bucketed by class** (Class 1 Fork erosion / Class 2 Upstream drift / Class 3 Structural move / Class 4 Merge-resolution defect / Class 5 Test-fixture staleness / Class 6 Dropped fork file) with counts and the subagent that fixed each cluster
 - **Upstream API renames detected** — if `getApiKey` → `getApiKeyAndHeaders`-style changes happened, record them in a machine-readable section at the bottom of `FORK_PATCHES.md` so future merges know
-- Upstream features adopted (things upstream does better now)
+- **Stratified chunk log (if Phase B ran)** — list every chunk attempted, its boundary SHA, whether it required halving, and its build result. This is the self-healing training signal: future runs pick safer chunk sizes based on past failures
+- Upstream features adopted (things upstream does better now, technical summary)
 - Fork features preserved (things we keep because they're superior)
 - Guardian result
 - Build result + final TS error count (should match baseline — i.e., `NEW_COUNT == 0`)
 - Gateway health + smoke-test transcript + fractal-reflection journal check
 - Dirty-repo flags from Step 6
 - Any features where upstream is CONVERGING on fork innovations (these are PR candidates)
+- **Collision-surface recommendations from Step 5.5** (see below) — paste them inline here AND append to merge-debt.md
+
+## Step 5.5: Collision-surface reduction — make the next merge easier
+
+The merge is only "done" when the next merge will be easier than this one. That is a measurable outcome. Run this analysis unconditionally after every successful or partial merge.
+
+### 5.5a. Identify the hottest fork files
+
+```bash
+cd ~/src/tinkerclaw
+# Files changed most by THIS merge (either upstream touched them, or we edited them to fix damage)
+git log $PRE_MERGE_SHA..HEAD --name-only --pretty=format: | sort | uniq -c | sort -rn | head -30 > /tmp/hot-files.txt
+
+# Which of those are fork-patched (have FORK: comments inline)
+while IFS= read -r line; do
+  count=$(echo "$line" | awk '{print $1}')
+  file=$(echo "$line" | awk '{$1=""; print $0}' | sed 's/^ //')
+  [ -f "$file" ] || continue
+  grep -q "^.*FORK:" "$file" 2>/dev/null && echo "FORK-HOT ($count) $file"
+done < /tmp/hot-files.txt > /tmp/fork-hot.txt
+```
+
+A file that appears as FORK-HOT on two consecutive merges is a **collision hotspot**. Future merges will keep paying for it until the fork code is refactored out of it.
+
+### 5.5b. Propose refactors
+
+For each collision hotspot, write a one-sentence refactor recommendation into `~/.openclaw/workspace/memory/knowledge/merge-debt.md` using this format:
+
+```markdown
+## 2026-MM-DD — <file>
+
+**Hotspot count**: touched in <N> merges in a row.
+
+**Fork value in this file**: <what the fork adds — e.g., "billing gate around model selection">
+
+**Refactor idea**: <how to isolate it — e.g., "Extract the billing gate into a standalone module that the upstream function imports, so upstream changes to the function no longer touch our code.">
+
+**Difficulty estimate**: <S/M/L>
+```
+
+Append, don't overwrite. This file is the refactor backlog. When upstream drift gets painful, the user (or a focused session) picks the highest-hotspot-count files off this list and refactors them. Each refactor reduces the collision surface for all future merges — the cron is self-improving by design.
+
+### 5.5c. Look for convergence
+
+Cross-reference FORK: features with upstream's last 500 commits. If upstream is building something that replaces a fork feature (e.g. upstream adds its own billing gate), that's a convergence. Log it under a `## Convergence candidates` heading in merge-debt.md — future merges can DROP the fork version and take upstream's. This is how the fork stays small over time.
 
 ### Commit notes (read before committing anything)
 
