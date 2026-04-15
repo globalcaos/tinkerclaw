@@ -1,5 +1,7 @@
 import http from "node:http";
 import { URL } from "node:url";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import {
   createWebhookInFlightLimiter,
   WEBHOOK_BODY_READ_DEFAULTS,
@@ -141,8 +143,7 @@ export class VoiceCallWebhookServer {
       return false;
     }
 
-    const initialMessage =
-      typeof call.metadata?.initialMessage === "string" ? call.metadata.initialMessage.trim() : "";
+    const initialMessage = normalizeOptionalString(call.metadata?.initialMessage) ?? "";
     return initialMessage.length > 0;
   }
 

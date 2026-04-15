@@ -1,3 +1,5 @@
+import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
+
 type ErrorPattern = RegExp | string;
 
 const PERIODIC_USAGE_LIMIT_RE =
@@ -22,7 +24,6 @@ const COMMON_AUTH_ERROR_PATTERNS = [
   "invalid token",
   "authentication",
   "re-authenticate",
-    /oauth.*(?:not supported|disabled|rejected)/i, // FORK: OAuth API rejection
   "oauth token refresh failed",
   "unauthorized",
   "forbidden",
@@ -119,11 +120,10 @@ const ERROR_PATTERNS = {
     "credit balance",
     "plans & billing",
     "insufficient balance",
-    /regain access/i, // FORK: Anthropic spending cap message
-    /specified.*usage limits/i, // FORK: Anthropic API usage limit message
     "insufficient usd or diem balance",
     /requires?\s+more\s+credits/i,
     /out of extra usage/i,
+    /draw from your extra usage/i,
     /extra usage is required(?: for long context requests)?/i,
   ],
   authPermanent: HIGH_CONFIDENCE_AUTH_PERMANENT_PATTERNS,
@@ -148,7 +148,7 @@ function matchesErrorPatterns(raw: string, patterns: readonly ErrorPattern[]): b
   if (!raw) {
     return false;
   }
-  const value = raw.toLowerCase();
+  const value = normalizeLowercaseStringOrEmpty(raw);
   return patterns.some((pattern) =>
     pattern instanceof RegExp ? pattern.test(value) : value.includes(pattern),
   );
@@ -178,7 +178,7 @@ export function isPeriodicUsageLimitErrorMessage(raw: string): boolean {
 }
 
 export function isBillingErrorMessage(raw: string): boolean {
-  const value = raw.toLowerCase();
+  const value = normalizeLowercaseStringOrEmpty(raw);
   if (!value) {
     return false;
   }

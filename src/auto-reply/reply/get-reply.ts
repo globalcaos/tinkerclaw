@@ -286,30 +286,6 @@ export async function getReplyFromConfig(
     triggerBodyNormalized,
     bodyStripped,
   } = sessionState;
-  console.log(
-    `[DEBUG] get-reply: after initSessionState isNewSession=${isNewSession} resetTriggered=${resetTriggered} bodyStripped="${bodyStripped}" triggerBodyNormalized="${triggerBodyNormalized}"`,
-  );
-
-  // Persist in-flight message for resume on restart
-  const resumeUserMessage = triggerBodyNormalized || bodyStripped || ctx.Body || "";
-  if (resumeUserMessage && agentSessionKey) {
-    try {
-      await writeSessionResume({
-        ts: Date.now(),
-        sessionKey: agentSessionKey,
-        channel: ctx.Provider ?? ctx.NativeChannelId ?? undefined,
-        userMessage: resumeUserMessage,
-        deliveryContext: {
-          channel: ctx.Provider ?? undefined,
-          to: ctx.From ?? undefined,
-          accountId: ctx.AccountId ?? undefined,
-        },
-      });
-    } catch {
-      // Never block the reply flow
-    }
-  }
-
   if (resetTriggered && normalizeOptionalString(bodyStripped)) {
     const { applyResetModelOverride } = await loadSessionResetModelRuntime();
     await applyResetModelOverride({
