@@ -81,7 +81,24 @@ function shouldCopyRuntimeFile(sourcePath) {
     relativePath.endsWith("/.claude-plugin/plugin.json") ||
     relativePath.endsWith("/.cursor-plugin/plugin.json") ||
     relativePath.endsWith("/SKILL.md")
-  );
+  ) {
+    return true;
+  }
+  // FORK: Extensions may ship runtime assets next to their entrypoint that
+  // the compiled JS reads at load time (fractal-prompt.md). Without this
+  // they'd fall through to symlink staging.
+  //
+  // CRITICAL: upstream's plugin manifest loader now rejects SYMLINK
+  // manifests ("unsafe plugin manifest path" validation in
+  // src/plugins/manifest.ts). Without the explicit `return true` above
+  // for manifest/package paths, this function fell through (missing
+  // body after the if) and every plugin load failed at gateway startup.
+  // The `if () { return true }` shape is load-bearing.
+  const ext = path.extname(relativePath).toLowerCase();
+  if (ext === ".md" || ext === ".txt" || ext === ".yaml" || ext === ".yml") {
+    return true;
+  }
+  return false;
 }
 
 function writeRuntimeModuleWrapper(sourcePath, targetPath) {

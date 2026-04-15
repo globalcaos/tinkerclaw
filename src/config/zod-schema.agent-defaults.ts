@@ -135,7 +135,12 @@ export const AgentDefaultsSchema = z
       .optional(),
     compaction: z
       .object({
-        mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),
+        // FORK: "engram" routes compaction through the engram memory subsystem
+        // (resolveCompactionMode in pi-embedded-runner/extensions.ts). Required
+        // for the fork's engram-based compaction pipeline.
+        mode: z
+          .union([z.literal("default"), z.literal("safeguard"), z.literal("engram")])
+          .optional(),
         provider: z.string().optional(),
         reserveTokens: z.number().int().nonnegative().optional(),
         keepRecentTokens: z.number().int().positive().optional(),
