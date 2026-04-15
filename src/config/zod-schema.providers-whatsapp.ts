@@ -118,6 +118,8 @@ function enforceAllowlistDmPolicyAllowFrom(params: {
   });
 }
 
+// FORK: passthrough instead of strict so fork-specific per-account fields
+// (backend selector config, custom auth dir variants) don't bomb validation.
 export const WhatsAppAccountSchema = WhatsAppSharedSchema.extend({
   name: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -125,8 +127,14 @@ export const WhatsAppAccountSchema = WhatsAppSharedSchema.extend({
   authDir: z.string().optional(),
   mediaMaxMb: z.number().int().positive().optional(),
   syncFullHistory: z.boolean().optional().default(false),
-}).strict();
+}).passthrough();
 
+// FORK: WhatsAppConfigSchema uses .passthrough() instead of .strict() to
+// accommodate fork-specific fields that upstream's schema doesn't know about
+// (e.g. engram-related settings, custom backend selector config). The fork's
+// runtime still only reads the fields it needs; unknown fields are ignored.
+// Upstream's merge gap documentation (MEMORY.md "Config schema merge gap")
+// has been flagging this as an open issue since March.
 export const WhatsAppConfigSchema = WhatsAppSharedSchema.extend({
   accounts: z.record(z.string(), WhatsAppAccountSchema.optional()).optional(),
   defaultAccount: z.string().optional(),
@@ -137,11 +145,11 @@ export const WhatsAppConfigSchema = WhatsAppSharedSchema.extend({
       sendMessage: z.boolean().optional(),
       polls: z.boolean().optional(),
     })
-    .strict()
+    .passthrough()
     .optional(),
   syncFullHistory: z.boolean().optional().default(false),
 })
-  .strict()
+  .passthrough()
   .superRefine((value, ctx) => {
     enforceOpenDmPolicyAllowFromStar({
       dmPolicy: value.dmPolicy,

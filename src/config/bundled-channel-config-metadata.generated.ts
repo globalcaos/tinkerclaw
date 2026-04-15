@@ -14912,7 +14912,7 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
     },
   },
   {
-    pluginId: "whatsapp",
+    pluginId: "tinkerclaw-whatsapp",
     channelId: "whatsapp",
     label: "WhatsApp",
     description: "works with your own number; recommend a separate phone + eSIM.",
@@ -14979,9 +14979,14 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
           type: "string",
           enum: ["open", "disabled", "allowlist"],
         },
-        contextVisibility: {
+        triggerPrefix: {
           type: "string",
-          enum: ["all", "allowlist", "allowlist_quote"],
+        },
+        triggerPrefixExempt: {
+          type: "array",
+          items: {
+            type: "string",
+          },
         },
         historyLimit: {
           type: "integer",
@@ -15131,6 +15136,25 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
           required: ["direct", "group"],
           additionalProperties: false,
         },
+        ackMessage: {
+          type: "object",
+          properties: {
+            text: {
+              type: "string",
+            },
+            direct: {
+              default: true,
+              type: "boolean",
+            },
+            group: {
+              default: "never",
+              type: "string",
+              enum: ["always", "mentions", "never"],
+            },
+          },
+          required: ["direct", "group"],
+          additionalProperties: false,
+        },
         reactionLevel: {
           type: "string",
           enum: ["off", "ack", "minimal", "extensive"],
@@ -15232,9 +15256,14 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
                 type: "string",
                 enum: ["open", "disabled", "allowlist"],
               },
-              contextVisibility: {
+              triggerPrefix: {
                 type: "string",
-                enum: ["all", "allowlist", "allowlist_quote"],
+              },
+              triggerPrefixExempt: {
+                type: "array",
+                items: {
+                  type: "string",
+                },
               },
               historyLimit: {
                 type: "integer",
@@ -15384,6 +15413,25 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
                 required: ["direct", "group"],
                 additionalProperties: false,
               },
+              ackMessage: {
+                type: "object",
+                properties: {
+                  text: {
+                    type: "string",
+                  },
+                  direct: {
+                    default: true,
+                    type: "boolean",
+                  },
+                  group: {
+                    default: "never",
+                    type: "string",
+                    enum: ["always", "mentions", "never"],
+                  },
+                },
+                required: ["direct", "group"],
+                additionalProperties: false,
+              },
               reactionLevel: {
                 type: "string",
                 enum: ["off", "ack", "minimal", "extensive"],
@@ -15429,9 +15477,13 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
                 exclusiveMinimum: 0,
                 maximum: 9007199254740991,
               },
+              syncFullHistory: {
+                default: false,
+                type: "boolean",
+              },
             },
-            required: ["dmPolicy", "groupPolicy", "debounceMs"],
-            additionalProperties: false,
+            required: ["dmPolicy", "groupPolicy", "debounceMs", "syncFullHistory"],
+            additionalProperties: {},
           },
         },
         defaultAccount: {
@@ -15456,11 +15508,15 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = [
               type: "boolean",
             },
           },
-          additionalProperties: false,
+          additionalProperties: {},
+        },
+        syncFullHistory: {
+          default: false,
+          type: "boolean",
         },
       },
-      required: ["dmPolicy", "groupPolicy", "debounceMs", "mediaMaxMb"],
-      additionalProperties: false,
+      required: ["dmPolicy", "groupPolicy", "debounceMs", "mediaMaxMb", "syncFullHistory"],
+      additionalProperties: {},
     },
     uiHints: {
       "": {
