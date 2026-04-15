@@ -44,13 +44,26 @@ function shouldWrapRuntimeJsFile(sourcePath) {
 
 function shouldCopyRuntimeFile(sourcePath) {
   const relativePath = sourcePath.replace(/\\/g, "/");
-  return (
+  if (
     relativePath.endsWith("/package.json") ||
     relativePath.endsWith("/openclaw.plugin.json") ||
     relativePath.endsWith("/.codex-plugin/plugin.json") ||
     relativePath.endsWith("/.claude-plugin/plugin.json") ||
     relativePath.endsWith("/.cursor-plugin/plugin.json")
-  );
+  ) {
+    return true;
+  }
+  // FORK: Extensions may ship runtime assets next to their entrypoint that the
+  // compiled JS reads at load time (e.g. tinkerclaw-fractal-reflection reads
+  // `fractal-prompt.md` via readFileSync from extensionDir). Without this, the
+  // staging step silently drops those files and the extension falls back to a
+  // hard-coded stub — which is how the fractal reflection regressed to a
+  // one-line fallback and broke UI formatting + HEARTBEAT_OK ban.
+  const ext = path.extname(relativePath).toLowerCase();
+  if (ext === ".md" || ext === ".txt" || ext === ".yaml" || ext === ".yml") {
+    return true;
+  }
+  return false;
 }
 
 function writeRuntimeModuleWrapper(sourcePath, targetPath) {

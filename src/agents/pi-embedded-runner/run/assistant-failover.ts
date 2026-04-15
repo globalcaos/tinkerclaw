@@ -198,7 +198,49 @@ export async function handleAssistantFailover(params: {
   }
 
   if (decision.action === "surface_error") {
-    params.logAssistantFailoverDecision("surface_error");
+    // FORK: surface_error used to fall through to continue_normal, which swallowed
+    // timeouts silently — the UI saw nothing when no profile rotation and no
+    // fallback model were available. Now it throws a FailoverError mirroring the
+    // fallback_model branch so the error reaches the user-facing emission path.
+    const message =
+      (params.lastAssistant
+        ? formatAssistantErrorText(params.lastAssistant, {
+            cfg: params.config,
+            sessionKey: params.sessionKey,
+            provider: params.activeErrorContext.provider,
+            model: params.activeErrorContext.model,
+          })
+        : undefined) ||
+      params.lastAssistant?.errorMessage?.trim() ||
+      (params.timedOut
+        ? "LLM request timed out."
+        : params.rateLimitFailure
+          ? "LLM request rate limited."
+          : params.billingFailure
+            ? formatBillingErrorMessage(
+                params.activeErrorContext.provider,
+                params.activeErrorContext.model,
+              )
+            : params.authFailure
+              ? "LLM request unauthorized."
+              : "LLM request failed.");
+    const surfaceErrorReason: FailoverReason =
+      decision.reason ?? (params.timedOut ? "timeout" : "unknown");
+    const status =
+      resolveFailoverStatus(surfaceErrorReason) ??
+      (isTimeoutErrorMessage(message) ? 408 : undefined);
+    params.logAssistantFailoverDecision("surface_error", { status });
+    return {
+      action: "throw",
+      overloadProfileRotations,
+      error: new FailoverError(message, {
+        reason: surfaceErrorReason,
+        provider: params.activeErrorContext.provider,
+        model: params.activeErrorContext.model,
+        profileId: params.lastProfileId,
+        status,
+      }),
+    };
   }
 
   return {

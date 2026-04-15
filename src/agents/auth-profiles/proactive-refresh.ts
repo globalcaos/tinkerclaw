@@ -50,6 +50,43 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
     }
 
     const now = Date.now();
+    const cfg = loadConfig();
+    const credFilePath = resolveCredentialFilePath(profileId, cfg);
+
+    // FORK: Always consult the credential file first when it exists, BEFORE
+    // checking the store's own expiry. Claude Code (Zen) is the single-writer
+    // for credential files and rotates tokens independently of the gateway's
+    // 15-minute tick. If we trust only the store's `expires` field, we can
+    // keep a locally-valid-looking-but-server-revoked access token for up to
+    // 15 minutes — which manifests as hanging API calls (Anthropic stalls on
+    // the stale token instead of 401'ing) until the next proactive tick.
+    // Syncing from the credential file whenever it has a *different* token
+    // or a *fresher* expiry keeps the store in lock-step with Claude Code.
+    if (credFilePath) {
+      const fresh = readCredentialFile(credFilePath, cred.provider);
+      if (
+        fresh &&
+        now < fresh.expires &&
+        fresh.expires - now > EXTERNAL_CLI_NEAR_EXPIRY_MS &&
+        (fresh.access !== cred.access || fresh.expires > cred.expires)
+      ) {
+        store.profiles[profileId] = {
+          ...cred,
+          access: fresh.access,
+          refresh: fresh.refresh,
+          expires: fresh.expires,
+          type: "oauth",
+        };
+        saveAuthProfileStore(store, undefined);
+        log.info("proactive refresh: synced from credential file (drift sync)", {
+          profileId,
+          expiresInMin: Math.round((fresh.expires - now) / 60_000),
+          reason: fresh.access !== cred.access ? "access_token_rotated" : "expires_bumped",
+        });
+        return true;
+      }
+    }
+
     const timeUntilExpiry = cred.expires - now;
 
     // Still valid and not near expiry — nothing to do.
@@ -62,9 +99,6 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
       profileId,
       expiresInMin: Math.round(timeUntilExpiry / 60_000),
     });
-
-    const cfg = loadConfig();
-    const credFilePath = resolveCredentialFilePath(profileId, cfg);
 
     // Check credential file for a fresher token
     if (credFilePath) {

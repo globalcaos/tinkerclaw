@@ -69,7 +69,7 @@ Before touching any code, load your context (but be token-efficient — don't re
 1. **Fork patches registry** — `~/src/tinkerclaw/FORK_PATCHES.md`
    Don't read it fully. Search it for the specific files you're about to touch: `grep -A3 '<filename>' FORK_PATCHES.md`. The old `~/.openclaw/fork-scripts/merge-conflict-prompt.md` path is dead — do not use it.
 
-2. **Pipeline architecture** — `~/.openclaw/workspace/memory/knowledge/upstream-merge-cron.md`. Skim the gaps + known incidents sections; they evolve with every merge.
+2. **Pipeline architecture** — `~/.openclaw/workspace/memory/knowledge/merge-workflow.md`. Skim the gaps + known incidents sections; they evolve with every merge. (Note: an older `upstream-merge-cron.md` reference elsewhere is stale — this is the canonical file.)
 
 3. **What changed upstream** — run and SAVE output:
    ```bash
@@ -406,7 +406,7 @@ Without this counter discipline, the Step 0d gate is meaningless.
 
 ### 7c. Update Jarvis memory
 
-After a successful merge (Step 4 smoke test green), add a one-line entry to `~/.openclaw/workspace/memory/knowledge/upstream-merge-cron.md`'s running log section with: date, upstream commits merged, clusters handled (if any), and wiring patches added (if any). This is the cross-session learning loop — every merge should teach the next one.
+After a successful merge (Step 4 smoke test green), add a one-line entry to `~/.openclaw/workspace/memory/knowledge/merge-workflow.md`'s running log section with: date, upstream commits merged, clusters handled (if any), and wiring patches added (if any). This is the cross-session learning loop — every merge should teach the next one.
 
 ## The Cardinal Rules
 
@@ -432,4 +432,4 @@ If you added a wiring patch, add an entry. If you discovered an upstream rename,
 If `death_spiral_count >= 2` AND `self_healed: false` in the last receipt, do not attempt a fresh merge. Escalate. Repeatedly merging into a broken fork compounds the damage — the correct response is human intervention.
 
 ### 8. Keep both prompt copies and both wiring-script copies in sync
-`cron-fork-sync-prompt.txt` lives at BOTH `~/src/tinkerclaw/scripts/` AND `~/.openclaw/workspace/scripts/`. `apply-fork-wiring.mjs` canonically lives at `~/.openclaw/workspace/scripts/` (there may or may not be a sibling in tinkerclaw; if there is, keep it in sync). Any edit to either file MUST be mirrored and committed in BOTH repos. Tinkerclaw uses `FAST_COMMIT=1 git commit`; jarvis-brain uses `git commit --no-verify` until the broken hook is repaired.
+`cron-fork-sync-prompt.txt` lives at BOTH `~/src/tinkerclaw/scripts/` AND `~/.openclaw/workspace/scripts/`. `apply-fork-wiring.mjs` canonically lives at `~/.openclaw/workspace/scripts/` (there may or may not be a sibling in tinkerclaw; if there is, keep it in sync). Any edit to either file MUST be mirrored and committed in BOTH repos. Tinkerclaw uses `FAST_COMMIT=1 git commit`; jarvis-brain's pre-commit hook was repaired on 2026-04-14 in commit `bb806e4c5c` (fix to `scripts/pre-commit/run-node-tool.sh`), so normal `git commit` works there too — `--no-verify` is no longer needed and should not be used except as a last resort if the hook regresses.

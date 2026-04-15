@@ -17,6 +17,46 @@ When a conflict occurs during upstream merge, it passes through these resolvers 
 5. **Wiring script** — `apply-fork-wiring.mjs` re-applies fork hooks post-merge
 6. **LLM agent** — cron agent (opus, 60min) resolves remaining conflicts
 
+## 2026-04-15 — Silent-failure trio
+
+Three independent root causes surfaced while debugging "Jarvis silent after
+prompts" during the session on 2026-04-15. All three are source-patched
+**and** wired so the next upstream merge auto-restores them.
+
+| #   | File                                                    | Fix summary                                                         | Patch fn                       |
+| --- | ------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------ |
+| 1   | src/agents/pi-embedded-runner/run/assistant-failover.ts | `surface_error` must throw a FailoverError, not fall through to     | patchSurfaceErrorThrow         |
+|     |                                                         | `continue_normal`. Original branch logs the decision and returns,   |                                |
+|     |                                                         | leaving the UI with no error bubble when no profile rotation or     |                                |
+|     |                                                         | fallback model is available. Mirrors the existing fallback_model    |                                |
+|     |                                                         | error-construction path.                                            |                                |
+| 2   | src/agents/auth-profiles/proactive-refresh.ts           | Always consult the credential file FIRST when present, before       | patchProactiveRefreshDriftSync |
+|     |                                                         | checking the store's own `expires`. Claude Code is single-writer    |                                |
+|     |                                                         | for the credential file and rotates tokens independently of the     |                                |
+|     |                                                         | 15-minute tick; trusting store expiry alone lets a server-revoked   |                                |
+|     |                                                         | access token sit in the store looking valid, producing 60-second    |                                |
+|     |                                                         | hangs on API calls instead of clean 401s.                           |                                |
+| 3   | scripts/stage-bundled-plugin-runtime.mjs                | `shouldCopyRuntimeFile` now also copies `.md`/`.txt`/`.yaml`/`.yml` | patchStagingRuntimeAssets      |
+|     |                                                         | runtime assets alongside manifest files. Without this, extensions   |                                |
+|     |                                                         | that ship text assets via `readFileSync(join(extensionDir, …))` —   |                                |
+|     |                                                         | such as tinkerclaw-fractal-reflection reading `fractal-prompt.md` — |                                |
+|     |                                                         | silently lose them in dist-runtime and fall back to hard-coded      |                                |
+|     |                                                         | stubs, breaking extension behavior.                                 |                                |
+
+**Symptoms these fixed:**
+
+- Silent timeouts in webchat when no profile rotation / fallback was configured —
+  Opus OAuth returned 429 fast, gateway reached `surface_error`, logged it, and
+  returned `continue_normal` → no user-visible error.
+- 60-second hangs on the next prompt after Claude Code rotated OAuth tokens —
+  proactive-refresh short-circuited on store expiry and never saw the fresher
+  credential-file tokens, so the next LLM call used a server-revoked access
+  token that Anthropic stalled on for a full minute before the client timed out.
+- Fractal reflections terminating with "NO" and rendering without the green
+  `🌿 FRACTAL:` compaction prefix — the plugin's `loadPrompt()` fallback was
+  serving a one-line stub because `fractal-prompt.md` was missing from
+  dist-runtime (dropped by the staging step's manifest-only allowlist).
+
 ## 2026-04-14 — April 6 merge damage (restored)
 
 The 2026-04-06 upstream merge silently dropped nine fork additions across the
