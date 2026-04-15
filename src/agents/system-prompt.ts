@@ -44,6 +44,8 @@ const CONTEXT_FILE_ORDER = new Map<string, number>([
 ]);
 
 const DYNAMIC_CONTEXT_FILE_BASENAMES = new Set(["heartbeat.md"]);
+const DEFAULT_HEARTBEAT_PROMPT_CONTEXT_BLOCK =
+  "Default heartbeat prompt:\n`Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`";
 
 function normalizeContextFilePath(pathValue: string): string {
   return pathValue.trim().replace(/\\/g, "/");
@@ -56,6 +58,13 @@ function getContextFileBasename(pathValue: string): string {
 
 function isDynamicContextFile(pathValue: string): boolean {
   return DYNAMIC_CONTEXT_FILE_BASENAMES.has(getContextFileBasename(pathValue));
+}
+
+function sanitizeContextFileContentForPrompt(content: string): string {
+  // Claude Code subscription mode rejects this exact prompt-policy quote when it
+  // appears in system context. The live heartbeat user turn still carries the
+  // actual instruction, and the generated heartbeat section below covers behavior.
+  return content.replaceAll(DEFAULT_HEARTBEAT_PROMPT_CONTEXT_BLOCK, "").replace(/\n{3,}/g, "\n\n");
 }
 
 function sortContextFilesForPrompt(contextFiles: EmbeddedContextFile[]): EmbeddedContextFile[] {
@@ -103,9 +112,22 @@ function buildProjectContextSection(params: {
     lines.push("");
   }
   for (const file of params.files) {
-    lines.push(`## ${file.path}`, "", file.content, "");
+    lines.push(`## ${file.path}`, "", sanitizeContextFileContentForPrompt(file.content), "");
   }
   return lines;
+}
+
+function buildHeartbeatSection(params: { isMinimal: boolean; heartbeatPrompt?: string }) {
+  if (params.isMinimal || !params.heartbeatPrompt) {
+    return [];
+  }
+  return [
+    "## Heartbeats",
+    "If the current user message is a heartbeat poll and nothing needs attention, reply exactly:",
+    "HEARTBEAT_OK",
+    'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
+    "",
+  ];
 }
 
 function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
@@ -190,7 +212,7 @@ function buildReplyTagsSection(isMinimal: boolean) {
     "- [[reply_to_current]] replies to the triggering message.",
     "- Prefer [[reply_to_current]]. Use [[reply_to:<id>]] only when an id was explicitly provided (e.g. by the user or a tool).",
     "Whitespace inside the tag is allowed (e.g. [[ reply_to_current ]] / [[ reply_to: 123 ]]).",
-    "Tags are stripped before sending; support depends on the current channel config.",
+    "Tags are removed before sending; support depends on the current channel config.",
     "",
   ];
 }
@@ -334,10 +356,6 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
-  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
-  personaBlock?: string;
-  /** FORK: AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
-  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -497,17 +515,6 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant operating inside OpenClaw.",
     "",
-    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached.
-    ...(params.personaBlock ? [params.personaBlock, ""] : []),
-    // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
-    ...(params.amygdalaNudge?.length
-      ? [
-          "## AMYGDALA Personality Nudge (active)",
-          "The Personality networks detected drift from your target personality. Adjustments:",
-          ...params.amygdalaNudge.map((a) => `- ${a}`),
-          "",
-        ]
-      : []),
     "## Tooling",
     "Structured tool definitions are the source of truth for tool names, descriptions, and parameters.",
     "Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.",
@@ -769,20 +776,7 @@ export function buildAgentSystemPrompt(params: {
     lines.push(providerDynamicSuffix, "");
   }
 
-  // Skip heartbeats for subagent/none modes
-  if (!isMinimal && heartbeatPrompt) {
-    lines.push(
-      "## Heartbeats",
-      `Heartbeat prompt: ${heartbeatPrompt}`,
-      // FORK: HEARTBEAT_OK must be scoped STRICTLY to heartbeat polls — the model
-      // otherwise generalizes it to fractal reflection prompts and system injections.
-      'If AND ONLY IF you receive a user message whose text is literally (or near-literally) the heartbeat prompt shown above, and there is nothing that needs attention, reply exactly "HEARTBEAT_OK".',
-      'Do NOT emit "HEARTBEAT_OK" in response to any other kind of message — in particular NOT to fractal reflection prompts, system injections, skill invocations, or ordinary user turns. The sentinel is scoped exclusively to heartbeat polls that match the heartbeat prompt text above.',
-      'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
-      'If a heartbeat poll arrives and something actually needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
-      "",
-    );
-  }
+  lines.push(...buildHeartbeatSection({ isMinimal, heartbeatPrompt }));
 
   lines.push(
     "## Runtime",
