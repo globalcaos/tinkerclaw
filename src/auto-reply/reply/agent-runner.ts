@@ -54,6 +54,11 @@ import { resolveQueuedReplyExecutionConfig } from "./agent-runner-utils.js";
 import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveEffectiveBlockStreamingConfig } from "./block-streaming.js";
 import { createFollowupRunner } from "./followup-runner.js";
+import {
+  createReplyOperation,
+  type ReplyOperation,
+  ReplyRunAlreadyActiveError,
+} from "./reply-run-registry.js";
 import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-routing.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
@@ -881,6 +886,7 @@ export async function runReplyAgent(params: {
   // FORK: resetTriggered flows through from session-reset detection in
   // get-reply-run.ts so downstream reply-operation/reset hooks can react.
   resetTriggered?: boolean;
+  replyOperation?: ReplyOperation;
 }): Promise<ReplyPayload | ReplyPayload[] | undefined> {
   const {
     commandBody,
@@ -908,6 +914,8 @@ export async function runReplyAgent(params: {
     sessionCtx,
     shouldInjectGroupIntro,
     typingMode,
+    resetTriggered,
+    replyOperation: providedReplyOperation,
   } = params;
 
   let activeSessionEntry = sessionEntry;

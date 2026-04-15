@@ -1,3 +1,10 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { resetConfiguredBindingTargetInPlace } from "../../channels/plugins/binding-targets.js";
+import { logVerbose } from "../../globals.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { resolveBoundAcpThreadSessionKey } from "./commands-acp/targets.js";
 import type {
