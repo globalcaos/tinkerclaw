@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderReplayFamilyHooks } from "./provider-model-shared.js";
+import {
+  buildProviderReplayFamilyHooks,
+  OPENAI_COMPATIBLE_REPLAY_HOOKS,
+  PASSTHROUGH_GEMINI_REPLAY_HOOKS,
+} from "./provider-model-shared.js";
 
 describe("buildProviderReplayFamilyHooks", () => {
   it("covers the replay family matrix", async () => {
@@ -29,6 +33,25 @@ describe("buildProviderReplayFamilyHooks", () => {
         match: {
           validateAnthropicTurns: true,
           // Sonnet 4.6 preserves thinking blocks (no dropThinkingBlocks)
+        },
+        absent: ["dropThinkingBlocks"],
+        hasSanitizeReplayHistory: false,
+        reasoningMode: undefined,
+      },
+      {
+        family: "native-anthropic-by-model" as const,
+        ctx: {
+          provider: "anthropic",
+          modelApi: "anthropic-messages",
+          modelId: "claude-sonnet-4-6",
+        },
+        match: {
+          sanitizeMode: "full",
+          preserveNativeAnthropicToolUseIds: true,
+          preserveSignatures: true,
+          repairToolUseResultPairing: true,
+          validateAnthropicTurns: true,
+          allowSyntheticToolResults: true,
         },
         absent: ["dropThinkingBlocks"],
         hasSanitizeReplayHistory: false,
@@ -151,5 +174,35 @@ describe("buildProviderReplayFamilyHooks", () => {
         modelId: "amazon.nova-pro-v1",
       } as never),
     ).not.toHaveProperty("dropThinkingBlocks");
+  });
+
+  it("exposes canonical replay hooks for reused provider families", () => {
+    expect(
+      OPENAI_COMPATIBLE_REPLAY_HOOKS.buildReplayPolicy?.({
+        provider: "xai",
+        modelApi: "openai-completions",
+        modelId: "grok-4",
+      } as never),
+    ).toMatchObject({
+      sanitizeToolCallIds: true,
+      applyAssistantFirstOrderingFix: true,
+      validateGeminiTurns: true,
+    });
+
+    expect(
+      PASSTHROUGH_GEMINI_REPLAY_HOOKS.buildReplayPolicy?.({
+        provider: "openrouter",
+        modelApi: "openai-completions",
+        modelId: "gemini-2.5-pro",
+      } as never),
+    ).toMatchObject({
+      applyAssistantFirstOrderingFix: false,
+      validateGeminiTurns: false,
+      validateAnthropicTurns: false,
+      sanitizeThoughtSignatures: {
+        allowBase64Only: true,
+        includeCamelCase: true,
+      },
+    });
   });
 });
