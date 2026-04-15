@@ -11,6 +11,7 @@ minimumReleaseAgeExclude:
   - "acpx"
   - "openclaw"
   - "@buape/carbon"
+  - "vite"
   - "@cloudflare/workers-types"
   - "@mariozechner/*"
   - "@typescript/native-preview*"
