@@ -171,7 +171,6 @@ type ManagedCollection = {
 };
 
 type QmdManagerMode = "full" | "status";
-type QmdCollectionPatternFlag = "--glob" | "--mask";
 
 export class QmdMemoryManager implements MemorySearchManager {
   static async create(params: {

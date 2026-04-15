@@ -866,136 +866,10 @@ export async function compactEmbeddedPiSessionDirect(
           log.info(
             `[compaction] skipping — no real conversation messages (sessionKey=${params.sessionKey ?? params.sessionId})`,
           );
-          await runPostCompactionSideEffects({
-            config: params.config,
-            sessionKey: params.sessionKey,
-            sessionFile: params.sessionFile,
-          });
-          let effectiveFirstKeptEntryId = result.firstKeptEntryId;
-          let postCompactionLeafId =
-            typeof sessionManager.getLeafId === "function"
-              ? (sessionManager.getLeafId() ?? undefined)
-              : undefined;
-          if (params.trigger === "manual") {
-            try {
-              const hardenedBoundary = await hardenManualCompactionBoundary({
-                sessionFile: params.sessionFile,
-              });
-              if (hardenedBoundary.applied) {
-                effectiveFirstKeptEntryId =
-                  hardenedBoundary.firstKeptEntryId ?? effectiveFirstKeptEntryId;
-                postCompactionLeafId = hardenedBoundary.leafId ?? postCompactionLeafId;
-                session.agent.state.messages = hardenedBoundary.messages;
-              }
-            } catch (err) {
-              log.warn("[compaction] failed to harden manual compaction boundary", {
-                errorMessage: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
-          // Estimate tokens after compaction by summing token estimates for remaining messages
-          const tokensAfter = estimateTokensAfterCompaction({
-            messagesAfter: session.messages,
-            observedTokenCount,
-            fullSessionTokensBefore,
-            estimateTokensFn: estimateTokens,
-          });
-          const messageCountAfter = session.messages.length;
-          const compactedCount = Math.max(0, messageCountCompactionInput - messageCountAfter);
-          if (params.config && params.sessionKey && checkpointSnapshot) {
-            try {
-              const storedCheckpoint = await persistSessionCompactionCheckpoint({
-                cfg: params.config,
-                sessionKey: params.sessionKey,
-                sessionId: params.sessionId,
-                reason: resolveSessionCompactionCheckpointReason({
-                  trigger: params.trigger,
-                }),
-                snapshot: checkpointSnapshot,
-                summary: result.summary,
-                firstKeptEntryId: effectiveFirstKeptEntryId,
-                tokensBefore: observedTokenCount ?? result.tokensBefore,
-                tokensAfter,
-                postSessionFile: params.sessionFile,
-                postLeafId: postCompactionLeafId,
-                postEntryId: postCompactionLeafId,
-                createdAt: compactStartedAt,
-              });
-              checkpointSnapshotRetained = storedCheckpoint !== null;
-            } catch (err) {
-              log.warn("failed to persist compaction checkpoint", {
-                errorMessage: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
-          const postMetrics = diagEnabled
-            ? summarizeCompactionMessages(session.messages)
-            : undefined;
-          if (diagEnabled && preMetrics && postMetrics) {
-            log.debug(
-              `[compaction-diag] end runId=${runId} sessionKey=${params.sessionKey ?? params.sessionId} ` +
-                `diagId=${diagId} trigger=${trigger} provider=${provider}/${modelId} ` +
-                `attempt=${attempt} maxAttempts=${maxAttempts} outcome=compacted reason=none ` +
-                `durationMs=${Date.now() - compactStartedAt} retrying=false ` +
-                `post.messages=${postMetrics.messages} post.historyTextChars=${postMetrics.historyTextChars} ` +
-                `post.toolResultChars=${postMetrics.toolResultChars} post.estTokens=${postMetrics.estTokens ?? "unknown"} ` +
-                `delta.messages=${postMetrics.messages - preMetrics.messages} ` +
-                `delta.historyTextChars=${postMetrics.historyTextChars - preMetrics.historyTextChars} ` +
-                `delta.toolResultChars=${postMetrics.toolResultChars - preMetrics.toolResultChars} ` +
-                `delta.estTokens=${typeof preMetrics.estTokens === "number" && typeof postMetrics.estTokens === "number" ? postMetrics.estTokens - preMetrics.estTokens : "unknown"}`,
-            );
-          }
-          await runAfterCompactionHooks({
-            hookRunner,
-            sessionId: params.sessionId,
-            sessionAgentId,
-            hookSessionKey,
-            missingSessionKey,
-            workspaceDir: effectiveWorkspace,
-            messageProvider: resolvedMessageProvider,
-            messageCountAfter,
-            tokensAfter,
-            compactedCount,
-            sessionFile: params.sessionFile,
-            summaryLength: typeof result.summary === "string" ? result.summary.length : undefined,
-            tokensBefore: result.tokensBefore,
-            firstKeptEntryId: effectiveFirstKeptEntryId,
-          });
-          // Truncate session file to remove compacted entries (#39953)
-          if (params.config?.agents?.defaults?.compaction?.truncateAfterCompaction) {
-            try {
-              const heartbeatSummary = resolveHeartbeatSummaryForAgent(
-                params.config,
-                sessionAgentId,
-              );
-              const truncResult = await truncateSessionAfterCompaction({
-                sessionFile: params.sessionFile,
-                ackMaxChars: heartbeatSummary.ackMaxChars,
-                heartbeatPrompt: heartbeatSummary.prompt,
-              });
-              if (truncResult.truncated) {
-                log.info(
-                  `[compaction] post-compaction truncation removed ${truncResult.entriesRemoved} entries ` +
-                    `(sessionKey=${params.sessionKey ?? params.sessionId})`,
-                );
-              }
-            } catch (err) {
-              log.warn("[compaction] post-compaction truncation failed", {
-                errorMessage: formatErrorMessage(err),
-                errorStack: err instanceof Error ? err.stack : undefined,
-              });
-            }
-          }
           return {
             ok: true,
-            compacted: true,
-            result: {
-              summary: result.summary,
-              firstKeptEntryId: effectiveFirstKeptEntryId,
-              tokensBefore: observedTokenCount ?? result.tokensBefore,
-              tokensAfter,
-              details: result.details,
-            },
+            compacted: false,
+            reason: "no real conversation messages",
           };
         }
 
@@ -1032,6 +906,29 @@ export async function compactEmbeddedPiSessionDirect(
           sessionKey: params.sessionKey,
           sessionFile: params.sessionFile,
         });
+        // FORK: manual-compaction boundary hardening + checkpoint persistence.
+        let effectiveFirstKeptEntryId = result.firstKeptEntryId;
+        let postCompactionLeafId =
+          typeof sessionManager.getLeafId === "function"
+            ? (sessionManager.getLeafId() ?? undefined)
+            : undefined;
+        if (params.trigger === "manual") {
+          try {
+            const hardenedBoundary = await hardenManualCompactionBoundary({
+              sessionFile: params.sessionFile,
+            });
+            if (hardenedBoundary.applied) {
+              effectiveFirstKeptEntryId =
+                hardenedBoundary.firstKeptEntryId ?? effectiveFirstKeptEntryId;
+              postCompactionLeafId = hardenedBoundary.leafId ?? postCompactionLeafId;
+              session.agent.state.messages = hardenedBoundary.messages;
+            }
+          } catch (err) {
+            log.warn("[compaction] failed to harden manual compaction boundary", {
+              errorMessage: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
         // Estimate tokens after compaction by summing token estimates for remaining messages
         const tokensAfter = estimateTokensAfterCompaction({
           messagesAfter: session.messages,
@@ -1041,6 +938,32 @@ export async function compactEmbeddedPiSessionDirect(
         });
         const messageCountAfter = session.messages.length;
         const compactedCount = Math.max(0, messageCountCompactionInput - messageCountAfter);
+        if (params.config && params.sessionKey && checkpointSnapshot) {
+          try {
+            const storedCheckpoint = await persistSessionCompactionCheckpoint({
+              cfg: params.config,
+              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
+              reason: resolveSessionCompactionCheckpointReason({
+                trigger: params.trigger,
+              }),
+              snapshot: checkpointSnapshot,
+              summary: result.summary,
+              firstKeptEntryId: effectiveFirstKeptEntryId,
+              tokensBefore: observedTokenCount ?? result.tokensBefore,
+              tokensAfter,
+              postSessionFile: params.sessionFile,
+              postLeafId: postCompactionLeafId,
+              postEntryId: postCompactionLeafId,
+              createdAt: compactStartedAt,
+            });
+            checkpointSnapshotRetained = storedCheckpoint !== null;
+          } catch (err) {
+            log.warn("failed to persist compaction checkpoint", {
+              errorMessage: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
         const postMetrics = diagEnabled ? summarizeCompactionMessages(session.messages) : undefined;
         if (diagEnabled && preMetrics && postMetrics) {
           log.debug(
@@ -1070,13 +993,20 @@ export async function compactEmbeddedPiSessionDirect(
           sessionFile: params.sessionFile,
           summaryLength: typeof result.summary === "string" ? result.summary.length : undefined,
           tokensBefore: result.tokensBefore,
-          firstKeptEntryId: result.firstKeptEntryId,
+          firstKeptEntryId: effectiveFirstKeptEntryId,
         });
         // Truncate session file to remove compacted entries (#39953)
         if (params.config?.agents?.defaults?.compaction?.truncateAfterCompaction) {
           try {
+            // FORK: pass heartbeat summary so ack/heartbeat messages survive truncation.
+            const heartbeatSummary = resolveHeartbeatSummaryForAgent(
+              params.config,
+              sessionAgentId,
+            );
             const truncResult = await truncateSessionAfterCompaction({
               sessionFile: params.sessionFile,
+              ackMaxChars: heartbeatSummary.ackMaxChars,
+              heartbeatPrompt: heartbeatSummary.prompt,
             });
             if (truncResult.truncated) {
               log.info(
@@ -1096,7 +1026,7 @@ export async function compactEmbeddedPiSessionDirect(
           compacted: true,
           result: {
             summary: result.summary,
-            firstKeptEntryId: result.firstKeptEntryId,
+            firstKeptEntryId: effectiveFirstKeptEntryId,
             tokensBefore: observedTokenCount ?? result.tokensBefore,
             tokensAfter,
             details: result.details,
