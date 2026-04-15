@@ -978,7 +978,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 email: {
                   type: "string",
                 },
-                displayName: {
+                credentialFile: {
                   type: "string",
                 },
               },
@@ -3179,6 +3179,11 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     streaming: {
                       type: "boolean",
                     },
+                    rank: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
                   },
                   additionalProperties: false,
                 },
@@ -4353,6 +4358,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "string",
                         const: "safeguard",
                       },
+                      {
+                        type: "string",
+                        const: "engram",
+                      },
                     ],
                     title: "Compaction Mode",
                     description:
@@ -4395,6 +4404,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Compaction Max History Share",
                     description:
                       "Maximum fraction of total context budget allowed for retained history after compaction (range 0.1-0.9). Use lower shares for more generation headroom or higher shares for deeper historical continuity.",
+                  },
+                  pointerMode: {
+                    type: "boolean",
                   },
                   customInstructions: {
                     type: "string",
@@ -22609,6 +22621,34 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
         title: "Plugins",
         description:
           "Plugin system controls for enabling extensions, constraining load scope, configuring entries, and tracking installs. Keep plugin policy explicit and least-privilege in production environments.",
+      },
+      fork: {
+        type: "object",
+        properties: {
+          cognitive: {
+            type: "object",
+            propertyNames: {
+              type: "string",
+            },
+            additionalProperties: {
+              anyOf: [
+                {
+                  type: "string",
+                  const: "inline",
+                },
+                {
+                  type: "string",
+                  const: "extension",
+                },
+                {
+                  type: "string",
+                  const: "disabled",
+                },
+              ],
+            },
+          },
+        },
+        additionalProperties: false,
       },
     },
     required: ["commands"],
