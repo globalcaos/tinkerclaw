@@ -160,7 +160,15 @@ Decision rule:
 
 The idea: instead of one giant `git merge upstream/main`, advance toward upstream/main in **chunks**, so each intermediate state is buildable. Every chunk is a separate local merge commit that you can roll back individually.
 
-**Choose chunk boundaries.** For each chunk, pick the SHA that is ~300 commits (or one upstream week of history, whichever is smaller) ahead of the current HEAD. Use `git log upstream/main --format='%H %ai' --reverse HEAD..upstream/main` to find boundary SHAs.
+**Choose chunk boundaries.** For each chunk, pick the SHA that is **200–250 commits** ahead of the current HEAD, NOT more. Use `git log upstream/main --format='%H %ai' --reverse HEAD..upstream/main` to find boundary SHAs.
+
+**Why 200-250, not 500 (lesson from the 2026-04-15 supervised run):**
+
+The stratified strategy was originally specced at 300-500 commits per chunk. A supervised run on 2026-04-15 attempted 500-commit chunks against a fork that was 4003 commits behind.
+- **Chunk 1 (500 commits)** landed with 21 tsc errors — fixable in ~20 minutes with 2 parallel subagents. Build green. Clean.
+- **Chunk 2 (another 500 commits)** introduced **50+ errors across 30 files** including a parse-error merge-resolution defect (`compact.ts` try/catch scrambled) and cascading fork erosion in memory-core, telegram, whatsapp, tinker-ui, wizard, and agents. Too much for a single chunk-cleanup session — the errors cascade because upstream was in a heavy sprint (plugin manifest activation, provider pluginization) and each rewrite touched files in different layers simultaneously.
+
+The empirical finding: at post-April-2026 upstream velocity, chunks above ~250 commits cross too many architectural rewrites at once. Errors cascade instead of staying isolated. **Always favor more, smaller chunks over fewer, bigger ones.** Wall-clock cost is similar; recoverability is much better.
 
 Write the boundary plan to `/tmp/chunk-plan.txt` as a newline-separated list of SHAs, in order from oldest to newest. The last line must be `upstream/main` so the final chunk always catches up to HEAD.
 
@@ -294,6 +302,28 @@ The extraction protocol:
 Extraction is not a refactor; it's a collision-surface reduction. Each one permanently lowers the fork's merge tax. If a merge has room in its time budget, **extract at least one hotspot** — the compounding benefit over many future merges pays back the extra cost within 2-3 merges.
 
 This task turns the cron from "a git merge" into "a merging of two ideas, two pieces of code with their intentions behind" — the fork and upstream converging on the *best* expression of each feature, regardless of which side originally shipped it.
+
+### g) Known collision hotspots (as of 2026-04-15 — update as you learn)
+
+These files are fork-patched AND get touched by upstream on most merges. They're the highest-priority extraction candidates. If you have time budget in any merge, pick ONE and extract it.
+
+| Hotspot | Fork value | Extraction target |
+|---------|-----------|-------------------|
+| `src/agents/model-fallback.ts` | cost-aware billing gate, flat-rate-first routing | Extract into a `tinkerclaw-billing-gate` plugin that registers as a before-provider-call hook. Upstream's provider-as-plugin refactor is moving the file under the fork constantly. |
+| `src/agents/system-prompt.ts` | amygdalaNudge, personaBlock, fractal header | Extract the block assembly into a `tinkerclaw-persona-prompt` plugin using `before_agent_start` hook. Upstream rewrites this file's `lines` array routinely. |
+| `src/agents/pi-embedded-runner/google.ts` | provider-specific sanitizers the fork uses, upstream removed | Already fork-orphaned (upstream deleted it). Consider extracting the 4 functions into a small `extensions/tinkerclaw-google-sanitize` package that other fork code imports. |
+| `src/auto-reply/reply/get-reply.ts` | session-resume helpers (3 call sites) | The 3 `clearSessionResume`/`writeSessionResume` calls could move into a plugin that registers `before_reply`/`after_reply` hooks. |
+| `extensions/memory-core/src/memory/*` | drifted types, lost imports on every merge | Fork's memory extension is heavily modified. This is the gray-area decision: **adopt upstream Memory-Wiki or double down on engram/hippocampus?** Document verdict in `merge-debt.md` before the next merge. |
+
+When you extract, add the plugin to `openclaw.json` `plugins.allow`, verify the extension loads (check boot logs for `[plugins] [<name>] ready`), then remove the inlined `// FORK:` blocks. The build must stay green throughout.
+
+## Lessons log — append after each run
+
+After every merge, append a one-sentence lesson to this section (below the last entry). These lessons accumulate across runs and tighten the prompt over time.
+
+- **2026-04-15 (supervised)**: chunks of 500 commits produced 21 errors (fixable) on attempt 1 but 50+ on attempt 2 as cascading drift crossed architectural rewrites — reduced max chunk size from 500 to 200-250 commits.
+- **2026-04-15 (supervised)**: `write-cli-startup-metadata.ts` bundle filter is a convergence point — upstream independently fixed the same root-help-metadata ambiguity the fork patched. Convergence candidates should be flagged in merge-debt.md for future removal.
+- **2026-04-15 (supervised)**: auto-merge can scramble try/catch/finally when upstream adds a new retry wrapper around an existing body and the fork's version of the inner body is slightly different. Parse errors in `compact.ts` are the smoking gun. Class 4 defects at braces are a signal that the chunk is too big.
 
 ## Step 3: HARD-GATED wiring + typecheck + build
 
