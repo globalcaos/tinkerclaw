@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { listAgentIds } from "../../agents/agent-scope.js";
+import { listAgentIds, resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import {
   normalizeSpawnedRunMetadata,
@@ -7,6 +7,10 @@ import {
 } from "../../agents/spawned-context.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR } from "../../agents/workspace.js";
 import { buildBareSessionResetPrompt } from "../../auto-reply/reply/session-reset-prompt.js";
+import {
+  buildSessionStartupContextPrelude,
+  shouldApplyStartupContext,
+} from "../../auto-reply/reply/startup-context.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
 import {
@@ -494,6 +498,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     let resolvedSessionKey = requestedSessionKey;
     let isNewSession = false;
     let skipTimestampInjection = false;
+    let shouldPrependStartupContext = false;
 
     const resetCommandMatch = message.match(RESET_COMMAND_RE);
     if (resetCommandMatch && requestedSessionKey) {
@@ -528,6 +533,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         // FORK: pass workspaceDir so SESSION.md is read from the correct location
         message = buildBareSessionResetPrompt(cfg, DEFAULT_AGENT_WORKSPACE_DIR);
         skipTimestampInjection = true;
+        shouldPrependStartupContext = shouldApplyStartupContext({ cfg, action: resetReason });
       }
     }
 
@@ -817,6 +823,22 @@ export const agentHandlers: GatewayRequestHandlers = {
         sessionKey: resolvedSessionKey,
         reason: "send",
       });
+    }
+
+    if (shouldPrependStartupContext && resolvedSessionKey) {
+      const sessionAgentId = resolveAgentIdFromSessionKey(resolvedSessionKey);
+      const runtimeWorkspaceDir =
+        resolveIngressWorkspaceOverrideForSpawnedRun({
+          spawnedBy: spawnedByValue,
+          workspaceDir: sessionEntry?.spawnedWorkspaceDir,
+        }) ?? resolveAgentWorkspaceDir(cfgForAgent ?? cfg, sessionAgentId);
+      const startupContextPrelude = await buildSessionStartupContextPrelude({
+        workspaceDir: runtimeWorkspaceDir,
+        cfg: cfgForAgent ?? cfg,
+      });
+      if (startupContextPrelude) {
+        message = `${startupContextPrelude}\n\n${message}`;
+      }
     }
 
     const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;

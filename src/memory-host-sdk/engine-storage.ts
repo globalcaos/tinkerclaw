@@ -28,6 +28,7 @@ export type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
   MemorySearchManager,
+  MemorySearchRuntimeDebug,
   MemorySearchResult,
   MemorySource,
   MemorySyncProgressUpdate,

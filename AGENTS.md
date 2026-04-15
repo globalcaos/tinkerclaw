@@ -22,11 +22,16 @@
   - `src/plugins/*` = plugin discovery, manifest validation, loader, registry, and contract enforcement
   - `src/gateway/protocol/*` = typed Gateway control-plane and node wire protocol
 - Progressive disclosure lives in local boundary guides:
-  - bundled-plugin-tree `AGENTS.md`
+  - repo root `AGENTS.md`
+  - bundled-plugin-tree `extensions/AGENTS.md`
   - `src/plugin-sdk/AGENTS.md`
   - `src/channels/AGENTS.md`
   - `src/plugins/AGENTS.md`
   - `src/gateway/protocol/AGENTS.md`
+- Workflow hygiene:
+  - Do not grep or existence-check every `docs/*.md`, `AGENTS.md`, or guide path mentioned in this file before starting work.
+  - Read only the guides and docs that are directly relevant to the files or boundary you are touching.
+  - Only do full broken-link or missing-guide sweeps when the task is explicitly about docs or repo-instruction maintenance.
 - Plugin and extension boundary:
   - Public docs: `docs/plugins/building-plugins.md`, `docs/plugins/architecture.md`, `docs/plugins/sdk-overview.md`, `docs/plugins/sdk-entrypoints.md`, `docs/plugins/sdk-runtime.md`, `docs/plugins/manifest.md`, `docs/plugins/sdk-channel-plugins.md`, `docs/plugins/sdk-provider-plugins.md`
   - Definition files: `src/plugin-sdk/plugin-entry.ts`, `src/plugin-sdk/core.ts`, `src/plugin-sdk/provider-entry.ts`, `src/plugin-sdk/channel-contract.ts`, `scripts/lib/plugin-sdk-entrypoints.json`, `package.json`
@@ -60,7 +65,7 @@
   - `hooks.internal.entries` is the canonical public hook config model. `hooks.internal.handlers` is compatibility-only input and must not be re-exposed in public schema/help/baseline surfaces.
 - Bundled plugin contract boundary:
   - Public docs: `docs/plugins/architecture.md`, `docs/plugins/manifest.md`, `docs/plugins/sdk-overview.md`
-- Definition files: `src/plugins/contracts/registry.ts`, `src/plugins/types.ts`, `src/plugins/public-artifacts.ts`
+  - Definition files: `src/plugins/contracts/registry.ts`, `src/plugins/types.ts`, `src/plugins/public-artifacts.ts`
   - Rule: keep manifest metadata, runtime registration, public SDK exports, and contract tests aligned. Do not create a hidden path around the declared plugin interfaces.
 - Extension test boundary:
   - Keep extension-owned onboarding/config/provider coverage under the owning bundled plugin package when feasible.
@@ -68,26 +73,25 @@
   - Shared helpers under `test/helpers/**` are part of that same boundary. Do not hardcode repo-relative `extensions/**` imports there, and do not keep plugin-local deep mocks in shared helpers just because multiple tests use them.
   - When core tests or shared helpers need bundled plugin public surfaces, use `src/test-utils/bundled-plugin-public-surface.ts` for `api.ts`, `runtime-api.ts`, `contract-api.ts`, `test-api.ts`, plugin entrypoint `index.js`, and resolved module ids for dynamic import or mocking.
   - If a core test is asserting extension-specific behavior instead of a generic contract, move it to the owning extension package.
+- Scoped guides still matter:
+  - `extensions/AGENTS.md` expands extension/plugin boundary rules.
+  - `src/channels/AGENTS.md` expands core channel boundary and hot-path rules.
+  - `src/plugin-sdk/AGENTS.md` expands public SDK contract rules.
+  - `src/plugins/AGENTS.md` expands plugin loading, registry, and manifest rules.
+  - `src/gateway/protocol/AGENTS.md` expands typed Gateway protocol rules.
+  - `test/helpers/AGENTS.md` and `test/helpers/channels/AGENTS.md` expand shared test helper boundary rules.
+- Plugin architecture direction:
+  - Keep a manifest-first control plane: discovery, validation, enablement, setup hints, and activation planning should stay metadata-driven by default.
+  - Keep runtime execution separate: actual provider/channel/tool execution should resolve through narrow targeted loaders, not broad registry materialization.
+  - Host loads plugins; plugins do not load host internals. Prefer a small versioned host/kernel seam plus documented SDK entrypoints over ambient reachability.
+  - Treat broad runtime registries and mutable global plugin state as transitional compatibility surfaces, not the target architecture.
+  - If a setup or config flow truly needs plugin runtime, make that explicit instead of silently importing runtime code on the cold path.
 
-- **Plugin SDK**: `src/plugin-sdk/*` is the public contract; extensions may NOT import `src/**` directly.
-- **Channels**: `src/channels/**` is core implementation; plugin authors use SDK instead.
-- **Providers**: core owns inference loop; plugins own provider-specific behavior via registration.
-- **Config**: prefer schema/zod at external boundaries; do not re-expose removed legacy keys in help/baselines.
+## Scoped Workflow Guides
 
-## Quick Git / PR Rules
-
-- Commit scope: related changes only; group with `scripts/committer "<msg>" <file...>`.
-- PR template: `.github/pull_request_template.md`
-- Main safety: no merge commits; rebase before pushing if main advanced.
-- Before landing: `pnpm check`, `pnpm test`, `pnpm build` (build is hard gate if output/modules touched).
-
-## Prompt Cache & Determinism
-
-- Module assembly (maps, registries, plugin lists, MCP catalogs) must be deterministic-ordered.
-- Do NOT rewrite recent transcript bytes unless invalidating cache is intentional.
-- Keep cached prefix stable across turns.
-
-## Test Performance Guardrails
+- `docs/AGENTS.md` owns Mintlify docs, docs links, and docs i18n rules.
+- `ui/AGENTS.md` owns Control UI i18n and generated locale rules.
+- `scripts/AGENTS.md` owns script-runner, local-check lock, and test/lint wrapper rules.
 
 - Avoid `vi.resetModules()` per-test in hot files; use static imports + `beforeAll`.
 - Do not partial-mock broad barrels; add a plugin-local `*.runtime.ts` seam instead.
@@ -155,7 +159,31 @@
 - **Keep unrelated WIP untouched**; commit only your changes.
 - **Auto-resolve formatting-only diffs** without asking.
 
-## Full Reference
+- Language: TypeScript (ESM). Prefer strict typing; avoid `any`.
+- Formatting/linting via Oxlint and Oxfmt.
+- Never add `@ts-nocheck` and do not add inline lint suppressions by default. Fix root causes first; only keep a suppression when the code is intentionally correct, the rule cannot express that safely, and the comment explains why.
+- Do not disable `no-explicit-any`; prefer real types, `unknown`, or a narrow adapter/helper instead. Update Oxlint/Oxfmt config only when required.
+- Prefer `zod` or existing schema helpers at external boundaries such as config, webhook payloads, CLI/JSON output, persisted JSON, and third-party API responses.
+- Prefer discriminated unions when parameter shape changes runtime behavior.
+- Prefer `Result<T, E>`-style outcomes and closed error-code unions for recoverable runtime decisions.
+- Keep human-readable strings for logs, CLI output, and UI; do not use freeform strings as the source of truth for internal branching.
+- Avoid `?? 0`, empty-string, empty-object, or magic-string sentinels when they can change runtime meaning silently.
+- If introducing a new optional field or nullable semantic in core logic, prefer an explicit union or dedicated type when the value changes behavior.
+- New runtime control-flow code should not branch on `error: string` or `reason: string` when a closed code union would be reasonable.
+- Dynamic import guardrail: do not mix `await import("x")` and static `import ... from "x"` for the same module in production code paths. If you need lazy loading, create a dedicated `*.runtime.ts` boundary (that re-exports from `x`) and dynamically import that boundary from lazy callers only.
+- Dynamic import verification: after refactors that touch lazy-loading/module boundaries, run `pnpm build` and check for `[INEFFECTIVE_DYNAMIC_IMPORT]` warnings before submitting.
+- Circular dependencies: keep both `pnpm check:import-cycles` and `pnpm check:static-import-sccs` green; do not reintroduce runtime import cycles or static SCCs.
+- Extension SDK self-import guardrail: inside an extension package, do not import that same extension via `openclaw/plugin-sdk/<extension>` from production files. Route internal imports through a local barrel such as `./api.ts` or `./runtime-api.ts`, and keep the `plugin-sdk/<extension>` path as the external contract only.
+- Extension package boundary guardrail: inside a bundled plugin package, do not use relative imports/exports that resolve outside that same package root. If shared code belongs in the plugin SDK, import `openclaw/plugin-sdk/<subpath>` instead of reaching into `src/plugin-sdk/**` or other repo paths via `../`.
+- Extension API surface rule: `openclaw/plugin-sdk/<subpath>` is the only public cross-package contract for extension-facing SDK code. If an extension needs a new seam, add a public subpath first; do not reach into `src/plugin-sdk/**` by relative path.
+- Never share class behavior via prototype mutation (`applyPrototypeMixins`, `Object.defineProperty` on `.prototype`, or exporting `Class.prototype` for merges). Use explicit inheritance/composition (`A extends B extends C`) or helper composition so TypeScript can typecheck.
+- If this pattern is needed, stop and get explicit approval before shipping; default behavior is to split/refactor into an explicit class hierarchy and keep members strongly typed.
+- In tests, prefer per-instance stubs over prototype mutation (`SomeClass.prototype.method = ...`) unless a test explicitly documents why prototype-level patching is required.
+- Add brief code comments for tricky or non-obvious logic.
+- Keep files concise; extract helpers instead of “V2” copies. Use existing patterns for CLI options and dependency injection via `createDefaultDeps`.
+- Aim to keep files under ~700 LOC; guideline only (not a hard guardrail). Split/refactor when it improves clarity or testability.
+- Naming: use **OpenClaw** for product/app/docs headings; use `openclaw` for CLI command, package/binary, paths, and config keys.
+- Written English: use American spelling and grammar in code, comments, docs, and UI strings (e.g. "color" not "colour", "behavior" not "behaviour", "analyze" not "analyse").
 
 ## Release / Advisory Workflows
 
@@ -274,7 +302,7 @@
   - Only ask when changes are semantic (logic/data/behavior).
 - **Multi-agent safety:** focus reports on your edits; avoid guard-rail disclaimers unless truly blocked; when multiple agents touch the same file, continue if safe; end with a brief “other files present” note only if relevant.
 - Bug investigations: read source code of relevant npm dependencies and all related local code before concluding; aim for high-confidence root cause.
-- Code style: add brief comments for tricky logic; keep files under ~500 LOC when feasible (split/refactor as needed).
+- Code style: add brief comments for tricky logic; keep files under ~700 LOC when feasible (split/refactor as needed).
 - Tool schema guardrails (google-antigravity): avoid `Type.Union` in tool input schemas; no `anyOf`/`oneOf`/`allOf`. Use `stringEnum`/`optionalStringEnum` (Type.Unsafe enum) for string lists, and `Type.Optional(...)` instead of `... | null`. Keep top-level tool schema as `type: "object"` with `properties`.
 - Tool schema guardrails: avoid raw `format` property names in tool schemas; some validators treat `format` as a reserved keyword and reject the schema.
 - Never send streaming/partial replies to external messaging surfaces (WhatsApp, Telegram); only final replies should be delivered there. Streaming/tool events may still go to internal UIs/control channel.
