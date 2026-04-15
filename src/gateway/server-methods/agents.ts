@@ -398,10 +398,6 @@ function sanitizeIdentityLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function resolveOptionalStringParam(value: unknown): string | undefined {
-  return normalizeOptionalString(value);
-}
-
 function respondInvalidMethodParams(
   respond: RespondFn,
   method: string,
@@ -599,8 +595,8 @@ export const agentsHandlers: GatewayRequestHandlers = {
 
     // Always write Name to IDENTITY.md; optionally include emoji/avatar.
     const safeName = sanitizeIdentityLine(rawName);
-    const emoji = resolveOptionalStringParam(params.emoji);
-    const avatar = resolveOptionalStringParam(params.avatar);
+    const emoji = normalizeOptionalString(params.emoji);
+    const avatar = normalizeOptionalString(params.avatar);
     const lines = [
       "",
       `- Name: ${safeName}`,
@@ -651,8 +647,8 @@ export const agentsHandlers: GatewayRequestHandlers = {
         ? resolveUserPath(params.workspace.trim())
         : undefined;
 
-    const model = resolveOptionalStringParam(params.model);
-    const avatar = resolveOptionalStringParam(params.avatar);
+    const model = normalizeOptionalString(params.model);
+    const avatar = normalizeOptionalString(params.avatar);
 
     const nextConfig = applyAgentConfig(cfg, {
       agentId,
