@@ -21,6 +21,7 @@ const rootDir = path.resolve(scriptDir, "..");
 const distDir = path.join(rootDir, "dist");
 const outputPath = path.join(distDir, "cli-startup-metadata.json");
 const extensionsDir = path.join(rootDir, "extensions");
+const ROOT_HELP_RENDER_TIMEOUT_MS = 60_000;
 const CORE_CHANNEL_ORDER = [
   "telegram",
   "whatsapp",
@@ -111,15 +112,68 @@ export async function renderBundledRootHelpText(
   if (!bundleName) {
     throw new Error("No root-help bundle found in dist; cannot write CLI startup metadata.");
   }
-  const moduleUrl = pathToFileURL(path.join(distDirOverride, bundleName)).href;
-  const mod = (await import(moduleUrl)) as { outputRootHelp?: () => void | Promise<void> };
-  if (typeof mod.outputRootHelp !== "function") {
-    throw new Error(`Bundle ${bundleName} does not export outputRootHelp.`);
+  const moduleUrl = pathToFileURL(path.join(_distDirOverride, bundleIdentity.bundleName)).href;
+  const renderOptions = {
+    config: renderContext.config,
+    env: renderContext.env,
+  } satisfies RootHelpRenderOptions;
+  const inlineModule = [
+    `const mod = await import(${JSON.stringify(moduleUrl)});`,
+    "if (typeof mod.outputRootHelp !== 'function') {",
+    `  throw new Error(${JSON.stringify(`Bundle ${bundleIdentity.bundleName} does not export outputRootHelp.`)});`,
+    "}",
+    `await mod.outputRootHelp(${JSON.stringify(renderOptions)});`,
+    "process.exit(0);",
+  ].join("\n");
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", inlineModule], {
+    cwd: _distDirOverride,
+    encoding: "utf8",
+    env: renderContext.env,
+    timeout: ROOT_HELP_RENDER_TIMEOUT_MS,
+  });
+  if (result.error) {
+    throw result.error;
   }
 
-  return captureStdout(async () => {
-    await mod.outputRootHelp?.();
-  });
+function renderSourceRootHelpText(
+  renderContext: RootHelpRenderContext = createIsolatedRootHelpRenderContext(),
+): string {
+  const moduleUrl = pathToFileURL(path.join(rootDir, "src/cli/program/root-help.ts")).href;
+  const renderOptions = {
+    pluginSdkResolution: "src",
+    config: renderContext.config,
+    env: renderContext.env,
+  } satisfies RootHelpRenderOptions;
+  const inlineModule = [
+    `const mod = await import(${JSON.stringify(moduleUrl)});`,
+    "if (typeof mod.renderRootHelpText !== 'function') {",
+    `  throw new Error(${JSON.stringify("Source root-help module does not export renderRootHelpText.")});`,
+    "}",
+    `const output = await mod.renderRootHelpText(${JSON.stringify(renderOptions)});`,
+    "process.stdout.write(output);",
+    "process.exit(0);",
+  ].join("\n");
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "--eval", inlineModule],
+    {
+      cwd: rootDir,
+      encoding: "utf8",
+      env: renderContext.env,
+      timeout: ROOT_HELP_RENDER_TIMEOUT_MS,
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    throw new Error(
+      "Failed to render source root help" +
+        (stderr ? `: ${stderr}` : result.signal ? `: terminated by ${result.signal}` : ""),
+    );
+  }
+  return result.stdout ?? "";
 }
 
 export async function writeCliStartupMetadata(options?: {
