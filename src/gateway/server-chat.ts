@@ -1,7 +1,6 @@
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import {
-  isSilentReplyText,
   SILENT_REPLY_TOKEN,
   startsWithSilentToken,
   stripLeadingSilentToken,
@@ -11,14 +10,13 @@ import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-event
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import {
-  deriveGatewaySessionLifecycleSnapshot,
-  persistGatewaySessionLifecycleEvent,
-} from "./session-lifecycle-state.js";
-import {
-  loadGatewaySessionRow,
-  loadSessionEntry,
-  resolveSessionModelRef,
-} from "./session-utils.js";
+  isSuppressedControlReplyLeadFragment,
+  isSuppressedControlReplyText,
+} from "./control-reply-text.js";
+import { loadGatewaySessionRow } from "./server-chat.load-gateway-session-row.runtime.js";
+import { persistGatewaySessionLifecycleEvent } from "./server-chat.persist-session-lifecycle.runtime.js";
+import { deriveGatewaySessionLifecycleSnapshot } from "./session-lifecycle-state.js";
+import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
 function resolveHeartbeatAckMaxChars(): number {
@@ -86,20 +84,6 @@ function normalizeHeartbeatChatFinalText(params: {
     return { suppress: true, text: "" };
   }
   return { suppress: false, text: stripped.text };
-}
-
-function isSilentReplyLeadFragment(text: string): boolean {
-  const normalized = text.trim().toUpperCase();
-  if (!normalized) {
-    return false;
-  }
-  if (!/^[A-Z_]+$/.test(normalized)) {
-    return false;
-  }
-  if (normalized === SILENT_REPLY_TOKEN) {
-    return false;
-  }
-  return SILENT_REPLY_TOKEN.startsWith(normalized);
 }
 
 function appendUniqueSuffix(base: string, suffix: string): string {
@@ -697,11 +681,11 @@ export function createAgentEventHandler({
       return;
     }
     chatRunState.rawBuffers.set(clientRunId, mergedRawText);
-    if (isSilentReplyText(mergedRawText, SILENT_REPLY_TOKEN)) {
+    if (isSuppressedControlReplyText(mergedRawText)) {
       chatRunState.buffers.set(clientRunId, "");
       return;
     }
-    if (isSilentReplyLeadFragment(mergedRawText)) {
+    if (isSuppressedControlReplyLeadFragment(mergedRawText)) {
       chatRunState.buffers.set(clientRunId, mergedRawText);
       return;
     }
@@ -709,6 +693,12 @@ export function createAgentEventHandler({
       ? stripLeadingSilentToken(mergedRawText, SILENT_REPLY_TOKEN)
       : mergedRawText;
     chatRunState.buffers.set(clientRunId, mergedText);
+    if (isSuppressedControlReplyText(mergedText)) {
+      return;
+    }
+    if (isSuppressedControlReplyLeadFragment(mergedText)) {
+      return;
+    }
     if (shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
       return;
     }
@@ -748,7 +738,7 @@ export function createAgentEventHandler({
     });
     const text = normalizedHeartbeatText.text.trim();
     const shouldSuppressSilent =
-      normalizedHeartbeatText.suppress || isSilentReplyText(text, SILENT_REPLY_TOKEN);
+      normalizedHeartbeatText.suppress || isSuppressedControlReplyText(text);
     return { text, shouldSuppressSilent };
   };
 
@@ -759,7 +749,7 @@ export function createAgentEventHandler({
     seq: number,
   ) => {
     const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId);
-    const shouldSuppressSilentLeadFragment = isSilentReplyLeadFragment(text);
+    const shouldSuppressSilentLeadFragment = isSuppressedControlReplyLeadFragment(text);
     const shouldSuppressHeartbeatStreaming = shouldHideHeartbeatChatOutput(
       clientRunId,
       sourceRunId,
