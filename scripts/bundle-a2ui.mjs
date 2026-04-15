@@ -1,94 +1,162 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
-/**
- * Cross-platform A2UI bundler (replaces bundle-a2ui.sh for Windows compat).
- * Computes a content hash of the A2UI sources and only rebuilds when changed.
- */
+
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolvePnpmRunner } from "./pnpm-runner.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, "..");
-
-const HASH_FILE = path.join(ROOT_DIR, "src/canvas-host/a2ui/.bundle.hash");
-const OUTPUT_FILE = path.join(ROOT_DIR, "src/canvas-host/a2ui/a2ui.bundle.js");
-const A2UI_RENDERER_DIR = path.join(ROOT_DIR, "vendor/a2ui/renderers/lit");
-const A2UI_APP_DIR = path.join(ROOT_DIR, "apps/shared/OpenClawKit/Tools/CanvasA2UI");
-
-// Docker builds exclude vendor/apps via .dockerignore.
-// In that environment we must keep the prebuilt bundle.
-if (!fs.existsSync(A2UI_RENDERER_DIR) || !fs.existsSync(A2UI_APP_DIR)) {
-  console.log("A2UI sources missing; keeping prebuilt bundle.");
-  process.exit(0);
-}
-
-const INPUT_PATHS = [
-  path.join(ROOT_DIR, "package.json"),
-  path.join(ROOT_DIR, "pnpm-lock.yaml"),
-  A2UI_RENDERER_DIR,
-  A2UI_APP_DIR,
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const hashFile = path.join(rootDir, "src", "canvas-host", "a2ui", ".bundle.hash");
+const outputFile = path.join(rootDir, "src", "canvas-host", "a2ui", "a2ui.bundle.js");
+const a2uiRendererDir = path.join(rootDir, "vendor", "a2ui", "renderers", "lit");
+const a2uiAppDir = path.join(rootDir, "apps", "shared", "OpenClawKit", "Tools", "CanvasA2UI");
+const inputPaths = [
+  path.join(rootDir, "package.json"),
+  path.join(rootDir, "pnpm-lock.yaml"),
+  a2uiRendererDir,
+  a2uiAppDir,
 ];
 
-async function walk(entryPath) {
-  const st = fs.statSync(entryPath);
-  if (st.isDirectory()) {
-    const entries = fs.readdirSync(entryPath);
-    const results = [];
-    for (const entry of entries) {
-      results.push(...(await walk(path.join(entryPath, entry))));
-    }
-    return results;
-  }
-  return [entryPath];
+function fail(message) {
+  console.error(message);
+  console.error("A2UI bundling failed. Re-run with: pnpm canvas:a2ui:bundle");
+  console.error("If this persists, verify pnpm deps and try again.");
+  process.exit(1);
 }
 
-function normalize(p) {
-  return p.split(path.sep).join("/");
+async function pathExists(targetPath) {
+  try {
+    await fs.stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function walkFiles(entryPath, files) {
+  const stat = await fs.stat(entryPath);
+  if (!stat.isDirectory()) {
+    files.push(entryPath);
+    return;
+  }
+  const entries = await fs.readdir(entryPath);
+  for (const entry of entries) {
+    await walkFiles(path.join(entryPath, entry), files);
+  }
+}
+
+function normalizePath(filePath) {
+  return filePath.split(path.sep).join("/");
 }
 
 async function computeHash() {
   const files = [];
-  for (const input of INPUT_PATHS) {
-    files.push(...(await walk(input)));
+  for (const inputPath of inputPaths) {
+    await walkFiles(inputPath, files);
   }
-  files.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  files.sort((left, right) => normalizePath(left).localeCompare(normalizePath(right)));
 
   const hash = createHash("sha256");
   for (const filePath of files) {
-    const rel = normalize(path.relative(ROOT_DIR, filePath));
-    hash.update(rel);
+    hash.update(normalizePath(path.relative(rootDir, filePath)));
     hash.update("\0");
-    hash.update(fs.readFileSync(filePath));
+    hash.update(await fs.readFile(filePath));
     hash.update("\0");
   }
   return hash.digest("hex");
 }
 
-try {
-  const currentHash = await computeHash();
+function runStep(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: rootDir,
+    stdio: "inherit",
+    env: process.env,
+    ...options,
+  });
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
 
-  if (fs.existsSync(HASH_FILE) && fs.existsSync(OUTPUT_FILE)) {
-    const previousHash = fs.readFileSync(HASH_FILE, "utf8").trim();
-    if (previousHash === currentHash) {
+function runPnpm(pnpmArgs) {
+  const runner = resolvePnpmRunner({
+    pnpmArgs,
+    nodeExecPath: process.execPath,
+    npmExecPath: process.env.npm_execpath,
+    comSpec: process.env.ComSpec,
+    platform: process.platform,
+  });
+  runStep(runner.command, runner.args, {
+    shell: runner.shell,
+    windowsVerbatimArguments: runner.windowsVerbatimArguments,
+  });
+}
+
+async function main() {
+  const hasRendererDir = await pathExists(a2uiRendererDir);
+  const hasAppDir = await pathExists(a2uiAppDir);
+  const hasOutputFile = await pathExists(outputFile);
+  if (!hasRendererDir || !hasAppDir) {
+    if (hasOutputFile) {
+      console.log("A2UI sources missing; keeping prebuilt bundle.");
+      return;
+    }
+    if (process.env.OPENCLAW_SPARSE_PROFILE || process.env.OPENCLAW_A2UI_SKIP_MISSING === "1") {
+      console.error(
+        "A2UI sources missing; skipping bundle because OPENCLAW_A2UI_SKIP_MISSING=1 or OPENCLAW_SPARSE_PROFILE is set.",
+      );
+      return;
+    }
+    fail(`A2UI sources missing and no prebuilt bundle found at: ${outputFile}`);
+  }
+
+  const currentHash = await computeHash();
+  if (await pathExists(hashFile)) {
+    const previousHash = (await fs.readFile(hashFile, "utf8")).trim();
+    if (previousHash === currentHash && hasOutputFile) {
       console.log("A2UI bundle up to date; skipping.");
-      process.exit(0);
+      return;
     }
   }
 
-  execSync(`pnpm -s exec tsc -p "${A2UI_RENDERER_DIR}/tsconfig.json"`, {
-    cwd: ROOT_DIR,
-    stdio: "inherit",
-  });
-  execSync(`rolldown -c "${A2UI_APP_DIR}/rolldown.config.mjs"`, {
-    cwd: ROOT_DIR,
-    stdio: "inherit",
-  });
+  runPnpm(["-s", "exec", "tsc", "-p", path.join(a2uiRendererDir, "tsconfig.json")]);
 
-  fs.writeFileSync(HASH_FILE, currentHash, "utf8");
-} catch {
-  console.error("A2UI bundling failed. Re-run with: pnpm canvas:a2ui:bundle");
-  console.error("If this persists, verify pnpm deps and try again.");
-  process.exit(1);
+  const localRolldownCliCandidates = [
+    path.join(rootDir, "node_modules", ".pnpm", "node_modules", "rolldown", "bin", "cli.mjs"),
+    path.join(
+      rootDir,
+      "node_modules",
+      ".pnpm",
+      "rolldown@1.0.0-rc.9",
+      "node_modules",
+      "rolldown",
+      "bin",
+      "cli.mjs",
+    ),
+  ];
+  const localRolldownCli = (
+    await Promise.all(
+      localRolldownCliCandidates.map(async (candidate) =>
+        (await pathExists(candidate)) ? candidate : null,
+      ),
+    )
+  ).find(Boolean);
+
+  if (localRolldownCli) {
+    runStep(process.execPath, [
+      localRolldownCli,
+      "-c",
+      path.join(a2uiAppDir, "rolldown.config.mjs"),
+    ]);
+  } else {
+    runPnpm(["-s", "dlx", "rolldown", "-c", path.join(a2uiAppDir, "rolldown.config.mjs")]);
+  }
+
+  await fs.writeFile(hashFile, `${currentHash}\n`, "utf8");
 }
+
+await main().catch((error) => {
+  fail(error instanceof Error ? error.message : String(error));
+});
