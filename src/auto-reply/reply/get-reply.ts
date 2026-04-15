@@ -15,8 +15,7 @@ import { type OpenClawConfig, loadConfig } from "../../config/config.js";
 // the on-disk config without mutating it.
 import { applyMergePatch } from "../../config/merge-patch.js";
 import { defaultRuntime } from "../../runtime.js";
-// FORK: session resume helpers persist gateway state across restarts.
-import { clearSessionResume, writeSessionResume } from "../../infra/session-resume.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import type { MsgContext } from "../templating.js";
 import { normalizeVerboseLevel } from "../thinking.js";
@@ -104,10 +103,10 @@ function hasInboundMedia(ctx: MsgContext): boolean {
   return Boolean(
     ctx.StickerMediaIncluded ||
     ctx.Sticker ||
-    ctx.MediaPath?.trim() ||
-    ctx.MediaUrl?.trim() ||
-    ctx.MediaPaths?.some((value) => value?.trim()) ||
-    ctx.MediaUrls?.some((value) => value?.trim()) ||
+    normalizeOptionalString(ctx.MediaPath) ||
+    normalizeOptionalString(ctx.MediaUrl) ||
+    ctx.MediaPaths?.some((value) => normalizeOptionalString(value)) ||
+    ctx.MediaUrls?.some((value) => normalizeOptionalString(value)) ||
     ctx.MediaTypes?.length,
   );
 }
@@ -166,7 +165,9 @@ export async function getReplyFromConfig(
     isFastTestEnv,
   });
   const targetSessionKey =
-    ctx.CommandSource === "native" ? ctx.CommandTargetSessionKey?.trim() : undefined;
+    ctx.CommandSource === "native"
+      ? normalizeOptionalString(ctx.CommandTargetSessionKey)
+      : undefined;
   const agentSessionKey = targetSessionKey || ctx.SessionKey;
   const agentId = resolveSessionAgentId({
     sessionKey: agentSessionKey,
@@ -191,7 +192,9 @@ export async function getReplyFromConfig(
     // Prefer the resolved per-agent heartbeat model passed from the heartbeat runner,
     // fall back to the global defaults heartbeat model for backward compatibility.
     const heartbeatRaw =
-      opts.heartbeatModelOverride?.trim() ?? agentCfg?.heartbeat?.model?.trim() ?? "";
+      normalizeOptionalString(opts.heartbeatModelOverride) ??
+      normalizeOptionalString(agentCfg?.heartbeat?.model) ??
+      "";
     const heartbeatRef = heartbeatRaw
       ? resolveModelRefFromString({
           raw: heartbeatRaw,
@@ -305,7 +308,7 @@ export async function getReplyFromConfig(
     }
   }
 
-  if (resetTriggered && bodyStripped?.trim()) {
+  if (resetTriggered && normalizeOptionalString(bodyStripped)) {
     const { applyResetModelOverride } = await loadSessionResetModelRuntime();
     await applyResetModelOverride({
       cfg,
@@ -341,7 +344,8 @@ export async function getReplyFromConfig(
     parentSessionKey: sessionCtx.ParentSessionKey,
   });
   const hasSessionModelOverride = Boolean(
-    sessionEntry.modelOverride?.trim() || sessionEntry.providerOverride?.trim(),
+    normalizeOptionalString(sessionEntry.modelOverride) ||
+    normalizeOptionalString(sessionEntry.providerOverride),
   );
   if (!hasResolvedHeartbeatModelOverride && !hasSessionModelOverride && channelModelOverride) {
     const resolved = resolveModelRefFromString({
