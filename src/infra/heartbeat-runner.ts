@@ -1065,7 +1065,13 @@ export async function runHeartbeatOnce(opts: {
       sessionKey: runSessionKey,
       agentId,
     });
-    const replyFn = opts.deps?.getReplyFromConfig ?? getReplyFromConfig;
+    // FORK: tests inject `getReplyFromConfig` via the heartbeat deps bag to stub
+    // the LLM call. Production code uses the real import. OutboundSendDeps is
+    // typed as a loose channel map, so narrow the injected override here.
+    const injectedReplyFn = opts.deps?.getReplyFromConfig as
+      | typeof getReplyFromConfig
+      | undefined;
+    const replyFn = injectedReplyFn ?? getReplyFromConfig;
     const replyResult = await replyFn(ctx, replyOpts, cfg);
     const replyPayload = resolveHeartbeatReplyPayload(replyResult);
     const includeReasoning = heartbeat?.includeReasoning === true;
