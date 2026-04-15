@@ -177,6 +177,7 @@ export async function resolveReplyDirectives(params: {
   const agentEntry = listAgentEntries(cfg).find(
     (entry) => normalizeAgentId(entry.id) === normalizeAgentId(agentId),
   );
+  const targetSessionEntry = sessionStore[sessionKey] ?? sessionEntry;
   let provider = initialProvider;
   let model = initialModel;
 
@@ -380,7 +381,7 @@ export async function resolveReplyDirectives(params: {
   });
   const defaultActivation = defaultGroupActivation(requireMention);
   const resolvedThinkLevel =
-    directives.thinkLevel ?? (sessionEntry?.thinkingLevel as ThinkLevel | undefined);
+    directives.thinkLevel ?? (targetSessionEntry?.thinkingLevel as ThinkLevel | undefined);
   const resolvedFastMode =
     directives.fastMode ??
     resolveFastModeState({
@@ -388,21 +389,21 @@ export async function resolveReplyDirectives(params: {
       provider,
       model,
       agentId,
-      sessionEntry,
+      sessionEntry: targetSessionEntry,
     }).enabled;
 
   const resolvedVerboseLevel =
     directives.verboseLevel ??
-    (sessionEntry?.verboseLevel as VerboseLevel | undefined) ??
+    (targetSessionEntry?.verboseLevel as VerboseLevel | undefined) ??
     (agentCfg?.verboseDefault as VerboseLevel | undefined);
   let resolvedReasoningLevel: ReasoningLevel =
     directives.reasoningLevel ??
-    (sessionEntry?.reasoningLevel as ReasoningLevel | undefined) ??
+    (targetSessionEntry?.reasoningLevel as ReasoningLevel | undefined) ??
     (agentEntry?.reasoningDefault as ReasoningLevel | undefined) ??
     "off";
   const resolvedElevatedLevel = elevatedAllowed
     ? (directives.elevatedLevel ??
-      (sessionEntry?.elevatedLevel as ElevatedLevel | undefined) ??
+      (targetSessionEntry?.elevatedLevel as ElevatedLevel | undefined) ??
       (agentCfg?.elevatedDefault as ElevatedLevel | undefined) ??
       "on")
     : "off";
@@ -430,8 +431,8 @@ export async function resolveReplyDirectives(params: {
     useFastReplyRuntime &&
     !directives.hasModelDirective &&
     !hasResolvedHeartbeatModelOverride &&
-    !normalizeOptionalString(sessionEntry?.modelOverride) &&
-    !normalizeOptionalString(sessionEntry?.providerOverride)
+    !normalizeOptionalString(targetSessionEntry?.modelOverride) &&
+    !normalizeOptionalString(targetSessionEntry?.providerOverride)
       ? createFastTestModelSelectionState({
           agentCfg,
           provider,
@@ -441,10 +442,10 @@ export async function resolveReplyDirectives(params: {
           cfg,
           agentId,
           agentCfg,
-          sessionEntry,
+          sessionEntry: targetSessionEntry,
           sessionStore,
           sessionKey,
-          parentSessionKey: ctx.ParentSessionKey,
+          parentSessionKey: targetSessionEntry?.parentSessionKey ?? ctx.ParentSessionKey,
           storePath,
           defaultProvider,
           defaultModel,
@@ -473,7 +474,8 @@ export async function resolveReplyDirectives(params: {
   // blocks can be emitted as visible "Reasoning:" messages in block replies.
   const reasoningExplicitlySet =
     directives.reasoningLevel !== undefined ||
-    (sessionEntry?.reasoningLevel !== undefined && sessionEntry?.reasoningLevel !== null) ||
+    (targetSessionEntry?.reasoningLevel !== undefined &&
+      targetSessionEntry?.reasoningLevel !== null) ||
     hasAgentReasoningDefault;
   const thinkingActive = resolvedThinkLevelWithDefault !== "off";
   if (!reasoningExplicitlySet && resolvedReasoningLevel === "off") {
@@ -515,7 +517,7 @@ export async function resolveReplyDirectives(params: {
     agentDir,
     agentCfg,
     agentEntry,
-    sessionEntry,
+    sessionEntry: targetSessionEntry,
     sessionStore,
     sessionKey,
     storePath,
@@ -552,7 +554,7 @@ export async function resolveReplyDirectives(params: {
   const { directiveAck, perMessageQueueMode, perMessageQueueOptions } = applyResult;
   const execOverrides = resolveReplyExecOverrides({
     directives,
-    sessionEntry,
+    sessionEntry: targetSessionEntry,
     agentExecDefaults: agentEntry?.tools?.exec,
   });
 
