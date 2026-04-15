@@ -1,14 +1,49 @@
 /**
- * WhatsApp session module using whatsmeow-node.
+ * FORK: WhatsApp session module using whatsmeow-node.
  * Drop-in alternative to session.ts (Baileys).
+ *
+ * whatsmeow-node is an OPTIONAL Go-native addon. It may be absent on
+ * machines without the Go toolchain (dev laptops, CI runners, Docker).
+ * To keep the gateway bootable in that case, the package is loaded
+ * LAZILY — only when createWmClient() is actually called. The top-level
+ * type is declared structurally so tsc can still type-check without the
+ * real module's types.
  */
 
-import { createClient, type WhatsmeowClient } from "@whatsmeow-node/whatsmeow-node";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 import { bindWmHistoryCapture } from "../../tinkerclaw-whatsapp/src/history/live-capture.js";
 
-export type { WhatsmeowClient };
+// FORK: structural type for WhatsmeowClient. Matches the subset of methods
+// we actually call. The real module's type is imported dynamically below.
+export type WhatsmeowClient = {
+  // biome-ignore lint/suspicious/noExplicitAny: optional Go-native addon shape
+  on(event: string, handler: (payload: any) => void): void;
+  init(): Promise<void>;
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic
+  [key: string]: any;
+};
+
+// Lazy holder for the createClient function from the optional module.
+// biome-ignore lint/suspicious/noExplicitAny: optional module
+let _createClient: ((opts: { store: string }) => WhatsmeowClient) | null = null;
+async function loadCreateClient(): Promise<(opts: { store: string }) => WhatsmeowClient> {
+  if (_createClient) {
+    return _createClient;
+  }
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: optional module
+    const mod = (await import("@whatsmeow-node/whatsmeow-node" as string)) as any;
+    _createClient = mod.createClient;
+    return _createClient!;
+  } catch (err) {
+    throw new Error(
+      "whatsmeow-node is not installed. Install the optional Go addon with " +
+      "`pnpm add @whatsmeow-node/whatsmeow-node` (requires Go toolchain). " +
+      `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 const DEFAULT_STORE_PATH = "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
 
@@ -31,6 +66,7 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
   const storeDir = storePath.replace(/\/[^/]+$/, "");
   await ensureDir(storeDir);
 
+  const createClient = await loadCreateClient();
   const client = createClient({ store: storePath });
 
   // ── QR events ──
