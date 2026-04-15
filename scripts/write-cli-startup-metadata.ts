@@ -97,8 +97,16 @@ async function captureStdout(action: () => void | Promise<void>): Promise<string
 export async function renderBundledRootHelpText(
   distDirOverride: string = distDir,
 ): Promise<string> {
+  // FORK: exclude the `root-help-metadata-*` bundle added upstream
+  // ~2026-04-10. It shares the `root-help-` prefix but does NOT export
+  // `outputRootHelp`, and because readdirSync returns alphabetically the
+  // metadata bundle gets picked first. Without this filter the build
+  // fails with "Bundle root-help-metadata-*.js does not export outputRootHelp".
   const bundleName = readdirSync(distDirOverride).find(
-    (entry) => entry.startsWith("root-help-") && entry.endsWith(".js"),
+    (entry) =>
+      entry.startsWith("root-help-") &&
+      !entry.startsWith("root-help-metadata-") &&
+      entry.endsWith(".js"),
   );
   if (!bundleName) {
     throw new Error("No root-help bundle found in dist; cannot write CLI startup metadata.");

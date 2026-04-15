@@ -1,5 +1,7 @@
+import type { DatabaseSync } from "node:sqlite";
 import { type FSWatcher } from "chokidar";
 import {
+  createSubsystemLogger,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
   resolveMemorySearchConfig,
@@ -51,6 +53,8 @@ const VECTOR_TABLE = "chunks_vec";
 const FTS_TABLE = "chunks_fts";
 const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const BATCH_FAILURE_LIMIT = 2;
+
+const log = createSubsystemLogger("memory");
 
 const MEMORY_INDEX_MANAGER_CACHE_KEY = Symbol.for("openclaw.memoryIndexManagerCache");
 
@@ -113,7 +117,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   protected sessionWatchTimer: NodeJS.Timeout | null = null;
   protected sessionUnsubscribe: (() => void) | null = null;
   protected intervalTimer: NodeJS.Timeout | null = null;
-  protected closed = false;
+  public override closed = false;
   protected dirty = false;
   protected sessionsDirty = false;
   protected sessionsDirtyFiles = new Set<string>();
@@ -123,9 +127,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     { lastSize: number; pendingBytes: number; pendingMessages: number }
   >();
   private sessionWarm = new Set<string>();
-  private syncing: Promise<void> | null = null;
-  private queuedSessionFiles = new Set<string>();
-  private queuedSessionSync: Promise<void> | null = null;
+  public syncing: Promise<void> | null = null;
+  public queuedSessionFiles = new Set<string>();
+  public queuedSessionSync: Promise<void> | null = null;
   private readonlyRecoveryAttempts = 0;
   private readonlyRecoverySuccesses = 0;
   private readonlyRecoveryFailures = 0;

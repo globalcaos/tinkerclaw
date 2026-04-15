@@ -10,7 +10,13 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+// FORK: applyMergePatch supports the `configOverride` parameter on
+// getReplyFromConfig, allowing callers (tests, harness) to deep-merge over
+// the on-disk config without mutating it.
+import { applyMergePatch } from "../../config/merge-patch.js";
 import { defaultRuntime } from "../../runtime.js";
+// FORK: session resume helpers persist gateway state across restarts.
+import { clearSessionResume, writeSessionResume } from "../../infra/session-resume.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import type { MsgContext } from "../templating.js";
 import { normalizeVerboseLevel } from "../thinking.js";
