@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
+import type { Agent } from "node:https";
 import { formatCliCommand } from "openclaw/plugin-sdk/cli-runtime";
 import { VERSION } from "openclaw/plugin-sdk/cli-runtime";
+import { resolveAmbientNodeProxyAgent } from "openclaw/plugin-sdk/extension-shared";
 import { danger, success } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger, toPinoLikeLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 import qrcode from "qrcode-terminal";
-// FORK: SQLite history capture
-import { bindHistoryCapture } from "../../../src/whatsapp-history/live-capture.js";
 import {
   maybeRestoreCredsFromBackup,
   readCredsJsonRaw,
@@ -120,6 +120,7 @@ export async function createWaSocket(
   maybeRestoreCredsFromBackup(authDir);
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const { version } = await fetchLatestBaileysVersion();
+  const agent = await resolveEnvProxyAgent(sessionLogger);
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -131,6 +132,8 @@ export async function createWaSocket(
     browser: ["openclaw", "cli", VERSION],
     syncFullHistory: false,
     markOnlineOnConnect: false,
+    agent,
+    fetchAgent: agent,
   });
 
   sock.ev.on("creds.update", () => enqueueSaveCreds(authDir, saveCreds, sessionLogger));
@@ -172,15 +175,23 @@ export async function createWaSocket(
     });
   }
 
-  // FORK: bind SQLite history capture to Baileys events
-  bindHistoryCapture(sock.ev);
-
-  // FORK: add waitForConnection method expected by upstream channel startup
-  // Wraps the event-based connection waiting as a method on the socket.
-  (sock as unknown as Record<string, unknown>).waitForConnection = (_timeoutMs?: number) =>
-    waitForWaConnection(sock).then(() => true);
-
   return sock;
+}
+
+async function resolveEnvProxyAgent(
+  logger: ReturnType<typeof getChildLogger>,
+): Promise<Agent | undefined> {
+  return resolveAmbientNodeProxyAgent<Agent>({
+    onError: (err) => {
+      logger.warn(
+        { error: String(err) },
+        "Failed to initialize env proxy agent for WhatsApp WebSocket connection",
+      );
+    },
+    onUsingProxy: () => {
+      logger.info("Using ambient env proxy for WhatsApp WebSocket connection");
+    },
+  });
 }
 
 export async function waitForWaConnection(sock: ReturnType<typeof makeWASocket>) {

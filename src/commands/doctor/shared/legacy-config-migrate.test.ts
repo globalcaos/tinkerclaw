@@ -3,10 +3,7 @@ import {
   validateConfigObjectRawWithPlugins,
   validateConfigObjectWithPlugins,
 } from "../../../config/validation.js";
-import {
-  applyLegacyDoctorMigrations,
-  migrateLegacyConfig,
-} from "./legacy-config-migrate.js";
+import { applyLegacyDoctorMigrations, migrateLegacyConfig } from "./legacy-config-migrate.js";
 
 describe("legacy migrate audio transcription", () => {
   it("does not rewrite removed routing.transcribeAudio migrations", () => {
@@ -606,13 +603,25 @@ describe("legacy migrate nested channel enabled aliases", () => {
     expect(res.config?.channels?.matrix?.groups?.["!ops:example.org"]).toEqual({
       enabled: false,
     });
-    expect(res.config?.channels?.matrix?.accounts?.work?.rooms?.["!legacy:example.org"]).toEqual({
+    expect(
+      (
+        res.config?.channels?.matrix?.accounts?.work as
+          | { rooms?: Record<string, unknown> }
+          | undefined
+      )?.rooms?.["!legacy:example.org"],
+    ).toEqual({
       enabled: true,
     });
     expect(res.config?.channels?.zalouser?.groups?.["group:trusted"]).toEqual({
       enabled: false,
     });
-    expect(res.config?.channels?.zalouser?.accounts?.work?.groups?.["group:legacy"]).toEqual({
+    expect(
+      (
+        res.config?.channels?.zalouser?.accounts?.work as
+          | { groups?: Record<string, unknown> }
+          | undefined
+      )?.groups?.["group:legacy"],
+    ).toEqual({
       enabled: true,
     });
   });
