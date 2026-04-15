@@ -5,6 +5,10 @@ import { resolveChannelApprovalCapability } from "../channels/plugins/approvals.
 import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { buildMemoryPromptSection } from "../plugins/memory-state.js";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+} from "../shared/string-coerce.js";
 import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
@@ -47,7 +51,7 @@ function normalizeContextFilePath(pathValue: string): string {
 
 function getContextFileBasename(pathValue: string): string {
   const normalizedPath = normalizeContextFilePath(pathValue);
-  return (normalizedPath.split("/").pop() ?? normalizedPath).toLowerCase();
+  return normalizeLowercaseStringOrEmpty(normalizedPath.split("/").pop() ?? normalizedPath);
 }
 
 function isDynamicContextFile(pathValue: string): boolean {
@@ -297,7 +301,7 @@ function buildExecApprovalPromptGuidance(params: {
   runtimeChannel?: string;
   inlineButtonsEnabled?: boolean;
 }) {
-  const runtimeChannel = params.runtimeChannel?.trim().toLowerCase();
+  const runtimeChannel = normalizeOptionalLowercaseString(params.runtimeChannel);
   const usesNativeApprovalUi =
     runtimeChannel === "webchat" ||
     params.inlineButtonsEnabled === true ||
@@ -330,10 +334,6 @@ export function buildAgentSystemPrompt(params: {
   docsPath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
-  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
-  personaBlock?: string;
-  /** FORK: AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
-  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -372,7 +372,7 @@ export function buildAgentSystemPrompt(params: {
   // Preserve caller casing while deduping tool names by lowercase.
   const canonicalByNormalized = new Map<string, string>();
   for (const name of canonicalToolNames) {
-    const normalized = name.toLowerCase();
+    const normalized = normalizeLowercaseStringOrEmpty(name);
     if (!canonicalByNormalized.has(normalized)) {
       canonicalByNormalized.set(normalized, name);
     }
@@ -380,7 +380,7 @@ export function buildAgentSystemPrompt(params: {
   const resolveToolName = (normalized: string) =>
     canonicalByNormalized.get(normalized) ?? normalized;
 
-  const normalizedTools = canonicalToolNames.map((tool) => tool.toLowerCase());
+  const normalizedTools = canonicalToolNames.map((tool) => normalizeLowercaseStringOrEmpty(tool));
   const availableTools = new Set(normalizedTools);
   const hasSessionsSpawn = availableTools.has("sessions_spawn");
   const hasUpdatePlanTool = availableTools.has("update_plan");
@@ -434,10 +434,10 @@ export function buildAgentSystemPrompt(params: {
       ? normalizeStructuredPromptSection(params.heartbeatPrompt)
       : undefined;
   const runtimeInfo = params.runtimeInfo;
-  const runtimeChannel = runtimeInfo?.channel?.trim().toLowerCase();
+  const runtimeChannel = normalizeOptionalLowercaseString(runtimeInfo?.channel);
   const runtimeCapabilities = runtimeInfo?.capabilities ?? [];
   const runtimeCapabilitiesLower = new Set(
-    runtimeCapabilities.map((cap) => String(cap).trim().toLowerCase()).filter(Boolean),
+    runtimeCapabilities.map((cap) => normalizeLowercaseStringOrEmpty(String(cap))).filter(Boolean),
   );
   const inlineButtonsEnabled = runtimeCapabilitiesLower.has("inlinebuttons");
   const messageChannelOptions = listDeliverableMessageChannels().join("|");
@@ -493,17 +493,6 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant operating inside OpenClaw.",
     "",
-    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached.
-    ...(params.personaBlock ? [params.personaBlock, ""] : []),
-    // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
-    ...(params.amygdalaNudge?.length
-      ? [
-          "## AMYGDALA Personality Nudge (active)",
-          "The Personality networks detected drift from your target personality. Adjustments:",
-          ...params.amygdalaNudge.map((a) => `- ${a}`),
-          "",
-        ]
-      : []),
     "## Tooling",
     "Structured tool definitions are the source of truth for tool names, descriptions, and parameters.",
     "Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.",
@@ -591,7 +580,7 @@ export function buildAgentSystemPrompt(params: {
           "Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.",
           "Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.",
           "Use config.schema.lookup with a specific dot path to inspect only the relevant config subtree before making config changes or answering config-field questions; avoid guessing field names/types.",
-          "Actions: config.schema.lookup, config.get, config.apply (validate + write full config, then restart), config.patch (partial update, merges with existing), update.run (update deps or git, then restart).",
+          "Actions: config.schema.lookup, config.get, config.apply (validate + write full config, then hot-reload or restart as needed), config.patch (partial update, merges with existing), update.run (update deps or git, then restart).",
           "After restart, OpenClaw pings the last active session automatically.",
         ].join("\n")
       : "",
@@ -770,12 +759,10 @@ export function buildAgentSystemPrompt(params: {
     lines.push(
       "## Heartbeats",
       `Heartbeat prompt: ${heartbeatPrompt}`,
-      // FORK: HEARTBEAT_OK must be scoped STRICTLY to heartbeat polls — the model
-      // otherwise generalizes it to fractal reflection prompts and system injections.
-      'If AND ONLY IF you receive a user message whose text is literally (or near-literally) the heartbeat prompt shown above, and there is nothing that needs attention, reply exactly "HEARTBEAT_OK".',
-      'Do NOT emit "HEARTBEAT_OK" in response to any other kind of message — in particular NOT to fractal reflection prompts, system injections, skill invocations, or ordinary user turns. The sentinel is scoped exclusively to heartbeat polls that match the heartbeat prompt text above.',
+      "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
+      "HEARTBEAT_OK",
       'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
-      'If a heartbeat poll arrives and something actually needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
+      'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
       "",
     );
   }
