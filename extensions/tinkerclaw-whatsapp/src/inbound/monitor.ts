@@ -12,9 +12,12 @@ import { createWaSocket, formatError, getStatusCode, waitForWaConnection } from 
 import { resolveJidToE164 } from "../text-runtime.js";
 import { checkInboundAccessControl } from "./access-control.js";
 import {
-  isRecentInboundMessage,
+  claimRecentInboundMessage,
+  commitRecentInboundMessage,
   isRecentOutboundMessage,
+  releaseRecentInboundMessage,
   rememberRecentOutboundMessage,
+  WhatsAppRetryableInboundError,
 } from "./dedupe.js";
 import {
   describeReplyContext,
@@ -43,7 +46,7 @@ function shouldClearSocketRefAfterSendFailure(err: unknown): boolean {
   return /closed|reset|disconnect|no active socket/i.test(formatError(err));
 }
 
-export async function monitorWebInbox(options: {
+export type MonitorWebInboxOptions = {
   verbose: boolean;
   accountId: string;
   authDir: string;
@@ -69,44 +72,16 @@ export async function monitorWebInbox(options: {
   };
   /** Abort in-flight reconnect waits when shutdown becomes terminal. */
   disconnectRetryAbortSignal?: AbortSignal;
-}) {
+};
+
+export async function attachWebInboxToSocket(
+  options: MonitorWebInboxOptions & {
+    sock: WASocket;
+  },
+) {
   const inboundLogger = getChildLogger({ module: "web-inbound" });
   const inboundConsoleLog = createSubsystemLogger("gateway/channels/whatsapp").child("inbound");
-
-  // FORK: whatsmeow backend support — use Baileys adapter over whatsmeow-node
-  const useWhatsmeow =
-    process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "whatsmeow" ||
-    process.env.OPENCLAW_WHATSAPP_BACKEND?.toLowerCase().trim() === "wm";
-  let sock: Awaited<ReturnType<typeof createWaSocket>>;
-  if (useWhatsmeow) {
-    const { existsSync, statSync } = await import("node:fs");
-    const { resolveUserPath } = await import("openclaw/plugin-sdk/text-runtime");
-    const storePath = options.authDir
-      ? `${options.authDir}/whatsmeow.db`
-      : "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
-    const resolved = resolveUserPath(storePath);
-    if (!existsSync(resolved) || statSync(resolved).size <= 8192) {
-      throw new Error(
-        "WhatsApp (whatsmeow) not linked. Use the Relink button in the channels tab to scan a QR code.",
-      );
-    }
-    const client = await createWmClient({ storePath, verbose: options.verbose });
-    // FORK: Create adapter BEFORE connecting so its "connected" event handler
-    // captures the self JID. connectWmClient fires "connected" synchronously
-    // during resolution — if adapter is created after, the handler misses the event.
-    const adapter = createBaileysAdapter({ wmClient: client });
-    sock = adapter as unknown as Awaited<ReturnType<typeof createWaSocket>>;
-    await connectWmClient(client);
-    inboundLogger.info("Using whatsmeow-node backend");
-    console.log(
-      `[wa-debug] WM adapter created, sock.user.id=${sock.user?.id}, sock.ev type=${typeof sock.ev}`,
-    );
-  } else {
-    sock = await createWaSocket(false, options.verbose, {
-      authDir: options.authDir,
-    });
-    await waitForWaConnection(sock);
-  }
+  const sock = options.sock;
   const connectedAtMs = Date.now();
   if (options.socketRef) {
     options.socketRef.current = sock;
@@ -145,7 +120,26 @@ export async function monitorWebInbox(options: {
     options.authDir,
     sock.user as { id?: string | null; lid?: string | null } | undefined,
   );
-  const debouncer = createInboundDebouncer<WebInboundMessage>({
+  type QueuedInboundMessage = WebInboundMessage & {
+    dedupeKey?: string;
+  };
+
+  const finalizeInboundDedupe = async (
+    entries: QueuedInboundMessage[],
+    error?: unknown,
+  ): Promise<void> => {
+    const dedupeKeys = [...new Set(entries.map((entry) => entry.dedupeKey).filter(Boolean))];
+    if (dedupeKeys.length === 0) {
+      return;
+    }
+    if (error instanceof WhatsAppRetryableInboundError) {
+      dedupeKeys.forEach((dedupeKey) => releaseRecentInboundMessage(dedupeKey, error));
+      return;
+    }
+    await Promise.all(dedupeKeys.map((dedupeKey) => commitRecentInboundMessage(dedupeKey)));
+  };
+
+  const debouncer = createInboundDebouncer<QueuedInboundMessage>({
     debounceMs: options.debounceMs ?? 0,
     buildKey: (msg) => {
       const sender = msg.sender;
@@ -169,27 +163,34 @@ export async function monitorWebInbox(options: {
       if (!last) {
         return;
       }
-      if (entries.length === 1) {
-        await options.onMessage(last);
-        return;
-      }
-      const mentioned = new Set<string>();
-      for (const entry of entries) {
-        for (const jid of entry.mentions ?? entry.mentionedJids ?? []) {
-          mentioned.add(jid);
+      try {
+        if (entries.length === 1) {
+          await options.onMessage(last);
+          await finalizeInboundDedupe(entries);
+          return;
         }
+        const mentioned = new Set<string>();
+        for (const entry of entries) {
+          for (const jid of entry.mentions ?? entry.mentionedJids ?? []) {
+            mentioned.add(jid);
+          }
+        }
+        const combinedBody = entries
+          .map((entry) => entry.body)
+          .filter(Boolean)
+          .join("\n");
+        const combinedMessage: WebInboundMessage = {
+          ...last,
+          body: combinedBody,
+          mentions: mentioned.size > 0 ? Array.from(mentioned) : undefined,
+          mentionedJids: mentioned.size > 0 ? Array.from(mentioned) : undefined,
+        };
+        await options.onMessage(combinedMessage);
+        await finalizeInboundDedupe(entries);
+      } catch (error) {
+        await finalizeInboundDedupe(entries, error);
+        throw error;
       }
-      const combinedBody = entries
-        .map((entry) => entry.body)
-        .filter(Boolean)
-        .join("\n");
-      const combinedMessage: WebInboundMessage = {
-        ...last,
-        body: combinedBody,
-        mentions: mentioned.size > 0 ? Array.from(mentioned) : undefined,
-        mentionedJids: mentioned.size > 0 ? Array.from(mentioned) : undefined,
-      };
-      await options.onMessage(combinedMessage);
     },
     onError: (err) => {
       inboundLogger.error({ error: String(err) }, "failed handling inbound web message");
@@ -340,13 +341,6 @@ export async function monitorWebInbox(options: {
     ) {
       console.log(`[wa-debug] DROP: recent outbound echo id=${id} jid=${remoteJid}`);
       return null;
-    }
-    if (id) {
-      const dedupeKey = `${options.accountId}:${remoteJid}:${id}`;
-      if (isRecentInboundMessage(dedupeKey)) {
-        console.log(`[wa-debug] DROP: dedupe id=${id} jid=${remoteJid}`);
-        return null;
-      }
     }
     const participantJid = msg.key?.participant ?? undefined;
     const from = group ? remoteJid : await resolveInboundJid(remoteJid);
@@ -528,7 +522,7 @@ export async function monitorWebInbox(options: {
       },
       "inbound message",
     );
-    const inboundMessage: WebInboundMessage = {
+    const inboundMessage: QueuedInboundMessage = {
       id: inbound.id,
       from: inbound.from,
       conversationId: inbound.from,
@@ -569,6 +563,7 @@ export async function monitorWebInbox(options: {
       mediaPath: enriched.mediaPath,
       mediaType: enriched.mediaType,
       mediaFileName: enriched.mediaFileName,
+      dedupeKey: inbound.id ? `${options.accountId}:${inbound.remoteJid}:${inbound.id}` : undefined,
     };
     try {
       const task = Promise.resolve(debouncer.enqueue(inboundMessage));
@@ -621,6 +616,11 @@ export async function monitorWebInbox(options: {
 
       const enriched = await enrichInboundMessage(msg);
       if (!enriched) {
+        continue;
+      }
+
+      const dedupeKey = inbound.id ? `${options.accountId}:${inbound.remoteJid}:${inbound.id}` : "";
+      if (dedupeKey && !(await claimRecentInboundMessage(dedupeKey))) {
         continue;
       }
 
@@ -714,4 +714,15 @@ export async function monitorWebInbox(options: {
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
   } as const;
+}
+
+export async function monitorWebInbox(options: MonitorWebInboxOptions) {
+  const sock = await createWaSocket(false, options.verbose, {
+    authDir: options.authDir,
+  });
+  await waitForWaConnection(sock);
+  return attachWebInboxToSocket({
+    ...options,
+    sock,
+  });
 }
