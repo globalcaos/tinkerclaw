@@ -238,7 +238,10 @@ export async function monitorWebChannel(
       sessionKey: connectRoute.sessionKey,
     });
 
-    setActiveWebListener(account.accountId, listener);
+    setActiveWebListener(
+      account.accountId,
+      listener as unknown as import("../active-listener.js").ActiveWebListener,
+    );
     active.unregisterUnhandled = registerUnhandledRejectionHandler((reason) => {
       if (!isLikelyWhatsAppCryptoError(reason)) {
         return false;

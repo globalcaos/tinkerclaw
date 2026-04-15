@@ -1,3 +1,4 @@
+import type { DatabaseSync } from "node:sqlite";
 import type { MemorySource } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 type StatusProvider = {
@@ -11,11 +12,7 @@ type StatusAggregateRow = {
   c: number;
 };
 
-type StatusAggregateDb = {
-  prepare: (sql: string) => {
-    all: (...args: MemorySource[]) => StatusAggregateRow[];
-  };
-};
+type StatusAggregateDb = Pick<DatabaseSync, "prepare">;
 
 export const MEMORY_STATUS_AGGREGATE_SQL =
   `SELECT 'files' AS kind, source, COUNT(*) as c FROM files WHERE 1=1__FILTER__ GROUP BY source\n` +
@@ -80,7 +77,7 @@ export function collectMemoryStatusAggregate(params: {
   const sourceFilterParams = params.sourceFilterParams ?? [];
   const aggregateRows = params.db
     .prepare(MEMORY_STATUS_AGGREGATE_SQL.replaceAll("__FILTER__", sourceFilterSql))
-    .all(...sourceFilterParams, ...sourceFilterParams);
+    .all(...sourceFilterParams, ...sourceFilterParams) as StatusAggregateRow[];
   let files = 0;
   let chunks = 0;
   for (const row of aggregateRows) {
