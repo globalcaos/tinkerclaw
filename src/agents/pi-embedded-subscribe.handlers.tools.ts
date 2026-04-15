@@ -1,12 +1,18 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import { emitToolExec } from "../fork/attempt-hooks.js"; // FORK: round-level tool tracking
-import { emitAgentEvent } from "../infra/agent-events.js";
+import type {
+  AgentApprovalEventData,
+  AgentCommandOutputEventData,
+  AgentItemEventData,
+  AgentPatchSummaryEventData,
+} from "../infra/agent-events.js";
 import {
-  buildExecApprovalPendingReplyPayload,
-  buildExecApprovalUnavailableReplyPayload,
-} from "../infra/exec-approval-reply.js";
+  emitAgentApprovalEvent,
+  emitAgentCommandOutputEvent,
+  emitAgentEvent,
+  emitAgentItemEvent,
+  emitAgentPatchSummaryEvent,
+} from "../infra/agent-events.js";
 import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
-import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
 import { normalizeOptionalLowercaseString, readStringValue } from "../shared/string-coerce.js";
 import type { ApplyPatchSummary } from "./apply-patch.js";
@@ -30,9 +36,38 @@ import {
   sanitizeToolResult,
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
-import { consumeAdjustedParamsForToolCall } from "./pi-tools.before-tool-call.js";
 import { buildToolMutationState, isSameToolMutationAction } from "./tool-mutation.js";
 import { normalizeToolName } from "./tool-policy.js";
+
+type ExecApprovalReplyModule = typeof import("../infra/exec-approval-reply.js");
+type HookRunnerGlobalModule = typeof import("../plugins/hook-runner-global.js");
+type MediaParseModule = typeof import("../media/parse.js");
+type BeforeToolCallModule = typeof import("./pi-tools.before-tool-call.js");
+
+let execApprovalReplyModulePromise: Promise<ExecApprovalReplyModule> | undefined;
+let hookRunnerGlobalModulePromise: Promise<HookRunnerGlobalModule> | undefined;
+let mediaParseModulePromise: Promise<MediaParseModule> | undefined;
+let beforeToolCallModulePromise: Promise<BeforeToolCallModule> | undefined;
+
+function loadExecApprovalReply(): Promise<ExecApprovalReplyModule> {
+  execApprovalReplyModulePromise ??= import("../infra/exec-approval-reply.js");
+  return execApprovalReplyModulePromise;
+}
+
+function loadHookRunnerGlobal(): Promise<HookRunnerGlobalModule> {
+  hookRunnerGlobalModulePromise ??= import("../plugins/hook-runner-global.js");
+  return hookRunnerGlobalModulePromise;
+}
+
+function loadMediaParse(): Promise<MediaParseModule> {
+  mediaParseModulePromise ??= import("../media/parse.js");
+  return mediaParseModulePromise;
+}
+
+function loadBeforeToolCall(): Promise<BeforeToolCallModule> {
+  beforeToolCallModulePromise ??= import("./pi-tools.before-tool-call.js");
+  return beforeToolCallModulePromise;
+}
 
 type ToolStartRecord = {
   startTime: number;
@@ -168,6 +203,43 @@ function queuePendingToolMedia(
   }
 }
 
+async function collectEmittedToolOutputMediaUrls(
+  toolName: string,
+  outputText: string,
+  result: unknown,
+): Promise<string[]> {
+  const { splitMediaFromOutput } = await loadMediaParse();
+  const mediaUrls = splitMediaFromOutput(outputText).mediaUrls ?? [];
+  if (mediaUrls.length === 0) {
+    return [];
+  }
+  return filterToolResultMediaUrls(toolName, mediaUrls, result);
+}
+
+const COMPACT_PROVIDER_INVENTORY_TOOLS = new Set(["image_generate", "video_generate"]);
+
+function hasProviderInventoryDetails(result: unknown): boolean {
+  if (!result || typeof result !== "object") {
+    return false;
+  }
+  const details = readToolResultDetailsRecord(result);
+  return Array.isArray(details?.providers);
+}
+
+function shouldEmitCompactToolOutput(params: {
+  toolName: string;
+  result: unknown;
+  outputText?: string;
+}): boolean {
+  if (!COMPACT_PROVIDER_INVENTORY_TOOLS.has(params.toolName)) {
+    return false;
+  }
+  if (!hasProviderInventoryDetails(params.result)) {
+    return false;
+  }
+  return Boolean(params.outputText?.trim());
+}
+
 function readExecApprovalPendingDetails(result: unknown): {
   approvalId: string;
   approvalSlug: string;
@@ -276,6 +348,7 @@ async function emitToolResultOutput(params: {
     }
     ctx.state.deterministicApprovalPromptPending = true;
     try {
+      const { buildExecApprovalPendingReplyPayload } = await loadExecApprovalReply();
       await ctx.params.onToolResult(
         buildExecApprovalPendingReplyPayload({
           approvalId: approvalPending.approvalId,
@@ -305,6 +378,7 @@ async function emitToolResultOutput(params: {
     }
     ctx.state.deterministicApprovalPromptPending = true;
     try {
+      const { buildExecApprovalUnavailableReplyPayload } = await loadExecApprovalReply();
       await ctx.params.onToolResult?.(
         buildExecApprovalUnavailableReplyPayload({
           reason: approvalUnavailable.reason,
@@ -326,6 +400,13 @@ async function emitToolResultOutput(params: {
     const outputText = extractToolResultText(sanitizedResult);
     if (outputText) {
       ctx.emitToolOutput(toolName, meta, outputText, result);
+      if (ctx.params.toolResultFormat === "plain") {
+        emittedToolOutputMediaUrls = await collectEmittedToolOutputMediaUrls(
+          toolName,
+          outputText,
+          result,
+        );
+      }
     }
     if (!hasStructuredMedia) {
       return;
@@ -580,11 +661,6 @@ export async function handleToolExecutionEnd(
     startData?.args && typeof startData.args === "object"
       ? (startData.args as Record<string, unknown>)
       : {};
-  const adjustedArgs = consumeAdjustedParamsForToolCall(toolCallId, runId);
-  const afterToolCallArgs =
-    adjustedArgs && typeof adjustedArgs === "object"
-      ? (adjustedArgs as Record<string, unknown>)
-      : startArgs;
   const isMessagingSend =
     pendingMediaUrls.length > 0 ||
     (isMessagingTool(toolName) && isMessagingToolSendAction(toolName, startArgs));
@@ -791,8 +867,14 @@ export async function handleToolExecutionEnd(
   await emitToolResultOutput({ ctx, toolName, meta, isToolError, result, sanitizedResult });
 
   // Run after_tool_call plugin hook (fire-and-forget)
-  const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();
+  const hookRunnerAfter = ctx.hookRunner ?? (await loadHookRunnerGlobal()).getGlobalHookRunner();
   if (hookRunnerAfter?.hasHooks("after_tool_call")) {
+    const { consumeAdjustedParamsForToolCall } = await loadBeforeToolCall();
+    const adjustedArgs = consumeAdjustedParamsForToolCall(toolCallId, runId);
+    const afterToolCallArgs =
+      adjustedArgs && typeof adjustedArgs === "object"
+        ? (adjustedArgs as Record<string, unknown>)
+        : startArgs;
     const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
     const hookEvent: PluginHookAfterToolCallEvent = {
       toolName,

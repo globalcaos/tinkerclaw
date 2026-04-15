@@ -42,6 +42,7 @@ import { finalizeInboundContext } from "./inbound-context.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
 import { createFastTestModelSelectionState } from "./model-selection.js";
 import { initSessionState } from "./session.js";
+import { resolveStoredModelOverride } from "./stored-model-override.js";
 import { createTypingController } from "./typing.js";
 
 type ResetCommandAction = "new" | "reset";
@@ -326,6 +327,17 @@ export async function getReplyFromConfig(
     normalizeOptionalString(sessionEntry.modelOverride) ||
     normalizeOptionalString(sessionEntry.providerOverride),
   );
+  const storedModelOverride = resolveStoredModelOverride({
+    sessionEntry,
+    sessionStore,
+    sessionKey,
+    parentSessionKey: sessionEntry.parentSessionKey ?? sessionCtx.ParentSessionKey,
+    defaultProvider,
+  });
+  if (storedModelOverride?.model && !hasResolvedHeartbeatModelOverride) {
+    provider = storedModelOverride.provider ?? defaultProvider;
+    model = storedModelOverride.model;
+  }
   if (!hasResolvedHeartbeatModelOverride && !hasSessionModelOverride && channelModelOverride) {
     const resolved = resolveModelRefFromString({
       raw: channelModelOverride.model,
