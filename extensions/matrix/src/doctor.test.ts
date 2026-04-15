@@ -23,7 +23,7 @@ vi.mock("./matrix-migration.runtime.js", async () => {
     autoPrepareLegacyMatrixCrypto: vi.fn(async () => ({ changes: [], warnings: [] })),
     resolveMatrixMigrationStatus: vi.fn(() => ({
       legacyState: null,
-      legacyCrypto: { warnings: [], plans: [] },
+      legacyCrypto: { inspectorAvailable: true, warnings: [], plans: [] },
       pending: false,
       actionable: false,
     })),
@@ -49,6 +49,7 @@ describe("matrix doctor", () => {
     ).toContain("Matrix plugin upgraded in place.");
 
     const previews = formatMatrixLegacyCryptoPreview({
+      inspectorAvailable: true,
       warnings: ["matrix warning"],
       plans: [
         {
@@ -99,7 +100,7 @@ describe("matrix doctor", () => {
     const runtimeApi = await import("./matrix-migration.runtime.js");
     vi.mocked(runtimeApi.resolveMatrixMigrationStatus).mockReturnValue({
       legacyState: null,
-      legacyCrypto: { warnings: [], plans: [] },
+      legacyCrypto: { inspectorAvailable: true, warnings: [], plans: [] },
       pending: true,
       actionable: true,
     });

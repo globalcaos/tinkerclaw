@@ -178,7 +178,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
           delayMs: POST_RESTART_HEALTH_DELAY_MS,
         });
         if (health.healthy) {
-          return;
+          return undefined;
         }
 
         // FORK: Non-fatal timeout — gateway is likely still booting
@@ -187,7 +187,12 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
             theme.info(`Gateway starting — port ${restartPort} will be ready in ~2 minutes.`),
           );
         }
-        return;
+
+        fail(`Gateway restart timed out after ${restartWaitSeconds}s waiting for health checks.`, [
+          formatCliCommand("openclaw gateway status --deep"),
+          formatCliCommand("openclaw doctor"),
+        ]);
+        throw new Error("unreachable after gateway restart health failure");
       }
 
       let health = await waitForGatewayHealthyRestart({
@@ -221,7 +226,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
       }
 
       if (health.healthy) {
-        return;
+        return undefined;
       }
 
       // FORK: Don't fail on health timeout — the gateway takes ~2min to load 57MB of JS
@@ -255,6 +260,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         formatCliCommand("openclaw gateway status --deep"),
         formatCliCommand("openclaw doctor"),
       ]);
+      throw new Error("unreachable after gateway restart failure");
     },
   });
 }

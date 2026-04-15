@@ -1,8 +1,33 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { __testing } from "./telegram-live.runtime.js";
 
+const fetchWithSsrFGuardMock = vi.hoisted(() =>
+  vi.fn(async (params: { url: string; init?: RequestInit; signal?: AbortSignal }) => ({
+    response: await fetch(params.url, {
+      ...params.init,
+      signal: params.signal,
+    }),
+    release: async () => {},
+  })),
+);
+
+vi.mock("openclaw/plugin-sdk/ssrf-runtime", async () => {
+  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/ssrf-runtime")>(
+    "openclaw/plugin-sdk/ssrf-runtime",
+  );
+  return {
+    ...actual,
+    fetchWithSsrFGuard: fetchWithSsrFGuardMock,
+  };
+});
+
 describe("telegram live qa runtime", () => {
+  afterEach(() => {
+    fetchWithSsrFGuardMock.mockClear();
+    vi.unstubAllGlobals();
+  });
+
   it("resolves required Telegram QA env vars", () => {
     expect(
       __testing.resolveTelegramQaRuntimeEnv({
@@ -73,6 +98,7 @@ describe("telegram live qa runtime", () => {
           enabled: true,
           botToken: "sut-token",
           dmPolicy: "disabled",
+          replyToMode: "first",
           groups: {
             "-100123": {
               groupPolicy: "allowlist",
@@ -122,6 +148,139 @@ describe("telegram live qa runtime", () => {
     });
   });
 
+  it("ignores unrelated sut replies when matching the canary response", () => {
+    expect(
+      __testing.classifyCanaryReply({
+        groupId: "-100123",
+        sutBotId: 88,
+        driverMessageId: 55,
+        message: {
+          updateId: 1,
+          messageId: 9,
+          chatId: -100123,
+          senderId: 88,
+          senderIsBot: true,
+          senderUsername: "sut_bot",
+          text: "other reply",
+          replyToMessageId: 999,
+          timestamp: 1_700_000_000_000,
+          inlineButtons: [],
+          mediaKinds: [],
+        },
+      }),
+    ).toBe("unthreaded");
+    expect(
+      __testing.classifyCanaryReply({
+        groupId: "-100123",
+        sutBotId: 88,
+        driverMessageId: 55,
+        message: {
+          updateId: 2,
+          messageId: 10,
+          chatId: -100123,
+          senderId: 88,
+          senderIsBot: true,
+          senderUsername: "sut_bot",
+          text: "canary reply",
+          replyToMessageId: 55,
+          timestamp: 1_700_000_001_000,
+          inlineButtons: [],
+          mediaKinds: [],
+        },
+      }),
+    ).toBe("match");
+  });
+
+  it("classifies threaded blank sut replies as matches", () => {
+    expect(
+      __testing.classifyCanaryReply({
+        groupId: "-100123",
+        sutBotId: 88,
+        driverMessageId: 55,
+        message: {
+          updateId: 3,
+          messageId: 11,
+          chatId: -100123,
+          senderId: 88,
+          senderIsBot: true,
+          senderUsername: "sut_bot",
+          text: "",
+          replyToMessageId: 55,
+          timestamp: 1_700_000_002_000,
+          inlineButtons: [],
+          mediaKinds: ["photo"],
+        },
+      }),
+    ).toBe("match");
+  });
+
+  it("fails when any requested Telegram scenario id is unknown", () => {
+    expect(() => __testing.findScenario(["telegram-help-command", "typo-scenario"])).toThrow(
+      "unknown Telegram QA scenario id(s): typo-scenario",
+    );
+  });
+
+  it("adds an abort deadline to Telegram API requests", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | globalThis.Request, init?: RequestInit) => {
+        signal = init?.signal as AbortSignal | undefined;
+        return new Response(JSON.stringify({ ok: true, result: { id: 42 } }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }),
+    );
+
+    await expect(__testing.callTelegramApi("token", "getMe", undefined, 25)).resolves.toEqual({
+      id: 42,
+    });
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("redacts observed message content by default in artifacts", () => {
+    expect(
+      __testing.buildObservedMessagesArtifact({
+        includeContent: false,
+        observedMessages: [
+          {
+            updateId: 1,
+            messageId: 9,
+            chatId: -100123,
+            senderId: 42,
+            senderIsBot: true,
+            senderUsername: "driver_bot",
+            text: "secret text",
+            caption: "secret caption",
+            replyToMessageId: 8,
+            timestamp: 1_700_000_000_000,
+            inlineButtons: ["Approve"],
+            mediaKinds: ["photo"],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        updateId: 1,
+        messageId: 9,
+        chatId: -100123,
+        senderId: 42,
+        senderIsBot: true,
+        senderUsername: "driver_bot",
+        replyToMessageId: 8,
+        timestamp: 1_700_000_000_000,
+        inlineButtons: ["Approve"],
+        mediaKinds: ["photo"],
+      },
+    ]);
+  });
+
   it("formats phase-specific canary diagnostics with context", () => {
     const error = new Error(
       "SUT bot did not send any group reply after the canary command within 30s.",
@@ -149,5 +308,26 @@ describe("telegram live qa runtime", () => {
     expect(message).toContain(
       "Confirm the SUT bot is present in the target private group and can receive /help@BotUsername commands there.",
     );
+  });
+
+  it("treats null canary context as a non-canary error", () => {
+    const error = new Error("boom");
+    error.name = "TelegramQaCanaryError";
+    Object.assign(error, {
+      phase: "sut_reply_timeout",
+      context: null,
+    });
+
+    const message = __testing.canaryFailureMessage({
+      error,
+      groupId: "-100123",
+      driverBotId: 42,
+      driverUsername: "driver_bot",
+      sutBotId: 88,
+      sutUsername: "sut_bot",
+    });
+
+    expect(message).toContain("Phase: unknown");
+    expect(message).toContain("boom");
   });
 });
