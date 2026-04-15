@@ -2,9 +2,9 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import contextPruningExtension from "../pi-extensions/context-pruning.js";
 import { getCompactionSafeguardRuntime } from "../pi-hooks/compaction-safeguard-runtime.js";
 import compactionSafeguardExtension from "../pi-hooks/compaction-safeguard.js";
-import contextPruningExtension from "../pi-hooks/context-pruning.js";
 import { buildEmbeddedExtensionFactories } from "./extensions.js";
 
 function buildSafeguardFactories(cfg: OpenClawConfig) {
