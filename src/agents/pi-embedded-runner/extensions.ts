@@ -12,8 +12,6 @@ import { createOllamaEmbeddingProvider } from "../../plugin-sdk/ollama-runtime.j
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
-import { setCompactionSafeguardRuntime } from "../pi-extensions/compaction-safeguard-runtime.js";
-import compactionSafeguardExtension from "../pi-extensions/compaction-safeguard.js";
 import contextPruningExtension from "../pi-extensions/context-pruning.js";
 import { setContextPruningRuntime } from "../pi-extensions/context-pruning/runtime.js";
 import { computeEffectiveSettings } from "../pi-extensions/context-pruning/settings.js";
@@ -32,6 +30,13 @@ import {
 import { initReflectionRuntime } from "../pi-extensions/reflection-runtime.js";
 import { setRetrievalRuntime } from "../pi-extensions/retrieval-runtime.js";
 import { createSynapseRuntime, setSynapseRuntime } from "../pi-extensions/synapse-runtime.js";
+// FORK: pi-hooks holds the canonical (fuller) compaction-safeguard impl with
+// cancelReason support. The pi-extensions stubs were leftover and caused an
+// ESM-module bifurcation: extensions.ts wrote runtime config to pi-extensions
+// while compact.ts read from pi-hooks, silently breaking qualityGuardEnabled
+// in production. Consolidated to pi-hooks 2026-04-15.
+import { setCompactionSafeguardRuntime } from "../pi-hooks/compaction-safeguard-runtime.js";
+import compactionSafeguardExtension from "../pi-hooks/compaction-safeguard.js";
 import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
 import { resolveTranscriptPolicy } from "../transcript-policy.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "./cache-ttl.js";
