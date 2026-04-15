@@ -1,9 +1,11 @@
-import { isRecord } from "openclaw/plugin-sdk/text-runtime";
-
 type UnsupportedSecretRefConfigCandidate = {
   path: string;
   value: unknown;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 export const unsupportedSecretRefSurfacePatterns = [
   "channels.whatsapp.creds.json",

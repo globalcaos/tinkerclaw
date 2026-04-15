@@ -1000,45 +1000,6 @@ export function createAgentEventHandler({
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text, evt.data.delta);
-      } else if (!isAborted && evt.stream === "thinking") {
-        // FORK: broadcast thinking stream as chat events for Tinker UI
-        const thinkingPhase = typeof evt.data?.phase === "string" ? evt.data.phase : null;
-        if (thinkingPhase === "end") {
-          const payload = {
-            runId: clientRunId,
-            sessionKey,
-            seq: evt.seq,
-            state: "thinking_end" as const,
-          };
-          if (!shouldHideHeartbeatChatOutput(clientRunId, evt.runId)) {
-            broadcast("chat", payload, { dropIfSlow: true });
-            nodeSendToSession(sessionKey, "chat", payload);
-          }
-        } else if (typeof evt.data?.text === "string" && evt.data.text) {
-          // Throttle thinking deltas same as text deltas (150ms)
-          const now = Date.now();
-          const thinkingThrottleKey = `thinking:${clientRunId}`;
-          const lastThinking = chatRunState.deltaSentAt.get(thinkingThrottleKey) ?? 0;
-          if (now - lastThinking < 150) {
-            return;
-          }
-          chatRunState.deltaSentAt.set(thinkingThrottleKey, now);
-          const payload = {
-            runId: clientRunId,
-            sessionKey,
-            seq: evt.seq,
-            state: "thinking_delta" as const,
-            message: {
-              role: "assistant",
-              content: [{ type: "thinking", text: evt.data.text }],
-              timestamp: now,
-            },
-          };
-          if (!shouldHideHeartbeatChatOutput(clientRunId, evt.runId)) {
-            broadcast("chat", payload, { dropIfSlow: true });
-            nodeSendToSession(sessionKey, "chat", payload);
-          }
-        }
       }
     }
 
