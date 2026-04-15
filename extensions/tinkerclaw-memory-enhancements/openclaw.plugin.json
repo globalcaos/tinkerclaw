@@ -1,0 +1,72 @@
+{
+  "id": "tinkerclaw-memory-enhancements",
+  "name": "Memory Enhancements",
+  "description": "Four layered wins on top of upstream memory-core: O(1) anchor → chunk hippocampus index, task-conditioned retrieval scoring, structured contradiction-gate on writes, and compaction-aware message capture. Drop-in plugin — upstream memory-core stays exactly as shipped. Designed to be published on ClawHub.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "hippocampusIndex": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "indexDir": {
+            "type": "string",
+            "default": "~/.openclaw/state/memory-enhancements/hippocampus",
+            "description": "Where the pre-computed anchor → chunk concept index is stored."
+          },
+          "minConceptLength": {
+            "type": "number",
+            "default": 3,
+            "description": "Minimum concept token length to be indexed (shorter tokens are noise)."
+          },
+          "importanceThreshold": {
+            "type": "number",
+            "default": 0.5,
+            "description": "Minimum importance score [0,1] for a concept to survive pruning."
+          }
+        }
+      },
+      "taskConditionedScoring": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "taskWeight": {
+            "type": "number",
+            "default": 0.3,
+            "description": "How strongly current task context biases retrieval scores [0,1]."
+          }
+        }
+      },
+      "contradictionGate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "mode": {
+            "type": "string",
+            "enum": ["warn", "block"],
+            "default": "warn",
+            "description": "warn: log contradictions but allow the write. block: refuse the write."
+          }
+        }
+      },
+      "compactionCapture": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "captureMode": {
+            "type": "string",
+            "enum": ["dropped-only", "full-context"],
+            "default": "dropped-only",
+            "description": "dropped-only: snapshot only messages about to be lost. full-context: snapshot entire context window."
+          }
+        }
+      }
+    }
+  }
+}

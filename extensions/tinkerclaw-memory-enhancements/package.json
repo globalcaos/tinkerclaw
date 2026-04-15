@@ -1,0 +1,11 @@
+{
+  "name": "@tinkerclaw/memory-enhancements",
+  "version": "0.1.0",
+  "description": "Four layered retrieval, write-safety and compaction enhancements for upstream memory-core.",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
