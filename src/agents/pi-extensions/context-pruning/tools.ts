@@ -1,21 +1,9 @@
-/**
- * FORK: context-pruning/tools — Tool name matching predicate for pruning eligibility
- *
- * Builds a predicate function that determines whether a given tool's results are
- * eligible for pruning, based on allow/deny glob patterns from the pruning config.
- * Deny patterns take priority; if no allow patterns are specified, all non-denied
- * tools are prunable. Tool names are normalized to lowercase before matching.
- *
- * Wired in by: imported by pruner.ts as the default tool predicate, and by runtime.ts
- * when constructing the per-session runtime value via makeToolPrunablePredicate().
- */
+import { normalizeLowercaseStringOrEmpty } from "../../../shared/string-coerce.js";
 import { compileGlobPatterns, matchesAnyGlobPattern } from "../../glob-pattern.js";
 import type { ContextPruningToolMatch } from "./settings.js";
 
 function normalizeGlob(value: string) {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase();
+  return normalizeLowercaseStringOrEmpty(String(value ?? ""));
 }
 
 export function makeToolPrunablePredicate(

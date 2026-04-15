@@ -189,8 +189,8 @@ function readExecApprovalPendingDetails(result: unknown): {
   if (details.status !== "approval-pending") {
     return null;
   }
-  const approvalId = typeof details.approvalId === "string" ? details.approvalId.trim() : "";
-  const approvalSlug = typeof details.approvalSlug === "string" ? details.approvalSlug.trim() : "";
+  const approvalId = readStringValue(details.approvalId) ?? "";
+  const approvalSlug = readStringValue(details.approvalSlug) ?? "";
   const command = typeof details.command === "string" ? details.command : "";
   const host = details.host === "node" ? "node" : details.host === "gateway" ? "gateway" : null;
   if (!approvalId || !approvalSlug || !command || !host) {
@@ -273,6 +273,7 @@ async function emitToolResultOutput(params: {
     if (!ctx.params.onToolResult) {
       return;
     }
+    ctx.state.deterministicApprovalPromptPending = true;
     try {
       await ctx.params.onToolResult(
         buildExecApprovalPendingReplyPayload({
@@ -289,7 +290,9 @@ async function emitToolResultOutput(params: {
       );
       ctx.state.deterministicApprovalPromptSent = true;
     } catch {
-      // ignore delivery failures
+      ctx.state.deterministicApprovalPromptSent = false;
+    } finally {
+      ctx.state.deterministicApprovalPromptPending = false;
     }
     return;
   }
@@ -299,6 +302,7 @@ async function emitToolResultOutput(params: {
     if (!ctx.params.onToolResult) {
       return;
     }
+    ctx.state.deterministicApprovalPromptPending = true;
     try {
       await ctx.params.onToolResult?.(
         buildExecApprovalUnavailableReplyPayload({
@@ -310,7 +314,9 @@ async function emitToolResultOutput(params: {
       );
       ctx.state.deterministicApprovalPromptSent = true;
     } catch {
-      // ignore delivery failures
+      ctx.state.deterministicApprovalPromptSent = false;
+    } finally {
+      ctx.state.deterministicApprovalPromptPending = false;
     }
     return;
   }
@@ -612,16 +618,156 @@ export async function handleToolExecutionEnd(
     },
   });
 
-  // FORK: emit tool-exec-complete for timeline round-level tracking
-  {
-    const toolDurationMs =
-      startData?.startTime != null ? Date.now() - startData.startTime : undefined;
-    emitToolExec({
-      runId: ctx.params.runId,
-      sessionKey: ctx.params.sessionKey,
-      roundNumber: 0, // round number not available in subscription context
-      phase: "tool-exec-complete",
-      toolName,
+  if (isExecToolName(toolName)) {
+    const execDetails = readExecToolDetails(result);
+    const commandItemId = buildCommandItemId(toolCallId);
+    if (
+      execDetails?.status === "approval-pending" ||
+      execDetails?.status === "approval-unavailable"
+    ) {
+      const approvalStatus = execDetails.status === "approval-pending" ? "pending" : "unavailable";
+      const approvalData: AgentApprovalEventData = {
+        phase: "requested",
+        kind: "exec",
+        status: approvalStatus,
+        title:
+          approvalStatus === "pending"
+            ? "Command approval requested"
+            : "Command approval unavailable",
+        itemId: commandItemId,
+        toolCallId,
+        ...(execDetails.status === "approval-pending"
+          ? {
+              approvalId: execDetails.approvalId,
+              approvalSlug: execDetails.approvalSlug,
+            }
+          : {}),
+        command: execDetails.command,
+        host: execDetails.host,
+        ...(execDetails.status === "approval-unavailable" ? { reason: execDetails.reason } : {}),
+        message: execDetails.warningText,
+      };
+      emitAgentApprovalEvent({
+        runId: ctx.params.runId,
+        ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+        data: approvalData,
+      });
+      void ctx.params.onAgentEvent?.({
+        stream: "approval",
+        data: approvalData,
+      });
+      emitTrackedItemEvent(ctx, {
+        itemId: commandItemId,
+        phase: "end",
+        kind: "command",
+        title: buildCommandItemTitle(toolName, meta),
+        status: "blocked",
+        name: toolName,
+        meta,
+        toolCallId,
+        startedAt: startData?.startTime,
+        endedAt,
+        ...(execDetails.status === "approval-pending"
+          ? {
+              approvalId: execDetails.approvalId,
+              approvalSlug: execDetails.approvalSlug,
+              summary: "Awaiting approval before command can run.",
+            }
+          : {
+              summary: "Command is blocked because no interactive approval route is available.",
+            }),
+      });
+    } else {
+      const output =
+        execDetails && "aggregated" in execDetails
+          ? execDetails.aggregated
+          : extractToolResultText(sanitizedResult);
+      const commandStatus =
+        execDetails?.status === "failed" || isToolError ? "failed" : "completed";
+      emitTrackedItemEvent(ctx, {
+        itemId: commandItemId,
+        phase: "end",
+        kind: "command",
+        title: buildCommandItemTitle(toolName, meta),
+        status: commandStatus,
+        name: toolName,
+        meta,
+        toolCallId,
+        startedAt: startData?.startTime,
+        endedAt,
+        ...(output ? { summary: output } : {}),
+        ...(isToolError && extractToolErrorMessage(sanitizedResult)
+          ? { error: extractToolErrorMessage(sanitizedResult) }
+          : {}),
+      });
+      const outputData: AgentCommandOutputEventData = {
+        itemId: commandItemId,
+        phase: "end",
+        title: buildCommandItemTitle(toolName, meta),
+        toolCallId,
+        name: toolName,
+        ...(output ? { output } : {}),
+        status: commandStatus,
+        ...(execDetails && "exitCode" in execDetails ? { exitCode: execDetails.exitCode } : {}),
+        ...(execDetails && "durationMs" in execDetails
+          ? { durationMs: execDetails.durationMs }
+          : {}),
+        ...(execDetails && "cwd" in execDetails && typeof execDetails.cwd === "string"
+          ? { cwd: execDetails.cwd }
+          : {}),
+      };
+      emitAgentCommandOutputEvent({
+        runId: ctx.params.runId,
+        ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+        data: outputData,
+      });
+      void ctx.params.onAgentEvent?.({
+        stream: "command_output",
+        data: outputData,
+      });
+
+      if (typeof output === "string") {
+        const parsedApprovalResult = parseExecApprovalResultText(output);
+        if (parsedApprovalResult.kind === "denied") {
+          const approvalData: AgentApprovalEventData = {
+            phase: "resolved",
+            kind: "exec",
+            status: normalizeOptionalLowercaseString(parsedApprovalResult.metadata)?.includes(
+              "approval-request-failed",
+            )
+              ? "failed"
+              : "denied",
+            title: "Command approval resolved",
+            itemId: commandItemId,
+            toolCallId,
+            message: parsedApprovalResult.body || parsedApprovalResult.raw,
+          };
+          emitAgentApprovalEvent({
+            runId: ctx.params.runId,
+            ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+            data: approvalData,
+          });
+          void ctx.params.onAgentEvent?.({
+            stream: "approval",
+            data: approvalData,
+          });
+        }
+      }
+    }
+  }
+
+  if (isPatchToolName(toolName)) {
+    const patchSummary = readApplyPatchSummary(result);
+    const patchItemId = buildPatchItemId(toolCallId);
+    const summaryText = patchSummary ? buildPatchSummaryText(patchSummary) : undefined;
+    emitTrackedItemEvent(ctx, {
+      itemId: patchItemId,
+      phase: "end",
+      kind: "patch",
+      title: buildPatchItemTitle(meta),
+      status: isToolError ? "failed" : "completed",
+      name: toolName,
+      meta,
       toolCallId,
       outputChars: typeof result === "string" ? result.length : JSON.stringify(result ?? "").length,
       durationMs: toolDurationMs,

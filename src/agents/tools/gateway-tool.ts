@@ -1,16 +1,4 @@
-/**
- * gateway-tool — Agent tool for gateway lifecycle and config management
- *
- * Exposes `createGatewayTool()` which gives the LLM actions to restart the
- * gateway (via SIGUSR1), read/write/patch the runtime config with optimistic
- * concurrency (baseHash), retrieve the config JSON schema, and trigger in-place
- * updates. Config writes auto-fetch the current hash when none is supplied to
- * prevent blind overwrites. The restart path writes a sentinel file so the
- * post-restart process can deliver a completion note back to the user's channel.
- * Marked `ownerOnly` so non-owner senders cannot mutate gateway state.
- *
- * Wired in by: tool registration in the agent runner; imported as `createGatewayTool`
- */
+import { isDeepStrictEqual } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { isRestartEnabled } from "../../config/commands.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -32,7 +20,14 @@ import { callGatewayTool, readGatewayCallOptions } from "./gateway.js";
 const log = createSubsystemLogger("gateway-tool");
 
 const DEFAULT_UPDATE_TIMEOUT_MS = 20 * 60_000;
-const PROTECTED_GATEWAY_CONFIG_PATHS = ["tools.exec.ask", "tools.exec.security"] as const;
+const PROTECTED_GATEWAY_CONFIG_PATHS = [
+  "tools.exec.ask",
+  "tools.exec.security",
+  "tools.exec.safeBins",
+  "tools.exec.safeBinProfiles",
+  "tools.exec.safeBinTrustedDirs",
+  "tools.exec.strictInlineEval",
+] as const;
 
 function resolveBaseHashFromSnapshot(snapshot: unknown): string | undefined {
   if (!snapshot || typeof snapshot !== "object") {
@@ -111,7 +106,11 @@ function assertGatewayConfigMutationAllowed(params: {
           mergeObjectArraysById: true,
         }) as Record<string, unknown>);
   const changedProtectedPaths = PROTECTED_GATEWAY_CONFIG_PATHS.filter(
-    (path) => getValueAtPath(params.currentConfig, path) !== getValueAtPath(nextConfig, path),
+    (path) =>
+      !isDeepStrictEqual(
+        getValueAtPath(params.currentConfig, path),
+        getValueAtPath(nextConfig, path),
+      ),
   );
   if (changedProtectedPaths.length === 0) {
     return;
