@@ -17,6 +17,45 @@ import {
 import { loadConfig } from "../../config/config.js";
 import { withFileLock } from "../../infra/file-lock.js";
 import { AUTH_STORE_LOCK_OPTIONS, EXTERNAL_CLI_NEAR_EXPIRY_MS, log } from "./constants.js";
+
+// FORK: Track consecutive refresh failures per profile. After MAX_CONSECUTIVE
+// failures, the profile enters a cooldown where no further refresh attempts
+// are made until either (a) the cooldown expires, or (b) the store is manually
+// updated (e.g. via anthropic-oauth-login.mjs). This prevents the gateway from
+// spamming Anthropic's token endpoint during an outage and triggering a 15+ min
+// rate limit that blocks even manual re-auth attempts.
+const MAX_CONSECUTIVE_REFRESH_FAILURES = 3;
+const REFRESH_FAILURE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+const refreshFailureState = new Map<string, { count: number; lastFailedAtMs: number }>();
+
+function isRefreshInCooldown(profileId: string): boolean {
+  const state = refreshFailureState.get(profileId);
+  if (!state) {
+    return false;
+  }
+  if (state.count < MAX_CONSECUTIVE_REFRESH_FAILURES) {
+    return false;
+  }
+  return Date.now() - state.lastFailedAtMs < REFRESH_FAILURE_COOLDOWN_MS;
+}
+
+function recordRefreshFailure(profileId: string): void {
+  const state = refreshFailureState.get(profileId) ?? { count: 0, lastFailedAtMs: 0 };
+  state.count += 1;
+  state.lastFailedAtMs = Date.now();
+  refreshFailureState.set(profileId, state);
+  if (state.count >= MAX_CONSECUTIVE_REFRESH_FAILURES) {
+    log.warn("proactive refresh: entering cooldown — too many consecutive failures", {
+      profileId,
+      failures: state.count,
+      cooldownMinutes: REFRESH_FAILURE_COOLDOWN_MS / 60_000,
+    });
+  }
+}
+
+function resetRefreshFailures(profileId: string): void {
+  refreshFailureState.delete(profileId);
+}
 import {
   readCredentialFile,
   refreshAnthropicOAuthToken,
@@ -49,6 +88,22 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
       return false;
     }
 
+    // FORK: Skip if this profile has failed too many consecutive refreshes.
+    // Prevents rate-limit poisoning — the gateway was spamming the token
+    // endpoint during a 2026-04-16 outage, triggering a 15+ min Anthropic
+    // rate limit that blocked even manual re-auth.
+    if (isRefreshInCooldown(profileId)) {
+      log.info("proactive refresh: skipping — in cooldown after repeated failures", {
+        profileId,
+        cooldownRemainingMin: Math.round(
+          (REFRESH_FAILURE_COOLDOWN_MS -
+            (Date.now() - (refreshFailureState.get(profileId)?.lastFailedAtMs ?? 0))) /
+            60_000,
+        ),
+      });
+      return false;
+    }
+
     const now = Date.now();
     const cfg = loadConfig();
     const credFilePath = resolveCredentialFilePath(profileId, cfg);
@@ -78,6 +133,7 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
           type: "oauth",
         };
         saveAuthProfileStore(store, undefined);
+        resetRefreshFailures(profileId);
         log.info("proactive refresh: synced from credential file (drift sync)", {
           profileId,
           expiresInMin: Math.round((fresh.expires - now) / 60_000),
@@ -179,6 +235,7 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
             };
             saveAuthProfileStore(store, undefined);
             writeCredentialFile(credFilePath, cred.provider, refreshed.newCredentials);
+            resetRefreshFailures(profileId);
             log.info("proactive refresh: token refreshed", {
               profileId,
               expiresInMin: Math.round((refreshed.newCredentials.expires - now) / 60_000),
@@ -186,16 +243,20 @@ async function refreshProfileProactively(profileId: string): Promise<boolean> {
             return true;
           }
           // Refresh returned null — stale refresh token or API error
+          recordRefreshFailure(profileId);
           log.warn("proactive refresh: refresh returned null (likely stale refresh token)", {
             profileId,
             credentialFile: credFilePath,
             credFileExpired: fresh ? fresh.expires < now : "no file",
+            consecutiveFailures: refreshFailureState.get(profileId)?.count ?? 0,
             action: "re-run anthropic-oauth-login.mjs --profile <id> to obtain fresh tokens",
           });
         } catch (err) {
+          recordRefreshFailure(profileId);
           log.warn("proactive refresh: refresh failed", {
             profileId,
             credentialFile: credFilePath,
+            consecutiveFailures: refreshFailureState.get(profileId)?.count ?? 0,
             error: err instanceof Error ? err.message : String(err),
           });
         }
