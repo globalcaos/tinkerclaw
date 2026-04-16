@@ -98,6 +98,45 @@ Before touching any code, load your context (but be token-efficient — don't re
    - `COGNITIVE_PLUGINS_GUIDE.md`
    - `TINKER_UI_DESIGN_BIBLE.md`
 
+6. **Paper-plugin architecture** — skim this table so you know which fork features are academically documented and which plugins they map to. The papers live at `~/Documents/AI_reports/Papers/J*/` and the plugins live at `~/src/tinkerclaw/extensions/`. Papers evolve — new ones may appear between merges. The merge agent should be aware of these relationships because upstream convergence on a paper's concept (e.g. upstream adding their own memory-wiki that overlaps J1/J14) is a strategic signal, not just a merge conflict.
+
+   | Paper | Codename | Plugin | Scope (one line) |
+   |-------|----------|--------|-----------------|
+   | J1 | ENGRAM | tinkerclaw-total-recall | Lossless event-sourced memory with pointer compaction — context window as managed cache over durable storage |
+   | J2 | HIPPOCAMPUS | hippocampus | Pre-computed O(1) anchor → chunk concept index for instant retrieval of known concepts |
+   | J3 | FMI | — (conceptual) | Multi-resolution hierarchical memory using fractal indexing — not yet implemented |
+   | J4 | CORTEX | tinkerclaw-identity-persistence | Persona-preserving context layer with tiered injection and drift detection |
+   | J5 | Cerebellum | (inside total-recall) | Nightly prompt self-improvement loop — failure-driven mutation and cross-task knowledge transfer |
+   | J6 | SYNAPSE | tinkerclaw-round-table | Cross-provider adversarial debate exploiting cognitive diversity across models |
+   | J7 | LIMBIC | tinkerclaw-computational-humor | Computational humor via Koestler's bisociation in embedding space |
+   | J8 | Thalamus | — (conceptual) | Curiosity-driven learning with LoRA adapter merging — not yet implemented |
+   | J9 | AEGIS | — (design doc) | Multi-layered security framework across the safety-capability-autonomy trilemma |
+   | J10 | HIVEMIND | — (conceptual) | Hierarchical agent swarms for enterprise — not implemented (enterprise scope) |
+   | J11 | AMYGDALA | tinkerclaw-learned-intuition | Neural safety gate: ONNX networks evaluating every tool call for risk |
+   | J12 | MYELIN | (billing-gate.ts inline) | 20 budget-prompting techniques for 3-5× cost reduction |
+   | J13 | PREFRONTAL | prefrontal | Orchestration recipe engine — effort routing, anti-goldplating, CORF debate trigger |
+   | J14 | MNEMOSYNE | tinkerclaw-memory-enhancements | 4 memory wins layered on upstream memory-core: hippocampus O(1) index, task-conditioned scoring, contradiction-gate, compaction-capture |
+
+   **Why this matters for the merge agent:**
+   - When upstream adds a feature that overlaps a paper's scope (e.g. upstream's Memory-Wiki overlapping J1/J14, upstream's provider-plugin refactor overlapping J12), this is **convergence** — flag it in the features-gained report under "convergence candidates" so the user can decide whether to adopt upstream's version and retire the fork's.
+   - When upstream changes break a plugin that has a paper, the paper reference helps you understand WHY the fork code exists and whether the fix should preserve the paper's design or concede to upstream's approach.
+   - The papers are the fork's publishable assets. Protecting them during merges is protecting the user's intellectual investment. A "features lost" entry that names a paper (e.g. "gave up MNEMOSYNE's contradiction-gate because upstream changed the write path") is much more meaningful than "changed 5 lines in memory-core/manager.ts".
+   - New papers may appear in `~/Documents/AI_reports/Papers/` between merges. If you find a `J15_*` or higher directory that isn't in this table, read its README and add it to the inventory. The table in `BLUEPRINT.md` is the canonical reference; update both.
+
+7. **Key architectural facts the merge agent should know** (saves re-discovery on every run):
+
+   - **Three git repos**: `~/src/tinkerclaw/` (public fork, GitHub), `~/.openclaw/workspace/` (private jarvis-brain, GitLab), `~/src/jarvis-icu/` (private project notes, GitLab). The fork gets merged; jarvis-brain stores wiring scripts + knowledge; jarvis-icu stores plans + specs. **Never push any of them** — only commit. Jarvis handles all pushes.
+   - **Wiring script**: `~/.openclaw/workspace/scripts/apply-fork-wiring.mjs` — 24+ patch functions that re-insert fork hooks after upstream merges wipe them. Each patch has an anchor regex and a replacement block. When an anchor fails, update the regex, don't hand-patch the target file (Cardinal Rule 3).
+   - **Native addon deps**: `better-sqlite3`, `bindings`, `opusscript`, `@discordjs/opus` must ALL be in `pnpm.onlyBuiltDependencies` in package.json. Upstream merges wipe this array. After any merge: verify + `pnpm rebuild better-sqlite3 opusscript @discordjs/opus`. Also ensure `better-sqlite3` and `bindings` are in `explicitNeverBundleDependencies` in `tsdown.config.ts`.
+   - **Zod schema merge gap**: the fork adds `engram`, `triggerPrefix`, `selfChatMode`, `syncFullHistory`, `ackMessage` to zod whatsapp/agent schemas. Upstream merges revert the schema to `.strict()` which rejects these fields. Fix: add them back AND regenerate `bundled-channel-config-metadata.generated.ts` via `node --import tsx scripts/generate-bundled-channel-config-metadata.ts`. Without the regeneration, the AJV validator still uses the old schema even after the zod source is patched.
+   - **Compaction mode "engram"**: the fork's `agents.defaults.compaction.mode` can be `"engram"` which is not in upstream's zod union. File: `src/config/zod-schema.agent-defaults.ts`. Add `z.literal("engram")` to the compaction mode union.
+   - **Plugin manifest staging**: `scripts/runtime-postbuild.mjs` must call `copyStaticExtensionAssets` BEFORE `stageBundledPluginRuntime` (not after — upstream ordering is wrong for the fork). Also `scripts/stage-bundled-plugin-runtime.mjs` `shouldCopyRuntimeFile` must have `return true` with a body (upstream sometimes loses the return statement during merges, turning the function into a no-op).
+   - **Plugin entries**: every fork plugin in `plugins.allow` also needs a `plugins.entries.<name>` block in `openclaw.json` to actually load. Presence in `allow` alone is insufficient.
+   - **Session-resume imports**: `src/auto-reply/reply/get-reply.ts` needs `import { clearSessionResume, writeSessionResume } from "../../infra/session-resume.js"` — upstream drops this import on every merge.
+   - **emitAgentEvent imports**: `src/auto-reply/reply/followup-runner.ts` and `src/agents/pi-embedded-runner/run/auth-controller.ts` both need `emitAgentEvent` in their agent-events import — upstream's versions don't include it.
+   - **sessionIdsByKey on embeddedRunState**: `src/agents/pi-embedded-runner/runs.ts` singleton initializer needs `sessionIdsByKey: new Map<string, string>()` — upstream doesn't declare this field, and the fork uses it for cross-session run resolution.
+   - **WhatsApp backend**: the fork uses Baileys by default (`OPENCLAW_WHATSAPP_BACKEND=baileys`). The `session-wm.ts` file uses lazy dynamic `import()` for whatsmeow-node so the gateway boots even without the optional Go addon.
+
 ## Phase A: Upstream reconnaissance — read the story, then plan the merge
 
 **Top-down first.** Before touching the merge, READ what upstream has been doing since the last sync and understand it as a *story*. You are not a script runner; you are a merge strategist. the user will judge this cron by "what features did we gain today?", not "how many commits landed". The burnt tokens must produce a readable answer to that question.
