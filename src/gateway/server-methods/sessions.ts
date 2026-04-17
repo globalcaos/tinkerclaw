@@ -379,8 +379,14 @@ async function interruptSessionRunIfActive(params: {
     typeof params.sessionId === "string" && params.sessionId
       ? isEmbeddedPiRunActive(params.sessionId)
       : false;
+  // FORK: the ReplyRunRegistry can hold a completed-but-not-yet-cleared
+  // ReplyOperation for a second or two after the embedded runner has
+  // already ended (followupRunner's finally block calls
+  // replyOperation.complete()). sessions.steer must wait on THIS state too,
+  // or the next createReplyOperation throws ReplyRunAlreadyActiveError.
+  const hasRegistryEntry = replyRunRegistry.isActive(params.canonicalKey);
 
-  if (!hasTrackedRun && !hasEmbeddedRun) {
+  if (!hasTrackedRun && !hasEmbeddedRun && !hasRegistryEntry) {
     return { interrupted: false };
   }
 
