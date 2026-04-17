@@ -10,6 +10,7 @@ import {
 } from "../../agents/pi-embedded-runner/runs.js";
 import { compactEmbeddedPiSession } from "../../agents/pi-embedded.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue/cleanup.js";
+import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
 import { normalizeReasoningLevel, normalizeThinkLevel } from "../../auto-reply/thinking.js";
 import { loadConfig } from "../../config/config.js";
 import {
@@ -429,6 +430,26 @@ async function interruptSessionRunIfActive(params: {
         error: errorShape(
           ErrorCodes.UNAVAILABLE,
           `Session ${params.requestedKey} is still active; try again in a moment.`,
+        ),
+      };
+    }
+  }
+
+  // FORK: Also wait for the ReplyRunRegistry to idle. Embedded-runner
+  // "ended" fires when the stream closes, but the ReplyOperation isn't
+  // removed from the registry until after followupRunner's finally block
+  // calls replyOperation.complete(). In that window, the next
+  // createReplyOperation throws ReplyRunAlreadyActiveError — which
+  // bubbles up as the "Previous run is still shutting down" banner.
+  // Waiting on the registry's own idle signal closes that gap.
+  {
+    const laneIdle = await replyRunRegistry.waitForIdle(params.canonicalKey, 5_000);
+    if (!laneIdle) {
+      return {
+        interrupted: true,
+        error: errorShape(
+          ErrorCodes.UNAVAILABLE,
+          `Session ${params.requestedKey} reply-run-registry still active; try again in a moment.`,
         ),
       };
     }
