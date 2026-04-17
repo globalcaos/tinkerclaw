@@ -188,28 +188,49 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
 
   const prompt = loadPrompt(extensionDir);
 
-  // Delay to let the current reply operation complete and release the session lock.
-  // The reply-run-registry throws ReplyRunAlreadyActiveError if a run is still active.
-  // 5 seconds gives enough time for tool calls, compaction flush, and lifecycle events.
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  // Brief wait to let the main turn's final events drain. With sessions.steer
+  // (below) we then interrupt any lingering active-run registry entry — this
+  // is the only reliable way to avoid ReplyRunAlreadyActiveError when the
+  // session-lane unwind trails the provider-side `done` event (seen with the
+  // cc-bridge persistent-subprocess provider, among others).
+  await new Promise((resolve) => setTimeout(resolve, 1500));
 
   try {
     // Dynamic import to avoid bundling the full gateway call module at parse time
     const { callGateway } = await import("openclaw/plugin-sdk/testing");
 
-    log.info("[fractal-reflection] sending via sessions.send RPC");
-
-    await callGateway<{ status: string }>({
-      method: "sessions.send",
-      params: {
-        key: sessionKey,
-        message: prompt,
-      },
-      timeoutMs: 120_000,
-    });
-
-    log.info("[fractal-reflection] reflection dispatched");
-    return true;
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      log.info(
+        `[fractal-reflection] sending via sessions.steer RPC (attempt ${attempt}/${maxAttempts})`,
+      );
+      try {
+        await callGateway<{ status: string }>({
+          method: "sessions.steer",
+          params: {
+            key: sessionKey,
+            message: prompt,
+          },
+          timeoutMs: 120_000,
+        });
+        log.info("[fractal-reflection] reflection dispatched");
+        return true;
+      } catch (err) {
+        const msg = String(err ?? "");
+        const isBusy =
+          /Reply run already active/i.test(msg) ||
+          /Previous run is still shutting down/i.test(msg);
+        if (!isBusy || attempt === maxAttempts) {
+          log.info(`[fractal-reflection] failed: ${msg}`);
+          return false;
+        }
+        log.info(
+          `[fractal-reflection] lane busy, retrying in 2s (attempt ${attempt}/${maxAttempts})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    return false;
   } catch (err) {
     log.info(`[fractal-reflection] failed: ${String(err)}`);
     return false;
