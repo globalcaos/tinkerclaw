@@ -1,0 +1,15 @@
+{
+  "name": "@openclaw/tinkerclaw-cc-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FORK: OpenClaw provider that drives the real Claude Code CLI as a persistent subprocess per session. Inherits ~/.claude/.credentials.json OAuth — flat-rate entitlement, no API key.",
+  "type": "module",
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

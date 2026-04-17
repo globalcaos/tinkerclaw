@@ -17,6 +17,53 @@ When a conflict occurs during upstream merge, it passes through these resolvers 
 5. **Wiring script** — `apply-fork-wiring.mjs` re-applies fork hooks post-merge
 6. **LLM agent** — cron agent (opus, 60min) resolves remaining conflicts
 
+## 2026-04-17 — Claude Code bridge (Enchanted Mountain)
+
+New fork-only plugin `extensions/tinkerclaw-cc-bridge/` registers a provider
+`claude-code` that drives the real `claude` CLI as a persistent subprocess
+per session. Inherits the Claude Code OAuth at `~/.claude/.credentials.json`
+— flat-rate entitlement, no API key.
+
+Why: Anthropic blocks non-Claude-Code OAuth server-side (bans since 2026-01-05
+for spoofed clients; third-party harnesses dropped from subscription coverage
+2026-04-04). Using the real binary legitimately, in a session-keyed worker
+pool, avoids both the policy landmine and the Agent SDK's 12-second per-turn
+cold start (SDK spawns fresh `claude` per `query()`; we keep it warm).
+
+Plugin contents (all fork-only, so no merge collisions expected):
+
+- `index.ts` — registers provider `claude-code`
+- `src/worker.ts` — one persistent `claude --input-format stream-json --output-format stream-json` subprocess
+- `src/worker-pool.ts` — `Map<sessionKey, Worker>`, killAll on gateway shutdown
+- `src/stream.ts` — NDJSON events → pi-ai `AssistantMessageEvent` shim
+- `src/protocol.ts` — reverse-engineered stream-json stdin/stdout schema (isolated for future Anthropic protocol drift)
+- `src/auth.ts` — validates `~/.claude/.credentials.json`
+
+Config additions in `~/.openclaw/openclaw.json`:
+
+- `plugins.allow` += `"tinkerclaw-cc-bridge"`
+- `plugins.entries.tinkerclaw-cc-bridge.enabled = true`
+- `auth.profiles.claude-code:oauth`
+- `auth.order.claude-code = ["claude-code:oauth"]`
+- `models.providers.claude-code` (baseUrl `local://claude-cli`, 3 models)
+- `agents.defaults.model.primary = "claude-code/claude-opus-4-7"`
+
+Fallbacks kept: Ollama gemma4:26b for emergency only. `anthropic:cli-gm`
+and `anthropic:api` profiles left in auth store but out of main rotation.
+
+Risks / known-gaps:
+
+- stream-json stdin schema is undocumented (issue anthropics/claude-code#24594
+  closed "not planned"). Schema isolated in `src/protocol.ts` for easy update.
+- First turn per session still pays ~12s cold spawn; every subsequent turn
+  within the session reuses the warm worker (~network latency only).
+- ToS gray zone — Anthropic explicitly disallows subscription OAuth from
+  non-CC code (including the Agent SDK). Personal single-user use has not
+  been banned in the wild but is policy-forbidden. Accepted risk.
+
+No core files modified. No new fork patch functions needed in the wiring
+script. Plugin lives entirely under `extensions/tinkerclaw-cc-bridge/`.
+
 ## 2026-04-15 — Silent-failure trio
 
 Three independent root causes surfaced while debugging "Jarvis silent after
