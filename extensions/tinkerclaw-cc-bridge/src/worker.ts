@@ -147,8 +147,13 @@ export class ClaudeCodeWorker extends EventEmitter {
         log.warn(`unparseable stdout line [${this.sessionKey}]: ${line.slice(0, 300)}`);
         continue;
       }
-      const logLine = JSON.stringify(parsed).slice(0, 400);
-      log.info(`stdout[${this.sessionKey}] ${logLine}`);
+      // Log every stdout NDJSON line at debug level. Turn it on via
+      // DEBUG=tinkerclaw-cc-bridge (or the subsystem's `verbose`) when you're
+      // tracing stream-json protocol issues; silent in normal operation.
+      if (log.debug) {
+        const logLine = JSON.stringify(parsed).slice(0, 400);
+        log.debug(`stdout[${this.sessionKey}] ${logLine}`);
+      }
       if (parsed.type === "system" && (parsed as { subtype?: string }).subtype === "init") {
         const sid = (parsed as { session_id?: string }).session_id;
         if (typeof sid === "string") {
