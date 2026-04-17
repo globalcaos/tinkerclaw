@@ -245,7 +245,9 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
         const msg = String(err ?? "");
         const isBusy =
           /Reply run already active/i.test(msg) ||
-          /Previous run is still shutting down/i.test(msg);
+          /Previous run is still shutting down/i.test(msg) ||
+          /reply-run-registry still active/i.test(msg) ||
+          /errorCode=UNAVAILABLE/i.test(msg);
         if (!isBusy || attempt === maxAttempts) {
           log.info(`[fractal-reflection] failed: ${msg}`);
           return false;
