@@ -14,7 +14,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
-import { DEFAULT_BINARY, DEFAULT_DISALLOWED_TOOLS } from "./defaults.js";
+import { DEFAULT_BINARY, DEFAULT_DISALLOWED_TOOLS, DEFAULT_PERMISSION_MODE } from "./defaults.js";
 import {
   type CcStreamStdoutLine,
   type CcStreamStdoutResult,
@@ -79,6 +79,8 @@ export class ClaudeCodeWorker extends EventEmitter {
       "stream-json",
       "--verbose",
       "-p",
+      "--permission-mode",
+      DEFAULT_PERMISSION_MODE,
     ];
     const disallowed = this.params.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
     if (disallowed.length > 0) {

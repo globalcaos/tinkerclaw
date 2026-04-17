@@ -15,32 +15,32 @@ export const DEFAULT_CWD = path.join(homedir(), ".openclaw", "jarvis-workspace")
 export const CREDENTIALS_PATH = path.join(homedir(), ".claude", ".credentials.json");
 
 /**
- * Tools we disable inside claude. OpenClaw already runs its own tool loop via
- * pi-embedded-runner; we want claude to produce TEXT ONLY for v0.1.
- * Everything in the built-in Claude Code tool set that could mutate state or
- * invoke subagents lives here.
+ * Tools we disable inside claude. Kept minimal on purpose: Jarvis needs
+ * Bash/Read/Write/Edit/Grep/Glob to do real work (run `jarvis "<text>"` for
+ * voice, read memory files, write notes, etc.). We disable only tools that
+ * are actively harmful in an agent-loop context: Agent (subagent spawning
+ * would fork claude processes), ExitPlanMode / AskUserQuestion / TodoWrite
+ * (IDE-session-only UX), TaskCreate/TaskUpdate/... (Claude Code's own task
+ * system, not our session's).
+ *
+ * If a specific tool misbehaves, add it here — but the default is PERMISSIVE:
+ * Jarvis should have his full shell unless there's a specific reason not to.
  */
 export const DEFAULT_DISALLOWED_TOOLS = [
-  "Bash",
-  "Read",
-  "Write",
-  "Edit",
-  "Grep",
-  "Glob",
   "Agent",
-  "NotebookEdit",
-  "WebFetch",
-  "WebSearch",
-  "TodoWrite",
+  "ExitPlanMode",
   "AskUserQuestion",
+  "TodoWrite",
   "TaskCreate",
   "TaskUpdate",
   "TaskList",
   "TaskGet",
   "TaskStop",
   "TaskOutput",
-  "ExitPlanMode",
 ];
+
+/** Permission mode passed to claude so it doesn't wait for human approval on tool calls. */
+export const DEFAULT_PERMISSION_MODE = "bypassPermissions" as const;
 
 export const DEFAULT_MODELS = [
   { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true },
