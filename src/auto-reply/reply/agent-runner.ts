@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { hasConfiguredModelFallbacks } from "../../agents/agent-scope.js";
+import { hasConfiguredModelFallbacks, resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
@@ -18,7 +18,6 @@ import { resolveSessionTranscriptCandidates } from "../../gateway/session-utils.
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
-import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import {
   estimateUsageCost,
@@ -54,11 +53,6 @@ import { resolveQueuedReplyExecutionConfig } from "./agent-runner-utils.js";
 import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveEffectiveBlockStreamingConfig } from "./block-streaming.js";
 import { createFollowupRunner } from "./followup-runner.js";
-import {
-  createReplyOperation,
-  type ReplyOperation,
-  ReplyRunAlreadyActiveError,
-} from "./reply-run-registry.js";
 import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-routing.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
@@ -69,6 +63,11 @@ import {
   type QueueSettings,
 } from "./queue.js";
 import { createReplyMediaPathNormalizer } from "./reply-media-paths.js";
+import {
+  createReplyOperation,
+  type ReplyOperation,
+  ReplyRunAlreadyActiveError,
+} from "./reply-run-registry.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
 import { createTypingSignaler } from "./typing-mode.js";
@@ -1551,7 +1550,10 @@ export async function runReplyAgent(params: {
       // Inject post-compaction workspace context for the next agent turn
       if (sessionKey) {
         const workspaceDir = process.cwd();
-        readPostCompactionContext(workspaceDir, cfg)
+        readPostCompactionContext(workspaceDir, {
+          cfg,
+          agentId: resolveSessionAgentId({ sessionKey, config: cfg }),
+        })
           .then((contextContent) => {
             if (contextContent) {
               enqueueSystemEvent(contextContent, { sessionKey });
