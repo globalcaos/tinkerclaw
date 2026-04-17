@@ -199,13 +199,13 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
     // Dynamic import to avoid bundling the full gateway call module at parse time
     const { callGateway } = await import("openclaw/plugin-sdk/testing");
 
-    const maxAttempts = 3;
+    const maxAttempts = 6;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       log.info(
         `[fractal-reflection] sending via sessions.steer RPC (attempt ${attempt}/${maxAttempts})`,
       );
       try {
-        await callGateway<{ status: string }>({
+        const response = await callGateway<Record<string, unknown>>({
           method: "sessions.steer",
           params: {
             key: sessionKey,
@@ -213,6 +213,32 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
           },
           timeoutMs: 120_000,
         });
+        // sessions.steer returns the gateway's reply to the new turn. When the
+        // reply-run-registry still has the main turn's just-finished operation,
+        // the handler catches ReplyRunAlreadyActiveError and returns a banner
+        // payload AS the reply (not as an RPC error). We detect that payload
+        // and retry until the lane truly idles.
+        const responseText =
+          typeof (response as { text?: unknown })?.text === "string"
+            ? ((response as { text: string }).text ?? "")
+            : JSON.stringify(response ?? "");
+        const bannerMatch =
+          /Previous run is still shutting down/i.test(responseText) ||
+          /Reply run already active/i.test(responseText);
+        if (bannerMatch) {
+          if (attempt === maxAttempts) {
+            log.info(
+              `[fractal-reflection] lane stayed busy across ${maxAttempts} attempts; giving up`,
+            );
+            return false;
+          }
+          const backoffMs = 2000 + attempt * 500;
+          log.info(
+            `[fractal-reflection] banner reply detected, retrying in ${backoffMs}ms (attempt ${attempt}/${maxAttempts})`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
         log.info("[fractal-reflection] reflection dispatched");
         return true;
       } catch (err) {
@@ -224,10 +250,11 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
           log.info(`[fractal-reflection] failed: ${msg}`);
           return false;
         }
+        const backoffMs = 2000 + attempt * 500;
         log.info(
-          `[fractal-reflection] lane busy, retrying in 2s (attempt ${attempt}/${maxAttempts})`,
+          `[fractal-reflection] lane busy (RPC error), retrying in ${backoffMs}ms (attempt ${attempt}/${maxAttempts})`,
         );
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
       }
     }
     return false;
