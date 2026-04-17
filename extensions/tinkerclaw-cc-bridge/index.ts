@@ -110,9 +110,11 @@ export default definePluginEntry({
         "Run `claude` once interactively to populate ~/.claude/.credentials.json.",
     });
 
-    // v0.1: warmOnBoot is declared in config-schema but not yet acted upon.
-    // Future: pre-spawn workers for listed session keys so the first real
-    // turn skips the ~12s cold-start.
+    // warmOnBoot is declared in config-schema but deferred: the system prompt
+    // is assembled per-turn by memory plugins, and the current pool only
+    // honors the prompt from the first spawn. Pre-warming needs the pool to
+    // detect a prompt change and respawn with the new one. Tracked as
+    // follow-up work; eagerly reading the config now would be misleading.
     void pluginConfig.warmOnBoot;
   },
 });
