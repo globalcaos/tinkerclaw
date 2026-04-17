@@ -2426,6 +2426,91 @@ function extractFilePaths(text: string): string[] {
   return matches ? [...new Set(matches)] : [];
 }
 
+// FORK 2026-04-17: ErrorEnvelope rendering ---------------------------------
+// See `src/fork/error-envelope.ts` on the server side. Servers deliver a
+// structured envelope as an assistant-text payload prefixed with the sentinel
+// `__ERR_ENV__:` so it flows through the normal assistant-turn path without
+// triggering any special-case error branches in the middle layers. Here we
+// detect the sentinel, parse, and render a rich error bubble (red if fatal,
+// orange if the system can recover on its own — per Design Bible §11.12).
+type EnvelopeLlm = {
+  provider?: string;
+  model?: string;
+  authProfileId?: string;
+  requestId?: string;
+  httpStatus?: number;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  durationMs?: number;
+};
+type Envelope = {
+  kind: "error";
+  id: string;
+  fatal: boolean;
+  category: string;
+  headline: string;
+  explanation?: string;
+  suggestedActions?: string[];
+  icon: string;
+  llm?: EnvelopeLlm;
+  sessionKey?: string;
+  raw?: string;
+  details?: Record<string, unknown>;
+  timestamp?: string;
+};
+const ERR_ENV_PREFIX = "__ERR_ENV__:";
+function extractEnvelope(text: string): Envelope | null {
+  const trimmed = text?.trimStart() ?? "";
+  if (!trimmed.startsWith(ERR_ENV_PREFIX)) return null;
+  const jsonPart = trimmed.slice(ERR_ENV_PREFIX.length).trimEnd();
+  try {
+    const parsed = JSON.parse(jsonPart) as Envelope;
+    if (parsed?.kind === "error" && typeof parsed.headline === "string") {
+      return parsed;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+function renderEnvelope(env: Envelope): string {
+  const variantClass = env.fatal ? "envelope-fatal" : "envelope-recoverable";
+  const actions =
+    env.suggestedActions && env.suggestedActions.length > 0
+      ? `<ul class="env-actions">${env.suggestedActions.map((a) => `<li>${md(a)}</li>`).join("")}</ul>`
+      : "";
+  const kvEntries: string[] = [];
+  if (env.llm?.provider) kvEntries.push(`provider: ${env.llm.provider}`);
+  if (env.llm?.model) kvEntries.push(`model: ${env.llm.model}`);
+  if (env.llm?.authProfileId) kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);
+  if (env.llm?.httpStatus !== undefined) kvEntries.push(`http_status: ${env.llm.httpStatus}`);
+  if (env.llm?.providerErrorCode) kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);
+  if (env.llm?.requestId) kvEntries.push(`request_id: ${env.llm.requestId}`);
+  if (env.llm?.durationMs !== undefined) kvEntries.push(`duration_ms: ${env.llm.durationMs}`);
+  if (env.sessionKey) kvEntries.push(`session: ${env.sessionKey}`);
+  if (env.timestamp) kvEntries.push(`timestamp: ${env.timestamp}`);
+  if (env.details) {
+    for (const [k, v] of Object.entries(env.details)) {
+      if (v !== undefined && v !== null) kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+    }
+  }
+  const kv = kvEntries.length > 0 ? `<div class="env-kv">${esc(kvEntries.join("\n"))}</div>` : "";
+  const raw = env.raw ? `<div class="env-kv">${esc(env.raw)}</div>` : "";
+  const tech =
+    kv || raw
+      ? `<details class="env-tech"><summary>technical details</summary>${kv}${raw}</details>`
+      : "";
+  const explanation = env.explanation ? `<div class="env-explanation">${md(env.explanation)}</div>` : "";
+  return (
+    `<div class="msg msg-envelope ${variantClass}" data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
+    `<div class="env-header"><span class="env-icon">${esc(env.icon ?? "⚠️")}</span><span class="env-headline">${esc(env.headline)}</span></div>` +
+    explanation +
+    actions +
+    tech +
+    `</div>`
+  );
+}
+
 function renderSystemMsg(text: string, idx: number): string {
   const sid = `s${idx}`;
   const sysExp = expandedTools.has(sid);
@@ -2543,6 +2628,15 @@ function renderMsg(
         }
       }
     } else if (role === "assistant") {
+      // FORK 2026-04-17: ErrorEnvelope detection ahead of everything else.
+      // Any assistant text prefixed with __ERR_ENV__:{json} gets rendered as a
+      // rich envelope bubble (red or orange per Design Bible §11.12) instead
+      // of going through the generic error/warning branches below.
+      const envelope = extractEnvelope(text);
+      if (envelope) {
+        h += renderEnvelope(envelope);
+        return h;
+      }
       const errorClass = msg._isError ? " msg-error" : "";
       const retryBtn =
         msg._isError && msg._retryProvider
@@ -2560,8 +2654,17 @@ function renderMsg(
         return h;
       }
       // FORK: Error messages — centered red bubble (not left-aligned assistant)
-      // Detect by flag OR by content (history-loaded messages lack _isError flag)
-      if (msg._isError || text.startsWith("⚠️ Agent failed") || text.startsWith("⚠ Agent failed")) {
+      // Detect by flag OR by content (history-loaded messages lack _isError flag).
+      // The isError flag on reply payloads doesn't propagate through the broadcast
+      // layer (server-chat.ts constructs messages from the text buffer, not the
+      // payload), so we pattern-match on known error prefixes here.
+      if (
+        msg._isError ||
+        text.startsWith("⚠️ Agent failed") ||
+        text.startsWith("⚠ Agent failed") ||
+        text.includes("Previous run is still shutting down") ||
+        text.includes("All models failed")
+      ) {
         h += `<div class="msg-overload-bubble exhausted">${md(text)}${retryBtn}</div>`;
         return h;
       }
@@ -2643,6 +2746,12 @@ function renderMsg(
           }
         }
       } else if (role === "assistant") {
+        // FORK 2026-04-17: same ErrorEnvelope detection as above.
+        const envelope2 = extractEnvelope(text);
+        if (envelope2) {
+          h += renderEnvelope(envelope2);
+          return h;
+        }
         const errorClass = msg._isError ? " msg-error" : "";
         const retryBtn =
           msg._isError && msg._retryProvider
@@ -2659,11 +2768,12 @@ function renderMsg(
           return h;
         }
         // FORK: Error messages — centered red bubble (not left-aligned assistant)
-        // Detect by flag OR by content (history-loaded messages lack _isError flag)
         if (
           msg._isError ||
           text.startsWith("⚠️ Agent failed") ||
-          text.startsWith("⚠ Agent failed")
+          text.startsWith("⚠ Agent failed") ||
+          text.includes("Previous run is still shutting down") ||
+          text.includes("All models failed")
         ) {
           h += `<div class="msg-overload-bubble exhausted">${md(text)}${retryBtn}</div>`;
           return h;

@@ -16,6 +16,7 @@ import {
 } from "@mariozechner/pi-ai";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { buildErrorEnvelope } from "../../../src/fork/error-envelope.js";
 import { DEFAULT_CWD, DEFAULT_DISALLOWED_TOOLS, PROVIDER_ID } from "./defaults.js";
 import type {
   CcContentBlock,
@@ -280,53 +281,113 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
 
         const result = finalLine as CcStreamStdoutResult;
         const usage = buildUsage(result.usage);
-        const stopReason: StopReason = result.is_error ? "error" : "stop";
 
         log.info(
           `turn result sessionKey=${sessionKey} subtype=${result.subtype} is_error=${result.is_error} num_turns=${result.num_turns} duration_ms=${result.duration_ms} result_text=${(result.result ?? "").slice(0, 500)}`,
         );
 
-        const finalMessage: AssistantMessage & { errorMessage?: string } = {
+        // On provider error (e.g. 401 auth, 400 billing), build a structured
+        // ErrorEnvelope and emit it as a TEXT payload so it flows through the
+        // normal assistant-turn path (no incomplete-turn eraser, no payload=0
+        // path). The UI parses the __ERR_ENV__ sentinel and renders rich.
+        if (result.is_error && typeof result.result === "string" && result.result.trim()) {
+          const rawErr = result.result.trim();
+          const envelope = buildErrorEnvelope({
+            raw: rawErr,
+            sessionKey,
+            llm: {
+              provider: modelInfo.provider,
+              model: modelInfo.id,
+              durationMs: result.duration_ms,
+            },
+          });
+          // Flush any partial content we may have streamed, then emit the
+          // envelope-carrying text block as the turn's assistant content.
+          pushStart();
+          if (thinkingStarted) pushThinkingEnd();
+          pushTextStart();
+          const envelopeText = `__ERR_ENV__:${JSON.stringify(envelope)}`;
+          accumulatedText += envelopeText;
+          stream.push({
+            type: "text_delta",
+            contentIndex: textIndex(),
+            delta: envelopeText,
+            partial: buildPartial(),
+          });
+          pushTextEnd();
+
+          const finalMessage: AssistantMessage = {
+            role: "assistant",
+            content: buildContent(),
+            stopReason: "stop",
+            api: modelInfo.api,
+            provider: modelInfo.provider,
+            model: modelInfo.id,
+            usage,
+            timestamp: Date.now(),
+          };
+          stream.push({ type: "done", reason: "stop", message: finalMessage });
+          return;
+        }
+
+        const finalMessage: AssistantMessage = {
           role: "assistant",
           content: buildContent(),
-          stopReason,
+          stopReason: "stop",
           api: modelInfo.api,
           provider: modelInfo.provider,
           model: modelInfo.id,
           usage,
           timestamp: Date.now(),
         };
-        if (result.is_error && typeof result.result === "string" && result.result.trim()) {
-          finalMessage.errorMessage = result.result;
-        }
 
         if (log.debug) {
           log.debug(
-            `emit done reason=${stopReason === "error" ? "error" : "stop"} content.len=${finalMessage.content.length} text_block=${finalMessage.content.some((c) => (c as { type?: string }).type === "text")}`,
+            `emit done reason=stop content.len=${finalMessage.content.length} text_block=${finalMessage.content.some((c) => (c as { type?: string }).type === "text")}`,
           );
         }
-        stream.push({
-          type: "done",
-          reason: stopReason === "error" ? "error" : "stop",
-          message: finalMessage,
-        });
+        stream.push({ type: "done", reason: "stop", message: finalMessage });
       } catch (err) {
         worker.off("stream_line", onStreamLine);
-        log.error(`claude-code turn failed: ${formatErrorMessage(err)}`);
+        const rawErr = formatErrorMessage(err);
+        log.error(`claude-code turn failed: ${rawErr}`);
+        // Same envelope-as-text trick as the is_error path: deliver the
+        // error as a normal assistant turn carrying the __ERR_ENV__ sentinel
+        // so the UI can render it as a red (or orange if recoverable) bubble
+        // with full detail instead of a generic "Agent couldn't generate a
+        // response" incomplete-turn banner.
+        const envelope = buildErrorEnvelope({
+          raw: rawErr,
+          sessionKey,
+          llm: {
+            provider: modelInfo.provider,
+            model: modelInfo.id,
+          },
+        });
+        pushStart();
+        pushTextStart();
+        const envelopeText = `__ERR_ENV__:${JSON.stringify(envelope)}`;
+        accumulatedText += envelopeText;
         stream.push({
-          type: "error",
-          reason: "error",
-          error: {
+          type: "text_delta",
+          contentIndex: textIndex(),
+          delta: envelopeText,
+          partial: buildPartial(),
+        });
+        pushTextEnd();
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: {
             role: "assistant",
-            content: [],
-            stopReason: "error",
-            errorMessage: formatErrorMessage(err),
+            content: buildContent(),
+            stopReason: "stop",
             api: modelInfo.api,
             provider: modelInfo.provider,
             model: modelInfo.id,
             usage: buildUsage(undefined),
             timestamp: Date.now(),
-          } as AssistantMessage & { stopReason: "error"; errorMessage: string },
+          },
         });
       } finally {
         stream.end();
