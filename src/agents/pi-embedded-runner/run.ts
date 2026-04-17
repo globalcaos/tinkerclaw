@@ -384,6 +384,8 @@ export async function runEmbeddedPiAgent(
         stopRuntimeAuthRefreshTimer,
       } = createEmbeddedRunAuthController({
         config: params.config,
+        runId: params.runId,
+        sessionKey: params.sessionKey ?? "",
         agentDir,
         workspaceDir: resolvedWorkspace,
         authStore,
