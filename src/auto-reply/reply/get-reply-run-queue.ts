@@ -1,3 +1,4 @@
+import { buildErrorEnvelope } from "../../fork/error-envelope.js";
 import { logVerbose } from "../../globals.js";
 import type { ReplyPayload } from "../types.js";
 import type { ActiveRunQueueAction } from "./queue-policy.js";
@@ -42,15 +43,22 @@ export async function resolvePreparedReplyQueueState(params: {
     const stuckSessionId =
       refreshedBusyState.activeSessionId ?? params.activeSessionId ?? "<unknown>";
     const streaming = refreshedBusyState.isStreaming ? "streaming" : "not streaming";
+    // FORK: deliver the busy banner as a structured ErrorEnvelope so the UI
+    // can render it rich (icon + fatal=false → orange) instead of as plain red.
+    const envelope = buildErrorEnvelope({
+      code: "lane_busy",
+      sessionKey: params.sessionKey ?? params.sessionId,
+      details: {
+        activeSessionId: stuckSessionId,
+        streaming: refreshedBusyState.isStreaming,
+        waitedMs,
+        state: streaming,
+      },
+    });
     return {
       kind: "reply",
       reply: {
-        // FORK: isError renders as a red centered banner in Tinker UI (§ Bible)
-        text:
-          `⚠️ Previous run is still shutting down. ` +
-          `session=${params.sessionKey ?? params.sessionId} ` +
-          `active_run=${stuckSessionId} ${streaming} ` +
-          `waited=${waitedMs}ms — try again in a moment.`,
+        text: `__ERR_ENV__:${JSON.stringify(envelope)}`,
         isError: true,
       },
     };

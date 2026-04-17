@@ -62,6 +62,7 @@ import {
   type FollowupRun,
   type QueueSettings,
 } from "./queue.js";
+import { buildErrorEnvelope } from "../../fork/error-envelope.js";
 import { createReplyMediaPathNormalizer } from "./reply-media-paths.js";
 import {
   createReplyOperation,
@@ -1078,14 +1079,18 @@ export async function runReplyAgent(params: {
     if (error instanceof ReplyRunAlreadyActiveError) {
       typing.cleanup();
       const errMsg = (error as Error).message ?? "";
-      const detail = errMsg ? ` detail=${errMsg.slice(0, 300)}` : "";
+      // FORK: ErrorEnvelope carries full detail; UI picks a friendly icon,
+      // orange styling (fatal=false), and the "wait and resend" hint.
+      const envelope = buildErrorEnvelope({
+        code: "reply_run_already_active",
+        raw: errMsg,
+        sessionKey: replySessionKey ?? followupRun.run.sessionKey ?? undefined,
+        details: {
+          thisRunId: followupRun.run.sessionId ?? undefined,
+        },
+      });
       return {
-        // FORK: isError renders as a red centered banner in Tinker UI (§ Bible)
-        text:
-          `⚠️ Previous run is still shutting down. ` +
-          `session=${replySessionKey ?? followupRun.run.sessionKey ?? "?"} ` +
-          `this_runId=${followupRun.run.sessionId ?? "?"}${detail} ` +
-          `— try again in a moment.`,
+        text: `__ERR_ENV__:${JSON.stringify(envelope)}`,
         isError: true,
       };
     }
