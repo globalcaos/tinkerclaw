@@ -1,0 +1,314 @@
+/**
+ * FORK: unified error envelope for Tinker UI.
+ *
+ * An `ErrorEnvelope` replaces the current pattern of "isError:true + raw text"
+ * with a structured object carrying everything the UI needs to render a rich,
+ * actionable error bubble: the fatal/recoverable flag (red vs orange per the
+ * Design Bible), provider/model when the error came from an LLM call, the raw
+ * HTTP status and provider error code, a human-readable explanation, a list of
+ * suggested actions, and the original request id for bug reports.
+ *
+ * Conventions:
+ *   - `kind: "error"` — discriminator so UI can route envelopes through the
+ *     error renderer instead of the normal assistant-text renderer.
+ *   - `fatal: true`  — red, blocks conversation until user acts.
+ *   - `fatal: false` — orange, auto-recovering (overload retry, fallback, etc).
+ *   - `icon` — emoji for variety; picked at build time from a small pool keyed
+ *     on the error type.
+ *   - `details` — a free-form record so sites can stuff in whatever extra
+ *     context they have (cooldown remaining, attempt number, fallback chain...).
+ *
+ * Emitted by: worker streams (cc-bridge, ollama, anthropic), agent-runner
+ * banners, get-reply-run-queue busy banners.
+ * Rendered by: tinker-ui/src/app.ts.
+ */
+
+export type MessageKind = "jarvis" | "user" | "error";
+
+export type ErrorCategory =
+  | "auth"
+  | "billing"
+  | "rate_limit"
+  | "overload"
+  | "network"
+  | "timeout"
+  | "provider_error"
+  | "tool"
+  | "compaction"
+  | "busy"
+  | "generic";
+
+export interface LlmCallMeta {
+  provider: string;
+  model: string;
+  authProfileId?: string;
+  requestId?: string;
+  httpStatus?: number;
+  providerErrorCode?: string;
+  providerErrorMessage?: string;
+  durationMs?: number;
+}
+
+export interface ErrorEnvelope {
+  kind: "error";
+  /** Stable ID for deduplication and retry targeting. */
+  id: string;
+  /** UX-critical: red vs orange. True = user action required. */
+  fatal: boolean;
+  /** One of the known categories; used to pick icon + explanation. */
+  category: ErrorCategory;
+  /** Short headline shown prominently. */
+  headline: string;
+  /** Longer human-readable paragraph. Markdown allowed. */
+  explanation?: string;
+  /** Ordered list of things the user can do. First one gets rendered as a button-ish hint. */
+  suggestedActions?: string[];
+  /** Icon (emoji). Chosen from a pool for variety. */
+  icon: string;
+  /** LLM-call context, present when the error came from a provider call. */
+  llm?: LlmCallMeta;
+  /** Session key where this surfaced. */
+  sessionKey?: string;
+  /** Raw original message (for debugging / copy-paste to bug reports). */
+  raw?: string;
+  /** Free-form extra context. */
+  details?: Record<string, unknown>;
+  /** ISO timestamp. */
+  timestamp: string;
+}
+
+interface ErrorLookupEntry {
+  category: ErrorCategory;
+  fatal: boolean;
+  headline: string;
+  explanation: string;
+  suggestedActions: string[];
+  /** Pool of icons; one is picked at random when the envelope is built. */
+  icons: string[];
+}
+
+const GENERIC: ErrorLookupEntry = {
+  category: "generic",
+  fatal: true,
+  headline: "Something went wrong",
+  explanation: "An unexpected error occurred. The raw message is attached below.",
+  suggestedActions: ["Try again", "Check the gateway logs for details"],
+  icons: ["🛑", "⛔", "❌", "🚫", "‼️"],
+};
+
+/**
+ * Error lookup table. Keyed by a canonical short code that sites pass in.
+ * The table exists so that every emission site gets: the right fatal flag,
+ * a consistent headline, plain-English explanation, and suggested actions —
+ * regardless of where in the code the error bubbled from.
+ */
+const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
+  auth_401_invalid_credentials: {
+    category: "auth",
+    fatal: true,
+    headline: "Claude Code authentication failed",
+    explanation:
+      "Anthropic rejected the OAuth token at `~/.claude/.credentials.json` with HTTP 401. " +
+      "This usually means the subscription token was revoked, expired without refresh, or the account was flagged. " +
+      "OpenClaw cannot recover on its own: a fresh login is required.",
+    suggestedActions: [
+      "Run `claude` in a terminal to re-login to Claude Code",
+      "If login succeeds but this error persists, restart the OpenClaw gateway",
+      "If Anthropic keeps rejecting, check https://www.anthropic.com/status",
+    ],
+    icons: ["🔐", "🔒", "🛡️"],
+  },
+  auth_expired: {
+    category: "auth",
+    fatal: true,
+    headline: "Auth credentials expired",
+    explanation: "The stored credentials are past their expiry window.",
+    suggestedActions: ["Re-authenticate the relevant profile"],
+    icons: ["⏰", "🔐"],
+  },
+  auth_missing: {
+    category: "auth",
+    fatal: true,
+    headline: "No auth credentials found",
+    explanation:
+      "The provider needs a login but `~/.claude/.credentials.json` is missing or unreadable.",
+    suggestedActions: ["Run `claude` once to create the credential file"],
+    icons: ["🔐", "🗝️"],
+  },
+  billing_insufficient: {
+    category: "billing",
+    fatal: true,
+    headline: "Credit balance too low",
+    explanation:
+      "The API key tied to this provider is out of credits. The subscription-OAuth path should be preferred; check which profile was selected.",
+    suggestedActions: [
+      "Top up the provider's API key, or",
+      "Switch to a subscription-OAuth profile (claude-code:oauth)",
+    ],
+    icons: ["💸", "💳"],
+  },
+  rate_limited: {
+    category: "rate_limit",
+    fatal: false,
+    headline: "Rate limited",
+    explanation:
+      "The provider is rejecting requests because the 5-hour or weekly quota is exhausted. This will clear when the quota resets.",
+    suggestedActions: ["Wait for the quota to reset", "Switch to a different auth profile temporarily"],
+    icons: ["⏳", "🚦", "⌛"],
+  },
+  overloaded: {
+    category: "overload",
+    fatal: false,
+    headline: "Provider overloaded",
+    explanation:
+      "The provider returned HTTP 529 (overloaded). Automatic retry is in progress.",
+    suggestedActions: ["Wait — retry is automatic"],
+    icons: ["⏳", "🌊"],
+  },
+  network_error: {
+    category: "network",
+    fatal: false,
+    headline: "Network error",
+    explanation: "Lost connection to the provider. Will retry.",
+    suggestedActions: ["Check your internet connection"],
+    icons: ["📡", "🌐"],
+  },
+  timeout: {
+    category: "timeout",
+    fatal: false,
+    headline: "Request timed out",
+    explanation: "The provider did not reply within the configured timeout window.",
+    suggestedActions: ["Try again", "Increase `agents.defaults.timeoutSeconds` if this is frequent"],
+    icons: ["⏱️", "⌛"],
+  },
+  provider_generic: {
+    category: "provider_error",
+    fatal: true,
+    headline: "Provider error",
+    explanation: "The provider returned an error but did not specify a known failure mode.",
+    suggestedActions: ["Check the raw message below", "Retry"],
+    icons: ["⚠️", "⚠"],
+  },
+  lane_busy: {
+    category: "busy",
+    fatal: false,
+    headline: "Previous run still shutting down",
+    explanation:
+      "A prior turn has not fully released the session lane. This usually clears within a few seconds.",
+    suggestedActions: ["Wait a moment and resend"],
+    icons: ["⏳", "🔄"],
+  },
+  reply_run_already_active: {
+    category: "busy",
+    fatal: false,
+    headline: "Another reply is already running",
+    explanation: "The gateway still holds an active reply operation for this session.",
+    suggestedActions: ["Wait a moment and resend"],
+    icons: ["⏳", "🔁"],
+  },
+  incomplete_turn: {
+    category: "provider_error",
+    fatal: true,
+    headline: "Turn ended without a response",
+    explanation:
+      "The provider closed the stream without producing any assistant output. This usually indicates a silent provider failure.",
+    suggestedActions: ["Retry", "Check gateway logs for details"],
+    icons: ["🫥", "❓"],
+  },
+};
+
+/** Pick an icon from a small pool for visual variety. */
+function pickIcon(icons: readonly string[]): string {
+  if (icons.length === 0) return "⚠️";
+  return icons[Math.floor(Math.random() * icons.length)] ?? icons[0]!;
+}
+
+/** Generate a short stable id. */
+function makeId(): string {
+  return `err_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Look up a known error code. Unknown codes fall back to a generic-fatal entry
+ * with the provided headline/explanation overrides (so we never throw here).
+ */
+function lookup(code: string): ErrorLookupEntry {
+  return ERROR_LOOKUP[code] ?? GENERIC;
+}
+
+/** Opportunistically classify a raw error message into one of the known codes. */
+export function classifyRawErrorMessage(raw: string): string {
+  const s = raw.toLowerCase();
+  if (/401|authentication_error|invalid authentication credentials/.test(s)) {
+    return "auth_401_invalid_credentials";
+  }
+  if (/credit balance is too low|insufficient.*balance|quota.*exhausted/.test(s)) {
+    return "billing_insufficient";
+  }
+  if (/rate.?limit|429|usage limits|too many requests/.test(s)) {
+    return "rate_limited";
+  }
+  if (/overloaded|529|temporarily unavailable/.test(s)) {
+    return "overloaded";
+  }
+  if (/timed out|timeout/.test(s)) {
+    return "timeout";
+  }
+  if (/reply run already active/.test(s)) {
+    return "reply_run_already_active";
+  }
+  if (/previous run is still shutting down/.test(s)) {
+    return "lane_busy";
+  }
+  if (/incomplete turn|turn ended without/.test(s)) {
+    return "incomplete_turn";
+  }
+  return "provider_generic";
+}
+
+export interface BuildEnvelopeInput {
+  /** Known error code, or leave undefined to auto-classify from `raw`. */
+  code?: string;
+  /** Raw error message; used for auto-classification and attached to `raw`. */
+  raw?: string;
+  /** Overrides any headline from the lookup table. */
+  headline?: string;
+  /** Overrides any explanation from the lookup table. */
+  explanation?: string;
+  /** Overrides any suggestedActions from the lookup table. */
+  suggestedActions?: string[];
+  /** Overrides the fatal flag from the lookup table. */
+  fatal?: boolean;
+  /** Optional LLM metadata. */
+  llm?: LlmCallMeta;
+  /** Session key for persistence / retry targeting. */
+  sessionKey?: string;
+  /** Free-form extra context. */
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Build an `ErrorEnvelope` from raw inputs. Either pass `code` directly, or pass
+ * `raw` and let `classifyRawErrorMessage` infer one. Any field from the lookup
+ * entry can be overridden per-call.
+ */
+export function buildErrorEnvelope(input: BuildEnvelopeInput): ErrorEnvelope {
+  const raw = input.raw?.trim() ?? "";
+  const code = input.code ?? classifyRawErrorMessage(raw);
+  const entry = lookup(code);
+  return {
+    kind: "error",
+    id: makeId(),
+    fatal: input.fatal ?? entry.fatal,
+    category: entry.category,
+    headline: input.headline ?? entry.headline,
+    explanation: input.explanation ?? entry.explanation,
+    suggestedActions: input.suggestedActions ?? entry.suggestedActions,
+    icon: pickIcon(entry.icons),
+    llm: input.llm,
+    sessionKey: input.sessionKey,
+    raw: raw || undefined,
+    details: input.details,
+    timestamp: new Date().toISOString(),
+  };
+}

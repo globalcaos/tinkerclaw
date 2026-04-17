@@ -587,6 +587,77 @@ body {
   position: relative;
   align-self: center;
 }
+
+/* FORK 2026-04-17: structured error-envelope bubble.
+   Renders a rich error card (red=fatal, orange=recoverable) with icon, headline,
+   explanation, suggested actions, and a collapsible "technical details" block. */
+.msg.msg-envelope {
+  align-self: center;
+  max-width: 80%;
+  margin: 6px auto;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.msg.msg-envelope.envelope-fatal {
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+.msg.msg-envelope.envelope-recoverable {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+.msg.msg-envelope .env-header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.msg.msg-envelope .env-icon {
+  font-size: 18px;
+}
+.msg.msg-envelope .env-headline {
+  flex: 1;
+}
+.msg.msg-envelope .env-explanation {
+  margin: 4px 0 6px;
+  opacity: 0.92;
+}
+.msg.msg-envelope .env-actions {
+  font-size: 12px;
+  margin: 4px 0;
+  padding-left: 14px;
+}
+.msg.msg-envelope .env-actions li {
+  margin-bottom: 2px;
+}
+.msg.msg-envelope details.env-tech {
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.msg.msg-envelope details.env-tech > summary {
+  cursor: pointer;
+  opacity: 0.7;
+  user-select: none;
+}
+.msg.msg-envelope details.env-tech > summary:hover {
+  opacity: 1;
+}
+.msg.msg-envelope .env-kv {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 /* FORK: Overload retry orange bubbles — centered, compact */
 .msg-overload-bubble {
   background: rgba(245, 158, 11, 0.12);
