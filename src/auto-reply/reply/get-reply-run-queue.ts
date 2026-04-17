@@ -33,14 +33,25 @@ export async function resolvePreparedReplyQueueState(params: {
     );
   }
 
+  const waitStart = Date.now();
   await params.waitForActiveRunEnd(params.activeSessionId);
+  const waitedMs = Date.now() - waitStart;
   await params.refreshPreparedState();
   const refreshedBusyState = params.resolveBusyState();
   if (refreshedBusyState.isActive) {
+    const stuckSessionId =
+      refreshedBusyState.activeSessionId ?? params.activeSessionId ?? "<unknown>";
+    const streaming = refreshedBusyState.isStreaming ? "streaming" : "not streaming";
     return {
       kind: "reply",
       reply: {
-        text: "⚠️ Previous run is still shutting down. Please try again in a moment.",
+        // FORK: isError renders as a red centered banner in Tinker UI (§ Bible)
+        text:
+          `⚠️ Previous run is still shutting down. ` +
+          `session=${params.sessionKey ?? params.sessionId} ` +
+          `active_run=${stuckSessionId} ${streaming} ` +
+          `waited=${waitedMs}ms — try again in a moment.`,
+        isError: true,
       },
     };
   }
