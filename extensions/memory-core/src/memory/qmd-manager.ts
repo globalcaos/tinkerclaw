@@ -16,6 +16,7 @@ import {
   writeFileWithinRoot,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
+import { resolveAgentContextLimits } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
 import {
   buildSessionEntry,
   deriveQmdScopeChannel,
@@ -29,7 +30,11 @@ import {
   type SessionFileEntry,
 } from "openclaw/plugin-sdk/memory-core-host-engine-qmd";
 import {
+  buildMemoryReadResult,
+  buildMemoryReadResultFromSlice,
+  DEFAULT_MEMORY_READ_LINES,
   isFileMissingError,
+  type MemoryReadResult,
   requireNodeSqlite,
   statRegularFile,
   type MemoryEmbeddingProbeResult,
@@ -48,7 +53,7 @@ import {
   normalizeLowercaseStringOrEmpty,
 } from "openclaw/plugin-sdk/text-runtime";
 import { asRecord } from "../dreaming-shared.js";
-import { resolveQmdCollectionPatternFlags, type QmdCollectionPatternFlag } from "./qmd-compat.js";
+import { type QmdCollectionPatternFlag } from "./qmd-compat.js";
 
 type SqliteDatabase = import("node:sqlite").DatabaseSync;
 
@@ -969,7 +974,7 @@ export class QmdMemoryManager implements MemorySearchManager {
     const qmdSearchCommand = opts?.qmdSearchModeOverride ?? this.qmd.searchMode;
     let effectiveSearchMode: "query" | "search" | "vsearch" = qmdSearchCommand;
     let searchFallbackReason: string | undefined;
-    const explicitSearchTool = this.qmd.searchTool;
+    const _explicitSearchTool = this.qmd.searchTool;
     const mcporterEnabled = this.qmd.mcporter.enabled;
     const runSearchAttempt = async (
       allowMissingCollectionRepair: boolean,
@@ -1121,7 +1126,7 @@ export class QmdMemoryManager implements MemorySearchManager {
     relPath: string;
     from?: number;
     lines?: number;
-  }): Promise<{ text: string; path: string }> {
+  }): Promise<MemoryReadResult> {
     const relPath = params.relPath?.trim();
     if (!relPath) {
       throw new Error("path required");
@@ -1134,18 +1139,38 @@ export class QmdMemoryManager implements MemorySearchManager {
     if (statResult.missing) {
       return { text: "", path: relPath };
     }
+    const contextLimits = resolveAgentContextLimits(this.cfg, this.agentId);
     if (params.from !== undefined || params.lines !== undefined) {
-      const partial = await this.readPartialText(absPath, params.from, params.lines);
+      const requestedCount = Math.max(
+        1,
+        params.lines ?? contextLimits?.memoryGetDefaultLines ?? DEFAULT_MEMORY_READ_LINES,
+      );
+      const partial = await this.readPartialText(absPath, params.from, requestedCount);
       if (partial.missing) {
         return { text: "", path: relPath };
       }
-      return { text: partial.text, path: relPath };
+      return buildMemoryReadResultFromSlice({
+        selectedLines: partial.selectedLines,
+        relPath,
+        startLine: Math.max(1, params.from ?? 1),
+        moreSourceLinesRemain: partial.moreSourceLinesRemain,
+        maxChars: contextLimits?.memoryGetMaxChars,
+        suggestReadFallback: isDefaultMemoryPath(relPath),
+      });
     }
     const full = await this.readFullText(absPath);
     if (full.missing) {
       return { text: "", path: relPath };
     }
-    return { text: full.text, path: relPath };
+    return buildMemoryReadResult({
+      content: full.text,
+      relPath,
+      from: params.from,
+      lines: params.lines,
+      defaultLines: contextLimits?.memoryGetDefaultLines ?? DEFAULT_MEMORY_READ_LINES,
+      maxChars: contextLimits?.memoryGetMaxChars,
+      suggestReadFallback: isDefaultMemoryPath(relPath),
+    });
   }
 
   status(): MemoryProviderStatus {
@@ -1836,7 +1861,9 @@ export class QmdMemoryManager implements MemorySearchManager {
     absPath: string,
     from?: number,
     lines?: number,
-  ): Promise<{ missing: true } | { missing: false; text: string }> {
+  ): Promise<
+    { missing: true } | { missing: false; selectedLines: string[]; moreSourceLinesRemain: boolean }
+  > {
     const start = Math.max(1, from ?? 1);
     const count = Math.max(1, lines ?? Number.POSITIVE_INFINITY);
     let handle;
@@ -1855,6 +1882,7 @@ export class QmdMemoryManager implements MemorySearchManager {
     });
     const selected: string[] = [];
     let index = 0;
+    let moreSourceLinesRemain = false;
     try {
       for await (const line of rl) {
         index += 1;
@@ -1862,6 +1890,7 @@ export class QmdMemoryManager implements MemorySearchManager {
           continue;
         }
         if (selected.length >= count) {
+          moreSourceLinesRemain = true;
           break;
         }
         selected.push(line);
@@ -1870,7 +1899,11 @@ export class QmdMemoryManager implements MemorySearchManager {
       rl.close();
       await handle.close();
     }
-    return { missing: false, text: selected.slice(0, count).join("\n") };
+    return {
+      missing: false,
+      selectedLines: selected.slice(0, count),
+      moreSourceLinesRemain,
+    };
   }
 
   private async readFullText(

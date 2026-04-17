@@ -114,6 +114,7 @@ import { handleRetryLimitExhaustion } from "./run/retry-limit.js";
 import { resolveEffectiveRuntimeModel, resolveHookModelSelection } from "./run/setup.js";
 import { mergeAttemptToolMediaPayloads } from "./run/tool-media-payloads.js";
 import {
+  resolveLiveToolResultMaxChars,
   sessionLikelyHasOversizedToolResults,
   truncateOversizedToolResultsInSession,
 } from "./tool-result-truncation.js";
@@ -426,8 +427,6 @@ export async function runEmbeddedPiAgent(
         setThinkLevel: (next) => {
           thinkLevel = next;
         },
-        runId: params.runId,
-        sessionKey: params.sessionKey ?? "",
         log,
       });
 
@@ -1102,6 +1101,11 @@ export async function runEmbeddedPiAgent(
                   const truncResult = await truncateOversizedToolResultsInSession({
                     sessionFile: params.sessionFile,
                     contextWindowTokens: ctxInfo.tokens,
+                    maxCharsOverride: resolveLiveToolResultMaxChars({
+                      contextWindowTokens: ctxInfo.tokens,
+                      cfg: params.config,
+                      agentId: sessionAgentId,
+                    }),
                     sessionId: params.sessionId,
                     sessionKey: params.sessionKey,
                   });
@@ -1127,10 +1131,16 @@ export async function runEmbeddedPiAgent(
             }
             if (!toolResultTruncationAttempted) {
               const contextWindowTokens = ctxInfo.tokens;
+              const toolResultMaxChars = resolveLiveToolResultMaxChars({
+                contextWindowTokens,
+                cfg: params.config,
+                agentId: sessionAgentId,
+              });
               const hasOversized = attempt.messagesSnapshot
                 ? sessionLikelyHasOversizedToolResults({
                     messages: attempt.messagesSnapshot,
                     contextWindowTokens,
+                    maxCharsOverride: toolResultMaxChars,
                   })
                 : false;
 
@@ -1143,6 +1153,7 @@ export async function runEmbeddedPiAgent(
                 const truncResult = await truncateOversizedToolResultsInSession({
                   sessionFile: params.sessionFile,
                   contextWindowTokens,
+                  maxCharsOverride: toolResultMaxChars,
                   sessionId: params.sessionId,
                   sessionKey: params.sessionKey,
                 });
