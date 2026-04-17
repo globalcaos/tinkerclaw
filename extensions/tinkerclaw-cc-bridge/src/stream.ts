@@ -130,7 +130,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
         streamStarted = true;
         const p = buildPartial();
-        log.info(`emit start content.len=${p.content.length}`);
+        if (log.debug) log.debug(`emit start content.len=${p.content.length}`);
         stream.push({ type: "start", partial: p });
       };
       const pushThinkingStart = () => {
@@ -138,7 +138,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         thinkingStarted = true;
-        log.info(`emit thinking_start`);
+        if (log.debug) log.debug(`emit thinking_start`);
         stream.push({ type: "thinking_start", contentIndex: 0, partial: buildPartial() });
       };
       const pushThinkingEnd = () => {
@@ -146,7 +146,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         thinkingEnded = true;
-        log.info(`emit thinking_end content.len=${accumulatedThinking.length}`);
+        if (log.debug) log.debug(`emit thinking_end content.len=${accumulatedThinking.length}`);
         stream.push({
           type: "thinking_end",
           contentIndex: 0,
@@ -159,7 +159,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         textStarted = true;
-        log.info(`emit text_start contentIndex=${textIndex()}`);
+        if (log.debug) log.debug(`emit text_start contentIndex=${textIndex()}`);
         stream.push({ type: "text_start", contentIndex: textIndex(), partial: buildPartial() });
       };
       const pushTextEnd = () => {
@@ -167,7 +167,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         textEnded = true;
-        log.info(`emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`);
+        if (log.debug) log.debug(`emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`);
         stream.push({
           type: "text_end",
           contentIndex: textIndex(),
@@ -190,9 +190,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
         pushTextStart();
         accumulatedText += delta;
-        log.info(
-          `emit text_delta contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length}`,
-        );
+        if (log.debug) {
+          log.debug(
+            `emit text_delta contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length}`,
+          );
+        }
         stream.push({
           type: "text_delta",
           contentIndex: textIndex(),
@@ -298,9 +300,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           finalMessage.errorMessage = result.result;
         }
 
-        log.info(
-          `emit done reason=${stopReason === "error" ? "error" : "stop"} content.len=${finalMessage.content.length} text_block=${finalMessage.content.some((c) => (c as { type?: string }).type === "text")}`,
-        );
+        if (log.debug) {
+          log.debug(
+            `emit done reason=${stopReason === "error" ? "error" : "stop"} content.len=${finalMessage.content.length} text_block=${finalMessage.content.some((c) => (c as { type?: string }).type === "text")}`,
+          );
+        }
         stream.push({
           type: "done",
           reason: stopReason === "error" ? "error" : "stop",
