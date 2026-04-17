@@ -1077,8 +1077,16 @@ export async function runReplyAgent(params: {
   } catch (error) {
     if (error instanceof ReplyRunAlreadyActiveError) {
       typing.cleanup();
+      const errMsg = (error as Error).message ?? "";
+      const detail = errMsg ? ` detail=${errMsg.slice(0, 300)}` : "";
       return {
-        text: "⚠️ Previous run is still shutting down. Please try again in a moment.",
+        // FORK: isError renders as a red centered banner in Tinker UI (§ Bible)
+        text:
+          `⚠️ Previous run is still shutting down. ` +
+          `session=${replySessionKey ?? followupRun.run.sessionKey ?? "?"} ` +
+          `this_runId=${followupRun.run.sessionId ?? "?"}${detail} ` +
+          `— try again in a moment.`,
+        isError: true,
       };
     }
     throw error;
