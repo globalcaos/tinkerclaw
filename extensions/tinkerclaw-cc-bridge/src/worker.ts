@@ -135,11 +135,14 @@ export class ClaudeCodeWorker extends EventEmitter {
     if (!cleanEnv.CLAUDE_CODE_EXECPATH) {
       cleanEnv.CLAUDE_CODE_EXECPATH = "/home/<user>/.local/share/claude/versions/latest";
     }
-    const surviving = Object.entries(cleanEnv)
-      .filter(([k]) => /^(ANTHROPIC_|CLAUDE_|CLAUDECODE|XDG_|HOME$|USER$|SHELL$)/.test(k))
-      .map(([k, v]) => `${k}=${(v ?? "").slice(0, 60)}`)
-      .join(" | ");
-    log.info(`env snapshot for claude spawn: ${surviving}`);
+    // Full env dump — every key, every value (secrets truncated). We've ruled out
+    // all the obvious suspects, so cast a wide net.
+    const fullEnv = Object.entries(cleanEnv)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${k}=${(v ?? "").length > 60 ? (v ?? "").slice(0, 60) + "…" : (v ?? "")}`)
+      .sort()
+      .join("\n  ");
+    log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
 
     this.proc = spawn(binary, args, {
       cwd,
