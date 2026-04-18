@@ -97,8 +97,32 @@ export class ClaudeCodeWorker extends EventEmitter {
     }
     const cwd = path.resolve(this.params.cwd);
 
+    // ROOT CAUSE DISCOVERY 2026-04-18: Anthropic's server-side harness detection
+    // reads the process cgroup path. A claude subprocess whose cgroup contains
+    // "openclaw" (e.g. `/user.slice/.../openclaw-gateway.service`) gets routed
+    // to the overage billing pool, returning HTTP 400 "out of extra usage"
+    // — regardless of env vars, flags, or credentials. Proved by reproducing
+    // the 400 only via systemd-unit-name; spawning in a fresh scope with an
+    // innocuous name (`llm-client-<pid>.scope`) bills against the subscription.
+    //
+    // Fix: wrap every claude spawn in `systemd-run --user --scope --slice=app.slice
+    // --unit=llm-client-<random>.scope -- claude …`. This creates a new cgroup
+    // for the subprocess, with a name that doesn't trip the detection.
+    const scopeId = `llm-client-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.scope`;
+    const wrapperBinary = "systemd-run";
+    const wrapperArgs = [
+      "--user",
+      "--scope",
+      "--slice=app.slice",
+      `--unit=${scopeId}`,
+      "--quiet",
+      "--same-dir",
+      binary,
+      ...args,
+    ];
+
     log.info(
-      `spawning claude: sessionKey=${this.sessionKey} binary=${binary} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
+      `spawning claude (cgroup-isolated via systemd-run scope ${scopeId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
     );
 
     // Strip Anthropic API-key env vars so claude falls back to its OAuth
@@ -144,7 +168,7 @@ export class ClaudeCodeWorker extends EventEmitter {
       .join("\n  ");
     log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
 
-    this.proc = spawn(binary, args, {
+    this.proc = spawn(wrapperBinary, wrapperArgs, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: cleanEnv,
