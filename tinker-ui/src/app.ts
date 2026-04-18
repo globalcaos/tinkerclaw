@@ -2460,11 +2460,46 @@ type Envelope = {
 };
 const ERR_ENV_PREFIX = "__ERR_ENV__:";
 function extractEnvelope(text: string): Envelope | null {
-  const trimmed = text?.trimStart() ?? "";
-  if (!trimmed.startsWith(ERR_ENV_PREFIX)) return null;
-  const jsonPart = trimmed.slice(ERR_ENV_PREFIX.length).trimEnd();
+  if (typeof text !== "string" || text.length === 0) return null;
+  // indexOf, not startsWith: defense-in-depth. If some upstream path ever
+  // concatenates prose before the envelope, we still detect it.
+  const idx = text.indexOf(ERR_ENV_PREFIX);
+  if (idx < 0) return null;
+  const jsonStart = idx + ERR_ENV_PREFIX.length;
+  // Find the end of the JSON object by brace-matching from the first '{'.
+  const braceStart = text.indexOf("{", jsonStart);
+  if (braceStart < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let end = -1;
+  for (let i = braceStart; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+      } else if (ch === "\\") {
+        esc = true;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
   try {
-    const parsed = JSON.parse(jsonPart) as Envelope;
+    const parsed = JSON.parse(text.slice(braceStart, end)) as Envelope;
     if (parsed?.kind === "error" && typeof parsed.headline === "string") {
       return parsed;
     }

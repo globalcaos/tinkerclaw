@@ -147,6 +147,19 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     ],
     icons: ["💸", "💳"],
   },
+  subscription_usage_exhausted: {
+    category: "billing",
+    fatal: true,
+    headline: "Claude Max subscription usage exhausted",
+    explanation:
+      "Your Claude Max subscription hit its usage cap. The flat-rate window is closed until the next reset, or you can add extra usage credit.",
+    suggestedActions: [
+      "Add extra usage at claude.ai/settings/usage",
+      "Wait for the 5-hour or weekly quota to reset",
+      "Temporarily switch to a paid API key via a different auth profile",
+    ],
+    icons: ["🧾", "💳", "📊"],
+  },
   rate_limited: {
     category: "rate_limit",
     fatal: false,
@@ -241,6 +254,9 @@ export function classifyRawErrorMessage(raw: string): string {
   const s = raw.toLowerCase();
   if (/401|authentication_error|invalid authentication credentials/.test(s)) {
     return "auth_401_invalid_credentials";
+  }
+  if (/out of extra usage|claude\.ai\/settings\/usage|subscription.*exhausted/.test(s)) {
+    return "subscription_usage_exhausted";
   }
   if (/credit balance is too low|insufficient.*balance|quota.*exhausted/.test(s)) {
     return "billing_insufficient";
