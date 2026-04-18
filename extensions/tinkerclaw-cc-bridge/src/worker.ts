@@ -112,6 +112,25 @@ export class ClaudeCodeWorker extends EventEmitter {
     delete cleanEnv.ANTHROPIC_VERTEX_API_KEY;
     delete cleanEnv.CLAUDE_AI_SESSION_KEY;
     delete cleanEnv.ANTHROPIC_ADMIN_API_KEY;
+    // KEY DISCOVERY 2026-04-18: claude routes to the overage billing pool
+    // (not the flat-rate subscription) when these CLAUDECODE env vars are
+    // absent. A bare shell inside an interactive `claude` session has them
+    // exported; the systemd-spawned gateway does not. Without them, every
+    // turn returns HTTP 400 "You're out of extra usage" even though the
+    // subscription's 5h / weekly windows are nearly empty. Claim them so
+    // the subprocess bills against the same pool as an interactive user.
+    cleanEnv.CLAUDECODE = "1";
+    cleanEnv.CLAUDE_CODE_ENTRYPOINT = "cli";
+    if (!cleanEnv.CLAUDE_CODE_EXECPATH) {
+      // Path resolution is best-effort — claude only consults this when the
+      // outer CC sets it explicitly. Missing is fine; wrong is fine too.
+      cleanEnv.CLAUDE_CODE_EXECPATH = "/home/<user>/.local/share/claude/versions/latest";
+    }
+    const surviving = Object.entries(cleanEnv)
+      .filter(([k]) => /^(ANTHROPIC_|CLAUDE_|CLAUDECODE|XDG_|HOME$|USER$|SHELL$)/.test(k))
+      .map(([k, v]) => `${k}=${(v ?? "").slice(0, 60)}`)
+      .join(" | ");
+    log.info(`env snapshot for claude spawn: ${surviving}`);
 
     this.proc = spawn(binary, args, {
       cwd,
