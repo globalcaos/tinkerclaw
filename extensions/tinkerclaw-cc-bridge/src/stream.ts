@@ -287,9 +287,12 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         );
 
         // On provider error (e.g. 401 auth, 400 billing), build a structured
-        // ErrorEnvelope and emit it as a TEXT payload so it flows through the
-        // normal assistant-turn path (no incomplete-turn eraser, no payload=0
-        // path). The UI parses the __ERR_ENV__ sentinel and renders rich.
+        // ErrorEnvelope and emit it as the ONLY text of the turn. Previous
+        // implementation appended the envelope to any claude-streamed error
+        // prose, which meant the envelope wasn't at position 0 and the UI's
+        // startsWith check missed it; the text then rendered as markdown,
+        // which stripped the `__ERR_ENV__` underscores as emphasis syntax.
+        // Now we RESET accumulated text and emit a clean final message.
         if (result.is_error && typeof result.result === "string" && result.result.trim()) {
           const rawErr = result.result.trim();
           const envelope = buildErrorEnvelope({
@@ -301,24 +304,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               durationMs: result.duration_ms,
             },
           });
-          // Flush any partial content we may have streamed, then emit the
-          // envelope-carrying text block as the turn's assistant content.
-          pushStart();
-          if (thinkingStarted) pushThinkingEnd();
-          pushTextStart();
-          const envelopeText = `__ERR_ENV__:${JSON.stringify(envelope)}`;
-          accumulatedText += envelopeText;
-          stream.push({
-            type: "text_delta",
-            contentIndex: textIndex(),
-            delta: envelopeText,
-            partial: buildPartial(),
-          });
-          pushTextEnd();
-
+          accumulatedText = `__ERR_ENV__:${JSON.stringify(envelope)}`;
+          accumulatedThinking = "";
           const finalMessage: AssistantMessage = {
             role: "assistant",
-            content: buildContent(),
+            content: [{ type: "text", text: accumulatedText }],
             stopReason: "stop",
             api: modelInfo.api,
             provider: modelInfo.provider,
@@ -326,6 +316,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             usage,
             timestamp: Date.now(),
           };
+          // pi-agent-core honors the finalMessage from a "done" event and
+          // replaces any partial streamed content with it. No need to keep
+          // flushing text_start/end events — the message_end event drives
+          // the UI's final render.
           stream.push({ type: "done", reason: "stop", message: finalMessage });
           return;
         }
