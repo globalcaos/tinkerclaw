@@ -186,6 +186,7 @@ import {
   shouldStripBootstrapFromEmbeddedContext,
 } from "./attempt-bootstrap-routing.js";
 export { shouldStripBootstrapFromEmbeddedContext } from "./attempt-bootstrap-routing.js";
+import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
 import { configureEmbeddedAttemptHttpRuntime } from "./attempt-http-runtime.js";
 import {
   assembleAttemptContextEngine,
@@ -2168,6 +2169,18 @@ export async function runEmbeddedAttempt(
               inFlightPrompt: effectivePrompt,
             });
 
+            // FORK: mid-context persona re-injection when SyncScore drops
+            {
+              const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
+                activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+                systemPromptText ?? "",
+                log,
+              );
+              if (reinjectResult.reinjected && systemPromptText != null) {
+                systemPromptText = reinjectResult.systemPromptText;
+              }
+            }
+
             // Only pass images option if there are actually images to pass
             // This avoids potential issues with models that don't expect the images parameter
             if (imageResult.images.length > 0) {
@@ -2460,6 +2473,24 @@ export async function runEmbeddedAttempt(
             .catch((err) => {
               log.warn(`agent_end hook failed: ${err}`);
             });
+        }
+
+        // FORK: text-tool-call interception for local providers (ollama/lmstudio/vllm)
+        if (!promptError && !aborted && tools.length > 0) {
+          const ttcResult = await _forkAttemptHooks.interceptTextToolCalls({
+            provider: params.provider,
+            activeSession: activeSession as never,
+            tools: tools as never,
+            toolMetas: toolMetas as never,
+            promptError,
+            aborted,
+            abortSignal: params.abortSignal,
+            abortable,
+            log,
+          });
+          if (ttcResult.promptError) {
+            promptError = ttcResult.promptError;
+          }
         }
       } finally {
         clearTimeout(abortTimer);

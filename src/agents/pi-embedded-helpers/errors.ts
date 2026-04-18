@@ -734,6 +734,11 @@ function classifyFailoverClassificationFromMessage(
   if (isPeriodicUsageLimitErrorMessage(raw)) {
     return toReasonClassification(isBillingErrorMessage(raw) ? "billing" : "rate_limit");
   }
+  // FORK: Early billing check for Anthropic spending cap — must come BEFORE
+  // rateLimit because "usage limits" also matches rate_limit patterns.
+  if (/regain access/i.test(raw) || /specified.*usage limits/i.test(raw)) {
+    return toReasonClassification("billing");
+  }
   if (isRateLimitErrorMessage(raw)) {
     return toReasonClassification("rate_limit");
   }
