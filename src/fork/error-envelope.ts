@@ -83,8 +83,10 @@ interface ErrorLookupEntry {
   headline: string;
   explanation: string;
   suggestedActions: string[];
-  /** Pool of icons; one is picked at random when the envelope is built. */
-  icons: string[];
+  /** Single fixed icon that conveys the error (or its remedy) at a glance.
+   *  Convention: pick the one icon that best signals the solution space, not
+   *  a randomised pool — users should learn "credit-card → billing" etc. */
+  icon: string;
 }
 
 const GENERIC: ErrorLookupEntry = {
@@ -93,7 +95,7 @@ const GENERIC: ErrorLookupEntry = {
   headline: "Something went wrong",
   explanation: "An unexpected error occurred. The raw message is attached below.",
   suggestedActions: ["Try again", "Check the gateway logs for details"],
-  icons: ["🛑", "⛔", "❌", "🚫", "‼️"],
+  icon: "⚠️",
 };
 
 /**
@@ -116,7 +118,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
       "If login succeeds but this error persists, restart the OpenClaw gateway",
       "If Anthropic keeps rejecting, check https://www.anthropic.com/status",
     ],
-    icons: ["🔐", "🔒", "🛡️"],
+    // 🔐 padlock — credentials / unlock-this-to-fix
+    icon: "🔐",
   },
   auth_expired: {
     category: "auth",
@@ -124,7 +127,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     headline: "Auth credentials expired",
     explanation: "The stored credentials are past their expiry window.",
     suggestedActions: ["Re-authenticate the relevant profile"],
-    icons: ["⏰", "🔐"],
+    // ⏰ clock — expired-in-time, refresh-required
+    icon: "⏰",
   },
   auth_missing: {
     category: "auth",
@@ -133,7 +137,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     explanation:
       "The provider needs a login but `~/.claude/.credentials.json` is missing or unreadable.",
     suggestedActions: ["Run `claude` once to create the credential file"],
-    icons: ["🔐", "🗝️"],
+    // 🗝️ key — login missing entirely
+    icon: "🗝️",
   },
   billing_insufficient: {
     category: "billing",
@@ -145,7 +150,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
       "Top up the provider's API key, or",
       "Switch to a subscription-OAuth profile (claude-code:oauth)",
     ],
-    icons: ["💸", "💳"],
+    // 💸 money-with-wings — wallet drained
+    icon: "💸",
   },
   subscription_usage_exhausted: {
     category: "billing",
@@ -158,7 +164,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
       "Wait for the 5-hour or weekly quota to reset",
       "Temporarily switch to a paid API key via a different auth profile",
     ],
-    icons: ["🧾", "💳", "📊"],
+    // 💳 credit-card — the user confirmed this as the right symbol for subscription-exhausted
+    icon: "💳",
   },
   rate_limited: {
     category: "rate_limit",
@@ -166,17 +173,21 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     headline: "Rate limited",
     explanation:
       "The provider is rejecting requests because the 5-hour or weekly quota is exhausted. This will clear when the quota resets.",
-    suggestedActions: ["Wait for the quota to reset", "Switch to a different auth profile temporarily"],
-    icons: ["⏳", "🚦", "⌛"],
+    suggestedActions: [
+      "Wait for the quota to reset",
+      "Switch to a different auth profile temporarily",
+    ],
+    // 🚦 traffic-light — slow down, auto-recovers
+    icon: "🚦",
   },
   overloaded: {
     category: "overload",
     fatal: false,
     headline: "Provider overloaded",
-    explanation:
-      "The provider returned HTTP 529 (overloaded). Automatic retry is in progress.",
+    explanation: "The provider returned HTTP 529 (overloaded). Automatic retry is in progress.",
     suggestedActions: ["Wait — retry is automatic"],
-    icons: ["⏳", "🌊"],
+    // 🌊 wave — too much traffic, will drain
+    icon: "🌊",
   },
   network_error: {
     category: "network",
@@ -184,15 +195,20 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     headline: "Network error",
     explanation: "Lost connection to the provider. Will retry.",
     suggestedActions: ["Check your internet connection"],
-    icons: ["📡", "🌐"],
+    // 📡 satellite-antenna — connectivity
+    icon: "📡",
   },
   timeout: {
     category: "timeout",
     fatal: false,
     headline: "Request timed out",
     explanation: "The provider did not reply within the configured timeout window.",
-    suggestedActions: ["Try again", "Increase `agents.defaults.timeoutSeconds` if this is frequent"],
-    icons: ["⏱️", "⌛"],
+    suggestedActions: [
+      "Try again",
+      "Increase `agents.defaults.timeoutSeconds` if this is frequent",
+    ],
+    // ⏱️ stopwatch — deadline exceeded
+    icon: "⏱️",
   },
   provider_generic: {
     category: "provider_error",
@@ -200,7 +216,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     headline: "Provider error",
     explanation: "The provider returned an error but did not specify a known failure mode.",
     suggestedActions: ["Check the raw message below", "Retry"],
-    icons: ["⚠️", "⚠"],
+    // ⚠️ warning — generic unclassified fault
+    icon: "⚠️",
   },
   lane_busy: {
     category: "busy",
@@ -209,7 +226,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     explanation:
       "A prior turn has not fully released the session lane. This usually clears within a few seconds.",
     suggestedActions: ["Wait a moment and resend"],
-    icons: ["⏳", "🔄"],
+    // 🔄 cyclic-arrow — cycle still draining
+    icon: "🔄",
   },
   reply_run_already_active: {
     category: "busy",
@@ -217,7 +235,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     headline: "Another reply is already running",
     explanation: "The gateway still holds an active reply operation for this session.",
     suggestedActions: ["Wait a moment and resend"],
-    icons: ["⏳", "🔁"],
+    // ⏳ hourglass — still processing, just wait
+    icon: "⏳",
   },
   incomplete_turn: {
     category: "provider_error",
@@ -226,15 +245,28 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     explanation:
       "The provider closed the stream without producing any assistant output. This usually indicates a silent provider failure.",
     suggestedActions: ["Retry", "Check gateway logs for details"],
-    icons: ["🫥", "❓"],
+    // 🫥 dotted-line-face — the model went silent
+    icon: "🫥",
+  },
+  tool_error: {
+    category: "tool",
+    fatal: false,
+    headline: "Tool call failed",
+    explanation: "A tool invocation returned an error. The reasoning can continue.",
+    suggestedActions: ["Check the tool's raw output below"],
+    // 🔧 wrench — tool failed
+    icon: "🔧",
+  },
+  compaction_error: {
+    category: "compaction",
+    fatal: false,
+    headline: "Compaction failed",
+    explanation: "Memory compaction hit an error. The current turn may still complete.",
+    suggestedActions: ["Continue — the next turn will retry compaction"],
+    // 🧹 broom — compaction sweep failed
+    icon: "🧹",
   },
 };
-
-/** Pick an icon from a small pool for visual variety. */
-function pickIcon(icons: readonly string[]): string {
-  if (icons.length === 0) return "⚠️";
-  return icons[Math.floor(Math.random() * icons.length)] ?? icons[0]!;
-}
 
 /** Generate a short stable id. */
 function makeId(): string {
@@ -320,7 +352,7 @@ export function buildErrorEnvelope(input: BuildEnvelopeInput): ErrorEnvelope {
     headline: input.headline ?? entry.headline,
     explanation: input.explanation ?? entry.explanation,
     suggestedActions: input.suggestedActions ?? entry.suggestedActions,
-    icon: pickIcon(entry.icons),
+    icon: entry.icon,
     llm: input.llm,
     sessionKey: input.sessionKey,
     raw: raw || undefined,
