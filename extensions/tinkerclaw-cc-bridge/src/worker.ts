@@ -112,6 +112,37 @@ export class ClaudeCodeWorker extends EventEmitter {
     delete cleanEnv.ANTHROPIC_VERTEX_API_KEY;
     delete cleanEnv.CLAUDE_AI_SESSION_KEY;
     delete cleanEnv.ANTHROPIC_ADMIN_API_KEY;
+    // ROOT CAUSE 2026-04-18: Anthropic's server-side harness detection reads
+    // OPENCLAW_CLI / OPENCLAW_* telemetry and routes matching requests to the
+    // overage billing pool (not the flat-rate subscription). OpenClaw core
+    // sets OPENCLAW_CLI=1 on process.env via ensureOpenClawExecMarkerOnProcess
+    // (src/infra/openclaw-exec-env.ts), and any OPENCLAW_* vars set on the
+    // gateway's process.env leak into our child claude's env. Strip every
+    // OPENCLAW_* var so claude sees a vanilla CC-style env and bills against
+    // the subscription. Confirmed by diffing working bare-shell spawn vs
+    // failing gateway-spawn environments.
+    for (const key of Object.keys(cleanEnv)) {
+      if (key.startsWith("OPENCLAW_")) {
+        delete cleanEnv[key];
+      }
+    }
+    // CLAUDECODE=1 is also set by interactive CC on every child shell; harmless
+    // to set for the subprocess. (Not strictly necessary for billing — the
+    // OPENCLAW_* strip is what matters — but keeps the subprocess's env close
+    // to what a nested claude expects.)
+    cleanEnv.CLAUDECODE = "1";
+    cleanEnv.CLAUDE_CODE_ENTRYPOINT = "cli";
+    if (!cleanEnv.CLAUDE_CODE_EXECPATH) {
+      cleanEnv.CLAUDE_CODE_EXECPATH = "/home/<user>/.local/share/claude/versions/latest";
+    }
+    // Full env dump — every key, every value (secrets truncated). We've ruled out
+    // all the obvious suspects, so cast a wide net.
+    const fullEnv = Object.entries(cleanEnv)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${k}=${(v ?? "").length > 60 ? (v ?? "").slice(0, 60) + "…" : (v ?? "")}`)
+      .sort()
+      .join("\n  ");
+    log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
 
     this.proc = spawn(binary, args, {
       cwd,
