@@ -1,19 +1,27 @@
-# AGENTS.md - Quick Reference
+# Repository Guidelines
 
-**Repo**: https://github.com/openclaw/openclaw  
-**File refs**: repo-root relative only (e.g., `src/telegram/index.ts:80`).
+- Repo: https://github.com/openclaw/openclaw
+- In chat replies, file references must be repo-root relative only (example: `extensions/telegram/src/index.ts:80`); never absolute paths or `~/...`.
+- Do not edit files covered by security-focused `CODEOWNERS` rules unless a listed owner explicitly asked for the change or is already reviewing it with you. Treat those paths as restricted surfaces, not drive-by cleanup.
 
-## Essential Quick Commands
+## Project Structure & Module Organization
 
-- **Install**: `pnpm install`
-- **Dev**: `pnpm dev` or `pnpm openclaw ...`
-- **Build**: `pnpm build` (hard gate before pushing main)
-- **Type-check**: `pnpm tsgo`
-- **Lint/format**: `pnpm check`, `pnpm format:fix`
-- **Test**: `pnpm test` (preferred landing bar for main)
-- **Test coverage**: `pnpm test:coverage`
+- Source code: `src/` (CLI wiring in `src/cli`, commands in `src/commands`, infra in `src/infra`, media pipeline in `src/media`, web provider helpers in `src/web` and `src/plugins/web-*provider*.ts`).
+- Tests: colocated `*.test.ts`.
+- Docs: `docs/` (images, queue, Pi config). Built output lives in `dist/`.
+- Nomenclature: use "plugin" / "plugins" in docs, UI, changelogs, and contributor guidance. The bundled workspace plugin tree remains the internal package layout to avoid repo-wide churn from a rename.
+- Bundled plugin naming: for repo-owned workspace plugins, keep the canonical plugin id aligned across `openclaw.plugin.json:id`, the default workspace folder name, and package names anchored to the same id (`@openclaw/<id>` or approved suffix forms like `-provider`, `-plugin`, `-speech`, `-sandbox`, `-media-understanding`). Keep `openclaw.install.npmSpec` equal to the package name and `openclaw.channel.id` equal to the plugin id when present. Exceptions must be explicit and covered by the repo invariant test.
+- Plugins: live in the bundled workspace plugin tree (workspace packages). Keep plugin-only deps in the extension `package.json`; do not add them to the root `package.json` unless core uses them.
+- Plugins: install runs `npm install --omit=dev` in plugin dir; runtime deps must live in `dependencies`. Avoid `workspace:*` in `dependencies` (npm install breaks); put `openclaw` in `devDependencies` or `peerDependencies` instead (runtime resolves `openclaw/plugin-sdk` via jiti alias).
+- Import boundaries: extension production code should treat `openclaw/plugin-sdk/*` plus local `api.ts` / `runtime-api.ts` barrels as the public surface. Do not import core `src/**`, `src/plugin-sdk-internal/**`, or another extension's `src/**` directly.
+- Installers served from `https://openclaw.ai/*`: live in the sibling repo `../openclaw.ai` (`public/install.sh`, `public/install-cli.sh`, `public/install.ps1`).
+- Messaging channels: always consider **all** built-in + extension channels when refactoring shared logic (routing, allowlists, pairing, command gating, onboarding, docs).
+  - Core channel docs: `docs/channels/`
+  - Core channel code: `src/channels`, `src/routing`, `src/web`
+  - Bundled plugin channels: `extensions/<channel>/` (for example Discord, Telegram, Slack, Matrix, Zalo, ZaloUser, Voice Call)
+- When adding channels/plugins/apps/docs, update `.github/labeler.yml` and create matching GitHub labels (use existing channel/plugin label colors).
 
-## Critical Boundaries (Refactor Triggers)
+## Architecture Boundaries
 
 - Start here for the repo map:
   - bundled workspace plugin tree = bundled plugins and the closest example surface for third-party plugins
@@ -65,7 +73,7 @@
   - `hooks.internal.entries` is the canonical public hook config model. `hooks.internal.handlers` is compatibility-only input and must not be re-exposed in public schema/help/baseline surfaces.
 - Bundled plugin contract boundary:
   - Public docs: `docs/plugins/architecture.md`, `docs/plugins/manifest.md`, `docs/plugins/sdk-overview.md`
-  - Definition files: `src/plugins/contracts/registry.ts`, `src/plugins/types.ts`, `src/plugins/public-artifacts.ts`
+  - Definition files: `src/plugins/contracts/registry.ts`, `src/plugins/types.ts`, `src/plugins/public-surface-loader.ts`, `src/plugins/public-surface-runtime.ts`, `src/plugins/provider-public-artifacts.ts`, `src/plugins/web-provider-public-artifacts.ts`
   - Rule: keep manifest metadata, runtime registration, public SDK exports, and contract tests aligned. Do not create a hidden path around the declared plugin interfaces.
 - Extension test boundary:
   - Keep extension-owned onboarding/config/provider coverage under the owning bundled plugin package when feasible.
@@ -79,6 +87,8 @@
   - `src/plugin-sdk/AGENTS.md` expands public SDK contract rules.
   - `src/plugins/AGENTS.md` expands plugin loading, registry, and manifest rules.
   - `src/gateway/protocol/AGENTS.md` expands typed Gateway protocol rules.
+  - `src/gateway/AGENTS.md` expands Gateway server hot-path and plugin artifact rules.
+  - `src/agents/AGENTS.md` expands agent test/import performance rules.
   - `test/helpers/AGENTS.md` and `test/helpers/channels/AGENTS.md` expand shared test helper boundary rules.
 - Plugin architecture direction:
   - Keep a manifest-first control plane: discovery, validation, enablement, setup hints, and activation planning should stay metadata-driven by default.
@@ -93,22 +103,24 @@
 - `ui/AGENTS.md` owns Control UI i18n and generated locale rules.
 - `scripts/AGENTS.md` owns script-runner, local-check lock, and test/lint wrapper rules.
 
-- Avoid `vi.resetModules()` per-test in hot files; use static imports + `beforeAll`.
-- Do not partial-mock broad barrels; add a plugin-local `*.runtime.ts` seam instead.
-- Prefer explicit mock factories over `importOriginal()`.
+## exe.dev VM ops (general)
 
-## Release / PR Maintenance Skills
+- Access: stable path is `ssh exe.dev` then `ssh vm-name` (assume SSH key already set).
+- SSH flaky: use exe.dev web terminal or Shelley (web agent); keep a tmux session for long ops.
+- Update: `sudo npm i -g openclaw@latest` (global install needs root on `/usr/lib/node_modules`).
+- Config: use `openclaw config set ...`; ensure `gateway.mode=local` is set.
+- Discord: store raw token only (no `DISCORD_BOT_TOKEN=` prefix).
+- Restart: stop old gateway and run:
+  `pkill -9 -f openclaw-gateway || true; nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &`
+- Verify: `openclaw channels status --probe`, `ss -ltnp | rg 18789`, `tail -n 120 /tmp/openclaw-gateway.log`.
 
-- **Release**: `$openclaw-release-maintainer` (`.agents/skills/openclaw-release-maintainer/SKILL.md`)
-- **PR landing**: Follow `/landpr` (global Codex prompt at `~/.codex/prompts/landpr.md`)
-- **PR triage**: `$openclaw-pr-maintainer` (`.agents/skills/openclaw-pr-maintainer/SKILL.md`)
-- **GHSA**: `$openclaw-ghsa-maintainer` (`.agents/skills/openclaw-ghsa-maintainer/SKILL.md`)
+## Build, Test, and Development Commands
 
 - Runtime baseline: Node **22+** (keep Node + Bun paths working).
 - Install deps: `pnpm install`
 - If deps are missing (for example `node_modules` missing, `vitest not found`, or `command not found`), run the repo’s package-manager install command (prefer lockfile/README-defined PM), then rerun the exact requested command once. Apply this to test/build/lint/typecheck/dev commands; if retry still fails, report the command and first actionable error.
-- Pre-commit hooks: `prek install`. The hook runs the repo verification flow, including `pnpm check`.
-- `FAST_COMMIT=1` skips the repo-wide `pnpm format` and `pnpm check` inside the pre-commit hook only. Use it when you intentionally want a faster commit path and are running equivalent targeted verification manually. It does not change CI and does not change what `pnpm check` itself does.
+- Pre-commit hooks are installed by the package `prepare` script (`git config core.hooksPath git-hooks`). The hook formats/lints staged source files and runs `pnpm check` unless the staged change is docs-only or `FAST_COMMIT=1` is set.
+- `FAST_COMMIT=1` skips the repo-wide `pnpm check` inside the pre-commit hook only. The hook still runs targeted formatting/linting for staged files and restages formatter changes. Use it when you intentionally want a faster commit path and are running equivalent targeted verification manually. It does not change CI and does not change what `pnpm check` itself does.
 - Also supported: `bun install` (keep `pnpm-lock.yaml` + Bun patching in sync when touching deps/patches).
 - Prefer Bun for TypeScript execution (scripts, dev, tests): `bun <file.ts>` / `bunx <tool>`.
 - Run CLI in dev: `pnpm openclaw ...` (bun) or `pnpm dev`.
@@ -118,8 +130,8 @@
 - TypeScript checks: `pnpm tsgo`
 - Lint/format: `pnpm check`
 - Local agent/dev shells default to host-aware `OPENCLAW_LOCAL_CHECK=1` behavior for `pnpm tsgo` and `pnpm lint`; set `OPENCLAW_LOCAL_CHECK_MODE=throttled` to force the lower-memory profile, `OPENCLAW_LOCAL_CHECK_MODE=full` to keep lock-only behavior, or `OPENCLAW_LOCAL_CHECK=0` in CI/shared runs.
-- Format check: `pnpm format` (oxfmt --check)
-- Format fix: `pnpm format:fix` (oxfmt --write)
+- Format check: `pnpm format:check` (oxfmt --check)
+- Format fix: `pnpm format` or `pnpm format:fix` (oxfmt --write)
 - Terminology:
   - "gate" means a verification command or command set that must be green for the decision you are making.
   - A local dev gate is the fast default loop, usually `pnpm check` plus any scoped test you actually need.
@@ -127,8 +139,8 @@
   - A CI gate is whatever the relevant workflow enforces for that lane (for example `check`, `check-additional`, `build-smoke`, or release validation).
 - Local dev gate: prefer `pnpm check` for the normal edit loop. It keeps the repo-architecture policy guards out of the default local loop.
 - CI architecture gate: `check-additional` enforces architecture and boundary policy guards that are intentionally kept out of the default local loop.
-- Formatting gate: the pre-commit hook runs `pnpm format` before `pnpm check`. If you want a formatting-only preflight locally, run `pnpm format` explicitly.
-- If you need a fast commit loop, `FAST_COMMIT=1 git commit ...` skips the hook’s repo-wide `pnpm format` and `pnpm check`; use that only when you are deliberately covering the touched surface some other way.
+- Formatting gate: the pre-commit hook runs targeted formatting on staged source files before `pnpm check`. If you want a repo-wide formatting-only preflight locally, run `pnpm format:check` explicitly.
+- If you need a fast commit loop, `FAST_COMMIT=1 git commit ...` skips the hook’s repo-wide `pnpm check`; targeted formatting/linting still runs, so use that only when you are deliberately covering the touched surface some other way.
 - Tests: `pnpm test` (vitest); coverage: `pnpm test:coverage`
 - Generated baseline drift detection uses SHA-256 hash files under `docs/.generated/` (`.sha256` files tracked in git; full JSON baselines are gitignored, generated locally for inspection).
 - Config schema drift uses `pnpm config:docs:gen` / `pnpm config:docs:check`.
@@ -146,18 +158,15 @@
 - For narrowly scoped changes, if unrelated failures already exist on latest `origin/main`, state that clearly, report the scoped tests you ran, and ask before broadening scope into unrelated fixes or landing despite those failures.
 - Do not use scoped tests as permission to ignore plausibly related failures.
 
-- **Version bumps**: `package.json`, `apps/android/build.gradle.kts`, `apps/ios/Info.plist`, `apps/macos/Info.plist`, `docs/install/updating.md`
-- **Real devices first**: check connected iOS/Android before simulator/emulator.
-- **Mobile pairing**: `ws://` allowed for RFC 1918/link-local/mDNS; `wss://` required for Tailscale/public.
-- **macOS gateway**: runs as menubar app only; restart via app or `scripts/restart-mac.sh`.
-- **macOS logs**: use `scripts/clawlog.sh` for unified log query.
+## Prompt Cache Stability
 
-## Multi-Agent Safety
+- Treat prompt-cache stability as correctness/perf-critical, not cosmetic.
+- Any code that assembles model or tool payloads from maps, sets, registries, plugin lists, MCP catalogs, filesystem reads, or network results must make ordering deterministic before building the request.
+- Do not rewrite older transcript/history bytes on every turn unless you intentionally want to invalidate the cached prefix. Legacy cleanup, pruning, normalization, and migration logic should preserve recent prompt bytes when possible.
+- If truncation or compaction is required, prefer mutating newest or tail content first so the cached prefix stays byte-identical for as long as possible.
+- For cache-sensitive changes, require a regression test that proves turn-to-turn prefix stability or deterministic request assembly; helper-local tests alone are not enough.
 
-- **Never** create/apply/drop `git stash` (other agents may be working).
-- **Never** create/remove `git worktree` or switch branches unless explicitly requested.
-- **Keep unrelated WIP untouched**; commit only your changes.
-- **Auto-resolve formatting-only diffs** without asking.
+## Coding Style & Naming Conventions
 
 - Language: TypeScript (ESM). Prefer strict typing; avoid `any`.
 - Formatting/linting via Oxlint and Oxfmt.
@@ -208,6 +217,8 @@
 - Test performance guardrail: when production code already accepts `deps`, callbacks, or runtime injection, use that seam in tests before adding module-level mocks.
 - Test performance guardrail: prefer narrow public SDK subpaths such as `models-provider-runtime`, `skill-commands-runtime`, and `reply-dispatch-runtime` over older broad helper barrels when both expose the needed helper.
 - Test performance guardrail: treat import-dominated test time as a boundary bug. Refactor the import surface before adding more cases to the slow file.
+- Test performance guardrail: when replacing a slow integration test with helper-level coverage, extract the exact production composition into a named helper and test that helper. Do not trade coverage shape for speed without preserving the behavior proof somewhere cheaper.
+- Test performance guardrail: for plugin-owned static descriptors used by core tests or cold paths, prefer lightweight public artifacts with full-runtime fallback over loading broad bundled plugin barrels.
 - Agents MUST NOT modify baseline, inventory, ignore, snapshot, or expected-failure files to silence failing checks without explicit approval in this chat.
 - For targeted/local debugging, use the native root-project entrypoint: `pnpm test <path-or-filter> [vitest args...]` (for example `pnpm test src/commands/onboard-search.test.ts -t "shows registered plugin providers"`); do not default to raw `pnpm vitest run ...` because it bypasses the repo's default config/profile/pool routing.
 - Do not set test workers above 16; tried already.
@@ -243,8 +254,8 @@
 
 ## Security & Configuration Tips
 
-- Web provider stores creds at `~/.openclaw/credentials/`; rerun `openclaw login` if logged out.
-- Pi sessions live under `~/.openclaw/sessions/` by default; the base directory is not configurable.
+- Channel/provider state lives under `~/.openclaw/credentials/`; rerun `openclaw channels login` if logged out. Model auth profiles live under `~/.openclaw/agents/<agentId>/agent/auth-profiles.json`; legacy OAuth import still reads `~/.openclaw/credentials/oauth.json`.
+- Pi sessions live under `~/.openclaw/agents/<agentId>/sessions/` by default; `session.store` can override the session store path.
 - Environment variables: see `~/.profile`.
 - Never commit or publish real phone numbers, videos, or live configuration values. Use obviously fake placeholders in docs, tests, and examples.
 - Release flow: use the private [maintainer release docs](https://github.com/openclaw/maintainers/blob/main/release/README.md) for the actual runbook, `docs/reference/RELEASING.md` for the public release policy, and `$openclaw-release-maintainer` for the maintainership workflow.
@@ -261,13 +272,13 @@
 - Signal: "update fly" => `fly ssh console -a flawd-bot -C "bash -lc 'cd /data/clawd/openclaw && git pull --rebase origin main'"` then `fly machines restart e825232f34d058 -a flawd-bot`.
 - CLI progress: use `src/cli/progress.ts` (`osc-progress` + `@clack/prompts` spinner); don’t hand-roll spinners/bars.
 - Status output: keep tables + ANSI-safe wrapping (`src/terminal/table.ts`); `status --all` = read-only/pasteable, `status --deep` = probes.
-- Gateway currently runs only as the menubar app; there is no separate LaunchAgent/helper label installed. Restart via the OpenClaw Mac app or `scripts/restart-mac.sh`; to verify/kill use `launchctl print gui/$UID | grep openclaw` rather than assuming a fixed label. **When debugging on macOS, start/stop the gateway via the app, not ad-hoc tmux sessions; kill any temporary tunnels before handoff.**
+- Gateway may run as an app-managed launchd job. Restart the gateway via the app or `openclaw gateway restart`; inspect with `openclaw gateway status --deep` or, for the default profile, `launchctl print gui/$UID/ai.openclaw.gateway`. Use `scripts/restart-mac.sh` when you need to rebuild/relaunch the local macOS app itself. The app LaunchAgent uses `ai.openclaw.mac`. **When debugging on macOS, start/stop the gateway via the app or gateway CLI, not ad-hoc tmux sessions; kill any temporary tunnels before handoff.**
 - macOS logs: use `./scripts/clawlog.sh` to query unified logs for the OpenClaw subsystem; it supports follow/tail/category filters and expects passwordless sudo for `/usr/bin/log`.
 - If shared guardrails are available locally, review them; otherwise follow this repo's guidance.
 - SwiftUI state management (iOS/macOS): prefer the `Observation` framework (`@Observable`, `@Bindable`) over `ObservableObject`/`@StateObject`; don’t introduce new `ObservableObject` unless required for compatibility, and migrate existing usages when touching related code.
 - Connection providers: when adding a new connection, update every UI surface and docs (macOS app, web UI, mobile if applicable, onboarding/overview docs) and add matching status + configuration forms so provider lists and settings stay in sync.
-- Version locations: `package.json` (CLI), `apps/android/app/build.gradle.kts` (versionName/versionCode), `apps/ios/Sources/Info.plist` + `apps/ios/Tests/Info.plist` (CFBundleShortVersionString/CFBundleVersion), `apps/macos/Sources/OpenClaw/Resources/Info.plist` (CFBundleShortVersionString/CFBundleVersion), `docs/install/updating.md` (pinned npm version), and Peekaboo Xcode projects/Info.plists (MARKETING_VERSION/CURRENT_PROJECT_VERSION).
-- "Bump version everywhere" means all version locations above **except** `appcast.xml` (only touch appcast when cutting a new macOS Sparkle release).
+- Version locations: `package.json` (CLI), `apps/android/app/build.gradle.kts` (versionName/versionCode), `apps/ios/version.json` (source for generated iOS config and Fastlane metadata), `apps/macos/Sources/OpenClaw/Resources/Info.plist` (CFBundleShortVersionString/CFBundleVersion), and `docs/install/updating.md` (pinned npm version).
+- "Bump version everywhere" means all version locations above, then run `pnpm ios:version:sync` for iOS generated outputs. Only touch appcast metadata when cutting a new macOS Sparkle release.
 - **Restart apps:** “restart iOS/Android apps” means rebuild (recompile/install) and relaunch, not just kill/launch.
 - **Device checks:** before testing, verify connected real devices (iOS/Android) before reaching for simulators/emulators.
 - Mobile pairing: `ws://` (cleartext) is allowed for private LAN addresses (RFC 1918, link-local, mDNS `.local`) and loopback. Private LAN hosts typically lack PKI-backed identity, so requiring TLS there adds complexity without meaningful security gain. `wss://` is required for Tailscale and public endpoints.
