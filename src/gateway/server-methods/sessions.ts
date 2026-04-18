@@ -441,18 +441,8 @@ async function interruptSessionRunIfActive(params: {
     }
   }
 
-  // FORK: Also wait for the ReplyRunRegistry to idle. Embedded-runner
-  // "ended" fires when the stream closes, but the ReplyOperation isn't
-  // removed from the registry until after followupRunner's finally block
-  // calls replyOperation.complete(). In that window, the next
-  // createReplyOperation throws ReplyRunAlreadyActiveError — which
-  // bubbles up as the "Previous run is still shutting down" banner.
-  // Waiting on the registry's own idle signal closes that gap.
-  //
-  // Timeout: 15s. Empirically followupRunner can take up to ~10s to fully
-  // unwind (fractal injection, memory-flush turn, compaction, persistence
-  // writes). 5s was too tight; the steer RPC returned UNAVAILABLE before the
-  // op cleared. If 15s isn't enough we have a bigger bug, not a race.
+  // FORK: wait for the ReplyRunRegistry to idle. See reply-run-registry.ts
+  // for the lifecycle.
   {
     const laneIdle = await replyRunRegistry.waitForIdle(params.canonicalKey, 15_000);
     if (!laneIdle) {
