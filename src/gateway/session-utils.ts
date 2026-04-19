@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  listAgentIds,
   resolveAgentEffectiveModelPrimary,
   resolveAgentModelFallbacksOverride,
   resolveAgentWorkspaceDir,
@@ -62,10 +63,10 @@ import {
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
 import {
-  canonicalizeSessionKeyForAgent,
   canonicalizeSpawnedByForAgent,
   resolveSessionStoreAgentId,
   resolveSessionStoreKey,
+  resolveStoredSessionKeyForAgentStore,
 } from "./session-store-key.js";
 import {
   readLatestSessionUsageFromTranscript,
@@ -389,6 +390,26 @@ function resolveTranscriptUsageFallback(params: {
     contextTokens: resolvePositiveNumber(contextTokens),
     estimatedCostUsd,
   };
+}
+
+/**
+ * Returns the owning agent id if the session key belongs to an agent that is no
+ * longer present in config (deleted). Returns null for non-agent legacy/global
+ * keys, or when the owning agent still exists (#65524).
+ */
+export function resolveDeletedAgentIdFromSessionKey(
+  cfg: OpenClawConfig,
+  sessionKey: string,
+): string | null {
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (!parsed) {
+    return null;
+  }
+  const agentId = normalizeAgentId(parsed.agentId);
+  if (listAgentIds(cfg).includes(agentId)) {
+    return null;
+  }
+  return agentId;
 }
 
 export function loadSessionEntry(sessionKey: string) {
@@ -906,7 +927,11 @@ export function loadCombinedSessionStoreForGateway(cfg: OpenClawConfig): {
     const store = loadSessionStore(storePath);
     const combined: Record<string, SessionEntry> = {};
     for (const [key, entry] of Object.entries(store)) {
-      const canonicalKey = canonicalizeSessionKeyForAgent(defaultAgentId, key);
+      const canonicalKey = resolveStoredSessionKeyForAgentStore({
+        cfg,
+        agentId: defaultAgentId,
+        sessionKey: key,
+      });
       mergeSessionEntryIntoCombined({
         cfg,
         combined,
@@ -925,7 +950,11 @@ export function loadCombinedSessionStoreForGateway(cfg: OpenClawConfig): {
     const storePath = target.storePath;
     const store = loadSessionStore(storePath);
     for (const [key, entry] of Object.entries(store)) {
-      const canonicalKey = canonicalizeSessionKeyForAgent(agentId, key);
+      const canonicalKey = resolveStoredSessionKeyForAgentStore({
+        cfg,
+        agentId,
+        sessionKey: key,
+      });
       mergeSessionEntryIntoCombined({
         cfg,
         combined,
