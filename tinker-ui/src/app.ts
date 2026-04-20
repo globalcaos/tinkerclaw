@@ -33,7 +33,9 @@ const PF_DEBUG_STATE = {
   eventCounts: { tree: 0, recipe: 0, trail: 0, subagentStart: 0, subagentEnd: 0 },
 };
 function pfLog(label: string, payload?: unknown): void {
-  if (!PF_DEBUG_STATE.debug) return;
+  if (!PF_DEBUG_STATE.debug) {
+    return;
+  }
   const ts = new Date().toISOString().split("T")[1].replace("Z", "");
   // One-argument form keeps devtools cleaner when payload is undefined.
   if (payload === undefined) {
@@ -44,7 +46,7 @@ function pfLog(label: string, payload?: unknown): void {
 }
 // Expose a live inspection handle so you can do `__pf.enable()` / `__pf.state`
 // from devtools without needing a page reload.
-(window as any).__pf = {
+(window as unknown).__pf = {
   get debug() {
     return PF_DEBUG_STATE.debug;
   },
@@ -68,7 +70,7 @@ if (PF_DEBUG_STATE.debug) {
 }
 
 // Runtime config: injected by the tinker plugin into index.html, or via URL params
-const __cfg = (window as any).__TINKER_CONFIG ?? {};
+const __cfg = (window as unknown).__TINKER_CONFIG ?? {};
 const TOKEN = __cfg.token ?? new URLSearchParams(window.location.search).get("token") ?? "";
 // In dev mode (vite), connect WS directly to the gateway; in prod the plugin serves from the gateway itself
 const GW_WS = import.meta.env.DEV
@@ -78,10 +80,10 @@ const BASE = import.meta.env.BASE_URL ?? "/";
 
 let ws: WebSocket | null = null;
 let connected = false;
-let pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
+let pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
 let sessionKey = "";
-let sessions: any[] = [];
-let messages: any[] = [];
+let sessions: unknown[] = [];
+let messages: unknown[] = [];
 /** Index into messages[] of the current streaming temporary message, or -1 if none. */
 let streamMsgIdx = -1;
 let streamRunId: string | null = null;
@@ -95,9 +97,9 @@ let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
 let initialized = false;
-let budgetData: any = null;
-let budgetUsageData: any = null;
-let forensicMode = false;
+let _budgetData: unknown = null;
+let budgetUsageData: unknown = null;
+let _forensicMode = false;
 // FORK: Active recipe step name for thinking indicator + message tags
 let activeRecipeStep: string | null = null;
 let budgetScope: "session" | "all" = "session";
@@ -358,7 +360,7 @@ function randomFortune(): string {
 // The globals (messages, sending, etc.) are always the "active tab's" working copy.
 // switchToTab does atomic save/load swap via saveCurrentTabState/loadTabState.
 interface TabState {
-  messages: any[];
+  messages: unknown[];
   streamMsgIdx: number;
   streamRunId: string | null;
   frozenTextEnd: number;
@@ -555,7 +557,7 @@ function findLastIndex<T>(arr: T[], pred: (v: T) => boolean): number {
 // ─── Persisted Error Messages ───
 const ERROR_STORAGE_KEY = "tinker-errors";
 
-function persistErrorMsg(sk: string, msg: any) {
+function persistErrorMsg(sk: string, msg: unknown) {
   try {
     const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
     if (!all[sk]) {
@@ -568,7 +570,7 @@ function persistErrorMsg(sk: string, msg: any) {
   }
 }
 
-function loadPersistedErrors(sk: string): any[] {
+function loadPersistedErrors(sk: string): unknown[] {
   try {
     const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
     return all[sk] || [];
@@ -742,7 +744,7 @@ function sessionHasActiveRuns(sessionKey: string): { live: boolean; provider?: s
   return { live: false };
 }
 
-let modelConfigData: any = null;
+let modelConfigData: unknown = null;
 
 // FORK 2026-04-20: Build the Prefrontal dashboard state (tree + recipe +
 // trail) and push it to the panel controller. Tree source of truth is the
@@ -856,7 +858,7 @@ function buildPrefrontalTree(): TreeResponse {
 
 // ─── Recipe Progress (Prefrontal v3.0) ───
 // FORK: Shows active recipe progress below the call tree panel.
-function updateRecipeProgress(data: any) {
+function updateRecipeProgress(data: unknown) {
   const container = document.getElementById("recipe-progress");
   if (!container) {
     return;
@@ -923,8 +925,8 @@ function uuid() {
 
 function gwConnect() {
   ws = new WebSocket(GW_WS);
-  ws.onmessage = (ev) => onFrame(JSON.parse(ev.data));
-  ws.onclose = () => {
+  ws.addEventListener("message", (ev) => onFrame(JSON.parse(ev.data)));
+  ws.addEventListener("close", () => {
     connected = false;
     sending = false;
     streamMsgIdx = -1;
@@ -937,10 +939,10 @@ function gwConnect() {
     updateBtn();
     updateChat();
     setTimeout(gwConnect, 2000);
-  };
+  });
 }
 
-function onFrame(f: any) {
+function onFrame(f: unknown) {
   if (f.type === "event") {
     if (f.event === "connect.challenge") {
       req("connect", {
@@ -958,7 +960,7 @@ function onFrame(f: any) {
         caps: ["tool-events"],
         auth: { token: TOKEN },
       })
-        .then((hello: any) => {
+        .then((hello: unknown) => {
           connected = true;
           const defs = hello?.snapshot?.sessionDefaults;
           if (defs?.mainSessionKey) {
@@ -998,11 +1000,11 @@ function onFrame(f: any) {
           timelineCtrl?.loadSession(sessionKey);
           scheduleUnconfirmedPrune();
           req("forensic.setMode", { enabled: true })
-            .then((res: any) => {
-              forensicMode = res?.enabled ?? true;
+            .then((res: unknown) => {
+              _forensicMode = res?.enabled ?? true;
             })
             .catch(() => {
-              forensicMode = true;
+              _forensicMode = true;
             });
         })
         .catch((e) => console.error("connect:", e));
@@ -1015,12 +1017,16 @@ function onFrame(f: any) {
     const p = pending.get(f.id);
     if (p) {
       pending.delete(f.id);
-      f.ok ? p.resolve(f.payload) : p.reject(f.error);
+      if (f.ok) {
+        p.resolve(f.payload);
+      } else {
+        p.reject(f.error);
+      }
     }
   }
 }
 
-function req<T = any>(method: string, params?: any): Promise<T> {
+function req<T = unknown>(method: string, params?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return reject("disconnected");
@@ -1050,7 +1056,7 @@ function startHealthPoll() {
         return;
       }
       let changed = false;
-      for (const [provider, info] of Object.entries(res.health) as [string, any][]) {
+      for (const [provider, info] of Object.entries(res.health) as [string, unknown][]) {
         if (info.available) {
           if (providerErrors.has(provider)) {
             providerErrors.delete(provider);
@@ -1101,7 +1107,7 @@ function findSentenceEnd(text: string, from: number): number {
  * The remainder (after the '.') stays in the current bubble. If nothing
  * remains, the bubble is removed entirely.
  */
-function mergeSentenceContinuations(msgs: any[]): void {
+function mergeSentenceContinuations(msgs: unknown[]): void {
   // Only operate on _temporary messages from the current run.
   // Find the range of temporary messages (they're always at the tail).
   let tempStart = -1;
@@ -1125,7 +1131,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
       continue;
     }
     const content = Array.isArray(m.content) ? m.content : [];
-    const textBlock = content.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+    const textBlock = content.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
     if (!textBlock) {
       continue;
     }
@@ -1144,7 +1150,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
     }
 
     // Find the previous temporary assistant text bubble
-    let prevTextBlock: any = null;
+    let prevTextBlock: unknown = null;
     for (let k = i - 1; k >= tempStart; k--) {
       const prev = msgs[k];
       if (!prev._temporary) {
@@ -1154,7 +1160,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
         continue;
       }
       const pc = Array.isArray(prev.content) ? prev.content : [];
-      const pt = pc.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+      const pt = pc.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
       if (pt) {
         prevTextBlock = pt;
         break;
@@ -1186,7 +1192,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
   }
 }
 
-function onEvent(evt: any) {
+function onEvent(evt: unknown) {
   if (evt.event === "chat") {
     const p = evt.payload;
     if (p.sessionKey !== sessionKey && !sessionKeyMatches(p.sessionKey)) {
@@ -1225,7 +1231,7 @@ function onEvent(evt: any) {
         if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
           // Update existing temporary message's text
           const content = messages[streamMsgIdx].content;
-          const textBlock = content.find((b: any) => b.type === "text");
+          const textBlock = content.find((b: unknown) => b.type === "text");
           if (textBlock) {
             textBlock.text = segmentText;
           }
@@ -1261,22 +1267,24 @@ function onEvent(evt: any) {
         // ALL temp text segments with the server's authoritative version so
         // markdown elements (tables, lists) that span tool-call boundaries
         // render correctly as a single block.
-        const hadTemps = messages.some((m: any) => m._temporary);
+        const hadTemps = messages.some((m: unknown) => m._temporary);
         if (hadTemps && p.message) {
           // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
           const finalText = finalContent
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text ?? "")
+            .filter((b: unknown) => b.type === "text")
+            .map((b: unknown) => b.text ?? "")
             .join("");
 
           // Remove temp text-only messages, keep temp tool messages
-          messages = messages.filter((m: any) => {
+          messages = messages.filter((m: unknown) => {
             if (!m._temporary) {
               return true;
             }
             const c = Array.isArray(m.content) ? m.content : [];
-            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+            const isToolMsg = c.some(
+              (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
+            );
             return isToolMsg;
           });
 
@@ -1306,7 +1314,7 @@ function onEvent(evt: any) {
           messages.push(p.message);
         }
       } else {
-        messages = messages.filter((m: any) => !m._temporary);
+        messages = messages.filter((m: unknown) => !m._temporary);
         if (p.message) {
           messages.push(p.message);
         }
@@ -1342,7 +1350,7 @@ function onEvent(evt: any) {
           }
           // Clear all keys matching this provider (provider:*, provider/*)
           if (streamProvider) {
-            for (const key of [...providerErrors.keys()]) {
+            for (const key of providerErrors.keys()) {
               if (
                 key === streamProvider ||
                 key.startsWith(streamProvider + ":") ||
@@ -1482,7 +1490,7 @@ function onEvent(evt: any) {
     // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
     if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
       if (p.data.anatomy && timelineCtrl) {
-        const anatomy = p.data.anatomy as any;
+        const anatomy = p.data.anatomy as unknown;
         if (anatomy.roundNumber) {
           // Round-level anatomy: enrich existing round bar with full segment data
           timelineCtrl.pushEvent(anatomy, p.runId);
@@ -1503,7 +1511,7 @@ function onEvent(evt: any) {
         return;
       }
       if (timelineCtrl) {
-        const roundEvent: any = {
+        const roundEvent: unknown = {
           turn: p.data.turnNumber,
           roundNumber: p.data.roundNumber,
           model: p.data.model,
@@ -1617,7 +1625,7 @@ function onEvent(evt: any) {
           ? " — all backups exhausted"
           : " — jumping to backup";
       const fallbackText = `⚠ ${shortModel}${profileLabel} ${stepLabel} — ${reasonLabel}${nextLabel}`;
-      const fallbackMsg: any = {
+      const fallbackMsg: unknown = {
         role: "assistant",
         content: [{ type: "text", text: fallbackText }],
         _isWarning: true,
@@ -1657,7 +1665,7 @@ function onEvent(evt: any) {
         updateBudgetPanel();
         startHealthPoll();
       }
-      const profileMsg: any = {
+      const profileMsg: unknown = {
         role: "assistant",
         content: [{ type: "text", text: profileText }],
         _isWarning: true,
@@ -1680,7 +1688,7 @@ function onEvent(evt: any) {
       const text = isExhausted
         ? `🛑 ${shortModel} — ${d.attempts} retries exhausted — falling back`
         : `⏳ ${shortModel} — overload retry ${d.attempt}/${d.maxAttempts} — waiting ${((d.delayMs as number) / 1000).toFixed(0)}s`;
-      const retryMsg: any = {
+      const retryMsg: unknown = {
         role: "assistant",
         content: [{ type: "text", text }],
         _isOverloadRetry: true,
@@ -1769,9 +1777,10 @@ function onEvent(evt: any) {
         const newStepKey = `${d.recipeId}:${d.step ?? 0}`;
         const prevStepKey = prev ? `${prev.recipeId}:${prev.step ?? 0}` : "";
         if (newStepKey !== prevStepKey) {
-          const label = d.step != null
-            ? `Step ${d.step}${d.totalSteps != null ? `/${d.totalSteps}` : ""}`
-            : d.recipeId;
+          const label =
+            d.step != null
+              ? `Step ${d.step}${d.totalSteps != null ? `/${d.totalSteps}` : ""}`
+              : d.recipeId;
           pushTrail({
             ts: d.ts ?? Date.now(),
             kind: "recipe-step",
@@ -1904,7 +1913,10 @@ function onEvent(evt: any) {
           if (sk.includes(":subagent:")) {
             const tail = sk.split(":").pop() ?? sk;
             const shortId = tail.length > 8 ? tail.slice(0, 8) : tail;
-            const shortModel = String(p.data.model ?? "").split("/").pop() ?? "";
+            const shortModel =
+              String(p.data.model ?? "")
+                .split("/")
+                .pop() ?? "";
             pushTrail({
               ts: Date.now(),
               kind: "dispatch",
@@ -1936,11 +1948,11 @@ function onEvent(evt: any) {
               fetch(`/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
-                  const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+                  const events: unknown[] = Array.isArray(body) ? body : (body?.events ?? []);
                   if (events.length === 0) {
                     return;
                   }
-                  const turnEvents = events.filter((ev: any) => ev.turn === tn);
+                  const turnEvents = events.filter((ev: unknown) => ev.turn === tn);
                   for (const ev of turnEvents) {
                     timelineCtrl!.pushEvent(ev);
                   }
@@ -1986,7 +1998,7 @@ function onEvent(evt: any) {
           if (targetTab) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
-            const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
+            const tabTurns = tabMsgs.filter((m: unknown) => m.role === "user").length;
             if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
               console.log(
                 "[tabs] triggering title generation for turn",
@@ -2002,7 +2014,7 @@ function onEvent(evt: any) {
         if (p.data.rateLimit && budgetUsageData?.claude) {
           const rl = p.data.rateLimit as { h5: number; d7: number; d7Sonnet?: number };
           if (!budgetUsageData.claude.limits) {
-            budgetUsageData.claude.limits = {} as any;
+            budgetUsageData.claude.limits = {} as unknown;
           }
           budgetUsageData.claude.limits.five_hour = {
             utilization: rl.h5,
@@ -2052,12 +2064,12 @@ function onEvent(evt: any) {
             )
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
-                const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+                const events: unknown[] = Array.isArray(body) ? body : (body?.events ?? []);
                 if (events.length === 0) {
                   return;
                 }
                 // Find events for the current turn
-                const turnEvents = events.filter((ev: any) => ev.turn === turnNum);
+                const turnEvents = events.filter((ev: unknown) => ev.turn === turnNum);
                 if (turnEvents.length === 0) {
                   // Fallback: just use the latest event (backwards compat)
                   const latest = events[events.length - 1];
@@ -2095,10 +2107,10 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
     if (tab.isAttached && tab.sessionKey && tab.id !== "tab-main") {
-      let sess = sessions.find((s: any) => s.key === tab.sessionKey);
+      let sess = sessions.find((s: unknown) => s.key === tab.sessionKey);
       if (!sess) {
         // Try suffix match: tab has "tinker:xxx", server has "agent:main:tinker:xxx"
-        sess = sessions.find((s: any) => s.key.endsWith(":" + tab.sessionKey));
+        sess = sessions.find((s: unknown) => s.key.endsWith(":" + tab.sessionKey));
       }
       if (sess && tab.sessionKey !== sess.key) {
         // Upgrade to canonical key
@@ -2138,7 +2150,7 @@ async function loadChat() {
     if (targetTab) {
       const ts = tabStates.get(targetTab.id) ?? freshTabState();
       ts.messages = res.messages ?? [];
-      ts.currentTurnNumber = ts.messages.filter((m: any) => m.role === "user").length;
+      ts.currentTurnNumber = ts.messages.filter((m: unknown) => m.role === "user").length;
       tabStates.set(targetTab.id, ts);
     }
     return;
@@ -2148,14 +2160,14 @@ async function loadChat() {
   lastDeltaLen = 0;
   messages = res.messages ?? [];
   // Sync turn counter from loaded history
-  const userMsgCount = messages.filter((m: any) => m.role === "user").length;
+  const userMsgCount = messages.filter((m: unknown) => m.role === "user").length;
   currentTurnNumber = userMsgCount;
   // Restore persisted error messages (survive refresh)
   const storedErrors = loadPersistedErrors(sessionKey);
   if (storedErrors.length) {
     // Insert errors before the last assistant message (natural position),
     // or append at end if no assistant message follows.
-    const lastAssistantIdx = findLastIndex(messages, (m: any) => m.role === "assistant");
+    const lastAssistantIdx = findLastIndex(messages, (m: unknown) => m.role === "assistant");
     if (lastAssistantIdx >= 0) {
       messages.splice(lastAssistantIdx, 0, ...storedErrors);
     } else {
@@ -2188,8 +2200,8 @@ async function generateTabTitle(tab: Tab) {
     }
     const text = Array.isArray(m.content)
       ? m.content
-          .filter((b: any) => b.type === "text")
-          .map((b: any) => b.text)
+          .filter((b: unknown) => b.type === "text")
+          .map((b: unknown) => b.text)
           .join(" ")
       : String(m.content);
     if (!text.trim()) {
@@ -2252,7 +2264,12 @@ async function send(text: string) {
     return;
   }
 
-  // FORK: /clear — wipe visual chat immediately, then send to gateway for backend reset
+  // FORK (2026-04-20): /clear is a pure client-side transaction, like Claude Code's /clear.
+  // Wipe the UI, rotate to a fresh session key, fire no LLM call. The old server-side
+  // session lingers on disk until cleaning-lady archives it — zero cost, zero tokens.
+  // Non-main sessions (tinker:*) are additionally told to be deleted server-side; the
+  // main session (agent:main:main) can't be deleted but is still abandoned in the tab
+  // by the sessionKey rotation below.
   if (text.trim() === "/clear") {
     messages = [];
     streamMsgIdx = -1;
@@ -2262,21 +2279,35 @@ async function send(text: string) {
     sending = false;
     currentTurnNumber = 0;
     expandedTools = new Set();
-    // Clear tab state too
+
+    const oldSessionKey = sessionKey;
     const clearTab = tabs.find((t) => t.id === activeTabId);
+
+    // Rotate the active tab to a fresh session key. Next message starts a new session
+    // on the gateway automatically (auto-create on first chat.send).
+    const freshKey = `tinker:${Date.now().toString(36)}`;
+    sessionKey = freshKey;
     if (clearTab) {
+      clearTab.sessionKey = freshKey;
+      clearTab.isAttached = true;
       const ts = tabStates.get(clearTab.id);
       if (ts) {
         ts.messages = [];
         ts.currentTurnNumber = 0;
       }
+      saveTabs();
+      renderTabs();
     }
+
     updateChat();
     scrollChat();
-    // Send /clear to gateway for backend context reset
-    await req("chat.send", { sessionKey, message: "/clear", idempotencyKey: uuid() }).catch(
-      () => {},
-    );
+
+    // Best-effort server-side cleanup of the old tinker:* session. Fire-and-forget;
+    // failures are fine (main session can't be deleted, that's by design). No await,
+    // no LLM call path touched.
+    if (oldSessionKey && oldSessionKey.startsWith("tinker:")) {
+      req("sessions.delete", { key: oldSessionKey, deleteTranscript: false }).catch(() => {});
+    }
     return;
   }
 
@@ -2371,8 +2402,8 @@ function retryProvider(provider: string) {
     if ((messages[i].role ?? "").toLowerCase() === "user") {
       const text = Array.isArray(messages[i].content)
         ? messages[i].content
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text)
+            .filter((b: unknown) => b.type === "text")
+            .map((b: unknown) => b.text)
             .join("\n")
         : typeof messages[i].content === "string"
           ? messages[i].content
@@ -2392,7 +2423,7 @@ function retryProvider(provider: string) {
 async function abort() {
   await req("chat.abort", { sessionKey }).catch(() => {});
   sending = false;
-  messages = messages.filter((m: any) => !m._temporary);
+  messages = messages.filter((m: unknown) => !m._temporary);
   streamMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
@@ -2408,7 +2439,7 @@ async function loadBudget() {
     req("config.models", {}).catch(() => null),
     req("budget.usage", {}).catch(() => null),
   ]);
-  budgetData = { budget: null, status: s };
+  _budgetData = { budget: null, status: s };
   if (mc) {
     modelConfigData = mc;
   }
@@ -2468,7 +2499,7 @@ function extractGrepTarget(cmd: string): string {
   return m ? (m[1] ?? m[2] ?? m[3] ?? "") : "";
 }
 
-function extractGrepFiles(cmd: string): string {
+function _extractGrepFiles(cmd: string): string {
   // Get the last path-like argument
   const parts = cmd.split(/\s+/);
   for (let i = parts.length - 1; i >= 0; i--) {
@@ -2485,7 +2516,7 @@ function editPreview(s: string): string {
   return line.length > 60 ? line.slice(0, 57) + "…" : line;
 }
 
-function toolSummary(name: string, input: any): string {
+function toolSummary(name: string, input: unknown): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
   switch (n) {
@@ -2691,7 +2722,7 @@ function toolSummary(name: string, input: any): string {
   }
 }
 
-function toolExpandedDetail(name: string, input: any): string {
+function toolExpandedDetail(name: string, input: unknown): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
   const p = shortenPath(String(a.file_path ?? a.path ?? ""));
@@ -2771,8 +2802,12 @@ let injectToggles = loadInjectToggles();
 function applyInjectToggleChrome(): void {
   const amy = document.getElementById("tb-amygdala");
   const fra = document.getElementById("tb-fractal");
-  if (amy) {amy.classList.toggle("tb-active", injectToggles.amygdala);}
-  if (fra) {fra.classList.toggle("tb-active", injectToggles.fractal);}
+  if (amy) {
+    amy.classList.toggle("tb-active", injectToggles.amygdala);
+  }
+  if (fra) {
+    fra.classList.toggle("tb-active", injectToggles.fractal);
+  }
 }
 // FORK 2026-04-18: UI injection is now minimal — the detailed rules for
 // each section live in the system prompt (appended by cc-bridge/worker.ts
@@ -2782,16 +2817,24 @@ function applyInjectToggleChrome(): void {
 function buildInjectedPrompt(userText: string): string {
   const wantAmy = injectToggles.amygdala;
   const wantFra = injectToggles.fractal;
-  if (!wantAmy && !wantFra) {return userText;}
+  if (!wantAmy && !wantFra) {
+    return userText;
+  }
   const sections: string[] = ["💬 ANSWER"];
-  if (wantAmy) {sections.push("🧠 AMYGDALA");}
-  if (wantFra) {sections.push("🌿 FRACTAL");}
+  if (wantAmy) {
+    sections.push("🧠 AMYGDALA");
+  }
+  if (wantFra) {
+    sections.push("🌿 FRACTAL");
+  }
   const order = sections.join(" → ");
   const extras: string[] = [];
   extras.push(
     `\n\n---\n\n**Structure this turn's reply as labelled sections in this exact order: ${order}.** Each marker on its own line, blank line between sections. The UI parses markers and renders each section as a separate bubble; the first is expanded, later ones collapsed.`,
   );
-  extras.push("\n\n**💬 ANSWER** — your complete substantive reply, markdown freely, natural prose.");
+  extras.push(
+    "\n\n**💬 ANSWER** — your complete substantive reply, markdown freely, natural prose.",
+  );
   if (wantAmy) {
     extras.push(
       "\n\n**🧠 AMYGDALA** — follow the amygdala rules in your system prompt (post-turn diagnostic of Prudence + Personality ensembles). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-learned-intuition/amygdala-prompt.md`.",
@@ -2820,22 +2863,31 @@ type SectionedReply = {
 // `💬 **ANSWER**`, sometimes `💬 **ANSWER:**` — all three must match.
 const AMY_MARKER_RE = /(^|\n)\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 const ANS_MARKER_RE = /(^|\n)\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
-const FRA_MARKER_RE = /(^|\n)\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+const FRA_MARKER_RE =
+  /(^|\n)\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 function splitSectionedReply(text: string): SectionedReply | null {
-  if (!text) {return null;}
+  if (!text) {
+    return null;
+  }
   // `text.search(regex)` returns the first match position; multiple marker
   // occurrences (rare — claude echoing its own section header) would still be
   // handled because we only care about the FIRST occurrence of each.
   const amyIdx = text.search(AMY_MARKER_RE);
   const ansIdx = text.search(ANS_MARKER_RE);
   const fraIdx = text.search(FRA_MARKER_RE);
-  if (amyIdx < 0 && ansIdx < 0 && fraIdx < 0) {return null;}
+  if (amyIdx < 0 && ansIdx < 0 && fraIdx < 0) {
+    return null;
+  }
   // Split by whichever markers exist, in order of appearance.
   const markers: { key: "amygdala" | "answer" | "fractal"; start: number; hdrLen: number }[] = [];
   const pushMarker = (idx: number, key: "amygdala" | "answer" | "fractal", re: RegExp) => {
-    if (idx < 0) {return;}
+    if (idx < 0) {
+      return;
+    }
     const m = text.slice(idx).match(re);
-    if (!m) {return;}
+    if (!m) {
+      return;
+    }
     markers.push({ key, start: idx, hdrLen: m[0].length });
   };
   pushMarker(amyIdx, "amygdala", AMY_MARKER_RE);
@@ -2844,14 +2896,20 @@ function splitSectionedReply(text: string): SectionedReply | null {
   markers.sort((a, b) => a.start - b.start);
   const result: SectionedReply = {};
   const preface = text.slice(0, markers[0]?.start ?? 0).trim();
-  if (preface) {result.other = preface;}
+  if (preface) {
+    result.other = preface;
+  }
   for (let i = 0; i < markers.length; i++) {
     const m = markers[i];
-    if (!m) {continue;}
+    if (!m) {
+      continue;
+    }
     const bodyStart = m.start + m.hdrLen;
     const bodyEnd = markers[i + 1]?.start ?? text.length;
     const body = text.slice(bodyStart, bodyEnd).trim();
-    if (body) {result[m.key] = body;}
+    if (body) {
+      result[m.key] = body;
+    }
   }
   return result;
 }
@@ -2892,7 +2950,8 @@ function renderSectionedReply(sec: SectionedReply): string {
   // the pre-marker content ("other") is actually the answer — promote it.
   // Otherwise the answer text falls on the floor.
   let h = "";
-  const effectiveAnswer = sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
+  const effectiveAnswer =
+    sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
   if (effectiveAnswer) {
     h += `<div class="msg assistant">${md(effectiveAnswer)}</div>`;
   } else if (sec.other && !sec.amygdala && !sec.fractal) {
@@ -2950,15 +3009,21 @@ type Envelope = {
 };
 const ERR_ENV_PREFIX = "__ERR_ENV__:";
 function extractEnvelope(text: string): Envelope | null {
-  if (typeof text !== "string" || text.length === 0) {return null;}
+  if (typeof text !== "string" || text.length === 0) {
+    return null;
+  }
   // indexOf, not startsWith: defense-in-depth. If some upstream path ever
   // concatenates prose before the envelope, we still detect it.
   const idx = text.indexOf(ERR_ENV_PREFIX);
-  if (idx < 0) {return null;}
+  if (idx < 0) {
+    return null;
+  }
   const jsonStart = idx + ERR_ENV_PREFIX.length;
   // Find the end of the JSON object by brace-matching from the first '{'.
   const braceStart = text.indexOf("{", jsonStart);
-  if (braceStart < 0) {return null;}
+  if (braceStart < 0) {
+    return null;
+  }
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -2987,7 +3052,9 @@ function extractEnvelope(text: string): Envelope | null {
       }
     }
   }
-  if (end < 0) {return null;}
+  if (end < 0) {
+    return null;
+  }
   try {
     const parsed = JSON.parse(text.slice(braceStart, end)) as Envelope;
     if (parsed?.kind === "error" && typeof parsed.headline === "string") {
@@ -3005,18 +3072,38 @@ function renderEnvelope(env: Envelope): string {
       ? `<ul class="env-actions">${env.suggestedActions.map((a) => `<li>${md(a)}</li>`).join("")}</ul>`
       : "";
   const kvEntries: string[] = [];
-  if (env.llm?.provider) {kvEntries.push(`provider: ${env.llm.provider}`);}
-  if (env.llm?.model) {kvEntries.push(`model: ${env.llm.model}`);}
-  if (env.llm?.authProfileId) {kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);}
-  if (env.llm?.httpStatus !== undefined) {kvEntries.push(`http_status: ${env.llm.httpStatus}`);}
-  if (env.llm?.providerErrorCode) {kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);}
-  if (env.llm?.requestId) {kvEntries.push(`request_id: ${env.llm.requestId}`);}
-  if (env.llm?.durationMs !== undefined) {kvEntries.push(`duration_ms: ${env.llm.durationMs}`);}
-  if (env.sessionKey) {kvEntries.push(`session: ${env.sessionKey}`);}
-  if (env.timestamp) {kvEntries.push(`timestamp: ${env.timestamp}`);}
+  if (env.llm?.provider) {
+    kvEntries.push(`provider: ${env.llm.provider}`);
+  }
+  if (env.llm?.model) {
+    kvEntries.push(`model: ${env.llm.model}`);
+  }
+  if (env.llm?.authProfileId) {
+    kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);
+  }
+  if (env.llm?.httpStatus !== undefined) {
+    kvEntries.push(`http_status: ${env.llm.httpStatus}`);
+  }
+  if (env.llm?.providerErrorCode) {
+    kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);
+  }
+  if (env.llm?.requestId) {
+    kvEntries.push(`request_id: ${env.llm.requestId}`);
+  }
+  if (env.llm?.durationMs !== undefined) {
+    kvEntries.push(`duration_ms: ${env.llm.durationMs}`);
+  }
+  if (env.sessionKey) {
+    kvEntries.push(`session: ${env.sessionKey}`);
+  }
+  if (env.timestamp) {
+    kvEntries.push(`timestamp: ${env.timestamp}`);
+  }
   if (env.details) {
     for (const [k, v] of Object.entries(env.details)) {
-      if (v !== undefined && v !== null) {kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);}
+      if (v !== undefined && v !== null) {
+        kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+      }
     }
   }
   const kv = kvEntries.length > 0 ? `<div class="env-kv">${esc(kvEntries.join("\n"))}</div>` : "";
@@ -3025,7 +3112,9 @@ function renderEnvelope(env: Envelope): string {
     kv || raw
       ? `<details class="env-tech"><summary>technical details</summary>${kv}${raw}</details>`
       : "";
-  const explanation = env.explanation ? `<div class="env-explanation">${md(env.explanation)}</div>` : "";
+  const explanation = env.explanation
+    ? `<div class="env-explanation">${md(env.explanation)}</div>`
+    : "";
   return (
     `<div class="msg msg-envelope ${variantClass}" data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
     `<div class="env-header"><span class="env-icon">${esc(env.icon ?? "⚠️")}</span><span class="env-headline">${esc(env.headline)}</span></div>` +
@@ -3071,11 +3160,11 @@ function renderSystemMsg(text: string, idx: number): string {
 }
 
 function renderMsg(
-  msg: any,
+  msg: unknown,
   idx: number,
   isThinking = false,
   globalResults?: Map<string, { content: string; isError: boolean }>,
-  globalToolNames?: Map<string, { name: string; input: any }>,
+  globalToolNames?: Map<string, { name: string; input: unknown }>,
 ): string {
   const role = (msg.role ?? "").toLowerCase();
   const content = Array.isArray(msg.content) ? msg.content : [];
@@ -3089,7 +3178,7 @@ function renderMsg(
   // FORK: Hide fractal reflection prompts regardless of role (user/assistant/toolResult)
   // sessions.send injects them as toolResult messages in the transcript
   const _allMsgTexts =
-    content.map((b: any) => b.text ?? "").join(" ") +
+    content.map((b: unknown) => b.text ?? "").join(" ") +
     (typeof msg.content === "string" ? msg.content : "");
   if (_allMsgTexts.includes("# FRACTAL REFLECTION")) {
     return h;
@@ -3223,7 +3312,7 @@ function renderMsg(
           "reflection";
         // Check if this fractal took action (tool calls in surrounding messages)
         const hasAction = content.some(
-          (b: any) => b.type === "tool_use" || b.type === "tool_result",
+          (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
         );
         const openAttr = hasAction ? " open" : "";
         h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
@@ -3339,7 +3428,7 @@ function renderMsg(
               .replace(/[*_#`]/g, "")
               .trim() || "reflection";
           const hasAction2 = content.some(
-            (b: any) => b.type === "tool_use" || b.type === "tool_result",
+            (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
           );
           const openAttr2 = hasAction2 ? " open" : "";
           h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
@@ -3440,8 +3529,11 @@ function renderThinkingIndicator(): string {
   <span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
-      if (isSubagentDescendant) subagentRows.push(row);
-      else mainRows.push(row);
+      if (isSubagentDescendant) {
+        subagentRows.push(row);
+      } else {
+        mainRows.push(row);
+      }
     }
     const rows = [...mainRows, ...subagentRows].join("");
     if (rows) {
@@ -3666,7 +3758,7 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     const monthPct = Math.min((oc.monthSpend / cap) * 100, 100);
     // Today's spend as fraction of total cap
     const today = new Date().toISOString().slice(0, 10);
-    const todayEntry = (oc.dailyBreakdown || []).find((d: any) => d.date === today);
+    const todayEntry = (oc.dailyBreakdown || []).find((d: unknown) => d.date === today);
     const todaySpend = todayEntry?.amount ?? 0;
     const todayPct = Math.min((todaySpend / cap) * 100, 100);
     let tip = `Today: $${todaySpend.toFixed(2)}/$${cap} (${todayPct.toFixed(0)}%)`;
@@ -3712,7 +3804,7 @@ function renderCostCol(costLabel: string): string {
 }
 
 // ─── Budget Helpers ───
-function budgetColor(pct: number) {
+function _budgetColor(pct: number) {
   if (pct >= 100) {
     return "#ef4444";
   }
@@ -3747,7 +3839,7 @@ const SYSTEM_INJECTED_RE =
 
 /** Extract the actual user text from a user message, stripping System: prefixes.
  *  Returns null if the message is entirely system-injected (no real user text). */
-function extractUserText(msg: any): string | null {
+function extractUserText(msg: unknown): string | null {
   const content = Array.isArray(msg.content) ? msg.content : [];
   let raw = "";
   if (content.length === 0 && typeof msg.content === "string") {
@@ -3798,12 +3890,12 @@ function updateChat(skipScroll = false) {
   // are thinking steps. If streaming is active, ALL assistant texts in the
   // current run are thinking (the live answer is a temporary message).
   // Tool result user messages are NOT run boundaries — they're mid-run tool responses.
-  const isRunBoundary = (m: any) => {
+  const isRunBoundary = (m: unknown) => {
     // FORK: Fractal reflection responses start a new run
     // (sessions.send injects them as assistant messages, so they won't have a user boundary)
     const mc = Array.isArray(m.content) ? m.content : [];
     const firstText =
-      mc.find((b: any) => b.type === "text" && b.text)?.text ??
+      mc.find((b: unknown) => b.type === "text" && b.text)?.text ??
       (typeof m.content === "string" ? m.content : "");
     if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) {
       return true;
@@ -3814,7 +3906,7 @@ function updateChat(skipScroll = false) {
     }
     const c = Array.isArray(m.content) ? m.content : [];
     // Pure tool_result messages are part of the run, not boundaries
-    if (c.length > 0 && !c.some((b: any) => b.type !== "tool_result")) {
+    if (c.length > 0 && !c.some((b: unknown) => b.type !== "tool_result")) {
       return false;
     }
     // System-injected user messages (runtime context, subagent results) are not boundaries
@@ -3838,7 +3930,7 @@ function updateChat(skipScroll = false) {
           continue;
         }
         const c = Array.isArray(m.content) ? m.content : [];
-        const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+        const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (!hasText && !plainText) {
           continue;
@@ -3847,7 +3939,7 @@ function updateChat(skipScroll = false) {
         // their own collapsed block. Exclude them so the real answer before
         // a fractal isn't demoted to "thinking".
         const firstTextBlock =
-          c.find((b: any) => b.type === "text" && b.text)?.text ?? (plainText || "");
+          c.find((b: unknown) => b.type === "text" && b.text)?.text ?? (plainText || "");
         if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) {
           continue;
         }
@@ -3875,7 +3967,7 @@ function updateChat(skipScroll = false) {
   // Build a global tool result map: tool_use_id → { content, isError, name }
   // so tool_use blocks can find their paired results even across messages.
   const globalResultMap = new Map<string, { content: string; isError: boolean }>();
-  const globalToolNames = new Map<string, { name: string; input: any }>();
+  const globalToolNames = new Map<string, { name: string; input: unknown }>();
   for (const m of messages) {
     const c = Array.isArray(m.content) ? m.content : [];
     for (const b of c) {
@@ -3912,7 +4004,7 @@ function updateChat(skipScroll = false) {
           if (role === "assistant") {
             // Check if it's a tool-only message (no text) — intermediate
             const c = Array.isArray(m.content) ? m.content : [];
-            const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+            const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
             const plainText = typeof m.content === "string" && (m.content as string).trim();
             if (!hasText && !plainText) {
               intermediateIndices.push(j);
@@ -4046,7 +4138,7 @@ function updateChat(skipScroll = false) {
         const fileApiBase = import.meta.env.DEV ? "/tinker-api" : "/tinker/api";
         fetch(`${fileApiBase}/file-read?path=${encodeURIComponent(fp)}`)
           .then((r) => r.json())
-          .then((data: any) => {
+          .then((data: unknown) => {
             if (data.error) {
               viewer.textContent = `Error: ${data.error}`;
               return;
@@ -4079,7 +4171,11 @@ function updateChat(skipScroll = false) {
         return;
       }
       const id = r.getAttribute("data-tid")!;
-      expandedTools.has(id) ? expandedTools.delete(id) : expandedTools.add(id);
+      if (expandedTools.has(id)) {
+        expandedTools.delete(id);
+      } else {
+        expandedTools.add(id);
+      }
       // Remember the clicked row's position relative to the viewport
       const clickedTop = (r as HTMLElement).getBoundingClientRect().top;
       updateChat(true);
@@ -4196,7 +4292,7 @@ function switchToTab(tabId: string) {
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) {
-      (tmCanvas as any).__treemapClear?.();
+      (tmCanvas as unknown).__treemapClear?.();
     }
     timelineCtrl?.loadSession(sessionKey);
     // Background refresh from server — only if still attached (server has the session)
@@ -4267,7 +4363,7 @@ function attachSessionToTab(key: string) {
 
   tab.sessionKey = key;
   tab.isAttached = true;
-  const sess = sessions.find((s: any) => s.key === key);
+  const sess = sessions.find((s: unknown) => s.key === key);
   if (sess?.label) {
     tab.title = sess.label.slice(0, 30);
   }
@@ -4542,7 +4638,16 @@ function updateBudgetPanel() {
 
   if (chain.length) {
     const open = !collapsedModelSections.has("fallback");
-    const badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
+    const _badges = [
+      "\u2460",
+      "\u2461",
+      "\u2462",
+      "\u2463",
+      "\u2464",
+      "\u2465",
+      "\u2466",
+      "\u2467",
+    ];
     html += `<div class="model-group${open ? " open" : ""}" data-section="fallback">`;
     html += '<div class="model-group-label">FALLBACK CHAIN</div>';
     html += '<div class="model-group-body">';
@@ -4621,7 +4726,7 @@ function shortErrorLabel(reason: string): string {
 
 // ─── Auth Re-auth UI (popover + OAuth popup + paste fallback) ───
 
-const authProfileListeners = new Set<(evt: any) => void>();
+const authProfileListeners = new Set<(evt: unknown) => void>();
 
 function showToast(msg: string, isError = false): void {
   const t = document.createElement("div");
@@ -4634,15 +4739,15 @@ function showToast(msg: string, isError = false): void {
 async function startOAuthReauthFlow(profileId: string): Promise<void> {
   let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
   try {
-    startResult = (await req("auth.reauth.start", { profileId })) as any;
-  } catch (err: any) {
+    startResult = (await req("auth.reauth.start", { profileId })) as unknown;
+  } catch (err: unknown) {
     showToast(`Re-auth failed: ${err?.message || err}`, true);
     return;
   }
   const { sessionId, authUrl, fallbackAuthUrl } = startResult;
   const popup = window.open(authUrl, "openclaw-reauth", "width=500,height=700");
   let resolved = false;
-  const onAuthEvent = (evt: any) => {
+  const onAuthEvent = (evt: unknown) => {
     const d = evt.data ?? evt.payload ?? {};
     if (d.profileId === profileId || d.source === "oauth-reauth") {
       resolved = true;
@@ -4711,7 +4816,7 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
       await req("auth.reauth.exchange", { sessionId, code });
       overlay.remove();
       showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       status.textContent = `Failed: ${err?.message || err}`;
       status.style.color = "#f38ba8";
       submitBtn.disabled = false;
@@ -4816,7 +4921,7 @@ function renderAuthKeyRow(
 function refreshTreemap() {
   const tmCanvas = $("treemap-canvas");
   if (tmCanvas) {
-    (tmCanvas as any).__treemapRefresh?.();
+    (tmCanvas as unknown).__treemapRefresh?.();
   }
 }
 
@@ -4824,7 +4929,7 @@ function refreshTreemap() {
 function updateResponseMap() {
   const canvas = $("response-canvas");
   if (canvas) {
-    (canvas as any).__responseRefresh?.();
+    (canvas as unknown).__responseRefresh?.();
   }
 }
 
@@ -4908,7 +5013,7 @@ function updateSessionsPanel() {
   }
 
   // Group sessions
-  const groups = new Map<string, Array<{ session: any; shortLabel: string }>>();
+  const groups = new Map<string, Array<{ session: unknown; shortLabel: string }>>();
   for (const s of sessions) {
     const { group, shortLabel } = classifySession(s.key);
     if (!groups.has(group)) {
@@ -4921,7 +5026,7 @@ function updateSessionsPanel() {
     if (tab.id === "tab-main" || !tab.sessionKey) {
       continue;
     }
-    const serverKeys = sessions.map((s: any) => s.key);
+    const serverKeys = sessions.map((s: unknown) => s.key);
     const hasServer =
       serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
@@ -4976,8 +5081,8 @@ function updateSessionsPanel() {
 
   // Wire session row clicks + delete buttons via single event delegation
   // (per-element listeners get destroyed on innerHTML re-render)
-  if (!(el as any).__sessionsWired) {
-    (el as any).__sessionsWired = true;
+  if (!(el as unknown).__sessionsWired) {
+    (el as unknown).__sessionsWired = true;
     el.addEventListener("click", async (e) => {
       const tgt = e.target as HTMLElement;
 
@@ -5038,7 +5143,7 @@ function updateSessionsPanel() {
         const newTab = createTab();
         newTab.sessionKey = key;
         newTab.isAttached = true;
-        const sess = sessions.find((s: any) => s.key === key);
+        const sess = sessions.find((s: unknown) => s.key === key);
         if (sess?.label) {
           newTab.title = sess.label.slice(0, 30);
         }
@@ -5062,7 +5167,7 @@ function updateSessionsPanel() {
   });
 }
 
-function renderSessionRow(s: any, shortLabel: string): string {
+function renderSessionRow(s: unknown, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
   const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
@@ -5383,9 +5488,13 @@ function init() {
   document.addEventListener("click", (ev) => {
     const target = ev.target as HTMLElement | null;
     const link = target?.closest(".fs-link") as HTMLElement | null;
-    if (!link) {return;}
+    if (!link) {
+      return;
+    }
     const path = link.dataset.path;
-    if (!path) {return;}
+    if (!path) {
+      return;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     link.classList.add("fs-link-opening");
@@ -5544,7 +5653,7 @@ function init() {
     }
     return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
   }
-  function altEsc(s: any): string {
+  function altEsc(s: unknown): string {
     if (s == null) {
       return "";
     }
@@ -5562,7 +5671,7 @@ function init() {
     }
     return String(n);
   }
-  function altJson(obj: any): string {
+  function altJson(obj: unknown): string {
     try {
       return `<pre style="white-space:pre-wrap;word-break:break-all;font-size:11px;color:var(--text);margin:0">${altEsc(JSON.stringify(obj, null, 2))}</pre>`;
     } catch {
@@ -5770,11 +5879,13 @@ function init() {
       req("system-presence", {}).catch(() => null),
       req("cron.status", {}).catch(() => null),
     ]);
-    const snapshot = (status as any) ?? {};
-    const presenceList = Array.isArray(presence) ? presence : ((presence as any)?.presence ?? []);
+    const snapshot = (status as unknown) ?? {};
+    const presenceList = Array.isArray(presence)
+      ? presence
+      : ((presence as unknown)?.presence ?? []);
     const uptimeMs = snapshot.uptimeMs ?? snapshot.uptime;
     const tickMs = snapshot.policy?.tickIntervalMs ?? snapshot.tickIntervalMs;
-    const cronSt = cronStatus as any;
+    const cronSt = cronStatus as unknown;
     sub.textContent = "Gateway snapshot & system presence";
     body.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -5798,7 +5909,7 @@ function init() {
           ? `<div class="alt-card"><h3>System Presence (${presenceList.length} instance${presenceList.length > 1 ? "s" : ""})</h3>
         ${presenceList
           .map(
-            (p: any) => `<div class="row">
+            (p: unknown) => `<div class="row">
           <span class="label">${altEsc(p.host ?? p.instanceId ?? "?")}</span>
           <span class="value">${altEsc(p.version ?? "")} · ${altEsc(p.platform ?? "")}${p.roles?.length ? ` · ${p.roles.join(", ")}` : ""}</span>
         </div>`,
@@ -5813,19 +5924,19 @@ function init() {
   // ═══════════════ CHANNELS ═══════════════
   async function renderChannelsTab(body: Element, sub: Element) {
     const res = await req("channels.status", { probe: false }).catch(() => null);
-    const snap = res as any;
+    const snap = res as unknown;
     if (!snap || !snap.channels) {
       sub.textContent = "Channel status";
       body.innerHTML = `<div class="alt-placeholder"><span>No channel data available</span></div>`;
       return;
     }
-    const channelMeta: any[] = snap.channelMeta ?? [];
+    const channelMeta: unknown[] = snap.channelMeta ?? [];
     const order: string[] = channelMeta.length
-      ? channelMeta.map((m: any) => m.id)
+      ? channelMeta.map((m: unknown) => m.id)
       : (snap.channelOrder ?? Object.keys(snap.channels));
     const labels: Record<string, string> = snap.channelLabels ?? {};
-    const accounts: Record<string, any[]> = snap.channelAccounts ?? {};
-    const metaMap: Record<string, any> = {};
+    const accounts: Record<string, unknown[]> = snap.channelAccounts ?? {};
+    const metaMap: Record<string, unknown> = {};
     for (const m of channelMeta) {
       metaMap[m.id] = m;
     }
@@ -5865,14 +5976,20 @@ function init() {
           const authAgeMs = data.authAgeMs;
 
           // Derive overall status like upstream
-          const statusText = connectedVal
+          const _statusText = connectedVal
             ? "Connected"
             : running
               ? "Running"
               : configured
                 ? "Configured"
                 : "Not configured";
-          const statusCls = connectedVal ? "green" : running ? "green" : configured ? "yellow" : "";
+          const _statusCls = connectedVal
+            ? "green"
+            : running
+              ? "green"
+              : configured
+                ? "yellow"
+                : "";
 
           return `<div class="alt-card"><h3>${altEsc(label)}</h3>
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px">${altEsc(meta?.description ?? `${label} channel status and configuration.`)}</div>
@@ -5920,7 +6037,7 @@ function init() {
           }
           const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
             message: (err as Error).message,
-          }))) as any;
+          }))) as unknown;
           if (qrArea) {
             if (r?.qrDataUrl) {
               qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
@@ -5948,12 +6065,12 @@ function init() {
     });
   }
 
-  function renderChannelAccounts(accts: any[], channel: string): string {
+  function renderChannelAccounts(accts: unknown[], _channel: string): string {
     const recentMs = 10 * 60 * 1000;
     return `<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
       <div style="font-size:10px;color:var(--muted);margin-bottom:4px">${accts.length} account(s)</div>
       ${accts
-        .map((a: any) => {
+        .map((a: unknown) => {
           const name = a.name || a.accountId || "?";
           const runningVal = a.running
             ? "Yes"
@@ -5968,7 +6085,7 @@ function init() {
                 : a.lastInboundAt && Date.now() - a.lastInboundAt < recentMs
                   ? "Active"
                   : "n/a";
-          const probe = a.probe as any;
+          const probe = a.probe as unknown;
           const botUsername = probe?.bot?.username;
           return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px">
           <div style="font-size:11px;color:var(--text);font-weight:600">${botUsername ? `@${botUsername}` : altEsc(name)}</div>
@@ -5992,8 +6109,8 @@ function init() {
       includeGlobal: sessIncludeGlobal,
       includeUnknown: sessIncludeUnknown,
     }).catch(() => ({ sessions: [] }));
-    let list: any[] = (res as any)?.sessions ?? [];
-    const mainKey = (res as any)?.mainSessionKey;
+    let list: unknown[] = (res as unknown)?.sessions ?? [];
+    const mainKey = (res as unknown)?.mainSessionKey;
 
     // Filter by activity window
     if (sessFilterActive !== "all") {
@@ -6002,7 +6119,7 @@ function init() {
         ({ "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 }[
           sessFilterActive
         ] ?? 0);
-      list = list.filter((s: any) => {
+      list = list.filter((s: unknown) => {
         const ts = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
         return ts >= cutoff;
       });
@@ -6011,15 +6128,15 @@ function init() {
     // Sort
     if (sessSortBy === "tokens") {
       list.sort(
-        (a: any, b: any) =>
+        (a: unknown, b: unknown) =>
           (b.inputTokens ?? 0) +
           (b.outputTokens ?? 0) -
           ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
       );
     } else if (sessSortBy === "key") {
-      list.sort((a: any, b: any) => (a.key ?? "").localeCompare(b.key ?? ""));
+      list.sort((a: unknown, b: unknown) => (a.key ?? "").localeCompare(b.key ?? ""));
     } else {
-      list.sort((a: any, b: any) => {
+      list.sort((a: unknown, b: unknown) => {
         const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
         const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
         return tb - ta;
@@ -6033,7 +6150,7 @@ function init() {
     }
 
     const totalTokens = list.reduce(
-      (sum: number, s: any) => sum + (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
+      (sum: number, s: unknown) => sum + (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
       0,
     );
     sub.textContent = `${totalCount} session(s) · ${altTokens(totalTokens)} tokens`;
@@ -6083,7 +6200,7 @@ function init() {
         </tr></thead>
         <tbody>
           ${list
-            .map((s: any) => {
+            .map((s: unknown) => {
               const isActive = s.key === sessionKey;
               const isMain = s.key === mainKey;
               const inTok = s.inputTokens ?? 0;
@@ -6126,7 +6243,7 @@ function init() {
         if (field === "active") {
           sessFilterActive = (el as HTMLSelectElement).value;
         } else if (field === "sort") {
-          sessSortBy = (el as HTMLSelectElement).value as any;
+          sessSortBy = (el as HTMLSelectElement).value as unknown;
         } else if (field === "limit") {
           sessFilterLimit = parseInt((el as HTMLInputElement).value, 10) || 50;
         } else if (field === "global") {
@@ -6151,11 +6268,11 @@ function init() {
       ),
       req("usage.cost", { startDate, endDate: today }).catch(() => null),
     ]);
-    const usageData = usage as any;
-    const costData = cost as any;
+    const usageData = usage as unknown;
+    const costData = cost as unknown;
     const totals = usageData?.totals ?? {};
-    const sessionUsage: any[] = usageData?.sessions ?? [];
-    const dailyCost: any[] = costData?.daily ?? [];
+    const sessionUsage: unknown[] = usageData?.sessions ?? [];
+    const dailyCost: unknown[] = costData?.daily ?? [];
     const totalIn = totals.inputTokens ?? 0;
     const totalOut = totals.outputTokens ?? 0;
     const totalCost = costData?.totalCost != null ? Number(costData.totalCost) : null;
@@ -6182,7 +6299,7 @@ function init() {
 
     // Daily bar chart data
     const maxDailyCost =
-      dailyCost.reduce((mx: number, d: any) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
+      dailyCost.reduce((mx: number, d: unknown) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
 
     // Period selector
     const periodBar = `<div class="alt-card" style="display:flex;gap:6px;align-items:center;padding:20px 12px;flex-wrap:wrap">
@@ -6229,7 +6346,7 @@ function init() {
           ? `<div class="alt-card"><h3>Daily Cost</h3>
         <div style="display:flex;flex-direction:column;gap:3px">
           ${dailyCost
-            .map((d: any) => {
+            .map((d: unknown) => {
               const c = Number(d.cost ?? 0);
               const pct = maxDailyCost > 0 ? (c / maxDailyCost) * 100 : 0;
               return `<div style="display:flex;align-items:center;gap:8px;font-size:10px">
@@ -6262,13 +6379,13 @@ function init() {
           <tbody>
             ${sessionUsage
               .toSorted(
-                (a: any, b: any) =>
+                (a: unknown, b: unknown) =>
                   (b.inputTokens ?? 0) +
                   (b.outputTokens ?? 0) -
                   ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
               )
               .slice(0, 50)
-              .map((s: any) => {
+              .map((s: unknown) => {
                 const inT = s.inputTokens ?? 0;
                 const outT = s.outputTokens ?? 0;
                 return `<tr style="border-bottom:1px solid rgba(74,63,48,0.2)">
@@ -6337,19 +6454,19 @@ function init() {
       req("cron.status", {}).catch(() => null),
       req("cron.list", { includeDisabled: true }).catch(() => null),
     ]);
-    const st = status as any;
-    const jobs: any[] = (jobsRes as any)?.jobs ?? [];
-    const enabledCount = jobs.filter((j: any) => j.enabled).length;
+    const st = status as unknown;
+    const jobs: unknown[] = (jobsRes as unknown)?.jobs ?? [];
+    const enabledCount = jobs.filter((j: unknown) => j.enabled).length;
     sub.textContent = `${jobs.length} job(s) · ${enabledCount} enabled · ${st?.enabled ? "Cron active" : "Cron disabled"}`;
 
     // Fetch runs for selected job or all
-    let runs: any[] = [];
+    let runs: unknown[] = [];
     let runsTotal = 0;
     if (cronSelectedJobId || jobs.length) {
       const runsRes = (await req("cron.runs", {
         jobId: cronSelectedJobId ?? undefined,
         limit: 20,
-      }).catch(() => null)) as any;
+      }).catch(() => null)) as unknown;
       runs = runsRes?.runs ?? runsRes?.entries ?? [];
       runsTotal = runsRes?.total ?? runs.length;
     }
@@ -6373,15 +6490,15 @@ function init() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div>
           <div class="alt-card"><h3>Jobs (${jobs.length})</h3>
-            ${jobs.length ? jobs.map((j: any) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No cron jobs configured</div>`}
+            ${jobs.length ? jobs.map((j: unknown) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No cron jobs configured</div>`}
           </div>
         </div>
         <div>
-          <div class="alt-card"><h3>Run History${cronSelectedJobId ? ` — ${altEsc(jobs.find((j: any) => j.id === cronSelectedJobId)?.name ?? cronSelectedJobId)}` : " — All jobs"} <span style="color:var(--muted);font-size:10px">(${runsTotal})</span></h3>
+          <div class="alt-card"><h3>Run History${cronSelectedJobId ? ` — ${altEsc(jobs.find((j: unknown) => j.id === cronSelectedJobId)?.name ?? cronSelectedJobId)}` : " — All jobs"} <span style="color:var(--muted);font-size:10px">(${runsTotal})</span></h3>
             <div style="margin-bottom:6px;display:flex;gap:4px">
               <button class="alt-cron-scope" data-scope="all" style="background:${!cronSelectedJobId ? "var(--surface2)" : "transparent"};border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer">All jobs</button>
             </div>
-            ${runs.length ? runs.map((r: any) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No runs recorded</div>`}
+            ${runs.length ? runs.map((r: unknown) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No runs recorded</div>`}
           </div>
         </div>
       </div>`;
@@ -6421,7 +6538,7 @@ function init() {
     });
   }
 
-  function renderCronJob(j: any): string {
+  function renderCronJob(j: unknown): string {
     const state = j.state ?? {};
     const lastStatus = state.lastStatus ?? j.lastStatus;
     const statusCls =
@@ -6491,7 +6608,7 @@ function init() {
     </div>`;
   }
 
-  function renderCronRun(r: any): string {
+  function renderCronRun(r: unknown): string {
     const status = r.status ?? "unknown";
     const statusCls =
       status === "ok" ? "green" : status === "error" ? "red" : status === "skipped" ? "yellow" : "";
@@ -6545,14 +6662,14 @@ function init() {
       req("agents.list", {}).catch(() => null),
       req("tools.catalog", { includePlugins: true }).catch(() => null),
     ]);
-    const data = agentsRes as any;
-    const agents: any[] = data?.agents ?? [];
+    const data = agentsRes as unknown;
+    const agents: unknown[] = data?.agents ?? [];
     const defaultId = data?.defaultId ?? "";
-    const toolsCat = toolsRes as any;
-    const profiles: any[] = toolsCat?.profiles ?? [];
-    const groups: any[] = toolsCat?.groups ?? [];
+    const toolsCat = toolsRes as unknown;
+    const profiles: unknown[] = toolsCat?.profiles ?? [];
+    const groups: unknown[] = toolsCat?.groups ?? [];
     const totalTools = profiles.reduce(
-      (s: number, p: any) => s + (p.toolCount ?? p.tools?.length ?? 0),
+      (s: number, p: unknown) => s + (p.toolCount ?? p.tools?.length ?? 0),
       0,
     );
     sub.textContent = `${agents.length} agent(s) · ${totalTools} tools · ${profiles.length} profile(s)`;
@@ -6560,11 +6677,11 @@ function init() {
     body.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         ${agents
-          .map((a: any) => {
+          .map((a: unknown) => {
             const isDefault = a.id === defaultId;
-            const fb: any[] = Array.isArray(a.fallbacks) ? a.fallbacks : [];
-            const channels: any[] = Array.isArray(a.channels) ? a.channels : [];
-            const skills: any[] = Array.isArray(a.skills) ? a.skills : [];
+            const fb: unknown[] = Array.isArray(a.fallbacks) ? a.fallbacks : [];
+            const channels: unknown[] = Array.isArray(a.channels) ? a.channels : [];
+            const skills: unknown[] = Array.isArray(a.skills) ? a.skills : [];
             return `<div class="alt-card">
             <h3 style="display:flex;align-items:center;gap:6px">
               ${a.emoji ? `<span style="font-size:16px">${a.emoji}</span>` : ""}
@@ -6586,7 +6703,7 @@ function init() {
                 ? `<div style="margin-top:6px">
               <div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">Fallback chain</div>
               <div style="display:flex;gap:4px;flex-wrap:wrap">${fb
-                .map((f: any, i: number) => {
+                .map((f: unknown, i: number) => {
                   const label =
                     typeof f === "string" ? f : `${f.model ?? "?"} (${f.provider ?? "?"})`;
                   return `<span style="padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">${i + 1}. ${altEsc(label)}</span>`;
@@ -6595,7 +6712,7 @@ function init() {
             </div>`
                 : ""
             }
-            ${channels.length ? `<div style="margin-top:4px;font-size:10px;color:var(--muted)">Channels: ${channels.map((c: any) => altEsc(typeof c === "string" ? c : (c.id ?? c.name ?? "?"))).join(", ")}</div>` : ""}
+            ${channels.length ? `<div style="margin-top:4px;font-size:10px;color:var(--muted)">Channels: ${channels.map((c: unknown) => altEsc(typeof c === "string" ? c : (c.id ?? c.name ?? "?"))).join(", ")}</div>` : ""}
             ${skills.length ? `<div style="margin-top:2px;font-size:10px;color:var(--muted)">Skills: ${skills.length}</div>` : ""}
           </div>`;
           })
@@ -6607,8 +6724,8 @@ function init() {
           ? `<div class="alt-card"><h3>Tool Profiles (${profiles.length})</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           ${profiles
-            .map((p: any) => {
-              const tools: any[] = p.tools ?? [];
+            .map((p: unknown) => {
+              const tools: unknown[] = p.tools ?? [];
               const count = p.toolCount ?? tools.length;
               return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px">
               <div style="display:flex;justify-content:space-between;align-items:center">
@@ -6621,7 +6738,7 @@ function init() {
                   ? `<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap">${tools
                       .slice(0, 12)
                       .map(
-                        (t: any) =>
+                        (t: unknown) =>
                           `<span style="padding:1px 4px;border-radius:2px;font-size:8px;background:var(--surface2);color:var(--muted)">${altEsc(typeof t === "string" ? t : (t.name ?? t.id ?? "?"))}</span>`,
                       )
                       .join(
@@ -6641,8 +6758,8 @@ function init() {
         groups.length
           ? `<div class="alt-card"><h3>Tool Groups (${groups.length})</h3>
         ${groups
-          .map((g: any) => {
-            const tools: any[] = g.tools ?? [];
+          .map((g: unknown) => {
+            const tools: unknown[] = g.tools ?? [];
             return `<div class="row" style="flex-wrap:wrap">
             <span class="label" style="font-weight:600">${altEsc(g.id ?? g.name ?? "?")}</span>
             <span class="value">${tools.length} tool(s)${g.description ? ` — ${altEsc(g.description.slice(0, 80))}` : ""}</span>
@@ -6657,18 +6774,18 @@ function init() {
   // ═══════════════ SKILLS ═══════════════
   async function renderSkillsTab(body: Element, sub: Element) {
     const res = await req("skills.status", {}).catch(() => null);
-    const data = res as any;
-    const skills: any[] = data?.skills ?? [];
-    const enabledCount = skills.filter((s: any) => s.enabled !== false).length;
+    const data = res as unknown;
+    const skills: unknown[] = data?.skills ?? [];
+    const enabledCount = skills.filter((s: unknown) => s.enabled !== false).length;
     const issueCount = skills.filter(
-      (s: any) => s.missingBinaries?.length || s.unavailableReason,
+      (s: unknown) => s.missingBinaries?.length || s.unavailableReason,
     ).length;
     sub.textContent = `${skills.length} skill(s) · ${enabledCount} enabled${issueCount ? ` · ${issueCount} with issues` : ""}`;
     if (!skills.length) {
       body.innerHTML = `<div class="alt-placeholder"><span>No skills registered</span></div>`;
       return;
     }
-    const grouped: Record<string, any[]> = {};
+    const grouped: Record<string, unknown[]> = {};
     for (const s of skills) {
       const group = s.source ?? s.group ?? "other";
       (grouped[group] ??= []).push(s);
@@ -6678,10 +6795,10 @@ function init() {
         ([group, items]) => `
       <div class="alt-card">
         <h3 style="display:flex;justify-content:space-between;align-items:center">${altEsc(group)}
-          <span style="font-size:10px;font-weight:400;color:var(--muted)">${items.filter((s: any) => s.enabled !== false).length}/${items.length} enabled</span>
+          <span style="font-size:10px;font-weight:400;color:var(--muted)">${items.filter((s: unknown) => s.enabled !== false).length}/${items.length} enabled</span>
         </h3>
         ${items
-          .map((s: any) => {
+          .map((s: unknown) => {
             const enabled = s.enabled !== false;
             const missingBins: string[] = s.missingBinaries ?? [];
             const unavail = s.unavailableReason;
@@ -6718,10 +6835,12 @@ function init() {
       req("node.list", {}).catch(() => null),
       req("device.pair.list", {}).catch(() => null),
     ]);
-    const nodes: any[] = (nodesRes as any)?.nodes ?? [];
-    const pending: any[] = (devicesRes as any)?.pending ?? [];
-    const paired: any[] = (devicesRes as any)?.paired ?? [];
-    const onlineNodes = nodes.filter((n: any) => n.connected !== false && n.status !== "offline");
+    const nodes: unknown[] = (nodesRes as unknown)?.nodes ?? [];
+    const pending: unknown[] = (devicesRes as unknown)?.pending ?? [];
+    const paired: unknown[] = (devicesRes as unknown)?.paired ?? [];
+    const onlineNodes = nodes.filter(
+      (n: unknown) => n.connected !== false && n.status !== "offline",
+    );
     sub.textContent = `${nodes.length} node(s) · ${onlineNodes.length} online · ${paired.length} device(s) · ${pending.length} pending`;
 
     body.innerHTML = `
@@ -6731,7 +6850,7 @@ function init() {
         ${pending
           .map(
             (
-              d: any,
+              d: unknown,
             ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:20px 10px;margin-bottom:4px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:11px;font-weight:600;color:var(--yellow)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
@@ -6759,7 +6878,7 @@ function init() {
         ${paired
           .map(
             (
-              d: any,
+              d: unknown,
             ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 10px;margin-bottom:4px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:11px;font-weight:600;color:var(--accent)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
@@ -6783,7 +6902,7 @@ function init() {
           ? `<div class="alt-card"><h3>Exec Nodes (${nodes.length})</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           ${nodes
-            .map((n: any) => {
+            .map((n: unknown) => {
               const online = n.connected !== false && n.status !== "offline";
               const caps: string[] = n.capabilities ?? [];
               return `<div style="background:var(--bg);border:1px solid ${online ? "var(--border)" : "rgba(239,68,68,0.3)"};border-radius:4px;padding:6px 10px">
@@ -6832,11 +6951,11 @@ function init() {
       req("config.schema", {}).catch(() => null),
       req("models.list", {}).catch(() => null),
     ]);
-    const cfg = configRes as any;
-    const schema = schemaRes as any;
-    const models: any[] = (modelsRes as any)?.models ?? [];
+    const cfg = configRes as unknown;
+    const schema = schemaRes as unknown;
+    const models: unknown[] = (modelsRes as unknown)?.models ?? [];
     const valid = cfg?.valid !== false;
-    const issues: any[] = cfg?.issues ?? [];
+    const issues: unknown[] = cfg?.issues ?? [];
     const configObj =
       cfg?.config ?? cfg?.parsed ?? (typeof cfg?.raw === "string" ? null : cfg?.raw) ?? {};
     const sections = Object.keys(configObj).filter(
@@ -6858,7 +6977,7 @@ function init() {
           ${
             models.length
               ? models
-                  .map((m: any) => {
+                  .map((m: unknown) => {
                     const name = typeof m === "string" ? m : (m.id ?? m.name ?? m.model ?? "?");
                     const provider = typeof m === "object" ? (m.provider ?? "") : "";
                     return `<div class="row">
@@ -6882,7 +7001,7 @@ function init() {
         issues.length
           ? `<div class="alt-card" style="border-color:var(--yellow)"><h3>Validation Issues (${issues.length})</h3>
         ${issues
-          .map((i: any) => {
+          .map((i: unknown) => {
             const msg = typeof i === "string" ? i : (i.message ?? "");
             const path = typeof i === "object" ? (i.path ?? i.schemaPath ?? "") : "";
             return `<div style="background:rgba(245,158,11,0.05);border:1px solid rgba(245,158,11,0.2);border-radius:4px;padding:4px 8px;margin-bottom:3px;font-size:10px">
@@ -6959,8 +7078,8 @@ function init() {
   // ═══════════════ DEBUG ═══════════════
   const debugRpcHistory: {
     method: string;
-    params: any;
-    result: any;
+    params: unknown;
+    result: unknown;
     ts: number;
     error?: string;
   }[] = [];
@@ -6973,7 +7092,7 @@ function init() {
       req("models.list", {}).catch(() => null),
     ]);
     sub.textContent = `Snapshots & RPC console · ${debugRpcHistory.length} call(s) in history`;
-    (window as any).__tinkerReq = req;
+    (window as unknown).__tinkerReq = req;
 
     // Quick-call presets
     const presets = [
@@ -7180,7 +7299,7 @@ function init() {
     }
     const res = (await req("logs.tail", { cursor: logsCursor, limit: 200, maxBytes: 64_000 }).catch(
       () => null,
-    )) as any;
+    )) as unknown;
     if (!res?.lines?.length) {
       if (!logsCursor) {
         stream.innerHTML = `<span class="muted">No logs available</span>`;
@@ -7689,9 +7808,10 @@ function init() {
   const backResp = $("brp-back-response");
 
   function updateBackButtons() {
-    const ctxBack = !!(tmCanvas as any).__treemapCanGoBack?.() || !!(tmCanvas as any).__hasOverlay;
+    const ctxBack =
+      !!(tmCanvas as unknown).__treemapCanGoBack?.() || !!(tmCanvas as unknown).__hasOverlay;
     const respBack =
-      !!(respCanvas as any).__responseCanGoBack?.() || !!(respCanvas as any).__hasOverlay;
+      !!(respCanvas as unknown).__responseCanGoBack?.() || !!(respCanvas as unknown).__hasOverlay;
     if (backCtx) {
       backCtx.style.display = ctxBack ? "" : "none";
     }
@@ -7718,21 +7838,21 @@ function init() {
   }
 
   backCtx?.addEventListener("click", () => {
-    if ((tmCanvas as any).__treemapCanGoBack?.()) {
-      (tmCanvas as any).__treemapBack?.();
+    if ((tmCanvas as unknown).__treemapCanGoBack?.()) {
+      (tmCanvas as unknown).__treemapBack?.();
     } else {
       // We're in an overlay (auto-summary) — clear overlay and refresh back to L1 treemap
-      (tmCanvas as any).__hasOverlay = false;
-      (tmCanvas as any).__treemapRefresh?.();
+      (tmCanvas as unknown).__hasOverlay = false;
+      (tmCanvas as unknown).__treemapRefresh?.();
     }
     updateBackButtons();
   });
   backResp?.addEventListener("click", () => {
-    if ((respCanvas as any).__responseCanGoBack?.()) {
-      (respCanvas as any).__responseBack?.();
+    if ((respCanvas as unknown).__responseCanGoBack?.()) {
+      (respCanvas as unknown).__responseBack?.();
     } else {
-      (respCanvas as any).__hasOverlay = false;
-      (respCanvas as any).__responseRefresh?.();
+      (respCanvas as unknown).__hasOverlay = false;
+      (respCanvas as unknown).__responseRefresh?.();
     }
     updateBackButtons();
   });
@@ -7743,16 +7863,16 @@ function init() {
   backObserver.observe(respCanvas, { childList: true, subtree: true });
 
   // Also expose direct callback for level changes (catches async updates the observer might miss)
-  (tmCanvas as any).__onLevelChange = updateBackButtons;
-  (respCanvas as any).__onLevelChange = updateBackButtons;
+  (tmCanvas as unknown).__onLevelChange = updateBackButtons;
+  (respCanvas as unknown).__onLevelChange = updateBackButtons;
 
   // ─── Auto-summary on bar re-click ───
-  async function triggerAutoSummary(event: any, type: "context" | "response") {
+  async function triggerAutoSummary(event: unknown, type: "context" | "response") {
     const panel = type === "context" ? tmCanvas : respCanvas;
     const ts = event.timestampMs ?? (event.timestamp ? new Date(event.timestamp).getTime() : null);
     panel.innerHTML = '<div class="tm-empty">Summarizing\u2026</div>';
     try {
-      const params: any = {
+      const params: unknown = {
         component: type === "context" ? "current_prompt" : "response",
         sessionKey: sessionKey || undefined,
       };
@@ -7775,10 +7895,10 @@ function init() {
       div.appendChild(body);
       panel.appendChild(div);
       // Mark overlay so updateBackButtons() shows the back button
-      (panel as any).__hasOverlay = true;
+      (panel as unknown).__hasOverlay = true;
       // Give DOM a tick to render before checking scroll
       setTimeout(updateBackButtons, 10);
-    } catch (e: any) {
+    } catch (e: unknown) {
       panel.innerHTML = `<div class="tm-empty">Summary failed: ${esc(e?.message ?? "unknown")}</div>`;
     }
   }
@@ -7831,7 +7951,7 @@ function init() {
         }
       } else {
         switchBrpTab("context");
-        (tmCanvas as any).__treemapShowAnatomy?.(event);
+        (tmCanvas as unknown).__treemapShowAnatomy?.(event);
       }
       updateBackButtons();
     },
@@ -7841,7 +7961,7 @@ function init() {
     (groupIndex, firstEvent) => {
       // Show the prompt's context anatomy in the treemap
       switchBrpTab("context");
-      (tmCanvas as any).__treemapShowAnatomy?.(firstEvent);
+      (tmCanvas as unknown).__treemapShowAnatomy?.(firstEvent);
       updateBackButtons();
 
       // Scroll webchat to the Nth user message matching this group
@@ -7881,7 +8001,7 @@ function init() {
     },
     (mode) => {
       if (mode === "all") {
-        timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
+        timelineCtrl?.loadAllSessions(sessions.map((s: unknown) => s.key));
       } else {
         timelineCtrl?.loadSession(sessionKey);
       }
