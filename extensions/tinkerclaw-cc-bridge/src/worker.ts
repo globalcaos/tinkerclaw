@@ -102,6 +102,7 @@ function readGatewayTokenFromConfig(): string {
 function buildSubagentHelperBlock(): string {
   const bin = resolveSpawnSubagentCliPath();
   if (!bin) return "";
+  const recipesDir = resolveRecipesDirPath();
   return [
     "",
     "",
@@ -109,8 +110,9 @@ function buildSubagentHelperBlock(): string {
     "## Spawning subagents",
     "",
     "When a task is big enough that a parallel sub-run would help (long research,",
-    "multi-file refactor, independent audit), dispatch it to an OpenClaw subagent",
-    "so Prefrontal can track it and the user sees live progress in the panel.",
+    "multi-file refactor, independent audit, section-by-section paper revision),",
+    "dispatch it to an OpenClaw subagent so Prefrontal can track it and the user",
+    "sees live progress in the panel.",
     "",
     "Invoke via Bash:",
     "",
@@ -127,7 +129,9 @@ function buildSubagentHelperBlock(): string {
     "The helper speaks the fork's WS RPC `fork.subagents.spawn`, which wraps the",
     "same `spawnSubagentDirect` path OpenClaw's native `sessions_spawn` tool uses.",
     "Prefrontal's `subagent_spawning` hook fires automatically, so the panel will",
-    "light up as soon as the child starts.",
+    "light up as soon as the child starts. When the current harness is swapped",
+    "for a regular LLM provider (anthropic/openai/etc) the native sessions_spawn",
+    "tool takes over automatically — you don't need to rewrite orchestration code.",
     "",
     "Guidelines:",
     "- Only spawn when it actually parallelizes. Small tasks stay inline.",
@@ -135,7 +139,56 @@ function buildSubagentHelperBlock(): string {
     "  `claude-code/claude-sonnet-4-6` for standard, `claude-code/claude-opus-4-7`",
     "  only for genuinely hard reasoning.",
     "- Always pass a short `--label` so the Prefrontal tree is readable.",
+    "- Narrate orchestration out loud in your reply ('dispatching §2 to sonnet,",
+    "  §7 to sonnet, §12 to opus') so the user can follow your meta-reasoning",
+    "  while the tree populates.",
+    ...(recipesDir
+      ? [
+          "",
+          "## Recipes (structured playbooks)",
+          "",
+          `A catalog of hand-written orchestration recipes lives at ${recipesDir}.`,
+          "Each recipe is a markdown file with YAML frontmatter (schema=recipe/1.0)",
+          "and numbered Steps, Constraints, Safety Notes, and Failures Overcome.",
+          "When the user's task matches a recipe's `triggers`, READ the recipe",
+          "FIRST, use its Steps as the skeleton of your plan, and reference the",
+          "recipe id in your orchestration narration so the user can follow the",
+          "same playbook. Key catalog entries:",
+          "",
+          "- `writing/revise-paper.md` — paper improvement pass (structure audit,",
+          "  evidence check, prose tightening, fresh additions, final pass).",
+          "- `writing/write-paper.md`, `writing/brainstorm.md`, `writing/write-plan.md`",
+          "- `coding/{code-review,debug,feature,refactor,plan,verify}.md`",
+          "- `analysis/{investigate,dependency-analysis}.md`",
+          "- See `recipes/CATALOG.md` for the full index.",
+          "",
+          "Recipes are PLAYBOOKS, not executable code. Combine them with the",
+          "subagent helper: dispatch each Step in a recipe to its own subagent",
+          "when the Step is independent and parallelizable, execute sequentially",
+          "otherwise.",
+        ]
+      : []),
   ].join("\n");
+}
+
+function resolveRecipesDirPath(): string {
+  const candidates = [
+    "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes",
+    path.join(
+      os.homedir(),
+      "src",
+      "tinkerclaw",
+      "extensions",
+      "tinkerclaw-prefrontal",
+      "recipes",
+    ),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+    } catch {}
+  }
+  return "";
 }
 
 function buildAppendedPromptRules(): string {

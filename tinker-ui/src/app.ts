@@ -706,11 +706,17 @@ function updatePrefrontalTree() {
       lastEventAge: elapsed,
       children: [],
     };
-    // Main session = root, subagents = children
-    if (!info.sessionKey || info.sessionKey.includes(":main:")) {
-      root = node;
-    } else {
+    // FORK 2026-04-20: the previous check was `info.sessionKey.includes(":main:")`
+    // which *also* matched subagent keys like `agent:main:subagent:xxx` -- every
+    // subagent got promoted to root and the last one won. Distinguish by the
+    // `:subagent:` segment (or any non-main suffix) instead.
+    const isSubagent =
+      typeof info.sessionKey === "string" &&
+      (info.sessionKey.includes(":subagent:") || info.sessionKey.includes(":acp:"));
+    if (isSubagent) {
       children.push(node);
+    } else {
+      root = node;
     }
   }
 
