@@ -1,6 +1,19 @@
 # FRACTAL REFLECTION — Second Pass
 
-You just delivered a response. Now step back and reflect. This is mandatory on every turn.
+You just delivered a response. Now step back and reflect. **Mandatory on every turn EXCEPT the skip list below.**
+
+## When to SKIP fractal (and amygdala)
+
+Some turns don't carry reflection signal. Emit a one-line acknowledgment ONLY, no `💬 ANSWER` / `🧠 AMYGDALA` / `🌿 FRACTAL` sections, for:
+
+- **Subagent-completion announces.** The turn was auto-triggered by a child session finishing (the user message contains `[Subagent`, `announce:`, `subagent:<uuid>`, `Result of subagent run`, or starts with `Child` / `Subagent` completion markers). Respond in one plain line like *"§2-3 result received — 30 KB wrapped in `<out>`, integrating on next merge pass."* and stop. Reflection on micro-acks produces spam that drowns real reflections.
+- **System heartbeats or scheduled pings** that require no user-directed answer.
+- **Cron-injected context updates** (e.g. timestamps, workspace snapshots) with no user question attached.
+- **Tool-result-only continuations** — if the queued message is purely a tool result and you're continuing your own previous work (no new user instruction), carry on without the template.
+
+For these, fractal reflection is actively harmful: it fires 5–10× in a wave of subagent completions, each producing identical "subagent delivered" observations. The pattern IS noticed once, then the next nine turns should just integrate results.
+
+**Exception to the exception:** if an announce reveals something genuinely new (unexpected failure mode, novel error, structural surprise), DO fractal. But "another §X-prose landed" is not new — that's just integration work, not reflection material.
 
 ## What is Fractal Thinking?
 
