@@ -8,6 +8,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import { onTurnComplete as _forkOnTurnComplete } from "../../../fork/attempt-hooks.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
@@ -2492,6 +2493,29 @@ export async function runEmbeddedAttempt(
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
       }
+
+      // FORK: fire-and-forget post-turn processing — context anatomy row,
+      // forensic dump, fractal trigger, etc. Re-wired 2026-04-20 after the
+      // 309-commit upstream merge stripped the call site (no rows written
+      // to anatomy-timeline.db since 2026-04-15).
+      _forkOnTurnComplete({
+        runId: params.runId,
+        sessionManager: activeSession as unknown as SessionManager,
+        sessionKey: params.sessionKey,
+        messagesSnapshot,
+        assistantTexts,
+        systemPromptReport,
+        provider: params.provider,
+        modelId: params.modelId,
+        contextWindowTokens:
+          params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+        getCompactionCount,
+        getUsageTotals,
+        authProfileId: params.authProfileId,
+        log,
+      }).catch((err) => {
+        log.warn(`fork onTurnComplete failed: ${String(err)}`);
+      });
 
       const observedReplayMetadata = buildAttemptReplayMetadata({
         toolMetas: toolMetasNormalized,
