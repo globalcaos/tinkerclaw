@@ -1,3 +1,4 @@
+import { forkPrefrontalStateHandlers } from "../fork/prefrontal-state-rpc.js";
 import { forkSubagentsHandlers } from "../fork/subagents-rpc.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "./control-plane-audit.js";
@@ -87,6 +88,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...configHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
+  // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).
+  ...forkPrefrontalStateHandlers,
   ...wizardHandlers,
   ...talkHandlers,
   ...toolsCatalogHandlers,
