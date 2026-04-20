@@ -59,6 +59,85 @@ function readPromptFile(paths: string[]): string | null {
   }
   return null;
 }
+// FORK 2026-04-20: locate the scripts/openclaw-spawn-subagent.mjs CLI.
+// Tries a few known positions so this works from both the bundled gateway
+// (dist/index.js) and the dev-loop ts-node run. Returns "" if not found so
+// the env var simply isn't exported.
+function resolveSpawnSubagentCliPath(): string {
+  const candidates = [
+    process.env.OPENCLAW_SPAWN_SUBAGENT_BIN ?? "",
+    "/home/<user>/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs",
+    path.join(os.homedir(), "src", "tinkerclaw", "scripts", "openclaw-spawn-subagent.mjs"),
+    path.join(os.homedir(), ".openclaw", "workspace", "scripts", "openclaw-spawn-subagent.mjs"),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return "";
+}
+
+// FORK 2026-04-20: read the gateway auth token from ~/.openclaw/openclaw.json.
+// The CLI can read this itself but passing it through env keeps the cc-bridge
+// → CLI hop cheap and survives config relocations.
+function readGatewayTokenFromConfig(): string {
+  try {
+    const cfgPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as {
+      gateway?: { auth?: { token?: string }; controlUi?: { auth?: { token?: string } } };
+    };
+    return cfg?.gateway?.auth?.token ?? cfg?.gateway?.controlUi?.auth?.token ?? "";
+  } catch {
+    return "";
+  }
+}
+
+// FORK 2026-04-20: one short system-prompt paragraph teaching Jarvis how to
+// spawn OpenClaw subagents from inside cc-bridge (where his native tool set
+// is only Bash/Read/Write/Edit/Grep/Glob). This writes the same kind of hint
+// a normal pi-agent-core run would get from the sessions_spawn tool
+// description -- intentionally brief to stay out of Opus's way. Skipped if
+// the CLI binary isn't locatable at worker spawn time.
+function buildSubagentHelperBlock(): string {
+  const bin = resolveSpawnSubagentCliPath();
+  if (!bin) return "";
+  return [
+    "",
+    "",
+    "<!-- TINKERCLAW SUBAGENT HELPER -- loaded at worker spawn -->",
+    "## Spawning subagents",
+    "",
+    "When a task is big enough that a parallel sub-run would help (long research,",
+    "multi-file refactor, independent audit), dispatch it to an OpenClaw subagent",
+    "so Prefrontal can track it and the user sees live progress in the panel.",
+    "",
+    "Invoke via Bash:",
+    "",
+    "    node $OPENCLAW_SPAWN_SUBAGENT_BIN --task \"<instruction>\" \\",
+    "         --label \"<short-name>\" \\",
+    "         [--model claude-code/claude-opus-4-7] \\",
+    "         [--thinking medium] \\",
+    "         [--timeout 600] \\",
+    "         --json",
+    "",
+    "The CLI prints one JSON object with `childSessionKey` and `runId` on stdout.",
+    "Use `--json` when you want to parse it; drop it for a human-readable line.",
+    "",
+    "The helper speaks the fork's WS RPC `fork.subagents.spawn`, which wraps the",
+    "same `spawnSubagentDirect` path OpenClaw's native `sessions_spawn` tool uses.",
+    "Prefrontal's `subagent_spawning` hook fires automatically, so the panel will",
+    "light up as soon as the child starts.",
+    "",
+    "Guidelines:",
+    "- Only spawn when it actually parallelizes. Small tasks stay inline.",
+    "- Prefer `claude-code/claude-haiku-4-5` for minimal tasks (lookups, format),",
+    "  `claude-code/claude-sonnet-4-6` for standard, `claude-code/claude-opus-4-7`",
+    "  only for genuinely hard reasoning.",
+    "- Always pass a short `--label` so the Prefrontal tree is readable.",
+  ].join("\n");
+}
+
 function buildAppendedPromptRules(): string {
   const blocks: string[] = [];
   for (const entry of PROMPT_FILES) {
@@ -143,7 +222,10 @@ export class ClaudeCodeWorker extends EventEmitter {
     // restating all 100 lines of each file.
     const systemPromptBody = (this.params.systemPromptAppend ?? "").trim();
     const rulesBody = buildAppendedPromptRules();
-    const combinedSystemPrompt = [systemPromptBody, rulesBody].filter(Boolean).join("");
+    const subagentHelpBody = buildSubagentHelperBlock();
+    const combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody]
+      .filter(Boolean)
+      .join("");
     if (combinedSystemPrompt.length > 0) {
       args.push("--append-system-prompt", combinedSystemPrompt);
     }
@@ -193,6 +275,20 @@ export class ClaudeCodeWorker extends EventEmitter {
     if (!cleanEnv.CLAUDE_CODE_EXECPATH) {
       cleanEnv.CLAUDE_CODE_EXECPATH = "/home/<user>/.local/share/claude/versions/latest";
     }
+    // FORK 2026-04-20: expose the provider-agnostic subagent-spawn helper
+    // CLI path + gateway token so Jarvis's Bash can dispatch sub-work and
+    // light up Prefrontal's call tree. The CLI speaks the fork-only
+    // `fork.subagents.spawn` RPC (see src/fork/subagents-rpc.ts) which in
+    // turn calls `spawnSubagentDirect` -- the same path pi-agent-core's
+    // native `sessions_spawn` tool ends up in. When we eventually swap
+    // cc-bridge out for a regular provider, this env var just stops being
+    // set; nothing here leaks into the non-cc-bridge flow.
+    cleanEnv.OPENCLAW_SPAWN_SUBAGENT_BIN = resolveSpawnSubagentCliPath();
+    const gatewayToken = readGatewayTokenFromConfig();
+    if (gatewayToken) {
+      cleanEnv.OPENCLAW_GATEWAY_TOKEN = gatewayToken;
+    }
+    cleanEnv.OPENCLAW_GATEWAY_URL = cleanEnv.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789";
     // Full env dump — every key, every value (secrets truncated). We've ruled out
     // all the obvious suspects, so cast a wide net.
     const fullEnv = Object.entries(cleanEnv)
