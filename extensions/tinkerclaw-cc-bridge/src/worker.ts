@@ -48,11 +48,11 @@ const PROMPT_FILES: Array<{ label: string; paths: string[] }> = [
 function readPromptFile(paths: string[]): string | null {
   for (const p of paths) {
     try {
-      const expanded = p.startsWith("~/")
-        ? path.join(os.homedir(), p.slice(2))
-        : p;
+      const expanded = p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
       const txt = fs.readFileSync(expanded, "utf8");
-      if (txt.trim().length > 0) return txt;
+      if (txt.trim().length > 0) {
+        return txt;
+      }
     } catch {
       /* try next */
     }
@@ -78,7 +78,9 @@ function resolveForkScript(name: string, envVar: string): string {
   ].filter(Boolean);
   for (const p of candidates) {
     try {
-      if (fs.existsSync(p)) return p;
+      if (fs.existsSync(p)) {
+        return p;
+      }
     } catch {}
   }
   return "";
@@ -107,7 +109,9 @@ function readGatewayTokenFromConfig(): string {
 // the CLI binary isn't locatable at worker spawn time.
 function buildSubagentHelperBlock(): string {
   const bin = resolveSpawnSubagentCliPath();
-  if (!bin) return "";
+  if (!bin) {
+    return "";
+  }
   const recipesDir = resolveRecipesDirPath();
   return [
     "",
@@ -122,8 +126,8 @@ function buildSubagentHelperBlock(): string {
     "",
     "Invoke via Bash:",
     "",
-    "    node $OPENCLAW_SPAWN_SUBAGENT_BIN --task \"<instruction>\" \\",
-    "         --label \"<short-name>\" \\",
+    '    node $OPENCLAW_SPAWN_SUBAGENT_BIN --task "<instruction>" \\',
+    '         --label "<short-name>" \\',
     "         [--model claude-code/claude-opus-4-7] \\",
     "         [--thinking medium] \\",
     "         [--timeout 600] \\",
@@ -158,7 +162,7 @@ function buildSubagentHelperBlock(): string {
     "",
     "    # announce / advance recipe state (call on every Step transition)",
     "    node $OPENCLAW_RECIPE_STATE_BIN --recipe revise-paper \\",
-    "         --step 3 --total 6 --step-name \"evidence check\" --cap 3 \\",
+    '         --step 3 --total 6 --step-name "evidence check" --cap 3 \\',
     "         --in-flight '§3-oauth-check,§7-NemoClaw-ev'",
     "",
     "    # push a trail event (dispatch, complete, note, transition, warn)",
@@ -203,21 +207,77 @@ function buildSubagentHelperBlock(): string {
   ].join("\n");
 }
 
+// FORK 2026-04-20: tool-choice guidance. Claude Code 2.1.114 exposes a dozen
+// tools as DEFERRED (WebSearch, WebFetch, Monitor, PushNotification,
+// NotebookEdit, Cron*, EnterPlanMode, Task*, EnterWorktree, mcp__...). They
+// don't appear in the default tool list; the model has only the *names* and
+// must load each schema on demand via `ToolSearch({query:"select:<name>"})`.
+// Jarvis has been reflexing to `WebFetch` for every URL-shaped need, which
+// fails on "find me the right URL" tasks (he guesses domains and TLS-errors
+// out). This short block teaches the decision tree so he stops asking the
+// user for URLs he could search for himself.
+function buildToolChoiceBlock(): string {
+  return [
+    "",
+    "",
+    "<!-- TINKERCLAW TOOL-CHOICE HINTS — loaded at worker spawn -->",
+    "## Tool choice",
+    "",
+    "Some capabilities are DEFERRED: the tool name exists, but the schema must",
+    'be loaded before use — `ToolSearch({query:"select:<Name>"})`, then call',
+    "the tool normally. Deferred tools include WebSearch, WebFetch, Monitor,",
+    "PushNotification, NotebookEdit, CronCreate/List/Delete, EnterPlanMode,",
+    "TaskCreate/List/Get/Update/Stop/Output, and the mcp__* auth tools.",
+    "",
+    "Pick the right one:",
+    "",
+    "- **WebSearch** — you need to FIND a URL, identify the current state of a",
+    "  topic, discover a domain you don't know, or check whether something",
+    "  exists on the web. Use it instead of guessing domains. If the user",
+    "  references an external page they are viewing and you don't have the",
+    "  link, WebSearch it once before asking them to paste it.",
+    "- **WebFetch** — you have a specific URL and want the content. Don't",
+    "  WebFetch guessed domains; WebSearch first, then fetch the hit.",
+    "- **Monitor** — watch a file, process, or log for a condition. Use it",
+    "  instead of `sleep` loops or self-paced wake-ups when a specific event",
+    "  signals readiness.",
+    "- **PushNotification** — alert the user about a significant event when",
+    "  they're not looking at the chat (build finished, long-running task",
+    "  complete, important decision needed). Do NOT use for routine status.",
+    "- **CronCreate/Delete/List** — schedule a repeating task in OpenClaw's",
+    "  cron system. Use for recurring work, not one-offs (ScheduleWakeup or",
+    "  Monitor is better for one-offs).",
+    "- **EnterPlanMode** — switch into read-only plan mode. Use only when the",
+    "  user explicitly asks for a plan-before-action gate; otherwise plan",
+    "  inline in chat.",
+    "- **TaskCreate/Update/List/Get/Stop** — create a structured task list",
+    "  for multi-step work (3+ distinct steps). Mark each step complete as",
+    "  you finish it so the user can track progress without scrolling chat.",
+    "",
+    "Anti-patterns:",
+    "",
+    "- Guessing URLs and WebFetching them. Symptom: TLS errors, connection",
+    "  refused, 404s in a row. Cure: WebSearch.",
+    "- Polling a file via `sleep; test -f` in a loop. Cure: Monitor.",
+    '- Posting routine "still working" updates in chat. The user watches the',
+    "  Prefrontal panel for status (recipe-state + trail events). Reserve",
+    "  chat for substantive output.",
+    "- Re-asking the user for information that's inferable from the workspace",
+    "  (a specific paper path, a known config file, a recent commit). Grep or",
+    "  WebSearch first; ask only when genuinely ambiguous.",
+  ].join("\n");
+}
+
 function resolveRecipesDirPath(): string {
   const candidates = [
     "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes",
-    path.join(
-      os.homedir(),
-      "src",
-      "tinkerclaw",
-      "extensions",
-      "tinkerclaw-prefrontal",
-      "recipes",
-    ),
+    path.join(os.homedir(), "src", "tinkerclaw", "extensions", "tinkerclaw-prefrontal", "recipes"),
   ];
   for (const p of candidates) {
     try {
-      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+        return p;
+      }
     } catch {}
   }
   return "";
@@ -308,7 +368,8 @@ export class ClaudeCodeWorker extends EventEmitter {
     const systemPromptBody = (this.params.systemPromptAppend ?? "").trim();
     const rulesBody = buildAppendedPromptRules();
     const subagentHelpBody = buildSubagentHelperBlock();
-    const combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody]
+    const toolChoiceBody = buildToolChoiceBlock();
+    const combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody, toolChoiceBody]
       .filter(Boolean)
       .join("");
     if (combinedSystemPrompt.length > 0) {
@@ -380,7 +441,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const fullEnv = Object.entries(cleanEnv)
       .filter(([, v]) => v !== undefined)
       .map(([k, v]) => `${k}=${(v ?? "").length > 60 ? (v ?? "").slice(0, 60) + "…" : (v ?? "")}`)
-      .sort()
+      .toSorted()
       .join("\n  ");
     log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
 
