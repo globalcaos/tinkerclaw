@@ -247,15 +247,15 @@ export const de: TranslationMap = {
     },
     pairing: {
       hint: "Dieses Gerät benötigt eine Pairing-Freigabe vom Gateway-Host.",
-      scopeUpgradeTitle: "Scope upgrade pending approval.",
+      scopeUpgradeTitle: "Umfangserweiterung wartet auf Genehmigung.",
       scopeUpgradeSummary:
-        "This device is already paired, but the requested wider scope is waiting for approval.",
-      roleUpgradeTitle: "Role upgrade pending approval.",
+        "Dieses Gerät ist bereits gekoppelt, aber der angeforderte erweiterte Umfang wartet auf Genehmigung.",
+      roleUpgradeTitle: "Rollenänderung wartet auf Genehmigung.",
       roleUpgradeSummary:
-        "This device is already paired, but the requested role change is waiting for approval.",
-      metadataUpgradeTitle: "Device metadata change pending approval.",
+        "Dieses Gerät ist bereits gekoppelt, aber die angeforderte Rollenänderung wartet auf Genehmigung.",
+      metadataUpgradeTitle: "Änderung der Gerätemetadaten wartet auf Genehmigung.",
       metadataUpgradeSummary:
-        "This device is already paired, but the metadata change is waiting for approval.",
+        "Dieses Gerät ist bereits gekoppelt, aber die Änderung der Metadaten wartet auf Genehmigung.",
       mobileHint:
         "Auf dem Mobilgerät? Kopieren Sie die vollständige URL (einschließlich #token=...) von openclaw dashboard --no-open auf Ihrem Desktop.",
       docsTitle: "Gerätekopplungs-Dokumentation (öffnet sich in neuem Tab)",
