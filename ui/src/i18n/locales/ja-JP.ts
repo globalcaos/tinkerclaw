@@ -247,15 +247,15 @@ export const ja_JP: TranslationMap = {
     },
     pairing: {
       hint: "このデバイスは Gateway ホストからのペアリング承認が必要です。",
-      scopeUpgradeTitle: "Scope upgrade pending approval.",
+      scopeUpgradeTitle: "スコープの拡張は承認待ちです。",
       scopeUpgradeSummary:
-        "This device is already paired, but the requested wider scope is waiting for approval.",
-      roleUpgradeTitle: "Role upgrade pending approval.",
+        "このデバイスはすでにペアリングされていますが、要求されたより広いスコープは承認待ちです。",
+      roleUpgradeTitle: "ロールの変更は承認待ちです。",
       roleUpgradeSummary:
-        "This device is already paired, but the requested role change is waiting for approval.",
-      metadataUpgradeTitle: "Device metadata change pending approval.",
+        "このデバイスはすでにペアリングされていますが、要求されたロールの変更は承認待ちです。",
+      metadataUpgradeTitle: "デバイスのメタデータ変更は承認待ちです。",
       metadataUpgradeSummary:
-        "This device is already paired, but the metadata change is waiting for approval.",
+        "このデバイスはすでにペアリングされていますが、メタデータの変更は承認待ちです。",
       mobileHint:
         "モバイルを使用していますか？ デスクトップで openclaw dashboard --no-open から完全な URL（#token=... を含む）をコピーしてください。",
       docsTitle: "デバイスのペアリングに関するドキュメント（新しいタブで開きます）",
