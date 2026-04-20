@@ -106,17 +106,52 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     container.style.display = "block";
     container.innerHTML = "";
 
-    const panel = el("div", "pf-panel");
+    // Single card that groups all three blocks visually. Darker wood
+    // background so cream/gold text reads cleanly against the rpanel's
+    // lighter base wood texture.
+    const card = el("div", "pf-card");
+
+    // ─── Title bar ──────────────────────────────────────────
+    // Tells the user the three sections below all belong to Prefrontal.
+    const title = el("div", "pf-card-title");
+    const titleLeft = el("span", "pf-card-title-left");
+    const icon = el("span", "pf-card-title-icon");
+    icon.textContent = "🕸";
+    const text = el("span", "pf-card-title-text");
+    text.textContent = "Orchestration";
+    titleLeft.appendChild(icon);
+    titleLeft.appendChild(text);
+    title.appendChild(titleLeft);
+
+    // Right side: compact summary badges so idle state still reads clean.
+    const tree = currentState?.tree ?? { active: false, root: null };
+    const recipe = currentState?.recipe ?? null;
+    const trail = currentState?.trail ?? [];
+    const activeCount = countActive(tree);
+    const badge = el("span", "pf-card-title-badge");
+    if (recipe) {
+      const step =
+        recipe.step != null
+          ? `${recipe.step}${recipe.totalSteps != null ? `/${recipe.totalSteps}` : ""}`
+          : "·";
+      badge.textContent = `${recipe.recipeId} · Step ${step}`;
+    } else if (activeCount > 0) {
+      badge.textContent = `${activeCount} active`;
+    } else {
+      badge.textContent = "idle";
+      badge.classList.add("pf-card-title-badge-idle");
+    }
+    title.appendChild(badge);
+    card.appendChild(title);
 
     // ─── Recipe header ──────────────────────────────────────
-    panel.appendChild(renderRecipeHeader(currentState?.recipe ?? null));
+    card.appendChild(renderRecipeHeader(recipe));
 
     // ─── Tree block ─────────────────────────────────────────
-    const tree = currentState?.tree ?? { active: false, root: null };
     if (!tree.active || !tree.root) {
       const empty = el("div", "pf-empty");
       empty.textContent = "No active LLM calls";
-      panel.appendChild(empty);
+      card.appendChild(empty);
     } else {
       const treeBlock = el("div", "pf-tree");
       treeBlock.appendChild(renderNode(tree.root, false));
@@ -127,16 +162,27 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
         }
         treeBlock.appendChild(childrenEl);
       }
-      panel.appendChild(treeBlock);
+      card.appendChild(treeBlock);
     }
 
     // ─── Action trail ────────────────────────────────────────
-    const trail = currentState?.trail ?? [];
     if (trail.length > 0) {
-      panel.appendChild(renderTrail(trail));
+      card.appendChild(renderTrail(trail));
     }
 
-    container.appendChild(panel);
+    container.appendChild(card);
+  }
+
+  function countActive(tree: TreeResponse): number {
+    if (!tree.active || !tree.root) return 0;
+    let n = isActiveStatus(tree.root.status) ? 1 : 0;
+    for (const child of tree.root.children) {
+      if (isActiveStatus(child.status)) n++;
+    }
+    return n;
+  }
+  function isActiveStatus(status: string): boolean {
+    return status !== "completed" && status !== "failed" && status !== "stalled";
   }
 
   function renderRecipeHeader(recipe: RecipeState | null): HTMLElement {
@@ -334,26 +380,86 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const style = document.createElement("style");
     style.id = "prefrontal-tree-styles";
     style.textContent = `
-      .pf-panel { padding: 0.5rem 0.6rem; display: flex; flex-direction: column; gap: 0.55rem; }
+      /* ─── Palette (wood-panel theme) ───
+         Background: darker wood (#3a2b22) multiplied over wood-panel.jpg --
+         same approach the old .pf-tree-panel used so cream text renders
+         cleanly. All text uses warm cream / tan shades; zero cold grays.
+         Accent: #d4a574 (sand), gold: #e8cc93, warm-muted: #a89080. */
+
+      .pf-card {
+        background: url("./wood-panel.jpg") repeat;
+        background-blend-mode: multiply;
+        background-color: #3a2b22;
+        border: 1px solid rgba(193, 154, 107, 0.35);
+        border-radius: 10px;
+        padding: 0.55rem 0.65rem 0.7rem;
+        display: flex; flex-direction: column; gap: 0.5rem;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,220,180,0.06);
+      }
+      .pf-card-title {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 0.5rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid rgba(193, 154, 107, 0.22);
+        color: #e8d4b0;
+      }
+      .pf-card-title-left { display: flex; align-items: center; gap: 0.4rem; }
+      .pf-card-title-icon { font-size: 0.92rem; }
+      .pf-card-title-text {
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #e8cc93;
+      }
+      .pf-card-title-badge {
+        font-size: 0.62rem;
+        font-family: ui-monospace, "Courier New", monospace;
+        color: #d4a574;
+        background: rgba(0,0,0,0.25);
+        padding: 0.12rem 0.5rem;
+        border-radius: 10px;
+        border: 1px solid rgba(193, 154, 107, 0.28);
+        white-space: nowrap;
+      }
+      .pf-card-title-badge-idle { color: #a89080; }
+
+      /* ─── Recipe header ─── */
       .pf-recipe-bar {
-        display: flex; align-items: center; gap: 0.35rem;
+        display: flex; align-items: center; gap: 0.4rem;
         padding: 0.35rem 0.55rem;
-        background: rgba(193, 154, 107, 0.08);
+        background: rgba(0,0,0,0.22);
         border: 1px solid rgba(193, 154, 107, 0.25);
         border-radius: 7px;
         font-size: 0.72rem;
       }
-      .pf-recipe-idle { color: #8a7d6e; font-style: italic; }
-      .pf-recipe-icon { font-size: 0.85rem; }
-      .pf-recipe-id { color: #c19a6b; font-weight: 700; letter-spacing: 0.02em; }
-      .pf-recipe-step { color: #c9d1d9; font-weight: 600; }
-      .pf-recipe-step-name { color: #a89080; font-style: italic; }
+      .pf-recipe-idle { color: #b8a593; font-style: italic; }
+      .pf-recipe-icon { font-size: 0.85rem; filter: saturate(1.2); }
+      .pf-recipe-id { color: #e8cc93; font-weight: 700; letter-spacing: 0.02em; }
+      .pf-recipe-step { color: #d4bf9e; font-weight: 600; }
+      .pf-recipe-step-name { color: #c9b8a0; font-style: italic; }
       .pf-recipe-spacer { flex: 1; }
-      .pf-recipe-parallel { color: #8ab4f8; font-family: ui-monospace, "Courier New", monospace; font-size: 0.68rem; }
-      .pf-recipe-elapsed { color: #6e7681; font-family: ui-monospace, "Courier New", monospace; font-size: 0.68rem; min-width: 2.5ch; text-align: right; }
+      .pf-recipe-parallel {
+        color: #d4a574;
+        font-family: ui-monospace, "Courier New", monospace;
+        font-size: 0.68rem;
+      }
+      .pf-recipe-elapsed {
+        color: #b8a593;
+        font-family: ui-monospace, "Courier New", monospace;
+        font-size: 0.68rem;
+        min-width: 2.5ch; text-align: right;
+      }
 
-      .pf-empty { display: flex; align-items: center; justify-content: center; padding: 0.75rem 0.5rem; color: #8a7d6e; font-size: 0.72rem; font-style: italic; }
+      /* ─── Idle ─── */
+      .pf-empty {
+        display: flex; align-items: center; justify-content: center;
+        padding: 0.85rem 0.5rem;
+        color: #b8a593;
+        font-size: 0.72rem; font-style: italic;
+      }
 
+      /* ─── Tree ─── */
       .pf-tree { display: flex; flex-direction: column; gap: 0.3rem; }
       @keyframes pf-shimmer {
         0%   { background-position: 150% 0, center; }
@@ -361,56 +467,112 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       }
       .pf-node {
         display: flex; align-items: center; gap: 0.4rem;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.09);
+        background: rgba(0,0,0,0.18);
+        border: 1px solid rgba(193, 154, 107, 0.22);
         border-radius: 8px;
         padding: 0.32rem 0.55rem;
         position: relative;
         font-size: 0.72rem;
       }
       .pf-node.pf-active {
-        border: none;
+        border: 1px solid rgba(193, 154, 107, 0.35);
         background-image:
           linear-gradient(90deg, transparent 0%, var(--pf-glow-bg, rgba(107,142,35,0.15)) 47%, var(--pf-glow-bg2, rgba(107,142,35,0.45)) 50%, var(--pf-glow-bg, rgba(107,142,35,0.15)) 53%, transparent 100%),
-          radial-gradient(ellipse at center, var(--pf-glow, rgba(107,142,35,0.2)) 0%, transparent 70%);
-        background-size: 150% 100%, 100% 100%;
+          radial-gradient(ellipse at center, var(--pf-glow, rgba(107,142,35,0.2)) 0%, transparent 70%),
+          linear-gradient(rgba(0,0,0,0.18), rgba(0,0,0,0.18));
+        background-size: 150% 100%, 100% 100%, 100% 100%;
         animation: pf-shimmer 1.2s ease-in-out infinite;
       }
-      .pf-root:not(.pf-active) { border-color: rgba(163,113,247,0.35); box-shadow: 0 0 8px rgba(163,113,247,0.1); }
-      .pf-completed { opacity: 0.55; animation: none !important; }
-      .pf-failed { opacity: 0.7; border-color: rgba(248,81,73,0.5) !important; }
+      .pf-root:not(.pf-active) {
+        border-color: rgba(163,113,247,0.45);
+        box-shadow: 0 0 8px rgba(163,113,247,0.15);
+      }
+      .pf-completed { opacity: 0.65; animation: none !important; }
+      .pf-failed { opacity: 0.8; border-color: rgba(248,81,73,0.55) !important; }
 
-      .pf-children { padding-left: 0.9rem; margin-left: 0.4rem; border-left: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 0.28rem; }
+      .pf-children {
+        padding-left: 0.9rem; margin-left: 0.4rem;
+        border-left: 1px dashed rgba(193, 154, 107, 0.3);
+        display: flex; flex-direction: column; gap: 0.28rem;
+      }
       .pf-child { position: relative; }
-      .pf-connector { position: absolute; left: -0.95rem; top: 50%; width: 0.9rem; height: 1px; background: rgba(255,255,255,0.14); }
+      .pf-connector {
+        position: absolute; left: -0.95rem; top: 50%;
+        width: 0.9rem; height: 1px;
+        background: rgba(193, 154, 107, 0.3);
+      }
 
-      .pf-glyph { font-size: 0.72rem; flex-shrink: 0; width: 12px; text-align: center; }
+      .pf-glyph {
+        font-size: 0.72rem; flex-shrink: 0; width: 12px; text-align: center;
+      }
       .pf-logo { display: flex; align-items: center; flex-shrink: 0; }
       .pf-logo svg { width: 13px; height: 13px; }
 
       .pf-model-wrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-      .pf-model { font-weight: 700; font-size: 0.7rem; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .pf-label { color: #c9b9a9; font-size: 0.66rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+      .pf-model {
+        font-weight: 700; font-size: 0.7rem;
+        letter-spacing: 0.01em;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+      }
+      .pf-label {
+        color: #e8d4b0;
+        font-size: 0.66rem;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        max-width: 220px;
+      }
 
       .pf-spacer { flex: 1; }
-      .pf-age { color: #8a7d6e; font-family: ui-monospace, "Courier New", monospace; font-size: 0.65rem; min-width: 3ch; text-align: right; }
-      .pf-root-status { color: #a89080; font-size: 0.65rem; font-style: italic; }
-      .pf-stall { color: #f85149; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em; }
-      .pf-failed-text { color: #f85149; font-size: 0.65rem; font-style: italic; }
+      .pf-age {
+        color: #c9b8a0;
+        font-family: ui-monospace, "Courier New", monospace;
+        font-size: 0.65rem;
+        min-width: 3ch; text-align: right;
+      }
+      .pf-root-status {
+        color: #d4bf9e;
+        font-size: 0.65rem; font-style: italic;
+      }
+      .pf-stall {
+        color: #ff8a82;
+        font-size: 0.62rem; font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+      .pf-failed-text { color: #ff8a82; font-size: 0.65rem; font-style: italic; }
 
-      .pf-progress-bar { width: 52px; height: 3px; background: #21262d; border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+      .pf-progress-bar {
+        width: 52px; height: 3px;
+        background: rgba(0,0,0,0.4);
+        border-radius: 2px; overflow: hidden; flex-shrink: 0;
+      }
       .pf-progress-fill { height: 100%; border-radius: 2px; transition: width 0.25s; }
       .pf-pct { font-size: 0.6rem; min-width: 28px; text-align: right; }
 
       /* ─── Trail ─── */
       .pf-trail {
-        border-top: 1px dashed rgba(255,255,255,0.08);
+        border-top: 1px dashed rgba(193, 154, 107, 0.25);
         padding-top: 0.45rem;
-        margin-top: 0.2rem;
-        display: flex; flex-direction: column; gap: 0.2rem;
+        margin-top: 0.15rem;
+        display: flex; flex-direction: column; gap: 0.25rem;
       }
-      .pf-trail-header { color: #6e7681; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; }
-      .pf-trail-list { display: flex; flex-direction: column; gap: 0.12rem; max-height: 180px; overflow-y: auto; }
+      .pf-trail-header {
+        color: #d4a574;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 700;
+      }
+      .pf-trail-list {
+        display: flex; flex-direction: column; gap: 0.12rem;
+        max-height: 180px; overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(193, 154, 107, 0.35) transparent;
+      }
+      .pf-trail-list::-webkit-scrollbar { width: 5px; }
+      .pf-trail-list::-webkit-scrollbar-thumb {
+        background: rgba(193, 154, 107, 0.4);
+        border-radius: 3px;
+      }
       .pf-trail-item {
         display: grid;
         grid-template-columns: 54px 16px auto 1fr;
@@ -420,16 +582,26 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
         font-family: ui-monospace, "Courier New", monospace;
         line-height: 1.3;
       }
-      .pf-trail-clock { color: #484f58; white-space: nowrap; }
+      .pf-trail-clock { color: #b8a593; white-space: nowrap; }
       .pf-trail-icon { text-align: center; }
-      .pf-trail-label { color: #c19a6b; font-weight: 700; font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 14ch; }
-      .pf-trail-msg { color: #c9d1d9; font-family: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .pf-trail-dispatch .pf-trail-icon { color: #8ab4f8; }
-      .pf-trail-complete .pf-trail-icon { color: #3fb950; }
-      .pf-trail-warn .pf-trail-icon { color: #f0883e; }
-      .pf-trail-spawn-fail .pf-trail-icon { color: #f85149; }
-      .pf-trail-transition .pf-trail-icon { color: #d2a8ff; }
-      .pf-trail-recipe-step .pf-trail-icon { color: #c19a6b; }
+      .pf-trail-label {
+        color: #e8cc93;
+        font-weight: 700; font-family: inherit;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        max-width: 14ch;
+      }
+      .pf-trail-msg {
+        color: #e8d4b0;
+        font-family: inherit;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pf-trail-dispatch .pf-trail-icon { color: #80baff; }
+      .pf-trail-complete .pf-trail-icon { color: #7ed77a; }
+      .pf-trail-warn .pf-trail-icon { color: #ffae5c; }
+      .pf-trail-spawn-fail .pf-trail-icon { color: #ff8a82; }
+      .pf-trail-transition .pf-trail-icon { color: #d9b3ff; }
+      .pf-trail-recipe-step .pf-trail-icon { color: #e8cc93; }
+      .pf-trail-note .pf-trail-icon { color: #d4a574; }
     `;
     document.head.appendChild(style);
   }
