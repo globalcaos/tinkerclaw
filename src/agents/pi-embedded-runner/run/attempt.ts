@@ -1596,6 +1596,13 @@ export async function runEmbeddedAttempt(
           sessionKey: sandboxSessionKey,
           sessionId: params.sessionId,
           agentId: sessionAgentId,
+          // FORK 2026-04-20: propagate model identity so handleAgentStart can emit
+          // a populated lifecycle phase=start event. Without these the Tinker UI
+          // filter drops the event and the 4 thinking indicators never animate
+          // (chat "Opus thinking", session panel, model-panel glow, Prefrontal tree).
+          modelId: params.modelId,
+          modelProvider: params.model.provider,
+          authProfileId: params.authProfileId,
           builtinToolNames,
           internalEvents: params.internalEvents,
         }),
