@@ -256,6 +256,11 @@ export default function register(api: OpenClawPluginApi) {
       if (!getPrefrontalSessionKey() && ctx.requesterSessionKey?.includes("main")) {
         setPrefrontalSessionKey(ctx.requesterSessionKey);
       }
+      // FORK 2026-04-20: push tree to UI immediately so the new subagent row
+      // shows up in the Prefrontal panel without waiting for the 120s
+      // monitor tick. Subagent lifespans (170-260s) frequently overlap with
+      // the interval window, so without this UIs rarely see live branches.
+      rebuildAndBroadcastTree();
     },
   );
 
@@ -277,6 +282,10 @@ export default function register(api: OpenClawPluginApi) {
           break;
         }
       }
+      // FORK 2026-04-20: flush the end-of-life state to the UI now; without
+      // this the completed child keeps shimmering as "running" until the
+      // slow monitor tick catches up.
+      rebuildAndBroadcastTree();
     },
   );
 
