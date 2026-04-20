@@ -3407,24 +3407,43 @@ let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
 
 function renderThinkingIndicator(): string {
   if (activeRuns.size > 0) {
-    // FORK: Only show runs belonging to the active session/tab
-    let rows = "";
+    // FORK 2026-04-20: include runs that BELONG to the current session OR
+    // descend from it (subagent children). The previous filter dropped any
+    // `agent:main:subagent:xxx` run because it didn't match the main session
+    // key -- so while main idled between ack-turns the indicator flickered
+    // off even though subagents were still thinking. Include any subagent
+    // descendant so the user sees continuous activity until the whole tree
+    // settles.
+    const mainRows: string[] = [];
+    const subagentRows: string[] = [];
     for (const [runId, info] of activeRuns) {
-      if (info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
+      const sk = info.sessionKey ?? "";
+      const isMainMatch = sk && sessionKeyMatches(sk);
+      const isSubagentDescendant =
+        sk.includes(":subagent:") &&
+        // descend from the current main session (agent:main:main is parent of agent:main:subagent:xxx)
+        sessionKey &&
+        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:");
+      if (!isMainMatch && !isSubagentDescendant) {
         continue;
       }
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      // FORK: Append active recipe step to thinking label
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
-      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
+      const subagentTag = isSubagentDescendant
+        ? ` <span class="thinking-subagent-tag" title="subagent">▸</span>`
+        : "";
+      const row = `<div class="thinking-run${isSubagentDescendant ? " thinking-run-subagent" : ""}" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${recipeLabel}</span>
+  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${subagentTag}${recipeLabel}</span>
   <span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
+      if (isSubagentDescendant) subagentRows.push(row);
+      else mainRows.push(row);
     }
+    const rows = [...mainRows, ...subagentRows].join("");
     if (rows) {
       return `<div class="thinking-indicator">${rows}</div>`;
     }
