@@ -16,6 +16,57 @@ import { mountResponseTreemap } from "./panels/response-treemap.js";
 
 const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
 
+// FORK 2026-04-20: Prefrontal debug channel. Turn on by visiting the page with
+// ?pfdebug=1 or by running `__pf.debug=true` in devtools. When on, every
+// prefrontal-related WS event, state transition, and render decision logs a
+// line to the console, and `__pf.state` mirrors the current dashboard feed so
+// you can inspect it live from the browser devtools.
+const PF_DEBUG_STATE = {
+  debug:
+    new URLSearchParams(window.location.search).get("pfdebug") === "1" ||
+    localStorage.getItem("tinker-pf-debug") === "1",
+  lastTree: null as unknown,
+  lastRecipe: null as unknown,
+  lastTrailEvent: null as unknown,
+  lastRenderSource: "" as "extension" | "fallback" | "",
+  renderCount: 0,
+  eventCounts: { tree: 0, recipe: 0, trail: 0, subagentStart: 0, subagentEnd: 0 },
+};
+function pfLog(label: string, payload?: unknown): void {
+  if (!PF_DEBUG_STATE.debug) return;
+  const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+  // One-argument form keeps devtools cleaner when payload is undefined.
+  if (payload === undefined) {
+    console.log(`%c[PF %s] %s`, "color:#c19a6b;font-weight:600", ts, label);
+    return;
+  }
+  console.log(`%c[PF %s] %s`, "color:#c19a6b;font-weight:600", ts, label, payload);
+}
+// Expose a live inspection handle so you can do `__pf.enable()` / `__pf.state`
+// from devtools without needing a page reload.
+(window as any).__pf = {
+  get debug() {
+    return PF_DEBUG_STATE.debug;
+  },
+  enable() {
+    PF_DEBUG_STATE.debug = true;
+    localStorage.setItem("tinker-pf-debug", "1");
+    console.log("%c[PF] debug ON (persists across reloads)", "color:#c19a6b;font-weight:600");
+  },
+  disable() {
+    PF_DEBUG_STATE.debug = false;
+    localStorage.removeItem("tinker-pf-debug");
+    console.log("[PF] debug OFF");
+  },
+  state: PF_DEBUG_STATE,
+};
+if (PF_DEBUG_STATE.debug) {
+  console.log(
+    "%c[PF] debug active — prefrontal events will log here. `__pf.disable()` to turn off.",
+    "color:#c19a6b;font-weight:600",
+  );
+}
+
 // Runtime config: injected by the tinker plugin into index.html, or via URL params
 const __cfg = (window as any).__TINKER_CONFIG ?? {};
 const TOKEN = __cfg.token ?? new URLSearchParams(window.location.search).get("token") ?? "";
@@ -714,13 +765,24 @@ function updatePrefrontalTree() {
 }
 
 function buildPrefrontalTree(): TreeResponse {
+  PF_DEBUG_STATE.renderCount++;
   // Prefer the extension's tree if recent.
   if (
     latestTreeFromExtension &&
     Date.now() - latestTreeFromExtensionAt < PREFRONTAL_EXT_TREE_TTL_MS &&
     latestTreeFromExtension.active
   ) {
+    if (PF_DEBUG_STATE.lastRenderSource !== "extension") {
+      PF_DEBUG_STATE.lastRenderSource = "extension";
+      pfLog(`render source → extension (age=${Date.now() - latestTreeFromExtensionAt}ms)`);
+    }
     return latestTreeFromExtension;
+  }
+  if (PF_DEBUG_STATE.lastRenderSource !== "fallback") {
+    PF_DEBUG_STATE.lastRenderSource = "fallback";
+    pfLog(
+      `render source → fallback (activeRuns=${activeRuns.size}, extensionTreeAge=${latestTreeFromExtension ? Date.now() - latestTreeFromExtensionAt : "none"}ms)`,
+    );
   }
 
   // Collect active runs (respecting session scope)
@@ -1655,7 +1717,15 @@ function onEvent(evt: any) {
       if (tree && typeof tree.active === "boolean") {
         latestTreeFromExtension = tree;
         latestTreeFromExtensionAt = Date.now();
+        PF_DEBUG_STATE.lastTree = tree;
+        PF_DEBUG_STATE.eventCounts.tree++;
+        pfLog(
+          `tree event #${PF_DEBUG_STATE.eventCounts.tree} active=${tree.active} root=${tree.root?.model ?? "-"} children=${tree.root?.children?.length ?? 0}`,
+          tree,
+        );
         updatePrefrontalTree();
+      } else {
+        pfLog(`tree event IGNORED (malformed)`, p.data);
       }
     }
 
@@ -1687,6 +1757,12 @@ function onEvent(evt: any) {
           note: d.note,
           startedAt,
         };
+        PF_DEBUG_STATE.lastRecipe = currentRecipe;
+        PF_DEBUG_STATE.eventCounts.recipe++;
+        pfLog(
+          `recipe-state #${PF_DEBUG_STATE.eventCounts.recipe} recipe=${d.recipeId} step=${d.step ?? "-"}/${d.totalSteps ?? "-"} name="${d.stepName ?? ""}" cap=${d.parallelismCap ?? "-"} inFlight=${(d.inFlightLabels ?? []).length}`,
+          currentRecipe,
+        );
         // Emit a trail item on step transitions (including recipe start).
         const newStepKey = `${d.recipeId}:${d.step ?? 0}`;
         const prevStepKey = prev ? `${prev.recipeId}:${prev.step ?? 0}` : "";
@@ -1729,14 +1805,22 @@ function onEvent(evt: any) {
         const kind: TrailEventKind = ALLOWED.includes(d.kind as TrailEventKind)
           ? (d.kind as TrailEventKind)
           : "note";
-        pushTrail({
+        const entry = {
           ts: d.ts ?? Date.now(),
           kind,
           label: d.label,
           message: d.message,
           icon: d.icon,
-        });
+        };
+        pushTrail(entry);
+        PF_DEBUG_STATE.lastTrailEvent = entry;
+        PF_DEBUG_STATE.eventCounts.trail++;
+        pfLog(
+          `trail-event #${PF_DEBUG_STATE.eventCounts.trail} kind=${kind} label=${d.label ?? "-"} msg="${d.message}"`,
+        );
         updatePrefrontalTree();
+      } else {
+        pfLog(`trail-event IGNORED (no message)`, d);
       }
     }
     // FORK: Prefrontal recipe status — banner + thinking annotation + message tags
@@ -1825,6 +1909,10 @@ function onEvent(evt: any) {
               label: shortId,
               message: `subagent start · ${shortModel}`,
             });
+            PF_DEBUG_STATE.eventCounts.subagentStart++;
+            pfLog(
+              `implicit dispatch #${PF_DEBUG_STATE.eventCounts.subagentStart} sessionKey=${sk} model=${shortModel} runId=${p.runId}`,
+            );
           }
         }
         // Re-assert sending in case a chat error event cleared it during fallback
@@ -1878,6 +1966,10 @@ function onEvent(evt: any) {
                   ? `subagent failed · ${elapsed}s`
                   : `subagent done · ${elapsed}s`,
             });
+            PF_DEBUG_STATE.eventCounts.subagentEnd++;
+            pfLog(
+              `implicit ${kind} #${PF_DEBUG_STATE.eventCounts.subagentEnd} sessionKey=${sk} elapsed=${elapsed}s runId=${p.runId}`,
+            );
           }
         }
         // FORK: Regenerate tab title after assistant responds — works for any tab via TabState
