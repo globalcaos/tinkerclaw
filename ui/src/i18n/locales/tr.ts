@@ -246,15 +246,15 @@ export const tr: TranslationMap = {
     },
     pairing: {
       hint: "Bu cihazın Gateway ana bilgisayarından eşleştirme onayı alması gerekiyor.",
-      scopeUpgradeTitle: "Scope upgrade pending approval.",
+      scopeUpgradeTitle: "Kapsam yükseltmesi onay bekliyor.",
       scopeUpgradeSummary:
-        "This device is already paired, but the requested wider scope is waiting for approval.",
-      roleUpgradeTitle: "Role upgrade pending approval.",
+        "Bu cihaz zaten eşleştirilmiş, ancak istenen daha geniş kapsam onay bekliyor.",
+      roleUpgradeTitle: "Rol yükseltmesi onay bekliyor.",
       roleUpgradeSummary:
-        "This device is already paired, but the requested role change is waiting for approval.",
-      metadataUpgradeTitle: "Device metadata change pending approval.",
+        "Bu cihaz zaten eşleştirilmiş, ancak istenen rol değişikliği onay bekliyor.",
+      metadataUpgradeTitle: "Cihaz meta veri değişikliği onay bekliyor.",
       metadataUpgradeSummary:
-        "This device is already paired, but the metadata change is waiting for approval.",
+        "Bu cihaz zaten eşleştirilmiş, ancak meta veri değişikliği onay bekliyor.",
       mobileHint:
         "Mobilde misiniz? Masaüstünüzde openclaw dashboard --no-open komutundan tam URL'yi (#token=... dahil) kopyalayın.",
       docsTitle: "Cihaz eşleştirme belgeleri (yeni sekmede açılır)",
