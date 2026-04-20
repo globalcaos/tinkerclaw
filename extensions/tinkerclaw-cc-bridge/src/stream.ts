@@ -74,6 +74,26 @@ function extractUserText(messages: Array<{ role: string; content: unknown }>): s
   return "";
 }
 
+// FORK 2026-04-20: derive a stable per-session worker-pool key from the
+// system prompt. The OpenClaw `createStreamFn` ctx doesn't expose the active
+// session key, and `opts.sessionKey` was always undefined (the previous code
+// in index.ts read a non-existent field off `model`). Every call fell back
+// to the literal "agent:main:main", so 3 parallel subagents collapsed onto
+// ONE worker -- they queued serially and two hung forever waiting for the
+// third. Main Jarvis has a ~32KB persona/amygdala/fractal prompt; each
+// subagent has a shorter task-embedded prompt. Hashing the prompt keeps
+// workers distinct per session across turns while staying cheap.
+function deriveSessionKey(explicit: string | undefined, systemPrompt: string | undefined): string {
+  if (explicit && explicit.trim()) return explicit.trim();
+  if (!systemPrompt || !systemPrompt.trim()) return "agent:main:main";
+  // djb2 hash -- 8 hex chars is plenty for a handful of concurrent sessions.
+  let h = 5381;
+  for (let i = 0; i < systemPrompt.length; i++) {
+    h = ((h << 5) + h + systemPrompt.charCodeAt(i)) | 0;
+  }
+  return `cc-sp-${(h >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -82,7 +102,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const modelInfo = { api: model.api, provider: model.provider, id: model.id };
       const cwd = opts.cwd ?? DEFAULT_CWD;
       const disallowedTools = opts.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
-      const sessionKey = opts.sessionKey ?? "agent:main:main";
+      const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt);
 
       const pool = getPool();
       const worker = pool.getOrCreate({

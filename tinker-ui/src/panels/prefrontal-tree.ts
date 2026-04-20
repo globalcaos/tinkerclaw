@@ -99,8 +99,35 @@ function fmtDuration(seconds: number): string {
   return s > 0 ? `${m}m${s}s` : `${m}m`;
 }
 
+// FORK 2026-04-20: expanded-state persistence so expanding a subagent or
+// a trail group survives across rerenders (the whole panel DOM rebuilds on
+// every event).
+const EXPAND_STORAGE_KEY = "tinker-pf-expanded";
+function loadExpandedSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(EXPAND_STORAGE_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr.filter((x): x is string => typeof x === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+function saveExpandedSet(set: Set<string>): void {
+  try {
+    localStorage.setItem(EXPAND_STORAGE_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
 export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeController {
   let currentState: PrefrontalDashboardState | null = null;
+  const expanded = loadExpandedSet();
+  function toggleExpanded(id: string): void {
+    if (expanded.has(id)) expanded.delete(id);
+    else expanded.add(id);
+    saveExpandedSet(expanded);
+    render();
+  }
 
   function render(): void {
     container.style.display = "block";
@@ -147,30 +174,101 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     // ─── Recipe header ──────────────────────────────────────
     card.appendChild(renderRecipeHeader(recipe));
 
-    // ─── Tree block ─────────────────────────────────────────
+    // ─── Tree block (recursive) ─────────────────────────────
     if (!tree.active || !tree.root) {
       const empty = el("div", "pf-empty");
       empty.textContent = "No active LLM calls";
       card.appendChild(empty);
     } else {
       const treeBlock = el("div", "pf-tree");
-      treeBlock.appendChild(renderNode(tree.root, false));
-      if (tree.root.children.length > 0) {
-        const childrenEl = el("div", "pf-children");
-        for (const child of tree.root.children) {
-          childrenEl.appendChild(renderNode(child, true));
-        }
-        treeBlock.appendChild(childrenEl);
-      }
+      treeBlock.appendChild(renderNodeRecursive(tree.root, 0, trail));
       card.appendChild(treeBlock);
     }
 
     // ─── Action trail ────────────────────────────────────────
-    if (trail.length > 0) {
-      card.appendChild(renderTrail(trail));
+    // Show ALL trail entries that don't belong to a subagent's own trail
+    // (those are inlined under the subagent row). Anything with no child
+    // node match lives here at the root.
+    const rootOwnedTrail = filterRootTrail(trail, tree);
+    if (rootOwnedTrail.length > 0) {
+      card.appendChild(renderTrail(rootOwnedTrail, "root"));
     }
 
     container.appendChild(card);
+  }
+
+  /**
+   * Render a TreeNode and its children recursively. Depth drives indent.
+   * For non-root nodes the row is clickable to expand the subagent's own
+   * trail slice (filterNodeTrail below).
+   */
+  function renderNodeRecursive(node: TreeNode, depth: number, trail: TrailEvent[]): HTMLElement {
+    const wrap = el("div", `pf-branch pf-branch-depth-${Math.min(depth, 5)}`);
+    const isRoot = depth === 0;
+    const row = renderNode(node, !isRoot);
+
+    // Make subagent rows clickable to expand their own trail slice.
+    const expandKey = `node:${node.runId}`;
+    const nodeTrail = isRoot ? [] : filterNodeTrail(trail, node);
+    const hasOwnTrail = nodeTrail.length > 0;
+    const isExpanded = expanded.has(expandKey);
+    if (!isRoot && hasOwnTrail) {
+      row.classList.add("pf-clickable");
+      const caret = el("span", "pf-caret");
+      caret.textContent = isExpanded ? "▾" : "▸";
+      caret.title = "Toggle this subagent's trail";
+      row.insertBefore(caret, row.firstChild);
+      row.addEventListener("click", () => toggleExpanded(expandKey));
+    }
+    wrap.appendChild(row);
+
+    // Render this node's own trail (expanded) and its children (always).
+    const needsChildrenContainer =
+      (!isRoot && isExpanded && hasOwnTrail) || node.children.length > 0;
+    if (needsChildrenContainer) {
+      const childrenEl = el("div", "pf-children");
+      if (!isRoot && isExpanded && hasOwnTrail) {
+        childrenEl.appendChild(renderTrail(nodeTrail, `node-${node.runId}`, /*inline*/ true));
+      }
+      for (const child of node.children) {
+        childrenEl.appendChild(renderNodeRecursive(child, depth + 1, trail));
+      }
+      wrap.appendChild(childrenEl);
+    }
+    return wrap;
+  }
+
+  // Filter: trail events that "belong" to this subagent node. A node claims
+  // a trail event when the event's label matches the node's label (case-
+  // insensitive) OR contains the node's short runId tail.
+  function filterNodeTrail(trail: TrailEvent[], node: TreeNode): TrailEvent[] {
+    const labelLower = (node.label ?? "").toLowerCase().trim();
+    const idTail = (node.runId ?? "").slice(0, 8);
+    return trail.filter((evt) => {
+      const evtLabel = (evt.label ?? "").toLowerCase().trim();
+      if (!evtLabel) return false;
+      if (labelLower && evtLabel === labelLower) return true;
+      if (idTail && evtLabel.includes(idTail)) return true;
+      return false;
+    });
+  }
+
+  // Anything not owned by ANY subagent node lives at the root trail.
+  function filterRootTrail(trail: TrailEvent[], tree: TreeResponse): TrailEvent[] {
+    if (!tree.root) return trail;
+    const allSubagentNodes: TreeNode[] = [];
+    (function walk(n: TreeNode) {
+      for (const c of n.children) {
+        allSubagentNodes.push(c);
+        walk(c);
+      }
+    })(tree.root);
+    return trail.filter((evt) => {
+      for (const sub of allSubagentNodes) {
+        if (filterNodeTrail([evt], sub).length > 0) return false;
+      }
+      return true;
+    });
   }
 
   function countActive(tree: TreeResponse): number {
@@ -334,38 +432,123 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     return row;
   }
 
-  function renderTrail(trail: TrailEvent[]): HTMLElement {
-    const wrap = el("div", "pf-trail");
-    const header = el("div", "pf-trail-header");
-    header.textContent = `Trail · last ${trail.length}`;
-    wrap.appendChild(header);
+  /**
+   * Render a trail block. If `groupId` is provided, group entries by their
+   * `label` so all events for the same tool/label fold into one expandable
+   * branch. The default view shows the most recent 12 entries expanded and
+   * collapses the rest (newest-first), with a scrolling container.
+   * When `inline=true`, the block is rendered as a nested child of a
+   * subagent row (no outer header, smaller visual weight).
+   */
+  function renderTrail(trail: TrailEvent[], groupId: string, inline = false): HTMLElement {
+    const wrap = el("div", `pf-trail${inline ? " pf-trail-inline" : ""}`);
+    if (!inline) {
+      const header = el("div", "pf-trail-header");
+      header.textContent = `Trail · ${trail.length} events`;
+      wrap.appendChild(header);
+    }
     const list = el("div", "pf-trail-list");
-    // Newest first
-    const ordered = [...trail].sort((a, b) => b.ts - a.ts);
-    for (const evt of ordered) {
-      const item = el("div", `pf-trail-item pf-trail-${evt.kind}`);
 
-      const clock = el("span", "pf-trail-clock");
-      clock.textContent = fmtClock(evt.ts);
-      item.appendChild(clock);
-
-      const iconEl = el("span", "pf-trail-icon");
-      iconEl.textContent = evt.icon ?? TRAIL_ICON_BY_KIND[evt.kind] ?? "·";
-      item.appendChild(iconEl);
-
-      if (evt.label) {
-        const lbl = el("span", "pf-trail-label");
-        lbl.textContent = evt.label;
-        item.appendChild(lbl);
+    // Group entries by label. Entries without a label stay ungrouped.
+    // "Groups" of size 1 render as a plain trail item (not a branch).
+    const groups = new Map<string, TrailEvent[]>();
+    const ungrouped: TrailEvent[] = [];
+    for (const evt of trail) {
+      if (evt.label && evt.label.trim()) {
+        const key = evt.label.trim();
+        const arr = groups.get(key) ?? [];
+        arr.push(evt);
+        groups.set(key, arr);
+      } else {
+        ungrouped.push(evt);
       }
+    }
 
-      const msg = el("span", "pf-trail-msg");
-      msg.textContent = evt.message;
-      item.appendChild(msg);
+    // Render groups + ungrouped together, newest-first by the group's
+    // latest event timestamp.
+    type GroupOrEvt = { ts: number; kind: "group"; label: string; evts: TrailEvent[] }
+      | { ts: number; kind: "evt"; evt: TrailEvent };
+    const combined: GroupOrEvt[] = [];
+    for (const [label, evts] of groups.entries()) {
+      const latestTs = Math.max(...evts.map((e) => e.ts));
+      if (evts.length === 1) {
+        combined.push({ ts: latestTs, kind: "evt", evt: evts[0] });
+      } else {
+        combined.push({ ts: latestTs, kind: "group", label, evts });
+      }
+    }
+    for (const evt of ungrouped) {
+      combined.push({ ts: evt.ts, kind: "evt", evt });
+    }
+    combined.sort((a, b) => b.ts - a.ts);
 
-      list.appendChild(item);
+    for (const entry of combined) {
+      if (entry.kind === "evt") {
+        list.appendChild(renderTrailItem(entry.evt));
+      } else {
+        list.appendChild(renderTrailGroup(entry.label, entry.evts, groupId));
+      }
     }
     wrap.appendChild(list);
+    return wrap;
+  }
+
+  function renderTrailItem(evt: TrailEvent, indented = false): HTMLElement {
+    const item = el(
+      "div",
+      `pf-trail-item pf-trail-${evt.kind}${indented ? " pf-trail-item-sub" : ""}`,
+    );
+    const clock = el("span", "pf-trail-clock");
+    clock.textContent = fmtClock(evt.ts);
+    item.appendChild(clock);
+    const iconEl = el("span", "pf-trail-icon");
+    iconEl.textContent = evt.icon ?? TRAIL_ICON_BY_KIND[evt.kind] ?? "·";
+    item.appendChild(iconEl);
+    if (evt.label && !indented) {
+      const lbl = el("span", "pf-trail-label");
+      lbl.textContent = evt.label;
+      item.appendChild(lbl);
+    } else {
+      item.appendChild(el("span", "pf-trail-label-placeholder"));
+    }
+    const msg = el("span", "pf-trail-msg");
+    msg.textContent = evt.message;
+    msg.title = evt.message;
+    item.appendChild(msg);
+    return item;
+  }
+
+  function renderTrailGroup(label: string, evts: TrailEvent[], groupId: string): HTMLElement {
+    const groupKey = `group:${groupId}:${label}`;
+    const isExpanded = expanded.has(groupKey);
+    const ordered = [...evts].sort((a, b) => b.ts - a.ts);
+    const latestEvt = ordered[0];
+    const wrap = el("div", "pf-trail-group");
+
+    const header = el("div", `pf-trail-item pf-trail-group-header pf-trail-${latestEvt.kind}`);
+    const clock = el("span", "pf-trail-clock");
+    clock.textContent = fmtClock(latestEvt.ts);
+    header.appendChild(clock);
+    const caret = el("span", "pf-trail-icon pf-trail-caret");
+    caret.textContent = isExpanded ? "▾" : "▸";
+    header.appendChild(caret);
+    const lbl = el("span", "pf-trail-label");
+    lbl.textContent = label;
+    header.appendChild(lbl);
+    const msg = el("span", "pf-trail-msg");
+    msg.textContent = `${evts.length} events · latest: ${latestEvt.message}`;
+    msg.title = latestEvt.message;
+    header.appendChild(msg);
+    header.addEventListener("click", () => toggleExpanded(groupKey));
+    wrap.appendChild(header);
+
+    if (isExpanded) {
+      const sub = el("div", "pf-trail-group-body");
+      for (const e of ordered) {
+        sub.appendChild(renderTrailItem(e, /*indented*/ true));
+      }
+      wrap.appendChild(sub);
+    }
     return wrap;
   }
 
@@ -459,8 +642,25 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
         font-size: 0.72rem; font-style: italic;
       }
 
-      /* ─── Tree ─── */
+      /* ─── Tree (recursive branches) ─── */
       .pf-tree { display: flex; flex-direction: column; gap: 0.3rem; }
+      .pf-branch { display: flex; flex-direction: column; gap: 0.28rem; }
+      .pf-branch.pf-branch-depth-1 .pf-children,
+      .pf-branch.pf-branch-depth-2 .pf-children,
+      .pf-branch.pf-branch-depth-3 .pf-children,
+      .pf-branch.pf-branch-depth-4 .pf-children,
+      .pf-branch.pf-branch-depth-5 .pf-children {
+        border-left-color: rgba(193, 154, 107, 0.22);
+      }
+      .pf-node.pf-clickable { cursor: pointer; user-select: none; }
+      .pf-node.pf-clickable:hover { background: rgba(0, 0, 0, 0.32); }
+      .pf-caret {
+        color: #d4a574;
+        font-size: 0.65rem;
+        width: 10px;
+        flex-shrink: 0;
+        text-align: center;
+      }
       @keyframes pf-shimmer {
         0%   { background-position: 150% 0, center; }
         100% { background-position: -150% 0, center; }
@@ -564,15 +764,45 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       }
       .pf-trail-list {
         display: flex; flex-direction: column; gap: 0.12rem;
-        max-height: 180px; overflow-y: auto;
+        max-height: min(420px, 45vh);
+        overflow-y: auto;
+        padding-right: 2px;
         scrollbar-width: thin;
-        scrollbar-color: rgba(193, 154, 107, 0.35) transparent;
+        scrollbar-color: rgba(193, 154, 107, 0.45) transparent;
       }
-      .pf-trail-list::-webkit-scrollbar { width: 5px; }
+      .pf-trail-inline .pf-trail-list {
+        max-height: min(240px, 30vh);
+      }
+      .pf-trail-list::-webkit-scrollbar { width: 6px; }
+      .pf-trail-list::-webkit-scrollbar-track { background: transparent; }
       .pf-trail-list::-webkit-scrollbar-thumb {
-        background: rgba(193, 154, 107, 0.4);
+        background: rgba(193, 154, 107, 0.5);
         border-radius: 3px;
       }
+      .pf-trail-list::-webkit-scrollbar-thumb:hover {
+        background: rgba(193, 154, 107, 0.7);
+      }
+      .pf-trail-inline {
+        border-top: none;
+        margin-top: 0;
+        padding-top: 0.25rem;
+        padding-left: 0.3rem;
+      }
+      .pf-trail-group { display: flex; flex-direction: column; gap: 0.08rem; }
+      .pf-trail-group-header { cursor: pointer; user-select: none; border-radius: 3px; padding: 0.08rem 0.2rem; margin-left: -0.2rem; }
+      .pf-trail-group-header:hover { background: rgba(0,0,0,0.25); }
+      .pf-trail-caret { color: #d4a574; }
+      .pf-trail-group-body {
+        display: flex; flex-direction: column; gap: 0.08rem;
+        padding-left: 0.75rem;
+        border-left: 1px dashed rgba(193, 154, 107, 0.25);
+        margin-left: 0.6rem;
+      }
+      .pf-trail-item-sub {
+        grid-template-columns: 54px 16px 0 1fr;
+        opacity: 0.9;
+      }
+      .pf-trail-label-placeholder { width: 0; }
       .pf-trail-item {
         display: grid;
         grid-template-columns: 54px 16px auto 1fr;
