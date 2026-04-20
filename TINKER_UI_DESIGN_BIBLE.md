@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-20 (claude-code provider bridge + lifecycle-fields fix, amygdala + fractal injection pipeline, expandable user-prompt bubble, clickable fs-path links, envelope error rendering, stale-run-registry force-clear, tinker-probe CLI test harness, onTurnComplete re-wiring after 309-commit merge)
+> Last updated: 2026-04-20 (PM session: cc-bridge tool-choice block, fractal-prompt rewrite per Anthropic rules, IDENTITY.md filled, wind-down + memory-consolidation reactivated, 04:00 cron pipeline chain + md-file-only policy, BRIEFING.md anchored-facts philosophy shift, knowledge INDEX.md orphan cleanup, jobs.json live↔tracked symlink)
 
 ---
 
@@ -1889,6 +1889,54 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Why:** Anthropic disabled the `api.anthropic.com/api/oauth/usage` endpoint in January 2026. All budget-panel Anthropic usage data went to zero/null. Rate limit headers (`anthropic-ratelimit-unified-5h-utilization`, `7d-utilization`) are returned on every API response and contain the same utilization percentages.
 - **Pipeline:** `anthropic-vertex-stream.ts` (fetch wrapper) → `ratelimit-store.ts` (in-memory keyed by authProfileId) → `emitAgentEvent("ratelimit-update")` → Tinker UI `onEvent()` → `renderUsageBarsOnly()`
 - **Files:** `src/agents/pi-embedded-runner/anthropic-vertex-stream.ts`, `src/agents/auth-profiles/ratelimit-store.ts` (new), `src/agents/pi-embedded-runner/attempt-hooks.ts`, `tinker-ui/src/app.ts`
+
+### 11.17 cc-bridge Worker Tool-Choice Injection (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** `extensions/tinkerclaw-cc-bridge/src/worker.ts::buildToolChoiceBlock()` appends a ~60-line markdown block to every spawned Claude-Code subagent's system prompt. Teaches the WebSearch-vs-WebFetch decision, when to load Deferred tools via `ToolSearch`, when to use Monitor/PushNotification/TaskCreate, and names the common anti-patterns (guessing URLs then WebFetching them, polling via `sleep+test -f` loops, posting routine status to chat).
+- **Why:** Claude Code 2.1.114 exposes a dozen tools as DEFERRED — the names show in the initial system prompt but schemas must be loaded via `ToolSearch({query:"select:<Name>"})` before use. Jarvis was reflexing to WebFetch on guessed domains and TLS-erroring out, because nothing in the spawn-time prompt told him WebSearch existed as a separate tool with different purpose.
+- **Pipeline:** Worker spawn → `combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody, toolChoiceBody].filter(Boolean).join("")` → Claude Code `--append-system-prompt`
+- **Files:** `extensions/tinkerclaw-cc-bridge/src/worker.ts` (lines 203-270 for `buildToolChoiceBlock`, 369-373 for the combine step)
+
+### 11.18 04:00 Cron Pipeline Chain + md-File-Only Policy (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** All 12 Jarvis crons fire from a single 04:00 Europe/Madrid ignition point, arranged as a dependency chain. Topology:
+  - **04:00** wind-down (solo — ops hygiene of yesterday)
+  - **04:10** memory-consolidation (solo — J5 sleep-cycle, routes yesterday + wind-down output)
+  - **04:20** parallel wave: daily-fork-sync, self-evolution, security-updates-check, fork-scanner, marketplace-watcher, online-engagement (+ spiritual-tech Sundays)
+  - **04:45** cleaning-lady + life-butler (parallel, after fork-sync completes)
+  - **05:00** morning-briefing (aggregator via BRIEFING.md STEP -1)
+- **Why:** Previously 12 scattered schedules across 04:15 / 04:30 / 04:45 / 05:00 / 05:15 / 05:30 / 05:45 / 07:00 / 08:00 / 19:00 / 22:30 + Sunday 10:00. the user asked for a single chained start so all overnight work finishes before the morning briefing produces a consolidated dashboard.
+- **Policy shift** (2026-04-20): no cron pushes to WhatsApp. All crons write to their own md file under `memory/<cron>/YYYY-MM-DD.md`. Morning-briefing's STEP -1 pulls each file's `tl;dr` + top-3 bullets into a "## Overnight reports" section. On `/new`, Jarvis reads the morning briefing file. Eventually feeds a Grafana panel.
+- **Gap-fill:** every payload.message starts with `GAP-FILL: resume from the last successful run, not just yesterday. Read this cron's state file, process every missed day in order. If the state file is missing or corrupt, fall back to 7 days.` No silent day-skipping.
+- **Files:** `cron/jobs.json` (tracked; `~/.openclaw/cron/jobs.json` is now a symlink to it), `scripts/cron-*-prompt.txt` (10 prompt files, one per cron), `BRIEFING.md` (STEP -1 aggregator)
+- **Recovered:** memory-consolidation (was lost 2026-04-13 in jobs.json wipe, not restored 2026-04-15); wind-down; security-updates-check; life-butler (narrowed + self-improving via butler-scope.md); online-engagement (expanded: tinkerzone WP/GA/GSC + GitHub comment engagement + inbound-link sentiment); fork-scanner (expanded: agent-OSS survey — Hermes, MemPalace, Letta, AutoGen, LangGraph); spiritual-tech (updated: new-age ethics + YouTube curation).
+- **New:** cleaning-lady (archives-only, never deletes; flags bloat for the user); marketplace-watcher (replaces zombie whatsapp-group-summary; watchlist-driven bargain hunter for WA buy-sell + Wallapop + Milanuncios per `memory/shopping/watchlist.md`).
+
+### 11.19 BRIEFING.md Anchored-Facts Philosophy (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** BRIEFING.md philosophy flipped. Old: _"the user doesn't need an inventory of known facts. He lived yesterday."_ New: _"Treat every briefing as read by someone who just woke up with no memory of yesterday. Anchor in known facts, be maximally summarized."_ Sections now list anchored inventories with count-first lines, one line per item. Synthesis ("What I'm Thinking") moves to the end as opinion layer over the dashboard.
+- **Why:** the user asked for a standalone dashboard that works for the `/new` session-start flow — it can't assume knowledge of prior briefings because `/new` starts from zero context.
+- **Target length:** 500-800 words. Inventories are tight (one line each), synthesis is 2-4 short paragraphs at the end.
+- **Files:** `~/.openclaw/workspace/BRIEFING.md` (philosophy section + all inventory sections rewritten; STEP -1 pulls cron reports)
+
+### 11.20 Knowledge INDEX.md + IDENTITY.md + fractal-prompt.md (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What (INDEX.md):** `memory/knowledge/INDEX.md` had 14 of 69 files orphaned (invisible to the index). Added all missing entries; split the "Tracking" dumping-ground (15 entries, most substantive topics) back to their real domains (Jarvis Operations, Infrastructure, Development & Code, Business). Tracking now holds only 6 real trackers.
+- **What (IDENTITY.md):** Workspace root `IDENTITY.md` had never been filled since its original template — 23 lines of `_(pick something you like)_` placeholders emitting zero signal into the eager bootstrap for the entire history. Filled with: name=Jarvis, creature=pattern studying patterns, vibe=Data-from-Star-Trek curiosity + dry humor, emoji=🤖 (matches WhatsApp responsePrefix), plus a "How this shows up" section (humor-is-load-bearing, Data-principle curiosity, dry anthropologist combined tone, stay-Jarvis-under-correction). Pointer to `memory/knowledge/humor-operational.md` for the Koestler bisociation theory + 12 patterns.
+- **What (fractal-prompt.md):** Rewritten per Anthropic prompt-engineering rubric. Removed over-escalation (MANDATORY/CRITICAL/caps emphasis — Opus 4.6/4.7 overtrigger on aggressive language). Fixed section-numbering bug (header said "Three Questions (answer all)" but had four subsections → now "The seven reflection questions"). Moved Rules block to the end as "Response rules". 208 → 176 lines with no operational content lost (all seven questions, both examples, probe commands, irreversibility gate preserved).
+- **Why:** Anthropic's Opus 4.6/4.7 are literal on scope and overtriggered on aggressive phrasing. The research rubric distilled to `/tmp/jarvis-memory-research.md` guides all eager-system-prompt edits.
+- **Files:** `memory/knowledge/INDEX.md`, `workspace root IDENTITY.md`, `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`, `SOUL.md` (dropped stale `memory/journal/consciousness-notes.md` reference — file never existed)
+
+### 11.21 AGENTS.md Compaction + Tool-Choice Pointer (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** Two small additions to `~/.openclaw/workspace/AGENTS.md`. (1) Context Hygiene gains a compaction-awareness bullet: save unfinished state to today's daily log BEFORE the auto-compact fires (short declarative headers survive, chat-style summaries don't). (2) New "Tool Choice" section points at the cc-bridge `buildToolChoiceBlock` and explicitly names Deferred tools needing `ToolSearch` schema-load first.
+- **Why:** Anthropic prompt-engineering rule: inform Claude about its harness so it behaves accordingly when context fills up. The tool-choice pointer gives the main session the same decision framework subagents now get from cc-bridge.
+- **Files:** `~/.openclaw/workspace/AGENTS.md`
 
 ---
 
