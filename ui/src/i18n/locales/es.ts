@@ -243,15 +243,15 @@ export const es: TranslationMap = {
     },
     pairing: {
       hint: "Este dispositivo necesita aprobación de emparejamiento del host de la puerta de enlace.",
-      scopeUpgradeTitle: "Scope upgrade pending approval.",
+      scopeUpgradeTitle: "Ampliación del alcance pendiente de aprobación.",
       scopeUpgradeSummary:
-        "This device is already paired, but the requested wider scope is waiting for approval.",
-      roleUpgradeTitle: "Role upgrade pending approval.",
+        "Este dispositivo ya está emparejado, pero el alcance más amplio solicitado está pendiente de aprobación.",
+      roleUpgradeTitle: "Actualización del rol pendiente de aprobación.",
       roleUpgradeSummary:
-        "This device is already paired, but the requested role change is waiting for approval.",
-      metadataUpgradeTitle: "Device metadata change pending approval.",
+        "Este dispositivo ya está emparejado, pero el cambio de rol solicitado está pendiente de aprobación.",
+      metadataUpgradeTitle: "Cambio de metadatos del dispositivo pendiente de aprobación.",
       metadataUpgradeSummary:
-        "This device is already paired, but the metadata change is waiting for approval.",
+        "Este dispositivo ya está emparejado, pero el cambio de metadatos está pendiente de aprobación.",
       mobileHint:
         "¿En el móvil? Copia la URL completa (incluyendo #token=...) desde openclaw dashboard --no-open en tu escritorio.",
       docsTitle: "Documentación de emparejamiento de dispositivos (se abre en una pestaña nueva)",
