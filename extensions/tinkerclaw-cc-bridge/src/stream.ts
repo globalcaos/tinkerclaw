@@ -235,28 +235,34 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         if (t === "assistant") {
-          // claude --verbose stream-json emits whole-block assistant messages
-          // rather than per-token deltas. Turn each non-empty block into one
-          // delta. Empty-string thinking blocks (claude's signed-but-empty
-          // extended-thinking marker) are skipped — emitting zero-length
-          // thinking events confuses pi-agent-core's attempt reader.
+          // claude's stream-json NDJSON emits periodic `assistant` messages
+          // with CUMULATIVE text. Treat each update as a potential delta:
+          // slice off whatever we've already pushed, emit the remainder.
+          // This gives real-time streaming to the UI even when claude isn't
+          // sending finer-grained `content_block_delta` events.
           const blocks = (line as CcStreamStdoutAssistantMessage).message?.content ?? [];
           for (const b of blocks) {
             const typed = b as CcContentBlock;
-            if (
-              typed.type === "text" &&
-              typeof typed.text === "string" &&
-              typed.text.length > 0 &&
-              !accumulatedText
-            ) {
-              pushTextDelta(typed.text);
-            } else if (
-              typed.type === "thinking" &&
-              typeof typed.thinking === "string" &&
-              typed.thinking.length > 0 &&
-              !accumulatedThinking
-            ) {
-              pushThinkingDelta(typed.thinking);
+            if (typed.type === "text" && typeof typed.text === "string") {
+              const cumulative = typed.text;
+              if (cumulative.startsWith(accumulatedText) && cumulative.length > accumulatedText.length) {
+                const delta = cumulative.slice(accumulatedText.length);
+                pushTextDelta(delta);
+              } else if (cumulative.length > 0 && !accumulatedText) {
+                // Full replacement on first emission
+                pushTextDelta(cumulative);
+              }
+            } else if (typed.type === "thinking" && typeof typed.thinking === "string") {
+              const cumulative = typed.thinking;
+              if (
+                cumulative.startsWith(accumulatedThinking) &&
+                cumulative.length > accumulatedThinking.length
+              ) {
+                const delta = cumulative.slice(accumulatedThinking.length);
+                pushThinkingDelta(delta);
+              } else if (cumulative.length > 0 && !accumulatedThinking) {
+                pushThinkingDelta(cumulative);
+              }
             }
           }
         }
@@ -266,6 +272,13 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       log.info(
         `turn start sessionKey=${sessionKey} userText.len=${userText.length} systemPrompt.len=${(context.systemPrompt ?? "").length}`,
       );
+
+      // FORK 2026-04-19: emit `start` immediately so the UI thinking
+      // indicator fires while claude is doing tool calls / thinking —
+      // not just when text deltas arrive. Previously this was lazy,
+      // meaning long tool-call chains (>60s of no text) left the UI
+      // with no visible activity.
+      pushStart();
 
       try {
         worker.on("stream_line", onStreamLine);

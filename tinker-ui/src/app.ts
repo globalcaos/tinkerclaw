@@ -430,6 +430,7 @@ const app = $("app")!;
 // ─── Provider Colors ───
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: "#D97757",
+  "claude-code": "#D97757", // FORK: cc-bridge runs Claude models; reuse Anthropic orange
   google: "#16a34a",
   openai: "#6b7280",
   ollama: "#ca8a04",
@@ -464,8 +465,13 @@ const MODEL_COST: Record<string, [number, number]> = {
 };
 
 // ─── Provider Icons (14px inline SVGs) ───
+const ANTHROPIC_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`;
 const PROVIDER_ICONS: Record<string, string> = {
-  anthropic: `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`,
+  anthropic: ANTHROPIC_ICON_SVG,
+  // FORK: cc-bridge talks to the same Claude models through the claude CLI;
+  // show the Anthropic asterisk so the model panel + thinking indicator
+  // read as "Opus (Anthropic)" instead of an anonymous grey dot.
+  "claude-code": ANTHROPIC_ICON_SVG,
   google: `<svg width="14" height="14" viewBox="0 0 48 48"><path d="M43.6 20.5H42V20H24v8h11.3C33.6 33.4 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" fill="#FFC107"/><path d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" fill="#FF3D00"/><path d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.3c-2 1.5-4.5 2.3-7.3 2.3-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" fill="#4CAF50"/><path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.7l6.2 5.3C37 39.4 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" fill="#1976D2"/></svg>`,
   openai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22.28 9.37a5.88 5.88 0 0 0-.51-4.86 5.97 5.97 0 0 0-6.43-2.83A5.9 5.9 0 0 0 10.87 0a5.97 5.97 0 0 0-5.69 4.13 5.88 5.88 0 0 0-3.93 2.85 5.97 5.97 0 0 0 .74 6.99 5.88 5.88 0 0 0 .51 4.86 5.97 5.97 0 0 0 6.43 2.83A5.9 5.9 0 0 0 13.4 24a5.97 5.97 0 0 0 5.69-4.13 5.88 5.88 0 0 0 3.93-2.85 5.97 5.97 0 0 0-.74-6.99zM13.4 22.3a4.42 4.42 0 0 1-2.84-1.03l.14-.08 4.72-2.73a.77.77 0 0 0 .39-.67v-6.66l2 1.15a.07.07 0 0 1 .04.06v5.52a4.46 4.46 0 0 1-4.46 4.44zM3.48 18.2a4.42 4.42 0 0 1-.53-2.97l.14.08 4.72 2.73a.77.77 0 0 0 .77 0l5.76-3.33v2.31a.07.07 0 0 1-.03.06l-4.77 2.76a4.46 4.46 0 0 1-6.06-1.64zM2.2 7.87A4.42 4.42 0 0 1 4.52 5.9v5.62a.77.77 0 0 0 .39.67l5.76 3.33-2 1.15a.07.07 0 0 1-.07 0L3.83 13.9A4.46 4.46 0 0 1 2.2 7.87zm17.33 4.03l-5.76-3.33 2-1.15a.07.07 0 0 1 .07 0l4.77 2.76a4.46 4.46 0 0 1-.69 8.05v-5.66a.77.77 0 0 0-.39-.67zM21.5 9.7l-.14-.08-4.72-2.73a.77.77 0 0 0-.77 0L10.1 10.2V7.9a.07.07 0 0 1 .03-.06l4.77-2.76a4.46 4.46 0 0 1 6.6 4.62zM8.93 13.34l-2-1.15a.07.07 0 0 1-.04-.06V6.61a4.46 4.46 0 0 1 7.3-3.42l-.14.08-4.72 2.73a.77.77 0 0 0-.39.67zm1.08-2.34L12 9.77l1.99 1.15v2.3L12 14.36l-1.99-1.15z" fill="#10a37f"/></svg>`,
   ollama: `<svg width="14" height="14" viewBox="0 0 24 24"><text x="3" y="17" font-size="14" font-weight="bold" fill="#ca8a04">O</text></svg>`,
@@ -2023,9 +2029,17 @@ async function send(text: string) {
     sending = true;
   }
   currentTurnNumber++;
+  // FORK 2026-04-18: Show the USER'S TEXT in the bubble, but stash the full
+  // injected prompt (with amygdala/fractal instructions) on the message so
+  // the renderer can offer a click-to-expand view. `_fullPrompt` holds the
+  // actual string that was sent to claude — useful both for debugging and
+  // for the user to confirm what instructions landed with their turn.
+  const fullPromptForDebug = buildInjectedPrompt(text);
+  const hasInjection = fullPromptForDebug.length > text.length + 16;
   messages.push({
     role: "user",
     content: [{ type: "text", text }],
+    ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
     ...(isQueued ? { _queued: true } : {}),
   });
   updateChat();
@@ -2034,7 +2048,18 @@ async function send(text: string) {
   }
   scrollChat();
 
-  await req("chat.send", { sessionKey, message: text, idempotencyKey: uuid() }).catch((e) => {
+  // FORK 2026-04-18: Amygdala + Fractal injection.
+  // The user sees ONLY `text` in their bubble (with a click-to-expand hint
+  // showing the full prompt if instructions were appended). The gateway
+  // receives `text + optional instruction suffix` so Opus emits a structured
+  // reply (💬 ANSWER → 🧠 AMYGDALA → 🌿 FRACTAL).
+  const messageForGateway = fullPromptForDebug;
+
+  await req("chat.send", {
+    sessionKey,
+    message: messageForGateway,
+    idempotencyKey: uuid(),
+  }).catch((e) => {
     console.error(e);
     sending = false;
     updateBtn();
@@ -2138,6 +2163,14 @@ function md(text: string): string {
   h = h.replace(
     /<strong>🌿 FRACTAL:<\/strong>\s*<em>(.*?)<\/em>/gi,
     '<strong style="color:#2ECC71">🌿 FRACTAL:</strong> <em style="color:#2ECC71">$1</em>',
+  );
+  // FORK 2026-04-18: wrap absolute or ~/ paths (rendered as inline <code>
+  // by markdown-it) in a clickable span that opens the file in the OS
+  // default viewer via the `config.openExternalFile` RPC. Also matches
+  // bare paths in plain text for pointer-style instructions.
+  h = h.replace(
+    /<code>(~\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf)|\/(?:home|usr|tmp|var|opt|etc)\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf))<\/code>/g,
+    '<code class="fs-link" data-path="$1" title="Click to open in system viewer">$1</code>',
   );
   return h;
 }
@@ -2426,6 +2459,185 @@ function extractFilePaths(text: string): string[] {
   return matches ? [...new Set(matches)] : [];
 }
 
+// FORK 2026-04-18: Amygdala + Fractal injection ----------------------------
+// Client-side, single-turn injection. The user's prompt, optionally wrapped
+// with an instruction suffix, flows through one normal turn — Opus 4.7 emits
+// a 3-section structured response (🧠 AMYGDALA → 💬 ANSWER → 🌿 FRACTAL).
+// This replaces the two-turn sessions.steer dance the old fractal-reflection
+// plugin used, eliminating the lane-race entirely.
+const AMY_FRA_TOGGLES_KEY = "tinker-amy-fra-toggles";
+type InjectToggles = { amygdala: boolean; fractal: boolean };
+function loadInjectToggles(): InjectToggles {
+  try {
+    const raw = localStorage.getItem(AMY_FRA_TOGGLES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        amygdala: parsed.amygdala !== false,
+        fractal: parsed.fractal !== false,
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { amygdala: true, fractal: true };
+}
+function saveInjectToggles(t: InjectToggles): void {
+  try {
+    localStorage.setItem(AMY_FRA_TOGGLES_KEY, JSON.stringify(t));
+  } catch {
+    /* ignore */
+  }
+}
+let injectToggles = loadInjectToggles();
+function applyInjectToggleChrome(): void {
+  const amy = document.getElementById("tb-amygdala");
+  const fra = document.getElementById("tb-fractal");
+  if (amy) {amy.classList.toggle("tb-active", injectToggles.amygdala);}
+  if (fra) {fra.classList.toggle("tb-active", injectToggles.fractal);}
+}
+// FORK 2026-04-18: UI injection is now minimal — the detailed rules for
+// each section live in the system prompt (appended by cc-bridge/worker.ts
+// from amygdala-prompt.md + fractal-prompt.md). The per-turn injection
+// just names which sections to emit and in what order. Opus pulls the
+// content from its system-prompt context.
+function buildInjectedPrompt(userText: string): string {
+  const wantAmy = injectToggles.amygdala;
+  const wantFra = injectToggles.fractal;
+  if (!wantAmy && !wantFra) {return userText;}
+  const sections: string[] = ["💬 ANSWER"];
+  if (wantAmy) {sections.push("🧠 AMYGDALA");}
+  if (wantFra) {sections.push("🌿 FRACTAL");}
+  const order = sections.join(" → ");
+  const extras: string[] = [];
+  extras.push(
+    `\n\n---\n\n**Structure this turn's reply as labelled sections in this exact order: ${order}.** Each marker on its own line, blank line between sections. The UI parses markers and renders each section as a separate bubble; the first is expanded, later ones collapsed.`,
+  );
+  extras.push("\n\n**💬 ANSWER** — your complete substantive reply, markdown freely, natural prose.");
+  if (wantAmy) {
+    extras.push(
+      "\n\n**🧠 AMYGDALA** — follow the amygdala rules in your system prompt (post-turn diagnostic of Prudence + Personality ensembles). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-learned-intuition/amygdala-prompt.md`.",
+    );
+  }
+  if (wantFra) {
+    extras.push(
+      "\n\n**🌿 FRACTAL** — follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`.",
+    );
+  }
+  return userText + extras.join("");
+}
+
+// FORK 2026-04-18: 3-section response splitter. Detects the AMYGDALA / ANSWER /
+// FRACTAL markers in an assistant message and returns the three pieces plus
+// any prefix/suffix text. Used by renderMsg to render each section in its own
+// bubble (amygdala + fractal collapsed, answer expanded by default).
+type SectionedReply = {
+  amygdala?: string;
+  answer?: string;
+  fractal?: string;
+  other?: string;
+};
+// Markers tolerate: optional bold wrapping (** or __), optional colon, optional
+// space between emoji and label. Opus sometimes emits `💬 ANSWER:`, sometimes
+// `💬 **ANSWER**`, sometimes `💬 **ANSWER:**` — all three must match.
+const AMY_MARKER_RE = /(^|\n)\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+const ANS_MARKER_RE = /(^|\n)\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+const FRA_MARKER_RE = /(^|\n)\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+function splitSectionedReply(text: string): SectionedReply | null {
+  if (!text) {return null;}
+  // `text.search(regex)` returns the first match position; multiple marker
+  // occurrences (rare — claude echoing its own section header) would still be
+  // handled because we only care about the FIRST occurrence of each.
+  const amyIdx = text.search(AMY_MARKER_RE);
+  const ansIdx = text.search(ANS_MARKER_RE);
+  const fraIdx = text.search(FRA_MARKER_RE);
+  if (amyIdx < 0 && ansIdx < 0 && fraIdx < 0) {return null;}
+  // Split by whichever markers exist, in order of appearance.
+  const markers: { key: "amygdala" | "answer" | "fractal"; start: number; hdrLen: number }[] = [];
+  const pushMarker = (idx: number, key: "amygdala" | "answer" | "fractal", re: RegExp) => {
+    if (idx < 0) {return;}
+    const m = text.slice(idx).match(re);
+    if (!m) {return;}
+    markers.push({ key, start: idx, hdrLen: m[0].length });
+  };
+  pushMarker(amyIdx, "amygdala", AMY_MARKER_RE);
+  pushMarker(ansIdx, "answer", ANS_MARKER_RE);
+  pushMarker(fraIdx, "fractal", FRA_MARKER_RE);
+  markers.sort((a, b) => a.start - b.start);
+  const result: SectionedReply = {};
+  const preface = text.slice(0, markers[0]?.start ?? 0).trim();
+  if (preface) {result.other = preface;}
+  for (let i = 0; i < markers.length; i++) {
+    const m = markers[i];
+    if (!m) {continue;}
+    const bodyStart = m.start + m.hdrLen;
+    const bodyEnd = markers[i + 1]?.start ?? text.length;
+    const body = text.slice(bodyStart, bodyEnd).trim();
+    if (body) {result[m.key] = body;}
+  }
+  return result;
+}
+// FORK 2026-04-18: render the user bubble. If the message was sent with
+// amygdala/fractal instructions appended, show the raw user text plus a
+// tiny clickable "📜 prompt" badge; clicking expands a <details> with the
+// full text sent to the gateway (for user visibility + debugging).
+function renderUserBubbleWithPromptToggle(
+  userText: string,
+  msg: { _fullPrompt?: string },
+  queuedClass: string,
+  queuedBadge: string,
+  idx: number,
+): string {
+  if (!msg._fullPrompt || typeof msg._fullPrompt !== "string") {
+    return `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+  }
+  const full = msg._fullPrompt;
+  return (
+    `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
+    `${md(userText)}` +
+    `<details class="user-prompt-toggle">` +
+    `<summary class="user-prompt-summary">📜 view full prompt</summary>` +
+    `<div class="user-prompt-full">${md(full)}</div>` +
+    `</details>` +
+    `${queuedBadge}` +
+    `</div>`
+  );
+}
+
+function renderSectionedReply(sec: SectionedReply): string {
+  // Visual order: ANSWER (expanded) → AMYGDALA (collapsed) → FRACTAL (collapsed).
+  // Matches the instructed emission order. The splitter records whichever
+  // sections it found, regardless of position in the text; this renderer
+  // forces the canonical on-screen order.
+  //
+  // IMPORTANT: if the splitter found amygdala OR fractal but NO answer marker,
+  // the pre-marker content ("other") is actually the answer — promote it.
+  // Otherwise the answer text falls on the floor.
+  let h = "";
+  const effectiveAnswer = sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
+  if (effectiveAnswer) {
+    h += `<div class="msg assistant">${md(effectiveAnswer)}</div>`;
+  } else if (sec.other && !sec.amygdala && !sec.fractal) {
+    // No markers at all — fall back to raw
+    h += `<div class="msg assistant">${md(sec.other)}</div>`;
+  }
+  if (sec.amygdala) {
+    h +=
+      `<details class="msg msg-amygdala">` +
+      `<summary class="amygdala-summary">🧠 <em>Amygdala</em> — gut read</summary>` +
+      `<div class="amygdala-body">${md(sec.amygdala)}</div>` +
+      `</details>`;
+  }
+  if (sec.fractal) {
+    h +=
+      `<details class="fractal-details">` +
+      `<summary class="fractal-summary">🌿 <em>Fractal</em> — reflection</summary>` +
+      `<div class="msg msg-fractal">${md(sec.fractal)}</div>` +
+      `</details>`;
+  }
+  return h;
+}
+
 // FORK 2026-04-17: ErrorEnvelope rendering ---------------------------------
 // See `src/fork/error-envelope.ts` on the server side. Servers deliver a
 // structured envelope as an assistant-text payload prefixed with the sentinel
@@ -2460,15 +2672,15 @@ type Envelope = {
 };
 const ERR_ENV_PREFIX = "__ERR_ENV__:";
 function extractEnvelope(text: string): Envelope | null {
-  if (typeof text !== "string" || text.length === 0) return null;
+  if (typeof text !== "string" || text.length === 0) {return null;}
   // indexOf, not startsWith: defense-in-depth. If some upstream path ever
   // concatenates prose before the envelope, we still detect it.
   const idx = text.indexOf(ERR_ENV_PREFIX);
-  if (idx < 0) return null;
+  if (idx < 0) {return null;}
   const jsonStart = idx + ERR_ENV_PREFIX.length;
   // Find the end of the JSON object by brace-matching from the first '{'.
   const braceStart = text.indexOf("{", jsonStart);
-  if (braceStart < 0) return null;
+  if (braceStart < 0) {return null;}
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -2497,7 +2709,7 @@ function extractEnvelope(text: string): Envelope | null {
       }
     }
   }
-  if (end < 0) return null;
+  if (end < 0) {return null;}
   try {
     const parsed = JSON.parse(text.slice(braceStart, end)) as Envelope;
     if (parsed?.kind === "error" && typeof parsed.headline === "string") {
@@ -2515,18 +2727,18 @@ function renderEnvelope(env: Envelope): string {
       ? `<ul class="env-actions">${env.suggestedActions.map((a) => `<li>${md(a)}</li>`).join("")}</ul>`
       : "";
   const kvEntries: string[] = [];
-  if (env.llm?.provider) kvEntries.push(`provider: ${env.llm.provider}`);
-  if (env.llm?.model) kvEntries.push(`model: ${env.llm.model}`);
-  if (env.llm?.authProfileId) kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);
-  if (env.llm?.httpStatus !== undefined) kvEntries.push(`http_status: ${env.llm.httpStatus}`);
-  if (env.llm?.providerErrorCode) kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);
-  if (env.llm?.requestId) kvEntries.push(`request_id: ${env.llm.requestId}`);
-  if (env.llm?.durationMs !== undefined) kvEntries.push(`duration_ms: ${env.llm.durationMs}`);
-  if (env.sessionKey) kvEntries.push(`session: ${env.sessionKey}`);
-  if (env.timestamp) kvEntries.push(`timestamp: ${env.timestamp}`);
+  if (env.llm?.provider) {kvEntries.push(`provider: ${env.llm.provider}`);}
+  if (env.llm?.model) {kvEntries.push(`model: ${env.llm.model}`);}
+  if (env.llm?.authProfileId) {kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);}
+  if (env.llm?.httpStatus !== undefined) {kvEntries.push(`http_status: ${env.llm.httpStatus}`);}
+  if (env.llm?.providerErrorCode) {kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);}
+  if (env.llm?.requestId) {kvEntries.push(`request_id: ${env.llm.requestId}`);}
+  if (env.llm?.durationMs !== undefined) {kvEntries.push(`duration_ms: ${env.llm.durationMs}`);}
+  if (env.sessionKey) {kvEntries.push(`session: ${env.sessionKey}`);}
+  if (env.timestamp) {kvEntries.push(`timestamp: ${env.timestamp}`);}
   if (env.details) {
     for (const [k, v] of Object.entries(env.details)) {
-      if (v !== undefined && v !== null) kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+      if (v !== undefined && v !== null) {kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);}
     }
   }
   const kv = kvEntries.length > 0 ? `<div class="env-kv">${esc(kvEntries.join("\n"))}</div>` : "";
@@ -2659,7 +2871,7 @@ function renderMsg(
           // System-injected messages (runtime context, subagent results) → system style
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
         } else {
-          h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+          h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
         }
       }
     } else if (role === "assistant") {
@@ -2671,6 +2883,18 @@ function renderMsg(
       if (envelope) {
         h += renderEnvelope(envelope);
         return h;
+      }
+      // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection.
+      // If ANY of the three markers is present we take over the render so
+      // the user never sees the raw "💬 ANSWER:" / "🧠 AMYGDALA:" / "🌿 FRACTAL:"
+      // prefixes as plain text. Splitter returns whatever sections it can
+      // extract; missing sections simply don't render.
+      if (!isThinking) {
+        const sectioned = splitSectionedReply(text);
+        if (sectioned && (sectioned.answer || sectioned.amygdala || sectioned.fractal)) {
+          h += renderSectionedReply(sectioned);
+          return h;
+        }
       }
       const errorClass = msg._isError ? " msg-error" : "";
       const retryBtn =
@@ -2777,7 +3001,7 @@ function renderMsg(
           } else if (SYSTEM_INJECTED_RE.test(userText)) {
             h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
           } else {
-            h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+            h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
           }
         }
       } else if (role === "assistant") {
@@ -2786,6 +3010,14 @@ function renderMsg(
         if (envelope2) {
           h += renderEnvelope(envelope2);
           return h;
+        }
+        // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection (twin path).
+        if (!isThinking) {
+          const sectioned2 = splitSectionedReply(text);
+          if (sectioned2 && (sectioned2.answer || sectioned2.amygdala || sectioned2.fractal)) {
+            h += renderSectionedReply(sectioned2);
+            return h;
+          }
         }
         const errorClass = msg._isError ? " msg-error" : "";
         const retryBtn =
@@ -4610,9 +4842,14 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
+        <!-- FORK 2026-04-18: Amygdala + Fractal injection toggles.
+             Enabled = Jarvis replies with 💬 ANSWER + 🧠 AMYGDALA (gut-read)
+             + 🌿 FRACTAL (post-reflection). Disable for speed. -->
+        <span id="tb-amygdala" class="topbar-icon-btn tb-active" data-hint="Amygdala (gut read)">🧠</span>
+        <span id="tb-fractal" class="topbar-icon-btn tb-active" data-hint="Fractal reflection">🌿</span>
         <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
-        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
+        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🕸️</span>
       </div>
       <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
@@ -4637,7 +4874,7 @@ function init() {
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🧠 Models
+        <div class="rpanel-header">🕸️ Models
           <span class="ct-switch" id="budget-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -4824,6 +5061,55 @@ function init() {
       );
     });
     updateBudgetPanel();
+  });
+
+  // ─── Amygdala + Fractal injection toggles (FORK 2026-04-18) ───
+  const amyBtn = $("tb-amygdala")!;
+  const fraBtn = $("tb-fractal")!;
+  applyInjectToggleChrome();
+  amyBtn.addEventListener("click", () => {
+    injectToggles = { ...injectToggles, amygdala: !injectToggles.amygdala };
+    saveInjectToggles(injectToggles);
+    applyInjectToggleChrome();
+  });
+  fraBtn.addEventListener("click", () => {
+    injectToggles = { ...injectToggles, fractal: !injectToggles.fractal };
+    saveInjectToggles(injectToggles);
+    applyInjectToggleChrome();
+  });
+
+  // ─── Filesystem link → open in system viewer (FORK 2026-04-18) ───
+  // Any <code class="fs-link" data-path="..."> rendered by md() (typically
+  // in pointers like fractal-prompt.md) becomes clickable. Calls the
+  // gateway RPC config.openExternalFile which invokes xdg-open / open /
+  // Start-Process with the path as a single argv element.
+  document.addEventListener("click", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    const link = target?.closest(".fs-link") as HTMLElement | null;
+    if (!link) {return;}
+    const path = link.dataset.path;
+    if (!path) {return;}
+    ev.preventDefault();
+    ev.stopPropagation();
+    link.classList.add("fs-link-opening");
+    req("config.openExternalFile", { path })
+      .then((res: { ok?: boolean; error?: string; path?: string }) => {
+        link.classList.remove("fs-link-opening");
+        if (res?.ok === false) {
+          link.classList.add("fs-link-error");
+          link.title = res.error ?? "open failed";
+          setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+        } else {
+          link.classList.add("fs-link-opened");
+          setTimeout(() => link.classList.remove("fs-link-opened"), 1500);
+        }
+      })
+      .catch((err: unknown) => {
+        link.classList.remove("fs-link-opening");
+        link.classList.add("fs-link-error");
+        link.title = String(err);
+        setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+      });
   });
 
   // ─── Voice mute toggle (§5.36) ───

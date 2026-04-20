@@ -203,7 +203,38 @@ export function createReplyOperation(params: {
     throw new Error("Reply operations require a sessionId");
   }
   if (replyRunState.activeRunsByKey.has(sessionKey)) {
-    throw new ReplyRunAlreadyActiveError(sessionKey);
+    // FORK 2026-04-20: before failing, check if the existing operation is
+    // actually stale (completed phase, no live streaming). If it is, force-
+    // clear and proceed. The proper path is `replyOperation.complete()`
+    // called from followup-runner's finally block; when that fails to fire
+    // (upstream edge case we haven't pinpointed yet), the registry entry
+    // persists indefinitely and every subsequent prompt throws. The
+    // force-clear keeps the UX working; if we're wrong about "stale", the
+    // previous op genuinely still runs and the interrupt path (abort from
+    // sessions.steer) is the legitimate fix.
+    const existing = replyRunState.activeRunsByKey.get(sessionKey);
+    const backend = existing ? attachedBackendByOperation.get(existing) : undefined;
+    const looksStale =
+      existing !== undefined &&
+      (existing.phase === "completed" ||
+        existing.phase === "failed" ||
+        existing.phase === "aborted" ||
+        !backend ||
+        !backend.isStreaming());
+    if (looksStale) {
+      replyRunState.activeRunsByKey.delete(sessionKey);
+      replyRunState.activeSessionIdsByKey.delete(sessionKey);
+      const staleSessionId = existing ? (existing.sessionId as string | undefined) : undefined;
+      if (staleSessionId) {
+        const mapped = replyRunState.activeKeysBySessionId.get(staleSessionId);
+        if (mapped === sessionKey) {
+          replyRunState.activeKeysBySessionId.delete(staleSessionId);
+        }
+      }
+      clearWaitSessionIds(sessionKey);
+    } else {
+      throw new ReplyRunAlreadyActiveError(sessionKey);
+    }
   }
 
   const controller = new AbortController();

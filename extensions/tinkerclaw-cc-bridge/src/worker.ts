@@ -12,6 +12,8 @@
  */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { DEFAULT_BINARY, DEFAULT_DISALLOWED_TOOLS, DEFAULT_PERMISSION_MODE } from "./defaults.js";
@@ -23,6 +25,55 @@ import {
 } from "./protocol.js";
 
 const log = createSubsystemLogger("tinkerclaw-cc-bridge");
+
+// FORK 2026-04-18: read the amygdala + fractal prompt .md files at spawn
+// time and append their FULL text to the system prompt. Keeps the per-turn
+// UI injection tiny ("follow your system-prompt rules") while giving Opus
+// the actual rule text in its permanent context. Read once per worker
+// spawn; cost paid only on the ~12s cold-start, not per turn.
+const PROMPT_FILES: Array<{ label: string; paths: string[] }> = [
+  {
+    label: "amygdala",
+    paths: [
+      "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-learned-intuition/amygdala-prompt.md",
+    ],
+  },
+  {
+    label: "fractal",
+    paths: [
+      "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md",
+    ],
+  },
+];
+function readPromptFile(paths: string[]): string | null {
+  for (const p of paths) {
+    try {
+      const expanded = p.startsWith("~/")
+        ? path.join(os.homedir(), p.slice(2))
+        : p;
+      const txt = fs.readFileSync(expanded, "utf8");
+      if (txt.trim().length > 0) return txt;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+function buildAppendedPromptRules(): string {
+  const blocks: string[] = [];
+  for (const entry of PROMPT_FILES) {
+    const body = readPromptFile(entry.paths);
+    if (!body) {
+      log.warn(`prompt rule file missing for "${entry.label}" — tried ${entry.paths.join(", ")}`);
+      continue;
+    }
+    blocks.push(
+      `\n\n<!-- TINKERCLAW ${entry.label.toUpperCase()} RULES — loaded at worker spawn -->\n` +
+        body.trim(),
+    );
+  }
+  return blocks.join("\n\n");
+}
 
 export type WorkerSpawnParams = {
   sessionKey: string;
@@ -86,8 +137,15 @@ export class ClaudeCodeWorker extends EventEmitter {
     if (disallowed.length > 0) {
       args.push("--disallowedTools", disallowed.join(","));
     }
-    if (this.params.systemPromptAppend && this.params.systemPromptAppend.trim().length > 0) {
-      args.push("--append-system-prompt", this.params.systemPromptAppend);
+    // FORK 2026-04-18: also append the amygdala + fractal rule files so
+    // Opus always has the rules in context — the per-turn UI injection
+    // can then just say "do sections A→B→C per your rules" without
+    // restating all 100 lines of each file.
+    const systemPromptBody = (this.params.systemPromptAppend ?? "").trim();
+    const rulesBody = buildAppendedPromptRules();
+    const combinedSystemPrompt = [systemPromptBody, rulesBody].filter(Boolean).join("");
+    if (combinedSystemPrompt.length > 0) {
+      args.push("--append-system-prompt", combinedSystemPrompt);
     }
     if (this.params.model) {
       args.push("--model", this.params.model);
