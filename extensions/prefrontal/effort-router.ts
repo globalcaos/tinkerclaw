@@ -11,11 +11,15 @@ export interface EffortRoutingConfig {
   maximum: string[];
 }
 
+// FORK: Route through claude-code bridge (see DEFAULT_PREFRONTAL_CONFIG in
+// prefrontal-types.ts for the reasoning). Anthropic direct-API paths are
+// suspended on this fork — leaving them as defaults makes every effort-routed
+// dispatch 400 on first try.
 export const DEFAULT_EFFORT_ROUTING_CONFIG: EffortRoutingConfig = {
   enabled: true,
-  minimal: ["anthropic/claude-haiku-4-5", "ollama/qwen3:14b"],
-  standard: ["anthropic/claude-sonnet-4-6", "google/gemini-2.5-pro"],
-  maximum: ["anthropic/claude-opus-4-6"],
+  minimal: ["claude-code/claude-haiku-4-5", "ollama/qwen3:14b"],
+  standard: ["claude-code/claude-sonnet-4-6", "google/gemini-2.5-pro"],
+  maximum: ["claude-code/claude-opus-4-7"],
 };
 
 const MINIMAL_KEYWORDS = [
@@ -74,7 +78,7 @@ export function validateModelAssignment(
   taskDescription: string,
   config: EffortRoutingConfig,
 ): RoutingDecision {
-  if (!config.enabled) return { approved: true };
+  if (!config.enabled) {return { approved: true };}
 
   const effort = classifyEffort(taskDescription);
 
