@@ -245,15 +245,15 @@ export const uk: TranslationMap = {
     },
     pairing: {
       hint: "Цей пристрій потребує схвалення спарювання від хоста шлюзу.",
-      scopeUpgradeTitle: "Scope upgrade pending approval.",
+      scopeUpgradeTitle: "Розширення області дії очікує на схвалення.",
       scopeUpgradeSummary:
-        "This device is already paired, but the requested wider scope is waiting for approval.",
-      roleUpgradeTitle: "Role upgrade pending approval.",
+        "Цей пристрій уже сполучено, але запитуване ширше охоплення очікує на схвалення.",
+      roleUpgradeTitle: "Зміна ролі очікує на схвалення.",
       roleUpgradeSummary:
-        "This device is already paired, but the requested role change is waiting for approval.",
-      metadataUpgradeTitle: "Device metadata change pending approval.",
+        "Цей пристрій уже сполучено, але запитувана зміна ролі очікує на схвалення.",
+      metadataUpgradeTitle: "Зміна метаданих пристрою очікує на схвалення.",
       metadataUpgradeSummary:
-        "This device is already paired, but the metadata change is waiting for approval.",
+        "Цей пристрій уже сполучено, але зміна метаданих очікує на схвалення.",
       mobileHint:
         "На мобільному? Скопіюйте повний URL (включно з #token=...) з openclaw dashboard --no-open на вашому комп’ютері.",
       docsTitle: "Документація щодо сполучення пристроїв (відкривається в новій вкладці)",
