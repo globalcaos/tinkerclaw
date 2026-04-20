@@ -204,6 +204,25 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         });
       };
 
+      // FORK 2026-04-20: progress heartbeat so we can tell from the gateway
+      // log whether claude is silently thinking vs actually stuck. Logs
+      // first-line-received and then every 30s/50 lines thereafter with a
+      // compact summary. Watchdog fires a WARN if nothing arrives for 45s
+      // so a silent hang is visible instead of invisible until the 900s
+      // hard timeout.
+      const turnStartedAt = Date.now();
+      let linesSeen = 0;
+      let lastProgressLogAt = 0;
+      let lastLineAt = turnStartedAt;
+      const watchdog = setInterval(() => {
+        const silentMs = Date.now() - lastLineAt;
+        if (silentMs > 45_000) {
+          log.warn(
+            `claude silent for ${Math.round(silentMs / 1000)}s (sessionKey=${sessionKey}, lines=${linesSeen}, text.len=${accumulatedText.length}, thinking.len=${accumulatedThinking.length})`,
+          );
+        }
+      }, 45_000);
+
       const onStreamLine = (evt: WorkerEvent) => {
         if (evt.type !== "stream_line") {
           return;
@@ -211,6 +230,21 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         const line = evt.line;
         if (!line || typeof line !== "object") {
           return;
+        }
+        linesSeen++;
+        lastLineAt = Date.now();
+        if (linesSeen === 1) {
+          log.info(
+            `first stream line after ${lastLineAt - turnStartedAt}ms sessionKey=${sessionKey}`,
+          );
+        } else if (
+          linesSeen % 50 === 0 ||
+          lastLineAt - lastProgressLogAt > 30_000
+        ) {
+          log.info(
+            `progress sessionKey=${sessionKey} lines=${linesSeen} elapsed=${Math.round((lastLineAt - turnStartedAt) / 1000)}s text.len=${accumulatedText.length} thinking.len=${accumulatedThinking.length}`,
+          );
+          lastProgressLogAt = lastLineAt;
         }
         handleLine(line);
       };
@@ -287,6 +321,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           signal: options?.signal,
         });
         worker.off("stream_line", onStreamLine);
+        clearInterval(watchdog);
 
         pushStart();
         pushThinkingEnd();
@@ -356,8 +391,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         stream.push({ type: "done", reason: "stop", message: finalMessage });
       } catch (err) {
         worker.off("stream_line", onStreamLine);
+        clearInterval(watchdog);
         const rawErr = formatErrorMessage(err);
-        log.error(`claude-code turn failed: ${rawErr}`);
+        log.error(
+          `claude-code turn failed after ${Math.round((Date.now() - turnStartedAt) / 1000)}s (${linesSeen} stream lines, text.len=${accumulatedText.length}, thinking.len=${accumulatedThinking.length}): ${rawErr}`,
+        );
         // Same envelope-as-text trick as the is_error path: deliver the
         // error as a normal assistant turn carrying the __ERR_ENV__ sentinel
         // so the UI can render it as a red (or orange if recoverable) bubble
