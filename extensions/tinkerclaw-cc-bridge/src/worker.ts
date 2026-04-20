@@ -64,11 +64,17 @@ function readPromptFile(paths: string[]): string | null {
 // (dist/index.js) and the dev-loop ts-node run. Returns "" if not found so
 // the env var simply isn't exported.
 function resolveSpawnSubagentCliPath(): string {
+  return resolveForkScript("openclaw-spawn-subagent.mjs", "OPENCLAW_SPAWN_SUBAGENT_BIN");
+}
+function resolveRecipeStateCliPath(): string {
+  return resolveForkScript("openclaw-recipe-state.mjs", "OPENCLAW_RECIPE_STATE_BIN");
+}
+function resolveForkScript(name: string, envVar: string): string {
   const candidates = [
-    process.env.OPENCLAW_SPAWN_SUBAGENT_BIN ?? "",
-    "/home/<user>/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs",
-    path.join(os.homedir(), "src", "tinkerclaw", "scripts", "openclaw-spawn-subagent.mjs"),
-    path.join(os.homedir(), ".openclaw", "workspace", "scripts", "openclaw-spawn-subagent.mjs"),
+    process.env[envVar] ?? "",
+    `/home/<user>/src/tinkerclaw/scripts/${name}`,
+    path.join(os.homedir(), "src", "tinkerclaw", "scripts", name),
+    path.join(os.homedir(), ".openclaw", "workspace", "scripts", name),
   ].filter(Boolean);
   for (const p of candidates) {
     try {
@@ -139,9 +145,35 @@ function buildSubagentHelperBlock(): string {
     "  `claude-code/claude-sonnet-4-6` for standard, `claude-code/claude-opus-4-7`",
     "  only for genuinely hard reasoning.",
     "- Always pass a short `--label` so the Prefrontal tree is readable.",
-    "- Narrate orchestration out loud in your reply ('dispatching §2 to sonnet,",
-    "  §7 to sonnet, §12 to opus') so the user can follow your meta-reasoning",
-    "  while the tree populates.",
+    "- Do NOT narrate dispatches in your chat reply. The user watches the",
+    "  redesigned Prefrontal panel for orchestration; your chat should stay",
+    "  focused on the actual answer / product. Use the recipe-state CLI below",
+    "  to publish what's happening behind the scenes.",
+    "",
+    "## Orchestration observability",
+    "",
+    "You have `$OPENCLAW_RECIPE_STATE_BIN` in env. Use it to push what the user",
+    "sees in the Prefrontal panel -- recipe id, current step, in-flight labels,",
+    "and a rolling trail of actions:",
+    "",
+    "    # announce / advance recipe state (call on every Step transition)",
+    "    node $OPENCLAW_RECIPE_STATE_BIN --recipe revise-paper \\",
+    "         --step 3 --total 6 --step-name \"evidence check\" --cap 3 \\",
+    "         --in-flight '§3-oauth-check,§7-NemoClaw-ev'",
+    "",
+    "    # push a trail event (dispatch, complete, note, transition, warn)",
+    "    node $OPENCLAW_RECIPE_STATE_BIN --trail dispatch \\",
+    "         --label '§7-NemoClaw-ev' --message 'sonnet, ~240s budget'",
+    "    node $OPENCLAW_RECIPE_STATE_BIN --trail complete \\",
+    "         --label '§2-threat-ref' --message '6s · 340w delta'",
+    "    node $OPENCLAW_RECIPE_STATE_BIN --trail transition \\",
+    "         --label 'Step 3 → Step 4' --message 'evidence clean; tightening prose'",
+    "",
+    "Rule of thumb: every `spawn-subagent` call gets a paired `--trail dispatch`",
+    "event BEFORE the spawn, and a paired `--trail complete` or `--trail warn`",
+    "event AFTER you see the child's result. Every recipe-step change gets a",
+    "`--recipe ... --step N` call. The user reads this panel instead of chat",
+    "narration, so keep it honest and current.",
     ...(recipesDir
       ? [
           "",
@@ -337,6 +369,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     // cc-bridge out for a regular provider, this env var just stops being
     // set; nothing here leaks into the non-cc-bridge flow.
     cleanEnv.OPENCLAW_SPAWN_SUBAGENT_BIN = resolveSpawnSubagentCliPath();
+    cleanEnv.OPENCLAW_RECIPE_STATE_BIN = resolveRecipeStateCliPath();
     const gatewayToken = readGatewayTokenFromConfig();
     if (gatewayToken) {
       cleanEnv.OPENCLAW_GATEWAY_TOKEN = gatewayToken;

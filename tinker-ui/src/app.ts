@@ -4,7 +4,11 @@ import { mountContextTimeline } from "./panels/context-timeline.js";
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
   mountPrefrontalTree,
+  type PrefrontalDashboardState,
   type PrefrontalTreeController,
+  type RecipeState,
+  type TrailEvent,
+  type TrailEventKind,
   type TreeNode,
   type TreeResponse,
 } from "./panels/prefrontal-tree.js";
@@ -544,6 +548,25 @@ type ActiveRunInfo = {
   currentTool?: string;
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
+
+// FORK 2026-04-20: Prefrontal dashboard state. Three slices:
+// - latestTreeFromExtension: last `prefrontal-tree` WS event from the extension.
+//   When present, it's the canonical source of the tree (has labels, progress,
+//   per-node summaries). When absent, we fall back to activeRuns synthesis.
+// - currentRecipe: last `prefrontal-recipe-state` WS event.
+// - prefrontalTrail: rolling ring of TrailEvent items, synthesized from both
+//   observed lifecycle events AND explicit `prefrontal-trail-event` broadcasts.
+const PREFRONTAL_TRAIL_MAX = 24;
+let latestTreeFromExtension: TreeResponse | null = null;
+let latestTreeFromExtensionAt = 0;
+let currentRecipe: RecipeState | null = null;
+const prefrontalTrail: TrailEvent[] = [];
+function pushTrail(evt: TrailEvent) {
+  prefrontalTrail.push(evt);
+  if (prefrontalTrail.length > PREFRONTAL_TRAIL_MAX) {
+    prefrontalTrail.splice(0, prefrontalTrail.length - PREFRONTAL_TRAIL_MAX);
+  }
+}
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
 
@@ -668,11 +691,36 @@ function sessionHasActiveRuns(sessionKey: string): { live: boolean; provider?: s
 
 let modelConfigData: any = null;
 
-// FORK: Build Prefrontal tree from activeRuns — unified with thinking indicator + models panel.
-// Called at the same points as updateBudgetPanel/updateChat for instant reactivity.
+// FORK 2026-04-20: Build the Prefrontal dashboard state (tree + recipe +
+// trail) and push it to the panel controller. Tree source of truth is the
+// extension's `prefrontal-tree` broadcast when we've seen one recently (that
+// feed has labels, progress, summaries). Falls back to synthesizing from the
+// local activeRuns map for the first paint before an extension event arrives.
+//
+// Called at every point that used to call updatePrefrontalTree (lifecycle
+// start/end, tool events, recipe-state events, trail events).
+const PREFRONTAL_EXT_TREE_TTL_MS = 6_000;
 function updatePrefrontalTree() {
   if (!prefrontalCtrl) {
     return;
+  }
+
+  const tree = buildPrefrontalTree();
+  prefrontalCtrl.update({
+    tree,
+    recipe: currentRecipe,
+    trail: prefrontalTrail,
+  } satisfies PrefrontalDashboardState);
+}
+
+function buildPrefrontalTree(): TreeResponse {
+  // Prefer the extension's tree if recent.
+  if (
+    latestTreeFromExtension &&
+    Date.now() - latestTreeFromExtensionAt < PREFRONTAL_EXT_TREE_TTL_MS &&
+    latestTreeFromExtension.active
+  ) {
+    return latestTreeFromExtension;
   }
 
   // Collect active runs (respecting session scope)
@@ -685,8 +733,7 @@ function updatePrefrontalTree() {
   }
 
   if (runs.length === 0) {
-    prefrontalCtrl.update({ active: false, root: null });
-    return;
+    return { active: false, root: null };
   }
 
   // Build tree: first run = root, rest = children (subagents)
@@ -738,8 +785,9 @@ function updatePrefrontalTree() {
 
   if (root) {
     root.children = children;
-    prefrontalCtrl.update({ active: true, root });
+    return { active: true, root };
   }
+  return { active: false, root: null };
 }
 
 // ─── Recipe Progress (Prefrontal v3.0) ───
@@ -1598,6 +1646,99 @@ function onEvent(evt: any) {
     if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-progress") {
       updateRecipeProgress(p.data.data);
     }
+
+    // FORK 2026-04-20: Prefrontal tree broadcast from the extension. Canonical
+    // source of the right-panel tree -- has labels, progress%, summaries per
+    // node that the local activeRuns synthesis can't provide.
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-tree") {
+      const tree = p.data?.tree as TreeResponse | undefined;
+      if (tree && typeof tree.active === "boolean") {
+        latestTreeFromExtension = tree;
+        latestTreeFromExtensionAt = Date.now();
+        updatePrefrontalTree();
+      }
+    }
+
+    // FORK 2026-04-20: Jarvis (or any caller) publishes recipe state via
+    // fork.prefrontal.setRecipe RPC. The gateway broadcasts it as a lifecycle
+    // event; we update the right-panel header + append a trail item.
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-recipe-state") {
+      const d = p.data as {
+        recipeId?: string;
+        step?: number;
+        totalSteps?: number;
+        stepName?: string;
+        parallelismCap?: number;
+        inFlightLabels?: string[];
+        note?: string;
+        ts?: number;
+      };
+      if (d.recipeId) {
+        const prev = currentRecipe;
+        const startedAt =
+          prev?.recipeId === d.recipeId ? (prev.startedAt ?? Date.now()) : (d.ts ?? Date.now());
+        currentRecipe = {
+          recipeId: d.recipeId,
+          step: d.step,
+          totalSteps: d.totalSteps,
+          stepName: d.stepName,
+          parallelismCap: d.parallelismCap,
+          inFlightLabels: d.inFlightLabels,
+          note: d.note,
+          startedAt,
+        };
+        // Emit a trail item on step transitions (including recipe start).
+        const newStepKey = `${d.recipeId}:${d.step ?? 0}`;
+        const prevStepKey = prev ? `${prev.recipeId}:${prev.step ?? 0}` : "";
+        if (newStepKey !== prevStepKey) {
+          const label = d.step != null
+            ? `Step ${d.step}${d.totalSteps != null ? `/${d.totalSteps}` : ""}`
+            : d.recipeId;
+          pushTrail({
+            ts: d.ts ?? Date.now(),
+            kind: "recipe-step",
+            label,
+            message: d.stepName ?? d.recipeId,
+          });
+        }
+        updatePrefrontalTree();
+      }
+    }
+
+    // FORK 2026-04-20: Jarvis publishes a discrete trail event via
+    // fork.prefrontal.trailEvent RPC. kind ∈ dispatch|complete|note|
+    // transition|warn (other kinds fall through to "note").
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-trail-event") {
+      const d = p.data as {
+        kind?: string;
+        label?: string;
+        message?: string;
+        icon?: string;
+        ts?: number;
+      };
+      if (d.message) {
+        const ALLOWED: TrailEventKind[] = [
+          "dispatch",
+          "complete",
+          "note",
+          "transition",
+          "warn",
+          "recipe-step",
+          "spawn-fail",
+        ];
+        const kind: TrailEventKind = ALLOWED.includes(d.kind as TrailEventKind)
+          ? (d.kind as TrailEventKind)
+          : "note";
+        pushTrail({
+          ts: d.ts ?? Date.now(),
+          kind,
+          label: d.label,
+          message: d.message,
+          icon: d.icon,
+        });
+        updatePrefrontalTree();
+      }
+    }
     // FORK: Prefrontal recipe status — banner + thinking annotation + message tags
     if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-recipe-status") {
       const d = p.data;
@@ -1669,6 +1810,23 @@ function onEvent(evt: any) {
           sessionKey: p.data.sessionKey as string | undefined,
           phase: "thinking",
         });
+        // FORK 2026-04-20: synthesize an implicit trail entry when a subagent
+        // session starts/ends, so the panel trail still shows motion even if
+        // the caller forgot to push explicit trail events via the RPC.
+        {
+          const sk = typeof p.data.sessionKey === "string" ? p.data.sessionKey : "";
+          if (sk.includes(":subagent:")) {
+            const tail = sk.split(":").pop() ?? sk;
+            const shortId = tail.length > 8 ? tail.slice(0, 8) : tail;
+            const shortModel = String(p.data.model ?? "").split("/").pop() ?? "";
+            pushTrail({
+              ts: Date.now(),
+              kind: "dispatch",
+              label: shortId,
+              message: `subagent start · ${shortModel}`,
+            });
+          }
+        }
         // Re-assert sending in case a chat error event cleared it during fallback
         sending = true;
         saveActiveRuns();
@@ -1702,6 +1860,26 @@ function onEvent(evt: any) {
           }, 800);
         }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
+        // FORK 2026-04-20: implicit trail entry on subagent completion.
+        {
+          const sk = typeof p.data.sessionKey === "string" ? p.data.sessionKey : "";
+          if (sk.includes(":subagent:")) {
+            const runMeta = activeRuns.get(p.runId);
+            const tail = sk.split(":").pop() ?? sk;
+            const shortId = tail.length > 8 ? tail.slice(0, 8) : tail;
+            const elapsed = runMeta ? Math.round((Date.now() - runMeta.startedAt) / 1000) : 0;
+            const kind = p.data.phase === "error" ? "spawn-fail" : "complete";
+            pushTrail({
+              ts: Date.now(),
+              kind,
+              label: shortId,
+              message:
+                kind === "spawn-fail"
+                  ? `subagent failed · ${elapsed}s`
+                  : `subagent done · ${elapsed}s`,
+            });
+          }
+        }
         // FORK: Regenerate tab title after assistant responds — works for any tab via TabState
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
