@@ -605,17 +605,19 @@ const activeRuns = new Map<string, ActiveRunInfo>();
 //   When present, it's the canonical source of the tree (has labels, progress,
 //   per-node summaries). When absent, we fall back to activeRuns synthesis.
 // - currentRecipe: last `prefrontal-recipe-state` WS event.
-// - prefrontalTrail: rolling ring of TrailEvent items, synthesized from both
-//   observed lifecycle events AND explicit `prefrontal-trail-event` broadcasts.
-const PREFRONTAL_TRAIL_MAX = 24;
+// - prefrontalTrail: full append-only ring of TrailEvent items (synthesized
+//   from lifecycle + explicit trail RPC). The panel renders all of them with
+//   scroll; we only clamp to an absurd maximum to avoid unbounded memory on
+//   long-running sessions.
+const PREFRONTAL_TRAIL_HARD_MAX = 500;
 let latestTreeFromExtension: TreeResponse | null = null;
 let latestTreeFromExtensionAt = 0;
 let currentRecipe: RecipeState | null = null;
 const prefrontalTrail: TrailEvent[] = [];
 function pushTrail(evt: TrailEvent) {
   prefrontalTrail.push(evt);
-  if (prefrontalTrail.length > PREFRONTAL_TRAIL_MAX) {
-    prefrontalTrail.splice(0, prefrontalTrail.length - PREFRONTAL_TRAIL_MAX);
+  if (prefrontalTrail.length > PREFRONTAL_TRAIL_HARD_MAX) {
+    prefrontalTrail.splice(0, prefrontalTrail.length - PREFRONTAL_TRAIL_HARD_MAX);
   }
 }
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
