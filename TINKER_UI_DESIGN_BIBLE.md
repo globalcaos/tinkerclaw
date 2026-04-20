@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-20 (PM session: cc-bridge tool-choice block, fractal-prompt rewrite per Anthropic rules, IDENTITY.md filled, wind-down + memory-consolidation reactivated, 04:00 cron pipeline chain + md-file-only policy, BRIEFING.md anchored-facts philosophy shift, knowledge INDEX.md orphan cleanup, jobs.json live↔tracked symlink)
+> Last updated: 2026-04-20 (PM session: cc-bridge tool-choice block, fractal-prompt rewrite per Anthropic rules, IDENTITY.md filled, wind-down + memory-consolidation reactivated, 04:00 cron pipeline chain + md-file-only policy, BRIEFING.md anchored-facts philosophy shift, knowledge INDEX.md orphan cleanup, jobs.json live↔tracked symlink, /clear is now a pure client transaction — no LLM call)
 
 ---
 
@@ -1937,6 +1937,15 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **What:** Two small additions to `~/.openclaw/workspace/AGENTS.md`. (1) Context Hygiene gains a compaction-awareness bullet: save unfinished state to today's daily log BEFORE the auto-compact fires (short declarative headers survive, chat-style summaries don't). (2) New "Tool Choice" section points at the cc-bridge `buildToolChoiceBlock` and explicitly names Deferred tools needing `ToolSearch` schema-load first.
 - **Why:** Anthropic prompt-engineering rule: inform Claude about its harness so it behaves accordingly when context fills up. The tool-choice pointer gives the main session the same decision framework subagents now get from cc-bridge.
 - **Files:** `~/.openclaw/workspace/AGENTS.md`
+
+### 11.22 /clear — Pure Client Transaction, No LLM Call (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** `/clear` in Tinker UI is now a client-only transaction matching Claude Code's semantics exactly. Wipes visual chat state (messages, stream state, expanded tools, tab state), rotates the active tab to a fresh `tinker:<timestamp>` sessionKey, fires a best-effort `sessions.delete` for the OLD sessionKey (only if it starts with `tinker:` — main session is never deletable), and **returns without calling chat.send**. Zero LLM tokens spent.
+- **Why:** Previously `/clear` wiped the UI locally but then dispatched `chat.send("/clear")` to the gateway, which hit the reset-trigger detection in `get-reply.ts`, fired a full LLM turn, and produced a wasted reply. the user's model: `/clear` is a transaction, not a request.
+- **Side effect on main session:** `/clear` on `agent:main:main` rotates the tab to a fresh `tinker:*` key; the main session stays intact on disk (by design — it carries memory continuity). Server-side delete isn't attempted for the main key. Next message creates a brand-new tinker:\* session via gateway auto-create.
+- **Transcript preservation:** `sessions.delete` is called with `deleteTranscript: false` so the jsonl is kept for recovery even after the in-memory entry is dropped.
+- **Files:** `tinker-ui/src/app.ts::send()` (the `text.trim() === "/clear"` branch)
 
 ---
 
