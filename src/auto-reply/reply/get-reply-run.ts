@@ -328,7 +328,7 @@ export async function runPreparedReply(
         })
       : null;
   const baseBodyFinal = isBareSessionReset
-    ? buildBareSessionResetPrompt(cfg)
+    ? buildBareSessionResetPrompt(cfg, undefined, workspaceDir)
     : stripPromptThinkingDirectives(baseBody);
   const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
   const inboundUserContext = buildInboundUserContextPrefix(
