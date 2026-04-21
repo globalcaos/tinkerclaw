@@ -42,11 +42,16 @@ export const DEFAULT_DISALLOWED_TOOLS = [
 /** Permission mode passed to claude so it doesn't wait for human approval on tool calls. */
 export const DEFAULT_PERMISSION_MODE = "bypassPermissions" as const;
 
+// FORK (2026-04-21): per-model contextWindow. Previously catalog.ts hardcoded
+// 200_000 for every model, which made pi-agent-core think Opus 4.7 had the
+// old 200k window and triggered preemptive compaction on turn 0 the moment
+// the bootstrap stack + main-session history loaded past 200k. Opus 4.7 and
+// Sonnet 4.6 are the 1M-context variants; Opus 4.6 and Haiku 4.5 keep 200k.
 export const DEFAULT_MODELS = [
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true },
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true },
-  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false },
+  { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, contextWindow: 1_000_000 },
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200_000 },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 1_000_000 },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, contextWindow: 200_000 },
 ] as const;
 
 export const MODEL_ALIASES: Record<string, string> = {
