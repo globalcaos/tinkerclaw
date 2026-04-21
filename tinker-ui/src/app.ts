@@ -96,6 +96,30 @@ let lastDeltaLen = 0;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
+
+// FORK (2026-04-21): Story Mode. When on, every tool call renders as if it
+// were clicked-expanded: full grandma-friendly title, full args, full stdout,
+// full tool result. Intended for users who want to "see literally everything"
+// the agent does, interleaved with thinking and text, as a continuous
+// narrative that builds up chronologically. Toggle via the 🎬 button in the
+// topbar; persists across reloads. Default ON so first-time users see the
+// full flow immediately — they can turn it off if they want the compact view.
+const STORY_MODE_STORAGE_KEY = "tinker-story-mode";
+let storyMode: boolean = (() => {
+  try {
+    const v = localStorage.getItem(STORY_MODE_STORAGE_KEY);
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+})();
+function saveStoryMode(): void {
+  try {
+    localStorage.setItem(STORY_MODE_STORAGE_KEY, storyMode ? "1" : "0");
+  } catch {
+    // Private-mode / quota — silent fail; setting persists only for this session.
+  }
+}
 let initialized = false;
 let _budgetData: unknown = null;
 let budgetUsageData: unknown = null;
@@ -3519,7 +3543,8 @@ function renderMsg(
       const a = block.input ?? {};
       const d = toolSummary(block.name, a);
       const tid = `t${idx}-${block.id ?? block.name}-${blockIdx++}`;
-      const exp = expandedTools.has(tid);
+      // FORK (2026-04-21): Story Mode auto-expands every tool call.
+      const exp = storyMode || expandedTools.has(tid);
       // Look up result from global map (tool_result may be in a different message)
       const paired = resultMap.get(block.id ?? "");
       const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
@@ -3551,7 +3576,8 @@ function renderMsg(
         typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
       const err = block.is_error === true;
       const tid = `r${idx}-${uid || "r"}-${blockIdx++}`;
-      const exp = expandedTools.has(tid);
+      // FORK (2026-04-21): Story Mode auto-expands every tool call.
+      const exp = storyMode || expandedTools.has(tid);
       const preview = rt.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
       const summary = preview.length > 120 ? preview.slice(0, 117) + "…" : preview;
       h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(summary)}</span></div>`;
@@ -5325,6 +5351,9 @@ function init() {
         <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
         <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🕸️</span>
+        <!-- FORK 2026-04-21: Story Mode — auto-expand every tool call so the full
+             stdout and args are visible inline. Click to toggle. -->
+        <span id="tb-story-mode" class="topbar-icon-btn" data-hint="Story Mode (auto-expand all tool calls)">🎬</span>
       </div>
       <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
@@ -5551,6 +5580,21 @@ function init() {
     injectToggles = { ...injectToggles, fractal: !injectToggles.fractal };
     saveInjectToggles(injectToggles);
     applyInjectToggleChrome();
+  });
+
+  // ─── Story Mode toggle (FORK 2026-04-21) ───
+  const storyBtn = $("tb-story-mode");
+  function applyStoryModeChrome(): void {
+    storyBtn?.classList.toggle("tb-active", storyMode);
+  }
+  applyStoryModeChrome();
+  storyBtn?.addEventListener("click", () => {
+    storyMode = !storyMode;
+    saveStoryMode();
+    applyStoryModeChrome();
+    // Re-render the current chat so existing tool calls pick up / drop the
+    // auto-expand state immediately. No need to refetch — it's a UI-only flip.
+    updateChat();
   });
 
   // ─── Filesystem link → open in system viewer (FORK 2026-04-18) ───
