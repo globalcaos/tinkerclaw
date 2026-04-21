@@ -3421,12 +3421,24 @@ function renderMsg(
     return h;
   }
 
-  // Render content blocks in order — text, tool_use, tool_result interlaced
+  // Render content blocks in order — text, tool_use, tool_result interlaced.
+  // FORK (2026-04-21): track the most recent text block so the next tool_use
+  // can use it as its title ("bird's-eye purpose" narration). The LLM is
+  // prompted to write a purpose sentence before each tool call; that sentence
+  // both renders as a normal text bubble AND becomes the tool row's title.
+  let pendingToolNarration: string | null = null;
   for (const block of content) {
     if (block.type === "text") {
       const text = (block.text ?? "").trim();
       if (!text) {
         continue;
+      }
+      // FORK (2026-04-21): stash assistant text as pending narration for the
+      // next tool_use in the same content array. Only the FINAL non-empty
+      // text before a tool_use becomes its title — if multiple text blocks
+      // stack up, the last one wins (closest to the tool call semantically).
+      if (role === "assistant") {
+        pendingToolNarration = text;
       }
       if (role === "user") {
         // Split system event lines from user text
@@ -3541,7 +3553,7 @@ function renderMsg(
       }
     } else if (block.type === "tool_use") {
       const a = block.input ?? {};
-      const d = toolSummary(block.name, a);
+      const mechanicalSummary = toolSummary(block.name, a);
       const tid = `t${idx}-${block.id ?? block.name}-${blockIdx++}`;
       // FORK (2026-04-21): Story Mode auto-expands every tool call.
       const exp = storyMode || expandedTools.has(tid);
@@ -3549,7 +3561,24 @@ function renderMsg(
       const paired = resultMap.get(block.id ?? "");
       const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
       const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
-      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
+      // FORK (2026-04-21): if the LLM wrote a purpose sentence right before
+      // this tool call, use the LAST sentence (or first ~160 chars) of it as
+      // the tool row's title — that's the "bird's-eye view" the user asked
+      // for. Fall back to the mechanical pattern summary when the LLM skipped
+      // narration. Keep the mechanical summary as a secondary line inside the
+      // row so you can still see what the tool literally does at a glance.
+      let title = mechanicalSummary;
+      let subtitle = "";
+      if (pendingToolNarration) {
+        const lastSentence =
+          pendingToolNarration.match(/[^.!?\n]+[.!?]?\s*$/)?.[0]?.trim() ?? pendingToolNarration;
+        const capped =
+          lastSentence.length > 160 ? lastSentence.slice(0, 157).trim() + "…" : lastSentence;
+        title = capped;
+        subtitle = mechanicalSummary;
+        pendingToolNarration = null; // consumed — next tool_use gets a fresh narration
+      }
+      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(title)}${subtitle ? `<span class="tool-row-sub"> · ${esc(subtitle)}</span>` : ""}</span></div>`;
       if (exp) {
         h += `<div class="tool-detail">${toolExpandedDetail(block.name, a)}`;
         // Show result only for errors or when the detail doesn't already contain it

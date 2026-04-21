@@ -991,6 +991,15 @@ code.fs-link.fs-link-error {
 .tool-row .status.run {
   color: var(--muted);
 }
+/* FORK (2026-04-21): secondary line inside a tool-row showing the mechanical
+   pattern-summary when the title is the LLM's purpose narration. Keeps the
+   literal "grep", "read", "exec" hint visible at a glance without stealing
+   from the bird's-eye narration. */
+.tool-row .tool-row-sub {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-style: italic;
+  font-size: 10px;
+}
 .tool-row .name {
   font-weight: 600;
   color: var(--text);
