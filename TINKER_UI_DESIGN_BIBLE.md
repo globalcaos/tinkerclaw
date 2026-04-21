@@ -1938,14 +1938,15 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Why:** Anthropic prompt-engineering rule: inform Claude about its harness so it behaves accordingly when context fills up. The tool-choice pointer gives the main session the same decision framework subagents now get from cc-bridge.
 - **Files:** `~/.openclaw/workspace/AGENTS.md`
 
-### 11.22 /clear — Pure Client Transaction, No LLM Call (2026-04-20)
+### 11.22 /clear — Pure Client Transaction, No LLM Call (2026-04-20, persistence fix 2026-04-21)
 
 - **Status:** `DEPLOYED`
 - **What:** `/clear` in Tinker UI is now a client-only transaction matching Claude Code's semantics exactly. Wipes visual chat state (messages, stream state, expanded tools, tab state), rotates the active tab to a fresh `tinker:<timestamp>` sessionKey, fires a best-effort `sessions.delete` for the OLD sessionKey (only if it starts with `tinker:` — main session is never deletable), and **returns without calling chat.send**. Zero LLM tokens spent.
 - **Why:** Previously `/clear` wiped the UI locally but then dispatched `chat.send("/clear")` to the gateway, which hit the reset-trigger detection in `get-reply.ts`, fired a full LLM turn, and produced a wasted reply. the user's model: `/clear` is a transaction, not a request.
 - **Side effect on main session:** `/clear` on `agent:main:main` rotates the tab to a fresh `tinker:*` key; the main session stays intact on disk (by design — it carries memory continuity). Server-side delete isn't attempted for the main key. Next message creates a brand-new tinker:\* session via gateway auto-create.
 - **Transcript preservation:** `sessions.delete` is called with `deleteTranscript: false` so the jsonl is kept for recovery even after the in-memory entry is dropped.
-- **Files:** `tinker-ui/src/app.ts::send()` (the `text.trim() === "/clear"` branch)
+- **Persistence fix (2026-04-21):** `saveTabs()` previously filtered `tab-main` out of `localStorage`. That meant `/clear`-rotated main-tab sessionKeys lived only in memory and were lost on hard reset (gateway restart or browser refresh) — the connect handshake's `defs.mainSessionKey` default would restore the canonical `agent:main:main` session, often showing yesterday's conversation instead of the user's fresh tinker:\* continuation. Now `saveTabs` persists all tabs including main, and the connect handler prefers a restored tab-main when present. `loadTabs` explicitly force-restores tab-main's title to `🏠 Main` each load (the fortune-title migration pass would otherwise stomp it since `🏠 Main` is <80 chars and matches the v1/v2 short-fortune migration heuristic).
+- **Files:** `tinker-ui/src/app.ts::send()` (the `text.trim() === "/clear"` branch), `saveTabs()`, `loadTabs()`, connect handler (~line 977)
 
 ---
 
