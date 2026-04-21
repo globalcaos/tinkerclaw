@@ -532,7 +532,8 @@ export const agentHandlers: GatewayRequestHandlers = {
         // Date is embedded in the prompt so agents read the correct daily
         // memory files; skip further timestamp injection to avoid duplication.
         // FORK: pass workspaceDir so SESSION.md is read from the correct location
-        message = buildBareSessionResetPrompt(cfg, DEFAULT_AGENT_WORKSPACE_DIR);
+        // (3rd positional arg; 2nd is nowMs which we let default)
+        message = buildBareSessionResetPrompt(cfg, undefined, DEFAULT_AGENT_WORKSPACE_DIR);
         skipTimestampInjection = true;
         shouldPrependStartupContext = shouldApplyStartupContext({ cfg, action: resetReason });
       }
