@@ -283,6 +283,58 @@ function resolveRecipesDirPath(): string {
   return "";
 }
 
+// FORK 2026-04-21: narration guidance. Claude Code users expect running text
+// between tool calls — a sentence before a tool chain, short updates at key
+// moments (finding, pivot, blocker), brief end-of-turn summary. Without this
+// Jarvis tends to go silent on complex tasks because the subagent-helper
+// block above explicitly says "Do NOT narrate dispatches in your chat reply"
+// (so Prefrontal owns orchestration mechanics). That rule is correct for
+// dispatches but was over-applied to everything — the user loses signal on
+// long investigations and multi-file edits. This block reinstates substance
+// narration in chat while keeping mechanics out.
+function buildChatNarrationBlock(): string {
+  return [
+    "",
+    "",
+    "<!-- TINKERCLAW CHAT NARRATION — loaded at worker spawn -->",
+    "## Keep chat alive between tool calls",
+    "",
+    "Most of your tool calls are invisible to the user. Only the text you emit is.",
+    "Make progress visible without narrating mechanics:",
+    "",
+    "- Before a tool chain of more than 2 steps, say in ONE sentence what you're",
+    '  about to do. *"Let me scan get-reply-run.ts for the bare-reset check."*',
+    "- At key moments, emit ONE sentence: when you find something, change",
+    '  direction, or hit a blocker. *"Found it — line 331 drops the workspace',
+    '  arg."* *"That path doesn\'t exist; pivoting to the plugin manifest."*',
+    "- End-of-turn: 1–2 sentences. What changed, what's next. Nothing else.",
+    "",
+    "Brief is good. Silent is not. A complex task with zero chat text between",
+    "tool calls reads as a stall, even if Prefrontal shows activity — the user",
+    "shouldn't have to hunt for signal across two panels.",
+    "",
+    "What NOT to narrate:",
+    "",
+    "- Subagent dispatches, recipe-step transitions, trail events — those go",
+    "  through `$OPENCLAW_RECIPE_STATE_BIN` to Prefrontal, not to chat.",
+    "- Running commentary on your own thought process (\"let me think… now I'll",
+    '  check…"). State results and decisions, not deliberation.',
+    "- Reading a file, running a grep, a single quick lookup. One-off tool",
+    "  calls don't need a preamble — just do them.",
+    "",
+    "Split of concerns:",
+    "",
+    "- **Prefrontal panel** — orchestration mechanics. Dispatches, recipe steps,",
+    "  spawn/complete trails. Owned by the recipe-state CLI.",
+    "- **Chat text** — substance. What you found, what you're doing with it,",
+    "  what you concluded, where you're stuck. Owned by you in plain prose.",
+    "",
+    "These complement each other. Don't duplicate orchestration into chat, and",
+    "don't push substance into trails. If the user ever has to flip between",
+    "panels to know where you are, the split was wrong.",
+  ].join("\n");
+}
+
 function buildAppendedPromptRules(): string {
   const blocks: string[] = [];
   for (const entry of PROMPT_FILES) {
@@ -369,7 +421,14 @@ export class ClaudeCodeWorker extends EventEmitter {
     const rulesBody = buildAppendedPromptRules();
     const subagentHelpBody = buildSubagentHelperBlock();
     const toolChoiceBody = buildToolChoiceBlock();
-    const combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody, toolChoiceBody]
+    const narrationBody = buildChatNarrationBlock();
+    const combinedSystemPrompt = [
+      systemPromptBody,
+      rulesBody,
+      subagentHelpBody,
+      toolChoiceBody,
+      narrationBody,
+    ]
       .filter(Boolean)
       .join("");
     if (combinedSystemPrompt.length > 0) {
