@@ -16,7 +16,10 @@ export function buildClaudeCodeProviderConfig(): ModelProviderConfig {
     api: "anthropic-messages",
     reasoning: m.reasoning,
     input: ["text"] as const,
-    contextWindow: 200000,
+    // FORK (2026-04-21): per-model contextWindow pulled from defaults.ts so
+    // pi-agent-core's preemptive-compaction budget matches the real capacity
+    // of each model (Opus 4.7 and Sonnet 4.6 at 1M, others at 200k).
+    contextWindow: m.contextWindow,
     maxTokens: 8192,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     aliases: Object.entries(MODEL_ALIASES)
