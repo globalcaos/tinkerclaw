@@ -1503,8 +1503,13 @@ function onEvent(evt: unknown) {
   if (evt.event === "agent") {
     const p = evt.payload;
     // ─── Live Tool Events ───
-    // Capture tool-use/tool-result events and inject them as visible messages
-    if (p?.stream === "tool" && p.sessionKey === sessionKey) {
+    // Capture tool-use/tool-result events and inject them as visible messages.
+    // FORK (2026-04-21): use sessionKeyMatches so a server-canonicalized key
+    // like "agent:main:tinker:mo7jxksk" matches a client key of
+    // "tinker:mo7jxksk". Previously the strict `===` check silently dropped
+    // every tool event on tinker:* sessions — that's why tool calls vanished
+    // from chat after /clear had rotated to a fresh key.
+    if (p?.stream === "tool" && sessionKeyMatches(p.sessionKey)) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
         // Update active run phase to "tool"
