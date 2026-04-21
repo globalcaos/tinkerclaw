@@ -1000,6 +1000,30 @@ code.fs-link.fs-link-error {
   font-style: italic;
   font-size: 10px;
 }
+/* FORK (2026-04-21): thin divider that replaces the old full-bubble "Compaction"
+   system message. It just marks that the agent consolidated context at that
+   point in the transcript — no prominence, no alarm. */
+.msg-compaction-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  opacity: 0.45;
+  font-size: 9px;
+  color: var(--muted);
+  font-family: "SF Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.msg-compaction-divider::before,
+.msg-compaction-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed color-mix(in srgb, var(--muted) 40%, transparent);
+}
+.msg-compaction-label {
+  flex: 0 0 auto;
+}
 .tool-row .name {
   font-weight: 600;
   color: var(--text);
