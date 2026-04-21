@@ -36,6 +36,9 @@ Use this skill for release and publish-time workflow. Keep ordinary development 
   stop and report.
 - Use `/changelog` before version/tag preparation so the top changelog section
   is deduped and ordered by user impact.
+- Do not create beta-specific `CHANGELOG.md` headings. Beta releases use the
+  stable base version section, for example `v2026.4.20-beta.1` uses
+  `## 2026.4.20` release notes.
 - When any beta or stable release is live, make a best-effort Discord
   announcement using Peter's bot token from `.profile`; do not block or roll
   back the release if the announcement fails.
@@ -82,7 +85,8 @@ Use this skill for release and publish-time workflow. Keep ordinary development 
 - When cutting a mac release with a beta GitHub prerelease:
   - tag `vYYYY.M.D-beta.N` from the release commit
   - create a prerelease titled `openclaw YYYY.M.D-beta.N`
-  - use release notes from the matching `CHANGELOG.md` version section
+  - use release notes from the stable base `CHANGELOG.md` version section
+    (`## YYYY.M.D`), not a beta-specific heading
   - attach at least the zip and dSYM zip, plus dmg if available
 - Keep the top version entries in `CHANGELOG.md` sorted by impact:
   - `### Changes` first
@@ -373,8 +377,9 @@ node --import tsx scripts/openclaw-npm-postpublish-verify.ts <published-version>
 3. Commit any dirty files in coherent groups, push, pull/rebase, and verify the
    worktree is clean.
 4. Pull latest `main` and confirm current `main` CI is green.
-5. Run `/changelog` for the target version on `main`, commit the changelog
-   rewrite immediately, push, and pull/rebase.
+5. Run `/changelog` for the stable base target version on `main`, commit the
+   changelog rewrite immediately, push, and pull/rebase. For beta releases,
+   keep the changelog heading as `## YYYY.M.D`, not `## YYYY.M.D-beta.N`.
 6. Create `release/YYYY.M.D` from that post-changelog `main` commit.
 7. Make every repo version location match the beta tag before creating it.
 8. Commit release preparation changes on the release branch and push the branch.
