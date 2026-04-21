@@ -3284,6 +3284,17 @@ function renderMsg(
   if (_allMsgTexts.includes("# FRACTAL REFLECTION")) {
     return h;
   }
+
+  // FORK (2026-04-21): synthetic compaction markers. session-utils.fs.ts on
+  // the server emits one role:"system" message with text "Compaction" (and
+  // __openclaw.kind === "compaction") per transcript compaction entry. The
+  // old default was a full system bubble, which on a freshly-loaded session
+  // with 227k tokens of historical context plastered the chat with bare
+  // "Compaction" cards that read as an error. Render a minimal divider
+  // instead — it still marks the boundary but doesn't masquerade as a message.
+  if (msg.__openclaw?.kind === "compaction") {
+    return `<div class="msg-compaction-divider"><span class="msg-compaction-label">context consolidated</span></div>`;
+  }
   let blockIdx = 0;
   let hasNonToolContent = false;
 
