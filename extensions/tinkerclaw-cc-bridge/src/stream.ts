@@ -11,6 +11,7 @@ import {
   type StopReason,
   type TextContent,
   type ThinkingContent,
+  type ToolCall,
   type Usage,
   createAssistantMessageEventStream,
 } from "@mariozechner/pi-ai";
@@ -84,8 +85,12 @@ function extractUserText(messages: Array<{ role: string; content: unknown }>): s
 // subagent has a shorter task-embedded prompt. Hashing the prompt keeps
 // workers distinct per session across turns while staying cheap.
 function deriveSessionKey(explicit: string | undefined, systemPrompt: string | undefined): string {
-  if (explicit && explicit.trim()) return explicit.trim();
-  if (!systemPrompt || !systemPrompt.trim()) return "agent:main:main";
+  if (explicit && explicit.trim()) {
+    return explicit.trim();
+  }
+  if (!systemPrompt || !systemPrompt.trim()) {
+    return "agent:main:main";
+  }
   // djb2 hash -- 8 hex chars is plenty for a handful of concurrent sessions.
   let h = 5381;
   for (let i = 0; i < systemPrompt.length; i++) {
@@ -121,15 +126,28 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       let textEnded = false;
       let accumulatedText = "";
       let accumulatedThinking = "";
+      // FORK (2026-04-21): track tool_use blocks that claude-cli emits in its
+      // stream-json `assistant` lines. claude-cli executes tools internally and
+      // returns results as the next round's input; pi-agent-core doesn't need
+      // to re-execute them, but it DOES need to see them in the assistant
+      // message content so they (a) get written to the session transcript and
+      // (b) render as tool-call rows in Tinker UI. Before this, stream.ts
+      // silently dropped every tool_use block and zero transcripts ever
+      // contained tool_use records — that's why the user never saw tool calls
+      // in the chat even when Jarvis ran dozens of them.
+      const toolCalls = new Map<string, ToolCall>();
       const textIndex = () => (thinkingStarted ? 1 : 0);
 
-      const buildContent = (): (TextContent | ThinkingContent)[] => {
-        const parts: (TextContent | ThinkingContent)[] = [];
+      const buildContent = (): (TextContent | ThinkingContent | ToolCall)[] => {
+        const parts: (TextContent | ThinkingContent | ToolCall)[] = [];
         if (accumulatedThinking) {
           parts.push({ type: "thinking", thinking: accumulatedThinking });
         }
         if (accumulatedText) {
           parts.push({ type: "text", text: accumulatedText });
+        }
+        for (const tc of toolCalls.values()) {
+          parts.push(tc);
         }
         return parts;
       };
@@ -151,7 +169,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
         streamStarted = true;
         const p = buildPartial();
-        if (log.debug) log.debug(`emit start content.len=${p.content.length}`);
+        if (log.debug) {
+          log.debug(`emit start content.len=${p.content.length}`);
+        }
         stream.push({ type: "start", partial: p });
       };
       const pushThinkingStart = () => {
@@ -159,7 +179,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         thinkingStarted = true;
-        if (log.debug) log.debug(`emit thinking_start`);
+        if (log.debug) {
+          log.debug(`emit thinking_start`);
+        }
         stream.push({ type: "thinking_start", contentIndex: 0, partial: buildPartial() });
       };
       const pushThinkingEnd = () => {
@@ -167,7 +189,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         thinkingEnded = true;
-        if (log.debug) log.debug(`emit thinking_end content.len=${accumulatedThinking.length}`);
+        if (log.debug) {
+          log.debug(`emit thinking_end content.len=${accumulatedThinking.length}`);
+        }
         stream.push({
           type: "thinking_end",
           contentIndex: 0,
@@ -180,7 +204,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         textStarted = true;
-        if (log.debug) log.debug(`emit text_start contentIndex=${textIndex()}`);
+        if (log.debug) {
+          log.debug(`emit text_start contentIndex=${textIndex()}`);
+        }
         stream.push({ type: "text_start", contentIndex: textIndex(), partial: buildPartial() });
       };
       const pushTextEnd = () => {
@@ -188,7 +214,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         textEnded = true;
-        if (log.debug) log.debug(`emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`);
+        if (log.debug) {
+          log.debug(
+            `emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`,
+          );
+        }
         stream.push({
           type: "text_end",
           contentIndex: textIndex(),
@@ -257,10 +287,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           log.info(
             `first stream line after ${lastLineAt - turnStartedAt}ms sessionKey=${sessionKey}`,
           );
-        } else if (
-          linesSeen % 50 === 0 ||
-          lastLineAt - lastProgressLogAt > 30_000
-        ) {
+        } else if (linesSeen % 50 === 0 || lastLineAt - lastProgressLogAt > 30_000) {
           log.info(
             `progress sessionKey=${sessionKey} lines=${linesSeen} elapsed=${Math.round((lastLineAt - turnStartedAt) / 1000)}s text.len=${accumulatedText.length} thinking.len=${accumulatedThinking.length}`,
           );
@@ -299,7 +326,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             const typed = b as CcContentBlock;
             if (typed.type === "text" && typeof typed.text === "string") {
               const cumulative = typed.text;
-              if (cumulative.startsWith(accumulatedText) && cumulative.length > accumulatedText.length) {
+              if (
+                cumulative.startsWith(accumulatedText) &&
+                cumulative.length > accumulatedText.length
+              ) {
                 const delta = cumulative.slice(accumulatedText.length);
                 pushTextDelta(delta);
               } else if (cumulative.length > 0 && !accumulatedText) {
@@ -316,6 +346,20 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 pushThinkingDelta(delta);
               } else if (cumulative.length > 0 && !accumulatedThinking) {
                 pushThinkingDelta(cumulative);
+              }
+            } else if (typed.type === "tool_use" && typeof typed.id === "string") {
+              // FORK (2026-04-21): capture the tool_use so buildContent can
+              // include it. Dedupe by id — claude's assistant messages are
+              // cumulative, so the same tool_use appears in every subsequent
+              // message until the turn ends.
+              const tuId = typed.id;
+              if (!toolCalls.has(tuId)) {
+                toolCalls.set(tuId, {
+                  type: "toolCall",
+                  id: tuId,
+                  name: typeof typed.name === "string" ? typed.name : "unknown",
+                  arguments: (typed.input ?? {}) as Record<string, unknown>,
+                });
               }
             }
           }
