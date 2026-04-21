@@ -105,6 +105,22 @@ let activeRecipeStep: string | null = null;
 let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
+// FORK (2026-04-21): reload the timeline for the current session, but respect
+// the filter toggle. Previously every tab switch called loadSession() directly,
+// which silently collapsed an "All"-mode timeline back to the single session
+// while leaving the toggle visually set to "All" — fixing required toggling
+// off and on again. Centralizing here keeps the two states in sync.
+function refreshTimelineRespectingMode(): void {
+  if (!timelineCtrl) {
+    return;
+  }
+  if (timelineCtrl.getFilterMode() === "all") {
+    timelineCtrl.loadAllSessions(sessions.map((s: unknown) => s.key));
+  } else {
+    timelineCtrl.loadSession(sessionKey);
+  }
+}
+
 // ─── Tab State ───
 interface Tab {
   id: string;
@@ -441,9 +457,29 @@ function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): 
 }
 
 let tabs: Tab[] = [];
-let activeTabId = "";
+// FORK (2026-04-21): initialize from localStorage so a hard refresh preserves
+// focus on whichever tab was active pre-reload. Previously defaulted to "" and
+// the connect handler fell through to "tab-main", losing sub-session focus.
+let activeTabId = (() => {
+  try {
+    return localStorage.getItem("tinker-active-tab") || "";
+  } catch {
+    return "";
+  }
+})();
 const TAB_STORAGE_KEY = "tinker-tabs";
+const ACTIVE_TAB_STORAGE_KEY = "tinker-active-tab";
 const TAB_TITLE_INTERVAL = 5;
+
+function saveActiveTabId(): void {
+  try {
+    if (activeTabId) {
+      localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+    }
+  } catch {
+    // Private-mode / quota errors — silent fail; refresh falls back to tab-main.
+  }
+}
 
 function generateTabId(): string {
   return "tab-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -995,9 +1031,12 @@ function onFrame(f: unknown) {
               tabStates.set(t.id, freshTabState());
             }
           }
-          // Restore previous active tab if it still exists, otherwise default to main
+          // Restore previous active tab if it still exists, otherwise default to main.
+          // FORK (2026-04-21): prevActiveTabId comes from localStorage on hard refresh
+          // (module-level init above), so the user's pre-refresh sub-session stays focused.
           const prevTabExists = tabs.some((t) => t.id === prevActiveTabId);
           activeTabId = prevTabExists ? prevActiveTabId : "tab-main";
+          saveActiveTabId();
           // Restore the session key from the active tab
           const activeTab = tabs.find((t) => t.id === activeTabId);
           if (activeTab?.isAttached && activeTab.sessionKey) {
@@ -1009,7 +1048,7 @@ function onFrame(f: unknown) {
           loadSessions({ loadChat: true });
           loadBudget();
           refreshTreemap();
-          timelineCtrl?.loadSession(sessionKey);
+          refreshTimelineRespectingMode();
           scheduleUnconfirmedPrune();
           req("forensic.setMode", { enabled: true })
             .then((res: unknown) => {
@@ -2114,7 +2153,7 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   updateSessionsPanel();
   // FORK: If sessionKey was just resolved for the first time, load timeline
   if (!hadSessionKey && sessionKey) {
-    timelineCtrl?.loadSession(sessionKey);
+    refreshTimelineRespectingMode();
   }
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
@@ -4293,6 +4332,7 @@ function switchToTab(tabId: string) {
   saveCurrentTabState();
 
   activeTabId = tab.id;
+  saveActiveTabId();
 
   if (tab.sessionKey) {
     sessionKey = tab.sessionKey;
@@ -4306,7 +4346,7 @@ function switchToTab(tabId: string) {
     if (tmCanvas) {
       (tmCanvas as unknown).__treemapClear?.();
     }
-    timelineCtrl?.loadSession(sessionKey);
+    refreshTimelineRespectingMode();
     // Background refresh from server — only if still attached (server has the session)
     if (tab.isAttached) {
       loadChat();
@@ -8022,6 +8062,29 @@ function init() {
     () => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
     // FORK: Pass WS req function so timeline uses WebSocket instead of HTTP (avoids CORS in dev)
     req,
+    // FORK (2026-04-21): getSessionLabel — in "All" mode, the timeline renders
+    // a per-call badge with this label. We return the tab title if the session
+    // has an open tab; otherwise fall back to the server-side session label.
+    (sk: string) => {
+      if (!sk) {
+        return null;
+      }
+      const tab = tabs.find(
+        (t) =>
+          t.sessionKey === sk ||
+          (t.sessionKey && sk.endsWith(":" + t.sessionKey)) ||
+          (t.sessionKey && t.sessionKey.endsWith(":" + sk)),
+      );
+      if (tab?.title) {
+        return tab.title;
+      }
+      const sess = sessions.find(
+        (s: unknown) =>
+          s.key === sk ||
+          (typeof s.key === "string" && (s.key.endsWith(":" + sk) || sk.endsWith(":" + s.key))),
+      );
+      return sess?.label || sess?.displayName || null;
+    },
   );
 
   // Initial load is triggered from gwConnect's onopen handler (line ~776)
