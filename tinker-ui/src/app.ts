@@ -463,30 +463,21 @@ function saveTabs() {
 function loadTabs() {
   try {
     const stored = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "[]") as Tab[];
-    // FORK: Migrate stale short fortune titles (v1/v2 had 4-6 word phrases like "Seek boldly",
-    // "Your words land perfectly"). Good fortunes are 80+ chars (12-25 words, Buddhist/mindfulness themed).
-    // Detect: no emoji prefix OR too short (under 80 chars) = old fortune, replace it.
-    // FORK (2026-04-21): skip tab-main — its title "🏠 Main" is intentional and short,
-    // and since tab-main is now persisted it would otherwise get fortune-stomped on every load.
-    // Also force tab-main's title back to "🏠 Main" in case an earlier load already stomped it.
-    let migrated = false;
+    // FORK (2026-04-21): force-restore tab-main's title to "🏠 Main" on every load.
+    // The old v1/v2 fortune-migration heuristic that used to stomp short titles was
+    // removed — it was intentionally stomping good Ollama-generated titles like
+    // "🔧 Fix auth bug" (short + emoji-prefixed by design), destroying tab-title
+    // persistence for every tinker:* session on gateway restart / hard refresh.
+    // v1/v2 migrations are months old at this point; any stale titles can be cleared
+    // manually by closing and reopening the tab.
+    let changed = false;
     for (const tab of stored) {
-      if (tab.id === "tab-main") {
-        if (tab.title !== "🏠 Main") {
-          tab.title = "🏠 Main";
-          migrated = true;
-        }
-        continue;
-      }
-      if (
-        tab.title &&
-        (!/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/u.test(tab.title) || tab.title.length < 80)
-      ) {
-        tab.title = randomFortune();
-        migrated = true;
+      if (tab.id === "tab-main" && tab.title !== "🏠 Main") {
+        tab.title = "🏠 Main";
+        changed = true;
       }
     }
-    if (migrated) {
+    if (changed) {
       localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(stored));
     }
     return stored;
