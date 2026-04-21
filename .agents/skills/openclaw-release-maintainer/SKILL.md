@@ -30,6 +30,8 @@ Use this skill for release and publish-time workflow. Keep ordinary development 
 - When any beta or stable release is live, make a best-effort Discord
   announcement using Peter's bot token from `.profile`; do not block or roll
   back the release if the announcement fails.
+- When asked to announce on X, use `~/Projects/bird/bird` and follow the
+  release tweet style below.
 
 ## Keep release channel naming aligned
 
@@ -76,6 +78,64 @@ Use this skill for release and publish-time workflow. Keep ordinary development 
 - Keep the top version entries in `CHANGELOG.md` sorted by impact:
   - `### Changes` first
   - `### Fixes` deduped with user-facing fixes first
+
+## Write release tweets
+
+Use the OpenClaw account's existing release-post style:
+
+- Format: `OpenClaw YYYY.M.D 🦞` or `🦞 OpenClaw YYYY.M.D is live`, blank line,
+  then 4-6 emoji-led bullets, blank line, one short punchline, then the release
+  link.
+- For beta: say `OpenClaw YYYY.M.D-beta.N 🦞` or `OpenClaw YYYY.M.D beta N is
+live`; keep it clearly beta and avoid implying stable promotion.
+- Lead with user-visible capabilities, then important integrations, then
+  reliability/security/install fixes. Compress "lots of fixes" into one
+  readable bullet.
+- Tone: high-signal, slightly cheeky, confident, not corporate. One joke is
+  enough. Avoid punching down, insulting users, or promising what was not
+  verified.
+- Length: release tweets are always standard tweets under 280 characters. Trim
+  to 3-4 bullets and count the final text before posting.
+- Links/media: include the GitHub release or changelog link at the end. Add a
+  short docs follow-up reply only when there is a standout feature that needs
+  setup instructions.
+- Hotfix/correction: be direct and accountable. State what slipped, what is
+  fixed, and the new version. Keep jokes out of incident-style posts.
+
+Examples to adapt:
+
+```text
+OpenClaw 2026.4.20-beta.1 🦞
+
+🐳 Docker install/update smoke
+🖥️ Parallels upgrade checks
+🔧 Package verification tightened
+
+Beta first. Stable after the gauntlet.
+<release link>
+```
+
+```text
+OpenClaw 2026.4.20 🦞
+
+🚀 Faster install + update
+🐳 Docker + Parallels verified
+🍎 macOS signed + notarized
+🔧 Channel/plugin fixes
+
+Good boring release. Best kind.
+<release link>
+```
+
+```text
+Packaging issue in 2026.4.20-beta.1.
+
+2026.4.20-beta.2 fixes install/update verification. No tag rewrites; beta moves
+forward.
+
+Upgrade with the beta channel.
+<release link>
+```
 
 ## Run publish-time validation
 
