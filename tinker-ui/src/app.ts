@@ -451,8 +451,12 @@ function generateTabId(): string {
 
 function saveTabs() {
   try {
-    const persistable = tabs.filter((t) => t.id !== "tab-main");
-    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(persistable));
+    // FORK (2026-04-21): persist tab-main too. Previously filtered out, which meant
+    // `/clear`-rotated main-tab sessionKeys were lost on hard reset (gateway restart or
+    // browser refresh), causing the connect handshake's `defs.mainSessionKey` default
+    // to restore yesterday's agent:main:main session instead of the user's fresh
+    // tinker:* continuation.
+    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(tabs));
   } catch {}
 }
 
@@ -968,17 +972,24 @@ function onFrame(f: unknown) {
           }
           // Initialize tabs (preserve active tab across reconnects)
           const prevActiveTabId = activeTabId;
-          const mainTab: Tab = {
+          const restored = loadTabs();
+          // FORK (2026-04-21): prefer restored tab-main (which carries the /clear-
+          // rotated sessionKey) over the default-constructed one. If no restored
+          // tab-main exists (first load ever, or cleared storage), fall back to a
+          // fresh mainTab bound to the gateway-provided default sessionKey.
+          const defaultMainTab: Tab = {
             id: "tab-main",
             sessionKey: sessionKey,
             title: "🏠 Main",
             isAttached: true,
           };
-          const restored = loadTabs();
-          tabs = [mainTab, ...restored];
+          const restoredMain = restored.find((t) => t.id === "tab-main");
+          const mainTab = restoredMain ?? defaultMainTab;
+          const others = restored.filter((t) => t.id !== "tab-main");
+          tabs = [mainTab, ...others];
           // FORK: Initialize TabState for main and all restored tabs
           tabStates.set(mainTab.id, freshTabState());
-          for (const t of restored) {
+          for (const t of others) {
             if (!tabStates.has(t.id)) {
               tabStates.set(t.id, freshTabState());
             }
