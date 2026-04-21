@@ -30,6 +30,7 @@ export type BundledRuntimeDepsNpmRunner = {
   command: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
+  shell?: boolean;
 };
 
 function dependencySentinelPath(depName: string): string {
@@ -99,12 +100,18 @@ export function resolveBundledRuntimeDepsNpmRunner(params: {
   const platform = params.platform ?? process.platform;
   const pathImpl = platform === "win32" ? path.win32 : path.posix;
   const nodeDir = pathImpl.dirname(execPath);
+  const npmExecPath = normalizeOptionalLowercaseString(env.npm_execpath)
+    ? env.npm_execpath
+    : undefined;
 
   const npmCliCandidates = [
+    npmExecPath,
     pathImpl.resolve(nodeDir, "../lib/node_modules/npm/bin/npm-cli.js"),
     pathImpl.resolve(nodeDir, "node_modules/npm/bin/npm-cli.js"),
-  ];
-  const npmCliPath = npmCliCandidates.find((candidate) => existsSync(candidate));
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const npmCliPath = npmCliCandidates.find(
+    (candidate) => pathImpl.isAbsolute(candidate) && existsSync(candidate),
+  );
   if (npmCliPath) {
     return {
       command: execPath,
@@ -120,10 +127,11 @@ export function resolveBundledRuntimeDepsNpmRunner(params: {
         args: params.npmArgs,
       };
     }
-    throw new Error(
-      `failed to resolve a toolchain-local npm next to ${execPath}. ` +
-        `Checked: ${[...npmCliCandidates, npmExePath].join(", ")}.`,
-    );
+    return {
+      command: "npm.cmd",
+      args: params.npmArgs,
+      shell: true,
+    };
   }
 
   const pathKey = resolvePathEnvKey(env, platform);
@@ -140,7 +148,6 @@ export function resolveBundledRuntimeDepsNpmRunner(params: {
     },
   };
 }
-
 function readBundledPluginChannels(pluginDir: string): string[] {
   const manifest = readJsonObject(path.join(pluginDir, "openclaw.plugin.json"));
   const channels = manifest?.channels;
@@ -370,13 +377,13 @@ export function installBundledRuntimeDeps(params: {
     encoding: "utf8",
     env: createNestedNpmInstallEnv(npmRunner.env ?? params.env),
     stdio: "pipe",
-    shell: false,
+    shell: npmRunner.shell ?? false,
   });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const output = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+  if (result.status !== 0 || result.error) {
+    const output = [result.error?.message, result.stderr, result.stdout]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
     throw new Error(output || "npm install failed");
   }
 }

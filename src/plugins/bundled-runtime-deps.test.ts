@@ -1,12 +1,19 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureBundledPluginRuntimeDeps,
+  installBundledRuntimeDeps,
   resolveBundledRuntimeDepsNpmRunner,
 } from "./bundled-runtime-deps.js";
 
+vi.mock("node:child_process", () => ({
+  spawnSync: vi.fn(),
+}));
+
+const spawnSyncMock = vi.mocked(spawnSync);
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
@@ -16,12 +23,29 @@ function makeTempDir(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  spawnSyncMock.mockReset();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 describe("resolveBundledRuntimeDepsNpmRunner", () => {
+  it("uses npm_execpath through node on Windows when available", () => {
+    const runner = resolveBundledRuntimeDepsNpmRunner({
+      env: { npm_execpath: "C:\\node\\node_modules\\npm\\bin\\npm-cli.js" },
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      existsSync: (candidate) => candidate === "C:\\node\\node_modules\\npm\\bin\\npm-cli.js",
+      npmArgs: ["install", "acpx@0.5.3"],
+      platform: "win32",
+    });
+
+    expect(runner).toEqual({
+      command: "C:\\Program Files\\nodejs\\node.exe",
+      args: ["C:\\node\\node_modules\\npm\\bin\\npm-cli.js", "install", "acpx@0.5.3"],
+    });
+  });
+
   it("uses the Node-adjacent npm CLI on Windows", () => {
     const execPath = "C:\\Program Files\\nodejs\\node.exe";
     const npmCliPath = path.win32.resolve(
@@ -43,16 +67,20 @@ describe("resolveBundledRuntimeDepsNpmRunner", () => {
     });
   });
 
-  it("does not fall back to bare npm on Windows", () => {
-    expect(() =>
-      resolveBundledRuntimeDepsNpmRunner({
-        env: {},
-        execPath: "C:\\Program Files\\nodejs\\node.exe",
-        existsSync: () => false,
-        npmArgs: ["install"],
-        platform: "win32",
-      }),
-    ).toThrow("failed to resolve a toolchain-local npm");
+  it("falls back to npm.cmd through shell on Windows", () => {
+    const runner = resolveBundledRuntimeDepsNpmRunner({
+      env: {},
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      existsSync: () => false,
+      npmArgs: ["install"],
+      platform: "win32",
+    });
+
+    expect(runner).toEqual({
+      command: "npm.cmd",
+      args: ["install"],
+      shell: true,
+    });
   });
 
   it("prefixes PATH with the active Node directory on POSIX", () => {
@@ -74,7 +102,72 @@ describe("resolveBundledRuntimeDepsNpmRunner", () => {
       },
     });
   });
+});
 
+describe("installBundledRuntimeDeps", () => {
+  it("uses the npm cmd shim on Windows", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    vi.spyOn(fs, "existsSync").mockReturnValue(false);
+    spawnSyncMock.mockReturnValue({
+      pid: 123,
+      output: [],
+      stdout: "",
+      stderr: "",
+      signal: null,
+      status: 0,
+    });
+
+    installBundledRuntimeDeps({
+      installRoot: "C:\\openclaw",
+      missingSpecs: ["acpx@0.5.3"],
+      env: { npm_config_prefix: "C:\\prefix", PATH: "C:\\node" },
+    });
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      "npm.cmd",
+      [
+        "install",
+        "--prefix",
+        "C:\\openclaw",
+        "--omit=dev",
+        "--no-save",
+        "--package-lock=false",
+        "--ignore-scripts",
+        "--legacy-peer-deps",
+        "acpx@0.5.3",
+      ],
+      expect.objectContaining({
+        cwd: "C:\\openclaw",
+        shell: true,
+        env: expect.not.objectContaining({
+          npm_config_prefix: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("includes spawn errors in install failures", () => {
+    spawnSyncMock.mockReturnValue({
+      pid: 0,
+      output: [],
+      stdout: "",
+      stderr: "",
+      signal: null,
+      status: null,
+      error: new Error("spawn npm ENOENT"),
+    });
+
+    expect(() =>
+      installBundledRuntimeDeps({
+        installRoot: "/tmp/openclaw",
+        missingSpecs: ["browser-runtime@1.0.0"],
+        env: {},
+      }),
+    ).toThrow("spawn npm ENOENT");
+  });
+});
+
+describe("ensureBundledPluginRuntimeDeps", () => {
   it("installs all direct plugin runtime deps when one is missing", () => {
     const packageRoot = makeTempDir();
     const extensionsRoot = path.join(packageRoot, "dist", "extensions");
