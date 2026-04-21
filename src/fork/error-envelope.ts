@@ -266,6 +266,64 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 🧹 broom — compaction sweep failed
     icon: "🧹",
   },
+  // FORK (2026-04-21): cc-bridge subprocess exit codes. Before this, any claude
+  // subprocess exit got classified as generic "Provider error" which made it
+  // impossible to tell a benign gateway-restart kill (SIGTERM) from a real
+  // Anthropic rejection. Now we name each exit path.
+  cc_bridge_sigterm: {
+    category: "provider_error",
+    fatal: false,
+    headline: "Gateway restart killed this turn",
+    explanation:
+      "The `claude` subprocess received **SIGTERM (exit 143)** mid-turn. This is almost always a gateway restart — not an Anthropic rejection. Any partial text you saw in the bubble above was what Jarvis had streamed before the kill. Retry and it should run clean.",
+    suggestedActions: [
+      "Retry the message",
+      "Check gateway journal if this recurs without a restart",
+    ],
+    // 🔌 plug — interrupted externally
+    icon: "🔌",
+  },
+  cc_bridge_sigkill: {
+    category: "provider_error",
+    fatal: false,
+    headline: "Claude subprocess force-killed",
+    explanation:
+      "The `claude` subprocess was **SIGKILL'd (exit 137)**. Usually the Linux OOM killer reclaiming memory. Not an Anthropic or auth issue. Retry; if it repeats, gateway memory is tight.",
+    suggestedActions: [
+      "Retry the message",
+      "Check `dmesg` for `oom-kill` events",
+      "Restart the gateway to reclaim memory",
+    ],
+    // 💀 skull — hard kill
+    icon: "💀",
+  },
+  cc_bridge_silent: {
+    category: "timeout",
+    fatal: false,
+    headline: "Claude subprocess went silent",
+    explanation:
+      "The `claude` subprocess was alive but emitted no stream output for over the configured watchdog window. This can happen when the CLI is hung on a slow tool call or waiting on network. The worker killed it to free the lane.",
+    suggestedActions: [
+      "Retry — the new worker spawns a fresh subprocess",
+      "If recurring, check the last tool call in the bubble above",
+    ],
+    // 🔇 muted — no output
+    icon: "🔇",
+  },
+  cc_bridge_nonzero_exit: {
+    category: "provider_error",
+    fatal: true,
+    headline: "Claude subprocess crashed",
+    explanation:
+      "The `claude` CLI exited with a non-zero status mid-turn without a recognised kill signal. Check the stderr tail attached below for the CLI's own error message.",
+    suggestedActions: [
+      "Retry the message",
+      "If this is new, roll back the latest `claude` CLI update",
+      "Check `journalctl --user -u openclaw-gateway` for stack traces",
+    ],
+    // 💥 collision — process crashed
+    icon: "💥",
+  },
 };
 
 /** Generate a short stable id. */
@@ -284,6 +342,26 @@ function lookup(code: string): ErrorLookupEntry {
 /** Opportunistically classify a raw error message into one of the known codes. */
 export function classifyRawErrorMessage(raw: string): string {
   const s = raw.toLowerCase();
+  // FORK (2026-04-21): cc-bridge subprocess-exit patterns. Check these BEFORE
+  // the generic provider patterns — a SIGTERM-killed claude CLI says nothing
+  // about Anthropic, but its raw string contains words like "exit" that
+  // shouldn't be miscategorised as provider_generic.
+  // Shapes we see in worker.ts::onExit:
+  //   "claude subprocess exited (code=143 signal=null) stderr=…"
+  //   "claude subprocess exited (code=137 signal=null) stderr=…"
+  //   "claude subprocess exited (code=null signal=SIGTERM) stderr=…"
+  if (/claude subprocess exited/.test(s)) {
+    if (/code=143\b|signal=sigterm/.test(s)) {
+      return "cc_bridge_sigterm";
+    }
+    if (/code=137\b|signal=sigkill/.test(s)) {
+      return "cc_bridge_sigkill";
+    }
+    return "cc_bridge_nonzero_exit";
+  }
+  if (/claude silent for \d+s|watchdog.*claude/.test(s)) {
+    return "cc_bridge_silent";
+  }
   if (/401|authentication_error|invalid authentication credentials/.test(s)) {
     return "auth_401_invalid_credentials";
   }
