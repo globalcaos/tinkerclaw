@@ -1619,6 +1619,18 @@ code.fs-link.fs-link-error {
   white-space: nowrap;
   line-height: 1.3;
 }
+/* FORK (2026-04-21): per-call session badge, rendered under the timestamp
+   only in "All" mode. Shows the session's emoji (🏠 for main, the tab's
+   leading emoji for tinker:* sessions) so the operator can visually
+   attribute each tool call to the right session. */
+.ct-session-badge {
+  text-align: center;
+  font-size: 11px;
+  line-height: 1;
+  margin-top: 2px;
+  opacity: 0.85;
+  cursor: default;
+}
 .ct-empty {
   display: flex;
   align-items: center;
