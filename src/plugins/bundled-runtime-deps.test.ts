@@ -7,6 +7,7 @@ import {
   ensureBundledPluginRuntimeDeps,
   installBundledRuntimeDeps,
   resolveBundledRuntimeDepsNpmRunner,
+  type BundledRuntimeDepsInstallParams,
 } from "./bundled-runtime-deps.js";
 
 vi.mock("node:child_process", () => ({
@@ -168,7 +169,7 @@ describe("installBundledRuntimeDeps", () => {
 });
 
 describe("ensureBundledPluginRuntimeDeps", () => {
-  it("installs all direct plugin runtime deps when one is missing", () => {
+  it("installs plugin-local runtime deps when one is missing", () => {
     const packageRoot = makeTempDir();
     const extensionsRoot = path.join(packageRoot, "dist", "extensions");
     const pluginRoot = path.join(extensionsRoot, "bedrock");
@@ -182,11 +183,11 @@ describe("ensureBundledPluginRuntimeDeps", () => {
         },
       }),
     );
-    fs.mkdirSync(path.join(extensionsRoot, "node_modules", "already-present"), {
+    fs.mkdirSync(path.join(pluginRoot, "node_modules", "already-present"), {
       recursive: true,
     });
     fs.writeFileSync(
-      path.join(extensionsRoot, "node_modules", "already-present", "package.json"),
+      path.join(pluginRoot, "node_modules", "already-present", "package.json"),
       JSON.stringify({ name: "already-present", version: "1.0.0" }),
     );
 
@@ -196,7 +197,7 @@ describe("ensureBundledPluginRuntimeDeps", () => {
       installSpecs?: string[];
     }> = [];
 
-    const retainedSpecs = ensureBundledPluginRuntimeDeps({
+    const result = ensureBundledPluginRuntimeDeps({
       env: {},
       installDeps: (params) => {
         calls.push(params);
@@ -206,13 +207,143 @@ describe("ensureBundledPluginRuntimeDeps", () => {
       retainSpecs: ["previous@3.0.0"],
     });
 
-    expect(retainedSpecs).toEqual(["already-present@1.0.0", "missing@2.0.0", "previous@3.0.0"]);
+    expect(result).toEqual({
+      installedSpecs: ["missing@2.0.0"],
+      retainSpecs: ["already-present@1.0.0", "missing@2.0.0", "previous@3.0.0"],
+    });
     expect(calls).toEqual([
       {
-        installRoot: extensionsRoot,
+        installRoot: pluginRoot,
         missingSpecs: ["missing@2.0.0"],
         installSpecs: ["already-present@1.0.0", "missing@2.0.0", "previous@3.0.0"],
       },
     ]);
+  });
+
+  it("skips install when staged plugin-local runtime deps are present", () => {
+    const packageRoot = makeTempDir();
+    const extensionsRoot = path.join(packageRoot, "dist", "extensions");
+    const pluginRoot = path.join(extensionsRoot, "discord");
+    fs.mkdirSync(path.join(pluginRoot, "node_modules", "@buape", "carbon"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          "@buape/carbon": "0.16.0",
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(pluginRoot, "node_modules", "@buape", "carbon", "package.json"),
+      JSON.stringify({ name: "@buape/carbon", version: "0.16.0" }),
+    );
+
+    const result = ensureBundledPluginRuntimeDeps({
+      env: {},
+      installDeps: () => {
+        throw new Error("staged plugin-local deps should not reinstall");
+      },
+      pluginId: "discord",
+      pluginRoot,
+    });
+
+    expect(result).toEqual({ installedSpecs: [], retainSpecs: [] });
+  });
+
+  it("does not treat sibling extension runtime deps as satisfying a plugin", () => {
+    const packageRoot = makeTempDir();
+    const extensionsRoot = path.join(packageRoot, "dist", "extensions");
+    const pluginRoot = path.join(extensionsRoot, "codex");
+    fs.mkdirSync(path.join(extensionsRoot, "discord", "node_modules", "zod"), {
+      recursive: true,
+    });
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          zod: "^4.3.6",
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(extensionsRoot, "discord", "node_modules", "zod", "package.json"),
+      JSON.stringify({ name: "zod", version: "4.3.6" }),
+    );
+    const calls: BundledRuntimeDepsInstallParams[] = [];
+
+    const result = ensureBundledPluginRuntimeDeps({
+      env: {},
+      installDeps: (params) => {
+        calls.push(params);
+      },
+      pluginId: "codex",
+      pluginRoot,
+    });
+
+    expect(result).toEqual({
+      installedSpecs: ["zod@^4.3.6"],
+      retainSpecs: ["zod@^4.3.6"],
+    });
+    expect(calls).toEqual([
+      {
+        installRoot: pluginRoot,
+        missingSpecs: ["zod@^4.3.6"],
+        installSpecs: ["zod@^4.3.6"],
+      },
+    ]);
+  });
+
+  it("rehydrates source-checkout dist deps from cache after rebuilds", () => {
+    const packageRoot = makeTempDir();
+    fs.mkdirSync(path.join(packageRoot, ".git"), { recursive: true });
+    fs.mkdirSync(path.join(packageRoot, "src"), { recursive: true });
+    fs.mkdirSync(path.join(packageRoot, "extensions"), { recursive: true });
+    const pluginRoot = path.join(packageRoot, "dist", "extensions", "codex");
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          zod: "^4.3.6",
+        },
+      }),
+    );
+    const installCalls: BundledRuntimeDepsInstallParams[] = [];
+
+    const first = ensureBundledPluginRuntimeDeps({
+      env: {},
+      installDeps: (params) => {
+        installCalls.push(params);
+        fs.mkdirSync(path.join(params.installRoot, "node_modules", "zod"), { recursive: true });
+        fs.writeFileSync(
+          path.join(params.installRoot, "node_modules", "zod", "package.json"),
+          JSON.stringify({ name: "zod", version: "4.3.6" }),
+        );
+      },
+      pluginId: "codex",
+      pluginRoot,
+    });
+
+    fs.rmSync(path.join(pluginRoot, "node_modules"), { recursive: true, force: true });
+
+    const second = ensureBundledPluginRuntimeDeps({
+      env: {},
+      installDeps: () => {
+        throw new Error("cached runtime deps should not reinstall");
+      },
+      pluginId: "codex",
+      pluginRoot,
+    });
+
+    expect(first).toEqual({
+      installedSpecs: ["zod@^4.3.6"],
+      retainSpecs: ["zod@^4.3.6"],
+    });
+    expect(second).toEqual({ installedSpecs: [], retainSpecs: [] });
+    expect(installCalls).toHaveLength(1);
+    expect(fs.existsSync(path.join(pluginRoot, "node_modules", "zod", "package.json"))).toBe(true);
   });
 });
