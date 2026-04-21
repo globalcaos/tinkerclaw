@@ -2865,7 +2865,28 @@ function applyInjectToggleChrome(): void {
 // from amygdala-prompt.md + fractal-prompt.md). The per-turn injection
 // just names which sections to emit and in what order. Opus pulls the
 // content from its system-prompt context.
+//
+// FORK 2026-04-21: for `/new` and `/reset`, replace the amygdala/fractal
+// suffix with a pointer to BRIEFING.md. Two reasons:
+//   1. Appending the ANSWER/AMYGDALA/FRACTAL template to /new makes
+//      bodyStripped non-empty on the server, which bypasses the
+//      isBareSessionReset → SESSION.md → BRIEFING.md path entirely. That's
+//      why /new wasn't producing the briefing before.
+//   2. the user wants to see the BRIEFING.md path in the expandable _fullPrompt
+//      so he can edit that file directly to change the briefing format,
+//      without digging through amygdala/fractal noise unrelated to /new.
 function buildInjectedPrompt(userText: string): string {
+  const trimmed = userText.trim();
+  // Bare /new or /reset (or /new-with-no-args): replace the standard
+  // section template with a BRIEFING.md pointer so the LLM reads the
+  // right file and the user can edit the briefing logic in place.
+  if (/^\/(new|reset)$/i.test(trimmed)) {
+    return (
+      userText +
+      "\n\n---\n\n**Session Startup.** Read and follow the full contents of `~/.openclaw/workspace/BRIEFING.md` — that file is the single source of truth for the session-start briefing and the /new flow. Edit it directly if you want to change the briefing format."
+    );
+  }
+
   const wantAmy = injectToggles.amygdala;
   const wantFra = injectToggles.fractal;
   if (!wantAmy && !wantFra) {
