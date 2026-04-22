@@ -4,7 +4,14 @@
  * One claude subprocess per OpenClaw session. Workers stay alive until the
  * gateway exits (no idle timeout). If a worker dies, we respawn it with
  * `--resume <sessionId>` on the next turn (see Worker.start).
+ *
+ * FORK (2026-04-22): sessionKey → sessionId mapping is now persisted to
+ * `~/.openclaw/cc-bridge/session-map.json` so a gateway restart doesn't
+ * lose claude CLI's conversation state. Previously the in-memory map
+ * reset on every restart and Jarvis woke up amnesic even though the
+ * transcript .jsonl files were sitting right there on disk.
  */
+import { getResumeSessionId } from "./session-map.js";
 import { ClaudeCodeWorker, type WorkerSpawnParams } from "./worker.js";
 
 export class SessionWorkerPool {
@@ -17,6 +24,15 @@ export class SessionWorkerPool {
     }
     if (existing && existing.sessionId && !params.resumeSessionId) {
       params = { ...params, resumeSessionId: existing.sessionId };
+    }
+    // FORK (2026-04-22): if there's no live worker AND no in-memory
+    // sessionId to resume from, check the persisted session-map. That's
+    // the gateway-restart path where `existing` is always undefined.
+    if (!params.resumeSessionId) {
+      const persisted = getResumeSessionId(params.sessionKey);
+      if (persisted) {
+        params = { ...params, resumeSessionId: persisted };
+      }
     }
     const worker = new ClaudeCodeWorker(params);
     worker.on("exit", () => {

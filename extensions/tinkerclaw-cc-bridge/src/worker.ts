@@ -23,6 +23,7 @@ import {
   parseStreamJsonLine,
   serializeStdinLine,
 } from "./protocol.js";
+import { setResumeSessionId } from "./session-map.js";
 
 const log = createSubsystemLogger("tinkerclaw-cc-bridge");
 
@@ -569,6 +570,14 @@ export class ClaudeCodeWorker extends EventEmitter {
         const sid = (parsed as { session_id?: string }).session_id;
         if (typeof sid === "string") {
           this.sessionId = sid;
+          // FORK (2026-04-22): persist so the next gateway boot can --resume.
+          // Best-effort; failures just mean amnesia on next restart, not
+          // broken turns.
+          try {
+            setResumeSessionId(this.sessionKey, sid);
+          } catch {
+            // swallow
+          }
         }
       }
       this.emit("stream_line", { type: "stream_line", line: parsed } as WorkerEvent);
