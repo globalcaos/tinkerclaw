@@ -11,7 +11,6 @@ import {
   type StopReason,
   type TextContent,
   type ThinkingContent,
-  type ToolCall,
   type Usage,
   createAssistantMessageEventStream,
 } from "@mariozechner/pi-ai";
@@ -126,28 +125,25 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       let textEnded = false;
       let accumulatedText = "";
       let accumulatedThinking = "";
-      // FORK (2026-04-21): track tool_use blocks that claude-cli emits in its
-      // stream-json `assistant` lines. claude-cli executes tools internally and
-      // returns results as the next round's input; pi-agent-core doesn't need
-      // to re-execute them, but it DOES need to see them in the assistant
-      // message content so they (a) get written to the session transcript and
-      // (b) render as tool-call rows in Tinker UI. Before this, stream.ts
-      // silently dropped every tool_use block and zero transcripts ever
-      // contained tool_use records — that's why the user never saw tool calls
-      // in the chat even when Jarvis ran dozens of them.
-      const toolCalls = new Map<string, ToolCall>();
+      // FORK (2026-04-22): tool_use blocks from claude-cli are NOT materialized
+      // into the final AssistantMessage.content. claude-cli executes tools
+      // internally and the UI learns about them through its own session-log
+      // tail (claude writes `~/.claude/projects/<uuid>/*.jsonl` with full
+      // tool_use/tool_result blocks). Putting toolCall blocks in OpenClaw's
+      // assistant-message content triggered pi-agent-core's agent-loop to
+      // re-execute them via the OpenClaw exec tool, which hit the prefrontal
+      // "Exploration required" gate and surfaced as red "Something went
+      // wrong" bubbles for every claude internal bash call. See
+      // `extensions/prefrontal/exploration-gate.ts:105`.
       const textIndex = () => (thinkingStarted ? 1 : 0);
 
-      const buildContent = (): (TextContent | ThinkingContent | ToolCall)[] => {
-        const parts: (TextContent | ThinkingContent | ToolCall)[] = [];
+      const buildContent = (): (TextContent | ThinkingContent)[] => {
+        const parts: (TextContent | ThinkingContent)[] = [];
         if (accumulatedThinking) {
           parts.push({ type: "thinking", thinking: accumulatedThinking });
         }
         if (accumulatedText) {
           parts.push({ type: "text", text: accumulatedText });
-        }
-        for (const tc of toolCalls.values()) {
-          parts.push(tc);
         }
         return parts;
       };
@@ -347,21 +343,12 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               } else if (cumulative.length > 0 && !accumulatedThinking) {
                 pushThinkingDelta(cumulative);
               }
-            } else if (typed.type === "tool_use" && typeof typed.id === "string") {
-              // FORK (2026-04-21): capture the tool_use so buildContent can
-              // include it. Dedupe by id — claude's assistant messages are
-              // cumulative, so the same tool_use appears in every subsequent
-              // message until the turn ends.
-              const tuId = typed.id;
-              if (!toolCalls.has(tuId)) {
-                toolCalls.set(tuId, {
-                  type: "toolCall",
-                  id: tuId,
-                  name: typeof typed.name === "string" ? typed.name : "unknown",
-                  arguments: (typed.input ?? {}) as Record<string, unknown>,
-                });
-              }
             }
+            // Tool blocks (tool_use / tool_result) are intentionally dropped
+            // from the assistant-message content. See the note on buildContent
+            // above — materializing them triggers double-execution through
+            // pi-agent-core and a stream of "Something went wrong" bubbles
+            // from the prefrontal exec gate.
           }
         }
       };
