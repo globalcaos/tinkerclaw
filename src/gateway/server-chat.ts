@@ -947,11 +947,20 @@ export function createAgentEventHandler({
       // tool-events capability, regardless of verboseLevel. The verbose
       // setting only controls whether tool details are sent as channel
       // messages to messaging surfaces (Telegram, Discord, etc.).
+      //
+      // FORK (2026-04-24): use `agentPayload` (UNSTRIPPED) for WS clients
+      // so Tinker UI + CLI tool consumers receive `result`/`partialResult`
+      // and can render full stdout on expand. The comment at line 1021
+      // already states "WS clients already received the event above" —
+      // the intent has always been "strip only for channel surfaces,
+      // keep for WS" but the toolPayload used here had the result deleted,
+      // which made every tool row in the UI render `(completed)` instead
+      // of the actual stdout.
       const recipients = toolEventRecipients.get(evt.runId);
       if (recipients && recipients.size > 0) {
         broadcastToConnIds(
           "agent",
-          sessionKey ? { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) } : toolPayload,
+          sessionKey ? { ...agentPayload, ...buildSessionEventSnapshot(sessionKey) } : agentPayload,
           recipients,
         );
       }
@@ -965,7 +974,7 @@ export function createAgentEventHandler({
         if (sessionSubscribers.size > 0) {
           broadcastToConnIds(
             "session.tool",
-            { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) },
+            { ...agentPayload, ...buildSessionEventSnapshot(sessionKey) },
             sessionSubscribers,
             { dropIfSlow: true },
           );
