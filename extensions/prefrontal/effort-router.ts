@@ -63,7 +63,11 @@ export function classifyEffort(taskDescription: string): EffortLevel {
   return "standard";
 }
 
-export function isModelInTier(model: string, tier: string[], config: EffortRoutingConfig): boolean {
+export function isModelInTier(
+  model: string,
+  tier: string[],
+  _config: EffortRoutingConfig,
+): boolean {
   return tier.some((m) => model.includes(m) || m.includes(model));
 }
 
@@ -78,7 +82,9 @@ export function validateModelAssignment(
   taskDescription: string,
   config: EffortRoutingConfig,
 ): RoutingDecision {
-  if (!config.enabled) {return { approved: true };}
+  if (!config.enabled) {
+    return { approved: true };
+  }
 
   const effort = classifyEffort(taskDescription);
 

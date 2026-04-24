@@ -5,6 +5,7 @@
  * Mirrors the context-treemap multi-call run pattern, fetching data from server.
  */
 
+// oxlint-disable-next-line typescript-eslint/no-explicit-any
 type ReqFn = (method: string, params?: any) => Promise<any>;
 
 interface TreemapNode {
@@ -164,7 +165,9 @@ function fmtUsd(v: number): string {
 }
 
 // ─── Build L1 nodes from server response call data ───
-function buildL1NodesFromSlim(call: any): TreemapNode[] {
+// oxlint-disable-next-line typescript-eslint/no-explicit-any
+function _buildL1NodesFromSlim(call: any): TreemapNode[] {
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   return (call.categories ?? []).map((c: any) => ({
     key: c.key,
     label: c.label ?? c.key,
@@ -173,6 +176,7 @@ function buildL1NodesFromSlim(call: any): TreemapNode[] {
 }
 
 // ─── Build L1 nodes from full content blocks (for L2/L3 drill-down) ───
+// oxlint-disable-next-line typescript-eslint/no-explicit-any
 function buildL1NodesFromContent(content: any[]): TreemapNode[] {
   const nodes: TreemapNode[] = [];
   let textChars = 0,
@@ -257,7 +261,9 @@ function syntaxHighlightJson(json: string): string {
 /** Detect JSON and return a highlighted pre block, or null */
 function tryRenderJson(text: string): HTMLElement | null {
   const t = text.trim();
-  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) {return null;}
+  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) {
+    return null;
+  }
   try {
     const parsed = JSON.parse(t);
     const pre = document.createElement("pre");
@@ -302,7 +308,9 @@ function renderRichBody(text: string, category: string, nodeKey: string): HTMLEl
   // Tool result: try JSON, otherwise formatted text
   if (category === "tool_result") {
     const jsonEl = tryRenderJson(text);
-    if (jsonEl) {return jsonEl;}
+    if (jsonEl) {
+      return jsonEl;
+    }
     const div = document.createElement("div");
     div.className = "tm-text-block";
     div.textContent = text;
@@ -331,7 +339,9 @@ export function mountResponseTreemap(
   costEl?: HTMLElement,
   modelEl?: HTMLElement,
 ): void {
-  let currentRunData: any = null;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
+  let _currentRunData: any = null;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   let currentCallContent: any[] | null = null;
   let selectedCallIndex: number | null = null;
   let level: 1 | 2 | 3 = 1;
@@ -479,6 +489,7 @@ export function mountResponseTreemap(
     container.innerHTML = "";
     container.appendChild(previewEl);
     updateFooter();
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
     (container as any).__onLevelChange?.();
   }
 
@@ -522,6 +533,7 @@ export function mountResponseTreemap(
       }
     } catch {
       container.innerHTML = `<div class="tm-preview" style="background:${bg}"><div class="tm-preview-meta">Failed to load detail</div></div>`;
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       (container as any).__onLevelChange?.();
     }
   }
@@ -595,6 +607,7 @@ export function mountResponseTreemap(
     updateFooter();
 
     // Notify parent (back button visibility etc.)
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
     (container as any).__onLevelChange?.();
   }
 
@@ -693,9 +706,13 @@ export function mountResponseTreemap(
   });
 
   // ─── Public hooks ───
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__responseRefresh = loadLatest;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__responseBack = goBack;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__responseLevel = () => level;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__responseCanGoBack = () => level > 1;
 
   // Initial state
