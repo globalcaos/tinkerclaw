@@ -244,7 +244,6 @@ export function createReplyOperation(params: {
   let stateCleared = false;
 
   const clearState = () => {
-    console.log(`[FORK-BISECT] clearState() entered sessionKey=${sessionKey} stateCleared=${stateCleared} activeBefore=${replyRunState.activeRunsByKey.has(sessionKey)}`);
     if (stateCleared) {
       return;
     }
@@ -253,7 +252,6 @@ export function createReplyOperation(params: {
       sessionKey,
       sessionId: currentSessionId,
     });
-    console.log(`[FORK-BISECT] clearState() cleared sessionKey=${sessionKey} activeAfter=${replyRunState.activeRunsByKey.has(sessionKey)}`);
   };
 
   const abortInternally = (reason?: unknown) => {
@@ -359,14 +357,11 @@ export function createReplyOperation(params: {
       }
     },
     complete() {
-      console.log(`[FORK-BISECT] ReplyOperation.complete() called sessionKey=${sessionKey} resultWas=${result ? JSON.stringify(result) : "null"}`);
       if (!result) {
         result = { kind: "completed" };
         phase = "completed";
       }
-      console.log(`[FORK-BISECT] ReplyOperation.complete() calling clearState() sessionKey=${sessionKey}`);
       clearState();
-      console.log(`[FORK-BISECT] ReplyOperation.complete() clearState() returned sessionKey=${sessionKey} stillActive=${replyRunState.activeRunsByKey.has(sessionKey)}`);
     },
     fail(code, cause) {
       if (!result) {

@@ -419,13 +419,9 @@ export function createFollowupRunner(params: {
         }
       }
 
-      console.log(`[FORK-BISECT] followup-runner: pre-sendFollowupPayloads sessionKey=${run.sessionKey ?? "?"} payloads=${finalPayloads.length}`);
       await sendFollowupPayloads(finalPayloads, effectiveQueued);
-      console.log(`[FORK-BISECT] followup-runner: post-sendFollowupPayloads sessionKey=${run.sessionKey ?? "?"}`);
     } finally {
-      console.log(`[FORK-BISECT] followup-runner: finally entered sessionKey=${run.sessionKey ?? "?"} calling complete()`);
       replyOperation.complete();
-      console.log(`[FORK-BISECT] followup-runner: complete() returned sessionKey=${run.sessionKey ?? "?"}`);
       // Both signals are required for the typing controller to clean up.
       // The main inbound dispatch path calls markDispatchIdle() from the
       // buffered dispatcher's finally block, but followup turns bypass the
