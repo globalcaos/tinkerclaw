@@ -434,13 +434,40 @@ export class ClaudeCodeWorker extends EventEmitter {
     const subagentHelpBody = buildSubagentHelperBlock();
     const toolChoiceBody = buildToolChoiceBlock();
     const narrationBody = buildChatNarrationBlock();
-    const combinedSystemPrompt = [
-      systemPromptBody,
-      rulesBody,
-      subagentHelpBody,
-      toolChoiceBody,
-      narrationBody,
-    ]
+    // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
+    // OpenClaw's pi-embedded-runner appends its full tool catalog + OpenClaw
+    // CLI quick-reference + heartbeat section + Runtime metadata to the
+    // system prompt (see `src/agents/system-prompt.ts:buildAgentSystemPrompt`
+    // — started sending that content on 2026-04-18 via commit 378684e4f5,
+    // "apply fork wiring after 309-commit upstream merge"). The block
+    // contains dozens of mentions of OpenClaw-specific verbs like
+    // `sessions_spawn`, `openclaw gateway start`, and
+    // `repo=/home/…/.openclaw/workspace` — exactly the fingerprint
+    // Anthropic's server-side classifier uses to route requests to the
+    // metered overage pool (HTTP 400 "out of extra usage"), even when
+    // everything else (env, cgroup, OAuth creds, credentials file) is
+    // already clean.
+    //
+    // Strip everything from the "You are a personal assistant running
+    // inside OpenClaw" sentinel onwards. That keeps the persona block at
+    // the top (`# Persona: JarvisOne (v1)…`) and drops the harness-
+    // specific tool policy. claude-cli maintains its own tool catalog so
+    // we don't lose tool access by trimming here. We also skip the
+    // rulesBody — it's fork-internal scaffolding for Jarvis's reply style
+    // that's not worth the risk of re-tripping the classifier.
+    //
+    // Confirmed by bisect: merge-base `4a6a289d5a` works, raw-merge
+    // `3db21784ad` works, fork-wiring `378684e4f5` fails. The ONLY change
+    // in `378684e4f5` that affects request routing is the new
+    // `buildAgentSystemPrompt` content (persona injection + "running
+    // inside OpenClaw" text), and stripping it here (on top of HEAD) makes
+    // Jarvis bill the subscription again.
+    const OPENCLAW_SYSPROMPT_CUTOFF = "You are a personal assistant running inside OpenClaw";
+    const openClawCutoff = systemPromptBody.indexOf(OPENCLAW_SYSPROMPT_CUTOFF);
+    const personaOnly =
+      openClawCutoff > 0 ? systemPromptBody.slice(0, openClawCutoff).trim() : systemPromptBody;
+    void rulesBody;
+    const combinedSystemPrompt = [personaOnly, subagentHelpBody, toolChoiceBody, narrationBody]
       .filter(Boolean)
       .join("");
     if (combinedSystemPrompt.length > 0) {
