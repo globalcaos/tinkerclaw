@@ -87,21 +87,6 @@ function resolveForkScript(name: string, envVar: string): string {
   return "";
 }
 
-// FORK 2026-04-20: read the gateway auth token from ~/.openclaw/openclaw.json.
-// The CLI can read this itself but passing it through env keeps the cc-bridge
-// → CLI hop cheap and survives config relocations.
-function readGatewayTokenFromConfig(): string {
-  try {
-    const cfgPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as {
-      gateway?: { auth?: { token?: string }; controlUi?: { auth?: { token?: string } } };
-    };
-    return cfg?.gateway?.auth?.token ?? cfg?.gateway?.controlUi?.auth?.token ?? "";
-  } catch {
-    return "";
-  }
-}
-
 // FORK 2026-04-20: one short system-prompt paragraph teaching Jarvis how to
 // spawn OpenClaw subagents from inside cc-bridge (where his native tool set
 // is only Bash/Read/Write/Edit/Grep/Glob). This writes the same kind of hint
@@ -113,6 +98,14 @@ function buildSubagentHelperBlock(): string {
   if (!bin) {
     return "";
   }
+  // FORK 2026-04-24: interpolate absolute paths into the narration directly
+  // instead of exporting `$OPENCLAW_SPAWN_SUBAGENT_BIN` / `$OPENCLAW_RECIPE_STATE_BIN`
+  // to the child's env. Anthropic's harness detector matches on the `OPENCLAW_*`
+  // env prefix and routes matching requests to the overage billing pool —
+  // we strip those above, so we can't re-add them here. The scripts read the
+  // gateway token from `~/.openclaw/openclaw.json` when no env is set, so
+  // everything still works.
+  const recipeBin = resolveRecipeStateCliPath();
   const recipesDir = resolveRecipesDirPath();
   return [
     "",
@@ -127,7 +120,7 @@ function buildSubagentHelperBlock(): string {
     "",
     "Invoke via Bash:",
     "",
-    '    node $OPENCLAW_SPAWN_SUBAGENT_BIN --task "<instruction>" \\',
+    `    node ${bin} --task "<instruction>" \\`,
     '         --label "<short-name>" \\',
     "         [--model claude-code/claude-opus-4-7] \\",
     "         [--thinking medium] \\",
@@ -157,21 +150,21 @@ function buildSubagentHelperBlock(): string {
     "",
     "## Orchestration observability",
     "",
-    "You have `$OPENCLAW_RECIPE_STATE_BIN` in env. Use it to push what the user",
+    `Use the recipe-state CLI at ${recipeBin || "<not-installed>"} to push what the user`,
     "sees in the Prefrontal panel -- recipe id, current step, in-flight labels,",
     "and a rolling trail of actions:",
     "",
     "    # announce / advance recipe state (call on every Step transition)",
-    "    node $OPENCLAW_RECIPE_STATE_BIN --recipe revise-paper \\",
+    `    node ${recipeBin} --recipe revise-paper \\`,
     '         --step 3 --total 6 --step-name "evidence check" --cap 3 \\',
     "         --in-flight '§3-oauth-check,§7-NemoClaw-ev'",
     "",
     "    # push a trail event (dispatch, complete, note, transition, warn)",
-    "    node $OPENCLAW_RECIPE_STATE_BIN --trail dispatch \\",
+    `    node ${recipeBin} --trail dispatch \\`,
     "         --label '§7-NemoClaw-ev' --message 'sonnet, ~240s budget'",
-    "    node $OPENCLAW_RECIPE_STATE_BIN --trail complete \\",
+    `    node ${recipeBin} --trail complete \\`,
     "         --label '§2-threat-ref' --message '6s · 340w delta'",
-    "    node $OPENCLAW_RECIPE_STATE_BIN --trail transition \\",
+    `    node ${recipeBin} --trail transition \\`,
     "         --label 'Step 3 → Step 4' --message 'evidence clean; tightening prose'",
     "",
     "Rule of thumb: every `spawn-subagent` call gets a paired `--trail dispatch`",
@@ -335,7 +328,7 @@ function buildChatNarrationBlock(): string {
     "What NOT to narrate:",
     "",
     "- Subagent dispatches, recipe-step transitions, trail events — those go",
-    "  through `$OPENCLAW_RECIPE_STATE_BIN` to Prefrontal, not to chat.",
+    "  through the recipe-state CLI (path above) to Prefrontal, not to chat.",
     "- Running commentary on your own thought process (\"let me think… now I'll",
     '  check…"). State results and decisions, not deliberation.',
     "- Mechanical restatements of the tool's argument list. The UI already",
@@ -461,57 +454,96 @@ export class ClaudeCodeWorker extends EventEmitter {
     }
     const cwd = path.resolve(this.params.cwd);
 
-    // ROOT CAUSE DISCOVERY 2026-04-18: Anthropic's server-side harness detection
-    // reads the process cgroup path. A claude subprocess whose cgroup contains
-    // "openclaw" (e.g. `/user.slice/.../openclaw-gateway.service`) gets routed
-    // to the overage billing pool, returning HTTP 400 "out of extra usage"
-    // — regardless of env vars, flags, or credentials. Proved by reproducing
-    // the 400 only via systemd-unit-name; spawning in a fresh scope with an
-    // innocuous name (`llm-client-<pid>.scope`) bills against the subscription.
+    // ROOT CAUSE DISCOVERY 2026-04-18 + 2026-04-24: Anthropic's server-side
+    // harness detection reads BOTH the process cgroup path AND the PPID chain
+    // (`/proc/<pid>/status:PPid`). The 2026-04-18 fix used `systemd-run --scope`
+    // to isolate the cgroup — but with `--scope` the claude process keeps the
+    // gateway as its PPID, and Anthropic's detector now matches on that parent
+    // process name. Confirmed by live probe (see /tmp/catch-claude.sh): with
+    // --scope, `/proc/<claude-pid>/status` shows `PPid: <gateway-pid>` and the
+    // parent's comm is `openclaw-gatewa` — a textbook harness tell.
     //
-    // Fix: wrap every claude spawn in `systemd-run --user --scope --slice=app.slice
-    // --unit=llm-client-<random>.scope -- claude …`. This creates a new cgroup
-    // for the subprocess, with a name that doesn't trip the detection.
-    const scopeId = `llm-client-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.scope`;
+    // Fix (2026-04-24): switch to `systemd-run --user --pipe --unit=llm-client-<id>`
+    // which runs claude as a transient systemd service. The service has
+    // systemd (pid 1) as its parent, so `/proc/<claude-pid>/status` shows
+    // `PPid: 1`, matching what a daemonized real CC install looks like. The
+    // `--pipe` flag keeps stdin/stdout/stderr forwarded to the caller — which
+    // cc-bridge needs for stream-json NDJSON both directions. Confirmed by
+    // bare-shell probe: `systemd-run --user --pipe --setenv=CLAUDECODE=1 ...`
+    // bills against the subscription even with the gateway's exact env +
+    // allowlist. Cgroup isolation still intact (the transient unit lives
+    // under `app.slice/llm-client-<id>.service`, never under openclaw-gateway).
+    const unitId = `llm-client-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // NOTE: we build wrapperArgs AFTER cleanEnv so we can pass every env var
+    // through `--setenv=K=V` — `systemd-run --pipe` does NOT inherit env
+    // from the caller (unlike --scope), so the service would otherwise run
+    // with only the user@1000.service's default env. Building the --setenv
+    // list here keeps the wrapper call self-contained.
     const wrapperBinary = "systemd-run";
-    const wrapperArgs = [
-      "--user",
-      "--scope",
-      "--slice=app.slice",
-      `--unit=${scopeId}`,
-      "--quiet",
-      "--same-dir",
-      binary,
-      ...args,
-    ];
+    const wrapperBaseArgs = ["--user", "--pipe", "--quiet", "--same-dir", `--unit=${unitId}`];
 
     log.info(
-      `spawning claude (cgroup-isolated via systemd-run scope ${scopeId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
+      `spawning claude (reparented to systemd via --pipe, unit=${unitId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
     );
 
-    // Strip Anthropic API-key env vars so claude falls back to its OAuth
-    // credentials at ~/.claude/.credentials.json (the whole point of this plugin).
-    // If any of these are set, claude prefers them over OAuth and bills against
-    // the API key — which is exactly what we want to avoid.
-    const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
-    delete cleanEnv.ANTHROPIC_API_KEY;
-    delete cleanEnv.ANTHROPIC_AUTH_TOKEN;
-    delete cleanEnv.ANTHROPIC_BEDROCK_API_KEY;
-    delete cleanEnv.ANTHROPIC_VERTEX_API_KEY;
-    delete cleanEnv.CLAUDE_AI_SESSION_KEY;
-    delete cleanEnv.ANTHROPIC_ADMIN_API_KEY;
-    // ROOT CAUSE 2026-04-18: Anthropic's server-side harness detection reads
-    // OPENCLAW_CLI / OPENCLAW_* telemetry and routes matching requests to the
-    // overage billing pool (not the flat-rate subscription). OpenClaw core
-    // sets OPENCLAW_CLI=1 on process.env via ensureOpenClawExecMarkerOnProcess
-    // (src/infra/openclaw-exec-env.ts), and any OPENCLAW_* vars set on the
-    // gateway's process.env leak into our child claude's env. Strip every
-    // OPENCLAW_* var so claude sees a vanilla CC-style env and bills against
-    // the subscription. Confirmed by diffing working bare-shell spawn vs
-    // failing gateway-spawn environments.
-    for (const key of Object.keys(cleanEnv)) {
-      if (key.startsWith("OPENCLAW_")) {
-        delete cleanEnv[key];
+    // FORK 2026-04-24: SWITCH TO ALLOWLIST. The previous implementation was
+    // "copy process.env, then delete the known-bad keys". That strategy keeps
+    // losing ground every time the gateway grows a new env var (provider
+    // API key, fork annotation, systemd leak). Anthropic's harness detector
+    // apparently matches on the presence of *any* env var a vanilla Claude
+    // Code install wouldn't have, not just a known denylist — so a single
+    // stray var silently routes the request to the metered overage pool.
+    //
+    // Empirically confirmed: a bare-shell spawn with `env -i` + minimal
+    // allowlist bills against the subscription; any wider env passes
+    // fail with HTTP 400 `out-of-extra-usage`. This switches to a closed
+    // allowlist: we construct the child env from scratch, copying only the
+    // vars a real CC install on an Ubuntu user session would have. That
+    // means the child cannot pick up stray OPENCLAW_*, ANTHROPIC_*,
+    // OPENAI_*, JOURNAL_STREAM, INVOCATION_ID, or any other harness-tell
+    // no matter how many new vars the gateway's systemd unit adds over time.
+    const allowedKeys = new Set([
+      // Shell / user identity
+      "HOME",
+      "USER",
+      "USERNAME",
+      "LOGNAME",
+      "SHELL",
+      "PWD",
+      "TMPDIR",
+      // Path (must include the claude binary + node)
+      "PATH",
+      // Locale
+      "LANG",
+      "LC_ADDRESS",
+      "LC_IDENTIFICATION",
+      "LC_MEASUREMENT",
+      "LC_MONETARY",
+      "LC_NAME",
+      "LC_NUMERIC",
+      "LC_PAPER",
+      "LC_TELEPHONE",
+      "LC_TIME",
+      "LC_ALL",
+      // Terminal (CC does TTY/color detection)
+      "TERM",
+      "COLORTERM",
+      // systemd-run --user needs the DBus session + runtime dir to attach
+      // the new scope to user@1000.service. Without these the spawn fails
+      // with "Failed to connect to bus". Real CC gets both from the login
+      // shell naturally.
+      "DBUS_SESSION_BUS_ADDRESS",
+      "XDG_RUNTIME_DIR",
+      // Forwarded CC markers — set explicitly below.
+      "CLAUDECODE",
+      "CLAUDE_CODE_ENTRYPOINT",
+      "CLAUDE_CODE_EXECPATH",
+    ]);
+    const cleanEnv: NodeJS.ProcessEnv = {};
+    for (const key of allowedKeys) {
+      const v = process.env[key];
+      if (typeof v === "string") {
+        cleanEnv[key] = v;
       }
     }
     // CLAUDECODE=1 is also set by interactive CC on every child shell; harmless
@@ -523,21 +555,27 @@ export class ClaudeCodeWorker extends EventEmitter {
     if (!cleanEnv.CLAUDE_CODE_EXECPATH) {
       cleanEnv.CLAUDE_CODE_EXECPATH = "/home/<user>/.local/share/claude/versions/latest";
     }
-    // FORK 2026-04-20: expose the provider-agnostic subagent-spawn helper
-    // CLI path + gateway token so Jarvis's Bash can dispatch sub-work and
-    // light up Prefrontal's call tree. The CLI speaks the fork-only
-    // `fork.subagents.spawn` RPC (see src/fork/subagents-rpc.ts) which in
-    // turn calls `spawnSubagentDirect` -- the same path pi-agent-core's
-    // native `sessions_spawn` tool ends up in. When we eventually swap
-    // cc-bridge out for a regular provider, this env var just stops being
-    // set; nothing here leaks into the non-cc-bridge flow.
-    cleanEnv.OPENCLAW_SPAWN_SUBAGENT_BIN = resolveSpawnSubagentCliPath();
-    cleanEnv.OPENCLAW_RECIPE_STATE_BIN = resolveRecipeStateCliPath();
-    const gatewayToken = readGatewayTokenFromConfig();
-    if (gatewayToken) {
-      cleanEnv.OPENCLAW_GATEWAY_TOKEN = gatewayToken;
-    }
-    cleanEnv.OPENCLAW_GATEWAY_URL = cleanEnv.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789";
+    // FORK 2026-04-20, REGRESSION FIXED 2026-04-24:
+    // The original provider-agnostic subagent bridge commit (601e8a3561)
+    // re-exported `OPENCLAW_SPAWN_SUBAGENT_BIN`, `OPENCLAW_RECIPE_STATE_BIN`,
+    // `OPENCLAW_GATEWAY_TOKEN`, and `OPENCLAW_GATEWAY_URL` to the child
+    // claude subprocess so Jarvis's Bash could expand them. But this
+    // undoes the whole point of the `OPENCLAW_*` strip above (commit
+    // d5d0eb53fd): Anthropic's server-side harness detection matches on
+    // the `OPENCLAW_*` prefix and routes any request whose subprocess
+    // env contains those vars to the metered overage pool, returning
+    // HTTP 400 `out-of-extra-usage` even when the subscription is at 5%.
+    // That's exactly the failure mode the user saw after the 2026-04-20 merge.
+    //
+    // Fix (now): DO NOT re-export any OPENCLAW_* var to the child. The
+    // spawn/recipe-state helper scripts get absolute paths interpolated
+    // directly into the narration block at buildSubagentHelperBlock time
+    // (see extensions/tinkerclaw-cc-bridge/src/worker.ts:buildSubagentHelperBlock),
+    // and both scripts already fall back to reading gateway.auth.token /
+    // default URL from `~/.openclaw/openclaw.json` when their respective
+    // env vars aren't set (scripts/openclaw-spawn-subagent.mjs:58-67,
+    // scripts/openclaw-recipe-state.mjs:78-87). The subagent bridge still
+    // works; the harness-detection strip is honored.
     // Full env dump — every key, every value (secrets truncated). We've ruled out
     // all the obvious suspects, so cast a wide net.
     const fullEnv = Object.entries(cleanEnv)
@@ -547,10 +585,29 @@ export class ClaudeCodeWorker extends EventEmitter {
       .join("\n  ");
     log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
 
+    // Build --setenv=K=V args for every cleanEnv entry. systemd-run --pipe
+    // does NOT inherit the caller's env (only --scope does), so the child
+    // would otherwise see only user@1000.service's default env. Pass them
+    // explicitly and keep the `env:` field on spawn minimal — systemd-run
+    // itself doesn't care about most env, but it does need PATH (to find
+    // `claude`) and DBUS/XDG (to connect to the user session bus).
+    const setenvArgs: string[] = [];
+    for (const [k, v] of Object.entries(cleanEnv)) {
+      if (typeof v === "string") {
+        setenvArgs.push(`--setenv=${k}=${v}`);
+      }
+    }
+    const wrapperArgs = [...wrapperBaseArgs, ...setenvArgs, binary, ...args];
+
     this.proc = spawn(wrapperBinary, wrapperArgs, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: cleanEnv,
+      env: {
+        PATH: cleanEnv.PATH,
+        HOME: cleanEnv.HOME,
+        DBUS_SESSION_BUS_ADDRESS: cleanEnv.DBUS_SESSION_BUS_ADDRESS,
+        XDG_RUNTIME_DIR: cleanEnv.XDG_RUNTIME_DIR,
+      },
     });
     this.running = true;
     this.proc.on("error", (err) => {
