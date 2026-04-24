@@ -5258,7 +5258,13 @@ function updateSessionsPanel() {
           row.style.opacity = "0.3";
         }
         try {
-          await req("sessions.delete", { key });
+          // FORK (2026-04-24): soft delete — archive transcript on disk
+          // instead of wiping it. The UI still treats the session as gone
+          // (list refreshes, affected tab closes), but on the next sessions
+          // mutation the transcript survives at `sessions-archive/` so we
+          // can recover if the click was a misfire or if an in-flight turn
+          // was still writing its answer.
+          await req("sessions.delete", { key, deleteTranscript: false });
           // Close any tab that was using this session
           const affectedTab = tabs.find((t) => t.sessionKey === key);
           if (affectedTab && affectedTab.id !== "tab-main") {
@@ -5886,7 +5892,10 @@ function init() {
     if (delBtn) {
       const key = delBtn.dataset.key!;
       if (key && confirm(`Delete session "${key}"?`)) {
-        req("sessions.delete", { key })
+        // FORK (2026-04-24): same soft-delete semantics as the session
+        // panel × button. Transcript goes to sessions-archive/ instead
+        // of being wiped.
+        req("sessions.delete", { key, deleteTranscript: false })
           .then(() => renderAltView("sessions"))
           .catch(() => {});
       }
