@@ -75,7 +75,7 @@ export function mountPrefrontalGraph(
       const icon = icons[item.provider] || "";
 
       html += `<div class="${cls}" style="${style}" data-hint="${esc(item.id)}">`;
-      if (icon) html += `<span class="prefrontal-pill-icon">${icon}</span>`;
+      if (icon) {html += `<span class="prefrontal-pill-icon">${icon}</span>`;}
       html += `<span class="prefrontal-pill-model">${esc(item.modelName)}</span>`;
       if (item.authLabel) {
         html += `<span class="prefrontal-pill-sep">\u00b7</span>`;

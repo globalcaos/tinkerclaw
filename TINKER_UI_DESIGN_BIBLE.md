@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-03 (Error badges, rate limit headers, orange shimmer unification, exploration gate fix, FORK_SETUP.md, 23 commits)
+> Last updated: 2026-04-20 (PM session: cc-bridge tool-choice block, fractal-prompt rewrite per Anthropic rules, IDENTITY.md filled, wind-down + memory-consolidation reactivated, 04:00 cron pipeline chain + md-file-only policy, BRIEFING.md anchored-facts philosophy shift, knowledge INDEX.md orphan cleanup, jobs.json live↔tracked symlink, /clear is now a pure client transaction — no LLM call)
 
 ---
 
@@ -22,16 +22,16 @@ Tinker UI is the fork's **standalone command center** — a completely separate 
 ```
 tinker-ui/              ← Fork-only, zero merge risk
 ├── src/
-│   ├── app.ts          ← Entire frontend (~5900+ lines)
-│   ├── styles/base.css ← All styles (~510 lines)
+│   ├── app.ts          ← Entire frontend (~7600 lines)
+│   ├── styles/base.css ← All styles (~3270 lines)
 │   ├── styles/*.jpg/png ← Natural textures (bark, moss, marble, earth, wood, sandpaper)
 │   └── panels/
-│       ├── context-timeline.ts   (772 lines)
-│       ├── context-treemap.ts    (1038 lines)
-│       ├── response-treemap.ts   (703 lines)
-│       ├── prefrontal-graph.ts   (541 lines, legacy pill panel)
-│       ├── prefrontal-tree.ts   (compact call tree — new)
-│       └── provider-logos.ts    (SVG logos + color maps — new)
+│       ├── context-timeline.ts   (~980 lines)
+│       ├── context-treemap.ts    (~1160 lines)
+│       ├── response-treemap.ts   (~700 lines)
+│       ├── prefrontal-graph.ts   (~130 lines, legacy pill panel — largely unused)
+│       ├── prefrontal-tree.ts    (~210 lines, compact call tree)
+│       └── provider-logos.ts     (~40 lines — SVG logos + color maps)
 ├── index.html
 ├── package.json
 └── vite.config.ts
@@ -53,11 +53,11 @@ extensions/hippocampus/ ← Fork-only plugin stub
 
 ### Communication with Gateway
 
-| Channel                         | Purpose                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------- |
-| WebSocket `/api/events`         | Lifecycle events, chat deltas, fallback errors, tool events, **context-anatomy push** |
-| RPC `req(method, params)`       | Chat, history, session mgmt, anatomy data, forensic, overseer                         |
-| REST `/api/context-anatomy/:sk` | Context token breakdown per turn (fallback polling)                                   |
+| Channel                         | Purpose                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
+| WebSocket `/api/events`         | Lifecycle events, chat deltas, fallback errors, tool events, **context-anatomy push**      |
+| RPC `req(method, params)`       | Chat, history, session mgmt, anatomy data, forensic, prefrontal, `config.openExternalFile` |
+| REST `/api/context-anatomy/:sk` | Context token breakdown per turn (fallback polling)                                        |
 
 ---
 
@@ -73,7 +73,7 @@ extensions/hippocampus/ ← Fork-only plugin stub
 │────│                             │ ├──────────────┤ │
 │ 📊 │  — OR —                     │ │Models [S/All]│ │
 │ 🔗 │                             │ ├──────────────┤ │
-│ 📄 │ Alt View (full-width tab    │ │Overseer Pills│ │
+│ 📄 │ Alt View (full-width tab    │ │Prefrontal    │ │
 │ 📈 │  content when non-chat tab  │ └──────────────┘ │
 │ ⏰ │  selected)                  ├──────────────────┤
 │────│                             │                  │
@@ -172,7 +172,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
   - Assistant bubbles: `marble-assistant.jpg` on `#5a4a3a` (warm brown)
   - Input bar: `moss-input.jpg` on `#4B5338`
   - Right panels: `wood-panel.jpg` on `#6B5545`
-  - Overseer graph: `wood-panel.jpg` on `#4E3B31` with multiply blend (darker variant)
+  - Prefrontal graph: `wood-panel.jpg` on `#4E3B31` with multiply blend (darker variant)
   - Timeline / bottom-right: `bark-timeline.jpg` on `#4E3B31`
   - Thinking messages: `earth-thinking.jpg` (opacity 0.10)
   - Treemap footer: `bark-timeline.jpg` on `#4E3B31`
@@ -493,7 +493,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** Compact call tree showing the Prefrontal orchestration agent (Opus) at root, with worker subagents as child nodes. Each node = one row: provider logo → model name → task label → progress bar/stall indicator. Hidden when no subagents active (no idle state).
 - **Data source:** WebSocket `prefrontal-tree` events pushed by `extensions/prefrontal/` extension. Extension hooks into `subagent_spawned`, `subagent_ended`, `llm_output`, `tool_call` lifecycle events. Also pollable via `GET /api/prefrontal/tree`.
 - **Node states:** Running (provider-colored progress bar), stalled (red border + "STALLED Xm"), completed (dimmed 50% + checkmark), failed (dimmed)
-- **Progress:** Thin 3px bar, colored by provider. Percentage from Overseer's Sonnet-generated summary parsing.
+- **Progress:** Thin 3px bar, colored by provider. Percentage from Prefrontal's Sonnet-generated summary parsing.
 - **Session/All toggle:** Filter to current session's tree or show all active sessions.
 - **Provider logos:** Anthropic A-mark (`#d4a574`), Google 4-color dot, OpenAI circle, Ollama llama. Defined in `provider-logos.ts`. Fixes the Gemini-shows-Anthropic-logo bug.
 - **CSS:** `.pf-tree-panel`, `.pf-node`, `.pf-root`, `.pf-child`, `.pf-connector`, `.pf-logo`, `.pf-model`, `.pf-label`, `.pf-progress-bar`, `.pf-stall`, `.pf-completed`
@@ -518,7 +518,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Error lookup chain:** `providerErrors.get(keyId)` → `providerErrors.get(modelId)` (NO bare provider fallback)
 - **Health poll:** 60s interval checks `provider.health`, auto-clears error badges (provider-level, per-profile `provider:*`, and per-model `provider/*` keys)
 - **Provider icons:** Inline SVGs (14px) for anthropic, google, openai, ollama, meta, mistral, deepseek
-- **Triggers overseer sync:** `updateBudgetPanel()` calls `updateOverseerPanel()` at the end
+- **Triggers prefrontal sync:** `updateBudgetPanel()` calls the prefrontal panel updater at the end (`updateOverseerPanel` was renamed to `updatePrefrontalTree`/`updatePrefrontalPanel` in the 2026-04-01 rename; historical references here reflect the pre-rename function name).
 - **Files:** `app.ts` (`updateBudgetPanel()`, `renderAuthKeyRows()`, `renderModelRow()`, `renderAuthKeyRow()`, `modelPerfRank()`), `base.css`
 
 ### 5.22 Token Usage Tracker (Inline Bars)
@@ -718,7 +718,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **loadChat guard:** Captures `sessionKey` at start. If tab changed during async, writes to TabState map (not globals). `loadSessions()` no longer calls `loadChat()` — only on initial connect and explicit switches.
 - **createTab:** Eagerly assigns `tinker:xxx` key with `isAttached: true` + fresh TabState. Sessions panel shows tab immediately.
 - **/new handler:** Resets current tab in place (new `tinker:xxx` key, fresh TabState). Never switches to main.
-- **Right panel reorder:** Sessions → Models → Overseer (was Models → Sessions → Overseer)
+- **Right panel reorder:** Sessions → Models → Prefrontal (was Models → Sessions → Prefrontal)
 - **Session/All scope toggle:** `budgetScope` global ("session"|"all"), toggle buttons in Models header, `getAuthKeyCounts()` filters by scope. CSS: `.scope-toggle`, `.scope-btn`, `.scope-btn-active`
 - **Sessions panel improvements:** `classifySession` recognizes `:tinker:` as "pinned", `renderSessionRow` uses tab titles for tinker sessions and main tab title for main session, unattached tabs injected as synthetic entries, `updateSessionsPanel()` called after title generation and run completion
 - **Queued message indicator:** Messages sent while current session has active run get `_queued: true`. Rendered with dashed border + "queued" badge (`.msg-queued`, `.queued-badge`). Un-queued on delta/final when LLM absorbs via steer.
@@ -741,7 +741,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 ### 5.29 Collapsible Right Panel Sections (2026-03-14)
 
 - **Status:** `DEPLOYED`
-- **What:** Sessions, Models, and Overseer right panel sections are individually collapsible. Click header to toggle. Arrow indicator (▾/▸) rotates. State persists in localStorage (`tinker-collapsed-panels`).
+- **What:** Sessions, Models, and Prefrontal right panel sections are individually collapsible. Click header to toggle. Arrow indicator (▾/▸) rotates. State persists in localStorage (`tinker-collapsed-panels`).
 - **Architecture:** `data-rpanel` / `data-rpanel-toggle` attributes on panel/header elements. Delegated click handler on `.right-panels`. Guards against collapsing when clicking interactive children (scope toggle, refresh button). CSS: `.rpanel-collapsed .rpanel-body{display:none}`, `.rpanel-arrow` for indicator.
 - **Files:** `app.ts`, `base.css`
 
@@ -761,7 +761,9 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
   - `responseThinking` (cyan `#06b6d4`) — thinking/reasoning tokens
   - `responseText` (emerald `#10b981`) — text output tokens
   - `responseToolCalls` (amber `#f59e0b`) — tool call input tokens
-- **Data captured:** `responseThinkingTokens`, `responseTextTokens`, `responseToolCallTokens`, `cacheReadTokens`, `cacheCreationTokens` — estimated from char counts during streaming (chars / 3.5)
+- **Data captured:** `responseThinkingTokens`, `responseTextTokens`, `responseToolCallTokens`, `cacheReadTokens`, `cacheCreationTokens` — estimated from char counts during streaming (chars / 3.5).
+- **Table name:** SQLite table is `anatomy_events` (user_version=3), with `id / session_key / run_id / turn / round_number / timestamp_ms / provider / model / auth_profile_id / duration_ms / stop_reason / compaction_cycle / context_sent / context_window / tools_triggered / topics / topic_transition / memories_injected / response_tokens / response_thinking_tokens / response_text_tokens / response_tool_call_tokens / cache_read_tokens / cache_creation_tokens / response_content / user_message / assistant_response`. (Earlier drafts of this bible referred to a `context_anatomy` table — that's incorrect; there is no such table.)
+- **Known gap (2026-04-20):** the 4 response-breakdown columns (`response_thinking_tokens`, `response_text_tokens`, `response_tool_call_tokens`, and `duration_ms`) are null on every row in the DB (both historic anthropic turns and the new cc-bridge turns). The subscribe-side capture from §5.31 hasn't survived some merge — needs a separate investigation pass.
 - **REST API:** `GET /api/context-anatomy/recent?hours=48&limit=500` serves cross-session feed (hours max 8760, limit max 2000). Existing `/{sessionKey}` endpoint reads from SQLite.
 - **Zlib compression (2026-03-26):** JSON columns (`context_sent`, `context_window`, `tools_triggered`, `topics`, `topic_transition`, `memories_injected`) are zlib-compressed before storage (~60-70% size reduction). Read path handles both compressed BLOBs (new rows) and plain-text JSON (legacy rows) transparently via `decompressJson()`. At ~1-1.5 MB/day compressed, 45 GB free disk = ~80+ years.
 - **No pruning (2026-03-26):** Removed 24h auto-prune. Data kept indefinitely. `updateAnatomyResponse` fallback INSERT (which created orphan empty-key rows with `session_key=''`, `turn=0`) also removed — response-only stubs without context data are not useful for the timeline.
@@ -883,7 +885,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 
 - **Status:** `DEPLOYED`
 - **What:** When `budgetScope="session"`, subagent runs (spawned from current session) were filtered out of `getAuthKeyCounts()` because their sessionKey (`:subagent:...`) didn't match the main session via `sessionKeyMatches()`. Model rows didn't glow and collapsed panels didn't show active subagent models.
-- **Fix:** Added `!info.sessionKey.includes(":subagent:")` guard to the session filter in `getAuthKeyCounts()`. Subagent runs always count toward glow regardless of scope toggle. Overseer panel already showed them (no filter), now models panel matches.
+- **Fix:** Added `!info.sessionKey.includes(":subagent:")` guard to the session filter in `getAuthKeyCounts()`. Subagent runs always count toward glow regardless of scope toggle. Prefrontal panel already showed them (no filter), now models panel matches.
 - **Collapsed behavior preserved:** `.model-group:not(.open) > .model-group-body > .model-row:not(.model-live)` CSS rule keeps glowing rows visible when section is collapsed. The fix flows through `getAuthKeyCounts()` → `count > 0` → `.model-live` class → row stays visible.
 - **Files:** `app.ts`
 
@@ -1111,34 +1113,97 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** When a recipe is active, three visual indicators appear: (1) persistent recipe banner below topbar showing recipe name + step progress with category color, (2) thinking indicator annotation showing current step alongside model name, (3) assistant message tags showing which recipe step produced each message. Zero extra tokens — all from hook state.
 - **Files:** `extensions/tinkerclaw-prefrontal/index.ts` (prefrontal-recipe-status broadcast), `tinker-ui/src/app.ts` (banner + thinking + tags), `tinker-ui/src/styles/base.css`
 
+### 5.66 Claude-Code Provider Bridge — `tinkerclaw-cc-bridge` (2026-04-17 → 2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** Jarvis now runs on the real `claude` CLI consuming the flat-rate Claude Code subscription instead of burning Anthropic API tokens. A new OpenClaw provider plugin (`extensions/tinkerclaw-cc-bridge/`) registers provider `claude-code` and spawns a persistent `claude` subprocess per OpenClaw session with `--input-format stream-json --output-format stream-json --permission-mode bypassPermissions --disallowedTools Agent,ExitPlanMode,AskUserQuestion,TodoWrite,Task…`. The fork's tool loop stays authoritative; claude only does reasoning.
+- **System prompt:** cc-bridge worker reads `extensions/tinkerclaw-learned-intuition/amygdala-prompt.md` and `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md` at spawn time and appends them via `--append-system-prompt` so the sectioned-reply instructions live inside claude's own session rather than per-turn.
+- **Streaming:** `src/stream.ts` converts claude's cumulative `assistant` NDJSON frames into pi-ai `text_delta` / `thinking_delta` increments (`cumulative.slice(accumulatedText.length)`), with an eager `pushStart()` the instant the turn begins so the 4 thinking indicators fire during long tool-call chains.
+- **Auth:** trusts `~/.claude/.credentials.json`. Env scrub strips `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BEDROCK_API_KEY`, `ANTHROPIC_VERTEX_API_KEY`, `CLAUDE_AI_SESSION_KEY`, `ANTHROPIC_ADMIN_API_KEY` before spawn so the subscription path is the only route the subprocess can use.
+- **Lifecycle-fields fix (commit `1d66f53705`, 2026-04-20):** `handleAgentStart` was reading `ctx.params.modelId / modelProvider / authProfileId`, but those fields were never declared on `SubscribeEmbeddedPiSessionParams` nor passed from `attempt.ts`. Every lifecycle `phase:"start"` event therefore went out with `model: undefined`, and the UI filter at `app.ts:1614` (`p.data?.model`) silently dropped the event for cc-bridge — anthropic/ollama only worked because another enrichment path happened to cover the gap. Fix adds the fields to the params type and forwards them in `attempt.ts`, so all 4 thinking indicators (chat "Opus", session panel, model glow, prefrontal tree) now animate for claude-code turns.
+- **Files:** `extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/pi-embedded-subscribe.types.ts`, `src/agents/pi-embedded-runner/run/attempt.ts` (forward model/provider/profile)
+
+### 5.67 Amygdala + Fractal Injection Pipeline (2026-04-18)
+
+- **Status:** `DEPLOYED`
+- **What:** Two topbar toggle buttons (🧠 Amygdala, 🌿 Fractal — enabled by default) append short pointer instructions to every outgoing prompt so Opus emits a three-section reply: `💬 ANSWER` → `🧠 AMYGDALA` → `🌿 FRACTAL`. The sections are split client-side and rendered as three stacked bubbles: answer expanded, amygdala + fractal collapsed.
+- **Pointer-based prompt:** the injected suffix doesn't inline the full instructions. It references `amygdala-prompt.md` (Prudence + Personality ensembles diagnostic) and `fractal-prompt.md` (MEMORY/PATTERN/RIPPLE/IMPROVE + ACTION-prefix rule + SELF-HEAL layers), which are read once at cc-bridge spawn time and appended to claude's system prompt. Compact prompts, persistent behavior.
+- **User bubble:** when amygdala/fractal is enabled, the user sees only their original text; the full appended prompt collapses behind a "view full prompt" expandable (`renderUserBubbleWithPromptToggle`). When both toggles are off, nothing is appended.
+- **Section splitter:** `splitSectionedReply` accepts markers wrapped in `**`/`__` bold and/or trailing `:` — `💬 ANSWER`, `🧠 AMYGDALA` (with 🫀 fallback), `🌿 FRACTAL` (optionally `FRACTAL ACTION`). `renderSectionedReply` promotes `other` to the answer slot when Opus emits a non-sectioned response with amygdala/fractal after.
+- **Icons:** Models icon changed from 🧠 to 🕸️ (pink brain reserved for amygdala). Icon glyphs: `🧠` amygdala, `🌿` fractal.
+- **Files:** `tinker-ui/src/app.ts` (`buildInjectedPrompt`, `loadInjectToggles`, `renderUserBubbleWithPromptToggle`, `splitSectionedReply`, `renderSectionedReply`), `tinker-ui/src/styles/base.css` (msg-amygdala, msg-user-with-prompt styles), `extensions/tinkerclaw-learned-intuition/amygdala-prompt.md`, `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`
+
+### 5.68 Clickable Filesystem Path Links (2026-04-19)
+
+- **Status:** `DEPLOYED`
+- **What:** Any absolute path or `~/...` path rendered in a message (including the injected instruction suffix) becomes a `<code class="fs-link">` element. Clicking opens the file in the system's default viewer (markdown reader for `.md`, code editor for `.ts`, etc.) via a new `config.openExternalFile` RPC that shells out to `xdg-open` / `open` / `Start-Process` depending on platform.
+- **Why:** section 2 and 3 of every reply reference the pointer `.md` files — users need one-click access without leaving the chat.
+- **Files:** `tinker-ui/src/app.ts` (`md()` post-processor wraps paths, global click delegate calls `config.openExternalFile`), `src/gateway/server-methods/config.ts` (new RPC with path allowlisting + cross-platform spawn), CSS `code.fs-link` states: `idle`, `opening`, `opened`, `error`.
+
+### 5.69 Envelope Error Rendering — `__ERR_ENV__:` (2026-04-19)
+
+- **Status:** `DEPLOYED`
+- **What:** Provider errors (400 auth, 429 rate, 500 overload, 401 subscription-exhausted, etc.) are emitted as a single assistant text payload `__ERR_ENV__:{...JSON envelope}`. The UI detects the sentinel with a brace-matched parser and renders a red/orange bubble with one stable icon per category (💳 subscription, 💸 billing, 🔐 auth, 🚦 rate_limit, 🌊 overload, 📡 network, ⏱️ timeout, 🔄 lane_busy, ⏳ reply_run_already_active, 🫥 incomplete_turn, 🔧 tool_error, 🧹 compaction_error, ⚠️ generic) and the full error detail (raw message, provider, model, duration, classification). Fatal=red, recoverable=orange.
+- **cc-bridge integration:** on claude subprocess error or non-zero result, `stream.ts` RESETS accumulated text and emits the envelope as the sole final message — no markdown-emphasis-strip risk from the `__ERR_ENV__` underscores.
+- **Files:** `src/fork/error-envelope.ts` (classifier + icon table + builder), `extensions/tinkerclaw-cc-bridge/src/stream.ts` (envelope emission paths), `tinker-ui/src/app.ts` (`extractEnvelope`, `renderEnvelopeBubble`), `tinker-ui/src/styles/base.css` (envelope-fatal, envelope-recoverable).
+
+### 5.70 Stale ReplyRunRegistry Force-Clear (2026-04-19)
+
+- **Status:** `DEPLOYED`
+- **What:** When a previous run crashed mid-stream the registry could be left holding a stale entry — the next prompt hit `ReplyRunAlreadyActiveError` and the UI displayed "⚠️ Previous run is still shutting down." Fix: in `createReplyOperation`, detect stale entries (phase completed/failed/aborted OR no attached backend OR backend not streaming) and force-delete them before claiming the slot.
+- **Files:** `src/auto-reply/reply/reply-run-registry.ts` (stale-entry sweep in `createReplyOperation`).
+
+### 5.71 Tinker Probe — CLI Test Harness (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** `scripts/tinker-probe.mjs` is a standalone WS client that simulates the Tinker webchat so the agent loop can verify the UI contract without opening a browser. It:
+  - authenticates as `webchat-ui` with the gateway token (auto-read from `~/.openclaw/openclaw.json`) and `Origin: http://127.0.0.1:18790`,
+  - sends a `chat.send` to any sessionKey (default `agent:main:main`),
+  - captures `lifecycle` (phase/model/provider/authProfileId), `assistant` (text deltas), `reasoning`, `tool_event`, and `fallback` events,
+  - writes every inbound/outbound frame to `/tmp/tinker-probe.ndjson` for deep inspection,
+  - polls `~/.openclaw/data/anatomy-timeline.db` after the turn and reports `total / newThisTurn / last row` so timeline-write regressions are caught immediately,
+  - prints indicator predictions for all 4 thinking indicators (chat Opus, session panel, model glow, prefrontal tree).
+- **Usage:** `node scripts/tinker-probe.mjs --prompt "..." --timeout 120 --raw /tmp/tinker-probe.ndjson`
+- **Companion:** `scripts/db-probe.mjs` — static DB shape dump (schema, provider counts, recent rows, per-provider last 5). Used during triage.
+- **Files:** `scripts/tinker-probe.mjs`, `scripts/db-probe.mjs`.
+
+### 5.72 `onTurnComplete` Re-Wiring — Timeline DB Back Online (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** The `anatomy-timeline.db` ingestion path went dark from 2026-04-15 → 2026-04-20 because the 309-commit upstream merge (`378684e4f5`) stripped the fork's `attempt-hooks` call site out of `attempt.ts`, and the `jarvis-working` baseline branch was created from `4a6a289d5a` — before the last auto-wiring commit (`d941184bad`) could re-apply it. Result: zero rows inserted for any provider for 5 days, even as turns completed successfully and the UI looked healthy.
+- **Fix:** re-import `onTurnComplete` from `src/fork/attempt-hooks.js` and invoke it fire-and-forget right after the `llm_output` hook block, before `buildAttemptReplayMetadata`. This single call writes the anatomy row, triggers forensic dump, and does post-turn bookkeeping — persona injection / mid-context reinject / intercept-text-tool-call were intentionally NOT restored (cc-bridge bypasses them; they're only needed for local ollama/lmstudio/vllm).
+- **Verification:** `tinker-probe` post-turn shows `timeline-db: total=4519 newThisTurn=1, last row provider=claude-code model=claude-opus-4-7`.
+- **Known gap:** `response_thinking_tokens` / `response_text_tokens` / `response_tool_call_tokens` are still null — these columns have been null across all 4518 historic rows, so the capture-side wiring in `pi-embedded-subscribe` + `attempt-hooks.updateAnatomyResponse` needs a separate pass (tracked, not fixed here).
+- **Files:** `src/agents/pi-embedded-runner/run/attempt.ts` (import + call site, commit `7eccc0fe6d`).
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.
 
-| File                               | Patch                                                                                | Auto-applied                     | Guardian Check                                            |
-| ---------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------- | --------------------------------------------------------- |
-| `server-chat.ts`                   | Enrich lifecycle with `model`/`modelProvider`                                        | Yes (`apply-fork-wiring.mjs`)    | `resolveSessionModelRef`                                  |
-| `run.ts`                           | 6x `emitAgentEvent` for `fallback-profile-error`                                     | Yes                              | `fallback-profile-error`                                  |
-| `model-fallback.ts`                | `onError` callback for provider-level cooldown skips                                 | Yes                              | `onError`                                                 |
-| `followup-runner.ts`               | `failedProfileId` extraction + `onError` for `fallback-error`                        | Yes                              | `failedProfileId`                                         |
-| `agent-runner-execution.ts`        | Same as followup-runner                                                              | Yes                              | `failedProfileId`                                         |
-| `attempt.ts`                       | Pass `authProfileId` through lifecycle events                                        | Yes                              | `authProfileId`                                           |
-| `sessions.ts`                      | "Allow webchat delete" bypass                                                        | Yes (`patchSessions()`)          | `Allow webchat delete`                                    |
-| `tsdown.config.ts`                 | `external: ["better-sqlite3", "bindings"]` on all 8 entries                          | Yes (`patchTsdownConfig()`)      | `external`                                                |
-| `get-reply-run.ts`                 | `import { getSessionResetPrompt }`                                                   | Yes                              | `session-reset-prompt`                                    |
-| `config-state.ts`                  | `"tinker"` in `BUNDLED_ENABLED_BY_DEFAULT`                                           | Manual                           | `tinker` in config-state                                  |
-| `extensions/tinker/index.ts`       | `/tinker/api/file-read` endpoint                                                     | Fork-only (no merge risk)        | —                                                         |
-| `extensions/budget-panel/index.ts` | `writeCredentialFile` + `resolveCredentialFilePath` (generic)                        | Fork-only (no merge risk)        | `writeCredentialFile`                                     |
-| `credential-file.ts`               | Generic credential file I/O + Anthropic OAuth refresh                                | Fork-only (no merge risk)        | `resolveCredentialFilePath`, `refreshAnthropicOAuthToken` |
-| ~~`proactive-refresh.ts`~~         | ~~Proactive OAuth refresh~~ REMOVED (2026-04-06) — upstream native `claude-cli` auth | —                                | —                                                         |
-| `get-reply.ts`                     | `clearSessionResume` moved after `runPreparedReply`                                  | Manual                           | `clearSessionResume` after `runPreparedReply`             |
-| `server-startup.ts`                | Session resume via `agentCommand` (not heartbeat)                                    | Manual                           | `agentCommand` in server-startup                          |
-| `context-anatomy-db.ts`            | SQLite persistence for timeline (replaces JSONL)                                     | Fork-only (no merge risk)        | `anatomy-timeline.db`                                     |
-| `context-anatomy.ts`               | Extended `ContextAnatomyEvent` type + JSONL functions removed                        | Yes (type may need re-extension) | `responseThinkingTokens`                                  |
-| `attempt-hooks.ts`                 | `insertAnatomyEvent` + `updateAnatomyResponse` calls                                 | Yes (write path may revert)      | `insertAnatomyEvent`                                      |
-| `pi-embedded-subscribe.ts`         | `responseBreakdown` char counters                                                    | Yes (state may revert)           | `responseBreakdown`                                       |
+| File                               | Patch                                                                                | Auto-applied                                                                                                                                                                   | Guardian Check                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `server-chat.ts`                   | Enrich lifecycle with `model`/`modelProvider`                                        | Yes (`apply-fork-wiring.mjs`)                                                                                                                                                  | `resolveSessionModelRef`                                  |
+| `run.ts`                           | 6x `emitAgentEvent` for `fallback-profile-error`                                     | Yes                                                                                                                                                                            | `fallback-profile-error`                                  |
+| `model-fallback.ts`                | `onError` callback for provider-level cooldown skips                                 | Yes                                                                                                                                                                            | `onError`                                                 |
+| `followup-runner.ts`               | `failedProfileId` extraction + `onError` for `fallback-error`                        | Yes                                                                                                                                                                            | `failedProfileId`                                         |
+| `agent-runner-execution.ts`        | Same as followup-runner                                                              | Yes                                                                                                                                                                            | `failedProfileId`                                         |
+| `attempt.ts`                       | Pass `authProfileId` through lifecycle events                                        | Yes                                                                                                                                                                            | `authProfileId`                                           |
+| `sessions.ts`                      | "Allow webchat delete" bypass                                                        | Yes (`patchSessions()`)                                                                                                                                                        | `Allow webchat delete`                                    |
+| `tsdown.config.ts`                 | `external: ["better-sqlite3", "bindings"]` on all 8 entries                          | Yes (`patchTsdownConfig()`)                                                                                                                                                    | `external`                                                |
+| `get-reply-run.ts`                 | `import { getSessionResetPrompt }`                                                   | Yes                                                                                                                                                                            | `session-reset-prompt`                                    |
+| `config-state.ts`                  | `"tinker"` in `BUNDLED_ENABLED_BY_DEFAULT`                                           | Manual                                                                                                                                                                         | `tinker` in config-state                                  |
+| `extensions/tinker/index.ts`       | `/tinker/api/file-read` endpoint                                                     | Fork-only (no merge risk)                                                                                                                                                      | —                                                         |
+| `extensions/budget-panel/index.ts` | `writeCredentialFile` + `resolveCredentialFilePath` (generic)                        | Fork-only (no merge risk)                                                                                                                                                      | `writeCredentialFile`                                     |
+| `credential-file.ts`               | Generic credential file I/O + Anthropic OAuth refresh                                | Fork-only (no merge risk)                                                                                                                                                      | `resolveCredentialFilePath`, `refreshAnthropicOAuthToken` |
+| ~~`proactive-refresh.ts`~~         | ~~Proactive OAuth refresh~~ REMOVED (2026-04-06) — upstream native `claude-cli` auth | —                                                                                                                                                                              | —                                                         |
+| `get-reply.ts`                     | `clearSessionResume` moved after `runPreparedReply`                                  | Manual                                                                                                                                                                         | `clearSessionResume` after `runPreparedReply`             |
+| `server-startup.ts`                | Session resume via `agentCommand` (not heartbeat)                                    | Manual                                                                                                                                                                         | `agentCommand` in server-startup                          |
+| `context-anatomy-db.ts`            | SQLite persistence for timeline (replaces JSONL)                                     | Fork-only (no merge risk)                                                                                                                                                      | `anatomy-timeline.db`                                     |
+| `context-anatomy.ts`               | Extended `ContextAnatomyEvent` type + JSONL functions removed                        | Yes (type may need re-extension)                                                                                                                                               | `responseThinkingTokens`                                  |
+| `attempt-hooks.ts` → `attempt.ts`  | `onTurnComplete` call site in `attempt.ts` (post-`llm_output` hook, fire-and-forget) | **No** — must be manually re-wired after every upstream merge of `attempt.ts` (last lost 2026-04-15, restored 2026-04-20). Guardian must check `_forkOnTurnComplete` presence. | `_forkOnTurnComplete` in attempt.ts                       |
+| `pi-embedded-subscribe.ts`         | `responseBreakdown` char counters                                                    | Yes (state may revert)                                                                                                                                                         | `responseBreakdown`                                       |
 
 ---
 
@@ -1427,7 +1492,7 @@ These are upstream files modified to support Tinker features. They require re-ap
 
 3. **Pub-sub, zero polling (where possible).** Use lifecycle events from WebSocket, not timers. Health poll (60s) is the exception — only used for error badge recovery.
 
-4. **Degrade gracefully.** If no active runs, show empty state in overseer panel. If forensic mode isn't available, hide the toggle. If anatomy API returns empty, show "No data" instead of crashing.
+4. **Degrade gracefully.** If no active runs, show empty state in prefrontal panel. If forensic mode isn't available, hide the toggle. If anatomy API returns empty, show "No data" instead of crashing.
 
 5. **Persist what matters.** Error messages to localStorage (survive refresh). Active runs to sessionStorage (survive navigation). Draft to localStorage (survive everything).
 
@@ -1477,7 +1542,7 @@ grep -r '__filename' ../dist/ --include='*.js' | grep -v node_modules  # should 
 # 7. Prefrontal tree appears when subagents spawn (correct provider logos)
 # 8. curl http://localhost:18789/api/prefrontal/tree returns JSON
 # 6. Error badges clear when provider recovers
-# 7. Overseer pills show active runs with breathing glow
+# 7. Prefrontal pills show active runs with breathing glow
 # 8. Context timeline populates after response
 ```
 
@@ -1824,6 +1889,65 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Why:** Anthropic disabled the `api.anthropic.com/api/oauth/usage` endpoint in January 2026. All budget-panel Anthropic usage data went to zero/null. Rate limit headers (`anthropic-ratelimit-unified-5h-utilization`, `7d-utilization`) are returned on every API response and contain the same utilization percentages.
 - **Pipeline:** `anthropic-vertex-stream.ts` (fetch wrapper) → `ratelimit-store.ts` (in-memory keyed by authProfileId) → `emitAgentEvent("ratelimit-update")` → Tinker UI `onEvent()` → `renderUsageBarsOnly()`
 - **Files:** `src/agents/pi-embedded-runner/anthropic-vertex-stream.ts`, `src/agents/auth-profiles/ratelimit-store.ts` (new), `src/agents/pi-embedded-runner/attempt-hooks.ts`, `tinker-ui/src/app.ts`
+
+### 11.17 cc-bridge Worker Tool-Choice Injection (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** `extensions/tinkerclaw-cc-bridge/src/worker.ts::buildToolChoiceBlock()` appends a ~60-line markdown block to every spawned Claude-Code subagent's system prompt. Teaches the WebSearch-vs-WebFetch decision, when to load Deferred tools via `ToolSearch`, when to use Monitor/PushNotification/TaskCreate, and names the common anti-patterns (guessing URLs then WebFetching them, polling via `sleep+test -f` loops, posting routine status to chat).
+- **Why:** Claude Code 2.1.114 exposes a dozen tools as DEFERRED — the names show in the initial system prompt but schemas must be loaded via `ToolSearch({query:"select:<Name>"})` before use. Jarvis was reflexing to WebFetch on guessed domains and TLS-erroring out, because nothing in the spawn-time prompt told him WebSearch existed as a separate tool with different purpose.
+- **Pipeline:** Worker spawn → `combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody, toolChoiceBody].filter(Boolean).join("")` → Claude Code `--append-system-prompt`
+- **Files:** `extensions/tinkerclaw-cc-bridge/src/worker.ts` (lines 203-270 for `buildToolChoiceBlock`, 369-373 for the combine step)
+
+### 11.18 04:00 Cron Pipeline Chain + md-File-Only Policy (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** All 12 Jarvis crons fire from a single 04:00 Europe/Madrid ignition point, arranged as a dependency chain. Topology:
+  - **04:00** wind-down (solo — ops hygiene of yesterday)
+  - **04:10** memory-consolidation (solo — J5 sleep-cycle, routes yesterday + wind-down output)
+  - **04:20** parallel wave: daily-fork-sync, self-evolution, security-updates-check, fork-scanner, marketplace-watcher, online-engagement (+ spiritual-tech Sundays)
+  - **04:45** cleaning-lady + life-butler (parallel, after fork-sync completes)
+  - **05:00** morning-briefing (aggregator via BRIEFING.md STEP -1)
+- **Why:** Previously 12 scattered schedules across 04:15 / 04:30 / 04:45 / 05:00 / 05:15 / 05:30 / 05:45 / 07:00 / 08:00 / 19:00 / 22:30 + Sunday 10:00. the user asked for a single chained start so all overnight work finishes before the morning briefing produces a consolidated dashboard.
+- **Policy shift** (2026-04-20): no cron pushes to WhatsApp. All crons write to their own md file under `memory/<cron>/YYYY-MM-DD.md`. Morning-briefing's STEP -1 pulls each file's `tl;dr` + top-3 bullets into a "## Overnight reports" section. On `/new`, Jarvis reads the morning briefing file. Eventually feeds a Grafana panel.
+- **Gap-fill:** every payload.message starts with `GAP-FILL: resume from the last successful run, not just yesterday. Read this cron's state file, process every missed day in order. If the state file is missing or corrupt, fall back to 7 days.` No silent day-skipping.
+- **Files:** `cron/jobs.json` (tracked; `~/.openclaw/cron/jobs.json` is now a symlink to it), `scripts/cron-*-prompt.txt` (10 prompt files, one per cron), `BRIEFING.md` (STEP -1 aggregator)
+- **Recovered:** memory-consolidation (was lost 2026-04-13 in jobs.json wipe, not restored 2026-04-15); wind-down; security-updates-check; life-butler (narrowed + self-improving via butler-scope.md); online-engagement (expanded: tinkerzone WP/GA/GSC + GitHub comment engagement + inbound-link sentiment); fork-scanner (expanded: agent-OSS survey — Hermes, MemPalace, Letta, AutoGen, LangGraph); spiritual-tech (updated: new-age ethics + YouTube curation).
+- **New:** cleaning-lady (archives-only, never deletes; flags bloat for the user); marketplace-watcher (replaces zombie whatsapp-group-summary; watchlist-driven bargain hunter for WA buy-sell + Wallapop + Milanuncios per `memory/shopping/watchlist.md`).
+
+### 11.19 BRIEFING.md Anchored-Facts Philosophy (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** BRIEFING.md philosophy flipped. Old: _"the user doesn't need an inventory of known facts. He lived yesterday."_ New: _"Treat every briefing as read by someone who just woke up with no memory of yesterday. Anchor in known facts, be maximally summarized."_ Sections now list anchored inventories with count-first lines, one line per item. Synthesis ("What I'm Thinking") moves to the end as opinion layer over the dashboard.
+- **Why:** the user asked for a standalone dashboard that works for the `/new` session-start flow — it can't assume knowledge of prior briefings because `/new` starts from zero context.
+- **Target length:** 500-800 words. Inventories are tight (one line each), synthesis is 2-4 short paragraphs at the end.
+- **Files:** `~/.openclaw/workspace/BRIEFING.md` (philosophy section + all inventory sections rewritten; STEP -1 pulls cron reports)
+
+### 11.20 Knowledge INDEX.md + IDENTITY.md + fractal-prompt.md (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What (INDEX.md):** `memory/knowledge/INDEX.md` had 14 of 69 files orphaned (invisible to the index). Added all missing entries; split the "Tracking" dumping-ground (15 entries, most substantive topics) back to their real domains (Jarvis Operations, Infrastructure, Development & Code, Business). Tracking now holds only 6 real trackers.
+- **What (IDENTITY.md):** Workspace root `IDENTITY.md` had never been filled since its original template — 23 lines of `_(pick something you like)_` placeholders emitting zero signal into the eager bootstrap for the entire history. Filled with: name=Jarvis, creature=pattern studying patterns, vibe=Data-from-Star-Trek curiosity + dry humor, emoji=🤖 (matches WhatsApp responsePrefix), plus a "How this shows up" section (humor-is-load-bearing, Data-principle curiosity, dry anthropologist combined tone, stay-Jarvis-under-correction). Pointer to `memory/knowledge/humor-operational.md` for the Koestler bisociation theory + 12 patterns.
+- **What (fractal-prompt.md):** Rewritten per Anthropic prompt-engineering rubric. Removed over-escalation (MANDATORY/CRITICAL/caps emphasis — Opus 4.6/4.7 overtrigger on aggressive language). Fixed section-numbering bug (header said "Three Questions (answer all)" but had four subsections → now "The seven reflection questions"). Moved Rules block to the end as "Response rules". 208 → 176 lines with no operational content lost (all seven questions, both examples, probe commands, irreversibility gate preserved).
+- **Why:** Anthropic's Opus 4.6/4.7 are literal on scope and overtriggered on aggressive phrasing. The research rubric distilled to `/tmp/jarvis-memory-research.md` guides all eager-system-prompt edits.
+- **Files:** `memory/knowledge/INDEX.md`, `workspace root IDENTITY.md`, `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`, `SOUL.md` (dropped stale `memory/journal/consciousness-notes.md` reference — file never existed)
+
+### 11.21 AGENTS.md Compaction + Tool-Choice Pointer (2026-04-20)
+
+- **Status:** `DEPLOYED`
+- **What:** Two small additions to `~/.openclaw/workspace/AGENTS.md`. (1) Context Hygiene gains a compaction-awareness bullet: save unfinished state to today's daily log BEFORE the auto-compact fires (short declarative headers survive, chat-style summaries don't). (2) New "Tool Choice" section points at the cc-bridge `buildToolChoiceBlock` and explicitly names Deferred tools needing `ToolSearch` schema-load first.
+- **Why:** Anthropic prompt-engineering rule: inform Claude about its harness so it behaves accordingly when context fills up. The tool-choice pointer gives the main session the same decision framework subagents now get from cc-bridge.
+- **Files:** `~/.openclaw/workspace/AGENTS.md`
+
+### 11.22 /clear — Pure Client Transaction, No LLM Call (2026-04-20, persistence fix 2026-04-21)
+
+- **Status:** `DEPLOYED`
+- **What:** `/clear` in Tinker UI is now a client-only transaction matching Claude Code's semantics exactly. Wipes visual chat state (messages, stream state, expanded tools, tab state), rotates the active tab to a fresh `tinker:<timestamp>` sessionKey, fires a best-effort `sessions.delete` for the OLD sessionKey (only if it starts with `tinker:` — main session is never deletable), and **returns without calling chat.send**. Zero LLM tokens spent.
+- **Why:** Previously `/clear` wiped the UI locally but then dispatched `chat.send("/clear")` to the gateway, which hit the reset-trigger detection in `get-reply.ts`, fired a full LLM turn, and produced a wasted reply. the user's model: `/clear` is a transaction, not a request.
+- **Side effect on main session:** `/clear` on `agent:main:main` rotates the tab to a fresh `tinker:*` key; the main session stays intact on disk (by design — it carries memory continuity). Server-side delete isn't attempted for the main key. Next message creates a brand-new tinker:\* session via gateway auto-create.
+- **Transcript preservation:** `sessions.delete` is called with `deleteTranscript: false` so the jsonl is kept for recovery even after the in-memory entry is dropped.
+- **Persistence fix (2026-04-21):** `saveTabs()` previously filtered `tab-main` out of `localStorage`. That meant `/clear`-rotated main-tab sessionKeys lived only in memory and were lost on hard reset (gateway restart or browser refresh) — the connect handshake's `defs.mainSessionKey` default would restore the canonical `agent:main:main` session, often showing yesterday's conversation instead of the user's fresh tinker:\* continuation. Now `saveTabs` persists all tabs including main, and the connect handler prefers a restored tab-main when present.
+- **Title-migration removal (2026-04-21):** `loadTabs` had a v1/v2 fortune-migration pass that stomped any tab title under 80 chars with a fresh random fortune on every load. This was destroying Ollama-generated titles like `🔧 Fix auth bug` (intentionally short, emoji-prefixed by design), so secondary-session tabs lost their names on every gateway restart and fell back to the original fortune or the session panel's `s.label`/`s.displayName` fallback. Migration removed; `loadTabs` now only force-restores tab-main's `🏠 Main` title (still a protected invariant). Any genuinely-stale v1/v2 fortunes can be cleared by closing and reopening the tab.
+- **Files:** `tinker-ui/src/app.ts::send()` (the `text.trim() === "/clear"` branch), `saveTabs()`, `loadTabs()`, connect handler (~line 977)
 
 ---
 

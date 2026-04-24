@@ -122,9 +122,9 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
   if (messages) {
     for (let i = (messages as unknown[]).length - 1; i >= 0; i--) {
       const msg = (messages as unknown[])[i];
-      if (!msg || typeof msg !== "object") continue;
+      if (!msg || typeof msg !== "object") {continue;}
       const m = msg as Record<string, unknown>;
-      if (m.role !== "assistant") continue;
+      if (m.role !== "assistant") {continue;}
       const texts: string[] = [];
       if (typeof m.content === "string") {
         texts.push(m.content);
@@ -160,9 +160,9 @@ export async function injectFractalReflection(opts: FractalInjectOptions): Promi
   // Skip if the run was triggered BY a fractal prompt (check user messages for the prompt)
   if (messages) {
     for (const msg of messages) {
-      if (!msg || typeof msg !== "object") continue;
+      if (!msg || typeof msg !== "object") {continue;}
       const m = msg as Record<string, unknown>;
-      if (m.role !== "user") continue;
+      if (m.role !== "user") {continue;}
       const userText =
         typeof m.content === "string"
           ? m.content

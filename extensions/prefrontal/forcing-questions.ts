@@ -27,20 +27,20 @@ export function shouldInjectForcingQuestions(
   userMessage: string,
   ctx?: ForcingQuestionsContext,
 ): boolean {
-  if (ctx?.trigger === "heartbeat" || ctx?.trigger === "cron") return false;
-  if (!userMessage || userMessage.length < 10) return false;
+  if (ctx?.trigger === "heartbeat" || ctx?.trigger === "cron") {return false;}
+  if (!userMessage || userMessage.length < 10) {return false;}
 
   const lower = userMessage.toLowerCase();
 
   // Check for complexity keywords
-  if (COMPLEXITY_KEYWORDS.some((kw) => lower.includes(kw))) return true;
+  if (COMPLEXITY_KEYWORDS.some((kw) => lower.includes(kw))) {return true;}
 
   // Check for long messages
-  if (userMessage.length >= MIN_LENGTH_THRESHOLD) return true;
+  if (userMessage.length >= MIN_LENGTH_THRESHOLD) {return true;}
 
   // Check for multiple file paths
   const paths = userMessage.match(FILE_PATH_REGEX) ?? [];
-  if (paths.length >= MIN_FILE_PATHS) return true;
+  if (paths.length >= MIN_FILE_PATHS) {return true;}
 
   return false;
 }

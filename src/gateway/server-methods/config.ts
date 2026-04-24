@@ -718,4 +718,55 @@ export const configHandlers: GatewayRequestHandlers = {
       );
     }
   },
+  // FORK 2026-04-18: open an arbitrary absolute file path in the system's
+  // default viewer (xdg-open on Linux, `open` on macOS, Start-Process on
+  // Windows). Used by Tinker UI links to let the user click e.g.
+  // fractal-prompt.md and have it open in their OS markdown handler.
+  //
+  // Safety: path MUST be absolute (start with "/"), MUST NOT contain
+  // ".." segments, and MUST exist as a regular file. No shell expansion —
+  // resolveConfigOpenCommand/execConfigOpenCommand invoke execFile with
+  // the path as a single argv element.
+  "config.openExternalFile": async ({ params, respond, context }) => {
+    const fs = await import("node:fs");
+    const nodePath = await import("node:path");
+    const p = (params ?? {}) as { path?: unknown };
+    const raw = typeof p.path === "string" ? p.path : "";
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      respond(false, undefined, {
+        code: "INVALID_REQUEST" as const,
+        message: "config.openExternalFile: path required",
+      });
+      return;
+    }
+    const expanded =
+      trimmed.startsWith("~/") || trimmed === "~"
+        ? nodePath.join(process.env.HOME ?? "/", trimmed.slice(1))
+        : trimmed;
+    const resolved = nodePath.resolve(expanded);
+    if (!nodePath.isAbsolute(resolved) || resolved.includes("..")) {
+      respond(true, { ok: false, error: "path must be absolute" }, undefined);
+      return;
+    }
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) {
+        respond(true, { ok: false, error: "not a regular file" }, undefined);
+        return;
+      }
+    } catch {
+      respond(true, { ok: false, error: "file not found" }, undefined);
+      return;
+    }
+    try {
+      await execConfigOpenCommand(resolveConfigOpenCommand(resolved));
+      respond(true, { ok: true, path: resolved }, undefined);
+    } catch (error) {
+      context?.logGateway?.warn(
+        `config.openExternalFile failed path=${sanitizeLookupPathForLog(resolved)}: ${formatConfigOpenError(error)}`,
+      );
+      respond(true, { ok: false, path: resolved, error: "failed to open file" }, undefined);
+    }
+  },
 };

@@ -77,9 +77,9 @@ function adjustHexLightness(hex: string, lightness: number): string {
   if (max !== min) {
     const d = max - min;
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
-    else if (max === g) h = ((b - r) / d + 2) / 6;
-    else h = ((r - g) / d + 4) / 6;
+    if (max === r) {h = ((g - b) / d + (g < b ? 6 : 0)) / 6;}
+    else if (max === g) {h = ((b - r) / d + 2) / 6;}
+    else {h = ((r - g) / d + 4) / 6;}
   }
   return `hsl(${Math.round(h * 360)},${Math.round(s * 100)}%,${lightness}%)`;
 }
@@ -336,7 +336,7 @@ function renderToolDetail(text: string): HTMLElement | null {
 /** Detect JSON and return a highlighted pre block, or null */
 function tryRenderJson(text: string): HTMLElement | null {
   const t = text.trim();
-  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) return null;
+  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) {return null;}
   try {
     const parsed = JSON.parse(t);
     const pre = document.createElement("pre");
@@ -422,13 +422,13 @@ function renderRichDetail(
   if (component === "system_prompt" || component === "current_prompt") {
     // Try JSON first (some sections may be JSON)
     const jsonEl = tryRenderJson(text);
-    if (jsonEl) return jsonEl;
+    if (jsonEl) {return jsonEl;}
     return renderFormattedText(text);
   }
 
   // Generic JSON detection
   const jsonEl = tryRenderJson(text);
-  if (jsonEl) return jsonEl;
+  if (jsonEl) {return jsonEl;}
 
   return null;
 }
@@ -780,7 +780,7 @@ export function mountContextTreemap(
           ? await reqFn("forensic.getCallLive", { sessionKey: sk || undefined, index: callIndex })
           : await reqFn("forensic.getLive", { sessionKey: sk || undefined });
 
-      if (!callDump) throw new Error("No dump data");
+      if (!callDump) {throw new Error("No dump data");}
 
       const forensicKey = ANATOMY_TO_FORENSIC[node.key] ?? node.key;
       const children = extractChildrenFromSlim(callDump, forensicKey, node.key);
@@ -957,6 +957,7 @@ export function mountContextTreemap(
 
       container.innerHTML = "";
       container.appendChild(previewEl);
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       (container as any).__onLevelChange?.();
     } catch (e: any) {
       // Graceful fallback — show what we know from anatomy data
@@ -967,6 +968,7 @@ export function mountContextTreemap(
         <div class="tm-preview-header">${esc(nodeLabel)}</div>
         <div class="tm-preview-meta">${nodeCharsStr}${nodeCharsStr ? " \u00b7 " : ""}Detail not available \u2014 send a new message to capture context</div>
       </div>`;
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       (container as any).__onLevelChange?.();
     }
   }
@@ -1006,6 +1008,7 @@ export function mountContextTreemap(
     }
 
     // Notify parent (back button visibility etc.)
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
     (container as any).__onLevelChange?.();
   }
 
@@ -1077,7 +1080,7 @@ export function mountContextTreemap(
 
     for (const { key, tokenField, label } of segments) {
       const tokens = cs[tokenField] ?? 0;
-      if (tokens <= 0) continue;
+      if (tokens <= 0) {continue;}
 
       // Treemap uses chars for sizing — approximate from tokens
       const chars = tokens * 4;
@@ -1130,9 +1133,13 @@ export function mountContextTreemap(
   }
 
   // ─── Public hooks ───
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapRefresh = loadLatest;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapClear = () => { currentDump = null; renderEmpty(); };
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapShowAnatomy = showAnatomyEvent;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapBack = () => {
     if (level === 3) {
       if (drillParent?.children?.length) {
@@ -1150,9 +1157,13 @@ export function mountContextTreemap(
       renderLevel();
     }
   };
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapCanGoBack = () => level > 1;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapLevel = () => level;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapTotalChars = () => l1Nodes.reduce((s, n) => s + n.chars, 0);
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapTimestamp = () => anatomyTimestamp;
 
   // Initial state

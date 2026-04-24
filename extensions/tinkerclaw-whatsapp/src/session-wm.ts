@@ -40,7 +40,7 @@ async function loadCreateClient(): Promise<(opts: { store: string }) => Whatsmeo
     throw new Error(
       "whatsmeow-node is not installed. Install the optional Go addon with " +
       "`pnpm add @whatsmeow-node/whatsmeow-node` (requires Go toolchain). " +
-      `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+      `Underlying error: ${err instanceof Error ? err.message : String(err)}`, { cause: err },
     );
   }
 }

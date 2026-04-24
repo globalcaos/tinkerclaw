@@ -15,11 +15,11 @@ export function detectCommandObfuscation(command: string): {
 } {
   const reasons: string[] = [];
 
-  if (/\\x[0-9a-f]{2}/i.test(command)) reasons.push("hex-escape-sequence");
-  if (/\\u[0-9a-f]{4}/i.test(command)) reasons.push("unicode-escape-sequence");
-  if (/\$\(.*base64/i.test(command)) reasons.push("base64-subshell");
-  if (/eval\s*\(/i.test(command)) reasons.push("eval-call");
-  if (/\\[0-7]{3}/.test(command)) reasons.push("octal-escape-sequence");
+  if (/\\x[0-9a-f]{2}/i.test(command)) {reasons.push("hex-escape-sequence");}
+  if (/\\u[0-9a-f]{4}/i.test(command)) {reasons.push("unicode-escape-sequence");}
+  if (/\$\(.*base64/i.test(command)) {reasons.push("base64-subshell");}
+  if (/eval\s*\(/i.test(command)) {reasons.push("eval-call");}
+  if (/\\[0-7]{3}/.test(command)) {reasons.push("octal-escape-sequence");}
 
   if (reasons.length > 0) {
     console.warn(
