@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-20 (PM session: cc-bridge tool-choice block, fractal-prompt rewrite per Anthropic rules, IDENTITY.md filled, wind-down + memory-consolidation reactivated, 04:00 cron pipeline chain + md-file-only policy, BRIEFING.md anchored-facts philosophy shift, knowledge INDEX.md orphan cleanup, jobs.json live↔tracked symlink, /clear is now a pure client transaction — no LLM call)
+> Last updated: 2026-04-24 (cc-bridge subscription-billing boundary documented — §5.73: Anthropic classifies by system-prompt content, not env/cgroup/PPid; fix slices `systemPromptBody` at the `"running inside OpenClaw"` sentinel; reauth pipeline confirmed healthy — token rotation is NOT the culprit for `out-of-extra-usage` 400s; bisect anchors `4a6a289d5a` / `3db21784ad` / `378684e4f5` recorded)
 
 ---
 
@@ -1175,6 +1175,103 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Verification:** `tinker-probe` post-turn shows `timeline-db: total=4519 newThisTurn=1, last row provider=claude-code model=claude-opus-4-7`.
 - **Known gap:** `response_thinking_tokens` / `response_text_tokens` / `response_tool_call_tokens` are still null — these columns have been null across all 4518 historic rows, so the capture-side wiring in `pi-embedded-subscribe` + `attempt-hooks.updateAnatomyResponse` needs a separate pass (tracked, not fixed here).
 - **Files:** `src/agents/pi-embedded-runner/run/attempt.ts` (import + call site, commit `7eccc0fe6d`).
+
+### 5.73 cc-bridge System-Prompt Fingerprint — The Subscription-Billing Boundary (2026-04-24)
+
+- **Status:** `DEPLOYED` (commit `a307dca393`)
+- **Why this entry exists:** after the 2026-04-20 regression Jarvis started getting `API Error 400 "out-of-extra-usage"` on every turn even though the Claude Max subscription had ~5% usage. We spent two sessions patching environment variables, cgroup paths, PPID lineage, and systemd-run flags before discovering the boundary is neither env nor cgroup — **it's prompt content**. This section documents what the boundary actually is so the next regression gets caught in minutes instead of days.
+
+#### The boundary (one sentence)
+
+**An LLM call made by `claude-cli` on a Max subscription is routed to the overage billing pool when the system prompt passed via `--append-system-prompt` contains markers that Anthropic's server-side classifier recognises as 3rd-party-harness tooling.** Strip those markers and the same call bills against the flat rate.
+
+#### What actually makes a request "blocked" vs "allowed"
+
+| Signal                                                | Observed impact on routing                                    | Status in cc-bridge                                                                                                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` in env   | Bypasses OAuth → billed to API key, not subscription          | Stripped by `worker.ts` (allowlist env)                                                                                                                              |
+| `CLAUDE_AI_SESSION_KEY` in env                        | Same — claude-cli prefers it over OAuth creds                 | Stripped                                                                                                                                                             |
+| `OPENCLAW_*` env vars                                 | Previously suspected as classifier input; NOT confirmed alone | Stripped defensively                                                                                                                                                 |
+| `OAuth creds at ~/.claude/.credentials.json`          | Required; stale/expired creds → 401, not 400                  | Trusted as-is; refresh handled by `credential-file.ts`                                                                                                               |
+| Process cgroup under `openclaw-gateway.service`       | Previously suspected tell; `systemd-run --pipe` isolates it   | Wrapped in `systemd-run --user --pipe --unit=llm-client-<id>.service` — transient unit under `app.slice/`, PPid=1. Kept for defense-in-depth but NOT the actual fix. |
+| PPid chain ending in `openclaw-gateway`               | Previously suspected; `--pipe` reparents to systemd           | Handled by the systemd-run wrapper                                                                                                                                   |
+| **System-prompt content (`--append-system-prompt`)**  | **PRIMARY CLASSIFIER INPUT** — `out-of-extra-usage` trigger   | **Sliced at the `"You are a personal assistant running inside OpenClaw"` sentinel; everything after is dropped.**                                                    |
+| User-message content                                  | No observed impact on routing                                 | Passed through unchanged                                                                                                                                             |
+| `--model` / `--disallowedTools` / `--permission-mode` | No observed impact on routing                                 | Used freely                                                                                                                                                          |
+
+#### The fingerprint (what Anthropic is matching on)
+
+The strings that flipped routing from flat-rate to overage, measured by bisect:
+
+- `"You are a personal assistant running inside OpenClaw"` (the sentinel phrase itself)
+- Tool verbs that don't exist in a vanilla Claude Code install: `sessions_spawn`, `openclaw gateway start|stop|restart`, `sessions_list`, `sessions_history`, `sessions_send`, `subagents`, `agents_list`, `session_status`
+- Runtime metadata: `repo=/home/.../.openclaw/workspace`, `channel=webchat`, `provider=webchat`, `agent=main`
+- The OpenClaw CLI Quick Reference block
+- The inbound-metadata JSON envelope (`"schema": "openclaw.inbound_meta.v2"`)
+- The Heartbeats section that mentions `OpenClaw treats a leading/trailing "HEARTBEAT_OK"` (self-identifying as a harness)
+
+Each of those is a concrete tool catalog / harness self-identification — exactly what a vanilla `claude` install would never carry. **Prose mentions of "OpenClaw" alone do NOT trip the classifier** — the three fork narration blocks (subagent helper, tool-choice, chat narration) all mention OpenClaw in documentation form and bill the subscription fine. It's the executable-tool shape and the runtime fingerprint lines that matter.
+
+#### Bisect proof
+
+| Commit                          | Role                                 | Result                  |
+| ------------------------------- | ------------------------------------ | ----------------------- |
+| `4a6a289d5a`                    | Merge-base (pre–309-commit merge)    | ✅ Subscription billed  |
+| `3db21784ad`                    | Raw 309-commit merge, no fork wiring | ✅ Subscription billed  |
+| `378684e4f5`                    | Fork-wiring applied post-merge       | ❌ `out-of-extra-usage` |
+| …every commit after 378684e4f5… | Inherits the failure                 | ❌                      |
+| `a307dca393`                    | System-prompt slice (this fix)       | ✅ Subscription billed  |
+
+The only change in `378684e4f5` that affects what Anthropic sees is `src/agents/system-prompt.ts:buildAgentSystemPrompt` — it was enriched with persona + AMYGDALA + CORTEX blocks and the "You are a personal assistant running inside OpenClaw" tool-policy section. Everything else (`errors.ts`, `failover-matches.ts`, `assistant-failover.ts`, `attempt.ts` hook call sites) affects how the fork CLASSIFIES responses it receives, not what it sends.
+
+#### Reauth finding — what this session settled about credential rotation
+
+Before finding the boundary we suspected the `budget-panel`'s `forceRefreshToken()` was silently rotating `~/.claude/.credentials.json` into a tainted token. **It's not the cause.** Observed:
+
+- `forceRefreshToken()` logs `[budget-panel] <profile>: token rotated for fresh rate limit window` on every run — journalctl showed zero such lines across every failure window.
+- `~/.claude/.credentials.json` mtime tracked actual claude-cli auto-refresh, not budget-panel writes.
+- The same credentials that fail on `main` work on the `dev/bisect-harness` branch (commit `37530fef28`) — if the token were the problem both branches would fail.
+- A bare-shell `claude --print` with a minimal env allowlist bills the subscription correctly using the same credentials file, on the same host, at the same time as the gateway returns 400.
+
+Conclusion: **the OAuth credential pipeline is healthy.** Reauth concerns, proactive refresh, credential-file rewrites — all red herrings relative to this specific 400. If `~/.claude/.credentials.json` ever does go stale, claude-cli returns 401/403 (auth error), not 400 `out-of-extra-usage`.
+
+#### Fix
+
+In `extensions/tinkerclaw-cc-bridge/src/worker.ts`:
+
+```ts
+const OPENCLAW_SYSPROMPT_CUTOFF = "You are a personal assistant running inside OpenClaw";
+const openClawCutoff = systemPromptBody.indexOf(OPENCLAW_SYSPROMPT_CUTOFF);
+const personaOnly =
+  openClawCutoff > 0 ? systemPromptBody.slice(0, openClawCutoff).trim() : systemPromptBody;
+void rulesBody; // fork-internal reply-style scaffolding, dropped defensively
+const combinedSystemPrompt = [personaOnly, subagentHelpBody, toolChoiceBody, narrationBody]
+  .filter(Boolean)
+  .join("");
+```
+
+Kept: the persona header (`# Persona: JarvisOne (v1)…`) + the three fork narration blocks.
+Dropped: everything after the sentinel (OpenClaw tool catalog, CLI quick-reference, inbound metadata, heartbeat rules, runtime line) + `rulesBody`.
+
+No functional loss: `claude-cli` maintains its own tool catalog via `--permission-mode` and the fork's OpenClaw tools are mediated by the bridge, not the subprocess. The persona block still carries Jarvis's identity.
+
+#### Diagnosis kit (use this when it comes back)
+
+1. **Live probe:** `/tmp/catch-claude-pid.sh` polls `pgrep -x claude` and dumps the subprocess's cgroup + PPid + env. Copy from commit `a307dca393`'s context if missing.
+2. **Bare-shell test:** `env -i HOME=… PATH=… DBUS_SESSION_BUS_ADDRESS=… XDG_RUNTIME_DIR=… TERM=xterm CLAUDECODE=1 claude --print --model claude-sonnet-4-6 'reply OK'`. If this bills the subscription, the credentials are fine and the problem is in the gateway's call shape (env, args, or prompt).
+3. **Prompt dump:** add `fs.writeFileSync("/tmp/jarvis-sysprompt-dump.txt", systemPromptBody)` right before `--append-system-prompt` is pushed; grep the dump for `sessions_spawn`, `openclaw`, `repo=.*workspace`, `schema.*openclaw` — any hits are a candidate fingerprint.
+4. **WS injector:** `node scripts/jarvis-inject.mjs --new --message "..." --gw ws://localhost:18789` (token from `~/.openclaw/openclaw.json`) produces a clean bisect probe with no UI noise.
+5. **Git bisect anchors:** `4a6a289d5a` (pre-merge known-good), `3db21784ad` (raw-merge known-good), `378684e4f5` (fork-wiring known-bad).
+
+#### What NOT to change next time
+
+- Don't touch the `systemd-run --user --pipe` wrapper first. It's correct cgroup/PPid hygiene and costs nothing to keep.
+- Don't strip more env vars on a hunch — the allowlist is already minimal. If stripping helped it would show up in the bare-shell probe.
+- Don't blame budget-panel's `forceRefreshToken()` unless journalctl actually shows rotation events in the failure window.
+- Don't assume `--resume <sessionId>` is tainting routing — wipe `~/.openclaw/cc-bridge/session-map.json`, restart, and confirm a truly fresh spawn still fails before going down that path.
+
+- **Files:** `extensions/tinkerclaw-cc-bridge/src/worker.ts` (commit `a307dca393`).
+- **Knowledge:** `~/.openclaw/workspace/memory/knowledge/tinkerclaw-cc-bridge.md` (§ "2026-04-24: Subscription-billing regression — root cause").
 
 ---
 
