@@ -1523,7 +1523,12 @@ function onEvent(evt: unknown) {
         // Freeze current streaming text — it becomes its own thinking bubble
         frozenTextEnd = lastDeltaLen;
         streamMsgIdx = -1;
-        // Add tool_use as a temporary message
+        // Add tool_use as a temporary message. FORK (2026-04-24): cc-bridge
+        // attaches a `purpose` string to the event carrying the LLM's
+        // purpose narration that preceded the tool call. Stash it on the
+        // pushed block as `_purpose` so renderMsg can use it as the tool
+        // row's title without re-rendering the narration (already streamed
+        // above as text deltas into the preceding chat bubble).
         messages.push({
           role: "assistant",
           content: [
@@ -1532,6 +1537,7 @@ function onEvent(evt: unknown) {
               id: d.toolCallId,
               name: d.name,
               input: d.args ?? {},
+              _purpose: typeof d.purpose === "string" ? d.purpose : undefined,
             },
           ],
           _temporary: true,
@@ -3585,9 +3591,17 @@ function renderMsg(
       // row so you can still see what the tool literally does at a glance.
       let title = mechanicalSummary;
       let subtitle = "";
-      if (pendingToolNarration) {
-        const lastSentence =
-          pendingToolNarration.match(/[^.!?\n]+[.!?]?\s*$/)?.[0]?.trim() ?? pendingToolNarration;
+      // FORK (2026-04-24): cc-bridge tool events carry the narration as
+      // `_purpose` on the tool_use block. Prefer that over the sibling-text
+      // heuristic since it survives message splitting (the purpose text is
+      // streamed to the PRIOR chat bubble, separate from the tool_use message).
+      const liveNarration =
+        typeof (block as { _purpose?: unknown })._purpose === "string"
+          ? ((block as { _purpose?: string })._purpose ?? "").trim()
+          : "";
+      const narration = liveNarration || pendingToolNarration;
+      if (narration) {
+        const lastSentence = narration.match(/[^.!?\n]+[.!?]?\s*$/)?.[0]?.trim() ?? narration;
         const capped =
           lastSentence.length > 160 ? lastSentence.slice(0, 157).trim() + "…" : lastSentence;
         title = capped;

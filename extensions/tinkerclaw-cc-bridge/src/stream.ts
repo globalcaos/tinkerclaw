@@ -17,6 +17,7 @@ import {
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { buildErrorEnvelope } from "../../../src/fork/error-envelope.js";
+import { emitAgentEvent } from "../../../src/infra/agent-events.js";
 import { DEFAULT_CWD, DEFAULT_DISALLOWED_TOOLS, PROVIDER_ID } from "./defaults.js";
 import type {
   CcContentBlock,
@@ -24,6 +25,7 @@ import type {
   CcStreamStdoutLine,
   CcStreamStdoutResult,
   CcStreamStdoutStreamEvent,
+  CcStreamStdoutUserMessage,
   CcUsage,
 } from "./protocol.js";
 import { getPool } from "./worker-pool.js";
@@ -107,6 +109,65 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const cwd = opts.cwd ?? DEFAULT_CWD;
       const disallowedTools = opts.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
       const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt);
+
+      // FORK (2026-04-24): OpenClaw's embedded runner smuggles the current
+      // run's identity into options via `__openclawRunId` / `__openclawSessionKey`
+      // (see `src/agents/pi-embedded-runner/run/attempt.ts`). We use them to
+      // attribute live `stream: "tool"` agent events to the right run so the
+      // UI can render tool calls with purpose titles + expandable output —
+      // without putting toolCall blocks in the assistant message (which would
+      // trigger re-execution through the prefrontal exec gate).
+      const pipedOptions = (options ?? {}) as {
+        __openclawRunId?: string;
+        __openclawSessionKey?: string;
+      };
+      const runId = pipedOptions.__openclawRunId;
+      const openclawSessionKey = pipedOptions.__openclawSessionKey;
+      const toolLastNarration = new Map<string, string>();
+      let pendingToolNarration = "";
+
+      const emitToolStart = (
+        toolCallId: string,
+        name: string,
+        args: unknown,
+        narration: string,
+      ) => {
+        if (!runId) {
+          return;
+        }
+        toolLastNarration.set(toolCallId, narration);
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "tool",
+          data: {
+            phase: "start",
+            name,
+            toolCallId,
+            args: (args ?? {}) as Record<string, unknown>,
+            purpose: narration || undefined,
+          },
+        });
+      };
+
+      const emitToolResult = (toolCallId: string, resultText: string, isError: boolean) => {
+        if (!runId) {
+          return;
+        }
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "tool",
+          data: {
+            phase: "result",
+            toolCallId,
+            result: resultText,
+            isError,
+            purpose: toolLastNarration.get(toolCallId) || undefined,
+          },
+        });
+        toolLastNarration.delete(toolCallId);
+      };
 
       const pool = getPool();
       const worker = pool.getOrCreate({
@@ -328,9 +389,14 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               ) {
                 const delta = cumulative.slice(accumulatedText.length);
                 pushTextDelta(delta);
+                // FORK (2026-04-24): capture the delta as "pending narration"
+                // — Jarvis writes one short purpose sentence right before a
+                // tool_use, and we feed it into the emitted tool-start event
+                // so the UI can use it as the row's one-line title.
+                pendingToolNarration += delta;
               } else if (cumulative.length > 0 && !accumulatedText) {
-                // Full replacement on first emission
                 pushTextDelta(cumulative);
+                pendingToolNarration += cumulative;
               }
             } else if (typed.type === "thinking" && typeof typed.thinking === "string") {
               const cumulative = typed.thinking;
@@ -343,13 +409,52 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               } else if (cumulative.length > 0 && !accumulatedThinking) {
                 pushThinkingDelta(cumulative);
               }
+            } else if (typed.type === "tool_use" && typeof typed.id === "string") {
+              // FORK (2026-04-24): emit a live `stream: "tool"` agent event so
+              // the UI shows a tool row with the narration as its title. The
+              // block is NOT added to the final AssistantMessage.content — it
+              // only lives as a UI-side event (see buildContent for rationale).
+              emitToolStart(
+                typed.id,
+                typeof typed.name === "string" ? typed.name : "unknown",
+                typed.input,
+                pendingToolNarration.trim(),
+              );
+              pendingToolNarration = "";
             }
-            // Tool blocks (tool_use / tool_result) are intentionally dropped
-            // from the assistant-message content. See the note on buildContent
-            // above — materializing them triggers double-execution through
-            // pi-agent-core and a stream of "Something went wrong" bubbles
-            // from the prefrontal exec gate.
           }
+          return;
+        }
+        if (t === "user") {
+          // FORK (2026-04-24): claude-cli echoes tool_result blocks back to us
+          // as `user`-role stream lines between turns. Convert them into live
+          // `stream: "tool"` phase=result events so the UI can pair them with
+          // their tool_use rows and show the full output on expand.
+          const blocks = (line as CcStreamStdoutUserMessage).message?.content ?? [];
+          for (const b of blocks) {
+            const typed = b as CcContentBlock;
+            if (typed.type === "tool_result" && typeof typed.tool_use_id === "string") {
+              const resultText =
+                typeof typed.content === "string"
+                  ? typed.content
+                  : Array.isArray(typed.content)
+                    ? typed.content
+                        .map((c) => {
+                          if (!c || typeof c !== "object") {
+                            return "";
+                          }
+                          const typedBlock = c as { type?: string; text?: string };
+                          return typedBlock.type === "text" && typeof typedBlock.text === "string"
+                            ? typedBlock.text
+                            : "";
+                        })
+                        .filter(Boolean)
+                        .join("\n")
+                    : "";
+              emitToolResult(typed.tool_use_id, resultText, Boolean(typed.is_error));
+            }
+          }
+          return;
         }
       };
 
