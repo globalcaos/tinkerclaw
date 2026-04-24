@@ -7,7 +7,7 @@ import type {
   PrefrontalTreeResponse,
   PrefrontalConfig,
 } from "./prefrontal-types.js";
-import { extractProvider, DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
+import { extractProvider } from "./prefrontal-types.js";
 
 export interface SubagentRunInfo {
   runId: string;
@@ -105,8 +105,12 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
     const childNodes = directChildren.map((r) => runToNode(r, now));
 
     childNodes.sort((a, b) => {
-      if (a.status === "completed" && b.status !== "completed") {return 1;}
-      if (a.status !== "completed" && b.status === "completed") {return -1;}
+      if (a.status === "completed" && b.status !== "completed") {
+        return 1;
+      }
+      if (a.status !== "completed" && b.status === "completed") {
+        return -1;
+      }
       return 0;
     });
 
@@ -126,7 +130,9 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
   }
 
   function calculateOverallProgress(nodes: PrefrontalTreeNode[]): number {
-    if (nodes.length === 0) {return 0;}
+    if (nodes.length === 0) {
+      return 0;
+    }
     const total = nodes.reduce((sum, n) => sum + n.progress, 0);
     return Math.round(total / nodes.length);
   }
@@ -137,13 +143,19 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
     now: number,
   ): string[] {
     const stalledRunIds: string[] = [];
-    if (!tree.root) {return stalledRunIds;}
+    if (!tree.root) {
+      return stalledRunIds;
+    }
 
     for (const child of tree.root.children) {
-      if (child.status === "completed" || child.status === "failed") {continue;}
+      if (child.status === "completed" || child.status === "failed") {
+        continue;
+      }
 
       const lastEvent = lastEventTimestamps.get(child.runId);
-      if (!lastEvent) {continue;}
+      if (!lastEvent) {
+        continue;
+      }
 
       const age = now - lastEvent;
       if (age > config.staleThresholdMs) {
