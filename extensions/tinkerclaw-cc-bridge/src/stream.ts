@@ -136,6 +136,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         toolLastNarration.set(toolCallId, narration);
+        log.info(
+          `tool.start name=${name} id=${toolCallId.slice(0, 12)} narration.len=${narration.length}`,
+        );
         emitAgentEvent({
           runId,
           sessionKey: openclawSessionKey,
@@ -154,6 +157,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         if (!runId) {
           return;
         }
+        log.info(
+          `tool.result id=${toolCallId.slice(0, 12)} is_error=${isError} stdout.len=${resultText.length}`,
+        );
         emitAgentEvent({
           runId,
           sessionKey: openclawSessionKey,

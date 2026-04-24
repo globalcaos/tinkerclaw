@@ -1552,19 +1552,24 @@ function onEvent(evt: unknown) {
           }
         }
         updatePrefrontalTree();
-        // Push tool_result as a temporary message so renderMsg can pair it
+        // Push tool_result as a temporary message so renderMsg can pair it.
+        // FORK (2026-04-24): never fill missing output with "(completed)" —
+        // that used to mask a real problem (empty stdout vs. not-yet-arrived
+        // vs. dropped-in-transit). Empty string is honest; renderMsg hides
+        // the stdout block when content is empty.
+        const resultContent =
+          typeof d.result === "string"
+            ? d.result
+            : d.result != null
+              ? JSON.stringify(d.result)
+              : "";
         messages.push({
           role: "user",
           content: [
             {
               type: "tool_result",
               tool_use_id: d.toolCallId,
-              content:
-                d.result != null
-                  ? typeof d.result === "string"
-                    ? d.result
-                    : JSON.stringify(d.result)
-                  : "(completed)",
+              content: resultContent,
               is_error: Boolean(d.isError),
             },
           ],
@@ -3589,12 +3594,10 @@ function renderMsg(
       // for. Fall back to the mechanical pattern summary when the LLM skipped
       // narration. Keep the mechanical summary as a secondary line inside the
       // row so you can still see what the tool literally does at a glance.
+      // FORK (2026-04-24): single-line tool row. Title is the LLM's purpose
+      // narration if available, else the mechanical summary. No subtitle —
+      // everything else lives in the expanded view.
       let title = mechanicalSummary;
-      let subtitle = "";
-      // FORK (2026-04-24): cc-bridge tool events carry the narration as
-      // `_purpose` on the tool_use block. Prefer that over the sibling-text
-      // heuristic since it survives message splitting (the purpose text is
-      // streamed to the PRIOR chat bubble, separate from the tool_use message).
       const liveNarration =
         typeof (block as { _purpose?: unknown })._purpose === "string"
           ? ((block as { _purpose?: string })._purpose ?? "").trim()
@@ -3602,20 +3605,18 @@ function renderMsg(
       const narration = liveNarration || pendingToolNarration;
       if (narration) {
         const lastSentence = narration.match(/[^.!?\n]+[.!?]?\s*$/)?.[0]?.trim() ?? narration;
-        const capped =
-          lastSentence.length > 160 ? lastSentence.slice(0, 157).trim() + "…" : lastSentence;
-        title = capped;
-        subtitle = mechanicalSummary;
+        title = lastSentence.length > 160 ? lastSentence.slice(0, 157).trim() + "…" : lastSentence;
         pendingToolNarration = null; // consumed — next tool_use gets a fresh narration
       }
-      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(title)}${subtitle ? `<span class="tool-row-sub"> · ${esc(subtitle)}</span>` : ""}</span></div>`;
+      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(title)}</span></div>`;
       if (exp) {
+        // FORK (2026-04-24): expanded view = command first, then full stdout
+        // of the command. the user's explicit design: description is the only
+        // thing visible until you click. Everything you need to judge the
+        // call lives in the expansion — what ran, and what came back.
         h += `<div class="tool-detail">${toolExpandedDetail(block.name, a)}`;
-        // Show result only for errors or when the detail doesn't already contain it
-        const n = (block.name ?? "").toLowerCase();
-        const detailHasContent = n === "edit" || n === "write";
-        if (paired && (paired.isError || !detailHasContent)) {
-          h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+        if (paired && paired.content) {
+          h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "stdout:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
         }
         h += `</div>`;
       }
