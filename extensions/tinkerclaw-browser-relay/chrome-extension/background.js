@@ -60,7 +60,7 @@ async function getRelayPort() {
 async function getRelayToken() {
   // Try stored token first
   const stored = await chrome.storage.local.get(["relayToken"]);
-  if (stored.relayToken) return stored.relayToken;
+  if (stored.relayToken) {return stored.relayToken;}
 
   // Auto-discover: probe the relay status endpoint (no auth needed for status)
   const port = await getRelayPort();

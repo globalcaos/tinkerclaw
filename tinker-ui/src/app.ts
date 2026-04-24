@@ -4,7 +4,11 @@ import { mountContextTimeline } from "./panels/context-timeline.js";
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
   mountPrefrontalTree,
+  type PrefrontalDashboardState,
   type PrefrontalTreeController,
+  type RecipeState,
+  type TrailEvent,
+  type TrailEventKind,
   type TreeNode,
   type TreeResponse,
 } from "./panels/prefrontal-tree.js";
@@ -12,8 +16,61 @@ import { mountResponseTreemap } from "./panels/response-treemap.js";
 
 const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
 
+// FORK 2026-04-20: Prefrontal debug channel. Turn on by visiting the page with
+// ?pfdebug=1 or by running `__pf.debug=true` in devtools. When on, every
+// prefrontal-related WS event, state transition, and render decision logs a
+// line to the console, and `__pf.state` mirrors the current dashboard feed so
+// you can inspect it live from the browser devtools.
+const PF_DEBUG_STATE = {
+  debug:
+    new URLSearchParams(window.location.search).get("pfdebug") === "1" ||
+    localStorage.getItem("tinker-pf-debug") === "1",
+  lastTree: null as unknown,
+  lastRecipe: null as unknown,
+  lastTrailEvent: null as unknown,
+  lastRenderSource: "" as "extension" | "fallback" | "",
+  renderCount: 0,
+  eventCounts: { tree: 0, recipe: 0, trail: 0, subagentStart: 0, subagentEnd: 0 },
+};
+function pfLog(label: string, payload?: unknown): void {
+  if (!PF_DEBUG_STATE.debug) {
+    return;
+  }
+  const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+  // One-argument form keeps devtools cleaner when payload is undefined.
+  if (payload === undefined) {
+    console.log(`%c[PF %s] %s`, "color:#c19a6b;font-weight:600", ts, label);
+    return;
+  }
+  console.log(`%c[PF %s] %s`, "color:#c19a6b;font-weight:600", ts, label, payload);
+}
+// Expose a live inspection handle so you can do `__pf.enable()` / `__pf.state`
+// from devtools without needing a page reload.
+(window as unknown).__pf = {
+  get debug() {
+    return PF_DEBUG_STATE.debug;
+  },
+  enable() {
+    PF_DEBUG_STATE.debug = true;
+    localStorage.setItem("tinker-pf-debug", "1");
+    console.log("%c[PF] debug ON (persists across reloads)", "color:#c19a6b;font-weight:600");
+  },
+  disable() {
+    PF_DEBUG_STATE.debug = false;
+    localStorage.removeItem("tinker-pf-debug");
+    console.log("[PF] debug OFF");
+  },
+  state: PF_DEBUG_STATE,
+};
+if (PF_DEBUG_STATE.debug) {
+  console.log(
+    "%c[PF] debug active — prefrontal events will log here. `__pf.disable()` to turn off.",
+    "color:#c19a6b;font-weight:600",
+  );
+}
+
 // Runtime config: injected by the tinker plugin into index.html, or via URL params
-const __cfg = (window as any).__TINKER_CONFIG ?? {};
+const __cfg = (window as unknown).__TINKER_CONFIG ?? {};
 const TOKEN = __cfg.token ?? new URLSearchParams(window.location.search).get("token") ?? "";
 // In dev mode (vite), connect WS directly to the gateway; in prod the plugin serves from the gateway itself
 const GW_WS = import.meta.env.DEV
@@ -23,10 +80,10 @@ const BASE = import.meta.env.BASE_URL ?? "/";
 
 let ws: WebSocket | null = null;
 let connected = false;
-let pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
+let pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
 let sessionKey = "";
-let sessions: any[] = [];
-let messages: any[] = [];
+let sessions: unknown[] = [];
+let messages: unknown[] = [];
 /** Index into messages[] of the current streaming temporary message, or -1 if none. */
 let streamMsgIdx = -1;
 let streamRunId: string | null = null;
@@ -39,14 +96,54 @@ let lastDeltaLen = 0;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
+
+// FORK (2026-04-21): Story Mode. When on, every tool call renders as if it
+// were clicked-expanded: full grandma-friendly title, full args, full stdout,
+// full tool result. Intended for users who want to "see literally everything"
+// the agent does, interleaved with thinking and text, as a continuous
+// narrative that builds up chronologically. Toggle via the 🎬 button in the
+// topbar; persists across reloads. Default ON so first-time users see the
+// full flow immediately — they can turn it off if they want the compact view.
+const STORY_MODE_STORAGE_KEY = "tinker-story-mode";
+let storyMode: boolean = (() => {
+  try {
+    const v = localStorage.getItem(STORY_MODE_STORAGE_KEY);
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+})();
+function saveStoryMode(): void {
+  try {
+    localStorage.setItem(STORY_MODE_STORAGE_KEY, storyMode ? "1" : "0");
+  } catch {
+    // Private-mode / quota — silent fail; setting persists only for this session.
+  }
+}
 let initialized = false;
-let budgetData: any = null;
-let budgetUsageData: any = null;
-let forensicMode = false;
+let _budgetData: unknown = null;
+let budgetUsageData: unknown = null;
+let _forensicMode = false;
 // FORK: Active recipe step name for thinking indicator + message tags
 let activeRecipeStep: string | null = null;
 let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
+
+// FORK (2026-04-21): reload the timeline for the current session, but respect
+// the filter toggle. Previously every tab switch called loadSession() directly,
+// which silently collapsed an "All"-mode timeline back to the single session
+// while leaving the toggle visually set to "All" — fixing required toggling
+// off and on again. Centralizing here keeps the two states in sync.
+function refreshTimelineRespectingMode(): void {
+  if (!timelineCtrl) {
+    return;
+  }
+  if (timelineCtrl.getFilterMode() === "all") {
+    timelineCtrl.loadAllSessions(sessions.map((s: unknown) => s.key));
+  } else {
+    timelineCtrl.loadSession(sessionKey);
+  }
+}
 
 // ─── Tab State ───
 interface Tab {
@@ -303,7 +400,7 @@ function randomFortune(): string {
 // The globals (messages, sending, etc.) are always the "active tab's" working copy.
 // switchToTab does atomic save/load swap via saveCurrentTabState/loadTabState.
 interface TabState {
-  messages: any[];
+  messages: unknown[];
   streamMsgIdx: number;
   streamRunId: string | null;
   frozenTextEnd: number;
@@ -384,9 +481,29 @@ function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): 
 }
 
 let tabs: Tab[] = [];
-let activeTabId = "";
+// FORK (2026-04-21): initialize from localStorage so a hard refresh preserves
+// focus on whichever tab was active pre-reload. Previously defaulted to "" and
+// the connect handler fell through to "tab-main", losing sub-session focus.
+let activeTabId = (() => {
+  try {
+    return localStorage.getItem("tinker-active-tab") || "";
+  } catch {
+    return "";
+  }
+})();
 const TAB_STORAGE_KEY = "tinker-tabs";
+const ACTIVE_TAB_STORAGE_KEY = "tinker-active-tab";
 const TAB_TITLE_INTERVAL = 5;
+
+function saveActiveTabId(): void {
+  try {
+    if (activeTabId) {
+      localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+    }
+  } catch {
+    // Private-mode / quota errors — silent fail; refresh falls back to tab-main.
+  }
+}
 
 function generateTabId(): string {
   return "tab-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -394,28 +511,33 @@ function generateTabId(): string {
 
 function saveTabs() {
   try {
-    const persistable = tabs.filter((t) => t.id !== "tab-main");
-    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(persistable));
+    // FORK (2026-04-21): persist tab-main too. Previously filtered out, which meant
+    // `/clear`-rotated main-tab sessionKeys were lost on hard reset (gateway restart or
+    // browser refresh), causing the connect handshake's `defs.mainSessionKey` default
+    // to restore yesterday's agent:main:main session instead of the user's fresh
+    // tinker:* continuation.
+    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(tabs));
   } catch {}
 }
 
 function loadTabs() {
   try {
     const stored = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "[]") as Tab[];
-    // FORK: Migrate stale short fortune titles (v1/v2 had 4-6 word phrases like "Seek boldly",
-    // "Your words land perfectly"). Good fortunes are 80+ chars (12-25 words, Buddhist/mindfulness themed).
-    // Detect: no emoji prefix OR too short (under 80 chars) = old fortune, replace it.
-    let migrated = false;
+    // FORK (2026-04-21): force-restore tab-main's title to "🏠 Main" on every load.
+    // The old v1/v2 fortune-migration heuristic that used to stomp short titles was
+    // removed — it was intentionally stomping good Ollama-generated titles like
+    // "🔧 Fix auth bug" (short + emoji-prefixed by design), destroying tab-title
+    // persistence for every tinker:* session on gateway restart / hard refresh.
+    // v1/v2 migrations are months old at this point; any stale titles can be cleared
+    // manually by closing and reopening the tab.
+    let changed = false;
     for (const tab of stored) {
-      if (
-        tab.title &&
-        (!/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/u.test(tab.title) || tab.title.length < 80)
-      ) {
-        tab.title = randomFortune();
-        migrated = true;
+      if (tab.id === "tab-main" && tab.title !== "🏠 Main") {
+        tab.title = "🏠 Main";
+        changed = true;
       }
     }
-    if (migrated) {
+    if (changed) {
       localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(stored));
     }
     return stored;
@@ -430,6 +552,7 @@ const app = $("app")!;
 // ─── Provider Colors ───
 const PROVIDER_COLORS: Record<string, string> = {
   anthropic: "#D97757",
+  "claude-code": "#D97757", // FORK: cc-bridge runs Claude models; reuse Anthropic orange
   google: "#16a34a",
   openai: "#6b7280",
   ollama: "#ca8a04",
@@ -464,8 +587,13 @@ const MODEL_COST: Record<string, [number, number]> = {
 };
 
 // ─── Provider Icons (14px inline SVGs) ───
+const ANTHROPIC_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`;
 const PROVIDER_ICONS: Record<string, string> = {
-  anthropic: `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`,
+  anthropic: ANTHROPIC_ICON_SVG,
+  // FORK: cc-bridge talks to the same Claude models through the claude CLI;
+  // show the Anthropic asterisk so the model panel + thinking indicator
+  // read as "Opus (Anthropic)" instead of an anonymous grey dot.
+  "claude-code": ANTHROPIC_ICON_SVG,
   google: `<svg width="14" height="14" viewBox="0 0 48 48"><path d="M43.6 20.5H42V20H24v8h11.3C33.6 33.4 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" fill="#FFC107"/><path d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" fill="#FF3D00"/><path d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.3c-2 1.5-4.5 2.3-7.3 2.3-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" fill="#4CAF50"/><path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.7l6.2 5.3C37 39.4 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" fill="#1976D2"/></svg>`,
   openai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22.28 9.37a5.88 5.88 0 0 0-.51-4.86 5.97 5.97 0 0 0-6.43-2.83A5.9 5.9 0 0 0 10.87 0a5.97 5.97 0 0 0-5.69 4.13 5.88 5.88 0 0 0-3.93 2.85 5.97 5.97 0 0 0 .74 6.99 5.88 5.88 0 0 0 .51 4.86 5.97 5.97 0 0 0 6.43 2.83A5.9 5.9 0 0 0 13.4 24a5.97 5.97 0 0 0 5.69-4.13 5.88 5.88 0 0 0 3.93-2.85 5.97 5.97 0 0 0-.74-6.99zM13.4 22.3a4.42 4.42 0 0 1-2.84-1.03l.14-.08 4.72-2.73a.77.77 0 0 0 .39-.67v-6.66l2 1.15a.07.07 0 0 1 .04.06v5.52a4.46 4.46 0 0 1-4.46 4.44zM3.48 18.2a4.42 4.42 0 0 1-.53-2.97l.14.08 4.72 2.73a.77.77 0 0 0 .77 0l5.76-3.33v2.31a.07.07 0 0 1-.03.06l-4.77 2.76a4.46 4.46 0 0 1-6.06-1.64zM2.2 7.87A4.42 4.42 0 0 1 4.52 5.9v5.62a.77.77 0 0 0 .39.67l5.76 3.33-2 1.15a.07.07 0 0 1-.07 0L3.83 13.9A4.46 4.46 0 0 1 2.2 7.87zm17.33 4.03l-5.76-3.33 2-1.15a.07.07 0 0 1 .07 0l4.77 2.76a4.46 4.46 0 0 1-.69 8.05v-5.66a.77.77 0 0 0-.39-.67zM21.5 9.7l-.14-.08-4.72-2.73a.77.77 0 0 0-.77 0L10.1 10.2V7.9a.07.07 0 0 1 .03-.06l4.77-2.76a4.46 4.46 0 0 1 6.6 4.62zM8.93 13.34l-2-1.15a.07.07 0 0 1-.04-.06V6.61a4.46 4.46 0 0 1 7.3-3.42l-.14.08-4.72 2.73a.77.77 0 0 0-.39.67zm1.08-2.34L12 9.77l1.99 1.15v2.3L12 14.36l-1.99-1.15z" fill="#10a37f"/></svg>`,
   ollama: `<svg width="14" height="14" viewBox="0 0 24 24"><text x="3" y="17" font-size="14" font-weight="bold" fill="#ca8a04">O</text></svg>`,
@@ -494,7 +622,7 @@ function findLastIndex<T>(arr: T[], pred: (v: T) => boolean): number {
 // ─── Persisted Error Messages ───
 const ERROR_STORAGE_KEY = "tinker-errors";
 
-function persistErrorMsg(sk: string, msg: any) {
+function persistErrorMsg(sk: string, msg: unknown) {
   try {
     const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
     if (!all[sk]) {
@@ -507,7 +635,7 @@ function persistErrorMsg(sk: string, msg: any) {
   }
 }
 
-function loadPersistedErrors(sk: string): any[] {
+function loadPersistedErrors(sk: string): unknown[] {
   try {
     const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
     return all[sk] || [];
@@ -538,6 +666,27 @@ type ActiveRunInfo = {
   currentTool?: string;
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
+
+// FORK 2026-04-20: Prefrontal dashboard state. Three slices:
+// - latestTreeFromExtension: last `prefrontal-tree` WS event from the extension.
+//   When present, it's the canonical source of the tree (has labels, progress,
+//   per-node summaries). When absent, we fall back to activeRuns synthesis.
+// - currentRecipe: last `prefrontal-recipe-state` WS event.
+// - prefrontalTrail: full append-only ring of TrailEvent items (synthesized
+//   from lifecycle + explicit trail RPC). The panel renders all of them with
+//   scroll; we only clamp to an absurd maximum to avoid unbounded memory on
+//   long-running sessions.
+const PREFRONTAL_TRAIL_HARD_MAX = 500;
+let latestTreeFromExtension: TreeResponse | null = null;
+let latestTreeFromExtensionAt = 0;
+let currentRecipe: RecipeState | null = null;
+const prefrontalTrail: TrailEvent[] = [];
+function pushTrail(evt: TrailEvent) {
+  prefrontalTrail.push(evt);
+  if (prefrontalTrail.length > PREFRONTAL_TRAIL_HARD_MAX) {
+    prefrontalTrail.splice(0, prefrontalTrail.length - PREFRONTAL_TRAIL_HARD_MAX);
+  }
+}
 const providerErrors = new Map<string, { error: string; reason: string; ts: number }>();
 const PROVIDER_ERRORS_STORAGE_KEY = "tinker-providerErrors";
 
@@ -660,13 +809,49 @@ function sessionHasActiveRuns(sessionKey: string): { live: boolean; provider?: s
   return { live: false };
 }
 
-let modelConfigData: any = null;
+let modelConfigData: unknown = null;
 
-// FORK: Build Prefrontal tree from activeRuns — unified with thinking indicator + models panel.
-// Called at the same points as updateBudgetPanel/updateChat for instant reactivity.
+// FORK 2026-04-20: Build the Prefrontal dashboard state (tree + recipe +
+// trail) and push it to the panel controller. Tree source of truth is the
+// extension's `prefrontal-tree` broadcast when we've seen one recently (that
+// feed has labels, progress, summaries). Falls back to synthesizing from the
+// local activeRuns map for the first paint before an extension event arrives.
+//
+// Called at every point that used to call updatePrefrontalTree (lifecycle
+// start/end, tool events, recipe-state events, trail events).
+const PREFRONTAL_EXT_TREE_TTL_MS = 6_000;
 function updatePrefrontalTree() {
   if (!prefrontalCtrl) {
     return;
+  }
+
+  const tree = buildPrefrontalTree();
+  prefrontalCtrl.update({
+    tree,
+    recipe: currentRecipe,
+    trail: prefrontalTrail,
+  } satisfies PrefrontalDashboardState);
+}
+
+function buildPrefrontalTree(): TreeResponse {
+  PF_DEBUG_STATE.renderCount++;
+  // Prefer the extension's tree if recent.
+  if (
+    latestTreeFromExtension &&
+    Date.now() - latestTreeFromExtensionAt < PREFRONTAL_EXT_TREE_TTL_MS &&
+    latestTreeFromExtension.active
+  ) {
+    if (PF_DEBUG_STATE.lastRenderSource !== "extension") {
+      PF_DEBUG_STATE.lastRenderSource = "extension";
+      pfLog(`render source → extension (age=${Date.now() - latestTreeFromExtensionAt}ms)`);
+    }
+    return latestTreeFromExtension;
+  }
+  if (PF_DEBUG_STATE.lastRenderSource !== "fallback") {
+    PF_DEBUG_STATE.lastRenderSource = "fallback";
+    pfLog(
+      `render source → fallback (activeRuns=${activeRuns.size}, extensionTreeAge=${latestTreeFromExtension ? Date.now() - latestTreeFromExtensionAt : "none"}ms)`,
+    );
   }
 
   // Collect active runs (respecting session scope)
@@ -679,8 +864,7 @@ function updatePrefrontalTree() {
   }
 
   if (runs.length === 0) {
-    prefrontalCtrl.update({ active: false, root: null });
-    return;
+    return { active: false, root: null };
   }
 
   // Build tree: first run = root, rest = children (subagents)
@@ -700,11 +884,17 @@ function updatePrefrontalTree() {
       lastEventAge: elapsed,
       children: [],
     };
-    // Main session = root, subagents = children
-    if (!info.sessionKey || info.sessionKey.includes(":main:")) {
-      root = node;
-    } else {
+    // FORK 2026-04-20: the previous check was `info.sessionKey.includes(":main:")`
+    // which *also* matched subagent keys like `agent:main:subagent:xxx` -- every
+    // subagent got promoted to root and the last one won. Distinguish by the
+    // `:subagent:` segment (or any non-main suffix) instead.
+    const isSubagent =
+      typeof info.sessionKey === "string" &&
+      (info.sessionKey.includes(":subagent:") || info.sessionKey.includes(":acp:"));
+    if (isSubagent) {
       children.push(node);
+    } else {
+      root = node;
     }
   }
 
@@ -726,13 +916,14 @@ function updatePrefrontalTree() {
 
   if (root) {
     root.children = children;
-    prefrontalCtrl.update({ active: true, root });
+    return { active: true, root };
   }
+  return { active: false, root: null };
 }
 
 // ─── Recipe Progress (Prefrontal v3.0) ───
 // FORK: Shows active recipe progress below the call tree panel.
-function updateRecipeProgress(data: any) {
+function updateRecipeProgress(data: unknown) {
   const container = document.getElementById("recipe-progress");
   if (!container) {
     return;
@@ -799,8 +990,8 @@ function uuid() {
 
 function gwConnect() {
   ws = new WebSocket(GW_WS);
-  ws.onmessage = (ev) => onFrame(JSON.parse(ev.data));
-  ws.onclose = () => {
+  ws.addEventListener("message", (ev) => onFrame(JSON.parse(ev.data)));
+  ws.addEventListener("close", () => {
     connected = false;
     sending = false;
     streamMsgIdx = -1;
@@ -813,10 +1004,10 @@ function gwConnect() {
     updateBtn();
     updateChat();
     setTimeout(gwConnect, 2000);
-  };
+  });
 }
 
-function onFrame(f: any) {
+function onFrame(f: unknown) {
   if (f.type === "event") {
     if (f.event === "connect.challenge") {
       req("connect", {
@@ -834,7 +1025,7 @@ function onFrame(f: any) {
         caps: ["tool-events"],
         auth: { token: TOKEN },
       })
-        .then((hello: any) => {
+        .then((hello: unknown) => {
           connected = true;
           const defs = hello?.snapshot?.sessionDefaults;
           if (defs?.mainSessionKey) {
@@ -842,24 +1033,34 @@ function onFrame(f: any) {
           }
           // Initialize tabs (preserve active tab across reconnects)
           const prevActiveTabId = activeTabId;
-          const mainTab: Tab = {
+          const restored = loadTabs();
+          // FORK (2026-04-21): prefer restored tab-main (which carries the /clear-
+          // rotated sessionKey) over the default-constructed one. If no restored
+          // tab-main exists (first load ever, or cleared storage), fall back to a
+          // fresh mainTab bound to the gateway-provided default sessionKey.
+          const defaultMainTab: Tab = {
             id: "tab-main",
             sessionKey: sessionKey,
             title: "🏠 Main",
             isAttached: true,
           };
-          const restored = loadTabs();
-          tabs = [mainTab, ...restored];
+          const restoredMain = restored.find((t) => t.id === "tab-main");
+          const mainTab = restoredMain ?? defaultMainTab;
+          const others = restored.filter((t) => t.id !== "tab-main");
+          tabs = [mainTab, ...others];
           // FORK: Initialize TabState for main and all restored tabs
           tabStates.set(mainTab.id, freshTabState());
-          for (const t of restored) {
+          for (const t of others) {
             if (!tabStates.has(t.id)) {
               tabStates.set(t.id, freshTabState());
             }
           }
-          // Restore previous active tab if it still exists, otherwise default to main
+          // Restore previous active tab if it still exists, otherwise default to main.
+          // FORK (2026-04-21): prevActiveTabId comes from localStorage on hard refresh
+          // (module-level init above), so the user's pre-refresh sub-session stays focused.
           const prevTabExists = tabs.some((t) => t.id === prevActiveTabId);
           activeTabId = prevTabExists ? prevActiveTabId : "tab-main";
+          saveActiveTabId();
           // Restore the session key from the active tab
           const activeTab = tabs.find((t) => t.id === activeTabId);
           if (activeTab?.isAttached && activeTab.sessionKey) {
@@ -871,14 +1072,14 @@ function onFrame(f: any) {
           loadSessions({ loadChat: true });
           loadBudget();
           refreshTreemap();
-          timelineCtrl?.loadSession(sessionKey);
+          refreshTimelineRespectingMode();
           scheduleUnconfirmedPrune();
           req("forensic.setMode", { enabled: true })
-            .then((res: any) => {
-              forensicMode = res?.enabled ?? true;
+            .then((res: unknown) => {
+              _forensicMode = res?.enabled ?? true;
             })
             .catch(() => {
-              forensicMode = true;
+              _forensicMode = true;
             });
         })
         .catch((e) => console.error("connect:", e));
@@ -891,12 +1092,16 @@ function onFrame(f: any) {
     const p = pending.get(f.id);
     if (p) {
       pending.delete(f.id);
-      f.ok ? p.resolve(f.payload) : p.reject(f.error);
+      if (f.ok) {
+        p.resolve(f.payload);
+      } else {
+        p.reject(f.error);
+      }
     }
   }
 }
 
-function req<T = any>(method: string, params?: any): Promise<T> {
+function req<T = unknown>(method: string, params?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return reject("disconnected");
@@ -926,7 +1131,7 @@ function startHealthPoll() {
         return;
       }
       let changed = false;
-      for (const [provider, info] of Object.entries(res.health) as [string, any][]) {
+      for (const [provider, info] of Object.entries(res.health) as [string, unknown][]) {
         if (info.available) {
           if (providerErrors.has(provider)) {
             providerErrors.delete(provider);
@@ -977,7 +1182,7 @@ function findSentenceEnd(text: string, from: number): number {
  * The remainder (after the '.') stays in the current bubble. If nothing
  * remains, the bubble is removed entirely.
  */
-function mergeSentenceContinuations(msgs: any[]): void {
+function mergeSentenceContinuations(msgs: unknown[]): void {
   // Only operate on _temporary messages from the current run.
   // Find the range of temporary messages (they're always at the tail).
   let tempStart = -1;
@@ -1001,7 +1206,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
       continue;
     }
     const content = Array.isArray(m.content) ? m.content : [];
-    const textBlock = content.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+    const textBlock = content.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
     if (!textBlock) {
       continue;
     }
@@ -1020,7 +1225,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
     }
 
     // Find the previous temporary assistant text bubble
-    let prevTextBlock: any = null;
+    let prevTextBlock: unknown = null;
     for (let k = i - 1; k >= tempStart; k--) {
       const prev = msgs[k];
       if (!prev._temporary) {
@@ -1030,7 +1235,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
         continue;
       }
       const pc = Array.isArray(prev.content) ? prev.content : [];
-      const pt = pc.find((b: any) => b.type === "text" && (b.text ?? "").trim());
+      const pt = pc.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
       if (pt) {
         prevTextBlock = pt;
         break;
@@ -1062,7 +1267,7 @@ function mergeSentenceContinuations(msgs: any[]): void {
   }
 }
 
-function onEvent(evt: any) {
+function onEvent(evt: unknown) {
   if (evt.event === "chat") {
     const p = evt.payload;
     if (p.sessionKey !== sessionKey && !sessionKeyMatches(p.sessionKey)) {
@@ -1101,7 +1306,7 @@ function onEvent(evt: any) {
         if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
           // Update existing temporary message's text
           const content = messages[streamMsgIdx].content;
-          const textBlock = content.find((b: any) => b.type === "text");
+          const textBlock = content.find((b: unknown) => b.type === "text");
           if (textBlock) {
             textBlock.text = segmentText;
           }
@@ -1137,22 +1342,24 @@ function onEvent(evt: any) {
         // ALL temp text segments with the server's authoritative version so
         // markdown elements (tables, lists) that span tool-call boundaries
         // render correctly as a single block.
-        const hadTemps = messages.some((m: any) => m._temporary);
+        const hadTemps = messages.some((m: unknown) => m._temporary);
         if (hadTemps && p.message) {
           // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
           const finalText = finalContent
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text ?? "")
+            .filter((b: unknown) => b.type === "text")
+            .map((b: unknown) => b.text ?? "")
             .join("");
 
           // Remove temp text-only messages, keep temp tool messages
-          messages = messages.filter((m: any) => {
+          messages = messages.filter((m: unknown) => {
             if (!m._temporary) {
               return true;
             }
             const c = Array.isArray(m.content) ? m.content : [];
-            const isToolMsg = c.some((b: any) => b.type === "tool_use" || b.type === "tool_result");
+            const isToolMsg = c.some(
+              (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
+            );
             return isToolMsg;
           });
 
@@ -1182,7 +1389,7 @@ function onEvent(evt: any) {
           messages.push(p.message);
         }
       } else {
-        messages = messages.filter((m: any) => !m._temporary);
+        messages = messages.filter((m: unknown) => !m._temporary);
         if (p.message) {
           messages.push(p.message);
         }
@@ -1218,7 +1425,7 @@ function onEvent(evt: any) {
           }
           // Clear all keys matching this provider (provider:*, provider/*)
           if (streamProvider) {
-            for (const key of [...providerErrors.keys()]) {
+            for (const key of providerErrors.keys()) {
               if (
                 key === streamProvider ||
                 key.startsWith(streamProvider + ":") ||
@@ -1296,8 +1503,13 @@ function onEvent(evt: any) {
   if (evt.event === "agent") {
     const p = evt.payload;
     // ─── Live Tool Events ───
-    // Capture tool-use/tool-result events and inject them as visible messages
-    if (p?.stream === "tool" && p.sessionKey === sessionKey) {
+    // Capture tool-use/tool-result events and inject them as visible messages.
+    // FORK (2026-04-21): use sessionKeyMatches so a server-canonicalized key
+    // like "agent:main:tinker:mo7jxksk" matches a client key of
+    // "tinker:mo7jxksk". Previously the strict `===` check silently dropped
+    // every tool event on tinker:* sessions — that's why tool calls vanished
+    // from chat after /clear had rotated to a fresh key.
+    if (p?.stream === "tool" && sessionKeyMatches(p.sessionKey)) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
         // Update active run phase to "tool"
@@ -1311,7 +1523,12 @@ function onEvent(evt: any) {
         // Freeze current streaming text — it becomes its own thinking bubble
         frozenTextEnd = lastDeltaLen;
         streamMsgIdx = -1;
-        // Add tool_use as a temporary message
+        // Add tool_use as a temporary message. FORK (2026-04-24): cc-bridge
+        // attaches a `purpose` string to the event carrying the LLM's
+        // purpose narration that preceded the tool call. Stash it on the
+        // pushed block as `_purpose` so renderMsg can use it as the tool
+        // row's title without re-rendering the narration (already streamed
+        // above as text deltas into the preceding chat bubble).
         messages.push({
           role: "assistant",
           content: [
@@ -1320,6 +1537,7 @@ function onEvent(evt: any) {
               id: d.toolCallId,
               name: d.name,
               input: d.args ?? {},
+              _purpose: typeof d.purpose === "string" ? d.purpose : undefined,
             },
           ],
           _temporary: true,
@@ -1334,19 +1552,24 @@ function onEvent(evt: any) {
           }
         }
         updatePrefrontalTree();
-        // Push tool_result as a temporary message so renderMsg can pair it
+        // Push tool_result as a temporary message so renderMsg can pair it.
+        // FORK (2026-04-24): never fill missing output with "(completed)" —
+        // that used to mask a real problem (empty stdout vs. not-yet-arrived
+        // vs. dropped-in-transit). Empty string is honest; renderMsg hides
+        // the stdout block when content is empty.
+        const resultContent =
+          typeof d.result === "string"
+            ? d.result
+            : d.result != null
+              ? JSON.stringify(d.result)
+              : "";
         messages.push({
           role: "user",
           content: [
             {
               type: "tool_result",
               tool_use_id: d.toolCallId,
-              content:
-                d.result != null
-                  ? typeof d.result === "string"
-                    ? d.result
-                    : JSON.stringify(d.result)
-                  : "(completed)",
+              content: resultContent,
               is_error: Boolean(d.isError),
             },
           ],
@@ -1358,7 +1581,7 @@ function onEvent(evt: any) {
     // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
     if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
       if (p.data.anatomy && timelineCtrl) {
-        const anatomy = p.data.anatomy as any;
+        const anatomy = p.data.anatomy as unknown;
         if (anatomy.roundNumber) {
           // Round-level anatomy: enrich existing round bar with full segment data
           timelineCtrl.pushEvent(anatomy, p.runId);
@@ -1379,7 +1602,7 @@ function onEvent(evt: any) {
         return;
       }
       if (timelineCtrl) {
-        const roundEvent: any = {
+        const roundEvent: unknown = {
           turn: p.data.turnNumber,
           roundNumber: p.data.roundNumber,
           model: p.data.model,
@@ -1493,7 +1716,7 @@ function onEvent(evt: any) {
           ? " — all backups exhausted"
           : " — jumping to backup";
       const fallbackText = `⚠ ${shortModel}${profileLabel} ${stepLabel} — ${reasonLabel}${nextLabel}`;
-      const fallbackMsg: any = {
+      const fallbackMsg: unknown = {
         role: "assistant",
         content: [{ type: "text", text: fallbackText }],
         _isWarning: true,
@@ -1533,7 +1756,7 @@ function onEvent(evt: any) {
         updateBudgetPanel();
         startHealthPoll();
       }
-      const profileMsg: any = {
+      const profileMsg: unknown = {
         role: "assistant",
         content: [{ type: "text", text: profileText }],
         _isWarning: true,
@@ -1556,7 +1779,7 @@ function onEvent(evt: any) {
       const text = isExhausted
         ? `🛑 ${shortModel} — ${d.attempts} retries exhausted — falling back`
         : `⏳ ${shortModel} — overload retry ${d.attempt}/${d.maxAttempts} — waiting ${((d.delayMs as number) / 1000).toFixed(0)}s`;
-      const retryMsg: any = {
+      const retryMsg: unknown = {
         role: "assistant",
         content: [{ type: "text", text }],
         _isOverloadRetry: true,
@@ -1585,6 +1808,122 @@ function onEvent(evt: any) {
     // v3.0: Prefrontal recipe progress events
     if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-progress") {
       updateRecipeProgress(p.data.data);
+    }
+
+    // FORK 2026-04-20: Prefrontal tree broadcast from the extension. Canonical
+    // source of the right-panel tree -- has labels, progress%, summaries per
+    // node that the local activeRuns synthesis can't provide.
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-tree") {
+      const tree = p.data?.tree as TreeResponse | undefined;
+      if (tree && typeof tree.active === "boolean") {
+        latestTreeFromExtension = tree;
+        latestTreeFromExtensionAt = Date.now();
+        PF_DEBUG_STATE.lastTree = tree;
+        PF_DEBUG_STATE.eventCounts.tree++;
+        pfLog(
+          `tree event #${PF_DEBUG_STATE.eventCounts.tree} active=${tree.active} root=${tree.root?.model ?? "-"} children=${tree.root?.children?.length ?? 0}`,
+          tree,
+        );
+        updatePrefrontalTree();
+      } else {
+        pfLog(`tree event IGNORED (malformed)`, p.data);
+      }
+    }
+
+    // FORK 2026-04-20: Jarvis (or any caller) publishes recipe state via
+    // fork.prefrontal.setRecipe RPC. The gateway broadcasts it as a lifecycle
+    // event; we update the right-panel header + append a trail item.
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-recipe-state") {
+      const d = p.data as {
+        recipeId?: string;
+        step?: number;
+        totalSteps?: number;
+        stepName?: string;
+        parallelismCap?: number;
+        inFlightLabels?: string[];
+        note?: string;
+        ts?: number;
+      };
+      if (d.recipeId) {
+        const prev = currentRecipe;
+        const startedAt =
+          prev?.recipeId === d.recipeId ? (prev.startedAt ?? Date.now()) : (d.ts ?? Date.now());
+        currentRecipe = {
+          recipeId: d.recipeId,
+          step: d.step,
+          totalSteps: d.totalSteps,
+          stepName: d.stepName,
+          parallelismCap: d.parallelismCap,
+          inFlightLabels: d.inFlightLabels,
+          note: d.note,
+          startedAt,
+        };
+        PF_DEBUG_STATE.lastRecipe = currentRecipe;
+        PF_DEBUG_STATE.eventCounts.recipe++;
+        pfLog(
+          `recipe-state #${PF_DEBUG_STATE.eventCounts.recipe} recipe=${d.recipeId} step=${d.step ?? "-"}/${d.totalSteps ?? "-"} name="${d.stepName ?? ""}" cap=${d.parallelismCap ?? "-"} inFlight=${(d.inFlightLabels ?? []).length}`,
+          currentRecipe,
+        );
+        // Emit a trail item on step transitions (including recipe start).
+        const newStepKey = `${d.recipeId}:${d.step ?? 0}`;
+        const prevStepKey = prev ? `${prev.recipeId}:${prev.step ?? 0}` : "";
+        if (newStepKey !== prevStepKey) {
+          const label =
+            d.step != null
+              ? `Step ${d.step}${d.totalSteps != null ? `/${d.totalSteps}` : ""}`
+              : d.recipeId;
+          pushTrail({
+            ts: d.ts ?? Date.now(),
+            kind: "recipe-step",
+            label,
+            message: d.stepName ?? d.recipeId,
+          });
+        }
+        updatePrefrontalTree();
+      }
+    }
+
+    // FORK 2026-04-20: Jarvis publishes a discrete trail event via
+    // fork.prefrontal.trailEvent RPC. kind ∈ dispatch|complete|note|
+    // transition|warn (other kinds fall through to "note").
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-trail-event") {
+      const d = p.data as {
+        kind?: string;
+        label?: string;
+        message?: string;
+        icon?: string;
+        ts?: number;
+      };
+      if (d.message) {
+        const ALLOWED: TrailEventKind[] = [
+          "dispatch",
+          "complete",
+          "note",
+          "transition",
+          "warn",
+          "recipe-step",
+          "spawn-fail",
+        ];
+        const kind: TrailEventKind = ALLOWED.includes(d.kind as TrailEventKind)
+          ? (d.kind as TrailEventKind)
+          : "note";
+        const entry = {
+          ts: d.ts ?? Date.now(),
+          kind,
+          label: d.label,
+          message: d.message,
+          icon: d.icon,
+        };
+        pushTrail(entry);
+        PF_DEBUG_STATE.lastTrailEvent = entry;
+        PF_DEBUG_STATE.eventCounts.trail++;
+        pfLog(
+          `trail-event #${PF_DEBUG_STATE.eventCounts.trail} kind=${kind} label=${d.label ?? "-"} msg="${d.message}"`,
+        );
+        updatePrefrontalTree();
+      } else {
+        pfLog(`trail-event IGNORED (no message)`, d);
+      }
     }
     // FORK: Prefrontal recipe status — banner + thinking annotation + message tags
     if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-recipe-status") {
@@ -1657,6 +1996,30 @@ function onEvent(evt: any) {
           sessionKey: p.data.sessionKey as string | undefined,
           phase: "thinking",
         });
+        // FORK 2026-04-20: synthesize an implicit trail entry when a subagent
+        // session starts/ends, so the panel trail still shows motion even if
+        // the caller forgot to push explicit trail events via the RPC.
+        {
+          const sk = typeof p.data.sessionKey === "string" ? p.data.sessionKey : "";
+          if (sk.includes(":subagent:")) {
+            const tail = sk.split(":").pop() ?? sk;
+            const shortId = tail.length > 8 ? tail.slice(0, 8) : tail;
+            const shortModel =
+              String(p.data.model ?? "")
+                .split("/")
+                .pop() ?? "";
+            pushTrail({
+              ts: Date.now(),
+              kind: "dispatch",
+              label: shortId,
+              message: `subagent start · ${shortModel}`,
+            });
+            PF_DEBUG_STATE.eventCounts.subagentStart++;
+            pfLog(
+              `implicit dispatch #${PF_DEBUG_STATE.eventCounts.subagentStart} sessionKey=${sk} model=${shortModel} runId=${p.runId}`,
+            );
+          }
+        }
         // Re-assert sending in case a chat error event cleared it during fallback
         sending = true;
         saveActiveRuns();
@@ -1676,11 +2039,11 @@ function onEvent(evt: any) {
               fetch(`/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`)
                 .then((r) => (r.ok ? r.json() : null))
                 .then((body) => {
-                  const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+                  const events: unknown[] = Array.isArray(body) ? body : (body?.events ?? []);
                   if (events.length === 0) {
                     return;
                   }
-                  const turnEvents = events.filter((ev: any) => ev.turn === tn);
+                  const turnEvents = events.filter((ev: unknown) => ev.turn === tn);
                   for (const ev of turnEvents) {
                     timelineCtrl!.pushEvent(ev);
                   }
@@ -1690,6 +2053,30 @@ function onEvent(evt: any) {
           }, 800);
         }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
+        // FORK 2026-04-20: implicit trail entry on subagent completion.
+        {
+          const sk = typeof p.data.sessionKey === "string" ? p.data.sessionKey : "";
+          if (sk.includes(":subagent:")) {
+            const runMeta = activeRuns.get(p.runId);
+            const tail = sk.split(":").pop() ?? sk;
+            const shortId = tail.length > 8 ? tail.slice(0, 8) : tail;
+            const elapsed = runMeta ? Math.round((Date.now() - runMeta.startedAt) / 1000) : 0;
+            const kind = p.data.phase === "error" ? "spawn-fail" : "complete";
+            pushTrail({
+              ts: Date.now(),
+              kind,
+              label: shortId,
+              message:
+                kind === "spawn-fail"
+                  ? `subagent failed · ${elapsed}s`
+                  : `subagent done · ${elapsed}s`,
+            });
+            PF_DEBUG_STATE.eventCounts.subagentEnd++;
+            pfLog(
+              `implicit ${kind} #${PF_DEBUG_STATE.eventCounts.subagentEnd} sessionKey=${sk} elapsed=${elapsed}s runId=${p.runId}`,
+            );
+          }
+        }
         // FORK: Regenerate tab title after assistant responds — works for any tab via TabState
         if (p.data.phase === "end") {
           const evtKey = p.data.sessionKey as string | undefined;
@@ -1702,7 +2089,7 @@ function onEvent(evt: any) {
           if (targetTab) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
-            const tabTurns = tabMsgs.filter((m: any) => m.role === "user").length;
+            const tabTurns = tabMsgs.filter((m: unknown) => m.role === "user").length;
             if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
               console.log(
                 "[tabs] triggering title generation for turn",
@@ -1718,7 +2105,7 @@ function onEvent(evt: any) {
         if (p.data.rateLimit && budgetUsageData?.claude) {
           const rl = p.data.rateLimit as { h5: number; d7: number; d7Sonnet?: number };
           if (!budgetUsageData.claude.limits) {
-            budgetUsageData.claude.limits = {} as any;
+            budgetUsageData.claude.limits = {} as unknown;
           }
           budgetUsageData.claude.limits.five_hour = {
             utilization: rl.h5,
@@ -1768,12 +2155,12 @@ function onEvent(evt: any) {
             )
               .then((r) => (r.ok ? r.json() : null))
               .then((body) => {
-                const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+                const events: unknown[] = Array.isArray(body) ? body : (body?.events ?? []);
                 if (events.length === 0) {
                   return;
                 }
                 // Find events for the current turn
-                const turnEvents = events.filter((ev: any) => ev.turn === turnNum);
+                const turnEvents = events.filter((ev: unknown) => ev.turn === turnNum);
                 if (turnEvents.length === 0) {
                   // Fallback: just use the latest event (backwards compat)
                   const latest = events[events.length - 1];
@@ -1806,15 +2193,15 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   updateSessionsPanel();
   // FORK: If sessionKey was just resolved for the first time, load timeline
   if (!hadSessionKey && sessionKey) {
-    timelineCtrl?.loadSession(sessionKey);
+    refreshTimelineRespectingMode();
   }
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
   for (const tab of tabs) {
     if (tab.isAttached && tab.sessionKey && tab.id !== "tab-main") {
-      let sess = sessions.find((s: any) => s.key === tab.sessionKey);
+      let sess = sessions.find((s: unknown) => s.key === tab.sessionKey);
       if (!sess) {
         // Try suffix match: tab has "tinker:xxx", server has "agent:main:tinker:xxx"
-        sess = sessions.find((s: any) => s.key.endsWith(":" + tab.sessionKey));
+        sess = sessions.find((s: unknown) => s.key.endsWith(":" + tab.sessionKey));
       }
       if (sess && tab.sessionKey !== sess.key) {
         // Upgrade to canonical key
@@ -1854,7 +2241,7 @@ async function loadChat() {
     if (targetTab) {
       const ts = tabStates.get(targetTab.id) ?? freshTabState();
       ts.messages = res.messages ?? [];
-      ts.currentTurnNumber = ts.messages.filter((m: any) => m.role === "user").length;
+      ts.currentTurnNumber = ts.messages.filter((m: unknown) => m.role === "user").length;
       tabStates.set(targetTab.id, ts);
     }
     return;
@@ -1864,14 +2251,14 @@ async function loadChat() {
   lastDeltaLen = 0;
   messages = res.messages ?? [];
   // Sync turn counter from loaded history
-  const userMsgCount = messages.filter((m: any) => m.role === "user").length;
+  const userMsgCount = messages.filter((m: unknown) => m.role === "user").length;
   currentTurnNumber = userMsgCount;
   // Restore persisted error messages (survive refresh)
   const storedErrors = loadPersistedErrors(sessionKey);
   if (storedErrors.length) {
     // Insert errors before the last assistant message (natural position),
     // or append at end if no assistant message follows.
-    const lastAssistantIdx = findLastIndex(messages, (m: any) => m.role === "assistant");
+    const lastAssistantIdx = findLastIndex(messages, (m: unknown) => m.role === "assistant");
     if (lastAssistantIdx >= 0) {
       messages.splice(lastAssistantIdx, 0, ...storedErrors);
     } else {
@@ -1904,8 +2291,8 @@ async function generateTabTitle(tab: Tab) {
     }
     const text = Array.isArray(m.content)
       ? m.content
-          .filter((b: any) => b.type === "text")
-          .map((b: any) => b.text)
+          .filter((b: unknown) => b.type === "text")
+          .map((b: unknown) => b.text)
           .join(" ")
       : String(m.content);
     if (!text.trim()) {
@@ -1968,7 +2355,12 @@ async function send(text: string) {
     return;
   }
 
-  // FORK: /clear — wipe visual chat immediately, then send to gateway for backend reset
+  // FORK (2026-04-20): /clear is a pure client-side transaction, like Claude Code's /clear.
+  // Wipe the UI, rotate to a fresh session key, fire no LLM call. The old server-side
+  // session lingers on disk until cleaning-lady archives it — zero cost, zero tokens.
+  // Non-main sessions (tinker:*) are additionally told to be deleted server-side; the
+  // main session (agent:main:main) can't be deleted but is still abandoned in the tab
+  // by the sessionKey rotation below.
   if (text.trim() === "/clear") {
     messages = [];
     streamMsgIdx = -1;
@@ -1978,21 +2370,35 @@ async function send(text: string) {
     sending = false;
     currentTurnNumber = 0;
     expandedTools = new Set();
-    // Clear tab state too
+
+    const oldSessionKey = sessionKey;
     const clearTab = tabs.find((t) => t.id === activeTabId);
+
+    // Rotate the active tab to a fresh session key. Next message starts a new session
+    // on the gateway automatically (auto-create on first chat.send).
+    const freshKey = `tinker:${Date.now().toString(36)}`;
+    sessionKey = freshKey;
     if (clearTab) {
+      clearTab.sessionKey = freshKey;
+      clearTab.isAttached = true;
       const ts = tabStates.get(clearTab.id);
       if (ts) {
         ts.messages = [];
         ts.currentTurnNumber = 0;
       }
+      saveTabs();
+      renderTabs();
     }
+
     updateChat();
     scrollChat();
-    // Send /clear to gateway for backend context reset
-    await req("chat.send", { sessionKey, message: "/clear", idempotencyKey: uuid() }).catch(
-      () => {},
-    );
+
+    // Best-effort server-side cleanup of the old tinker:* session. Fire-and-forget;
+    // failures are fine (main session can't be deleted, that's by design). No await,
+    // no LLM call path touched.
+    if (oldSessionKey && oldSessionKey.startsWith("tinker:")) {
+      req("sessions.delete", { key: oldSessionKey, deleteTranscript: false }).catch(() => {});
+    }
     return;
   }
 
@@ -2023,9 +2429,17 @@ async function send(text: string) {
     sending = true;
   }
   currentTurnNumber++;
+  // FORK 2026-04-18: Show the USER'S TEXT in the bubble, but stash the full
+  // injected prompt (with amygdala/fractal instructions) on the message so
+  // the renderer can offer a click-to-expand view. `_fullPrompt` holds the
+  // actual string that was sent to claude — useful both for debugging and
+  // for the user to confirm what instructions landed with their turn.
+  const fullPromptForDebug = buildInjectedPrompt(text);
+  const hasInjection = fullPromptForDebug.length > text.length + 16;
   messages.push({
     role: "user",
     content: [{ type: "text", text }],
+    ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
     ...(isQueued ? { _queued: true } : {}),
   });
   updateChat();
@@ -2034,7 +2448,18 @@ async function send(text: string) {
   }
   scrollChat();
 
-  await req("chat.send", { sessionKey, message: text, idempotencyKey: uuid() }).catch((e) => {
+  // FORK 2026-04-18: Amygdala + Fractal injection.
+  // The user sees ONLY `text` in their bubble (with a click-to-expand hint
+  // showing the full prompt if instructions were appended). The gateway
+  // receives `text + optional instruction suffix` so Opus emits a structured
+  // reply (💬 ANSWER → 🧠 AMYGDALA → 🌿 FRACTAL).
+  const messageForGateway = fullPromptForDebug;
+
+  await req("chat.send", {
+    sessionKey,
+    message: messageForGateway,
+    idempotencyKey: uuid(),
+  }).catch((e) => {
     console.error(e);
     sending = false;
     updateBtn();
@@ -2068,8 +2493,8 @@ function retryProvider(provider: string) {
     if ((messages[i].role ?? "").toLowerCase() === "user") {
       const text = Array.isArray(messages[i].content)
         ? messages[i].content
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text)
+            .filter((b: unknown) => b.type === "text")
+            .map((b: unknown) => b.text)
             .join("\n")
         : typeof messages[i].content === "string"
           ? messages[i].content
@@ -2089,7 +2514,7 @@ function retryProvider(provider: string) {
 async function abort() {
   await req("chat.abort", { sessionKey }).catch(() => {});
   sending = false;
-  messages = messages.filter((m: any) => !m._temporary);
+  messages = messages.filter((m: unknown) => !m._temporary);
   streamMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
@@ -2105,7 +2530,7 @@ async function loadBudget() {
     req("config.models", {}).catch(() => null),
     req("budget.usage", {}).catch(() => null),
   ]);
-  budgetData = { budget: null, status: s };
+  _budgetData = { budget: null, status: s };
   if (mc) {
     modelConfigData = mc;
   }
@@ -2139,6 +2564,14 @@ function md(text: string): string {
     /<strong>🌿 FRACTAL:<\/strong>\s*<em>(.*?)<\/em>/gi,
     '<strong style="color:#2ECC71">🌿 FRACTAL:</strong> <em style="color:#2ECC71">$1</em>',
   );
+  // FORK 2026-04-18: wrap absolute or ~/ paths (rendered as inline <code>
+  // by markdown-it) in a clickable span that opens the file in the OS
+  // default viewer via the `config.openExternalFile` RPC. Also matches
+  // bare paths in plain text for pointer-style instructions.
+  h = h.replace(
+    /<code>(~\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf)|\/(?:home|usr|tmp|var|opt|etc)\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf))<\/code>/g,
+    '<code class="fs-link" data-path="$1" title="Click to open in system viewer">$1</code>',
+  );
   return h;
 }
 
@@ -2157,7 +2590,7 @@ function extractGrepTarget(cmd: string): string {
   return m ? (m[1] ?? m[2] ?? m[3] ?? "") : "";
 }
 
-function extractGrepFiles(cmd: string): string {
+function _extractGrepFiles(cmd: string): string {
   // Get the last path-like argument
   const parts = cmd.split(/\s+/);
   for (let i = parts.length - 1; i >= 0; i--) {
@@ -2174,7 +2607,7 @@ function editPreview(s: string): string {
   return line.length > 60 ? line.slice(0, 57) + "…" : line;
 }
 
-function toolSummary(name: string, input: any): string {
+function toolSummary(name: string, input: unknown): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
   switch (n) {
@@ -2380,7 +2813,7 @@ function toolSummary(name: string, input: any): string {
   }
 }
 
-function toolExpandedDetail(name: string, input: any): string {
+function toolExpandedDetail(name: string, input: unknown): string {
   const n = (name ?? "").toLowerCase();
   const a = input ?? {};
   const p = shortenPath(String(a.file_path ?? a.path ?? ""));
@@ -2426,6 +2859,234 @@ function extractFilePaths(text: string): string[] {
   return matches ? [...new Set(matches)] : [];
 }
 
+// FORK 2026-04-18: Amygdala + Fractal injection ----------------------------
+// Client-side, single-turn injection. The user's prompt, optionally wrapped
+// with an instruction suffix, flows through one normal turn — Opus 4.7 emits
+// a 3-section structured response (🧠 AMYGDALA → 💬 ANSWER → 🌿 FRACTAL).
+// This replaces the two-turn sessions.steer dance the old fractal-reflection
+// plugin used, eliminating the lane-race entirely.
+const AMY_FRA_TOGGLES_KEY = "tinker-amy-fra-toggles";
+type InjectToggles = { amygdala: boolean; fractal: boolean };
+function loadInjectToggles(): InjectToggles {
+  try {
+    const raw = localStorage.getItem(AMY_FRA_TOGGLES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        amygdala: parsed.amygdala !== false,
+        fractal: parsed.fractal !== false,
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { amygdala: true, fractal: true };
+}
+function saveInjectToggles(t: InjectToggles): void {
+  try {
+    localStorage.setItem(AMY_FRA_TOGGLES_KEY, JSON.stringify(t));
+  } catch {
+    /* ignore */
+  }
+}
+let injectToggles = loadInjectToggles();
+function applyInjectToggleChrome(): void {
+  const amy = document.getElementById("tb-amygdala");
+  const fra = document.getElementById("tb-fractal");
+  if (amy) {
+    amy.classList.toggle("tb-active", injectToggles.amygdala);
+  }
+  if (fra) {
+    fra.classList.toggle("tb-active", injectToggles.fractal);
+  }
+}
+// FORK 2026-04-18: UI injection is now minimal — the detailed rules for
+// each section live in the system prompt (appended by cc-bridge/worker.ts
+// from amygdala-prompt.md + fractal-prompt.md). The per-turn injection
+// just names which sections to emit and in what order. Opus pulls the
+// content from its system-prompt context.
+//
+// FORK 2026-04-21: for `/new` and `/reset`, replace the amygdala/fractal
+// suffix with a pointer to BRIEFING.md. Two reasons:
+//   1. Appending the ANSWER/AMYGDALA/FRACTAL template to /new makes
+//      bodyStripped non-empty on the server, which bypasses the
+//      isBareSessionReset → SESSION.md → BRIEFING.md path entirely. That's
+//      why /new wasn't producing the briefing before.
+//   2. the user wants to see the BRIEFING.md path in the expandable _fullPrompt
+//      so he can edit that file directly to change the briefing format,
+//      without digging through amygdala/fractal noise unrelated to /new.
+function buildInjectedPrompt(userText: string): string {
+  const trimmed = userText.trim();
+  // Bare /new or /reset (or /new-with-no-args): replace the standard
+  // section template with a BRIEFING.md pointer so the LLM reads the
+  // right file and the user can edit the briefing logic in place.
+  if (/^\/(new|reset)$/i.test(trimmed)) {
+    return (
+      userText +
+      "\n\n---\n\n**Session Startup.** Read and follow the full contents of `~/.openclaw/workspace/BRIEFING.md` — that file is the single source of truth for the session-start briefing and the /new flow. Edit it directly if you want to change the briefing format."
+    );
+  }
+
+  const wantAmy = injectToggles.amygdala;
+  const wantFra = injectToggles.fractal;
+  if (!wantAmy && !wantFra) {
+    return userText;
+  }
+  const sections: string[] = ["💬 ANSWER"];
+  if (wantAmy) {
+    sections.push("🧠 AMYGDALA");
+  }
+  if (wantFra) {
+    sections.push("🌿 FRACTAL");
+  }
+  const order = sections.join(" → ");
+  const extras: string[] = [];
+  extras.push(
+    `\n\n---\n\n**Structure this turn's reply as labelled sections in this exact order: ${order}.** Each marker on its own line, blank line between sections. The UI parses markers and renders each section as a separate bubble; the first is expanded, later ones collapsed.`,
+  );
+  extras.push(
+    "\n\n**💬 ANSWER** — your complete substantive reply, markdown freely, natural prose.",
+  );
+  if (wantAmy) {
+    extras.push(
+      "\n\n**🧠 AMYGDALA** — follow the amygdala rules in your system prompt (post-turn diagnostic of Prudence + Personality ensembles). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-learned-intuition/amygdala-prompt.md`.",
+    );
+  }
+  if (wantFra) {
+    extras.push(
+      "\n\n**🌿 FRACTAL** — follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`.",
+    );
+  }
+  return userText + extras.join("");
+}
+
+// FORK 2026-04-18: 3-section response splitter. Detects the AMYGDALA / ANSWER /
+// FRACTAL markers in an assistant message and returns the three pieces plus
+// any prefix/suffix text. Used by renderMsg to render each section in its own
+// bubble (amygdala + fractal collapsed, answer expanded by default).
+type SectionedReply = {
+  amygdala?: string;
+  answer?: string;
+  fractal?: string;
+  other?: string;
+};
+// Markers tolerate: optional bold wrapping (** or __), optional colon, optional
+// space between emoji and label. Opus sometimes emits `💬 ANSWER:`, sometimes
+// `💬 **ANSWER**`, sometimes `💬 **ANSWER:**` — all three must match.
+const AMY_MARKER_RE = /(^|\n)\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+const ANS_MARKER_RE = /(^|\n)\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+const FRA_MARKER_RE =
+  /(^|\n)\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+function splitSectionedReply(text: string): SectionedReply | null {
+  if (!text) {
+    return null;
+  }
+  // `text.search(regex)` returns the first match position; multiple marker
+  // occurrences (rare — claude echoing its own section header) would still be
+  // handled because we only care about the FIRST occurrence of each.
+  const amyIdx = text.search(AMY_MARKER_RE);
+  const ansIdx = text.search(ANS_MARKER_RE);
+  const fraIdx = text.search(FRA_MARKER_RE);
+  if (amyIdx < 0 && ansIdx < 0 && fraIdx < 0) {
+    return null;
+  }
+  // Split by whichever markers exist, in order of appearance.
+  const markers: { key: "amygdala" | "answer" | "fractal"; start: number; hdrLen: number }[] = [];
+  const pushMarker = (idx: number, key: "amygdala" | "answer" | "fractal", re: RegExp) => {
+    if (idx < 0) {
+      return;
+    }
+    const m = text.slice(idx).match(re);
+    if (!m) {
+      return;
+    }
+    markers.push({ key, start: idx, hdrLen: m[0].length });
+  };
+  pushMarker(amyIdx, "amygdala", AMY_MARKER_RE);
+  pushMarker(ansIdx, "answer", ANS_MARKER_RE);
+  pushMarker(fraIdx, "fractal", FRA_MARKER_RE);
+  markers.sort((a, b) => a.start - b.start);
+  const result: SectionedReply = {};
+  const preface = text.slice(0, markers[0]?.start ?? 0).trim();
+  if (preface) {
+    result.other = preface;
+  }
+  for (let i = 0; i < markers.length; i++) {
+    const m = markers[i];
+    if (!m) {
+      continue;
+    }
+    const bodyStart = m.start + m.hdrLen;
+    const bodyEnd = markers[i + 1]?.start ?? text.length;
+    const body = text.slice(bodyStart, bodyEnd).trim();
+    if (body) {
+      result[m.key] = body;
+    }
+  }
+  return result;
+}
+// FORK 2026-04-18: render the user bubble. If the message was sent with
+// amygdala/fractal instructions appended, show the raw user text plus a
+// tiny clickable "📜 prompt" badge; clicking expands a <details> with the
+// full text sent to the gateway (for user visibility + debugging).
+function renderUserBubbleWithPromptToggle(
+  userText: string,
+  msg: { _fullPrompt?: string },
+  queuedClass: string,
+  queuedBadge: string,
+  idx: number,
+): string {
+  if (!msg._fullPrompt || typeof msg._fullPrompt !== "string") {
+    return `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+  }
+  const full = msg._fullPrompt;
+  return (
+    `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
+    `${md(userText)}` +
+    `<details class="user-prompt-toggle">` +
+    `<summary class="user-prompt-summary">📜 view full prompt</summary>` +
+    `<div class="user-prompt-full">${md(full)}</div>` +
+    `</details>` +
+    `${queuedBadge}` +
+    `</div>`
+  );
+}
+
+function renderSectionedReply(sec: SectionedReply): string {
+  // Visual order: ANSWER (expanded) → AMYGDALA (collapsed) → FRACTAL (collapsed).
+  // Matches the instructed emission order. The splitter records whichever
+  // sections it found, regardless of position in the text; this renderer
+  // forces the canonical on-screen order.
+  //
+  // IMPORTANT: if the splitter found amygdala OR fractal but NO answer marker,
+  // the pre-marker content ("other") is actually the answer — promote it.
+  // Otherwise the answer text falls on the floor.
+  let h = "";
+  const effectiveAnswer =
+    sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
+  if (effectiveAnswer) {
+    h += `<div class="msg assistant">${md(effectiveAnswer)}</div>`;
+  } else if (sec.other && !sec.amygdala && !sec.fractal) {
+    // No markers at all — fall back to raw
+    h += `<div class="msg assistant">${md(sec.other)}</div>`;
+  }
+  if (sec.amygdala) {
+    h +=
+      `<details class="msg msg-amygdala">` +
+      `<summary class="amygdala-summary">🧠 <em>Amygdala</em> — gut read</summary>` +
+      `<div class="amygdala-body">${md(sec.amygdala)}</div>` +
+      `</details>`;
+  }
+  if (sec.fractal) {
+    h +=
+      `<details class="fractal-details">` +
+      `<summary class="fractal-summary">🌿 <em>Fractal</em> — reflection</summary>` +
+      `<div class="msg msg-fractal">${md(sec.fractal)}</div>` +
+      `</details>`;
+  }
+  return h;
+}
+
 // FORK 2026-04-17: ErrorEnvelope rendering ---------------------------------
 // See `src/fork/error-envelope.ts` on the server side. Servers deliver a
 // structured envelope as an assistant-text payload prefixed with the sentinel
@@ -2460,15 +3121,21 @@ type Envelope = {
 };
 const ERR_ENV_PREFIX = "__ERR_ENV__:";
 function extractEnvelope(text: string): Envelope | null {
-  if (typeof text !== "string" || text.length === 0) return null;
+  if (typeof text !== "string" || text.length === 0) {
+    return null;
+  }
   // indexOf, not startsWith: defense-in-depth. If some upstream path ever
   // concatenates prose before the envelope, we still detect it.
   const idx = text.indexOf(ERR_ENV_PREFIX);
-  if (idx < 0) return null;
+  if (idx < 0) {
+    return null;
+  }
   const jsonStart = idx + ERR_ENV_PREFIX.length;
   // Find the end of the JSON object by brace-matching from the first '{'.
   const braceStart = text.indexOf("{", jsonStart);
-  if (braceStart < 0) return null;
+  if (braceStart < 0) {
+    return null;
+  }
   let depth = 0;
   let inStr = false;
   let esc = false;
@@ -2497,7 +3164,9 @@ function extractEnvelope(text: string): Envelope | null {
       }
     }
   }
-  if (end < 0) return null;
+  if (end < 0) {
+    return null;
+  }
   try {
     const parsed = JSON.parse(text.slice(braceStart, end)) as Envelope;
     if (parsed?.kind === "error" && typeof parsed.headline === "string") {
@@ -2515,18 +3184,38 @@ function renderEnvelope(env: Envelope): string {
       ? `<ul class="env-actions">${env.suggestedActions.map((a) => `<li>${md(a)}</li>`).join("")}</ul>`
       : "";
   const kvEntries: string[] = [];
-  if (env.llm?.provider) kvEntries.push(`provider: ${env.llm.provider}`);
-  if (env.llm?.model) kvEntries.push(`model: ${env.llm.model}`);
-  if (env.llm?.authProfileId) kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);
-  if (env.llm?.httpStatus !== undefined) kvEntries.push(`http_status: ${env.llm.httpStatus}`);
-  if (env.llm?.providerErrorCode) kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);
-  if (env.llm?.requestId) kvEntries.push(`request_id: ${env.llm.requestId}`);
-  if (env.llm?.durationMs !== undefined) kvEntries.push(`duration_ms: ${env.llm.durationMs}`);
-  if (env.sessionKey) kvEntries.push(`session: ${env.sessionKey}`);
-  if (env.timestamp) kvEntries.push(`timestamp: ${env.timestamp}`);
+  if (env.llm?.provider) {
+    kvEntries.push(`provider: ${env.llm.provider}`);
+  }
+  if (env.llm?.model) {
+    kvEntries.push(`model: ${env.llm.model}`);
+  }
+  if (env.llm?.authProfileId) {
+    kvEntries.push(`auth_profile: ${env.llm.authProfileId}`);
+  }
+  if (env.llm?.httpStatus !== undefined) {
+    kvEntries.push(`http_status: ${env.llm.httpStatus}`);
+  }
+  if (env.llm?.providerErrorCode) {
+    kvEntries.push(`provider_error_code: ${env.llm.providerErrorCode}`);
+  }
+  if (env.llm?.requestId) {
+    kvEntries.push(`request_id: ${env.llm.requestId}`);
+  }
+  if (env.llm?.durationMs !== undefined) {
+    kvEntries.push(`duration_ms: ${env.llm.durationMs}`);
+  }
+  if (env.sessionKey) {
+    kvEntries.push(`session: ${env.sessionKey}`);
+  }
+  if (env.timestamp) {
+    kvEntries.push(`timestamp: ${env.timestamp}`);
+  }
   if (env.details) {
     for (const [k, v] of Object.entries(env.details)) {
-      if (v !== undefined && v !== null) kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+      if (v !== undefined && v !== null) {
+        kvEntries.push(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+      }
     }
   }
   const kv = kvEntries.length > 0 ? `<div class="env-kv">${esc(kvEntries.join("\n"))}</div>` : "";
@@ -2535,7 +3224,9 @@ function renderEnvelope(env: Envelope): string {
     kv || raw
       ? `<details class="env-tech"><summary>technical details</summary>${kv}${raw}</details>`
       : "";
-  const explanation = env.explanation ? `<div class="env-explanation">${md(env.explanation)}</div>` : "";
+  const explanation = env.explanation
+    ? `<div class="env-explanation">${md(env.explanation)}</div>`
+    : "";
   return (
     `<div class="msg msg-envelope ${variantClass}" data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
     `<div class="env-header"><span class="env-icon">${esc(env.icon ?? "⚠️")}</span><span class="env-headline">${esc(env.headline)}</span></div>` +
@@ -2581,11 +3272,11 @@ function renderSystemMsg(text: string, idx: number): string {
 }
 
 function renderMsg(
-  msg: any,
+  msg: unknown,
   idx: number,
   isThinking = false,
   globalResults?: Map<string, { content: string; isError: boolean }>,
-  globalToolNames?: Map<string, { name: string; input: any }>,
+  globalToolNames?: Map<string, { name: string; input: unknown }>,
 ): string {
   const role = (msg.role ?? "").toLowerCase();
   const content = Array.isArray(msg.content) ? msg.content : [];
@@ -2599,10 +3290,21 @@ function renderMsg(
   // FORK: Hide fractal reflection prompts regardless of role (user/assistant/toolResult)
   // sessions.send injects them as toolResult messages in the transcript
   const _allMsgTexts =
-    content.map((b: any) => b.text ?? "").join(" ") +
+    content.map((b: unknown) => b.text ?? "").join(" ") +
     (typeof msg.content === "string" ? msg.content : "");
   if (_allMsgTexts.includes("# FRACTAL REFLECTION")) {
     return h;
+  }
+
+  // FORK (2026-04-21): synthetic compaction markers. session-utils.fs.ts on
+  // the server emits one role:"system" message with text "Compaction" (and
+  // __openclaw.kind === "compaction") per transcript compaction entry. The
+  // old default was a full system bubble, which on a freshly-loaded session
+  // with 227k tokens of historical context plastered the chat with bare
+  // "Compaction" cards that read as an error. Render a minimal divider
+  // instead — it still marks the boundary but doesn't masquerade as a message.
+  if (msg.__openclaw?.kind === "compaction") {
+    return `<div class="msg-compaction-divider"><span class="msg-compaction-label">context consolidated</span></div>`;
   }
   let blockIdx = 0;
   let hasNonToolContent = false;
@@ -2659,7 +3361,7 @@ function renderMsg(
           // System-injected messages (runtime context, subagent results) → system style
           h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
         } else {
-          h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+          h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
         }
       }
     } else if (role === "assistant") {
@@ -2671,6 +3373,18 @@ function renderMsg(
       if (envelope) {
         h += renderEnvelope(envelope);
         return h;
+      }
+      // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection.
+      // If ANY of the three markers is present we take over the render so
+      // the user never sees the raw "💬 ANSWER:" / "🧠 AMYGDALA:" / "🌿 FRACTAL:"
+      // prefixes as plain text. Splitter returns whatever sections it can
+      // extract; missing sections simply don't render.
+      if (!isThinking) {
+        const sectioned = splitSectionedReply(text);
+        if (sectioned && (sectioned.answer || sectioned.amygdala || sectioned.fractal)) {
+          h += renderSectionedReply(sectioned);
+          return h;
+        }
       }
       const errorClass = msg._isError ? " msg-error" : "";
       const retryBtn =
@@ -2721,7 +3435,7 @@ function renderMsg(
           "reflection";
         // Check if this fractal took action (tool calls in surrounding messages)
         const hasAction = content.some(
-          (b: any) => b.type === "tool_use" || b.type === "tool_result",
+          (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
         );
         const openAttr = hasAction ? " open" : "";
         h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
@@ -2734,12 +3448,24 @@ function renderMsg(
     return h;
   }
 
-  // Render content blocks in order — text, tool_use, tool_result interlaced
+  // Render content blocks in order — text, tool_use, tool_result interlaced.
+  // FORK (2026-04-21): track the most recent text block so the next tool_use
+  // can use it as its title ("bird's-eye purpose" narration). The LLM is
+  // prompted to write a purpose sentence before each tool call; that sentence
+  // both renders as a normal text bubble AND becomes the tool row's title.
+  let pendingToolNarration: string | null = null;
   for (const block of content) {
     if (block.type === "text") {
       const text = (block.text ?? "").trim();
       if (!text) {
         continue;
+      }
+      // FORK (2026-04-21): stash assistant text as pending narration for the
+      // next tool_use in the same content array. Only the FINAL non-empty
+      // text before a tool_use becomes its title — if multiple text blocks
+      // stack up, the last one wins (closest to the tool call semantically).
+      if (role === "assistant") {
+        pendingToolNarration = text;
       }
       if (role === "user") {
         // Split system event lines from user text
@@ -2777,7 +3503,7 @@ function renderMsg(
           } else if (SYSTEM_INJECTED_RE.test(userText)) {
             h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
           } else {
-            h += `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+            h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
           }
         }
       } else if (role === "assistant") {
@@ -2786,6 +3512,14 @@ function renderMsg(
         if (envelope2) {
           h += renderEnvelope(envelope2);
           return h;
+        }
+        // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection (twin path).
+        if (!isThinking) {
+          const sectioned2 = splitSectionedReply(text);
+          if (sectioned2 && (sectioned2.answer || sectioned2.amygdala || sectioned2.fractal)) {
+            h += renderSectionedReply(sectioned2);
+            return h;
+          }
         }
         const errorClass = msg._isError ? " msg-error" : "";
         const retryBtn =
@@ -2829,7 +3563,7 @@ function renderMsg(
               .replace(/[*_#`]/g, "")
               .trim() || "reflection";
           const hasAction2 = content.some(
-            (b: any) => b.type === "tool_use" || b.type === "tool_result",
+            (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
           );
           const openAttr2 = hasAction2 ? " open" : "";
           h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
@@ -2846,21 +3580,43 @@ function renderMsg(
       }
     } else if (block.type === "tool_use") {
       const a = block.input ?? {};
-      const d = toolSummary(block.name, a);
+      const mechanicalSummary = toolSummary(block.name, a);
       const tid = `t${idx}-${block.id ?? block.name}-${blockIdx++}`;
-      const exp = expandedTools.has(tid);
+      // FORK (2026-04-21): Story Mode auto-expands every tool call.
+      const exp = storyMode || expandedTools.has(tid);
       // Look up result from global map (tool_result may be in a different message)
       const paired = resultMap.get(block.id ?? "");
       const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
       const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
-      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(d)}</span></div>`;
+      // FORK (2026-04-21): if the LLM wrote a purpose sentence right before
+      // this tool call, use the LAST sentence (or first ~160 chars) of it as
+      // the tool row's title — that's the "bird's-eye view" the user asked
+      // for. Fall back to the mechanical pattern summary when the LLM skipped
+      // narration. Keep the mechanical summary as a secondary line inside the
+      // row so you can still see what the tool literally does at a glance.
+      // FORK (2026-04-24): single-line tool row. Title is the LLM's purpose
+      // narration if available, else the mechanical summary. No subtitle —
+      // everything else lives in the expanded view.
+      let title = mechanicalSummary;
+      const liveNarration =
+        typeof (block as { _purpose?: unknown })._purpose === "string"
+          ? ((block as { _purpose?: string })._purpose ?? "").trim()
+          : "";
+      const narration = liveNarration || pendingToolNarration;
+      if (narration) {
+        const lastSentence = narration.match(/[^.!?\n]+[.!?]?\s*$/)?.[0]?.trim() ?? narration;
+        title = lastSentence.length > 160 ? lastSentence.slice(0, 157).trim() + "…" : lastSentence;
+        pendingToolNarration = null; // consumed — next tool_use gets a fresh narration
+      }
+      h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(title)}</span></div>`;
       if (exp) {
+        // FORK (2026-04-24): expanded view = command first, then full stdout
+        // of the command. the user's explicit design: description is the only
+        // thing visible until you click. Everything you need to judge the
+        // call lives in the expansion — what ran, and what came back.
         h += `<div class="tool-detail">${toolExpandedDetail(block.name, a)}`;
-        // Show result only for errors or when the detail doesn't already contain it
-        const n = (block.name ?? "").toLowerCase();
-        const detailHasContent = n === "edit" || n === "write";
-        if (paired && (paired.isError || !detailHasContent)) {
-          h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "What came back:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
+        if (paired && paired.content) {
+          h += `<div class="tool-result-inline"><div class="explanation">${paired.isError ? "❌ Something went wrong:" : "stdout:"}</div><div class="code-block">${esc(paired.content)}</div></div>`;
         }
         h += `</div>`;
       }
@@ -2880,7 +3636,8 @@ function renderMsg(
         typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
       const err = block.is_error === true;
       const tid = `r${idx}-${uid || "r"}-${blockIdx++}`;
-      const exp = expandedTools.has(tid);
+      // FORK (2026-04-21): Story Mode auto-expands every tool call.
+      const exp = storyMode || expandedTools.has(tid);
       const preview = rt.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
       const summary = preview.length > 120 ? preview.slice(0, 117) + "…" : preview;
       h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(summary)}</span></div>`;
@@ -2897,24 +3654,46 @@ let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
 
 function renderThinkingIndicator(): string {
   if (activeRuns.size > 0) {
-    // FORK: Only show runs belonging to the active session/tab
-    let rows = "";
+    // FORK 2026-04-20: include runs that BELONG to the current session OR
+    // descend from it (subagent children). The previous filter dropped any
+    // `agent:main:subagent:xxx` run because it didn't match the main session
+    // key -- so while main idled between ack-turns the indicator flickered
+    // off even though subagents were still thinking. Include any subagent
+    // descendant so the user sees continuous activity until the whole tree
+    // settles.
+    const mainRows: string[] = [];
+    const subagentRows: string[] = [];
     for (const [runId, info] of activeRuns) {
-      if (info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
+      const sk = info.sessionKey ?? "";
+      const isMainMatch = sk && sessionKeyMatches(sk);
+      const isSubagentDescendant =
+        sk.includes(":subagent:") &&
+        // descend from the current main session (agent:main:main is parent of agent:main:subagent:xxx)
+        sessionKey &&
+        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:");
+      if (!isMainMatch && !isSubagentDescendant) {
         continue;
       }
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
-      // FORK: Append active recipe step to thinking label
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
-      rows += `<div class="thinking-run" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
+      const subagentTag = isSubagentDescendant
+        ? ` <span class="thinking-subagent-tag" title="subagent">▸</span>`
+        : "";
+      const row = `<div class="thinking-run${isSubagentDescendant ? " thinking-run-subagent" : ""}" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${recipeLabel}</span>
+  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${subagentTag}${recipeLabel}</span>
   <span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
+      if (isSubagentDescendant) {
+        subagentRows.push(row);
+      } else {
+        mainRows.push(row);
+      }
     }
+    const rows = [...mainRows, ...subagentRows].join("");
     if (rows) {
       return `<div class="thinking-indicator">${rows}</div>`;
     }
@@ -3137,7 +3916,7 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
     const monthPct = Math.min((oc.monthSpend / cap) * 100, 100);
     // Today's spend as fraction of total cap
     const today = new Date().toISOString().slice(0, 10);
-    const todayEntry = (oc.dailyBreakdown || []).find((d: any) => d.date === today);
+    const todayEntry = (oc.dailyBreakdown || []).find((d: unknown) => d.date === today);
     const todaySpend = todayEntry?.amount ?? 0;
     const todayPct = Math.min((todaySpend / cap) * 100, 100);
     let tip = `Today: $${todaySpend.toFixed(2)}/$${cap} (${todayPct.toFixed(0)}%)`;
@@ -3183,7 +3962,7 @@ function renderCostCol(costLabel: string): string {
 }
 
 // ─── Budget Helpers ───
-function budgetColor(pct: number) {
+function _budgetColor(pct: number) {
   if (pct >= 100) {
     return "#ef4444";
   }
@@ -3218,7 +3997,7 @@ const SYSTEM_INJECTED_RE =
 
 /** Extract the actual user text from a user message, stripping System: prefixes.
  *  Returns null if the message is entirely system-injected (no real user text). */
-function extractUserText(msg: any): string | null {
+function extractUserText(msg: unknown): string | null {
   const content = Array.isArray(msg.content) ? msg.content : [];
   let raw = "";
   if (content.length === 0 && typeof msg.content === "string") {
@@ -3269,12 +4048,12 @@ function updateChat(skipScroll = false) {
   // are thinking steps. If streaming is active, ALL assistant texts in the
   // current run are thinking (the live answer is a temporary message).
   // Tool result user messages are NOT run boundaries — they're mid-run tool responses.
-  const isRunBoundary = (m: any) => {
+  const isRunBoundary = (m: unknown) => {
     // FORK: Fractal reflection responses start a new run
     // (sessions.send injects them as assistant messages, so they won't have a user boundary)
     const mc = Array.isArray(m.content) ? m.content : [];
     const firstText =
-      mc.find((b: any) => b.type === "text" && b.text)?.text ??
+      mc.find((b: unknown) => b.type === "text" && b.text)?.text ??
       (typeof m.content === "string" ? m.content : "");
     if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) {
       return true;
@@ -3285,7 +4064,7 @@ function updateChat(skipScroll = false) {
     }
     const c = Array.isArray(m.content) ? m.content : [];
     // Pure tool_result messages are part of the run, not boundaries
-    if (c.length > 0 && !c.some((b: any) => b.type !== "tool_result")) {
+    if (c.length > 0 && !c.some((b: unknown) => b.type !== "tool_result")) {
       return false;
     }
     // System-injected user messages (runtime context, subagent results) are not boundaries
@@ -3309,7 +4088,7 @@ function updateChat(skipScroll = false) {
           continue;
         }
         const c = Array.isArray(m.content) ? m.content : [];
-        const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+        const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
         const plainText = typeof m.content === "string" && (m.content as string).trim();
         if (!hasText && !plainText) {
           continue;
@@ -3318,7 +4097,7 @@ function updateChat(skipScroll = false) {
         // their own collapsed block. Exclude them so the real answer before
         // a fractal isn't demoted to "thinking".
         const firstTextBlock =
-          c.find((b: any) => b.type === "text" && b.text)?.text ?? (plainText || "");
+          c.find((b: unknown) => b.type === "text" && b.text)?.text ?? (plainText || "");
         if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) {
           continue;
         }
@@ -3346,7 +4125,7 @@ function updateChat(skipScroll = false) {
   // Build a global tool result map: tool_use_id → { content, isError, name }
   // so tool_use blocks can find their paired results even across messages.
   const globalResultMap = new Map<string, { content: string; isError: boolean }>();
-  const globalToolNames = new Map<string, { name: string; input: any }>();
+  const globalToolNames = new Map<string, { name: string; input: unknown }>();
   for (const m of messages) {
     const c = Array.isArray(m.content) ? m.content : [];
     for (const b of c) {
@@ -3383,7 +4162,7 @@ function updateChat(skipScroll = false) {
           if (role === "assistant") {
             // Check if it's a tool-only message (no text) — intermediate
             const c = Array.isArray(m.content) ? m.content : [];
-            const hasText = c.some((b: any) => b.type === "text" && (b.text ?? "").trim());
+            const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
             const plainText = typeof m.content === "string" && (m.content as string).trim();
             if (!hasText && !plainText) {
               intermediateIndices.push(j);
@@ -3517,7 +4296,7 @@ function updateChat(skipScroll = false) {
         const fileApiBase = import.meta.env.DEV ? "/tinker-api" : "/tinker/api";
         fetch(`${fileApiBase}/file-read?path=${encodeURIComponent(fp)}`)
           .then((r) => r.json())
-          .then((data: any) => {
+          .then((data: unknown) => {
             if (data.error) {
               viewer.textContent = `Error: ${data.error}`;
               return;
@@ -3550,7 +4329,11 @@ function updateChat(skipScroll = false) {
         return;
       }
       const id = r.getAttribute("data-tid")!;
-      expandedTools.has(id) ? expandedTools.delete(id) : expandedTools.add(id);
+      if (expandedTools.has(id)) {
+        expandedTools.delete(id);
+      } else {
+        expandedTools.add(id);
+      }
       // Remember the clicked row's position relative to the viewport
       const clickedTop = (r as HTMLElement).getBoundingClientRect().top;
       updateChat(true);
@@ -3656,6 +4439,7 @@ function switchToTab(tabId: string) {
   saveCurrentTabState();
 
   activeTabId = tab.id;
+  saveActiveTabId();
 
   if (tab.sessionKey) {
     sessionKey = tab.sessionKey;
@@ -3667,9 +4451,9 @@ function switchToTab(tabId: string) {
     updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) {
-      (tmCanvas as any).__treemapClear?.();
+      (tmCanvas as unknown).__treemapClear?.();
     }
-    timelineCtrl?.loadSession(sessionKey);
+    refreshTimelineRespectingMode();
     // Background refresh from server — only if still attached (server has the session)
     if (tab.isAttached) {
       loadChat();
@@ -3738,7 +4522,7 @@ function attachSessionToTab(key: string) {
 
   tab.sessionKey = key;
   tab.isAttached = true;
-  const sess = sessions.find((s: any) => s.key === key);
+  const sess = sessions.find((s: unknown) => s.key === key);
   if (sess?.label) {
     tab.title = sess.label.slice(0, 30);
   }
@@ -4013,7 +4797,16 @@ function updateBudgetPanel() {
 
   if (chain.length) {
     const open = !collapsedModelSections.has("fallback");
-    const badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
+    const _badges = [
+      "\u2460",
+      "\u2461",
+      "\u2462",
+      "\u2463",
+      "\u2464",
+      "\u2465",
+      "\u2466",
+      "\u2467",
+    ];
     html += `<div class="model-group${open ? " open" : ""}" data-section="fallback">`;
     html += '<div class="model-group-label">FALLBACK CHAIN</div>';
     html += '<div class="model-group-body">';
@@ -4092,7 +4885,7 @@ function shortErrorLabel(reason: string): string {
 
 // ─── Auth Re-auth UI (popover + OAuth popup + paste fallback) ───
 
-const authProfileListeners = new Set<(evt: any) => void>();
+const authProfileListeners = new Set<(evt: unknown) => void>();
 
 function showToast(msg: string, isError = false): void {
   const t = document.createElement("div");
@@ -4105,15 +4898,15 @@ function showToast(msg: string, isError = false): void {
 async function startOAuthReauthFlow(profileId: string): Promise<void> {
   let startResult: { sessionId: string; authUrl: string; fallbackAuthUrl: string };
   try {
-    startResult = (await req("auth.reauth.start", { profileId })) as any;
-  } catch (err: any) {
+    startResult = (await req("auth.reauth.start", { profileId })) as unknown;
+  } catch (err: unknown) {
     showToast(`Re-auth failed: ${err?.message || err}`, true);
     return;
   }
   const { sessionId, authUrl, fallbackAuthUrl } = startResult;
   const popup = window.open(authUrl, "openclaw-reauth", "width=500,height=700");
   let resolved = false;
-  const onAuthEvent = (evt: any) => {
+  const onAuthEvent = (evt: unknown) => {
     const d = evt.data ?? evt.payload ?? {};
     if (d.profileId === profileId || d.source === "oauth-reauth") {
       resolved = true;
@@ -4182,7 +4975,7 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
       await req("auth.reauth.exchange", { sessionId, code });
       overlay.remove();
       showToast(`Credentials refreshed for ${profileId.replace("anthropic:", "")}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       status.textContent = `Failed: ${err?.message || err}`;
       status.style.color = "#f38ba8";
       submitBtn.disabled = false;
@@ -4287,7 +5080,7 @@ function renderAuthKeyRow(
 function refreshTreemap() {
   const tmCanvas = $("treemap-canvas");
   if (tmCanvas) {
-    (tmCanvas as any).__treemapRefresh?.();
+    (tmCanvas as unknown).__treemapRefresh?.();
   }
 }
 
@@ -4295,7 +5088,7 @@ function refreshTreemap() {
 function updateResponseMap() {
   const canvas = $("response-canvas");
   if (canvas) {
-    (canvas as any).__responseRefresh?.();
+    (canvas as unknown).__responseRefresh?.();
   }
 }
 
@@ -4379,7 +5172,7 @@ function updateSessionsPanel() {
   }
 
   // Group sessions
-  const groups = new Map<string, Array<{ session: any; shortLabel: string }>>();
+  const groups = new Map<string, Array<{ session: unknown; shortLabel: string }>>();
   for (const s of sessions) {
     const { group, shortLabel } = classifySession(s.key);
     if (!groups.has(group)) {
@@ -4392,7 +5185,7 @@ function updateSessionsPanel() {
     if (tab.id === "tab-main" || !tab.sessionKey) {
       continue;
     }
-    const serverKeys = sessions.map((s: any) => s.key);
+    const serverKeys = sessions.map((s: unknown) => s.key);
     const hasServer =
       serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
@@ -4447,8 +5240,8 @@ function updateSessionsPanel() {
 
   // Wire session row clicks + delete buttons via single event delegation
   // (per-element listeners get destroyed on innerHTML re-render)
-  if (!(el as any).__sessionsWired) {
-    (el as any).__sessionsWired = true;
+  if (!(el as unknown).__sessionsWired) {
+    (el as unknown).__sessionsWired = true;
     el.addEventListener("click", async (e) => {
       const tgt = e.target as HTMLElement;
 
@@ -4509,7 +5302,7 @@ function updateSessionsPanel() {
         const newTab = createTab();
         newTab.sessionKey = key;
         newTab.isAttached = true;
-        const sess = sessions.find((s: any) => s.key === key);
+        const sess = sessions.find((s: unknown) => s.key === key);
         if (sess?.label) {
           newTab.title = sess.label.slice(0, 30);
         }
@@ -4533,7 +5326,7 @@ function updateSessionsPanel() {
   });
 }
 
-function renderSessionRow(s: any, shortLabel: string): string {
+function renderSessionRow(s: unknown, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
   const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
   const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
@@ -4610,9 +5403,17 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
+        <!-- FORK 2026-04-18: Amygdala + Fractal injection toggles.
+             Enabled = Jarvis replies with 💬 ANSWER + 🧠 AMYGDALA (gut-read)
+             + 🌿 FRACTAL (post-reflection). Disable for speed. -->
+        <span id="tb-amygdala" class="topbar-icon-btn tb-active" data-hint="Amygdala (gut read)">🧠</span>
+        <span id="tb-fractal" class="topbar-icon-btn tb-active" data-hint="Fractal reflection">🌿</span>
         <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
-        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🧠</span>
+        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🕸️</span>
+        <!-- FORK 2026-04-21: Story Mode — auto-expand every tool call so the full
+             stdout and args are visible inline. Click to toggle. -->
+        <span id="tb-story-mode" class="topbar-icon-btn" data-hint="Story Mode (auto-expand all tool calls)">🎬</span>
       </div>
       <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
@@ -4637,7 +5438,7 @@ function init() {
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🧠 Models
+        <div class="rpanel-header">🕸️ Models
           <span class="ct-switch" id="budget-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -4826,6 +5627,74 @@ function init() {
     updateBudgetPanel();
   });
 
+  // ─── Amygdala + Fractal injection toggles (FORK 2026-04-18) ───
+  const amyBtn = $("tb-amygdala")!;
+  const fraBtn = $("tb-fractal")!;
+  applyInjectToggleChrome();
+  amyBtn.addEventListener("click", () => {
+    injectToggles = { ...injectToggles, amygdala: !injectToggles.amygdala };
+    saveInjectToggles(injectToggles);
+    applyInjectToggleChrome();
+  });
+  fraBtn.addEventListener("click", () => {
+    injectToggles = { ...injectToggles, fractal: !injectToggles.fractal };
+    saveInjectToggles(injectToggles);
+    applyInjectToggleChrome();
+  });
+
+  // ─── Story Mode toggle (FORK 2026-04-21) ───
+  const storyBtn = $("tb-story-mode");
+  function applyStoryModeChrome(): void {
+    storyBtn?.classList.toggle("tb-active", storyMode);
+  }
+  applyStoryModeChrome();
+  storyBtn?.addEventListener("click", () => {
+    storyMode = !storyMode;
+    saveStoryMode();
+    applyStoryModeChrome();
+    // Re-render the current chat so existing tool calls pick up / drop the
+    // auto-expand state immediately. No need to refetch — it's a UI-only flip.
+    updateChat();
+  });
+
+  // ─── Filesystem link → open in system viewer (FORK 2026-04-18) ───
+  // Any <code class="fs-link" data-path="..."> rendered by md() (typically
+  // in pointers like fractal-prompt.md) becomes clickable. Calls the
+  // gateway RPC config.openExternalFile which invokes xdg-open / open /
+  // Start-Process with the path as a single argv element.
+  document.addEventListener("click", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    const link = target?.closest(".fs-link") as HTMLElement | null;
+    if (!link) {
+      return;
+    }
+    const path = link.dataset.path;
+    if (!path) {
+      return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    link.classList.add("fs-link-opening");
+    req("config.openExternalFile", { path })
+      .then((res: { ok?: boolean; error?: string; path?: string }) => {
+        link.classList.remove("fs-link-opening");
+        if (res?.ok === false) {
+          link.classList.add("fs-link-error");
+          link.title = res.error ?? "open failed";
+          setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+        } else {
+          link.classList.add("fs-link-opened");
+          setTimeout(() => link.classList.remove("fs-link-opened"), 1500);
+        }
+      })
+      .catch((err: unknown) => {
+        link.classList.remove("fs-link-opening");
+        link.classList.add("fs-link-error");
+        link.title = String(err);
+        setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+      });
+  });
+
   // ─── Voice mute toggle (§5.36) ───
   const voiceBtn = $("tb-voice")!;
   const muteApi = "/tinker/api/jarvis-mute";
@@ -4961,7 +5830,7 @@ function init() {
     }
     return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
   }
-  function altEsc(s: any): string {
+  function altEsc(s: unknown): string {
     if (s == null) {
       return "";
     }
@@ -4979,7 +5848,7 @@ function init() {
     }
     return String(n);
   }
-  function altJson(obj: any): string {
+  function altJson(obj: unknown): string {
     try {
       return `<pre style="white-space:pre-wrap;word-break:break-all;font-size:11px;color:var(--text);margin:0">${altEsc(JSON.stringify(obj, null, 2))}</pre>`;
     } catch {
@@ -5187,11 +6056,13 @@ function init() {
       req("system-presence", {}).catch(() => null),
       req("cron.status", {}).catch(() => null),
     ]);
-    const snapshot = (status as any) ?? {};
-    const presenceList = Array.isArray(presence) ? presence : ((presence as any)?.presence ?? []);
+    const snapshot = (status as unknown) ?? {};
+    const presenceList = Array.isArray(presence)
+      ? presence
+      : ((presence as unknown)?.presence ?? []);
     const uptimeMs = snapshot.uptimeMs ?? snapshot.uptime;
     const tickMs = snapshot.policy?.tickIntervalMs ?? snapshot.tickIntervalMs;
-    const cronSt = cronStatus as any;
+    const cronSt = cronStatus as unknown;
     sub.textContent = "Gateway snapshot & system presence";
     body.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -5215,7 +6086,7 @@ function init() {
           ? `<div class="alt-card"><h3>System Presence (${presenceList.length} instance${presenceList.length > 1 ? "s" : ""})</h3>
         ${presenceList
           .map(
-            (p: any) => `<div class="row">
+            (p: unknown) => `<div class="row">
           <span class="label">${altEsc(p.host ?? p.instanceId ?? "?")}</span>
           <span class="value">${altEsc(p.version ?? "")} · ${altEsc(p.platform ?? "")}${p.roles?.length ? ` · ${p.roles.join(", ")}` : ""}</span>
         </div>`,
@@ -5230,19 +6101,19 @@ function init() {
   // ═══════════════ CHANNELS ═══════════════
   async function renderChannelsTab(body: Element, sub: Element) {
     const res = await req("channels.status", { probe: false }).catch(() => null);
-    const snap = res as any;
+    const snap = res as unknown;
     if (!snap || !snap.channels) {
       sub.textContent = "Channel status";
       body.innerHTML = `<div class="alt-placeholder"><span>No channel data available</span></div>`;
       return;
     }
-    const channelMeta: any[] = snap.channelMeta ?? [];
+    const channelMeta: unknown[] = snap.channelMeta ?? [];
     const order: string[] = channelMeta.length
-      ? channelMeta.map((m: any) => m.id)
+      ? channelMeta.map((m: unknown) => m.id)
       : (snap.channelOrder ?? Object.keys(snap.channels));
     const labels: Record<string, string> = snap.channelLabels ?? {};
-    const accounts: Record<string, any[]> = snap.channelAccounts ?? {};
-    const metaMap: Record<string, any> = {};
+    const accounts: Record<string, unknown[]> = snap.channelAccounts ?? {};
+    const metaMap: Record<string, unknown> = {};
     for (const m of channelMeta) {
       metaMap[m.id] = m;
     }
@@ -5282,14 +6153,20 @@ function init() {
           const authAgeMs = data.authAgeMs;
 
           // Derive overall status like upstream
-          const statusText = connectedVal
+          const _statusText = connectedVal
             ? "Connected"
             : running
               ? "Running"
               : configured
                 ? "Configured"
                 : "Not configured";
-          const statusCls = connectedVal ? "green" : running ? "green" : configured ? "yellow" : "";
+          const _statusCls = connectedVal
+            ? "green"
+            : running
+              ? "green"
+              : configured
+                ? "yellow"
+                : "";
 
           return `<div class="alt-card"><h3>${altEsc(label)}</h3>
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px">${altEsc(meta?.description ?? `${label} channel status and configuration.`)}</div>
@@ -5337,7 +6214,7 @@ function init() {
           }
           const r = (await req("web.login.start", { force: action === "relink" }).catch((err) => ({
             message: (err as Error).message,
-          }))) as any;
+          }))) as unknown;
           if (qrArea) {
             if (r?.qrDataUrl) {
               qrArea.innerHTML = `<div style="margin-top:8px;text-align:center"><img src="${r.qrDataUrl}" alt="WhatsApp QR" style="max-width:200px;border-radius:8px;border:2px solid var(--border)"><div style="font-size:10px;color:var(--muted);margin-top:4px">${altEsc(r.message ?? "Scan with WhatsApp")}</div></div>`;
@@ -5365,12 +6242,12 @@ function init() {
     });
   }
 
-  function renderChannelAccounts(accts: any[], channel: string): string {
+  function renderChannelAccounts(accts: unknown[], _channel: string): string {
     const recentMs = 10 * 60 * 1000;
     return `<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
       <div style="font-size:10px;color:var(--muted);margin-bottom:4px">${accts.length} account(s)</div>
       ${accts
-        .map((a: any) => {
+        .map((a: unknown) => {
           const name = a.name || a.accountId || "?";
           const runningVal = a.running
             ? "Yes"
@@ -5385,7 +6262,7 @@ function init() {
                 : a.lastInboundAt && Date.now() - a.lastInboundAt < recentMs
                   ? "Active"
                   : "n/a";
-          const probe = a.probe as any;
+          const probe = a.probe as unknown;
           const botUsername = probe?.bot?.username;
           return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px">
           <div style="font-size:11px;color:var(--text);font-weight:600">${botUsername ? `@${botUsername}` : altEsc(name)}</div>
@@ -5409,8 +6286,8 @@ function init() {
       includeGlobal: sessIncludeGlobal,
       includeUnknown: sessIncludeUnknown,
     }).catch(() => ({ sessions: [] }));
-    let list: any[] = (res as any)?.sessions ?? [];
-    const mainKey = (res as any)?.mainSessionKey;
+    let list: unknown[] = (res as unknown)?.sessions ?? [];
+    const mainKey = (res as unknown)?.mainSessionKey;
 
     // Filter by activity window
     if (sessFilterActive !== "all") {
@@ -5419,7 +6296,7 @@ function init() {
         ({ "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 }[
           sessFilterActive
         ] ?? 0);
-      list = list.filter((s: any) => {
+      list = list.filter((s: unknown) => {
         const ts = s.updatedAt ? new Date(s.updatedAt).getTime() : 0;
         return ts >= cutoff;
       });
@@ -5428,15 +6305,15 @@ function init() {
     // Sort
     if (sessSortBy === "tokens") {
       list.sort(
-        (a: any, b: any) =>
+        (a: unknown, b: unknown) =>
           (b.inputTokens ?? 0) +
           (b.outputTokens ?? 0) -
           ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
       );
     } else if (sessSortBy === "key") {
-      list.sort((a: any, b: any) => (a.key ?? "").localeCompare(b.key ?? ""));
+      list.sort((a: unknown, b: unknown) => (a.key ?? "").localeCompare(b.key ?? ""));
     } else {
-      list.sort((a: any, b: any) => {
+      list.sort((a: unknown, b: unknown) => {
         const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
         const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
         return tb - ta;
@@ -5450,7 +6327,7 @@ function init() {
     }
 
     const totalTokens = list.reduce(
-      (sum: number, s: any) => sum + (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
+      (sum: number, s: unknown) => sum + (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
       0,
     );
     sub.textContent = `${totalCount} session(s) · ${altTokens(totalTokens)} tokens`;
@@ -5500,7 +6377,7 @@ function init() {
         </tr></thead>
         <tbody>
           ${list
-            .map((s: any) => {
+            .map((s: unknown) => {
               const isActive = s.key === sessionKey;
               const isMain = s.key === mainKey;
               const inTok = s.inputTokens ?? 0;
@@ -5543,7 +6420,7 @@ function init() {
         if (field === "active") {
           sessFilterActive = (el as HTMLSelectElement).value;
         } else if (field === "sort") {
-          sessSortBy = (el as HTMLSelectElement).value as any;
+          sessSortBy = (el as HTMLSelectElement).value as unknown;
         } else if (field === "limit") {
           sessFilterLimit = parseInt((el as HTMLInputElement).value, 10) || 50;
         } else if (field === "global") {
@@ -5568,11 +6445,11 @@ function init() {
       ),
       req("usage.cost", { startDate, endDate: today }).catch(() => null),
     ]);
-    const usageData = usage as any;
-    const costData = cost as any;
+    const usageData = usage as unknown;
+    const costData = cost as unknown;
     const totals = usageData?.totals ?? {};
-    const sessionUsage: any[] = usageData?.sessions ?? [];
-    const dailyCost: any[] = costData?.daily ?? [];
+    const sessionUsage: unknown[] = usageData?.sessions ?? [];
+    const dailyCost: unknown[] = costData?.daily ?? [];
     const totalIn = totals.inputTokens ?? 0;
     const totalOut = totals.outputTokens ?? 0;
     const totalCost = costData?.totalCost != null ? Number(costData.totalCost) : null;
@@ -5599,7 +6476,7 @@ function init() {
 
     // Daily bar chart data
     const maxDailyCost =
-      dailyCost.reduce((mx: number, d: any) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
+      dailyCost.reduce((mx: number, d: unknown) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
 
     // Period selector
     const periodBar = `<div class="alt-card" style="display:flex;gap:6px;align-items:center;padding:20px 12px;flex-wrap:wrap">
@@ -5646,7 +6523,7 @@ function init() {
           ? `<div class="alt-card"><h3>Daily Cost</h3>
         <div style="display:flex;flex-direction:column;gap:3px">
           ${dailyCost
-            .map((d: any) => {
+            .map((d: unknown) => {
               const c = Number(d.cost ?? 0);
               const pct = maxDailyCost > 0 ? (c / maxDailyCost) * 100 : 0;
               return `<div style="display:flex;align-items:center;gap:8px;font-size:10px">
@@ -5679,13 +6556,13 @@ function init() {
           <tbody>
             ${sessionUsage
               .toSorted(
-                (a: any, b: any) =>
+                (a: unknown, b: unknown) =>
                   (b.inputTokens ?? 0) +
                   (b.outputTokens ?? 0) -
                   ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
               )
               .slice(0, 50)
-              .map((s: any) => {
+              .map((s: unknown) => {
                 const inT = s.inputTokens ?? 0;
                 const outT = s.outputTokens ?? 0;
                 return `<tr style="border-bottom:1px solid rgba(74,63,48,0.2)">
@@ -5754,19 +6631,19 @@ function init() {
       req("cron.status", {}).catch(() => null),
       req("cron.list", { includeDisabled: true }).catch(() => null),
     ]);
-    const st = status as any;
-    const jobs: any[] = (jobsRes as any)?.jobs ?? [];
-    const enabledCount = jobs.filter((j: any) => j.enabled).length;
+    const st = status as unknown;
+    const jobs: unknown[] = (jobsRes as unknown)?.jobs ?? [];
+    const enabledCount = jobs.filter((j: unknown) => j.enabled).length;
     sub.textContent = `${jobs.length} job(s) · ${enabledCount} enabled · ${st?.enabled ? "Cron active" : "Cron disabled"}`;
 
     // Fetch runs for selected job or all
-    let runs: any[] = [];
+    let runs: unknown[] = [];
     let runsTotal = 0;
     if (cronSelectedJobId || jobs.length) {
       const runsRes = (await req("cron.runs", {
         jobId: cronSelectedJobId ?? undefined,
         limit: 20,
-      }).catch(() => null)) as any;
+      }).catch(() => null)) as unknown;
       runs = runsRes?.runs ?? runsRes?.entries ?? [];
       runsTotal = runsRes?.total ?? runs.length;
     }
@@ -5790,15 +6667,15 @@ function init() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div>
           <div class="alt-card"><h3>Jobs (${jobs.length})</h3>
-            ${jobs.length ? jobs.map((j: any) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No cron jobs configured</div>`}
+            ${jobs.length ? jobs.map((j: unknown) => renderCronJob(j)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No cron jobs configured</div>`}
           </div>
         </div>
         <div>
-          <div class="alt-card"><h3>Run History${cronSelectedJobId ? ` — ${altEsc(jobs.find((j: any) => j.id === cronSelectedJobId)?.name ?? cronSelectedJobId)}` : " — All jobs"} <span style="color:var(--muted);font-size:10px">(${runsTotal})</span></h3>
+          <div class="alt-card"><h3>Run History${cronSelectedJobId ? ` — ${altEsc(jobs.find((j: unknown) => j.id === cronSelectedJobId)?.name ?? cronSelectedJobId)}` : " — All jobs"} <span style="color:var(--muted);font-size:10px">(${runsTotal})</span></h3>
             <div style="margin-bottom:6px;display:flex;gap:4px">
               <button class="alt-cron-scope" data-scope="all" style="background:${!cronSelectedJobId ? "var(--surface2)" : "transparent"};border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer">All jobs</button>
             </div>
-            ${runs.length ? runs.map((r: any) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No runs recorded</div>`}
+            ${runs.length ? runs.map((r: unknown) => renderCronRun(r)).join("") : `<div style="color:var(--muted);font-size:11px;padding:20px 0">No runs recorded</div>`}
           </div>
         </div>
       </div>`;
@@ -5838,7 +6715,7 @@ function init() {
     });
   }
 
-  function renderCronJob(j: any): string {
+  function renderCronJob(j: unknown): string {
     const state = j.state ?? {};
     const lastStatus = state.lastStatus ?? j.lastStatus;
     const statusCls =
@@ -5908,7 +6785,7 @@ function init() {
     </div>`;
   }
 
-  function renderCronRun(r: any): string {
+  function renderCronRun(r: unknown): string {
     const status = r.status ?? "unknown";
     const statusCls =
       status === "ok" ? "green" : status === "error" ? "red" : status === "skipped" ? "yellow" : "";
@@ -5962,14 +6839,14 @@ function init() {
       req("agents.list", {}).catch(() => null),
       req("tools.catalog", { includePlugins: true }).catch(() => null),
     ]);
-    const data = agentsRes as any;
-    const agents: any[] = data?.agents ?? [];
+    const data = agentsRes as unknown;
+    const agents: unknown[] = data?.agents ?? [];
     const defaultId = data?.defaultId ?? "";
-    const toolsCat = toolsRes as any;
-    const profiles: any[] = toolsCat?.profiles ?? [];
-    const groups: any[] = toolsCat?.groups ?? [];
+    const toolsCat = toolsRes as unknown;
+    const profiles: unknown[] = toolsCat?.profiles ?? [];
+    const groups: unknown[] = toolsCat?.groups ?? [];
     const totalTools = profiles.reduce(
-      (s: number, p: any) => s + (p.toolCount ?? p.tools?.length ?? 0),
+      (s: number, p: unknown) => s + (p.toolCount ?? p.tools?.length ?? 0),
       0,
     );
     sub.textContent = `${agents.length} agent(s) · ${totalTools} tools · ${profiles.length} profile(s)`;
@@ -5977,11 +6854,11 @@ function init() {
     body.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         ${agents
-          .map((a: any) => {
+          .map((a: unknown) => {
             const isDefault = a.id === defaultId;
-            const fb: any[] = Array.isArray(a.fallbacks) ? a.fallbacks : [];
-            const channels: any[] = Array.isArray(a.channels) ? a.channels : [];
-            const skills: any[] = Array.isArray(a.skills) ? a.skills : [];
+            const fb: unknown[] = Array.isArray(a.fallbacks) ? a.fallbacks : [];
+            const channels: unknown[] = Array.isArray(a.channels) ? a.channels : [];
+            const skills: unknown[] = Array.isArray(a.skills) ? a.skills : [];
             return `<div class="alt-card">
             <h3 style="display:flex;align-items:center;gap:6px">
               ${a.emoji ? `<span style="font-size:16px">${a.emoji}</span>` : ""}
@@ -6003,7 +6880,7 @@ function init() {
                 ? `<div style="margin-top:6px">
               <div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">Fallback chain</div>
               <div style="display:flex;gap:4px;flex-wrap:wrap">${fb
-                .map((f: any, i: number) => {
+                .map((f: unknown, i: number) => {
                   const label =
                     typeof f === "string" ? f : `${f.model ?? "?"} (${f.provider ?? "?"})`;
                   return `<span style="padding:1px 6px;border-radius:3px;font-size:9px;background:var(--surface2);color:var(--muted)">${i + 1}. ${altEsc(label)}</span>`;
@@ -6012,7 +6889,7 @@ function init() {
             </div>`
                 : ""
             }
-            ${channels.length ? `<div style="margin-top:4px;font-size:10px;color:var(--muted)">Channels: ${channels.map((c: any) => altEsc(typeof c === "string" ? c : (c.id ?? c.name ?? "?"))).join(", ")}</div>` : ""}
+            ${channels.length ? `<div style="margin-top:4px;font-size:10px;color:var(--muted)">Channels: ${channels.map((c: unknown) => altEsc(typeof c === "string" ? c : (c.id ?? c.name ?? "?"))).join(", ")}</div>` : ""}
             ${skills.length ? `<div style="margin-top:2px;font-size:10px;color:var(--muted)">Skills: ${skills.length}</div>` : ""}
           </div>`;
           })
@@ -6024,8 +6901,8 @@ function init() {
           ? `<div class="alt-card"><h3>Tool Profiles (${profiles.length})</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           ${profiles
-            .map((p: any) => {
-              const tools: any[] = p.tools ?? [];
+            .map((p: unknown) => {
+              const tools: unknown[] = p.tools ?? [];
               const count = p.toolCount ?? tools.length;
               return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px">
               <div style="display:flex;justify-content:space-between;align-items:center">
@@ -6038,7 +6915,7 @@ function init() {
                   ? `<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap">${tools
                       .slice(0, 12)
                       .map(
-                        (t: any) =>
+                        (t: unknown) =>
                           `<span style="padding:1px 4px;border-radius:2px;font-size:8px;background:var(--surface2);color:var(--muted)">${altEsc(typeof t === "string" ? t : (t.name ?? t.id ?? "?"))}</span>`,
                       )
                       .join(
@@ -6058,8 +6935,8 @@ function init() {
         groups.length
           ? `<div class="alt-card"><h3>Tool Groups (${groups.length})</h3>
         ${groups
-          .map((g: any) => {
-            const tools: any[] = g.tools ?? [];
+          .map((g: unknown) => {
+            const tools: unknown[] = g.tools ?? [];
             return `<div class="row" style="flex-wrap:wrap">
             <span class="label" style="font-weight:600">${altEsc(g.id ?? g.name ?? "?")}</span>
             <span class="value">${tools.length} tool(s)${g.description ? ` — ${altEsc(g.description.slice(0, 80))}` : ""}</span>
@@ -6074,18 +6951,18 @@ function init() {
   // ═══════════════ SKILLS ═══════════════
   async function renderSkillsTab(body: Element, sub: Element) {
     const res = await req("skills.status", {}).catch(() => null);
-    const data = res as any;
-    const skills: any[] = data?.skills ?? [];
-    const enabledCount = skills.filter((s: any) => s.enabled !== false).length;
+    const data = res as unknown;
+    const skills: unknown[] = data?.skills ?? [];
+    const enabledCount = skills.filter((s: unknown) => s.enabled !== false).length;
     const issueCount = skills.filter(
-      (s: any) => s.missingBinaries?.length || s.unavailableReason,
+      (s: unknown) => s.missingBinaries?.length || s.unavailableReason,
     ).length;
     sub.textContent = `${skills.length} skill(s) · ${enabledCount} enabled${issueCount ? ` · ${issueCount} with issues` : ""}`;
     if (!skills.length) {
       body.innerHTML = `<div class="alt-placeholder"><span>No skills registered</span></div>`;
       return;
     }
-    const grouped: Record<string, any[]> = {};
+    const grouped: Record<string, unknown[]> = {};
     for (const s of skills) {
       const group = s.source ?? s.group ?? "other";
       (grouped[group] ??= []).push(s);
@@ -6095,10 +6972,10 @@ function init() {
         ([group, items]) => `
       <div class="alt-card">
         <h3 style="display:flex;justify-content:space-between;align-items:center">${altEsc(group)}
-          <span style="font-size:10px;font-weight:400;color:var(--muted)">${items.filter((s: any) => s.enabled !== false).length}/${items.length} enabled</span>
+          <span style="font-size:10px;font-weight:400;color:var(--muted)">${items.filter((s: unknown) => s.enabled !== false).length}/${items.length} enabled</span>
         </h3>
         ${items
-          .map((s: any) => {
+          .map((s: unknown) => {
             const enabled = s.enabled !== false;
             const missingBins: string[] = s.missingBinaries ?? [];
             const unavail = s.unavailableReason;
@@ -6135,10 +7012,12 @@ function init() {
       req("node.list", {}).catch(() => null),
       req("device.pair.list", {}).catch(() => null),
     ]);
-    const nodes: any[] = (nodesRes as any)?.nodes ?? [];
-    const pending: any[] = (devicesRes as any)?.pending ?? [];
-    const paired: any[] = (devicesRes as any)?.paired ?? [];
-    const onlineNodes = nodes.filter((n: any) => n.connected !== false && n.status !== "offline");
+    const nodes: unknown[] = (nodesRes as unknown)?.nodes ?? [];
+    const pending: unknown[] = (devicesRes as unknown)?.pending ?? [];
+    const paired: unknown[] = (devicesRes as unknown)?.paired ?? [];
+    const onlineNodes = nodes.filter(
+      (n: unknown) => n.connected !== false && n.status !== "offline",
+    );
     sub.textContent = `${nodes.length} node(s) · ${onlineNodes.length} online · ${paired.length} device(s) · ${pending.length} pending`;
 
     body.innerHTML = `
@@ -6148,7 +7027,7 @@ function init() {
         ${pending
           .map(
             (
-              d: any,
+              d: unknown,
             ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:20px 10px;margin-bottom:4px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:11px;font-weight:600;color:var(--yellow)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
@@ -6176,7 +7055,7 @@ function init() {
         ${paired
           .map(
             (
-              d: any,
+              d: unknown,
             ) => `<div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 10px;margin-bottom:4px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:11px;font-weight:600;color:var(--accent)">${altEsc(d.displayName ?? d.deviceId ?? "?")}</span>
@@ -6200,7 +7079,7 @@ function init() {
           ? `<div class="alt-card"><h3>Exec Nodes (${nodes.length})</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
           ${nodes
-            .map((n: any) => {
+            .map((n: unknown) => {
               const online = n.connected !== false && n.status !== "offline";
               const caps: string[] = n.capabilities ?? [];
               return `<div style="background:var(--bg);border:1px solid ${online ? "var(--border)" : "rgba(239,68,68,0.3)"};border-radius:4px;padding:6px 10px">
@@ -6249,11 +7128,11 @@ function init() {
       req("config.schema", {}).catch(() => null),
       req("models.list", {}).catch(() => null),
     ]);
-    const cfg = configRes as any;
-    const schema = schemaRes as any;
-    const models: any[] = (modelsRes as any)?.models ?? [];
+    const cfg = configRes as unknown;
+    const schema = schemaRes as unknown;
+    const models: unknown[] = (modelsRes as unknown)?.models ?? [];
     const valid = cfg?.valid !== false;
-    const issues: any[] = cfg?.issues ?? [];
+    const issues: unknown[] = cfg?.issues ?? [];
     const configObj =
       cfg?.config ?? cfg?.parsed ?? (typeof cfg?.raw === "string" ? null : cfg?.raw) ?? {};
     const sections = Object.keys(configObj).filter(
@@ -6275,7 +7154,7 @@ function init() {
           ${
             models.length
               ? models
-                  .map((m: any) => {
+                  .map((m: unknown) => {
                     const name = typeof m === "string" ? m : (m.id ?? m.name ?? m.model ?? "?");
                     const provider = typeof m === "object" ? (m.provider ?? "") : "";
                     return `<div class="row">
@@ -6299,7 +7178,7 @@ function init() {
         issues.length
           ? `<div class="alt-card" style="border-color:var(--yellow)"><h3>Validation Issues (${issues.length})</h3>
         ${issues
-          .map((i: any) => {
+          .map((i: unknown) => {
             const msg = typeof i === "string" ? i : (i.message ?? "");
             const path = typeof i === "object" ? (i.path ?? i.schemaPath ?? "") : "";
             return `<div style="background:rgba(245,158,11,0.05);border:1px solid rgba(245,158,11,0.2);border-radius:4px;padding:4px 8px;margin-bottom:3px;font-size:10px">
@@ -6376,8 +7255,8 @@ function init() {
   // ═══════════════ DEBUG ═══════════════
   const debugRpcHistory: {
     method: string;
-    params: any;
-    result: any;
+    params: unknown;
+    result: unknown;
     ts: number;
     error?: string;
   }[] = [];
@@ -6390,7 +7269,7 @@ function init() {
       req("models.list", {}).catch(() => null),
     ]);
     sub.textContent = `Snapshots & RPC console · ${debugRpcHistory.length} call(s) in history`;
-    (window as any).__tinkerReq = req;
+    (window as unknown).__tinkerReq = req;
 
     // Quick-call presets
     const presets = [
@@ -6597,7 +7476,7 @@ function init() {
     }
     const res = (await req("logs.tail", { cursor: logsCursor, limit: 200, maxBytes: 64_000 }).catch(
       () => null,
-    )) as any;
+    )) as unknown;
     if (!res?.lines?.length) {
       if (!logsCursor) {
         stream.innerHTML = `<span class="muted">No logs available</span>`;
@@ -7106,9 +7985,10 @@ function init() {
   const backResp = $("brp-back-response");
 
   function updateBackButtons() {
-    const ctxBack = !!(tmCanvas as any).__treemapCanGoBack?.() || !!(tmCanvas as any).__hasOverlay;
+    const ctxBack =
+      !!(tmCanvas as unknown).__treemapCanGoBack?.() || !!(tmCanvas as unknown).__hasOverlay;
     const respBack =
-      !!(respCanvas as any).__responseCanGoBack?.() || !!(respCanvas as any).__hasOverlay;
+      !!(respCanvas as unknown).__responseCanGoBack?.() || !!(respCanvas as unknown).__hasOverlay;
     if (backCtx) {
       backCtx.style.display = ctxBack ? "" : "none";
     }
@@ -7135,21 +8015,21 @@ function init() {
   }
 
   backCtx?.addEventListener("click", () => {
-    if ((tmCanvas as any).__treemapCanGoBack?.()) {
-      (tmCanvas as any).__treemapBack?.();
+    if ((tmCanvas as unknown).__treemapCanGoBack?.()) {
+      (tmCanvas as unknown).__treemapBack?.();
     } else {
       // We're in an overlay (auto-summary) — clear overlay and refresh back to L1 treemap
-      (tmCanvas as any).__hasOverlay = false;
-      (tmCanvas as any).__treemapRefresh?.();
+      (tmCanvas as unknown).__hasOverlay = false;
+      (tmCanvas as unknown).__treemapRefresh?.();
     }
     updateBackButtons();
   });
   backResp?.addEventListener("click", () => {
-    if ((respCanvas as any).__responseCanGoBack?.()) {
-      (respCanvas as any).__responseBack?.();
+    if ((respCanvas as unknown).__responseCanGoBack?.()) {
+      (respCanvas as unknown).__responseBack?.();
     } else {
-      (respCanvas as any).__hasOverlay = false;
-      (respCanvas as any).__responseRefresh?.();
+      (respCanvas as unknown).__hasOverlay = false;
+      (respCanvas as unknown).__responseRefresh?.();
     }
     updateBackButtons();
   });
@@ -7160,16 +8040,16 @@ function init() {
   backObserver.observe(respCanvas, { childList: true, subtree: true });
 
   // Also expose direct callback for level changes (catches async updates the observer might miss)
-  (tmCanvas as any).__onLevelChange = updateBackButtons;
-  (respCanvas as any).__onLevelChange = updateBackButtons;
+  (tmCanvas as unknown).__onLevelChange = updateBackButtons;
+  (respCanvas as unknown).__onLevelChange = updateBackButtons;
 
   // ─── Auto-summary on bar re-click ───
-  async function triggerAutoSummary(event: any, type: "context" | "response") {
+  async function triggerAutoSummary(event: unknown, type: "context" | "response") {
     const panel = type === "context" ? tmCanvas : respCanvas;
     const ts = event.timestampMs ?? (event.timestamp ? new Date(event.timestamp).getTime() : null);
     panel.innerHTML = '<div class="tm-empty">Summarizing\u2026</div>';
     try {
-      const params: any = {
+      const params: unknown = {
         component: type === "context" ? "current_prompt" : "response",
         sessionKey: sessionKey || undefined,
       };
@@ -7192,10 +8072,10 @@ function init() {
       div.appendChild(body);
       panel.appendChild(div);
       // Mark overlay so updateBackButtons() shows the back button
-      (panel as any).__hasOverlay = true;
+      (panel as unknown).__hasOverlay = true;
       // Give DOM a tick to render before checking scroll
       setTimeout(updateBackButtons, 10);
-    } catch (e: any) {
+    } catch (e: unknown) {
       panel.innerHTML = `<div class="tm-empty">Summary failed: ${esc(e?.message ?? "unknown")}</div>`;
     }
   }
@@ -7248,7 +8128,7 @@ function init() {
         }
       } else {
         switchBrpTab("context");
-        (tmCanvas as any).__treemapShowAnatomy?.(event);
+        (tmCanvas as unknown).__treemapShowAnatomy?.(event);
       }
       updateBackButtons();
     },
@@ -7258,7 +8138,7 @@ function init() {
     (groupIndex, firstEvent) => {
       // Show the prompt's context anatomy in the treemap
       switchBrpTab("context");
-      (tmCanvas as any).__treemapShowAnatomy?.(firstEvent);
+      (tmCanvas as unknown).__treemapShowAnatomy?.(firstEvent);
       updateBackButtons();
 
       // Scroll webchat to the Nth user message matching this group
@@ -7298,7 +8178,7 @@ function init() {
     },
     (mode) => {
       if (mode === "all") {
-        timelineCtrl?.loadAllSessions(sessions.map((s: any) => s.key));
+        timelineCtrl?.loadAllSessions(sessions.map((s: unknown) => s.key));
       } else {
         timelineCtrl?.loadSession(sessionKey);
       }
@@ -7307,6 +8187,29 @@ function init() {
     () => (TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
     // FORK: Pass WS req function so timeline uses WebSocket instead of HTTP (avoids CORS in dev)
     req,
+    // FORK (2026-04-21): getSessionLabel — in "All" mode, the timeline renders
+    // a per-call badge with this label. We return the tab title if the session
+    // has an open tab; otherwise fall back to the server-side session label.
+    (sk: string) => {
+      if (!sk) {
+        return null;
+      }
+      const tab = tabs.find(
+        (t) =>
+          t.sessionKey === sk ||
+          (t.sessionKey && sk.endsWith(":" + t.sessionKey)) ||
+          (t.sessionKey && t.sessionKey.endsWith(":" + sk)),
+      );
+      if (tab?.title) {
+        return tab.title;
+      }
+      const sess = sessions.find(
+        (s: unknown) =>
+          s.key === sk ||
+          (typeof s.key === "string" && (s.key.endsWith(":" + sk) || sk.endsWith(":" + s.key))),
+      );
+      return sess?.label || sess?.displayName || null;
+    },
   );
 
   // Initial load is triggered from gwConnect's onopen handler (line ~776)

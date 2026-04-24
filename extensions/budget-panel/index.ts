@@ -62,7 +62,7 @@ async function forceRefreshToken(
   try {
     const store = ensureAuthProfileStore();
     const cred = store.profiles[profileId] as any;
-    if (!cred || cred.type !== "oauth" || !cred.refresh) return null;
+    if (!cred || cred.type !== "oauth" || !cred.refresh) {return null;}
 
     const res = await fetch(ANTHROPIC_TOKEN_URL, {
       method: "POST",
@@ -82,14 +82,14 @@ async function forceRefreshToken(
     const data = (await res.json()) as any;
     const newAccess = data.access_token;
     const newRefresh = data.refresh_token;
-    if (!newAccess) return null;
+    if (!newAccess) {return null;}
 
     // Persist new tokens to auth-profiles store
     const freshStore = ensureAuthProfileStore();
     const freshCred = freshStore.profiles[profileId] as any;
     if (freshCred) {
       freshCred.access = newAccess;
-      if (newRefresh) freshCred.refresh = newRefresh;
+      if (newRefresh) {freshCred.refresh = newRefresh;}
       freshCred.expires = Date.now() + (data.expires_in ?? 3600) * 1000;
       saveAuthProfileStore(freshStore);
     }
@@ -101,7 +101,7 @@ async function forceRefreshToken(
       expires: freshCred?.expires ?? Date.now() + 3600_000,
     };
     const credFilePath = resolveCredentialFilePath(profileId);
-    if (credFilePath) writeCredentialFile(credFilePath, "anthropic", writeback as any);
+    if (credFilePath) {writeCredentialFile(credFilePath, "anthropic", writeback as any);}
 
     log(`[budget-panel] ${profileId}: token rotated for fresh rate limit window`);
     return newAccess;
@@ -118,9 +118,9 @@ async function fetchProfileUsage(
 ): Promise<Record<string, any> | null> {
   const cached = usageCache[label];
   const ttl = cached?.data ? CACHE_TTL_MS : CACHE_TTL_FAILED_MS;
-  if (cached && Date.now() - cached.ts < ttl) return cached.data;
+  if (cached && Date.now() - cached.ts < ttl) {return cached.data;}
   const profileId = USAGE_PROFILES[label];
-  if (!profileId) return cached?.data ?? null;
+  if (!profileId) {return cached?.data ?? null;}
 
   let token = await resolveToken(profileId, log);
   if (!token) {
@@ -191,7 +191,7 @@ async function fetchOpenAICosts(
     openaiCostsCache.data &&
     Date.now() - openaiCostsCache.ts < OPENAI_COSTS_CACHE_TTL_MS
   )
-    return openaiCostsCache.data;
+    {return openaiCostsCache.data;}
   const adminKey = process.env.OPENAI_ADMIN_API_KEY;
   if (!adminKey) {
     log("[budget-panel] OPENAI_ADMIN_API_KEY not set, skipping costs fetch");
@@ -223,7 +223,7 @@ async function fetchOpenAICosts(
         dayTotal += typeof amt === "number" ? amt : parseFloat(amt) || 0;
       }
       monthSpend += dayTotal;
-      if (dayTotal > 0) dailyBreakdown.push({ date, amount: dayTotal });
+      if (dayTotal > 0) {dailyBreakdown.push({ date, amount: dayTotal });}
     }
     const result = { monthSpend, dailyBreakdown };
     openaiCostsCache = { data: result, ts: Date.now() };
@@ -263,7 +263,7 @@ function signJwt(payload: Record<string, any>, privateKey: string): string {
 }
 
 async function getGoogleToken(sa: any, log: (...a: any[]) => void): Promise<string | null> {
-  if (googleTokenCache && Date.now() < googleTokenCache.exp) return googleTokenCache.token;
+  if (googleTokenCache && Date.now() < googleTokenCache.exp) {return googleTokenCache.token;}
   const now = Math.floor(Date.now() / 1000);
   const jwt = signJwt(
     {
@@ -311,11 +311,11 @@ async function queryRequestCount(
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) return 0;
+  if (!res.ok) {return 0;}
   const data = (await res.json()) as any;
   let total = 0;
   for (const ts of data.timeSeries || []) {
-    for (const p of ts.points || []) total += parseInt(p.value?.int64Value ?? "0") || 0;
+    for (const p of ts.points || []) {total += parseInt(p.value?.int64Value ?? "0") || 0;}
   }
   return total;
 }
@@ -328,7 +328,7 @@ async function fetchGeminiUsage(
     geminiUsageCache.data &&
     Date.now() - geminiUsageCache.ts < GEMINI_CACHE_TTL_MS
   )
-    return geminiUsageCache.data;
+    {return geminiUsageCache.data;}
 
   let sa: any;
   try {
@@ -340,7 +340,7 @@ async function fetchGeminiUsage(
 
   try {
     const token = await getGoogleToken(sa, log);
-    if (!token) return null;
+    if (!token) {return null;}
 
     // Query RPM window (1 min) and RPD window (24h) in parallel
     const [rpm_used, rpd_used] = await Promise.all([
@@ -396,7 +396,7 @@ export default function register(api: OpenClawPluginApi) {
   // Helper to safely read JSON files
   function readUsageFile(path: string): Record<string, unknown> | null {
     try {
-      if (!existsSync(path)) return null;
+      if (!existsSync(path)) {return null;}
       return JSON.parse(readFileSync(path, "utf-8"));
     } catch {
       return null;
@@ -410,11 +410,11 @@ export default function register(api: OpenClawPluginApi) {
     | undefined;
 
   if (pluginConfig?.claudeBudget)
-    tracker.setProviderBudget("claude", Number(pluginConfig.claudeBudget));
+    {tracker.setProviderBudget("claude", Number(pluginConfig.claudeBudget));}
   if (pluginConfig?.manusBudget)
-    tracker.setProviderBudget("manus", Number(pluginConfig.manusBudget));
+    {tracker.setProviderBudget("manus", Number(pluginConfig.manusBudget));}
   if (pluginConfig?.geminiBudget)
-    tracker.setProviderBudget("gemini", Number(pluginConfig.geminiBudget));
+    {tracker.setProviderBudget("gemini", Number(pluginConfig.geminiBudget));}
 
   // Helper to fetch Claude usage from OpenClaw's cost tracking
   async function refreshClaudeUsage(client: any) {
@@ -462,7 +462,7 @@ export default function register(api: OpenClawPluginApi) {
     ]);
 
     function buildClaudeProfile(live: Record<string, any> | null) {
-      if (!live) return null;
+      if (!live) {return null;}
       return {
         mode: "subscription",
         plan: "max",
@@ -490,7 +490,7 @@ export default function register(api: OpenClawPluginApi) {
     const claudeProfiles: Record<string, any> = {};
     for (const [profile, data] of Object.entries(liveProfiles)) {
       const built = buildClaudeProfile(data);
-      if (built) claudeProfiles[profile] = built;
+      if (built) {claudeProfiles[profile] = built;}
     }
 
     // Backwards-compatible "claude" key: use first available profile or file fallback
@@ -525,11 +525,11 @@ export default function register(api: OpenClawPluginApi) {
       gemini: geminiLive ?? { rpm_used: 0, rpm_limit: 0, rpd_used: 0, rpd_limit: 0 },
       manus: (() => {
         if (!manusData)
-          return {
+          {return {
             daily: { used: 0, limit: 300, pct: 0 },
             monthly: { used: 0, limit: 4000, pct: 0 },
             addon: 0,
-          };
+          };}
         // Handle manus-usage.json structure (from manus-usage-fetch.py)
         const daily = manusData.credits?.daily_refresh || {};
         const monthly = manusData.credits?.breakdown?.monthly || {};
@@ -568,7 +568,7 @@ export default function register(api: OpenClawPluginApi) {
 
     // ChatGPT / OpenAI
     result.chatgpt = (() => {
-      if (!chatgptData) return null;
+      if (!chatgptData) {return null;}
       const models: Record<string, any> = {};
       for (const [key, val] of Object.entries(chatgptData.models || {}) as [string, any][]) {
         const rl = val?.rate_limits || {};
@@ -694,7 +694,7 @@ export default function register(api: OpenClawPluginApi) {
 
   api.registerGatewayMethod("anatomy.recent", async ({ params, respond }) => {
     const db = getAnatomyDb();
-    if (!db) return respond(true, { count: 0, events: [] }, undefined);
+    if (!db) {return respond(true, { count: 0, events: [] }, undefined);}
     const hours = Math.min(Math.max(params?.hours ?? 8760, 1), 8760);
     const limit = Math.min(Math.max(params?.limit ?? 50, 1), 2000);
     const events = db.queryRecentEvents(hours, limit);
@@ -703,9 +703,9 @@ export default function register(api: OpenClawPluginApi) {
 
   api.registerGatewayMethod("anatomy.before", async ({ params, respond }) => {
     const db = getAnatomyDb();
-    if (!db) return respond(true, { count: 0, events: [] }, undefined);
+    if (!db) {return respond(true, { count: 0, events: [] }, undefined);}
     const beforeMs = params?.beforeMs;
-    if (!beforeMs) return respond(true, { count: 0, events: [] }, undefined);
+    if (!beforeMs) {return respond(true, { count: 0, events: [] }, undefined);}
     const limit = Math.min(Math.max(params?.limit ?? 50, 1), 500);
     const events = db.queryEventsBefore ? db.queryEventsBefore(beforeMs, limit) : [];
     respond(true, { count: events.length, events }, undefined);
@@ -713,9 +713,9 @@ export default function register(api: OpenClawPluginApi) {
 
   api.registerGatewayMethod("anatomy.session", async ({ params, respond }) => {
     const db = getAnatomyDb();
-    if (!db) return respond(true, { count: 0, events: [] }, undefined);
+    if (!db) {return respond(true, { count: 0, events: [] }, undefined);}
     const sk = params?.sessionKey;
-    if (!sk) return respond(true, { count: 0, events: [] }, undefined);
+    if (!sk) {return respond(true, { count: 0, events: [] }, undefined);}
     const limit = Math.min(Math.max(params?.limit ?? 200, 1), 500);
     const events = db.querySessionEvents(sk, limit);
     respond(true, { sessionKey: sk, count: events.length, events }, undefined);

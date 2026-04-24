@@ -24,7 +24,7 @@ export const DEFAULT_FEATURE_FLAGS: PrefrontalFeatureFlags = {
 export function resolveFeatureFlags(
   configFlags?: Partial<PrefrontalFeatureFlags>,
 ): PrefrontalFeatureFlags {
-  return { ...DEFAULT_FEATURE_FLAGS, ...(configFlags ?? {}) };
+  return { ...DEFAULT_FEATURE_FLAGS, ...configFlags };
 }
 
 export function isEnabled(

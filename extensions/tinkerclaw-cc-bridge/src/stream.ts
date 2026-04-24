@@ -17,6 +17,7 @@ import {
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { buildErrorEnvelope } from "../../../src/fork/error-envelope.js";
+import { emitAgentEvent } from "../../../src/infra/agent-events.js";
 import { DEFAULT_CWD, DEFAULT_DISALLOWED_TOOLS, PROVIDER_ID } from "./defaults.js";
 import type {
   CcContentBlock,
@@ -24,6 +25,7 @@ import type {
   CcStreamStdoutLine,
   CcStreamStdoutResult,
   CcStreamStdoutStreamEvent,
+  CcStreamStdoutUserMessage,
   CcUsage,
 } from "./protocol.js";
 import { getPool } from "./worker-pool.js";
@@ -74,6 +76,30 @@ function extractUserText(messages: Array<{ role: string; content: unknown }>): s
   return "";
 }
 
+// FORK 2026-04-20: derive a stable per-session worker-pool key from the
+// system prompt. The OpenClaw `createStreamFn` ctx doesn't expose the active
+// session key, and `opts.sessionKey` was always undefined (the previous code
+// in index.ts read a non-existent field off `model`). Every call fell back
+// to the literal "agent:main:main", so 3 parallel subagents collapsed onto
+// ONE worker -- they queued serially and two hung forever waiting for the
+// third. Main Jarvis has a ~32KB persona/amygdala/fractal prompt; each
+// subagent has a shorter task-embedded prompt. Hashing the prompt keeps
+// workers distinct per session across turns while staying cheap.
+function deriveSessionKey(explicit: string | undefined, systemPrompt: string | undefined): string {
+  if (explicit && explicit.trim()) {
+    return explicit.trim();
+  }
+  if (!systemPrompt || !systemPrompt.trim()) {
+    return "agent:main:main";
+  }
+  // djb2 hash -- 8 hex chars is plenty for a handful of concurrent sessions.
+  let h = 5381;
+  for (let i = 0; i < systemPrompt.length; i++) {
+    h = ((h << 5) + h + systemPrompt.charCodeAt(i)) | 0;
+  }
+  return `cc-sp-${(h >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -82,7 +108,72 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const modelInfo = { api: model.api, provider: model.provider, id: model.id };
       const cwd = opts.cwd ?? DEFAULT_CWD;
       const disallowedTools = opts.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
-      const sessionKey = opts.sessionKey ?? "agent:main:main";
+      const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt);
+
+      // FORK (2026-04-24): OpenClaw's embedded runner smuggles the current
+      // run's identity into options via `__openclawRunId` / `__openclawSessionKey`
+      // (see `src/agents/pi-embedded-runner/run/attempt.ts`). We use them to
+      // attribute live `stream: "tool"` agent events to the right run so the
+      // UI can render tool calls with purpose titles + expandable output —
+      // without putting toolCall blocks in the assistant message (which would
+      // trigger re-execution through the prefrontal exec gate).
+      const pipedOptions = (options ?? {}) as {
+        __openclawRunId?: string;
+        __openclawSessionKey?: string;
+      };
+      const runId = pipedOptions.__openclawRunId;
+      const openclawSessionKey = pipedOptions.__openclawSessionKey;
+      const toolLastNarration = new Map<string, string>();
+      let pendingToolNarration = "";
+
+      const emitToolStart = (
+        toolCallId: string,
+        name: string,
+        args: unknown,
+        narration: string,
+      ) => {
+        if (!runId) {
+          return;
+        }
+        toolLastNarration.set(toolCallId, narration);
+        log.info(
+          `tool.start name=${name} id=${toolCallId.slice(0, 12)} narration.len=${narration.length}`,
+        );
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "tool",
+          data: {
+            phase: "start",
+            name,
+            toolCallId,
+            args: (args ?? {}) as Record<string, unknown>,
+            purpose: narration || undefined,
+          },
+        });
+      };
+
+      const emitToolResult = (toolCallId: string, resultText: string, isError: boolean) => {
+        if (!runId) {
+          return;
+        }
+        log.info(
+          `tool.result id=${toolCallId.slice(0, 12)} is_error=${isError} stdout.len=${resultText.length}`,
+        );
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "tool",
+          data: {
+            phase: "result",
+            toolCallId,
+            result: resultText,
+            isError,
+            purpose: toolLastNarration.get(toolCallId) || undefined,
+          },
+        });
+        toolLastNarration.delete(toolCallId);
+      };
 
       const pool = getPool();
       const worker = pool.getOrCreate({
@@ -101,6 +192,16 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       let textEnded = false;
       let accumulatedText = "";
       let accumulatedThinking = "";
+      // FORK (2026-04-22): tool_use blocks from claude-cli are NOT materialized
+      // into the final AssistantMessage.content. claude-cli executes tools
+      // internally and the UI learns about them through its own session-log
+      // tail (claude writes `~/.claude/projects/<uuid>/*.jsonl` with full
+      // tool_use/tool_result blocks). Putting toolCall blocks in OpenClaw's
+      // assistant-message content triggered pi-agent-core's agent-loop to
+      // re-execute them via the OpenClaw exec tool, which hit the prefrontal
+      // "Exploration required" gate and surfaced as red "Something went
+      // wrong" bubbles for every claude internal bash call. See
+      // `extensions/prefrontal/exploration-gate.ts:105`.
       const textIndex = () => (thinkingStarted ? 1 : 0);
 
       const buildContent = (): (TextContent | ThinkingContent)[] => {
@@ -131,7 +232,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
         streamStarted = true;
         const p = buildPartial();
-        if (log.debug) log.debug(`emit start content.len=${p.content.length}`);
+        if (log.debug) {
+          log.debug(`emit start content.len=${p.content.length}`);
+        }
         stream.push({ type: "start", partial: p });
       };
       const pushThinkingStart = () => {
@@ -139,7 +242,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         thinkingStarted = true;
-        if (log.debug) log.debug(`emit thinking_start`);
+        if (log.debug) {
+          log.debug(`emit thinking_start`);
+        }
         stream.push({ type: "thinking_start", contentIndex: 0, partial: buildPartial() });
       };
       const pushThinkingEnd = () => {
@@ -147,7 +252,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         thinkingEnded = true;
-        if (log.debug) log.debug(`emit thinking_end content.len=${accumulatedThinking.length}`);
+        if (log.debug) {
+          log.debug(`emit thinking_end content.len=${accumulatedThinking.length}`);
+        }
         stream.push({
           type: "thinking_end",
           contentIndex: 0,
@@ -160,7 +267,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         textStarted = true;
-        if (log.debug) log.debug(`emit text_start contentIndex=${textIndex()}`);
+        if (log.debug) {
+          log.debug(`emit text_start contentIndex=${textIndex()}`);
+        }
         stream.push({ type: "text_start", contentIndex: textIndex(), partial: buildPartial() });
       };
       const pushTextEnd = () => {
@@ -168,7 +277,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         textEnded = true;
-        if (log.debug) log.debug(`emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`);
+        if (log.debug) {
+          log.debug(
+            `emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`,
+          );
+        }
         stream.push({
           type: "text_end",
           contentIndex: textIndex(),
@@ -204,6 +317,25 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         });
       };
 
+      // FORK 2026-04-20: progress heartbeat so we can tell from the gateway
+      // log whether claude is silently thinking vs actually stuck. Logs
+      // first-line-received and then every 30s/50 lines thereafter with a
+      // compact summary. Watchdog fires a WARN if nothing arrives for 45s
+      // so a silent hang is visible instead of invisible until the 900s
+      // hard timeout.
+      const turnStartedAt = Date.now();
+      let linesSeen = 0;
+      let lastProgressLogAt = 0;
+      let lastLineAt = turnStartedAt;
+      const watchdog = setInterval(() => {
+        const silentMs = Date.now() - lastLineAt;
+        if (silentMs > 45_000) {
+          log.warn(
+            `claude silent for ${Math.round(silentMs / 1000)}s (sessionKey=${sessionKey}, lines=${linesSeen}, text.len=${accumulatedText.length}, thinking.len=${accumulatedThinking.length})`,
+          );
+        }
+      }, 45_000);
+
       const onStreamLine = (evt: WorkerEvent) => {
         if (evt.type !== "stream_line") {
           return;
@@ -211,6 +343,18 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         const line = evt.line;
         if (!line || typeof line !== "object") {
           return;
+        }
+        linesSeen++;
+        lastLineAt = Date.now();
+        if (linesSeen === 1) {
+          log.info(
+            `first stream line after ${lastLineAt - turnStartedAt}ms sessionKey=${sessionKey}`,
+          );
+        } else if (linesSeen % 50 === 0 || lastLineAt - lastProgressLogAt > 30_000) {
+          log.info(
+            `progress sessionKey=${sessionKey} lines=${linesSeen} elapsed=${Math.round((lastLineAt - turnStartedAt) / 1000)}s text.len=${accumulatedText.length} thinking.len=${accumulatedThinking.length}`,
+          );
+          lastProgressLogAt = lastLineAt;
         }
         handleLine(line);
       };
@@ -235,30 +379,88 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         if (t === "assistant") {
-          // claude --verbose stream-json emits whole-block assistant messages
-          // rather than per-token deltas. Turn each non-empty block into one
-          // delta. Empty-string thinking blocks (claude's signed-but-empty
-          // extended-thinking marker) are skipped — emitting zero-length
-          // thinking events confuses pi-agent-core's attempt reader.
+          // claude's stream-json NDJSON emits periodic `assistant` messages
+          // with CUMULATIVE text. Treat each update as a potential delta:
+          // slice off whatever we've already pushed, emit the remainder.
+          // This gives real-time streaming to the UI even when claude isn't
+          // sending finer-grained `content_block_delta` events.
           const blocks = (line as CcStreamStdoutAssistantMessage).message?.content ?? [];
           for (const b of blocks) {
             const typed = b as CcContentBlock;
-            if (
-              typed.type === "text" &&
-              typeof typed.text === "string" &&
-              typed.text.length > 0 &&
-              !accumulatedText
-            ) {
-              pushTextDelta(typed.text);
-            } else if (
-              typed.type === "thinking" &&
-              typeof typed.thinking === "string" &&
-              typed.thinking.length > 0 &&
-              !accumulatedThinking
-            ) {
-              pushThinkingDelta(typed.thinking);
+            if (typed.type === "text" && typeof typed.text === "string") {
+              const cumulative = typed.text;
+              if (
+                cumulative.startsWith(accumulatedText) &&
+                cumulative.length > accumulatedText.length
+              ) {
+                const delta = cumulative.slice(accumulatedText.length);
+                pushTextDelta(delta);
+                // FORK (2026-04-24): capture the delta as "pending narration"
+                // — Jarvis writes one short purpose sentence right before a
+                // tool_use, and we feed it into the emitted tool-start event
+                // so the UI can use it as the row's one-line title.
+                pendingToolNarration += delta;
+              } else if (cumulative.length > 0 && !accumulatedText) {
+                pushTextDelta(cumulative);
+                pendingToolNarration += cumulative;
+              }
+            } else if (typed.type === "thinking" && typeof typed.thinking === "string") {
+              const cumulative = typed.thinking;
+              if (
+                cumulative.startsWith(accumulatedThinking) &&
+                cumulative.length > accumulatedThinking.length
+              ) {
+                const delta = cumulative.slice(accumulatedThinking.length);
+                pushThinkingDelta(delta);
+              } else if (cumulative.length > 0 && !accumulatedThinking) {
+                pushThinkingDelta(cumulative);
+              }
+            } else if (typed.type === "tool_use" && typeof typed.id === "string") {
+              // FORK (2026-04-24): emit a live `stream: "tool"` agent event so
+              // the UI shows a tool row with the narration as its title. The
+              // block is NOT added to the final AssistantMessage.content — it
+              // only lives as a UI-side event (see buildContent for rationale).
+              emitToolStart(
+                typed.id,
+                typeof typed.name === "string" ? typed.name : "unknown",
+                typed.input,
+                pendingToolNarration.trim(),
+              );
+              pendingToolNarration = "";
             }
           }
+          return;
+        }
+        if (t === "user") {
+          // FORK (2026-04-24): claude-cli echoes tool_result blocks back to us
+          // as `user`-role stream lines between turns. Convert them into live
+          // `stream: "tool"` phase=result events so the UI can pair them with
+          // their tool_use rows and show the full output on expand.
+          const blocks = (line as CcStreamStdoutUserMessage).message?.content ?? [];
+          for (const b of blocks) {
+            const typed = b as CcContentBlock;
+            if (typed.type === "tool_result" && typeof typed.tool_use_id === "string") {
+              const resultText =
+                typeof typed.content === "string"
+                  ? typed.content
+                  : Array.isArray(typed.content)
+                    ? typed.content
+                        .map((c) => {
+                          if (!c || typeof c !== "object") {
+                            return "";
+                          }
+                          const typedBlock = c as { type?: string; text?: string };
+                          return typedBlock.type === "text" && typeof typedBlock.text === "string"
+                            ? typedBlock.text
+                            : "";
+                        })
+                        .filter(Boolean)
+                        .join("\n")
+                    : "";
+              emitToolResult(typed.tool_use_id, resultText, Boolean(typed.is_error));
+            }
+          }
+          return;
         }
       };
 
@@ -267,6 +469,13 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         `turn start sessionKey=${sessionKey} userText.len=${userText.length} systemPrompt.len=${(context.systemPrompt ?? "").length}`,
       );
 
+      // FORK 2026-04-19: emit `start` immediately so the UI thinking
+      // indicator fires while claude is doing tool calls / thinking —
+      // not just when text deltas arrive. Previously this was lazy,
+      // meaning long tool-call chains (>60s of no text) left the UI
+      // with no visible activity.
+      pushStart();
+
       try {
         worker.on("stream_line", onStreamLine);
         const finalLine = await worker.send({
@@ -274,6 +483,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           signal: options?.signal,
         });
         worker.off("stream_line", onStreamLine);
+        clearInterval(watchdog);
 
         pushStart();
         pushThinkingEnd();
@@ -343,8 +553,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         stream.push({ type: "done", reason: "stop", message: finalMessage });
       } catch (err) {
         worker.off("stream_line", onStreamLine);
+        clearInterval(watchdog);
         const rawErr = formatErrorMessage(err);
-        log.error(`claude-code turn failed: ${rawErr}`);
+        log.error(
+          `claude-code turn failed after ${Math.round((Date.now() - turnStartedAt) / 1000)}s (${linesSeen} stream lines, text.len=${accumulatedText.length}, thinking.len=${accumulatedThinking.length}): ${rawErr}`,
+        );
         // Same envelope-as-text trick as the is_error path: deliver the
         // error as a normal assistant turn carrying the __ERR_ENV__ sentinel
         // so the UI can render it as a red (or orange if recoverable) bubble

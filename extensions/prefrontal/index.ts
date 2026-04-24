@@ -39,7 +39,7 @@ let _sessionStoreLoader: ((cfg: any) => any) | null = null;
 let _sessionStoreChecked = false;
 
 function getSessionStoreLoader(): ((cfg: any) => any) | null {
-  if (_sessionStoreChecked) return _sessionStoreLoader;
+  if (_sessionStoreChecked) {return _sessionStoreLoader;}
   _sessionStoreChecked = true;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -85,12 +85,13 @@ let sharedPrefrontalSessionKey: string | null = null;
 
 export default function register(api: OpenClawPluginApi) {
   const config = api.config as Record<string, any>;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const pluginConfig = (config.plugins as any)?.entries?.[PLUGIN_ID]?.config ?? {};
 
   // ─── Config: merge plugin config with defaults ───
   const prefrontalConfig = {
     ...DEFAULT_PREFRONTAL_CONFIG,
-    ...(pluginConfig.prefrontal ?? {}),
+    ...pluginConfig.prefrontal,
   };
 
   // ─── WS5: Feature Flags ───
@@ -99,7 +100,7 @@ export default function register(api: OpenClawPluginApi) {
   // ─── P0: Exploration Gate ───
   const explorationGateConfig = {
     ...DEFAULT_EXPLORATION_GATE_CONFIG,
-    ...(pluginConfig.explorationGate ?? {}),
+    ...pluginConfig.explorationGate,
   };
   explorationGateConfig.enabled = isEnabled(featureFlags, "explorationGate");
   const explorationGate = createExplorationGate(explorationGateConfig);
@@ -107,7 +108,7 @@ export default function register(api: OpenClawPluginApi) {
   // ─── P0: Anti-Gold-Plating ───
   const antiGoldplatingConfig = {
     ...DEFAULT_ANTI_GOLDPLATING_CONFIG,
-    ...(pluginConfig.antiGoldplating ?? {}),
+    ...pluginConfig.antiGoldplating,
   };
   antiGoldplatingConfig.enabled = isEnabled(featureFlags, "antiGoldplating");
 
@@ -115,14 +116,14 @@ export default function register(api: OpenClawPluginApi) {
   const effortRoutingConfig = {
     ...DEFAULT_EFFORT_ROUTING_CONFIG,
     enabled: isEnabled(featureFlags, "effortRouting"),
-    ...(pluginConfig.effortRouting ?? {}),
+    ...pluginConfig.effortRouting,
   };
 
   // ─── WS4: CORF Trigger ───
   const corfConfig = {
     ...DEFAULT_CORF_CONFIG,
     enabled: isEnabled(featureFlags, "corfTrigger"),
-    ...(pluginConfig.corf ?? {}),
+    ...pluginConfig.corf,
   };
 
   // ─── WS6: FAAR Tracker ───
@@ -201,6 +202,7 @@ export default function register(api: OpenClawPluginApi) {
     emitFn: (markdown: string) => {
       // Broadcast prefrontal update as agent event so Tinker UI can display it
       try {
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         (api as any).broadcast?.("agent", {
           stream: "lifecycle",
           data: {
@@ -221,7 +223,7 @@ export default function register(api: OpenClawPluginApi) {
     (event: PluginHookSubagentSpawnedEvent, ctx: PluginHookSubagentContext) => {
       topology.addNode(event, ctx);
       const node = topology.getNode(event.childSessionKey);
-      if (node) chatEmitter.onSpawned(node);
+      if (node) {chatEmitter.onSpawned(node);}
       log.info?.(
         `[prefrontal] Agent spawned: ${event.label || event.agentId} (${event.childSessionKey})`,
       );
@@ -233,6 +235,7 @@ export default function register(api: OpenClawPluginApi) {
         requesterSessionKey: ctx.requesterSessionKey ?? "",
         task: event.label || event.agentId,
         label: event.label,
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         model: (event as any).model,
         createdAt: Date.now(),
         startedAt: Date.now(),
@@ -243,6 +246,7 @@ export default function register(api: OpenClawPluginApi) {
       // WS3: Validate model assignment against task complexity
       if (isEnabled(featureFlags, "effortRouting") && event.label) {
         const routing = validateModelAssignment(
+          // oxlint-disable-next-line typescript-eslint/no-explicit-any
           (event as any).model ?? "",
           event.label,
           effortRoutingConfig,
@@ -256,6 +260,11 @@ export default function register(api: OpenClawPluginApi) {
       if (!getPrefrontalSessionKey() && ctx.requesterSessionKey?.includes("main")) {
         setPrefrontalSessionKey(ctx.requesterSessionKey);
       }
+      // FORK 2026-04-20: push tree to UI immediately so the new subagent row
+      // shows up in the Prefrontal panel without waiting for the 120s
+      // monitor tick. Subagent lifespans (170-260s) frequently overlap with
+      // the interval window, so without this UIs rarely see live branches.
+      rebuildAndBroadcastTree();
     },
   );
 
@@ -277,6 +286,10 @@ export default function register(api: OpenClawPluginApi) {
           break;
         }
       }
+      // FORK 2026-04-20: flush the end-of-life state to the UI now; without
+      // this the completed child keeps shimmering as "running" until the
+      // slow monitor tick catches up.
+      rebuildAndBroadcastTree();
     },
   );
 
@@ -287,7 +300,7 @@ export default function register(api: OpenClawPluginApi) {
     log.info?.(
       `[prefrontal] HOOK llm_input sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} provider=${event.provider} model=${event.model}`,
     );
-    if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
+    if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) {return;}
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.activateMain({
       sessionKey,
@@ -312,7 +325,7 @@ export default function register(api: OpenClawPluginApi) {
 
   api.on("llm_output", (event: PluginHookLlmOutputEvent, ctx: PluginHookAgentContext) => {
     log.info?.(`[prefrontal] HOOK llm_output sessionKey=${ctx.sessionKey} trigger=${ctx.trigger}`);
-    if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
+    if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) {return;}
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.updateUsage(sessionKey, event.usage);
     topology.updatePhase(sessionKey, "responding");
@@ -373,7 +386,7 @@ export default function register(api: OpenClawPluginApi) {
       }
 
       const sessionKey = ctx.sessionKey || "agent:main:main";
-      if (TopologyStore.isHeartbeat(sessionKey)) return;
+      if (TopologyStore.isHeartbeat(sessionKey)) {return;}
       topology.addToolCall(sessionKey, event.toolName);
 
       // Update last event timestamp for any matching subagent
@@ -427,7 +440,7 @@ export default function register(api: OpenClawPluginApi) {
       `[prefrontal] HOOK after_tool_call sessionKey=${ctx.sessionKey} tool=${event.toolName}`,
     );
     const sessionKey = ctx.sessionKey || "agent:main:main";
-    if (TopologyStore.isHeartbeat(sessionKey)) return;
+    if (TopologyStore.isHeartbeat(sessionKey)) {return;}
     topology.finishToolCall(sessionKey);
   });
 
@@ -435,7 +448,7 @@ export default function register(api: OpenClawPluginApi) {
     log.info?.(
       `[prefrontal] HOOK agent_end sessionKey=${ctx.sessionKey} trigger=${ctx.trigger} success=${event.success} duration=${event.durationMs}`,
     );
-    if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) return;
+    if (TopologyStore.isHeartbeat(ctx.sessionKey, ctx.trigger)) {return;}
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.endSession(sessionKey, event.success, event.durationMs);
     // Clear active main after a short delay so the UI poll catches the completed state.
@@ -521,9 +534,9 @@ export default function register(api: OpenClawPluginApi) {
       log.info?.(`[prefrontal] Persisted ${snap.nodes.length} nodes to ${persistPath}`);
     }
     chatEmitter.destroy();
-    if (pollTimer) clearInterval(pollTimer);
-    if (stalenessTimer) clearInterval(stalenessTimer);
-    if (monitorTimer) clearInterval(monitorTimer);
+    if (pollTimer) {clearInterval(pollTimer);}
+    if (stalenessTimer) {clearInterval(stalenessTimer);}
+    if (monitorTimer) {clearInterval(monitorTimer);}
   });
 
   // ─── Enrichment Poll ───
@@ -533,10 +546,11 @@ export default function register(api: OpenClawPluginApi) {
 
   function enrichTopology() {
     // Only enrich non-main nodes (main node gets data from hooks directly)
-    if (topology.allNodes().filter((n) => !n.isMain).length === 0) return;
+    if (topology.allNodes().filter((n) => !n.isMain).length === 0) {return;}
     const loader = getSessionStoreLoader();
-    if (!loader) return;
+    if (!loader) {return;}
     try {
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       const { store } = loader(config as any);
       const sessions = Object.entries(store).map(([key, entry]: [string, any]) => ({
         key,
@@ -552,7 +566,7 @@ export default function register(api: OpenClawPluginApi) {
       for (const [runId, run] of subagentRuns) {
         if (!run.endedAt) {
           const session = sessions.find((s) => s.key === run.childSessionKey);
-          if (session?.model) run.model = session.model;
+          if (session?.model) {run.model = session.model;}
         }
       }
     } catch (e) {
@@ -564,7 +578,7 @@ export default function register(api: OpenClawPluginApi) {
     const stuck = topology.detectStaleness(stalenessThresholdMs);
     for (const key of stuck) {
       const node = topology.getNode(key);
-      if (node) chatEmitter.onStuck(node);
+      if (node) {chatEmitter.onStuck(node);}
     }
   }
 
@@ -587,6 +601,7 @@ export default function register(api: OpenClawPluginApi) {
       // Broadcast tree update to Tinker UI via the "agent" event stream
       // (same stream used by lifecycle events — known to work with Tinker UI)
       try {
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         (api as any).broadcast?.("agent", {
           stream: "lifecycle",
           data: {

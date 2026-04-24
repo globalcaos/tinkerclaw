@@ -676,6 +676,113 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.3);
   color: #f87171;
 }
+
+/* FORK 2026-04-18: user bubble with collapsible full-prompt toggle. */
+.msg.msg-user-with-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.msg.msg-user-with-prompt details.user-prompt-toggle {
+  margin-top: 4px;
+  font-size: 10.5px;
+  opacity: 0.65;
+}
+.msg.msg-user-with-prompt details.user-prompt-toggle > summary.user-prompt-summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  color: #c9d4a8;
+}
+.msg.msg-user-with-prompt details.user-prompt-toggle > summary.user-prompt-summary::-webkit-details-marker {
+  display: none;
+}
+.msg.msg-user-with-prompt details.user-prompt-toggle[open] > summary.user-prompt-summary {
+  opacity: 1;
+  margin-bottom: 4px;
+}
+.msg.msg-user-with-prompt details.user-prompt-toggle .user-prompt-full {
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.2);
+  border-left: 2px solid rgba(255, 255, 255, 0.22);
+  padding: 6px 10px;
+  border-radius: 4px;
+  max-height: 380px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* FORK 2026-04-18: filesystem link — any inline <code> path that looks like
+   an absolute or ~/ file in a recognized extension becomes clickable and
+   opens in the system's default viewer via config.openExternalFile RPC. */
+code.fs-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(168, 192, 112, 0.6);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+code.fs-link:hover {
+  color: #c4e09a;
+  background: rgba(107, 142, 35, 0.2);
+}
+code.fs-link.fs-link-opening {
+  opacity: 0.6;
+}
+code.fs-link.fs-link-opened {
+  background: rgba(107, 142, 35, 0.35);
+  color: #d4e8b8;
+}
+code.fs-link.fs-link-error {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+/* FORK 2026-04-18: Amygdala collapsed bubble — warm amber, left-aligned, subtle. */
+.msg.msg-amygdala {
+  align-self: flex-start;
+  max-width: 85%;
+  margin: 2px 0;
+  padding: 0;
+  background: none;
+  border: none;
+}
+.msg.msg-amygdala > summary.amygdala-summary {
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-left: 3px solid #f59e0b;
+  color: #d4a860;
+  font-size: 12px;
+  list-style: none;
+  user-select: none;
+}
+.msg.msg-amygdala > summary.amygdala-summary::-webkit-details-marker {
+  display: none;
+}
+.msg.msg-amygdala > summary.amygdala-summary:hover {
+  background: rgba(245, 158, 11, 0.13);
+}
+.msg.msg-amygdala[open] > summary.amygdala-summary {
+  margin-bottom: 4px;
+}
+.msg.msg-amygdala > .amygdala-body {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.05);
+  border-left: 3px solid rgba(245, 158, 11, 0.4);
+  color: #c9a87a;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .msg.msg-fractal {
   background: rgba(107, 142, 35, 0.1);
   border: 1px solid rgba(107, 142, 35, 0.25);
@@ -883,6 +990,39 @@ body {
 }
 .tool-row .status.run {
   color: var(--muted);
+}
+/* FORK (2026-04-21): secondary line inside a tool-row showing the mechanical
+   pattern-summary when the title is the LLM's purpose narration. Keeps the
+   literal "grep", "read", "exec" hint visible at a glance without stealing
+   from the bird's-eye narration. */
+.tool-row .tool-row-sub {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-style: italic;
+  font-size: 10px;
+}
+/* FORK (2026-04-21): thin divider that replaces the old full-bubble "Compaction"
+   system message. It just marks that the agent consolidated context at that
+   point in the transcript — no prominence, no alarm. */
+.msg-compaction-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  opacity: 0.45;
+  font-size: 9px;
+  color: var(--muted);
+  font-family: "SF Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.msg-compaction-divider::before,
+.msg-compaction-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed color-mix(in srgb, var(--muted) 40%, transparent);
+}
+.msg-compaction-label {
+  flex: 0 0 auto;
 }
 .tool-row .name {
   font-weight: 600;
@@ -1511,6 +1651,18 @@ body {
   margin-top: 1px;
   white-space: nowrap;
   line-height: 1.3;
+}
+/* FORK (2026-04-21): per-call session badge, rendered under the timestamp
+   only in "All" mode. Shows the session's emoji (🏠 for main, the tab's
+   leading emoji for tinker:* sessions) so the operator can visually
+   attribute each tool call to the right session. */
+.ct-session-badge {
+  text-align: center;
+  font-size: 11px;
+  line-height: 1;
+  margin-top: 2px;
+  opacity: 0.85;
+  cursor: default;
 }
 .ct-empty {
   display: flex;

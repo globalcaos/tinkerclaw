@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
   createAgentSession,
@@ -9,9 +8,14 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import { onTurnComplete as _forkOnTurnComplete } from "../../../fork/attempt-hooks.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
+import {
+  ensureGlobalUndiciEnvProxyDispatcher,
+  ensureGlobalUndiciStreamTimeouts,
+} from "../../../infra/net/undici-global-dispatcher.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import {
   isOllamaCompatProvider,
@@ -27,7 +31,7 @@ import {
   transformProviderSystemPrompt,
 } from "../../../plugins/provider-runtime.js";
 import { getPluginToolMeta } from "../../../plugins/tools.js";
-import { isAcpSessionKey, isSubagentSessionKey } from "../../../routing/session-key.js";
+import { isSubagentSessionKey } from "../../../routing/session-key.js";
 import { normalizeOptionalLowercaseString } from "../../../shared/string-coerce.js";
 import { normalizeOptionalString } from "../../../shared/string-coerce.js";
 import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
@@ -47,7 +51,6 @@ import {
 import {
   FULL_BOOTSTRAP_COMPLETED_CUSTOM_TYPE,
   hasCompletedBootstrapTurn,
-  isWorkspaceBootstrapPending,
   makeBootstrapWarn,
   resolveBootstrapContextForRun,
   resolveContextInjectionMode,
@@ -75,7 +78,6 @@ import {
   getOrCreateSessionMcpRuntime,
   materializeBundleMcpToolsForRun,
 } from "../../pi-bundle-mcp-tools.js";
-import type { EmbeddedContextFile } from "../../pi-embedded-helpers.js";
 import {
   downgradeOpenAIFunctionCallReasoningPairs,
   isCloudCodeAssistFormatError,
@@ -119,13 +121,12 @@ import {
   resolveTranscriptPolicy,
   shouldAllowProviderOwnedThinkingReplay,
 } from "../../transcript-policy.js";
-import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
+import { derivePromptTokens, normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
-import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
 import { applyExtraParamsToAgent, resolveAgentTransportOverride } from "../extra-params.js";
 import { prepareGooglePromptCacheStreamFn } from "../google-prompt-cache.js";
@@ -180,14 +181,6 @@ import {
 import { splitSdkTools } from "../tool-split.js";
 import { mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
-export { buildContextEnginePromptCacheInfo } from "./attempt.context-engine-helpers.js";
-import {
-  resolveAttemptWorkspaceBootstrapRouting,
-  shouldStripBootstrapFromEmbeddedContext,
-} from "./attempt-bootstrap-routing.js";
-export { shouldStripBootstrapFromEmbeddedContext } from "./attempt-bootstrap-routing.js";
-import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
-import { configureEmbeddedAttemptHttpRuntime } from "./attempt-http-runtime.js";
 import {
   assembleAttemptContextEngine,
   buildLoopPromptCacheInfo,
@@ -200,7 +193,6 @@ import {
 } from "./attempt.context-engine-helpers.js";
 import {
   buildAfterTurnRuntimeContext,
-  buildAfterTurnRuntimeContextFromUsage,
   mergeOrphanedTrailingUserPrompt,
   prependSystemPromptAddition,
   resolveAttemptFsWorkspaceOnly,
@@ -264,7 +256,6 @@ export {
 } from "./attempt.thread-helpers.js";
 export {
   buildAfterTurnRuntimeContext,
-  buildAfterTurnRuntimeContextFromUsage,
   mergeOrphanedTrailingUserPrompt,
   prependSystemPromptAddition,
   resolveAttemptFsWorkspaceOnly,
@@ -321,33 +312,6 @@ export function resolveUnknownToolGuardThreshold(loopDetection?: {
     return Math.floor(raw);
   }
   return UNKNOWN_TOOL_THRESHOLD;
-}
-
-export function isPrimaryBootstrapRun(sessionKey?: string): boolean {
-  return !isSubagentSessionKey(sessionKey) && !isAcpSessionKey(sessionKey);
-}
-
-export function remapInjectedContextFilesToWorkspace(params: {
-  files: EmbeddedContextFile[];
-  sourceWorkspaceDir: string;
-  targetWorkspaceDir: string;
-}): EmbeddedContextFile[] {
-  if (params.sourceWorkspaceDir === params.targetWorkspaceDir) {
-    return params.files;
-  }
-  return params.files.map((file) => {
-    const relative = path.relative(params.sourceWorkspaceDir, file.path);
-    const canRemap = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-    return canRemap
-      ? {
-          ...file,
-          path:
-            relative === ""
-              ? params.targetWorkspaceDir
-              : path.join(params.targetWorkspaceDir, relative),
-        }
-      : file;
-  });
 }
 
 function summarizeMessagePayload(msg: AgentMessage): { textChars: number; imageBlocks: number } {
@@ -418,7 +382,10 @@ export async function runEmbeddedAttempt(
 ): Promise<EmbeddedRunAttemptResult> {
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
   const runAbortController = new AbortController();
-  configureEmbeddedAttemptHttpRuntime({ timeoutMs: params.timeoutMs });
+  // Proxy bootstrap must happen before timeout tuning so the timeouts wrap the
+  // active EnvHttpProxyAgent instead of being replaced by a bare proxy dispatcher.
+  ensureGlobalUndiciEnvProxyDispatcher();
+  ensureGlobalUndiciStreamTimeouts({ timeoutMs: params.timeoutMs });
 
   log.debug(
     `embedded run start: runId=${params.runId} sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId} thinking=${params.thinkLevel} messageChannel=${params.messageChannel ?? params.messageProvider ?? "unknown"}`,
@@ -482,7 +449,73 @@ export async function runEmbeddedAttempt(
 
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const contextInjectionMode = resolveContextInjectionMode(params.config);
+    const {
+      bootstrapFiles: hookAdjustedBootstrapFiles,
+      contextFiles,
+      shouldRecordCompletedBootstrapTurn,
+    } = await resolveAttemptBootstrapContext({
+      contextInjectionMode,
+      bootstrapContextMode: params.bootstrapContextMode,
+      bootstrapContextRunKind: params.bootstrapContextRunKind,
+      sessionFile: params.sessionFile,
+      hasCompletedBootstrapTurn,
+      resolveBootstrapContextForRun: async () =>
+        await resolveBootstrapContextForRun({
+          workspaceDir: effectiveWorkspace,
+          config: params.config,
+          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
+          warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
+          contextMode: params.bootstrapContextMode,
+          runKind: params.bootstrapContextRunKind,
+        }),
+    });
+    const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
+    const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
+    const bootstrapAnalysis = analyzeBootstrapBudget({
+      files: buildBootstrapInjectionStats({
+        bootstrapFiles: hookAdjustedBootstrapFiles,
+        injectedFiles: contextFiles,
+      }),
+      bootstrapMaxChars,
+      bootstrapTotalMaxChars,
+    });
+    const bootstrapPromptWarningMode = resolveBootstrapPromptTruncationWarningMode(params.config);
+    const bootstrapPromptWarning = buildBootstrapPromptWarning({
+      analysis: bootstrapAnalysis,
+      mode: bootstrapPromptWarningMode,
+      seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
+      previousSignature: params.bootstrapPromptWarningSignature,
+    });
+    const workspaceNotes = hookAdjustedBootstrapFiles.some(
+      (file) => file.name === DEFAULT_BOOTSTRAP_FILENAME && !file.missing,
+    )
+      ? [
+          "If BOOTSTRAP.md is present in Project Context, it overrides the normal first greeting. Read it and follow its instructions first, then update or delete it when complete.",
+          "Reminder: commit your changes in this workspace after edits.",
+        ]
+      : undefined;
+
     const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
+
+    const { defaultAgentId } = resolveSessionAgentIds({
+      sessionKey: params.sessionKey,
+      config: params.config,
+      agentId: params.agentId,
+    });
+    const effectiveFsWorkspaceOnly = resolveAttemptFsWorkspaceOnly({
+      config: params.config,
+      sessionAgentId,
+    });
+    // Track sessions_yield tool invocation (callback pattern, like clientToolCallDetected)
+    let yieldDetected = false;
+    let yieldMessage: string | null = null;
+    // Late-binding reference so onYield can abort the session (declared after tool creation)
+    let abortSessionForYield: (() => void) | null = null;
+    let queueYieldInterruptForSession: (() => void) | null = null;
+    let yieldAbortSettled: Promise<void> | null = null;
+    // Check if the model supports native image input
+    const modelHasVision = params.model.input?.includes("image") ?? false;
     const toolsRaw = params.disableTools
       ? []
       : (() => {
@@ -532,7 +565,7 @@ export async function runEmbeddedAttempt(
             currentMessageId: params.currentMessageId,
             replyToMode: params.replyToMode,
             hasRepliedRef: params.hasRepliedRef,
-            modelHasVision: params.model.input?.includes("image") ?? false,
+            modelHasVision,
             requireExplicitMessageTarget:
               params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
             disableMessageTool: params.disableMessageTool,
@@ -551,96 +584,6 @@ export async function runEmbeddedAttempt(
           return allTools;
         })();
     const toolsEnabled = supportsModelTools(params.model);
-    const bootstrapHasFileAccess = toolsEnabled && toolsRaw.some((tool) => tool.name === "read");
-    const bootstrapRouting = await resolveAttemptWorkspaceBootstrapRouting({
-      isWorkspaceBootstrapPending,
-      bootstrapContextRunKind: params.bootstrapContextRunKind,
-      trigger: params.trigger,
-      sessionKey: params.sessionKey,
-      isPrimaryRun: isPrimaryBootstrapRun(params.sessionKey),
-      isCanonicalWorkspace: params.isCanonicalWorkspace,
-      effectiveWorkspace,
-      resolvedWorkspace,
-      hasBootstrapFileAccess: bootstrapHasFileAccess,
-    });
-    const bootstrapMode = bootstrapRouting.bootstrapMode;
-    const shouldStripBootstrapFromContext = bootstrapRouting.shouldStripBootstrapFromContext;
-    const {
-      bootstrapFiles: hookAdjustedBootstrapFiles,
-      contextFiles: resolvedContextFiles,
-      shouldRecordCompletedBootstrapTurn,
-    } = await resolveAttemptBootstrapContext({
-      contextInjectionMode,
-      bootstrapContextMode: params.bootstrapContextMode,
-      bootstrapContextRunKind: params.bootstrapContextRunKind ?? "default",
-      bootstrapMode,
-      sessionFile: params.sessionFile,
-      hasCompletedBootstrapTurn,
-      resolveBootstrapContextForRun: async () =>
-        await resolveBootstrapContextForRun({
-          workspaceDir: resolvedWorkspace,
-          config: params.config,
-          sessionKey: params.sessionKey,
-          sessionId: params.sessionId,
-          warn: makeBootstrapWarn({
-            sessionLabel,
-            workspaceDir: resolvedWorkspace,
-            warn: (message) => log.warn(message),
-          }),
-          contextMode: params.bootstrapContextMode,
-          runKind: params.bootstrapContextRunKind,
-        }),
-    });
-    const remappedContextFiles = remapInjectedContextFilesToWorkspace({
-      files: resolvedContextFiles,
-      sourceWorkspaceDir: resolvedWorkspace,
-      targetWorkspaceDir: effectiveWorkspace,
-    });
-    const contextFiles = shouldStripBootstrapFromContext
-      ? remappedContextFiles.filter((file) => !/(^|[\\/])BOOTSTRAP\.md$/iu.test(file.path.trim()))
-      : remappedContextFiles;
-    const bootstrapFilesForInjectionStats = shouldStripBootstrapFromContext
-      ? hookAdjustedBootstrapFiles.filter((file) => file.name !== DEFAULT_BOOTSTRAP_FILENAME)
-      : hookAdjustedBootstrapFiles;
-    const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
-    const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
-    const bootstrapAnalysis = analyzeBootstrapBudget({
-      files: buildBootstrapInjectionStats({
-        bootstrapFiles: bootstrapFilesForInjectionStats,
-        injectedFiles: contextFiles,
-      }),
-      bootstrapMaxChars,
-      bootstrapTotalMaxChars,
-    });
-    const bootstrapPromptWarningMode = resolveBootstrapPromptTruncationWarningMode(params.config);
-    const bootstrapPromptWarning = buildBootstrapPromptWarning({
-      analysis: bootstrapAnalysis,
-      mode: bootstrapPromptWarningMode,
-      seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
-      previousSignature: params.bootstrapPromptWarningSignature,
-    });
-    const workspaceNotes = hookAdjustedBootstrapFiles.some(
-      (file) => file.name === DEFAULT_BOOTSTRAP_FILENAME && !file.missing,
-    )
-      ? ["Reminder: commit your changes in this workspace after edits."]
-      : undefined;
-
-    const { defaultAgentId } = resolveSessionAgentIds({
-      sessionKey: params.sessionKey,
-      config: params.config,
-      agentId: params.agentId,
-    });
-    const effectiveFsWorkspaceOnly = resolveAttemptFsWorkspaceOnly({
-      config: params.config,
-      sessionAgentId,
-    });
-    // Track sessions_yield tool invocation (callback pattern, like clientToolCallDetected)
-    let yieldDetected = false;
-    let yieldMessage: string | null = null;
-    // Late-binding reference so onYield can abort the session (declared after tool creation)
-    let abortSessionForYield: (() => void) | null = null;
-    let queueYieldInterruptForSession: (() => void) | null = null;
-    let yieldAbortSettled: Promise<void> | null = null;
     const tools = normalizeProviderToolSchemas({
       tools: toolsEnabled ? toolsRaw : [],
       provider: params.provider,
@@ -680,28 +623,11 @@ export async function runEmbeddedAttempt(
           ],
         })
       : undefined;
-    const filteredBundledTools = applyFinalEffectiveToolPolicy({
-      bundledTools: [...(bundleMcpRuntime?.tools ?? []), ...(bundleLspRuntime?.tools ?? [])],
-      config: params.config,
-      sandboxToolPolicy: sandbox?.tools,
-      sessionKey: sandboxSessionKey,
-      agentId: sessionAgentId,
-      modelProvider: params.provider,
-      modelId: params.modelId,
-      messageProvider: params.messageChannel ?? params.messageProvider,
-      agentAccountId: params.agentAccountId,
-      groupId: params.groupId,
-      groupChannel: params.groupChannel,
-      groupSpace: params.groupSpace,
-      spawnedBy: params.spawnedBy,
-      senderId: params.senderId,
-      senderName: params.senderName,
-      senderUsername: params.senderUsername,
-      senderE164: params.senderE164,
-      senderIsOwner: params.senderIsOwner,
-      warn: (message) => log.warn(message),
-    });
-    const effectiveTools = [...tools, ...filteredBundledTools];
+    const effectiveTools = [
+      ...tools,
+      ...(bundleMcpRuntime?.tools ?? []),
+      ...(bundleLspRuntime?.tools ?? []),
+    ];
     const allowedToolNames = collectAllowedToolNames({
       tools: effectiveTools,
       clientTools,
@@ -940,7 +866,6 @@ export async function runEmbeddedAttempt(
     });
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
     let systemPromptText = systemPromptOverride();
-    const userPromptPrefixText = bootstrapRouting.userPromptPrefixText;
 
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -1465,6 +1390,26 @@ export async function runEmbeddedAttempt(
         );
       }
 
+      // FORK (2026-04-24): pipe runId + sessionKey through streamFn options so
+      // cc-bridge (and any other provider) can attribute live tool events to
+      // the current run. pi-ai's SimpleStreamOptions doesn't carry these
+      // fields, so we smuggle them in as `__openclawRunId` / `__openclawSessionKey`
+      // — the underscore prefix marks them as fork-owned and avoids collision
+      // with any real pi-ai field. Providers that don't care simply ignore them.
+      {
+        const piped = activeSession.agent.streamFn;
+        const pipedRunId = params.runId;
+        const pipedSessionKey = params.sessionKey;
+        activeSession.agent.streamFn = (model, context, options) => {
+          const pipedOptions = {
+            ...options,
+            __openclawRunId: pipedRunId,
+            __openclawSessionKey: pipedSessionKey,
+          } as typeof options;
+          return piped(model, context, pipedOptions);
+        };
+      }
+
       try {
         const prior = await sanitizeSessionHistory({
           messages: activeSession.messages,
@@ -1672,6 +1617,13 @@ export async function runEmbeddedAttempt(
           sessionKey: sandboxSessionKey,
           sessionId: params.sessionId,
           agentId: sessionAgentId,
+          // FORK 2026-04-20: propagate model identity so handleAgentStart can emit
+          // a populated lifecycle phase=start event. Without these the Tinker UI
+          // filter drops the event and the 4 thinking indicators never animate
+          // (chat "Opus thinking", session panel, model-panel glow, Prefrontal tree).
+          modelId: params.modelId,
+          modelProvider: params.model.provider,
+          authProfileId: params.authProfileId,
           builtinToolNames,
           internalEvents: params.internalEvents,
         }),
@@ -1828,9 +1780,6 @@ export async function runEmbeddedAttempt(
             preserveExactPrompt: heartbeatPrompt,
           },
         );
-        if (userPromptPrefixText) {
-          effectivePrompt = `${userPromptPrefixText}\n\n${effectivePrompt}`;
-        }
         const hookCtx = {
           runId: params.runId,
           agentId: hookAgentId,
@@ -2169,18 +2118,6 @@ export async function runEmbeddedAttempt(
               inFlightPrompt: effectivePrompt,
             });
 
-            // FORK: mid-context persona re-injection when SyncScore drops
-            {
-              const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
-                activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-                systemPromptText ?? "",
-                log,
-              );
-              if (reinjectResult.reinjected && systemPromptText != null) {
-                systemPromptText = reinjectResult.systemPromptText;
-              }
-            }
-
             // Only pass images option if there are actually images to pass
             // This avoids potential issues with models that don't expect the images parameter
             if (imageResult.images.length > 0) {
@@ -2382,12 +2319,13 @@ export async function runEmbeddedAttempt(
 
         // Let the active context engine run its post-turn lifecycle.
         if (params.contextEngine) {
-          const afterTurnRuntimeContext = buildAfterTurnRuntimeContextFromUsage({
+          const runtimeCurrentTokenCount = derivePromptTokens(lastCallUsage);
+          const afterTurnRuntimeContext = buildAfterTurnRuntimeContext({
             attempt: params,
             workspaceDir: effectiveWorkspace,
             agentDir,
             tokenBudget: params.contextTokenBudget,
-            lastCallUsage,
+            currentTokenCount: runtimeCurrentTokenCount,
             promptCache,
           });
           await finalizeAttemptContextEngineTurn({
@@ -2473,24 +2411,6 @@ export async function runEmbeddedAttempt(
             .catch((err) => {
               log.warn(`agent_end hook failed: ${err}`);
             });
-        }
-
-        // FORK: text-tool-call interception for local providers (ollama/lmstudio/vllm)
-        if (!promptError && !aborted && tools.length > 0) {
-          const ttcResult = await _forkAttemptHooks.interceptTextToolCalls({
-            provider: params.provider,
-            activeSession: activeSession as never,
-            tools: tools as never,
-            toolMetas: toolMetas as never,
-            promptError,
-            aborted,
-            abortSignal: params.abortSignal,
-            abortable,
-            log,
-          });
-          if (ttcResult.promptError) {
-            promptError = ttcResult.promptError;
-          }
         }
       } finally {
         clearTimeout(abortTimer);
@@ -2593,6 +2513,29 @@ export async function runEmbeddedAttempt(
             log.warn(`llm_output hook failed: ${String(err)}`);
           });
       }
+
+      // FORK: fire-and-forget post-turn processing — context anatomy row,
+      // forensic dump, fractal trigger, etc. Re-wired 2026-04-20 after the
+      // 309-commit upstream merge stripped the call site (no rows written
+      // to anatomy-timeline.db since 2026-04-15).
+      _forkOnTurnComplete({
+        runId: params.runId,
+        sessionManager: activeSession as unknown as SessionManager,
+        sessionKey: params.sessionKey,
+        messagesSnapshot,
+        assistantTexts,
+        systemPromptReport,
+        provider: params.provider,
+        modelId: params.modelId,
+        contextWindowTokens:
+          params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+        getCompactionCount,
+        getUsageTotals,
+        authProfileId: params.authProfileId,
+        log,
+      }).catch((err) => {
+        log.warn(`fork onTurnComplete failed: ${String(err)}`);
+      });
 
       const observedReplayMetadata = buildAttemptReplayMetadata({
         toolMetas: toolMetasNormalized,

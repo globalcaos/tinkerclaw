@@ -23,7 +23,7 @@ let directDb: any = null;
 
 /** Decompress a column that may be zlib BLOB (new) or plain-text JSON (legacy). */
 function decompressJson(val: Buffer | string | null) {
-  if (val == null) return undefined;
+  if (val == null) {return undefined;}
   try {
     if (Buffer.isBuffer(val)) {
       return JSON.parse(inflateSync(val).toString("utf-8"));
@@ -67,7 +67,7 @@ function parseRow(row: any) {
 function getAnatomyDb() {
   // Prefer the gateway's bridge (shares DB handle + prepared statements)
   const bridge = (globalThis as any).__anatomyDb;
-  if (bridge) return bridge;
+  if (bridge) {return bridge;}
 
   // Fallback: open DB directly via better-sqlite3 (already in the process)
   if (!directDb) {
@@ -79,7 +79,7 @@ function getAnatomyDb() {
         "data",
         "anatomy-timeline.db",
       );
-      if (!fs.existsSync(dbPath)) return null;
+      if (!fs.existsSync(dbPath)) {return null;}
       const db = new Database(dbPath, { readonly: true });
       db.pragma("journal_mode = WAL");
       directDb = {
@@ -170,7 +170,7 @@ const plugin = {
     let indexHtmlCache: string | null = null;
 
     function getIndexHtml(): string {
-      if (indexHtmlCache) return indexHtmlCache;
+      if (indexHtmlCache) {return indexHtmlCache;}
       const raw = fs.readFileSync(path.join(TINKER_DIST, "index.html"), "utf-8");
       // Inject runtime config before </head> so the client can read it
       const config = JSON.stringify({ token: authToken });
@@ -219,7 +219,7 @@ const plugin = {
           }
           if (req.method === "POST") {
             const chunks: Buffer[] = [];
-            for await (const chunk of req) chunks.push(chunk as Buffer);
+            for await (const chunk of req) {chunks.push(chunk as Buffer);}
             const body = JSON.parse(Buffer.concat(chunks).toString());
             const muted = body.muted === true;
             fs.mkdirSync(path.dirname(MUTE_FILE), { recursive: true });
@@ -386,7 +386,7 @@ const plugin = {
 
         // Strip prefix to get relative path
         let rel = pathname.slice(PREFIX.length);
-        if (!rel || rel === "/") rel = "/index.html";
+        if (!rel || rel === "/") {rel = "/index.html";}
 
         // Security: resolve and check path stays within dist
         const filePath = path.resolve(TINKER_DIST, "." + rel);

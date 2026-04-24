@@ -17,7 +17,7 @@ export const DEFAULT_ANTI_GOLDPLATING_CONFIG: AntiGoldplatingConfig = {
 let cachedPrompt: string | null = null;
 
 export function loadAntiGoldplatingPrompt(baseDir?: string): string {
-  if (cachedPrompt) return cachedPrompt;
+  if (cachedPrompt) {return cachedPrompt;}
   const dir = baseDir ?? dirname(fileURLToPath(import.meta.url));
   const promptPath = join(dir, "anti-goldplating-prompt.md");
   try {
@@ -42,8 +42,8 @@ export function shouldInjectAntiGoldplating(
   config: AntiGoldplatingConfig,
   trigger?: string,
 ): boolean {
-  if (!config.enabled) return false;
-  if (trigger && EXEMPT_TRIGGERS.has(trigger)) return false;
+  if (!config.enabled) {return false;}
+  if (trigger && EXEMPT_TRIGGERS.has(trigger)) {return false;}
   return true;
 }
 

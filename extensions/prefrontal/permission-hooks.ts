@@ -22,7 +22,7 @@ export function createPermissionHooks(hooks: HookDef[]): PermissionHooks {
   return {
     async check(toolName: string, context: Record<string, unknown>): Promise<HookResult> {
       const matching = hooks.filter((h) => h.tool === toolName || h.tool === "*");
-      if (matching.length === 0) return { decision: "approve" };
+      if (matching.length === 0) {return { decision: "approve" };}
 
       for (const hook of matching) {
         try {
@@ -34,7 +34,7 @@ export function createPermissionHooks(hooks: HookDef[]): PermissionHooks {
             stdio: ["pipe", "pipe", "pipe"],
           });
           const result = JSON.parse(output.trim()) as HookResult;
-          if (result.decision === "deny") return result;
+          if (result.decision === "deny") {return result;}
         } catch {
           // Timeout or error → approve (fail-open for hooks)
           continue;

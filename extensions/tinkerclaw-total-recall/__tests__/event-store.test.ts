@@ -41,7 +41,7 @@ describe("EventStore", () => {
     for (let i = 0; i < 100; i++) {
       ids.push(generateULID());
     }
-    const sorted = [...ids].sort();
+    const sorted = [...ids].toSorted();
     expect(ids).toEqual(sorted);
   });
 

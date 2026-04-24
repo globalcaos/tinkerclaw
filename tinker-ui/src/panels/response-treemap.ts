@@ -257,7 +257,7 @@ function syntaxHighlightJson(json: string): string {
 /** Detect JSON and return a highlighted pre block, or null */
 function tryRenderJson(text: string): HTMLElement | null {
   const t = text.trim();
-  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) return null;
+  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) {return null;}
   try {
     const parsed = JSON.parse(t);
     const pre = document.createElement("pre");
@@ -302,7 +302,7 @@ function renderRichBody(text: string, category: string, nodeKey: string): HTMLEl
   // Tool result: try JSON, otherwise formatted text
   if (category === "tool_result") {
     const jsonEl = tryRenderJson(text);
-    if (jsonEl) return jsonEl;
+    if (jsonEl) {return jsonEl;}
     const div = document.createElement("div");
     div.className = "tm-text-block";
     div.textContent = text;
