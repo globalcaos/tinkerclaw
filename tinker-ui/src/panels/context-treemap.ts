@@ -7,6 +7,7 @@ import MarkdownIt from "markdown-it";
 
 const md = MarkdownIt({ html: false, linkify: true, breaks: true });
 
+// oxlint-disable-next-line typescript-eslint/no-explicit-any
 type ReqFn = (method: string, params?: any) => Promise<any>;
 
 interface TreemapNode {
@@ -77,9 +78,13 @@ function adjustHexLightness(hex: string, lightness: number): string {
   if (max !== min) {
     const d = max - min;
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) {h = ((g - b) / d + (g < b ? 6 : 0)) / 6;}
-    else if (max === g) {h = ((b - r) / d + 2) / 6;}
-    else {h = ((r - g) / d + 4) / 6;}
+    if (max === r) {
+      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    } else if (max === g) {
+      h = ((b - r) / d + 2) / 6;
+    } else {
+      h = ((r - g) / d + 4) / 6;
+    }
   }
   return `hsl(${Math.round(h * 360)},${Math.round(s * 100)}%,${lightness}%)`;
 }
@@ -223,6 +228,7 @@ function fmtUsd(v: number): string {
 
 // ─── Tool schema rich renderer ───
 function renderToolDetail(text: string): HTMLElement | null {
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   let tool: any;
   try {
     tool = JSON.parse(text);
@@ -283,6 +289,7 @@ function renderToolDetail(text: string): HTMLElement | null {
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
     for (const [pName, pSchema] of Object.entries(params.properties) as [string, any][]) {
       const tr = document.createElement("tr");
 
@@ -306,6 +313,7 @@ function renderToolDetail(text: string): HTMLElement | null {
       tdType.className = "tm-tool-param-type";
       let typeStr = pSchema?.type ?? "any";
       if (pSchema?.enum) {
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         typeStr = pSchema.enum.map((v: any) => `"${v}"`).join(" | ");
         if (typeStr.length > 60) {
           typeStr = pSchema.type + ` (${pSchema.enum.length} values)`;
@@ -336,7 +344,9 @@ function renderToolDetail(text: string): HTMLElement | null {
 /** Detect JSON and return a highlighted pre block, or null */
 function tryRenderJson(text: string): HTMLElement | null {
   const t = text.trim();
-  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) {return null;}
+  if (!(t.startsWith("{") || t.startsWith("[")) || t.length < 3) {
+    return null;
+  }
   try {
     const parsed = JSON.parse(t);
     const pre = document.createElement("pre");
@@ -422,18 +432,23 @@ function renderRichDetail(
   if (component === "system_prompt" || component === "current_prompt") {
     // Try JSON first (some sections may be JSON)
     const jsonEl = tryRenderJson(text);
-    if (jsonEl) {return jsonEl;}
+    if (jsonEl) {
+      return jsonEl;
+    }
     return renderFormattedText(text);
   }
 
   // Generic JSON detection
   const jsonEl = tryRenderJson(text);
-  if (jsonEl) {return jsonEl;}
+  if (jsonEl) {
+    return jsonEl;
+  }
 
   return null;
 }
 
 // ─── Build L1 nodes from slim dump ───
+// oxlint-disable-next-line typescript-eslint/no-explicit-any
 function buildL1Nodes(dump: any): TreemapNode[] {
   const nodes: TreemapNode[] = [];
 
@@ -444,6 +459,7 @@ function buildL1Nodes(dump: any): TreemapNode[] {
       key: "system_prompt",
       label: "system_prompt",
       chars: sp.chars,
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       children: (sp.sections ?? []).map((s: any) => ({
         key: s.name,
         label: s.name,
@@ -459,6 +475,7 @@ function buildL1Nodes(dump: any): TreemapNode[] {
       key: "tools",
       label: "tools",
       chars: tools.chars,
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       children: (tools.definitions ?? []).map((d: any) => ({
         key: d.name,
         label: d.name,
@@ -471,6 +488,7 @@ function buildL1Nodes(dump: any): TreemapNode[] {
   const ch = dump.conversation_history;
   if (ch && ch.chars > 0) {
     const msgSlim = ch.messages_slim ?? [];
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
     const children: TreemapNode[] = msgSlim.map((m: any) => ({
       key: String(m.index),
       label: `${m.role}[${m.index}]`,
@@ -507,8 +525,10 @@ export function mountContextTreemap(
   costEl?: HTMLElement,
   modelEl?: HTMLElement,
 ): void {
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
   let currentDump: any = null;
-  let currentRun: any = null;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
+  let _currentRun: any = null;
   let selectedCallIndex: number | null = null;
   let level: 1 | 2 | 3 = 1;
   let drillParent: TreemapNode | null = null;
@@ -653,6 +673,7 @@ export function mountContextTreemap(
     const key = parentKey ? node.key : undefined;
 
     try {
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       const params: any = { component, key };
       if (selectedCallIndex !== null) {
         params.callIndex = selectedCallIndex;
@@ -683,6 +704,7 @@ export function mountContextTreemap(
       overlay.appendChild(textEl);
       overlay.addEventListener("click", (e) => e.stopPropagation());
       box.appendChild(overlay);
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
     } catch (e: any) {
       btn.textContent = "\u26A0";
       btn.title = e?.message ?? "Summary failed";
@@ -710,6 +732,7 @@ export function mountContextTreemap(
 
   // ─── Extract children from forensic slim dump for a given anatomy/forensic key ───
   function extractChildrenFromSlim(
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
     slim: any,
     forensicKey: string,
     anatomyKey: string,
@@ -717,11 +740,13 @@ export function mountContextTreemap(
     if (forensicKey === "system_prompt") {
       const sections = slim.system_prompt?.sections;
       if (sections?.length) {
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         return sections.map((s: any) => ({ key: s.name, label: s.name, chars: s.chars }));
       }
     } else if (forensicKey === "tools") {
       const defs = slim.tools?.definitions;
       if (defs?.length) {
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         return defs.map((d: any) => ({ key: d.name, label: d.name, chars: d.schema_chars }));
       }
     } else if (forensicKey === "conversation_history") {
@@ -730,11 +755,14 @@ export function mountContextTreemap(
         // In anatomy mode, split by role: "conversation" = non-tool, "toolResults" = tool
         const filtered =
           anatomyKey === "toolResults"
-            ? msgs.filter((m: any) => m.role === "tool")
+            ? // oxlint-disable-next-line typescript-eslint/no-explicit-any
+              msgs.filter((m: any) => m.role === "tool")
             : anatomyKey === "conversation"
-              ? msgs.filter((m: any) => m.role !== "tool")
+              ? // oxlint-disable-next-line typescript-eslint/no-explicit-any
+                msgs.filter((m: any) => m.role !== "tool")
               : msgs;
         if (filtered.length > 0) {
+          // oxlint-disable-next-line typescript-eslint/no-explicit-any
           return filtered.map((m: any) => ({
             key: String(m.index),
             label: `${m.role}[${m.index}]`,
@@ -751,6 +779,7 @@ export function mountContextTreemap(
     container.innerHTML = `<div class="tm-empty">Loading\u2026</div>`;
     try {
       const sk = getSessionKey();
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       const params: any = { sessionKey: sk || undefined };
 
       // Find the matching call index via timestamp
@@ -780,7 +809,9 @@ export function mountContextTreemap(
           ? await reqFn("forensic.getCallLive", { sessionKey: sk || undefined, index: callIndex })
           : await reqFn("forensic.getLive", { sessionKey: sk || undefined });
 
-      if (!callDump) {throw new Error("No dump data");}
+      if (!callDump) {
+        throw new Error("No dump data");
+      }
 
       const forensicKey = ANATOMY_TO_FORENSIC[node.key] ?? node.key;
       const children = extractChildrenFromSlim(callDump, forensicKey, node.key);
@@ -805,7 +836,7 @@ export function mountContextTreemap(
   }
 
   // ─── Box click ───
-  function onBoxClick(node: TreemapNode, parentKey: string | null) {
+  function onBoxClick(node: TreemapNode, _parentKey: string | null) {
     if (level === 1) {
       // Drill to L2
       if (node.children && node.children.length > 0) {
@@ -839,6 +870,7 @@ export function mountContextTreemap(
     container.innerHTML = `<div class="tm-preview" style="background:${bg}"><div class="tm-preview-meta">Loading...</div></div>`;
 
     try {
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
       const detailParams: any = { component, key };
       if (selectedCallIndex !== null) {
         detailParams.callIndex = selectedCallIndex;
@@ -903,6 +935,7 @@ export function mountContextTreemap(
         sumBtn.textContent = "\u23F3 Summarizing\u2026";
         sumBtn.style.pointerEvents = "none";
         try {
+          // oxlint-disable-next-line typescript-eslint/no-explicit-any
           const sumParams: any = { component, key };
           if (selectedCallIndex !== null) {
             sumParams.callIndex = selectedCallIndex;
@@ -916,6 +949,7 @@ export function mountContextTreemap(
           const result = await reqFn("forensic.summarize", sumParams);
           setBody("summary", result?.summary ?? "(no summary)");
           sumBtn.textContent = "\u{1F519} Back";
+          // oxlint-disable-next-line typescript-eslint/no-explicit-any
         } catch (e: any) {
           const msg = e?.message ?? (typeof e === "string" ? e : "Summary failed");
           sumBtn.textContent = "\u26A0 Failed";
@@ -959,7 +993,7 @@ export function mountContextTreemap(
       container.appendChild(previewEl);
       // oxlint-disable-next-line typescript-eslint/no-explicit-any
       (container as any).__onLevelChange?.();
-    } catch (e: any) {
+    } catch {
       // Graceful fallback — show what we know from anatomy data
       const nodeLabel = drillChild?.label ?? key ?? component;
       const nodeCharsStr =
@@ -1031,7 +1065,7 @@ export function mountContextTreemap(
       anatomyMode = false;
       level = 1;
       renderLevel();
-    } catch (e: any) {
+    } catch {
       renderEmpty(`No context yet — send a message first`);
     }
   }
@@ -1080,7 +1114,9 @@ export function mountContextTreemap(
 
     for (const { key, tokenField, label } of segments) {
       const tokens = cs[tokenField] ?? 0;
-      if (tokens <= 0) {continue;}
+      if (tokens <= 0) {
+        continue;
+      }
 
       // Treemap uses chars for sizing — approximate from tokens
       const chars = tokens * 4;
@@ -1088,6 +1124,7 @@ export function mountContextTreemap(
 
       // injectedFiles has children (file list with per-file breakdown)
       if (key === "injectedFiles" && Array.isArray(cs.injectedFiles)) {
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
         node.children = cs.injectedFiles.map((f: any) => ({
           key: f.name ?? "file",
           label: f.name ?? "file",
@@ -1136,7 +1173,10 @@ export function mountContextTreemap(
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapRefresh = loadLatest;
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
-  (container as any).__treemapClear = () => { currentDump = null; renderEmpty(); };
+  (container as any).__treemapClear = () => {
+    currentDump = null;
+    renderEmpty();
+  };
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapShowAnatomy = showAnatomyEvent;
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
