@@ -40,16 +40,22 @@ export type SubscribeEmbeddedPiSessionParams = {
   /** Agent identity for hook context — resolved from session config in attempt.ts. */
   agentId?: string;
   /**
+   * FORK 2026-04-20: Model identity propagated from the runner so
+   * `handleAgentStart` can emit authoritative `lifecycle phase=start` events
+   * with `model` / `modelProvider` / `authProfileId` populated. Without these,
+   * the Tinker UI's lifecycle filter (`p.data?.model`) silently drops the
+   * event, leaving the 4 "thinking" indicators dark on providers (notably
+   * `claude-code`) where the server-side enrichment fallback path does not
+   * fill model info in.
+   */
+  modelId?: string;
+  modelProvider?: string;
+  authProfileId?: string;
+  /**
    * Exact raw names of non-plugin OpenClaw tools registered for this run.
    * When provided, MEDIA: passthrough requires an exact match instead of only
    * a normalized-name collision with a trusted built-in.
    */
   builtinToolNames?: ReadonlySet<string>;
   internalEvents?: AgentInternalEvent[];
-  /** Auth profile ID for lifecycle event tracking. */
-  authProfileId?: string;
-  /** FORK: Model ID for lifecycle event tracking (e.g. "claude-sonnet-4-6"). */
-  modelId?: string;
-  /** FORK: Provider name for lifecycle event tracking (e.g. "anthropic"). */
-  modelProvider?: string;
 };

@@ -50,19 +50,23 @@ export interface PrefrontalRecoveryState {
   originalPrompt: string;
 }
 
+// FORK: Defaults now target the claude-code bridge (Anthropic subscription via
+// the claude CLI) — the anthropic API provider path is suspended on this fork,
+// so prefrontal's planner + summariser + subagent dispatch would otherwise 400
+// on every call. Runtime config in openclaw.json can still override per-deploy.
 export const DEFAULT_PREFRONTAL_CONFIG: PrefrontalConfig = {
   enabled: false,
-  model: "anthropic/claude-opus-4-6",
-  summaryModel: "anthropic/claude-sonnet-4-6",
+  model: "claude-code/claude-opus-4-7",
+  summaryModel: "claude-code/claude-sonnet-4-6",
   monitorIntervalMs: 120_000,
   staleThresholdMs: 180_000,
   guardianStaleThresholdMs: 300_000,
   maxConcurrentWorkers: 8,
   autoRoute: true,
   effortRouting: {
-    minimal: ["anthropic/claude-haiku-4-5", "ollama/qwen3:14b"],
-    standard: ["anthropic/claude-sonnet-4-6", "google/gemini-2.5-pro"],
-    maximum: ["anthropic/claude-opus-4-6"],
+    minimal: ["claude-code/claude-haiku-4-5", "ollama/qwen3:14b"],
+    standard: ["claude-code/claude-sonnet-4-6", "google/gemini-2.5-pro"],
+    maximum: ["claude-code/claude-opus-4-7"],
   },
 };
 

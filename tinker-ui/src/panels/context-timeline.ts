@@ -63,7 +63,7 @@ export interface AnatomyEvent {
     toolResultsTokens?: number;
     userMessageTokens?: number;
     totalTokens?: number;
-    [k: string]: any;
+    [k: string]: unknown;
   };
   contextWindow?: {
     maxTokens?: number;
@@ -97,7 +97,7 @@ export interface AnatomyEvent {
     textChars?: number;
     toolCallChars?: number;
   };
-  [k: string]: any;
+  [k: string]: unknown;
 }
 
 interface BufferEntry {
@@ -171,7 +171,11 @@ export function mountContextTimeline(
   onGroupLineClick?: (groupIndex: number, firstEvent: AnatomyEvent) => void,
   onFilterModeChange?: (mode: "session" | "all") => void,
   getAuthHeaders?: () => Record<string, string>,
-  reqFn?: (method: string, params?: any) => Promise<any>,
+  reqFn?: (method: string, params?: unknown) => Promise<unknown>,
+  // FORK (2026-04-21): optional lookup — in "All" mode, the timeline shows a
+  // per-call session badge so you can see which session each tool call came
+  // from. Returns the short title/emoji for a session key, or null if unknown.
+  getSessionLabel?: (sessionKey: string) => string | null,
 ): TimelineController {
   const buffer: BufferEntry[] = [];
   let selectedIdx: number | null = null;
@@ -179,13 +183,15 @@ export function mountContextTimeline(
   let groupCounter = 0;
   let tooltipEl: HTMLElement | null = null;
   let filterMode: "session" | "all" = "session";
-  let currentGlobalMax = 200_000;
+  let _currentGlobalMax = 200_000;
   let hasMoreHistory = false;
   let loadingMore = false;
 
   /** Fetch timeline data via WS (preferred) or HTTP fallback. */
-  async function fetchAnatomy(method: string, params: any): Promise<any> {
-    if (reqFn) return reqFn(method, params);
+  async function fetchAnatomy(method: string, params: unknown): Promise<unknown> {
+    if (reqFn) {
+      return reqFn(method, params);
+    }
     // HTTP fallback (prod mode where same-origin works)
     const base = getGatewayBase();
     const headers = getAuthHeaders?.() ?? {};
@@ -200,7 +206,9 @@ export function mountContextTimeline(
       throw new Error(`Unknown anatomy method: ${method}`);
     }
     const resp = await fetch(url, { headers });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
     return resp.json();
   }
 
@@ -222,7 +230,9 @@ export function mountContextTimeline(
 
   /** Prepend older events to the front of the buffer. Events must be in ASC order. */
   function prependEvents(events: AnatomyEvent[]) {
-    if (events.length === 0) return;
+    if (events.length === 0) {
+      return;
+    }
     const oldEntries: BufferEntry[] = [];
     let prevSession: string | undefined;
     let prependGroupCounter = 0;
@@ -245,16 +255,23 @@ export function mountContextTimeline(
         firstExisting.groupId = `grp-${++groupCounter}`;
       }
     }
-    if (selectedIdx !== null) selectedIdx += oldEntries.length;
+    if (selectedIdx !== null) {
+      selectedIdx += oldEntries.length;
+    }
     buffer.unshift(...oldEntries);
   }
 
   /** Load older events before the oldest entry in the buffer. */
   async function loadOlderPage() {
-    if (loadingMore || !hasMoreHistory || buffer.length === 0) return;
+    if (loadingMore || !hasMoreHistory || buffer.length === 0) {
+      return;
+    }
     loadingMore = true;
-    const oldestTs = buffer[0].event.timestampMs ?? (buffer[0].event as any).timestamp_ms;
-    if (!oldestTs) { loadingMore = false; return; }
+    const oldestTs = buffer[0].event.timestampMs ?? (buffer[0].event as unknown).timestamp_ms;
+    if (!oldestTs) {
+      loadingMore = false;
+      return;
+    }
     const pageSize = Math.max(30, Math.ceil(container.clientWidth / BAR_WIDTH_PX));
     try {
       const body = await fetchAnatomy("anatomy.before", { beforeMs: oldestTs, limit: pageSize });
@@ -269,7 +286,9 @@ export function mountContextTimeline(
         const newScrollWidth = container.scrollWidth;
         container.scrollLeft = oldScrollLeft + (newScrollWidth - oldScrollWidth);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     loadingMore = false;
   }
 
@@ -294,11 +313,19 @@ export function mountContextTimeline(
     const round = ev.roundNumber;
 
     let text = model;
-    if (round) text = `R${round} · ${text}`;
+    if (round) {
+      text = `R${round} · ${text}`;
+    }
     text += ` · ${fmtK(total)} in`;
-    if (resp) text += ` · ${fmtK(resp)} out`;
-    if (dur) text += ` · ${(dur / 1000).toFixed(1)}s`;
-    if (tools > 0) text += ` · ${tools} tool${tools !== 1 ? "s" : ""}`;
+    if (resp) {
+      text += ` · ${fmtK(resp)} out`;
+    }
+    if (dur) {
+      text += ` · ${(dur / 1000).toFixed(1)}s`;
+    }
+    if (tools > 0) {
+      text += ` · ${tools} tool${tools !== 1 ? "s" : ""}`;
+    }
 
     tip.textContent = text;
     tip.style.left = `${x + 10}px`;
@@ -320,29 +347,53 @@ export function mountContextTimeline(
   }
 
   function shortModelName(model: string): string {
-    if (!model) return "";
+    if (!model) {
+      return "";
+    }
     // Extract recognizable short name from model IDs like "claude-sonnet-4-6", "qwen3:14b-q4_K_M", "gemini-3-flash-preview"
     const m = model.toLowerCase();
-    if (m.includes("opus")) return "opus";
-    if (m.includes("sonnet")) return "sonnet";
-    if (m.includes("haiku")) return "haiku";
-    if (m.includes("qwen")) return model.split(":")[0]; // "qwen3"
+    if (m.includes("opus")) {
+      return "opus";
+    }
+    if (m.includes("sonnet")) {
+      return "sonnet";
+    }
+    if (m.includes("haiku")) {
+      return "haiku";
+    }
+    if (m.includes("qwen")) {
+      return model.split(":")[0];
+    } // "qwen3"
     if (m.includes("gemini")) {
       const parts = model.replace("gemini-", "").split("-");
       return "gemini-" + parts.slice(0, 2).join("-"); // "gemini-3-flash"
     }
-    if (m.includes("gpt-4")) return "gpt-4o";
-    if (m.includes("gpt-3")) return "gpt-3.5";
-    if (m.includes("deepseek")) return "deepseek";
-    if (m.includes("llama")) return model.split(":")[0];
-    if (m.includes("mistral")) return "mistral";
+    if (m.includes("gpt-4")) {
+      return "gpt-4o";
+    }
+    if (m.includes("gpt-3")) {
+      return "gpt-3.5";
+    }
+    if (m.includes("deepseek")) {
+      return "deepseek";
+    }
+    if (m.includes("llama")) {
+      return model.split(":")[0];
+    }
+    if (m.includes("mistral")) {
+      return "mistral";
+    }
     // Fallback: first segment before colon or dash-number
     return model.split(":")[0].split(/-\d/)[0];
   }
 
   function fmtK(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+    if (n >= 1_000_000) {
+      return (n / 1_000_000).toFixed(1) + "M";
+    }
+    if (n >= 1_000) {
+      return (n / 1_000).toFixed(1) + "k";
+    }
     return String(n);
   }
 
@@ -368,9 +419,13 @@ export function mountContextTimeline(
       d = new Date(ms);
     } else if (ev.timestamp) {
       const parsed = new Date(ev.timestamp);
-      if (!isNaN(parsed.getTime())) d = parsed;
+      if (!isNaN(parsed.getTime())) {
+        d = parsed;
+      }
     }
-    if (!d) return null;
+    if (!d) {
+      return null;
+    }
     const date = `${SHORT_MONTHS[d.getMonth()]} ${d.getDate()}`;
     const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     return { date, time };
@@ -382,8 +437,10 @@ export function mountContextTimeline(
     for (const key of SEGMENT_ORDER) {
       const field = SEGMENT_TOKEN_FIELDS[key];
       // Input segments come from contextSent, response segments from top-level event
-      const tokens = cs?.[field] ?? (ev as any)[field] ?? 0;
-      if (tokens > 0) out.push({ key, tokens });
+      const tokens = cs?.[field] ?? (ev as unknown)[field] ?? 0;
+      if (tokens > 0) {
+        out.push({ key, tokens });
+      }
     }
     return out;
   }
@@ -402,7 +459,9 @@ export function mountContextTimeline(
   }
 
   function assignGroupId(runId?: string, ev?: AnatomyEvent): string {
-    if (runId) return `run-${runId}`;
+    if (runId) {
+      return `run-${runId}`;
+    }
     // Group by turn number: same turn = same prompt
     if (ev?.turn != null && buffer.length > 0) {
       const last = buffer[buffer.length - 1];
@@ -428,7 +487,9 @@ export function mountContextTimeline(
       buffer.shift();
       if (selectedIdx !== null) {
         selectedIdx--;
-        if (selectedIdx < 0) selectedIdx = null;
+        if (selectedIdx < 0) {
+          selectedIdx = null;
+        }
       }
     }
     buffer.push(entry);
@@ -488,7 +549,9 @@ export function mountContextTimeline(
       lblAll.className = "ct-switch-label" + (newMode === "all" ? " ct-switch-label--active" : "");
       track.className = "ct-switch-track" + (newMode === "all" ? " ct-switch-track--on" : "");
       // Async load will call render() when data arrives
-      if (onFilterModeChange) onFilterModeChange(newMode);
+      if (onFilterModeChange) {
+        onFilterModeChange(newMode);
+      }
     });
     legend.appendChild(switchWrap);
     // Legend lives INSIDE the timeline container — position:sticky keeps it at the right edge
@@ -518,10 +581,14 @@ export function mountContextTimeline(
     let globalMax = 0;
     for (const entry of buffer) {
       const m = maxTokensFor(entry.event);
-      if (m > globalMax) globalMax = m;
+      if (m > globalMax) {
+        globalMax = m;
+      }
     }
-    if (globalMax <= 0) globalMax = 200_000;
-    currentGlobalMax = globalMax;
+    if (globalMax <= 0) {
+      globalMax = 200_000;
+    }
+    _currentGlobalMax = globalMax;
 
     // Pre-compute response tokens for independent scaling
     const respTokensArr: number[] = [];
@@ -530,9 +597,13 @@ export function mountContextTimeline(
     }
     let maxRespTokens = 0;
     for (const r of respTokensArr) {
-      if (r > maxRespTokens) maxRespTokens = r;
+      if (r > maxRespTokens) {
+        maxRespTokens = r;
+      }
     }
-    if (maxRespTokens <= 0) maxRespTokens = 1;
+    if (maxRespTokens <= 0) {
+      maxRespTokens = 1;
+    }
 
     // Spacer pushes bars right when content doesn't overflow; shrinks to 0 when it does
     const spacer = document.createElement("div");
@@ -688,9 +759,15 @@ export function mountContextTimeline(
           const dur = ev.durationMs;
           const tools = ev.toolsTriggered?.length ?? 0;
           let text = `Response · ${fmtK(respTokens)} out`;
-          if (dur) text += ` · ${(dur / 1000).toFixed(1)}s`;
-          if (tools > 0) text += ` · ${tools} tool${tools !== 1 ? "s" : ""}`;
-          if (ev.stopReason) text += ` · ${ev.stopReason}`;
+          if (dur) {
+            text += ` · ${(dur / 1000).toFixed(1)}s`;
+          }
+          if (tools > 0) {
+            text += ` · ${tools} tool${tools !== 1 ? "s" : ""}`;
+          }
+          if (ev.stopReason) {
+            text += ` · ${ev.stopReason}`;
+          }
           tip.textContent = text;
           tip.style.left = `${e.clientX + 10}px`;
           tip.style.top = `${e.clientY - 28}px`;
@@ -734,6 +811,21 @@ export function mountContextTimeline(
         tsEl.appendChild(timeLine);
       }
       col.appendChild(tsEl);
+
+      // FORK (2026-04-21): session badge — only in "All" mode, to distinguish
+      // which session each tool call came from. Shows the session's emoji
+      // prefix (first grapheme from the tab title) + a short label on hover.
+      if (filterMode === "all" && getSessionLabel && ev.sessionKey) {
+        const rawLabel = getSessionLabel(ev.sessionKey);
+        if (rawLabel) {
+          const badge = document.createElement("div");
+          badge.className = "ct-session-badge";
+          const emojiMatch = rawLabel.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)/u);
+          badge.textContent = emojiMatch ? emojiMatch[0] : rawLabel.slice(0, 2);
+          badge.title = rawLabel;
+          col.appendChild(badge);
+        }
+      }
 
       groupEl!.appendChild(col);
     }
@@ -826,7 +918,9 @@ export function mountContextTimeline(
           break;
         }
       }
-      if (!target) return;
+      if (!target) {
+        return;
+      }
 
       if (!target.event.toolsTriggered) {
         target.event.toolsTriggered = [];
@@ -951,7 +1045,11 @@ export function mountContextTimeline(
       console.log("[timeline] loadAllSessions called, limit=", initialLimit);
       try {
         const body = await fetchAnatomy("anatomy.recent", { hours: 8760, limit: initialLimit });
-        console.log("[timeline] loadAllSessions got", body?.count ?? body?.events?.length ?? 0, "events");
+        console.log(
+          "[timeline] loadAllSessions got",
+          body?.count ?? body?.events?.length ?? 0,
+          "events",
+        );
         const allEvents: AnatomyEvent[] = Array.isArray(body) ? body : (body?.events ?? []);
 
         buffer.length = 0;
@@ -964,7 +1062,7 @@ export function mountContextTimeline(
           selectedIdx = buffer.length - 1;
           onBarSelect(buffer[selectedIdx].event, "context");
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("[timeline] loadAllSessions failed:", e?.message ?? e);
         return;
       }

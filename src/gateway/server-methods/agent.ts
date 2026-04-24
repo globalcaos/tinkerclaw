@@ -599,6 +599,8 @@ export const agentHandlers: GatewayRequestHandlers = {
         // memory files; skip further timestamp injection to avoid duplication.
         // FORK: bareResetPromptState already carries the SESSION.md override when one
         // is present in runtimeWorkspaceDir (threaded through resolveBareSessionResetPromptState).
+        // This supersedes the earlier manual buildBareSessionResetPrompt(cfg, undefined, workspaceDir)
+        // call — the new resolver API already threads the workspaceDir override.
         message = bareResetPromptState.prompt;
         skipTimestampInjection = true;
         shouldPrependStartupContext =

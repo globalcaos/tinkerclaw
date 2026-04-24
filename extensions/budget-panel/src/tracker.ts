@@ -42,15 +42,15 @@ export class BudgetTracker {
   }
 
   setProviderBudget(id: string, budget: number): void {
-    if (id === "claude") this.claudeBudget = budget;
-    if (id === "manus") this.manusBudget = budget;
-    if (id === "gemini") this.geminiBudget = budget;
+    if (id === "claude") {this.claudeBudget = budget;}
+    if (id === "manus") {this.manusBudget = budget;}
+    if (id === "gemini") {this.geminiBudget = budget;}
   }
 
   updateUsage(id: string, used: number): void {
-    if (id === "claude") this.claudeUsed = used;
-    if (id === "manus") this.manusUsed = used;
-    if (id === "gemini") this.geminiUsed = used;
+    if (id === "claude") {this.claudeUsed = used;}
+    if (id === "manus") {this.manusUsed = used;}
+    if (id === "gemini") {this.geminiUsed = used;}
   }
 
   setGatewayClient(client: any): void {

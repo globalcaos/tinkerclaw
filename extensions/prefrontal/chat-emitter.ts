@@ -79,7 +79,7 @@ export class ChatEmitter {
   }
 
   private scheduleFlush(): void {
-    if (this.timer) return;
+    if (this.timer) {return;}
     const elapsed = Date.now() - this.lastEmitAt;
     const wait = Math.max(0, this.currentIntervalMs - elapsed);
     this.timer = setTimeout(() => {

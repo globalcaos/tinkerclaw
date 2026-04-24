@@ -43,7 +43,7 @@ const CATEGORY_KEYWORDS: Record<TaskCategory, string[]> = {
 export function classifyTask(description: string): TaskCategory {
   const lower = description.toLowerCase();
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    if (category === "unknown") continue;
+    if (category === "unknown") {continue;}
     if (keywords.some((kw) => lower.includes(kw))) {
       return category as TaskCategory;
     }
@@ -78,14 +78,14 @@ export function createFaarTracker(): FaarTracker {
 
     for (const o of filtered) {
       // By category
-      if (!byCategory[o.category]) byCategory[o.category] = { total: 0, successes: 0, faar: 0 };
+      if (!byCategory[o.category]) {byCategory[o.category] = { total: 0, successes: 0, faar: 0 };}
       byCategory[o.category].total++;
-      if (o.firstAttemptSuccess) byCategory[o.category].successes++;
+      if (o.firstAttemptSuccess) {byCategory[o.category].successes++;}
 
       // By model
-      if (!byModel[o.model]) byModel[o.model] = { total: 0, successes: 0, faar: 0 };
+      if (!byModel[o.model]) {byModel[o.model] = { total: 0, successes: 0, faar: 0 };}
       byModel[o.model].total++;
-      if (o.firstAttemptSuccess) byModel[o.model].successes++;
+      if (o.firstAttemptSuccess) {byModel[o.model].successes++;}
     }
 
     // Calculate per-category and per-model FAAR
