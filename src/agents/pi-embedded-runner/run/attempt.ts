@@ -1390,6 +1390,26 @@ export async function runEmbeddedAttempt(
         );
       }
 
+      // FORK (2026-04-24): pipe runId + sessionKey through streamFn options so
+      // cc-bridge (and any other provider) can attribute live tool events to
+      // the current run. pi-ai's SimpleStreamOptions doesn't carry these
+      // fields, so we smuggle them in as `__openclawRunId` / `__openclawSessionKey`
+      // — the underscore prefix marks them as fork-owned and avoids collision
+      // with any real pi-ai field. Providers that don't care simply ignore them.
+      {
+        const piped = activeSession.agent.streamFn;
+        const pipedRunId = params.runId;
+        const pipedSessionKey = params.sessionKey;
+        activeSession.agent.streamFn = (model, context, options) => {
+          const pipedOptions = {
+            ...options,
+            __openclawRunId: pipedRunId,
+            __openclawSessionKey: pipedSessionKey,
+          } as typeof options;
+          return piped(model, context, pipedOptions);
+        };
+      }
+
       try {
         const prior = await sanitizeSessionHistory({
           messages: activeSession.messages,
