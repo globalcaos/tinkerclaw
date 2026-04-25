@@ -28,6 +28,7 @@ import type {
   CcStreamStdoutUserMessage,
   CcUsage,
 } from "./protocol.js";
+import { recordToolEvent } from "./tool-buffer.js";
 import { getPool } from "./worker-pool.js";
 import type { WorkerEvent } from "./worker.js";
 
@@ -139,6 +140,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         log.info(
           `tool.start name=${name} id=${toolCallId.slice(0, 12)} narration.len=${narration.length}`,
         );
+        const argsRecord = (args ?? {}) as Record<string, unknown>;
         emitAgentEvent({
           runId,
           sessionKey: openclawSessionKey,
@@ -147,9 +149,20 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             phase: "start",
             name,
             toolCallId,
-            args: (args ?? {}) as Record<string, unknown>,
+            args: argsRecord,
             purpose: narration || undefined,
           },
+        });
+        // FORK 2026-04-25: also buffer the event so onTurnComplete can persist
+        // it as a `customType: "cc-bridge-tool"` entry. Without this, history
+        // reload in Tinker shows only the user prompt + 64-char opener.
+        recordToolEvent(runId, {
+          phase: "start",
+          toolCallId,
+          name,
+          args: argsRecord,
+          purpose: narration || undefined,
+          startedAt: Date.now(),
         });
       };
 
@@ -160,6 +173,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         log.info(
           `tool.result id=${toolCallId.slice(0, 12)} is_error=${isError} stdout.len=${resultText.length}`,
         );
+        const purpose = toolLastNarration.get(toolCallId) || undefined;
         emitAgentEvent({
           runId,
           sessionKey: openclawSessionKey,
@@ -169,8 +183,16 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             toolCallId,
             result: resultText,
             isError,
-            purpose: toolLastNarration.get(toolCallId) || undefined,
+            purpose,
           },
+        });
+        recordToolEvent(runId, {
+          phase: "result",
+          toolCallId,
+          result: resultText,
+          isError,
+          purpose,
+          endedAt: Date.now(),
         });
         toolLastNarration.delete(toolCallId);
       };
