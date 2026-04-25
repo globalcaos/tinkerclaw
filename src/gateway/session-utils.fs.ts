@@ -139,11 +139,140 @@ export function readSessionMessages(
           },
         });
       }
+
+      // FORK 2026-04-25: cc-bridge tool entries — surface tool_use/tool_result
+      // blocks in chat history so Tinker can replay them on session reload.
+      // The bundled cc-bridge stream pushes these into a per-run buffer
+      // (`extensions/tinkerclaw-cc-bridge/src/tool-buffer.ts`) and the fork
+      // `onTurnComplete` hook drains the buffer with `appendCustomEntry`. The
+      // entry shape matches the live `agent.stream:"tool"` event payload that
+      // Tinker already renders (`tinker-ui/src/app.ts:1512`), so we just emit
+      // a synthetic message of the right role here and Tinker pairs them with
+      // its existing tool-bubble logic.
+      if (parsed?.type === "custom" && parsed?.customType === "cc-bridge-tool") {
+        const data = (parsed as { data?: Record<string, unknown> }).data ?? {};
+        const ts = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : Number.NaN;
+        const timestamp = Number.isFinite(ts) ? ts : Date.now();
+        const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
+        if (data.phase === "start" && toolCallId && typeof data.name === "string") {
+          messageSeq += 1;
+          messages.push({
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolCallId,
+                name: data.name,
+                input: (data.args as Record<string, unknown>) ?? {},
+                _purpose: typeof data.purpose === "string" ? data.purpose : undefined,
+              },
+            ],
+            timestamp,
+            __openclaw: {
+              kind: "cc-bridge-tool",
+              phase: "start",
+              id: typeof parsed.id === "string" ? parsed.id : undefined,
+              seq: messageSeq,
+            },
+          });
+        } else if (data.phase === "result" && toolCallId) {
+          messageSeq += 1;
+          const resultText =
+            typeof data.result === "string"
+              ? data.result
+              : data.result != null
+                ? JSON.stringify(data.result)
+                : "";
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolCallId,
+                content: resultText,
+                is_error: Boolean(data.isError),
+              },
+            ],
+            timestamp,
+            __openclaw: {
+              kind: "cc-bridge-tool",
+              phase: "result",
+              id: typeof parsed.id === "string" ? parsed.id : undefined,
+              seq: messageSeq,
+            },
+          });
+        }
+      }
     } catch {
       // ignore bad lines
     }
   }
-  return messages;
+  return reorderCcBridgeToolBlocks(messages);
+}
+
+/**
+ * FORK 2026-04-25: cc-bridge tool entries are appended in `onTurnComplete`,
+ * which fires AFTER the assistant text was already persisted, so they trail
+ * the assistant message in jsonl order. The natural reading order in chat
+ * is `[user → tool_use → tool_result → … → assistant text]`, not
+ * `[user → assistant text → … → tool_use → tool_result]`. There can also be
+ * intervening `compaction` system entries between the assistant text and
+ * the tool block, so a simple back-to-back swap is not enough — we must
+ * find the assistant text message the tools belong to and splice them
+ * back in front of it.
+ *
+ * Heuristic: a cc-bridge-tool block always belongs to the most recent
+ * assistant *text* message that came before it in jsonl order, ignoring
+ * any system/compaction entries in between. Walk the array; whenever we
+ * encounter a cc-bridge-tool message, splice it into the position
+ * immediately before that assistant message.
+ */
+function reorderCcBridgeToolBlocks(messages: unknown[]): unknown[] {
+  type Maybe = {
+    role?: string;
+    content?: Array<{ type?: string }>;
+    __openclaw?: { kind?: string };
+  };
+  const isCcBridgeTool = (m: unknown): boolean =>
+    (m as Maybe | null)?.__openclaw?.kind === "cc-bridge-tool";
+  const isAssistantText = (m: unknown): boolean => {
+    const msg = m as Maybe | null;
+    if (!msg || msg.role !== "assistant") {
+      return false;
+    }
+    if (msg.__openclaw?.kind === "cc-bridge-tool") {
+      return false;
+    }
+    if (!Array.isArray(msg.content)) {
+      return true;
+    }
+    return msg.content.some((c) => c?.type === "text" || c?.type === "thinking");
+  };
+
+  const out: unknown[] = [];
+  for (const m of messages) {
+    if (!isCcBridgeTool(m)) {
+      out.push(m);
+      continue;
+    }
+    // Find the index of the most recent assistant *text* message in `out`.
+    // Splice the tool entry into that position so it appears just before
+    // the assistant text. If no assistant text exists yet (e.g. orphaned
+    // tool from an aborted turn), append at the end as a safe fallback.
+    let target = -1;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (isAssistantText(out[i])) {
+        target = i;
+        break;
+      }
+    }
+    if (target >= 0) {
+      out.splice(target, 0, m);
+    } else {
+      out.push(m);
+    }
+  }
+  return out;
 }
 
 export {

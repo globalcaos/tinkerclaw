@@ -571,27 +571,57 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     (m) => (m as { role?: string }).role === "user",
   ).length;
 
-  // FRACTAL REFLECTION v4 — DISABLED: moved to tinkerclaw-fractal-reflection plugin.
-  // The inline path here caused double-firing when the plugin was also active.
-  // Config fork.cognitive.fractal="extension" should prevent this, but
-  // isInlineMode() falls back to true on import errors in the bundled dist.
-  if (false && params.sessionKey && isInlineMode("fractal")) {
-    import("./fractal-inject.js")
-      .then((mod) => {
-        mod
-          .injectFractalReflection({
-            sessionKey: params.sessionKey!,
-            assistantTexts,
-            log,
-          })
-          .catch((err) => {
-            log.info(`[fractal-v4] inject failed: ${String(err)}`);
-          });
-      })
-      .catch((err) => {
-        log.info(`[fractal-v4] import failed: ${String(err)}`);
-      });
+  // FORK 2026-04-25: drain the cc-bridge tool-event buffer into the session
+  // transcript as `customType: "cc-bridge-tool"` entries. cc-bridge cannot
+  // put tool_use blocks in the assistant message (pi-agent-core would
+  // re-execute them and trip the prefrontal exec gate — see comment in
+  // `extensions/tinkerclaw-cc-bridge/src/stream.ts:buildContent`), so the
+  // buffer is the only path that lets a Tinker history reload show what
+  // tools claude-cli ran. Dynamic import keeps the runner free of a
+  // hard dependency on the extension's runtime.
+  //
+  // The `sessionManager` cast at the call site (attempt.ts) is actually an
+  // `activeSession` (AgentSession) — its `appendCustomEntry` lives on the
+  // wrapped `.sessionManager` field, not directly on the agent. Resolve the
+  // real SessionManager-like target here so we don't depend on the cast.
+  try {
+    const { consumeToolEventsForRun } =
+      (await import("../../extensions/tinkerclaw-cc-bridge/src/tool-buffer.js")) as typeof import("../../extensions/tinkerclaw-cc-bridge/src/tool-buffer.js");
+    const events = consumeToolEventsForRun(params.runId);
+    if (events.length > 0) {
+      const sm = sessionManager as unknown as {
+        appendCustomEntry?: (customType: string, data?: unknown) => string;
+        sessionManager?: { appendCustomEntry?: (customType: string, data?: unknown) => string };
+      };
+      const target = typeof sm.appendCustomEntry === "function" ? sm : sm.sessionManager;
+      if (target && typeof target.appendCustomEntry === "function") {
+        for (const ev of events) {
+          // appendCustomEntry → "Extension state (not in context)" — perfect
+          // for tool calls: persisted on disk, rendered by Tinker on history
+          // reload, but NOT replayed into the LLM message array (which would
+          // force pi-agent-core to re-validate them and double-bill).
+          target.appendCustomEntry("cc-bridge-tool", { runId: params.runId, ...ev });
+        }
+        log.info(
+          `[cc-bridge-tool] persisted ${events.length} tool events for runId=${params.runId}`,
+        );
+      } else {
+        log.info(
+          `[cc-bridge-tool] drain skipped — no appendCustomEntry on sessionManager (events=${events.length})`,
+        );
+      }
+    }
+  } catch (err) {
+    log.info(`[cc-bridge-tool] drain failed: ${String(err)}`);
   }
+
+  // FRACTAL REFLECTION v4 — moved to the `tinkerclaw-fractal-reflection`
+  // plugin. The inline injection path used to live here, but it double-fired
+  // when the plugin was also active. `fork.cognitive.fractal="extension"`
+  // should be enough on its own; the inline `if (false && …)` fallback that
+  // sat here previously was dead code (oxlint flagged the constant gate).
+  // If the plugin path needs to be replaced, recover the inline body from
+  // git history and re-enable behind a real runtime flag.
 
   // Context anatomy
   if (params.systemPromptReport && params.sessionKey) {

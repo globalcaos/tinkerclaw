@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-24 (cc-bridge subscription-billing boundary documented — §5.73: Anthropic classifies by system-prompt content, not env/cgroup/PPid; fix slices `systemPromptBody` at the `"running inside OpenClaw"` sentinel; reauth pipeline confirmed healthy — token rotation is NOT the culprit for `out-of-extra-usage` 400s; bisect anchors `4a6a289d5a` / `3db21784ad` / `378684e4f5` recorded)
+> Last updated: 2026-04-25 (cc-bridge tool-call history replay — §5.74: per-run buffer in cc-bridge stream + `onTurnComplete` drain via `appendCustomEntry("cc-bridge-tool")` + `readSessionMessages` transform with `reorderCcBridgeToolBlocks`; Tinker now shows every Jarvis tool call after refresh, no more 64-char-opener-only history)
 
 ---
 
@@ -1272,6 +1272,25 @@ No functional loss: `claude-cli` maintains its own tool catalog via `--permissio
 
 - **Files:** `extensions/tinkerclaw-cc-bridge/src/worker.ts` (commit `a307dca393`).
 - **Knowledge:** `~/.openclaw/workspace/memory/knowledge/tinkerclaw-cc-bridge.md` (§ "2026-04-24: Subscription-billing regression — root cause").
+
+### 5.74 cc-bridge Tool Call Replay in Session History (2026-04-25)
+
+- **Status:** `DEPLOYED`
+- **Why:** §5.66 explains that cc-bridge cannot put `tool_use` blocks in the assistant message — pi-agent-core would re-execute them through OpenClaw's exec tool and trip the prefrontal "Exploration required" gate (red bubbles for every claude internal Bash call). That kept context clean but left the OpenClaw session transcript with **only** the user prompt and the final assistant text. Reloading `agent:main:main` after a 46-tool-call turn showed `[user prompt → 64-character opener]` and nothing else — every command Jarvis ran was invisible after refresh, which broke the "see Jarvis working" promise of the webchat.
+- **Fix:** three-piece pipeline that lands tool events in the transcript without polluting the LLM context.
+  1. **Buffer (cc-bridge):** `extensions/tinkerclaw-cc-bridge/src/tool-buffer.ts` keeps an in-process `Map<runId, ToolBufferedEvent[]>`. Both `emitToolStart` and `emitToolResult` in `stream.ts` push their events into the buffer alongside the existing live `emitAgentEvent` call. Buffer state is not persisted to disk — gateway crash loses it, but the user already lost the turn at that point.
+  2. **Drain (fork hook):** `src/fork/attempt-hooks.ts:onTurnComplete` resolves the active `SessionManager` (the runner casts `activeSession` to `SessionManager`, but the real instance is on `activeSession.sessionManager`, which the hook discovers defensively) and writes each buffered event with `appendCustomEntry("cc-bridge-tool", { runId, ...event })`. `appendCustomEntry` is the "Extension state — not in context" primitive (per `pi-coding-agent` `session.md`), so the entries persist on disk and ship to Tinker via `chat.history`, but pi-agent-core does NOT replay them into the message array on the next turn — no double-execution.
+  3. **Surface (chat.history transform):** `src/gateway/session-utils.fs.ts:readSessionMessages` recognises `type:"custom"` + `customType:"cc-bridge-tool"` entries and emits them as synthetic `tool_use` (assistant role) and `tool_result` (user role) messages with `__openclaw.kind:"cc-bridge-tool"`. They reuse the exact block types Tinker already renders for live tool events at `tinker-ui/src/app.ts:1512`, so no client-side change is needed — the existing live-tool render path runs again on history load.
+- **Reorder logic:** the drain runs in `onTurnComplete`, AFTER the assistant text was already persisted, so cc-bridge-tool entries trail the assistant message in jsonl order. `reorderCcBridgeToolBlocks` walks the read messages and splices each cc-bridge-tool message into the position immediately before the most-recent preceding assistant _text_ message, ignoring intervening `compaction` system entries. Final chat reading order: `[user → tool_use → tool_result → … → assistant text → compaction]`.
+- **Verification:**
+  - Live: jarvis-inject probe runs `pwd` + `whoami`, three blocks visible in real time (existing §5.6 path).
+  - Persist: jsonl gains 4 `{"type":"custom","customType":"cc-bridge-tool", "data":{ runId, phase, toolCallId, name, args, result, isError, ... }}` lines per turn.
+  - Replay: `chat.history` returns those entries as `[assistant tool_use, user tool_result]` pairs spliced before the final assistant text. Tinker renders them as the same single-line/expandable bubbles it shows live.
+- **What this is NOT:**
+  - Not "in context" — pi-agent-core never re-feeds these entries to the LLM. cc-bridge handles its own tool loop inside claude-cli (`~/.claude/projects/<sid>/*.jsonl`); the OpenClaw side just keeps a render-only mirror.
+  - Not retroactive — turns that ran before this fix have no buffered events to drain. Their history still shows only the assistant opener + final text. Future turns are fully captured.
+  - Not a replacement for `agent.stream:"tool"` events — the live WS path still drives Tinker's real-time tool bubbles. The persistence path is a parallel record for after-the-fact reload, not a substitute.
+- **Files:** `extensions/tinkerclaw-cc-bridge/src/tool-buffer.ts` (new), `extensions/tinkerclaw-cc-bridge/src/tool-buffer.types.ts` (new), `extensions/tinkerclaw-cc-bridge/src/stream.ts` (record at emit), `src/fork/attempt-hooks.ts` (drain on turn complete), `src/gateway/session-utils.fs.ts` (history transform + reorder), `scripts/check-history-probe.mjs` (verification harness).
 
 ---
 
