@@ -1400,11 +1400,19 @@ export async function runEmbeddedAttempt(
         const piped = activeSession.agent.streamFn;
         const pipedRunId = params.runId;
         const pipedSessionKey = params.sessionKey;
+        // FORK 2026-04-27: also smuggle the per-reset sessionId so cc-bridge can
+        // pin its worker to *this* incarnation of the session, not just to the
+        // (stable) sessionKey. `performGatewaySessionReset` mints a new sessionId
+        // on /new and /reset; including it in the cc-bridge key derivation
+        // makes those resets actually cascade to the claude-cli subprocess
+        // (otherwise cc-bridge keeps `--resume`-ing the same conversation).
+        const pipedSessionId = params.sessionId;
         activeSession.agent.streamFn = (model, context, options) => {
           const pipedOptions = {
             ...options,
             __openclawRunId: pipedRunId,
             __openclawSessionKey: pipedSessionKey,
+            __openclawSessionId: pipedSessionId,
           } as typeof options;
           return piped(model, context, pipedOptions);
         };
