@@ -106,11 +106,19 @@ let expandedTools = new Set<string>();
 // full flow immediately — they can turn it off if they want the compact view.
 const STORY_MODE_STORAGE_KEY = "tinker-story-mode";
 let storyMode: boolean = (() => {
+  // FORK 2026-04-27: default OFF. Bible §5.6 specifies tool calls collapse by
+  // default with click-to-expand. Story Mode (auto-expand every tool) is an
+  // explicit power-user override, not the new-user baseline — when it
+  // defaulted to ON, every fresh /new looked busy and the per-tool click-to-
+  // collapse was a no-op (the render's `storyMode || expandedTools.has(tid)`
+  // gate stayed true regardless of the click). Returning `false` for first-
+  // time users restores the default; anyone who already toggled it on keeps
+  // their stored preference.
   try {
     const v = localStorage.getItem(STORY_MODE_STORAGE_KEY);
-    return v === null ? true : v === "1";
+    return v === "1";
   } catch {
-    return true;
+    return false;
   }
 })();
 function saveStoryMode(): void {
@@ -4338,7 +4346,20 @@ function updateChat(skipScroll = false) {
         return;
       }
       const id = r.getAttribute("data-tid")!;
-      if (expandedTools.has(id)) {
+      // FORK 2026-04-27: a manual click on a tool means "I want fine-grained
+      // control", so turn off Story Mode if it was on. Without this, the
+      // render uses `storyMode || expandedTools.has(tid)` and any toggle is
+      // invisible — the user has to hunt down the 🎬 topbar button to undo
+      // the override. Treat the click as a unified gesture: leave Story
+      // Mode, collapse everything, and let the user hand-pick what to
+      // expand from there.
+      if (storyMode) {
+        storyMode = false;
+        saveStoryMode();
+        const storyBtn = $("tb-story-mode");
+        storyBtn?.classList.remove("tb-active");
+        expandedTools.clear();
+      } else if (expandedTools.has(id)) {
         expandedTools.delete(id);
       } else {
         expandedTools.add(id);

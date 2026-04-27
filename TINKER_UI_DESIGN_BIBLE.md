@@ -329,14 +329,15 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 
 ### 5.6 Live Tool Call Display
 
-- **Status:** `CONFIRMED` (2026-03-08)
+- **Status:** `CONFIRMED` (2026-03-08, default-collapse restored 2026-04-27)
 - **Deployed:** 2026-03-03 (commit `98f72f4c1`), **rewritten 2026-03-08** (commit `b4da1e0d5`)
 - **What:** Tool `start`/`result` events render immediately in chat as expandable rows with human-readable summaries. Tool calls are interlaced with thinking bubbles during live streaming.
 - **Architecture (2026-03-08):** Tool events push `_temporary` messages into `messages[]` (`tool_use` on start, `tool_result` on result). No separate `liveToolCalls` Map — tools render through the same `renderMsg()` path as finalized messages.
 - **Tool summaries:** `toolSummary()` covers 20+ tools (exec, read, edit, write, web_search, browser, message, whatsapp_history, sessions_spawn, subagents, tts, etc.)
 - **Expanded detail view:** Shows actual command/diff with del/ins formatting (red strikethrough old, green new)
 - **Status icons:** `⋯` (pending), `✓` (ok), `✗` (error)
-- **Files:** `app.ts` (toolSummary + toolExpandedDetail + rendering)
+- **Default state — collapsed (2026-04-27):** Tool rows render single-line by default; click expands. The 🎬 topbar Story Mode button is the explicit override that auto-expands every tool. Story Mode now defaults to **OFF** for first-time users (it had defaulted to ON for new visitors, which made every fresh `/new` look chaotic and silently no-op'd the per-tool click toggle since the render gate was `storyMode || expandedTools.has(tid)`). A click on any tool row while Story Mode is ON is now interpreted as "I want fine-grained control" — it turns Story Mode off, clears `expandedTools`, and lets the user hand-pick what to expand from there. Users who explicitly toggled Story Mode on keep their preference (localStorage persists).
+- **Files:** `app.ts` (`toolSummary`, `toolExpandedDetail`, `renderMsg` tool branches, `storyMode` initializer, click handler at the `[data-tid]` delegate)
 
 ### 5.7 Thinking Indicator (Animated)
 
