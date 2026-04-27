@@ -5455,7 +5455,7 @@ function init() {
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="prefrontal-panel">
-        <div class="rpanel-header">Prefrontal <span id="prefrontal-count" class="sessions-count"></span>
+        <div class="rpanel-header">🌳 Prefrontal <span id="prefrontal-count" class="sessions-count"></span>
           <span class="ct-switch" id="prefrontal-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
