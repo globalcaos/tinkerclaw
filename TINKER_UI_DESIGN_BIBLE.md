@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-27 (UI chrome cleanup — Story Mode 🎬 button removed, Models button renamed to "Side panel" 🗂️, Prefrontal inner "Orchestration" title + idle badge removed; collapsed-by-default tool rows are now the only contract per §5.6, the rpanel toggle now reflects the whole right column it actually controls, and the Prefrontal card stops competing with its own outer header)
+> Last updated: 2026-04-27 (cc-bridge stream parser — post-tool text recovery via per-block tracking + `result.result` reconciliation in the success path; before this fix, every tool-heavy turn looked like Jarvis "died after N tool calls" because the post-tool summary was silently dropped — only the 120-char preamble made it to the persisted assistant message. Earlier today: UI chrome cleanup — Story Mode 🎬 deleted, Models renamed "Side panel" 🗂️, Prefrontal "Orchestration" inner header removed.)
 
 ---
 
@@ -1288,6 +1288,23 @@ No functional loss: `claude-cli` maintains its own tool catalog via `--permissio
 
 - **Files:** `extensions/tinkerclaw-cc-bridge/src/worker.ts` (commit `a307dca393`).
 - **Knowledge:** `~/.openclaw/workspace/memory/knowledge/tinkerclaw-cc-bridge.md` (§ "2026-04-24: Subscription-billing regression — root cause").
+
+#### 5.73a Stream parser: post-tool text recovery (2026-04-27)
+
+- **Status:** `DEPLOYED`
+- **Symptom:** every `/new` (and any tool-heavy turn) appeared to "die after N tool calls" — the UI showed user prompt + tool bubbles + the brief opener Jarvis writes before the first tool, then nothing. The Morning Briefing, the post-tool summary, the actual answer — all gone. Refreshing didn't help; the assistant message persisted in `agent:main:main`'s jsonl was only the 122-char preamble even though claude-cli had emitted ~5.5KB of output.
+- **Root cause:** two related parser bugs in `extensions/tinkerclaw-cc-bridge/src/stream.ts`.
+  1. **Multi-block accumulation gap.** The parser tracked one `accumulatedText` for the whole turn and gated updates on `cumulative.startsWith(accumulatedText)`. claude-cli's stream-json emits SEPARATE text blocks before and after a tool_use chain (`message.content[0]` = preamble, `message.content[N]` = post-tool summary). Block N's cumulative didn't start with block 0's accumulated text, so the prefix check fell through and no delta was pushed — the post-tool block was silently dropped.
+  2. **`result.result` ignored on success.** claude-cli's stream emits a `result` line at the end of each turn whose `result` field carries the FULL final assistant text. The error-path code at line 595 already used it (to build the error envelope), but the success-path at line 626 just called `buildContent()` over `accumulatedText` and trusted whatever streamed through. In dense tool chains where the post-tool summary never appears as a separate `assistant.content` text block, `result.result` was the only source of the answer — and the success path was throwing it away.
+- **Fix:**
+  1. **Per-block tracking**: `blockTextSeen: Map<number, string>` and `blockThinkingSeen: Map<number, string>` track each block's previous cumulative independently. The text-block branch compares `cumulative` against the SAME-block-index's `prev`, slices the delta, and appends to the global `accumulatedText` via `pushTextDelta`. When a fresh block emerges after a tool_use chain (`bi > 0 && prev === ""`), `pendingToolNarration` is cleared so the post-tool prose doesn't get attributed to a stale upcoming tool.
+  2. **`result.result` reconciliation in the success path**: before composing the final assistant message, compare `result.result` against `accumulatedText`. If `result.result` extends `accumulatedText` (prefix match), push the tail as a delta. If they've diverged (result is more than 2× longer + 50 chars, classic preamble-only stream case), push `\n\n` + the full result_text so both the streamed preamble and the result-line answer survive in the final message.
+- **Verification:** probe sends "Run echo PROBE-A then echo PROBE-B then summarize what they printed in two sentences after the calls." Before fix: streamed text 44B (preamble only), persisted message 122B in earlier prompts. After fix: streamed/persisted text 237B (preamble + `\n\n` + 191B post-tool summary). Log line `tail-recover: streamed 44B, result_text 191B, replacing (diverged)` confirms the success-path branch fired.
+- **What this is NOT:**
+  - Not a workaround for `/new`-specific behaviour. The bug applied to ANY turn where claude-cli ran tool calls; `/new`'s briefing just made it most visible because the prompt always produces a substantial post-tool summary.
+  - Not the same as §5.74's tool-call replay. That fix landed tool_use/tool_result entries in the jsonl; this fix lands the assistant TEXT in the jsonl. They compose: `/new` history now shows user prompt → tool bubbles (from §5.74) → preamble + briefing (from §5.73a).
+  - Not retroactive — turns persisted before this commit are stuck with whatever truncated text made it. Future turns are whole.
+- **Files:** `extensions/tinkerclaw-cc-bridge/src/stream.ts` (per-block maps, multi-block parser branches, `result.result` reconciliation in the success path).
 
 ### 5.74 cc-bridge Tool Call Replay in Session History (2026-04-25)
 
