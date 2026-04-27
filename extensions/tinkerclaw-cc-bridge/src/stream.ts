@@ -514,7 +514,31 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
       };
 
-      const userText = extractUserText(context.messages ?? []);
+      const rawUserText = extractUserText(context.messages ?? []);
+      // FORK 2026-04-27: claude-cli's `-p` print mode tends to suppress
+      // pre-tool narration even when the system prompt explicitly demands
+      // it — the model treats print-mode runs as "execute tools quietly,
+      // summarize once at the end." The user-message slot has much
+      // stronger pull on output behaviour than `--append-system-prompt`,
+      // so we append a short, named directive to every user turn. Keeps
+      // the original prompt verbatim above the directive; cheap (~280
+      // chars per turn) and survives compaction.
+      const NARRATION_USER_DIRECTIVE = [
+        "",
+        "",
+        "<!-- TINKERCLAW chat-row contract -->",
+        "Before EVERY tool call in your response, emit one assistant text",
+        "sentence stating (a) the artifact (real file path or symbol or",
+        "literal string searched) and (b) the question/move it serves —",
+        "in plain language a non-engineer could follow. That sentence",
+        "becomes the tool row's collapsed title in the chat UI; an empty",
+        "narration leaves a useless wall of greps. Banned phrasings include",
+        '"performing an action", "running a command", "reading a section',
+        'of the code", "checking something", "applying a fix", or any bare',
+        "verb without an object. Required for the FIRST tool call too —",
+        "no silent kickoff.",
+      ].join("\n");
+      const userText = rawUserText + NARRATION_USER_DIRECTIVE;
       log.info(
         `turn start sessionKey=${sessionKey} userText.len=${userText.length} systemPrompt.len=${(context.systemPrompt ?? "").length}`,
       );
