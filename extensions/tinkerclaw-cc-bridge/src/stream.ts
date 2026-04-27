@@ -154,6 +154,12 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt, openclawSessionId);
       const toolLastNarration = new Map<string, string>();
       let pendingToolNarration = "";
+      // FORK 2026-04-27: per-block-index cumulative state so each text /
+      // thinking block in `assistant.message.content` accumulates
+      // independently. Without this, a post-tool text block would be
+      // dropped because its content does not prefix the preamble's text.
+      const blockTextSeen = new Map<number, string>();
+      const blockThinkingSeen = new Map<number, string>();
 
       const emitToolStart = (
         toolCallId: string,
@@ -434,36 +440,45 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           // slice off whatever we've already pushed, emit the remainder.
           // This gives real-time streaming to the UI even when claude isn't
           // sending finer-grained `content_block_delta` events.
+          //
+          // FORK 2026-04-27 — multi-block fix: claude-cli emits SEPARATE
+          // text blocks before and after tool_use chains. Tracking a single
+          // `accumulatedText` and gating updates on
+          // `cumulative.startsWith(accumulatedText)` worked for the
+          // preamble (block 0) but silently dropped the post-tool summary
+          // (block N), because block N's text didn't start with block 0's
+          // text. The result: the OpenClaw transcript persisted only the
+          // preamble (~120 chars) while claude-cli had actually emitted a
+          // 1KB+ briefing — Tinker reload showed user prompt + 4 tool
+          // bubbles + tiny opener with no answer. Track per-block-index
+          // cumulative state so each block's deltas append independently
+          // to the global `accumulatedText`.
           const blocks = (line as CcStreamStdoutAssistantMessage).message?.content ?? [];
-          for (const b of blocks) {
-            const typed = b as CcContentBlock;
+          for (let bi = 0; bi < blocks.length; bi++) {
+            const typed = blocks[bi] as CcContentBlock;
             if (typed.type === "text" && typeof typed.text === "string") {
               const cumulative = typed.text;
-              if (
-                cumulative.startsWith(accumulatedText) &&
-                cumulative.length > accumulatedText.length
-              ) {
-                const delta = cumulative.slice(accumulatedText.length);
+              const prev = blockTextSeen.get(bi) ?? "";
+              if (cumulative.length > prev.length && cumulative.startsWith(prev)) {
+                const delta = cumulative.slice(prev.length);
+                // First-ever delta of a NEW non-zero block index means the
+                // model has just resumed emitting text after a tool_use
+                // chain — clear pending narration so the post-tool prose
+                // doesn't get attributed to a stale upcoming tool.
+                if (bi > 0 && prev === "") {
+                  pendingToolNarration = "";
+                }
                 pushTextDelta(delta);
-                // FORK (2026-04-24): capture the delta as "pending narration"
-                // — Jarvis writes one short purpose sentence right before a
-                // tool_use, and we feed it into the emitted tool-start event
-                // so the UI can use it as the row's one-line title.
                 pendingToolNarration += delta;
-              } else if (cumulative.length > 0 && !accumulatedText) {
-                pushTextDelta(cumulative);
-                pendingToolNarration += cumulative;
+                blockTextSeen.set(bi, cumulative);
               }
             } else if (typed.type === "thinking" && typeof typed.thinking === "string") {
               const cumulative = typed.thinking;
-              if (
-                cumulative.startsWith(accumulatedThinking) &&
-                cumulative.length > accumulatedThinking.length
-              ) {
-                const delta = cumulative.slice(accumulatedThinking.length);
+              const prev = blockThinkingSeen.get(bi) ?? "";
+              if (cumulative.length > prev.length && cumulative.startsWith(prev)) {
+                const delta = cumulative.slice(prev.length);
                 pushThinkingDelta(delta);
-              } else if (cumulative.length > 0 && !accumulatedThinking) {
-                pushThinkingDelta(cumulative);
+                blockThinkingSeen.set(bi, cumulative);
               }
             } else if (typed.type === "tool_use" && typeof typed.id === "string") {
               // FORK (2026-04-24): emit a live `stream: "tool"` agent event so
@@ -606,6 +621,47 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           // the UI's final render.
           stream.push({ type: "done", reason: "stop", message: finalMessage });
           return;
+        }
+
+        // FORK 2026-04-27: claude-cli's stream emits a `result` line at the
+        // end of every successful turn with `result_text` containing the
+        // FULL final assistant output. In dense tool chains the post-tool
+        // summary often arrives only via this `result_text` and never
+        // appears as a separate `assistant.content` text block — so the
+        // streamed `accumulatedText` ends at the preamble (~120 chars)
+        // while `result.result` carries the actual answer (1KB+ or more).
+        // Reconcile against `result.result`:
+        //   - If `result.result.startsWith(accumulatedText)` → emit the tail
+        //     as deltas so live UIs catch up. Common case: stream missed the
+        //     post-tool block but the result line includes everything.
+        //   - Else if streamed length is much shorter (< 50% of result),
+        //     the streams diverged; trust `result.result` as the truth and
+        //     replace. Live UI sees a corrective delta.
+        //   - Else leave the streamed accumulation alone (likely matches).
+        if (typeof result.result === "string" && result.result.length > 0) {
+          const resTxt = result.result;
+          const streamedLen = accumulatedText.length;
+          if (resTxt.length > streamedLen && resTxt.startsWith(accumulatedText)) {
+            const tail = resTxt.slice(streamedLen);
+            log.info(
+              `tail-recover: streamed ${streamedLen}B, result_text ${resTxt.length}B, recovering ${tail.length}B (prefix-match)`,
+            );
+            pushTextDelta(tail);
+          } else if (resTxt.length > streamedLen * 2 + 50) {
+            // Streams diverged enough to suggest the streamed accumulation
+            // is just the preamble; replace with the result line.
+            log.info(
+              `tail-recover: streamed ${streamedLen}B, result_text ${resTxt.length}B, replacing (diverged)`,
+            );
+            // Compute "what to push so accumulated == result_text". Simplest:
+            // push the difference as a fresh delta after a separator, but if
+            // accumulated text was just an opener it's cleaner to overwrite.
+            // pi-agent-core consumers honor whatever `accumulatedText` we
+            // pass into buildContent + the final `done` message, so reset
+            // the stored value directly here.
+            const overwriteDelta = streamedLen > 0 ? `\n\n${resTxt}` : resTxt;
+            pushTextDelta(overwriteDelta);
+          }
         }
 
         const finalMessage: AssistantMessage = {
