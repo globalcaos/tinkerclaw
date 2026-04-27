@@ -92,8 +92,12 @@ function fmtClock(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 function fmtDuration(seconds: number): string {
-  if (seconds < 0 || !Number.isFinite(seconds)) {return "-";}
-  if (seconds < 60) {return `${seconds}s`;}
+  if (seconds < 0 || !Number.isFinite(seconds)) {
+    return "-";
+  }
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
   const m = Math.floor(seconds / 60);
   const s = seconds - m * 60;
   return s > 0 ? `${m}m${s}s` : `${m}m`;
@@ -106,9 +110,13 @@ const EXPAND_STORAGE_KEY = "tinker-pf-expanded";
 function loadExpandedSet(): Set<string> {
   try {
     const raw = localStorage.getItem(EXPAND_STORAGE_KEY);
-    if (!raw) {return new Set();}
+    if (!raw) {
+      return new Set();
+    }
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? new Set(arr.filter((x): x is string => typeof x === "string")) : new Set();
+    return Array.isArray(arr)
+      ? new Set(arr.filter((x): x is string => typeof x === "string"))
+      : new Set();
   } catch {
     return new Set();
   }
@@ -123,8 +131,11 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
   let currentState: PrefrontalDashboardState | null = null;
   const expanded = loadExpandedSet();
   function toggleExpanded(id: string): void {
-    if (expanded.has(id)) {expanded.delete(id);}
-    else {expanded.add(id);}
+    if (expanded.has(id)) {
+      expanded.delete(id);
+    } else {
+      expanded.add(id);
+    }
     saveExpandedSet(expanded);
     render();
   }
@@ -138,38 +149,19 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     // lighter base wood texture.
     const card = el("div", "pf-card");
 
-    // ─── Title bar ──────────────────────────────────────────
-    // Tells the user the three sections below all belong to Prefrontal.
-    const title = el("div", "pf-card-title");
-    const titleLeft = el("span", "pf-card-title-left");
-    const icon = el("span", "pf-card-title-icon");
-    icon.textContent = "🕸";
-    const text = el("span", "pf-card-title-text");
-    text.textContent = "Orchestration";
-    titleLeft.appendChild(icon);
-    titleLeft.appendChild(text);
-    title.appendChild(titleLeft);
-
-    // Right side: compact summary badges so idle state still reads clean.
+    // FORK 2026-04-27: removed the inner "Orchestration" title bar (icon +
+    // text + idle badge). The outer rpanel already announces "Prefrontal"
+    // via its own header — the redundant inline title and the "idle" badge
+    // when nothing was running were both noise. If no LLM call is visible,
+    // the panel is idle by definition; the user doesn't need a label
+    // saying so. Recipe state, the active-count badge, and "no active
+    // recipe" inline have all been removed too — when a recipe IS active
+    // its full progress shows below via renderRecipeHeader, and when the
+    // tree is empty the existing "No active LLM calls" empty state below
+    // is the only signal needed.
     const tree = currentState?.tree ?? { active: false, root: null };
     const recipe = currentState?.recipe ?? null;
     const trail = currentState?.trail ?? [];
-    const activeCount = countActive(tree);
-    const badge = el("span", "pf-card-title-badge");
-    if (recipe) {
-      const step =
-        recipe.step != null
-          ? `${recipe.step}${recipe.totalSteps != null ? `/${recipe.totalSteps}` : ""}`
-          : "·";
-      badge.textContent = `${recipe.recipeId} · Step ${step}`;
-    } else if (activeCount > 0) {
-      badge.textContent = `${activeCount} active`;
-    } else {
-      badge.textContent = "idle";
-      badge.classList.add("pf-card-title-badge-idle");
-    }
-    title.appendChild(badge);
-    card.appendChild(title);
 
     // ─── Recipe header ──────────────────────────────────────
     card.appendChild(renderRecipeHeader(recipe));
@@ -246,16 +238,24 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const idTail = (node.runId ?? "").slice(0, 8);
     return trail.filter((evt) => {
       const evtLabel = (evt.label ?? "").toLowerCase().trim();
-      if (!evtLabel) {return false;}
-      if (labelLower && evtLabel === labelLower) {return true;}
-      if (idTail && evtLabel.includes(idTail)) {return true;}
+      if (!evtLabel) {
+        return false;
+      }
+      if (labelLower && evtLabel === labelLower) {
+        return true;
+      }
+      if (idTail && evtLabel.includes(idTail)) {
+        return true;
+      }
       return false;
     });
   }
 
   // Anything not owned by ANY subagent node lives at the root trail.
   function filterRootTrail(trail: TrailEvent[], tree: TreeResponse): TrailEvent[] {
-    if (!tree.root) {return trail;}
+    if (!tree.root) {
+      return trail;
+    }
     const allSubagentNodes: TreeNode[] = [];
     (function walk(n: TreeNode) {
       for (const c of n.children) {
@@ -265,22 +265,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     })(tree.root);
     return trail.filter((evt) => {
       for (const sub of allSubagentNodes) {
-        if (filterNodeTrail([evt], sub).length > 0) {return false;}
+        if (filterNodeTrail([evt], sub).length > 0) {
+          return false;
+        }
       }
       return true;
     });
-  }
-
-  function countActive(tree: TreeResponse): number {
-    if (!tree.active || !tree.root) {return 0;}
-    let n = isActiveStatus(tree.root.status) ? 1 : 0;
-    for (const child of tree.root.children) {
-      if (isActiveStatus(child.status)) {n++;}
-    }
-    return n;
-  }
-  function isActiveStatus(status: string): boolean {
-    return status !== "completed" && status !== "failed" && status !== "stalled";
   }
 
   function renderRecipeHeader(recipe: RecipeState | null): HTMLElement {
@@ -318,7 +308,10 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const spacer = el("span", "pf-recipe-spacer");
     bar.appendChild(spacer);
 
-    if (recipe.parallelismCap != null || (recipe.inFlightLabels && recipe.inFlightLabels.length > 0)) {
+    if (
+      recipe.parallelismCap != null ||
+      (recipe.inFlightLabels && recipe.inFlightLabels.length > 0)
+    ) {
       const inflight = recipe.inFlightLabels?.length ?? 0;
       const cap = recipe.parallelismCap ?? "-";
       const par = el("span", "pf-recipe-parallel");
@@ -366,10 +359,15 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
 
     // Status glyph
     const glyph = el("span", "pf-glyph");
-    if (node.status === "completed") {glyph.textContent = "\u2713";}
-    else if (node.status === "failed") {glyph.textContent = "\u2717";}
-    else if (node.status === "stalled") {glyph.textContent = "!";}
-    else {glyph.textContent = isActive ? "▶" : "·";}
+    if (node.status === "completed") {
+      glyph.textContent = "\u2713";
+    } else if (node.status === "failed") {
+      glyph.textContent = "\u2717";
+    } else if (node.status === "stalled") {
+      glyph.textContent = "!";
+    } else {
+      glyph.textContent = isActive ? "▶" : "·";
+    }
     glyph.style.color = node.status === "failed" ? "#f85149" : color;
     row.appendChild(glyph);
 
@@ -466,7 +464,8 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
 
     // Render groups + ungrouped together, newest-first by the group's
     // latest event timestamp.
-    type GroupOrEvt = { ts: number; kind: "group"; label: string; evts: TrailEvent[] }
+    type GroupOrEvt =
+      | { ts: number; kind: "group"; label: string; evts: TrailEvent[] }
       | { ts: number; kind: "evt"; evt: TrailEvent };
     const combined: GroupOrEvt[] = [];
     for (const [label, evts] of groups.entries()) {
