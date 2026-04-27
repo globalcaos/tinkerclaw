@@ -104,30 +104,11 @@ let expandedTools = new Set<string>();
 // narrative that builds up chronologically. Toggle via the 🎬 button in the
 // topbar; persists across reloads. Default ON so first-time users see the
 // full flow immediately — they can turn it off if they want the compact view.
-const STORY_MODE_STORAGE_KEY = "tinker-story-mode";
-let storyMode: boolean = (() => {
-  // FORK 2026-04-27: default OFF. Bible §5.6 specifies tool calls collapse by
-  // default with click-to-expand. Story Mode (auto-expand every tool) is an
-  // explicit power-user override, not the new-user baseline — when it
-  // defaulted to ON, every fresh /new looked busy and the per-tool click-to-
-  // collapse was a no-op (the render's `storyMode || expandedTools.has(tid)`
-  // gate stayed true regardless of the click). Returning `false` for first-
-  // time users restores the default; anyone who already toggled it on keeps
-  // their stored preference.
-  try {
-    const v = localStorage.getItem(STORY_MODE_STORAGE_KEY);
-    return v === "1";
-  } catch {
-    return false;
-  }
-})();
-function saveStoryMode(): void {
-  try {
-    localStorage.setItem(STORY_MODE_STORAGE_KEY, storyMode ? "1" : "0");
-  } catch {
-    // Private-mode / quota — silent fail; setting persists only for this session.
-  }
-}
+// FORK 2026-04-27: removed Story Mode entirely. Bible §5.6 specifies tool
+// calls collapse by default with click-to-expand; the topbar 🎬 toggle was
+// a global override that confused the click-to-collapse contract and added
+// no behaviour the user wanted. Stale `tinker-story-mode` localStorage
+// keys from previous installs are harmless — nothing reads them now.
 let initialized = false;
 let _budgetData: unknown = null;
 let budgetUsageData: unknown = null;
@@ -3599,8 +3580,7 @@ function renderMsg(
       const a = block.input ?? {};
       const mechanicalSummary = toolSummary(block.name, a);
       const tid = `t${idx}-${block.id ?? block.name}-${blockIdx++}`;
-      // FORK (2026-04-21): Story Mode auto-expands every tool call.
-      const exp = storyMode || expandedTools.has(tid);
+      const exp = expandedTools.has(tid);
       // Look up result from global map (tool_result may be in a different message)
       const paired = resultMap.get(block.id ?? "");
       const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
@@ -3653,8 +3633,7 @@ function renderMsg(
         typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
       const err = block.is_error === true;
       const tid = `r${idx}-${uid || "r"}-${blockIdx++}`;
-      // FORK (2026-04-21): Story Mode auto-expands every tool call.
-      const exp = storyMode || expandedTools.has(tid);
+      const exp = expandedTools.has(tid);
       const preview = rt.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
       const summary = preview.length > 120 ? preview.slice(0, 117) + "…" : preview;
       h += `<div class="tool-row" data-tid="${tid}"><span class="status ${err ? "err" : "ok"}">${err ? "✗" : "✓"}</span><span class="detail">${esc(summary)}</span></div>`;
@@ -4346,20 +4325,7 @@ function updateChat(skipScroll = false) {
         return;
       }
       const id = r.getAttribute("data-tid")!;
-      // FORK 2026-04-27: a manual click on a tool means "I want fine-grained
-      // control", so turn off Story Mode if it was on. Without this, the
-      // render uses `storyMode || expandedTools.has(tid)` and any toggle is
-      // invisible — the user has to hunt down the 🎬 topbar button to undo
-      // the override. Treat the click as a unified gesture: leave Story
-      // Mode, collapse everything, and let the user hand-pick what to
-      // expand from there.
-      if (storyMode) {
-        storyMode = false;
-        saveStoryMode();
-        const storyBtn = $("tb-story-mode");
-        storyBtn?.classList.remove("tb-active");
-        expandedTools.clear();
-      } else if (expandedTools.has(id)) {
+      if (expandedTools.has(id)) {
         expandedTools.delete(id);
       } else {
         expandedTools.add(id);
@@ -5446,10 +5412,14 @@ function init() {
         <span id="tb-fractal" class="topbar-icon-btn tb-active" data-hint="Fractal reflection">🌿</span>
         <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
         <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
-        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Models">🕸️</span>
-        <!-- FORK 2026-04-21: Story Mode — auto-expand every tool call so the full
-             stdout and args are visible inline. Click to toggle. -->
-        <span id="tb-story-mode" class="topbar-icon-btn" data-hint="Story Mode (auto-expand all tool calls)">🎬</span>
+        <!-- FORK 2026-04-27: renamed "Models" → "Side panel". The button
+             expands/collapses the entire right rpanel cluster (models,
+             sessions, prefrontal, …); the old "Models" label only described
+             the topmost section, which was confusing once the panel grew.
+             Story Mode (🎬) was removed entirely — collapsed-by-default is
+             the design contract per bible §5.6, and the per-tool click
+             toggle is the only override that should exist. -->
+        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Side panel">🗂️</span>
       </div>
       <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
@@ -5678,20 +5648,9 @@ function init() {
     applyInjectToggleChrome();
   });
 
-  // ─── Story Mode toggle (FORK 2026-04-21) ───
-  const storyBtn = $("tb-story-mode");
-  function applyStoryModeChrome(): void {
-    storyBtn?.classList.toggle("tb-active", storyMode);
-  }
-  applyStoryModeChrome();
-  storyBtn?.addEventListener("click", () => {
-    storyMode = !storyMode;
-    saveStoryMode();
-    applyStoryModeChrome();
-    // Re-render the current chat so existing tool calls pick up / drop the
-    // auto-expand state immediately. No need to refetch — it's a UI-only flip.
-    updateChat();
-  });
+  // FORK 2026-04-27: Story Mode toggle + handler removed. The topbar 🎬 was
+  // deleted; collapsed-by-default with per-tool click-to-expand is the only
+  // contract now. See bible §5.6 for rationale.
 
   // ─── Filesystem link → open in system viewer (FORK 2026-04-18) ───
   // Any <code class="fs-link" data-path="..."> rendered by md() (typically

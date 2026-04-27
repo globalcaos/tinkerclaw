@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-27 (`/clear` and `/new` reset cascade — §5.75: smuggle openclawSessionId to cc-bridge, hash it into the worker-pool key so `performGatewaySessionReset` actually rotates Jarvis's claude-cli session; `/clear` now calls `sessions.reset` instead of `sessions.delete` so `command:reset` plugin lifecycle and `session-memory` save fire; topbar `/new` on `tinker:*` tabs resets the abandoned key before rotating so old sessions soft-archive instead of orphaning on disk)
+> Last updated: 2026-04-27 (UI chrome cleanup — Story Mode 🎬 button removed, Models button renamed to "Side panel" 🗂️, Prefrontal inner "Orchestration" title + idle badge removed; collapsed-by-default tool rows are now the only contract per §5.6, the rpanel toggle now reflects the whole right column it actually controls, and the Prefrontal card stops competing with its own outer header)
 
 ---
 
@@ -336,7 +336,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Tool summaries:** `toolSummary()` covers 20+ tools (exec, read, edit, write, web_search, browser, message, whatsapp_history, sessions_spawn, subagents, tts, etc.)
 - **Expanded detail view:** Shows actual command/diff with del/ins formatting (red strikethrough old, green new)
 - **Status icons:** `⋯` (pending), `✓` (ok), `✗` (error)
-- **Default state — collapsed (2026-04-27):** Tool rows render single-line by default; click expands. The 🎬 topbar Story Mode button is the explicit override that auto-expands every tool. Story Mode now defaults to **OFF** for first-time users (it had defaulted to ON for new visitors, which made every fresh `/new` look chaotic and silently no-op'd the per-tool click toggle since the render gate was `storyMode || expandedTools.has(tid)`). A click on any tool row while Story Mode is ON is now interpreted as "I want fine-grained control" — it turns Story Mode off, clears `expandedTools`, and lets the user hand-pick what to expand from there. Users who explicitly toggled Story Mode on keep their preference (localStorage persists).
+- **Default state — collapsed (2026-04-27, Story Mode deleted same day):** Tool rows render single-line by default; click expands. Story Mode (the 🎬 topbar global "auto-expand every tool" override) was removed entirely — collapsed-by-default with per-tool click-to-expand is the only contract. The earlier attempt to default Story Mode to off and treat clicks as an exit gesture worked, but the toggle still added no behaviour worth keeping and confused the click-to-collapse contract. Stale `tinker-story-mode` localStorage keys from previous installs are harmless — nothing reads them anymore. Render gate is now plain `expandedTools.has(tid)`.
 - **Collapsed-summary contract (grandma-proof bar, 2026-04-27):** the single-line title shown in the collapsed row is the LAST sentence of the LLM's pre-tool narration (`renderMsg` extracts it via `/[^.!?\n]+[.!?]?\s*$/` and clamps to 160 chars). That sentence MUST be specific enough that someone non-technical, reading the chat top-to-bottom with the original prompt as context but no expanded views, can follow what each step is doing and why this step instead of any other. **Banned phrasings** (the cc-bridge narration system-prompt block enumerates these explicitly so the LLM stops emitting them):
   - _performing an action_, _running a command_, _executing a tool_ — strips the step of meaning.
   - _reading a section of the code to understand how it works_ — which section? understand what about it? Must name file/symbol + the specific question.
@@ -512,6 +512,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Provider logos:** Anthropic A-mark (`#d4a574`), Google 4-color dot, OpenAI circle, Ollama llama. Defined in `provider-logos.ts`. Fixes the Gemini-shows-Anthropic-logo bug.
 - **CSS:** `.pf-tree-panel`, `.pf-node`, `.pf-root`, `.pf-child`, `.pf-connector`, `.pf-logo`, `.pf-model`, `.pf-label`, `.pf-progress-bar`, `.pf-stall`, `.pf-completed`
 - **Files:** `prefrontal-tree.ts` (~250 lines), `provider-logos.ts` (~60 lines), `prefrontal-graph.ts` (legacy pill panel, retained)
+- **Inner header cleanup (2026-04-27):** the inner card had its own "🕸 Orchestration" title bar with a right-side "idle / N active / recipeId · Step X" badge. The outer rpanel already announces "Prefrontal" via its own header, so the inline title was a redundant second label, and the "idle" badge was noise — when nothing is running, the existing "No active LLM calls" empty state below already says so. The whole title bar (icon + text + badge + the unused `countActive` / `isActiveStatus` helpers) was removed; recipe context still surfaces via `renderRecipeHeader` when a recipe is active.
 - **Gateway extension:** `extensions/prefrontal/` — monitor loop (5s rebuild), stall detection (180s threshold), HTTP API, crash recovery via `/tmp/prefrontal/recovery.json`
 - **Guardian:** Phase 3.5 in `scripts/cron-health-gate.sh` — checks if Prefrontal agent stalls for >5min, kills session, preserves recovery state for relaunch
 - **Config:** `openclaw.json` → `plugins.entries.prefrontal` (model, thresholds, effort routing tiers)
@@ -603,7 +604,8 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Deployed:** 2026-03-08
 - **What:** Sidebar removed. All navigation moved to a centered `.toolbox` in the topbar. Two icons toggle collapsible panels:
   - 📊 (`#tb-timeline`, hint "Timeline"): collapses bottom row (context-timeline + bottom-right-panel)
-  - 🧠 (`#tb-models`, hint "Models"): collapses right column (right-panels + bottom-right-panel)
+  - 🗂️ (`#tb-models`, hint "Side panel" — renamed from "Models" 🕸️ on 2026-04-27): collapses right column (right-panels + bottom-right-panel). The button affects the entire rpanel cluster (models + sessions + prefrontal + …); the old "Models" label only described the topmost section. The element id `tb-models` is preserved for stable selectors and CSS — it's the rename that matters, not the markup churn.
+  - The 🎬 Story Mode button was deleted on 2026-04-27 (see §5.6 Default state bullet). Was once `#tb-story-mode`.
 - **Logo:** 70px (2.5x bigger), left side of topbar, still triggers `/new` session
 - **Grid change:** `48px 1fr 416px` → `3fr 1fr` (sidebar column removed). Rows: `48px 3fr 1fr` (topbar matches sidebar width).
 - **Topbar:** Only spans column 1 (chat width). Right panels span rows 1-2 (touch window top).
