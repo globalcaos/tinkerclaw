@@ -2355,12 +2355,24 @@ async function send(text: string) {
     return;
   }
 
-  // FORK (2026-04-20): /clear is a pure client-side transaction, like Claude Code's /clear.
-  // Wipe the UI, rotate to a fresh session key, fire no LLM call. The old server-side
-  // session lingers on disk until cleaning-lady archives it — zero cost, zero tokens.
-  // Non-main sessions (tinker:*) are additionally told to be deleted server-side; the
-  // main session (agent:main:main) can't be deleted but is still abandoned in the tab
-  // by the sessionKey rotation below.
+  // FORK (2026-04-20, rewired 2026-04-27): /clear wipes the UI immediately
+  // and routes the OLD sessionKey through `sessions.reset` so the gateway
+  // archives the transcript (soft-delete per bible §5.5), mints a fresh
+  // sessionId on the same key, and fires the full plugin lifecycle
+  // (`command:reset` → `before_reset` → `session_end` → `session_start`).
+  // The session-memory hook saves the prior context to memory, and
+  // — because the OpenClaw sessionId is now part of the cc-bridge
+  // worker-pool key (see `extensions/tinkerclaw-cc-bridge/src/stream.ts:
+  // deriveSessionKey`) — the next message lands on a fresh claude-cli
+  // worker without `--resume`, so Jarvis's underlying memory resets too.
+  // No LLM call is fired; /clear stays a zero-token operation.
+  //
+  // The tab's local sessionKey ALSO rotates to a new `tinker:<ts>` (so
+  // history reload can't accidentally surface the old transcript while
+  // the reset RPC is still in flight) — but the reset is what does the
+  // real work server-side. /new keeps its own path (chat.send "/new")
+  // because it intentionally fires a BRIEFING.md prelude through the
+  // model.
   if (text.trim() === "/clear") {
     messages = [];
     streamMsgIdx = -1;
@@ -2374,8 +2386,6 @@ async function send(text: string) {
     const oldSessionKey = sessionKey;
     const clearTab = tabs.find((t) => t.id === activeTabId);
 
-    // Rotate the active tab to a fresh session key. Next message starts a new session
-    // on the gateway automatically (auto-create on first chat.send).
     const freshKey = `tinker:${Date.now().toString(36)}`;
     sessionKey = freshKey;
     if (clearTab) {
@@ -2393,11 +2403,10 @@ async function send(text: string) {
     updateChat();
     scrollChat();
 
-    // Best-effort server-side cleanup of the old tinker:* session. Fire-and-forget;
-    // failures are fine (main session can't be deleted, that's by design). No await,
-    // no LLM call path touched.
-    if (oldSessionKey && oldSessionKey.startsWith("tinker:")) {
-      req("sessions.delete", { key: oldSessionKey, deleteTranscript: false }).catch(() => {});
+    // Server-side cascade. Fire-and-forget; failures are non-fatal — worst
+    // case the next chat.send auto-creates a fresh entry on the new key.
+    if (oldSessionKey) {
+      req("sessions.reset", { key: oldSessionKey, reason: "reset" }).catch(() => {});
     }
     return;
   }
@@ -7591,7 +7600,17 @@ function init() {
     }
 
     // FORK: /new resets the current tab in place — never switches to main.
+    // FORK (2026-04-27): on non-main tabs, also reset the OLD tinker:* session
+    // server-side before rotating the local key. Symmetric with /clear: the
+    // gateway archives the transcript (soft-delete) and fires the full
+    // command:new plugin lifecycle on the previous session, instead of
+    // orphaning it on disk. The tab still rotates to a fresh tinker:<ts>
+    // afterward so the BRIEFING.md prelude lands on a clean key.
     if (tab && tab.id !== "tab-main") {
+      const oldKey = sessionKey;
+      if (oldKey && oldKey.startsWith("tinker:")) {
+        req("sessions.reset", { key: oldKey, reason: "new" }).catch(() => {});
+      }
       const newKey = `tinker:${Date.now().toString(36)}`;
       tab.sessionKey = newKey;
       tab.isAttached = true;

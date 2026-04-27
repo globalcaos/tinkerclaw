@@ -77,26 +77,50 @@ function extractUserText(messages: Array<{ role: string; content: unknown }>): s
   return "";
 }
 
-// FORK 2026-04-20: derive a stable per-session worker-pool key from the
-// system prompt. The OpenClaw `createStreamFn` ctx doesn't expose the active
-// session key, and `opts.sessionKey` was always undefined (the previous code
-// in index.ts read a non-existent field off `model`). Every call fell back
-// to the literal "agent:main:main", so 3 parallel subagents collapsed onto
-// ONE worker -- they queued serially and two hung forever waiting for the
-// third. Main Jarvis has a ~32KB persona/amygdala/fractal prompt; each
-// subagent has a shorter task-embedded prompt. Hashing the prompt keeps
-// workers distinct per session across turns while staying cheap.
-function deriveSessionKey(explicit: string | undefined, systemPrompt: string | undefined): string {
+// FORK 2026-04-20 (extended 2026-04-27): derive a stable per-session
+// worker-pool key. The OpenClaw `createStreamFn` ctx doesn't expose the
+// active session key, and `opts.sessionKey` was always undefined (the
+// previous code in index.ts read a non-existent field off `model`). Every
+// call fell back to the literal "agent:main:main", so 3 parallel subagents
+// collapsed onto ONE worker — they queued serially and two hung forever
+// waiting for the third.
+//
+// Hashing the system prompt alone kept workers distinct per session across
+// turns, but it ALSO kept Jarvis pinned to the same claude-cli `--resume`
+// session forever: `performGatewaySessionReset` rotates the OpenClaw
+// sessionId on /new and /reset, but the systemPrompt hash is unchanged so
+// the cc-bridge key was the same → same worker → same `--resume <oldId>`
+// → claude-cli's memory survived a "session reset". That broke the bible
+// §5.5 contract that /new and /clear should reset BOTH the UI and the
+// underlying context.
+//
+// Fix: hash the OpenClaw sessionId into the key. Now a reset that mints
+// a new sessionId yields a new cc-bridge key, which the worker pool
+// treats as a brand-new session (no `--resume`, no inherited context).
+// The old map entry under the previous hash is left behind as orphaned
+// state — `getResumeSessionId` will never look it up again because no
+// future request will derive that same key. Cheap; no explicit cleanup
+// needed for now.
+function deriveSessionKey(
+  explicit: string | undefined,
+  systemPrompt: string | undefined,
+  openclawSessionId: string | undefined,
+): string {
   if (explicit && explicit.trim()) {
     return explicit.trim();
   }
-  if (!systemPrompt || !systemPrompt.trim()) {
+  const promptPart = systemPrompt ?? "";
+  const idPart = openclawSessionId ?? "";
+  if (!promptPart && !idPart) {
     return "agent:main:main";
   }
-  // djb2 hash -- 8 hex chars is plenty for a handful of concurrent sessions.
+  // djb2 hash over `${systemPrompt}\u0001${sessionId}` — the SOH separator
+  // keeps a 32KB persona prompt with a colliding hash from being mistaken
+  // for a 32KB persona prompt with a different sessionId.
   let h = 5381;
-  for (let i = 0; i < systemPrompt.length; i++) {
-    h = ((h << 5) + h + systemPrompt.charCodeAt(i)) | 0;
+  const combined = `${promptPart}\u0001${idPart}`;
+  for (let i = 0; i < combined.length; i++) {
+    h = ((h << 5) + h + combined.charCodeAt(i)) | 0;
   }
   return `cc-sp-${(h >>> 0).toString(16).padStart(8, "0")}`;
 }
@@ -109,21 +133,25 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const modelInfo = { api: model.api, provider: model.provider, id: model.id };
       const cwd = opts.cwd ?? DEFAULT_CWD;
       const disallowedTools = opts.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
-      const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt);
 
-      // FORK (2026-04-24): OpenClaw's embedded runner smuggles the current
-      // run's identity into options via `__openclawRunId` / `__openclawSessionKey`
-      // (see `src/agents/pi-embedded-runner/run/attempt.ts`). We use them to
-      // attribute live `stream: "tool"` agent events to the right run so the
-      // UI can render tool calls with purpose titles + expandable output —
-      // without putting toolCall blocks in the assistant message (which would
-      // trigger re-execution through the prefrontal exec gate).
+      // FORK (2026-04-24, extended 2026-04-27): OpenClaw's embedded runner
+      // smuggles the current run/session identity into options via
+      // `__openclawRunId` / `__openclawSessionKey` / `__openclawSessionId`
+      // (see `src/agents/pi-embedded-runner/run/attempt.ts`). The runId +
+      // sessionKey attribute live `stream:"tool"` agent events so the UI
+      // can render tool bubbles with purpose titles. The sessionId is used
+      // BELOW in `deriveSessionKey` to make /new and /reset cascade into
+      // the cc-bridge worker pool — without it the systemPrompt-only hash
+      // kept the same `--resume` session alive across resets.
       const pipedOptions = (options ?? {}) as {
         __openclawRunId?: string;
         __openclawSessionKey?: string;
+        __openclawSessionId?: string;
       };
       const runId = pipedOptions.__openclawRunId;
       const openclawSessionKey = pipedOptions.__openclawSessionKey;
+      const openclawSessionId = pipedOptions.__openclawSessionId;
+      const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt, openclawSessionId);
       const toolLastNarration = new Map<string, string>();
       let pendingToolNarration = "";
 
