@@ -1,14 +1,25 @@
-import { hasControlCommand } from "openclaw/plugin-sdk/command-detection";
 import type { loadConfig } from "openclaw/plugin-sdk/config-runtime";
-import { recordPendingHistoryEntryIfEnabled } from "openclaw/plugin-sdk/reply-history";
-import { parseActivationCommand } from "openclaw/plugin-sdk/reply-runtime";
-import { normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
-import { getPrimaryIdentityId, getSelfIdentity, getSenderIdentity } from "../../identity.js";
+import {
+  getPrimaryIdentityId,
+  getReplyContext,
+  getSelfIdentity,
+  getSenderIdentity,
+  identitiesOverlap,
+} from "../../identity.js";
+import { resolveWhatsAppInboundPolicy } from "../../inbound-policy.js";
 import type { MentionConfig } from "../mentions.js";
 import { buildMentionConfig, debugMention, resolveOwnerList } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { stripMentionsForCommand } from "./commands.js";
-import { resolveGroupPolicyFor } from "./group-activation.js";
+import { resolveGroupActivationFor } from "./group-activation.js";
+import {
+  hasControlCommand,
+  implicitMentionKindWhen,
+  normalizeE164,
+  parseActivationCommand,
+  recordPendingHistoryEntryIfEnabled,
+  resolveInboundMentionDecision,
+} from "./group-gating.runtime.js";
 import { noteGroupMember } from "./group-members.js";
 
 export type GroupHistoryEntry = {
@@ -17,6 +28,23 @@ export type GroupHistoryEntry = {
   timestamp?: number;
   id?: string;
   senderJid?: string;
+};
+
+type ApplyGroupGatingParams = {
+  cfg: ReturnType<typeof loadConfig>;
+  msg: WebInboundMsg;
+  conversationId: string;
+  groupHistoryKey: string;
+  agentId: string;
+  sessionKey: string;
+  baseMentionConfig: MentionConfig;
+  authDir?: string;
+  groupHistories: Map<string, GroupHistoryEntry[]>;
+  groupHistoryLimit: number;
+  groupMemberNames: Map<string, Map<string, string>>;
+  selfChatMode?: boolean;
+  logVerbose: (msg: string) => void;
+  replyLogger: { debug: (obj: unknown, msg: string) => void };
 };
 
 function isOwnerSender(baseMentionConfig: MentionConfig, msg: WebInboundMsg) {
@@ -56,51 +84,31 @@ function recordPendingGroupHistoryEntry(params: {
   });
 }
 
-export function applyGroupGating(params: {
-  cfg: ReturnType<typeof loadConfig>;
-  msg: WebInboundMsg;
-  conversationId: string;
-  groupHistoryKey: string;
-  agentId: string;
-  sessionKey: string;
-  baseMentionConfig: MentionConfig;
-  authDir?: string;
-  groupHistories: Map<string, GroupHistoryEntry[]>;
-  groupHistoryLimit: number;
-  groupMemberNames: Map<string, Map<string, string>>;
-  logVerbose: (msg: string) => void;
-  replyLogger: { debug: (obj: unknown, msg: string) => void };
-}) {
-  // ──────────────────────────────────────────────────────────────────
-  // STRICT 3-RULE GROUP GATE (no bypasses, no exceptions)
-  //
-  // Rule 1: Is the message from an ALLOWED CHAT?
-  // Rule 2: Is the message from an AUTHORIZED SENDER?
-  // Rule 3: Does the message text start with the triggerPrefix ("Jarvis")?
-  //
-  // ALL three must pass. Media without caption = no prefix = REJECT.
-  // allowFrom ≠ owner. Only explicit owner numbers are owners.
-  // ──────────────────────────────────────────────────────────────────
+function skipGroupMessageAndStoreHistory(params: ApplyGroupGatingParams, verboseMessage: string) {
+  params.logVerbose(verboseMessage);
+  recordPendingGroupHistoryEntry({
+    msg: params.msg,
+    groupHistories: params.groupHistories,
+    groupHistoryKey: params.groupHistoryKey,
+    groupHistoryLimit: params.groupHistoryLimit,
+  });
+  return { shouldProcess: false } as const;
+}
 
-  // — Rule 1: Allowed Chat —
-  const groupPolicy = resolveGroupPolicyFor(params.cfg, params.conversationId);
-  if (groupPolicy.allowlistEnabled && !groupPolicy.allowed) {
-    // Owner override: if sender is the owner AND message starts with triggerPrefix,
-    // allow processing even in non-allowlisted chats.
-    const earlyTriggerPrefix =
-      params.cfg.channels?.whatsapp?.triggerPrefix ?? params.cfg.channels?.defaults?.triggerPrefix;
-    const earlyBodyTrimmed = (params.msg.body ?? "").trim().toLowerCase();
-    const earlyPrefixMatch = earlyTriggerPrefix
-      ? earlyBodyTrimmed.startsWith(earlyTriggerPrefix.toLowerCase())
-      : false;
-    const earlyOwner = isOwnerSender(params.baseMentionConfig, params.msg);
-    if (!(earlyOwner && earlyPrefixMatch)) {
-      params.logVerbose(`[group-gate] REJECT: chat not in allowlist → ${params.conversationId}`);
-      return { shouldProcess: false };
-    }
-    params.logVerbose(
-      `[group-gate] OWNER-OVERRIDE: non-allowlisted chat but owner+prefix → ${params.conversationId}`,
-    );
+export async function applyGroupGating(params: ApplyGroupGatingParams) {
+  const sender = getSenderIdentity(params.msg);
+  const self = getSelfIdentity(params.msg, params.authDir);
+  const inboundPolicy = resolveWhatsAppInboundPolicy({
+    cfg: params.cfg,
+    accountId: params.msg.accountId,
+    selfE164: self.e164 ?? null,
+  });
+  const conversationGroupPolicy = inboundPolicy.resolveConversationGroupPolicy(
+    params.conversationId,
+  );
+  if (conversationGroupPolicy.allowlistEnabled && !conversationGroupPolicy.allowed) {
+    params.logVerbose(`Skipping group message ${params.conversationId} (not in allowlist)`);
+    return { shouldProcess: false };
   }
 
   noteGroupMember(
@@ -110,134 +118,83 @@ export function applyGroupGating(params: {
     sender.name ?? undefined,
   );
 
-  // — Rule 2: Authorized Sender —
-  const senderE164 = normalizeE164(params.msg.senderE164 ?? "");
-  const configuredGroupAllowFrom =
-    params.cfg.channels?.whatsapp?.groupAllowFrom ?? params.cfg.channels?.whatsapp?.allowFrom ?? [];
-  const normalizedAllowFrom = configuredGroupAllowFrom
-    .map((entry: string | number) => String(entry).trim())
-    .filter((entry: string) => entry && entry !== "*")
-    .map((entry: string) => normalizeE164(entry))
-    .filter((entry: string | null): entry is string => Boolean(entry));
-  const senderAuthorized = senderE164 ? normalizedAllowFrom.includes(senderE164) : false;
-
-  if (!senderAuthorized) {
-    console.log(
-      `[GROUP-GATE] REJECT: sender not authorized → sender=${params.msg.senderE164} normalized=${senderE164} chat=${params.conversationId}`,
-    );
-    params.logVerbose(
-      `[group-gate] REJECT: sender not authorized → ${params.msg.senderE164} in ${params.conversationId}`,
-    );
-    recordPendingGroupHistoryEntry({
-      msg: params.msg,
-      groupHistories: params.groupHistories,
-      groupHistoryKey: params.groupHistoryKey,
-      groupHistoryLimit: params.groupHistoryLimit,
-    });
-    return { shouldProcess: false };
-  }
-
-  // — Rule 3: Trigger Prefix —
-  const triggerPrefix =
-    params.cfg.channels?.whatsapp?.triggerPrefix ?? params.cfg.channels?.defaults?.triggerPrefix;
-  const triggerPrefixExemptList: string[] =
-    ((params.cfg.channels?.whatsapp as Record<string, unknown> | undefined)
-      ?.triggerPrefixExempt as string[]) ?? [];
-  const isTriggerExempt = triggerPrefixExemptList.includes(params.conversationId);
-  const bodyTrimmed = (params.msg.body ?? "").trim().toLowerCase();
-  const triggerPrefixMatched = isTriggerExempt
-    ? true
-    : triggerPrefix
-      ? bodyTrimmed.startsWith(triggerPrefix.toLowerCase())
-      : false;
-
-  // Also allow @mention as equivalent to prefix (standard WhatsApp behavior)
-  const mentionConfig = buildMentionConfig(params.cfg, params.agentId);
-  const mentionDebug = debugMention(params.msg, mentionConfig, params.authDir);
-  const wasMentioned = mentionDebug.wasMentioned || triggerPrefixMatched;
-
-  // Allow reply-to-bot as implicit trigger (user replied to one of our messages)
-  const selfJid = params.msg.selfJid?.replace(/:\\d+/, "");
-  const replySenderJid = params.msg.replyToSenderJid?.replace(/:\\d+/, "");
-  const selfE164 = params.msg.selfE164 ? normalizeE164(params.msg.selfE164) : null;
-  const replySenderE164 = params.msg.replyToSenderE164
-    ? normalizeE164(params.msg.replyToSenderE164)
-    : null;
-  const repliedToBot = Boolean(
-    (selfJid && replySenderJid && selfJid === replySenderJid) ||
-    (selfE164 && replySenderE164 && selfE164 === replySenderE164),
-  );
-
-  // Owner slash commands (e.g. /new, /status) always pass rule 3
-  const owner = isOwnerSender(params.baseMentionConfig, params.msg);
+  const baseMentionConfig = {
+    ...params.baseMentionConfig,
+    allowFrom: inboundPolicy.configuredAllowFrom,
+  };
+  const mentionConfig = {
+    ...buildMentionConfig(params.cfg, params.agentId),
+    allowFrom: inboundPolicy.configuredAllowFrom,
+  };
   const commandBody = stripMentionsForCommand(
     params.msg.body,
     mentionConfig.mentionRegexes,
-    params.msg.selfE164,
+    self.e164,
   );
-  const ownerSlashCommand = owner && hasControlCommand(commandBody, params.cfg);
+  const activationCommand = parseActivationCommand(commandBody);
+  const owner = isOwnerSender(baseMentionConfig, params.msg);
+  const shouldBypassMention = owner && hasControlCommand(commandBody, params.cfg);
 
-  // Audio messages: let through to dispatch-from-config which handles
-  // audio preflight (transcribe → prefix check) downstream.
-  // Only audio — images/video/docs stay gated (no bypass for non-audio media).
-  const isAudioMessage = (params.msg.body ?? "").trim().toLowerCase().startsWith("<media:audio");
+  if (activationCommand.hasCommand && !owner) {
+    return skipGroupMessageAndStoreHistory(
+      params,
+      `Ignoring /activation from non-owner in group ${params.conversationId}`,
+    );
+  }
 
-  const prefixPassed = wasMentioned || repliedToBot || ownerSlashCommand || isAudioMessage;
-
+  const mentionDebug = debugMention(params.msg, mentionConfig, params.authDir);
   params.replyLogger.debug(
     {
       conversationId: params.conversationId,
-      senderAuthorized,
-      triggerPrefixMatched,
       wasMentioned: mentionDebug.wasMentioned,
-      repliedToBot,
-      ownerSlashCommand,
-      prefixPassed,
-      triggerPrefix,
       ...mentionDebug.details,
     },
-    "group gate debug",
+    "group mention debug",
   );
-
-  if (!prefixPassed) {
-    console.log(
-      `[GROUP-GATE] REJECT: no prefix/mention/reply → sender=${params.msg.senderE164} chat=${params.conversationId} body=${params.msg.body?.substring(0, 60)} triggerPrefix=${triggerPrefix} triggerPrefixMatched=${triggerPrefixMatched} wasMentioned=${mentionDebug.wasMentioned} repliedToBot=${repliedToBot}`,
+  const wasMentioned = mentionDebug.wasMentioned;
+  const activation = await resolveGroupActivationFor({
+    cfg: params.cfg,
+    accountId: inboundPolicy.account.accountId,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    conversationId: params.conversationId,
+  });
+  const requireMention = activation !== "always";
+  const replyContext = getReplyContext(params.msg, params.authDir);
+  const sharedNumberSelfChat = params.selfChatMode === true;
+  // Detect reply-to-bot: compare JIDs, LIDs, and E.164 numbers.
+  // WhatsApp may report the quoted message sender as either a phone JID
+  // (xxxxx@s.whatsapp.net) or a LID (xxxxx@lid), so we compare both.
+  // But in shared-number/selfChatMode setups, replies from the same self number
+  // should not count as implicit bot mentions unless the message explicitly
+  // mentioned the bot in text.
+  const implicitReplyToSelf = sharedNumberSelfChat && identitiesOverlap(self, sender);
+  const implicitMentionKinds = implicitMentionKindWhen(
+    "quoted_bot",
+    !implicitReplyToSelf && identitiesOverlap(self, replyContext?.sender),
+  );
+  const mentionDecision = resolveInboundMentionDecision({
+    facts: {
+      canDetectMention: true,
+      wasMentioned,
+      implicitMentionKinds,
+    },
+    policy: {
+      isGroup: true,
+      requireMention,
+      allowTextCommands: false,
+      hasControlCommand: false,
+      commandAuthorized: false,
+    },
+  });
+  const effectiveWasMentioned = mentionDecision.effectiveWasMentioned || shouldBypassMention;
+  params.msg.wasMentioned = effectiveWasMentioned;
+  if (!shouldBypassMention && requireMention && mentionDecision.shouldSkip) {
+    return skipGroupMessageAndStoreHistory(
+      params,
+      `Group message stored for context (no mention detected) in ${params.conversationId}: ${params.msg.body}`,
     );
-    params.logVerbose(
-      `[group-gate] REJECT: no prefix/mention/reply → ${params.msg.senderE164} in ${params.conversationId}: ${params.msg.body?.substring(0, 80)}`,
-    );
-    recordPendingGroupHistoryEntry({
-      msg: params.msg,
-      groupHistories: params.groupHistories,
-      groupHistoryKey: params.groupHistoryKey,
-      groupHistoryLimit: params.groupHistoryLimit,
-    });
-    return { shouldProcess: false };
   }
 
-  // Block non-owner /activation commands
-  const activationCommand = parseActivationCommand(commandBody);
-  if (activationCommand.hasCommand && !owner) {
-    params.logVerbose(
-      `[group-gate] REJECT: /activation from non-owner in ${params.conversationId}`,
-    );
-    recordPendingGroupHistoryEntry({
-      msg: params.msg,
-      groupHistories: params.groupHistories,
-      groupHistoryKey: params.groupHistoryKey,
-      groupHistoryLimit: params.groupHistoryLimit,
-    });
-    return { shouldProcess: false };
-  }
-
-  // Set wasMentioned for downstream context
-  params.msg.wasMentioned = wasMentioned || repliedToBot;
-
-  console.log(
-    `[GROUP-GATE] ACCEPT: all 3 rules passed → sender=${params.msg.senderE164} chat=${params.conversationId}`,
-  );
-  params.logVerbose(
-    `[group-gate] ACCEPT: all 3 rules passed → ${params.msg.senderE164} in ${params.conversationId}`,
-  );
   return { shouldProcess: true };
 }

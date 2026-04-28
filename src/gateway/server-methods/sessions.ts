@@ -10,7 +10,6 @@ import {
 } from "../../agents/pi-embedded-runner/runs.js";
 import { compactEmbeddedPiSession } from "../../agents/pi-embedded.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue/cleanup.js";
-import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
 import { normalizeReasoningLevel, normalizeThinkLevel } from "../../auto-reply/thinking.js";
 import { loadConfig } from "../../config/config.js";
 import {
@@ -93,6 +92,15 @@ import type {
   RespondFn,
 } from "./types.js";
 import { assertValidParams } from "./validation.js";
+
+type SessionsRuntimeModule = typeof import("./sessions.runtime.js");
+
+let sessionsRuntimeModulePromise: Promise<SessionsRuntimeModule> | undefined;
+
+function loadSessionsRuntimeModule(): Promise<SessionsRuntimeModule> {
+  sessionsRuntimeModulePromise ??= import("./sessions.runtime.js");
+  return sessionsRuntimeModulePromise;
+}
 
 function requireSessionKey(key: unknown, respond: RespondFn): string | null {
   const raw =
@@ -379,14 +387,8 @@ async function interruptSessionRunIfActive(params: {
     typeof params.sessionId === "string" && params.sessionId
       ? isEmbeddedPiRunActive(params.sessionId)
       : false;
-  // FORK: the ReplyRunRegistry can hold a completed-but-not-yet-cleared
-  // ReplyOperation for a second or two after the embedded runner has
-  // already ended (followupRunner's finally block calls
-  // replyOperation.complete()). sessions.steer must wait on THIS state too,
-  // or the next createReplyOperation throws ReplyRunAlreadyActiveError.
-  const hasRegistryEntry = replyRunRegistry.isActive(params.canonicalKey);
 
-  if (!hasTrackedRun && !hasEmbeddedRun && !hasRegistryEntry) {
+  if (!hasTrackedRun && !hasEmbeddedRun) {
     return { interrupted: false };
   }
 
@@ -436,21 +438,6 @@ async function interruptSessionRunIfActive(params: {
         error: errorShape(
           ErrorCodes.UNAVAILABLE,
           `Session ${params.requestedKey} is still active; try again in a moment.`,
-        ),
-      };
-    }
-  }
-
-  // FORK: wait for the ReplyRunRegistry to idle. See reply-run-registry.ts
-  // for the lifecycle.
-  {
-    const laneIdle = await replyRunRegistry.waitForIdle(params.canonicalKey, 15_000);
-    if (!laneIdle) {
-      return {
-        interrupted: true,
-        error: errorShape(
-          ErrorCodes.UNAVAILABLE,
-          `Session ${params.requestedKey} reply-run-registry still active; try again in a moment.`,
         ),
       };
     }
@@ -1358,7 +1345,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     }
 
     const reason = p.reason === "new" ? "new" : "reset";
-    const { performGatewaySessionReset } = await import("./sessions.runtime.js");
+    const { performGatewaySessionReset } = await loadSessionsRuntimeModule();
     const result = await performGatewaySessionReset({
       key,
       reason,
@@ -1404,7 +1391,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       cleanupSessionBeforeMutation,
       emitGatewaySessionEndPluginHook,
       emitSessionUnboundLifecycleEvent,
-    } = await import("./sessions.runtime.js");
+    } = await loadSessionsRuntimeModule();
 
     const { entry, legacyKey, canonicalKey } = loadSessionEntry(key);
     const mutationCleanupError = await cleanupSessionBeforeMutation({
