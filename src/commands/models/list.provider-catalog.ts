@@ -10,7 +10,10 @@ import {
   resolvePluginDiscoveryProviders,
   runProviderStaticCatalog,
 } from "../../plugins/provider-discovery.js";
-import { resolveOwningPluginIdsForProvider } from "../../plugins/providers.js";
+import {
+  resolveBundledProviderCompatPluginIds,
+  resolveOwningPluginIdsForProvider,
+} from "../../plugins/providers.js";
 
 const DISCOVERY_ORDERS = ["simple", "profile", "paired", "late"] as const;
 const SELF_HOSTED_DISCOVERY_PROVIDER_IDS = new Set(["lmstudio", "ollama", "sglang", "vllm"]);
@@ -35,7 +38,11 @@ export async function resolveProviderCatalogPluginIdsForFilter(params: {
   }
   const { resolveProviderContractPluginIdsForProviderAlias } =
     await import("../../plugins/contracts/registry.js");
-  return resolveProviderContractPluginIdsForProviderAlias(providerFilter);
+  const bundledAliasPluginIds = resolveProviderContractPluginIdsForProviderAlias(providerFilter);
+  if (bundledAliasPluginIds) {
+    return bundledAliasPluginIds;
+  }
+  return undefined;
 }
 
 function modelFromProviderCatalog(params: {
@@ -78,12 +85,31 @@ export async function loadProviderCatalogModelsForList(params: {
   if (providerFilter && !onlyPluginIds) {
     return [];
   }
-  const providers = await resolvePluginDiscoveryProviders({
+
+  const bundledPluginIds = resolveBundledProviderCompatPluginIds({
     config: params.cfg,
     env,
-    ...(onlyPluginIds ? { onlyPluginIds } : {}),
-    includeUntrustedWorkspacePlugins: false,
   });
+  const bundledPluginIdSet = new Set(bundledPluginIds);
+  const scopedPluginIds = onlyPluginIds
+    ? onlyPluginIds.filter((pluginId) => bundledPluginIdSet.has(pluginId))
+    : bundledPluginIds;
+  if (scopedPluginIds.length === 0) {
+    return [];
+  }
+
+  const providers = (
+    await resolvePluginDiscoveryProviders({
+      config: params.cfg,
+      env,
+      onlyPluginIds: scopedPluginIds,
+      includeUntrustedWorkspacePlugins: false,
+      requireCompleteDiscoveryEntryCoverage: true,
+    })
+  ).filter(
+    (provider) =>
+      typeof provider.pluginId === "string" && bundledPluginIdSet.has(provider.pluginId),
+  );
   const byOrder = groupPluginDiscoveryProvidersByOrder(providers);
   const rows: Model<Api>[] = [];
   const seen = new Set<string>();

@@ -63,7 +63,7 @@ import {
   type FollowupRun,
   type QueueSettings,
 } from "./queue.js";
-import { createReplyMediaPathNormalizer } from "./reply-media-paths.js";
+import { createReplyMediaContext } from "./reply-media-paths.js";
 import {
   createReplyOperation,
   type ReplyOperation,
@@ -1035,7 +1035,7 @@ export async function runReplyAgent(params: {
   );
   const applyReplyToMode = createReplyToModeFilterForChannel(replyToMode, replyToChannel);
   const cfg = followupRun.run.config;
-  const normalizeReplyMediaPaths = createReplyMediaPathNormalizer({
+  const replyMediaContext = createReplyMediaContext({
     cfg,
     sessionKey,
     workspaceDir: followupRun.run.workspaceDir,
@@ -1222,6 +1222,7 @@ export async function runReplyAgent(params: {
       activeSessionStore,
       storePath,
       resolvedVerboseLevel,
+      replyMediaContext,
     });
 
     if (runOutcome.kind === "final") {
@@ -1372,7 +1373,7 @@ export async function runReplyAgent(params: {
         to: sessionCtx.To,
       }),
       accountId: sessionCtx.AccountId,
-      normalizeMediaPaths: normalizeReplyMediaPaths,
+      normalizeMediaPaths: replyMediaContext.normalizePayload,
     });
     const { replyPayloads } = payloadResult;
     didLogHeartbeatStrip = payloadResult.didLogHeartbeatStrip;
