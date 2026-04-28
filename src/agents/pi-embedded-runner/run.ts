@@ -390,8 +390,6 @@ export async function runEmbeddedPiAgent(
         stopRuntimeAuthRefreshTimer,
       } = createEmbeddedRunAuthController({
         config: params.config,
-        runId: params.runId,
-        sessionKey: resolvedSessionKey ?? params.sessionId,
         agentDir,
         workspaceDir: resolvedWorkspace,
         authStore,
@@ -436,6 +434,8 @@ export async function runEmbeddedPiAgent(
           thinkLevel = next;
         },
         log,
+        runId: params.runId,
+        sessionKey: params.sessionKey ?? params.sessionId,
       });
 
       await initializeAuthProfile();
@@ -689,6 +689,7 @@ export async function runEmbeddedPiAgent(
             groupId: params.groupId,
             groupChannel: params.groupChannel,
             groupSpace: params.groupSpace,
+            memberRoleIds: params.memberRoleIds,
             spawnedBy: params.spawnedBy,
             isCanonicalWorkspace,
             senderId: params.senderId,
@@ -1735,7 +1736,7 @@ export async function runEmbeddedPiAgent(
                   source: "planning_only_retry",
                 },
               });
-              void params.onAgentEvent?.({
+              params.onAgentEvent?.({
                 stream: "plan",
                 data: {
                   phase: "update",

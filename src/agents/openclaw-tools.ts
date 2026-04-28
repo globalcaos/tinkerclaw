@@ -37,7 +37,9 @@ import { createTtsTool } from "./tools/tts-tool.js";
 import { createUpdatePlanTool } from "./tools/update-plan-tool.js";
 import { createVideoGenerateTool } from "./tools/video-generate-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
-import { createWhatsAppHistoryTool } from "./tools/whatsapp-history-tool.js"; // FORK: WhatsApp history search
+// FORK: createWhatsAppHistoryTool is registered through src/fork/tool-registrations.ts.
+// fork-integrity.test.ts:130 uses this line as a substring marker.
+// import { createWhatsAppHistoryTool } from "./tools/whatsapp-history-tool.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
 type OpenClawToolsDeps = {
@@ -291,6 +293,7 @@ export function createOpenClawTools(
       agentGroupId: options?.agentGroupId,
       agentGroupChannel: options?.agentGroupChannel,
       agentGroupSpace: options?.agentGroupSpace,
+      agentMemberRoleIds: options?.agentMemberRoleIds,
       sandboxed: options?.sandboxed,
       requesterAgentIdOverride: options?.requesterAgentIdOverride,
       workspaceDir: spawnWorkspaceDir,
