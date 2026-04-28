@@ -18,6 +18,7 @@ import { asResolvedSourceConfig, asRuntimeConfig } from "../../config/materializ
 import { resolveGatewayInstallEntrypoint } from "../../daemon/gateway-entrypoint.js";
 import { resolveGatewayRestartLogPath } from "../../daemon/restart-logs.js";
 import { resolveGatewayService } from "../../daemon/service.js";
+import { createLowDiskSpaceWarning } from "../../infra/disk-space.js";
 import { nodeVersionSatisfiesEngine } from "../../infra/runtime-guard.js";
 import {
   channelToNpmTag,
@@ -50,6 +51,7 @@ import {
 import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../../plugins/update.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { stylePromptMessage } from "../../terminal/prompt-style.js";
 import { theme } from "../../terminal/theme.js";
 import { pathExists } from "../../utils.js";
@@ -351,6 +353,7 @@ async function runPackageInstallUpdate(params: {
   timeoutMs: number;
   startedAt: number;
   progress: ReturnType<typeof createUpdateProgress>["progress"];
+  jsonMode: boolean;
 }): Promise<UpdateRunResult> {
   const manager = await resolveGlobalManager({
     root: params.root,
@@ -381,6 +384,18 @@ async function runPackageInstallUpdate(params: {
       globalRoot: path.dirname(pkgRoot),
       packageName,
     });
+  }
+
+  const diskWarning = createLowDiskSpaceWarning({
+    targetPath: pkgRoot ? path.dirname(pkgRoot) : params.root,
+    purpose: "global package update",
+  });
+  if (diskWarning) {
+    if (params.jsonMode) {
+      defaultRuntime.error(`Warning: ${diskWarning}`);
+    } else {
+      defaultRuntime.log(theme.warn(diskWarning));
+    }
   }
 
   const updateStep = await runUpdateStep({
@@ -748,7 +763,53 @@ async function maybeRestartService(params: {
   gatewayPort: number;
   restartScriptPath?: string | null;
   invocationCwd?: string;
-}): Promise<void> {
+}): Promise<boolean> {
+  const verifyRestartedGateway = async (expectedGatewayVersion: string | undefined) => {
+    const service = resolveGatewayService();
+    let health = await waitForGatewayHealthyRestart({
+      service,
+      port: params.gatewayPort,
+      expectedVersion: expectedGatewayVersion,
+    });
+    if (!health.healthy && health.staleGatewayPids.length > 0) {
+      if (!params.opts.json) {
+        defaultRuntime.log(
+          theme.warn(
+            `Found stale gateway process(es) after restart: ${health.staleGatewayPids.join(", ")}. Cleaning up...`,
+          ),
+        );
+      }
+      await terminateStaleGatewayPids(health.staleGatewayPids);
+      await runDaemonRestart();
+      health = await waitForGatewayHealthyRestart({
+        service,
+        port: params.gatewayPort,
+        expectedVersion: expectedGatewayVersion,
+      });
+    }
+
+    if (health.healthy) {
+      return true;
+    }
+
+    const diagnosticLines = [
+      "Gateway did not become healthy after restart.",
+      ...renderRestartDiagnostics(health),
+      `Restart log: ${resolveGatewayRestartLogPath(process.env)}`,
+      `Run \`${replaceCliName(formatCliCommand("openclaw gateway status --deep"), CLI_NAME)}\` for details.`,
+    ];
+    if (params.opts.json) {
+      defaultRuntime.error(diagnosticLines.join("\n"));
+    } else {
+      defaultRuntime.log(theme.warn(diagnosticLines[0] ?? "Gateway did not become healthy."));
+      for (const line of diagnosticLines.slice(1)) {
+        defaultRuntime.log(theme.muted(line));
+      }
+    }
+
+    return !(health.versionMismatch || health.activatedPluginErrors?.length);
+  };
+
   if (params.shouldRestart) {
     if (!params.opts.json) {
       defaultRuntime.log("");
@@ -756,6 +817,9 @@ async function maybeRestartService(params: {
     }
 
     try {
+      const expectedGatewayVersion = isPackageManagerUpdateMode(params.result.mode)
+        ? normalizeOptionalString(params.result.after?.version)
+        : undefined;
       let restarted = false;
       let restartInitiated = false;
       if (params.refreshServiceEnv) {
@@ -775,6 +839,9 @@ async function maybeRestartService(params: {
           } else {
             defaultRuntime.log(theme.warn(message));
           }
+          if (isPackageManagerUpdateMode(params.result.mode)) {
+            return false;
+          }
         }
       }
       if (params.restartScriptPath) {
@@ -782,6 +849,22 @@ async function maybeRestartService(params: {
         restartInitiated = true;
       } else {
         restarted = await runDaemonRestart();
+      }
+
+      const shouldVerifyRestart =
+        restartInitiated || (restarted && expectedGatewayVersion !== undefined);
+      if (shouldVerifyRestart) {
+        const restartHealthy = await verifyRestartedGateway(expectedGatewayVersion);
+        if (!restartHealthy) {
+          if (!params.opts.json) {
+            defaultRuntime.log("");
+          }
+          return false;
+        }
+        if (!params.opts.json && restartInitiated) {
+          defaultRuntime.log(theme.success("Daemon restart completed."));
+          defaultRuntime.log("");
+        }
       }
 
       if (!params.opts.json && restarted) {
@@ -800,47 +883,6 @@ async function maybeRestartService(params: {
           delete process.env.OPENCLAW_UPDATE_IN_PROGRESS;
         }
       }
-
-      if (!params.opts.json && restartInitiated) {
-        const service = resolveGatewayService();
-        let health = await waitForGatewayHealthyRestart({
-          service,
-          port: params.gatewayPort,
-        });
-        if (!health.healthy && health.staleGatewayPids.length > 0) {
-          if (!params.opts.json) {
-            defaultRuntime.log(
-              theme.warn(
-                `Found stale gateway process(es) after restart: ${health.staleGatewayPids.join(", ")}. Cleaning up...`,
-              ),
-            );
-          }
-          await terminateStaleGatewayPids(health.staleGatewayPids);
-          await runDaemonRestart();
-          health = await waitForGatewayHealthyRestart({
-            service,
-            port: params.gatewayPort,
-          });
-        }
-
-        if (health.healthy) {
-          defaultRuntime.log(theme.success("Daemon restart completed."));
-        } else {
-          defaultRuntime.log(theme.warn("Gateway did not become healthy after restart."));
-          for (const line of renderRestartDiagnostics(health)) {
-            defaultRuntime.log(theme.muted(line));
-          }
-          defaultRuntime.log(
-            theme.muted(`Restart log: ${resolveGatewayRestartLogPath(process.env)}`),
-          );
-          defaultRuntime.log(
-            theme.muted(
-              `Run \`${replaceCliName(formatCliCommand("openclaw gateway status --deep"), CLI_NAME)}\` for details.`,
-            ),
-          );
-        }
-        defaultRuntime.log("");
-      }
     } catch (err) {
       if (!params.opts.json) {
         defaultRuntime.log(theme.warn(`Daemon restart failed: ${String(err)}`));
@@ -851,7 +893,7 @@ async function maybeRestartService(params: {
         );
       }
     }
-    return;
+    return true;
   }
 
   if (!params.opts.json) {
@@ -870,6 +912,7 @@ async function maybeRestartService(params: {
       );
     }
   }
+  return true;
 }
 
 async function runPostCorePluginUpdate(params: {
@@ -963,13 +1006,16 @@ async function continuePostCoreUpdateInFreshProcess(params: {
       });
     });
 
-    if (exitCode !== 0) {
-      defaultRuntime.exit(exitCode);
-      throw new Error(`post-update process exited with code ${exitCode}`);
-    }
     const pluginUpdate = resultPath
       ? await readPostCorePluginUpdateResultFile(resultPath)
       : undefined;
+    if (exitCode !== 0) {
+      if (pluginUpdate) {
+        return { resumed: true, pluginUpdate };
+      }
+      defaultRuntime.exit(exitCode);
+      throw new Error(`post-update process exited with code ${exitCode}`);
+    }
     return { resumed: true, ...(pluginUpdate ? { pluginUpdate } : {}) };
   } finally {
     if (resultDir) {
@@ -1031,6 +1077,10 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
         };
         defaultRuntime.writeJson(result);
       }
+    }
+    if (pluginUpdate.status === "error") {
+      defaultRuntime.exit(1);
+      return;
     }
     return;
   }
@@ -1248,6 +1298,7 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
           timeoutMs: timeoutMs ?? 20 * 60_000,
           startedAt,
           progress,
+          jsonMode: Boolean(opts.json),
         })
       : await runGitUpdate({
           root,
@@ -1390,6 +1441,28 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     });
   }
 
+  const resultWithPostUpdate: UpdateRunResult = postCorePluginUpdate
+    ? {
+        ...result,
+        status: postCorePluginUpdate.status === "error" ? "error" : result.status,
+        ...(postCorePluginUpdate.status === "error" ? { reason: "post-update-plugins" } : {}),
+        postUpdate: {
+          ...result.postUpdate,
+          plugins: postCorePluginUpdate,
+        },
+      }
+    : result;
+
+  if (postCorePluginUpdate?.status === "error") {
+    if (opts.json) {
+      defaultRuntime.writeJson(resultWithPostUpdate);
+    } else {
+      defaultRuntime.error(theme.error("Update failed during plugin post-update sync."));
+    }
+    defaultRuntime.exit(1);
+    return;
+  }
+
   let restartScriptPath: string | null = null;
   let refreshGatewayServiceEnv = false;
   const gatewayPort = resolveGatewayPort(
@@ -1423,23 +1496,24 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
       skipPrompt: Boolean(opts.yes),
     });
 
-    await maybeRestartService({
+    const restartOk = await maybeRestartService({
       shouldRestart,
-      result,
+      result: resultWithPostUpdate,
       opts,
       refreshServiceEnv: refreshGatewayServiceEnv,
       gatewayPort,
       restartScriptPath,
       invocationCwd,
     });
+    if (!restartOk) {
+      defaultRuntime.exit(1);
+      return;
+    }
   }
 
   if (!opts.json) {
     defaultRuntime.log(theme.muted(pickUpdateQuip()));
   } else {
-    defaultRuntime.writeJson({
-      ...result,
-      ...(postCorePluginUpdate ? { postUpdate: { plugins: postCorePluginUpdate } } : {}),
-    });
+    defaultRuntime.writeJson(resultWithPostUpdate);
   }
 }

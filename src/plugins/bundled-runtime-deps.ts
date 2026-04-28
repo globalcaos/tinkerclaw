@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createLowDiskSpaceWarning } from "../infra/disk-space.js";
 import { resolveHomeRelativePath } from "../infra/home-dir.js";
 import { createNpmProjectInstallEnv } from "../infra/npm-install-env.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
@@ -30,6 +31,7 @@ export type BundledRuntimeDepsInstallParams = {
   linkNodeModulesFromExecutionRoot?: boolean;
   missingSpecs: string[];
   installSpecs?: string[];
+  warn?: (message: string) => void;
 };
 
 export type BundledRuntimeDepsEnsureResult = {
@@ -684,6 +686,19 @@ function hasDependencySentinel(
   });
 }
 
+function assertBundledRuntimeDepsInstalled(rootDir: string, specs: readonly string[]): void {
+  const missingSpecs = specs.filter((spec) => {
+    const dep = parseInstallableRuntimeDepSpec(spec);
+    return !hasDependencySentinel([rootDir], dep);
+  });
+  if (missingSpecs.length === 0) {
+    return;
+  }
+  throw new Error(
+    `npm install did not place bundled runtime deps in ${rootDir}: ${missingSpecs.join(", ")}`,
+  );
+}
+
 function replaceNodeModulesDir(targetDir: string, sourceDir: string): void {
   const parentDir = path.dirname(targetDir);
   const tempDir = fs.mkdtempSync(path.join(parentDir, ".openclaw-runtime-deps-copy-"));
@@ -1185,6 +1200,7 @@ export function installBundledRuntimeDeps(params: {
   linkNodeModulesFromExecutionRoot?: boolean;
   missingSpecs: string[];
   env: NodeJS.ProcessEnv;
+  warn?: (message: string) => void;
 }): void {
   const installExecutionRoot = params.installExecutionRoot ?? params.installRoot;
   const isolatedExecutionRoot =
@@ -1198,6 +1214,13 @@ export function installBundledRuntimeDeps(params: {
   try {
     fs.mkdirSync(params.installRoot, { recursive: true });
     fs.mkdirSync(installExecutionRoot, { recursive: true });
+    const diskWarning = createLowDiskSpaceWarning({
+      targetPath: installExecutionRoot,
+      purpose: "bundled plugin runtime dependency staging",
+    });
+    if (diskWarning) {
+      params.warn?.(diskWarning);
+    }
     // Always make npm see an OpenClaw-owned package root. The package-level
     // doctor repair path installs directly in the external stage dir; without a
     // manifest, npm can honor a user's global prefix config and write under
@@ -1223,6 +1246,7 @@ export function installBundledRuntimeDeps(params: {
         .trim();
       throw new Error(output || "npm install failed");
     }
+    assertBundledRuntimeDepsInstalled(installExecutionRoot, params.missingSpecs);
     if (isolatedExecutionRoot) {
       const stagedNodeModulesDir = path.join(installExecutionRoot, "node_modules");
       if (!fs.existsSync(stagedNodeModulesDir)) {
@@ -1234,6 +1258,7 @@ export function installBundledRuntimeDeps(params: {
       } else {
         replaceNodeModulesDir(targetNodeModulesDir, stagedNodeModulesDir);
       }
+      assertBundledRuntimeDepsInstalled(params.installRoot, params.missingSpecs);
     }
   } finally {
     if (cleanInstallExecutionRoot) {
@@ -1248,6 +1273,7 @@ export function repairBundledRuntimeDepsInstallRoot(params: {
   installSpecs: string[];
   env: NodeJS.ProcessEnv;
   installDeps?: (params: BundledRuntimeDepsInstallParams) => void;
+  warn?: (message: string) => void;
 }): { installSpecs: string[] } {
   return withBundledRuntimeDepsInstallRootLock(params.installRoot, () => {
     const retainedManifestSpecs = readRetainedRuntimeDepsManifest(params.installRoot);
@@ -1261,6 +1287,7 @@ export function repairBundledRuntimeDepsInstallRoot(params: {
           installRoot: installParams.installRoot,
           missingSpecs: installParams.installSpecs ?? installParams.missingSpecs,
           env: params.env,
+          warn: params.warn,
         }));
     install({
       installRoot: params.installRoot,
