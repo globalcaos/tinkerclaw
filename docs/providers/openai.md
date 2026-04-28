@@ -174,11 +174,10 @@ Choose your preferred auth method and follow the setup steps.
 
     ### Status indicator
 
-    Chat `/status` shows which embedded harness is active for the current
-    session. The default PI harness appears as `Runner: pi (embedded)` and does
-    not add a separate badge. When the bundled Codex app-server harness is
-    selected, `/status` appends the non-PI harness id next to `Fast`, for example
-    `Fast · codex`. Existing sessions keep their recorded harness id, so use
+    Chat `/status` shows which model runtime is active for the current session.
+    The default PI harness appears as `Runtime: OpenClaw Pi Default`. When the
+    bundled Codex app-server harness is selected, `/status` shows
+    `Runtime: OpenAI Codex`. Existing sessions keep their recorded harness id, so use
     `/new` or `/reset` after changing `embeddedHarness` if you want `/status` to
     reflect a new PI/Codex choice.
 
@@ -790,6 +789,8 @@ the Server-side compaction accordion below.
 
     **Proxy/compatible routes:**
     - Use looser compat behavior
+    - Strip Completions `store` from non-native `openai-completions` payloads
+    - Accept advanced `params.extra_body`/`params.extraBody` pass-through JSON for OpenAI-compatible Completions proxies
     - Do not force strict tool schemas or native-only headers
 
     Azure OpenAI uses native transport and compat behavior but does not receive the hidden attribution headers.

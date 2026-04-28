@@ -10,6 +10,11 @@ import {
   type GoogleMeetMode,
   type GoogleMeetTransport,
 } from "./src/config.js";
+import {
+  createAndJoinMeetFromParams,
+  createMeetFromParams,
+  shouldJoinCreatedMeet,
+} from "./src/create.js";
 import { buildGoogleMeetPreflightReport, fetchGoogleMeetSpace } from "./src/meet.js";
 import { handleGoogleMeetNodeHostCommand } from "./src/node-host.js";
 import { resolveGoogleMeetAccessToken } from "./src/oauth.js";
@@ -134,16 +139,24 @@ const GoogleMeetToolSchema = Type.Object({
   action: Type.String({
     enum: [
       "join",
+      "create",
       "status",
       "setup_status",
       "resolve_space",
       "preflight",
+      "recover_current_tab",
       "leave",
       "speak",
       "test_speech",
     ],
-    description: "Google Meet action to run",
+    description:
+      "Google Meet action to run. create creates a meeting and joins it by default; pass join=false to only mint a meeting URL.",
   }),
+  join: Type.Optional(
+    Type.Boolean({
+      description: "For action=create, set false to create the URL without joining.",
+    }),
+  ),
   url: Type.Optional(Type.String({ description: "Explicit https://meet.google.com/... URL" })),
   transport: Type.Optional(
     Type.String({ enum: ["chrome", "chrome-node", "twilio"], description: "Join transport" }),
@@ -263,6 +276,28 @@ export default definePluginEntry({
     );
 
     api.registerGatewayMethod(
+      "googlemeet.create",
+      async ({ params, respond }: GatewayRequestHandlerOptions) => {
+        try {
+          const raw = asParamRecord(params);
+          respond(
+            true,
+            shouldJoinCreatedMeet(raw)
+              ? await createAndJoinMeetFromParams({
+                  config,
+                  runtime: api.runtime,
+                  raw,
+                  ensureRuntime,
+                })
+              : await createMeetFromParams({ config, runtime: api.runtime, raw }),
+          );
+        } catch (err) {
+          sendError(respond, err);
+        }
+      },
+    );
+
+    api.registerGatewayMethod(
       "googlemeet.status",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
@@ -275,11 +310,23 @@ export default definePluginEntry({
     );
 
     api.registerGatewayMethod(
+      "googlemeet.recoverCurrentTab",
+      async ({ params, respond }: GatewayRequestHandlerOptions) => {
+        try {
+          const rt = await ensureRuntime();
+          respond(true, await rt.recoverCurrentTab({ url: normalizeOptionalString(params?.url) }));
+        } catch (err) {
+          sendError(respond, err);
+        }
+      },
+    );
+
+    api.registerGatewayMethod(
       "googlemeet.setup",
       async ({ respond }: GatewayRequestHandlerOptions) => {
         try {
           const rt = await ensureRuntime();
-          respond(true, rt.setupStatus());
+          respond(true, await rt.setupStatus());
         } catch (err) {
           sendError(respond, err);
         }
@@ -364,6 +411,18 @@ export default definePluginEntry({
                 }),
               );
             }
+            case "create": {
+              return json(
+                shouldJoinCreatedMeet(raw)
+                  ? await createAndJoinMeetFromParams({
+                      config,
+                      runtime: api.runtime,
+                      raw,
+                      ensureRuntime,
+                    })
+                  : await createMeetFromParams({ config, runtime: api.runtime, raw }),
+              );
+            }
             case "test_speech": {
               const rt = await ensureRuntime();
               return json(
@@ -382,9 +441,13 @@ export default definePluginEntry({
               const rt = await ensureRuntime();
               return json(rt.status(normalizeOptionalString(raw.sessionId)));
             }
+            case "recover_current_tab": {
+              const rt = await ensureRuntime();
+              return json(await rt.recoverCurrentTab({ url: normalizeOptionalString(raw.url) }));
+            }
             case "setup_status": {
               const rt = await ensureRuntime();
-              return json(rt.setupStatus());
+              return json(await rt.setupStatus());
             }
             case "resolve_space": {
               const { token: _token, ...result } = await resolveSpaceFromParams(config, raw);
