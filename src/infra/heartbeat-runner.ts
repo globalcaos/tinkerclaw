@@ -35,7 +35,7 @@ import type {
   ChannelId,
   ChannelPlugin,
 } from "../channels/plugins/types.public.js";
-import { loadConfig } from "../config/config.js";
+import { getRuntimeConfig } from "../config/config.js";
 import {
   canonicalizeMainSessionAlias,
   resolveAgentIdFromSessionKey,
@@ -767,7 +767,7 @@ export async function runHeartbeatOnce(opts: {
   reason?: string;
   deps?: HeartbeatDeps;
 }): Promise<HeartbeatRunResult> {
-  const cfg = opts.cfg ?? loadConfig();
+  const cfg = opts.cfg ?? getRuntimeConfig();
   const explicitAgentId = typeof opts.agentId === "string" ? opts.agentId.trim() : "";
   const forcedSessionAgentId =
     explicitAgentId.length > 0 ? undefined : parseAgentSessionKey(opts.sessionKey)?.agentId;
@@ -1378,7 +1378,7 @@ export function startHeartbeatRunner(opts: {
   const runtime = opts.runtime ?? defaultRuntime;
   const runOnce = opts.runOnce ?? runHeartbeatOnce;
   const state = {
-    cfg: opts.cfg ?? loadConfig(),
+    cfg: opts.cfg ?? getRuntimeConfig(),
     runtime,
     schedulerSeed: resolveHeartbeatSchedulerSeed(opts.stableSchedulerSeed),
     agents: new Map<string, HeartbeatAgentState>(),

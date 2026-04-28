@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { loadConfig } from "../../config/config.js";
 import {
   resolveSessionFilePath,
   resolveSessionFilePathOptions,
@@ -93,6 +92,7 @@ function setCostUsageCache(cacheKey: string, entry: CostUsageCacheEntry): void {
 function resolveSessionUsageFileOrRespond(
   key: string,
   respond: RespondFn,
+  config: OpenClawConfig,
 ): {
   config: OpenClawConfig;
   entry: SessionEntry | undefined;
@@ -100,7 +100,6 @@ function resolveSessionUsageFileOrRespond(
   sessionId: string;
   sessionFile: string;
 } | null {
-  const config = loadConfig();
   const { entry, storePath } = loadSessionEntry(key);
 
   // For discovered sessions (not in store), try using key as sessionId directly
@@ -398,8 +397,8 @@ export const usageHandlers: GatewayRequestHandlers = {
     const summary = await loadProviderUsageSummary();
     respond(true, summary, undefined);
   },
-  "usage.cost": async ({ respond, params }) => {
-    const config = loadConfig();
+  "usage.cost": async ({ respond, params, context }) => {
+    const config = context.getRuntimeConfig();
     const { startMs, endMs } = parseDateRange({
       startDate: params?.startDate,
       endDate: params?.endDate,
@@ -410,7 +409,7 @@ export const usageHandlers: GatewayRequestHandlers = {
     const summary = await loadCostUsageSummaryCached({ startMs, endMs, config });
     respond(true, summary, undefined);
   },
-  "sessions.usage": async ({ respond, params }) => {
+  "sessions.usage": async ({ respond, params, context }) => {
     if (!validateSessionsUsageParams(params)) {
       respond(
         false,
@@ -424,7 +423,7 @@ export const usageHandlers: GatewayRequestHandlers = {
     }
 
     const p = params;
-    const config = loadConfig();
+    const config = context.getRuntimeConfig();
     const { startMs, endMs } = parseDateRange({
       startDate: p.startDate,
       endDate: p.endDate,
@@ -852,7 +851,7 @@ export const usageHandlers: GatewayRequestHandlers = {
 
     respond(true, result, undefined);
   },
-  "sessions.usage.timeseries": async ({ respond, params }) => {
+  "sessions.usage.timeseries": async ({ respond, params, context }) => {
     const key = normalizeOptionalString(params?.key) ?? null;
     if (!key) {
       respond(
@@ -863,7 +862,7 @@ export const usageHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const resolved = resolveSessionUsageFileOrRespond(key, respond);
+    const resolved = resolveSessionUsageFileOrRespond(key, respond, context.getRuntimeConfig());
     if (!resolved) {
       return;
     }
@@ -889,7 +888,7 @@ export const usageHandlers: GatewayRequestHandlers = {
 
     respond(true, timeseries, undefined);
   },
-  "sessions.usage.logs": async ({ respond, params }) => {
+  "sessions.usage.logs": async ({ respond, params, context }) => {
     const key = normalizeOptionalString(params?.key) ?? null;
     if (!key) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "key is required for logs"));
@@ -901,7 +900,7 @@ export const usageHandlers: GatewayRequestHandlers = {
         ? Math.min(params.limit, 1000)
         : 200;
 
-    const resolved = resolveSessionUsageFileOrRespond(key, respond);
+    const resolved = resolveSessionUsageFileOrRespond(key, respond, context.getRuntimeConfig());
     if (!resolved) {
       return;
     }

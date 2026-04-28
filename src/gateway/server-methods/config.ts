@@ -5,9 +5,9 @@ import {
   parseConfigJson5,
   readConfigFileSnapshot,
   readConfigFileSnapshotForWrite,
+  replaceConfigFile,
   resolveConfigSnapshotHash,
   validateConfigObjectWithPlugins,
-  writeConfigFile,
 } from "../../config/config.js";
 import { formatConfigIssueLines } from "../../config/issue-format.js";
 import { applyMergePatch } from "../../config/merge-patch.js";
@@ -387,7 +387,7 @@ async function tryWriteRestartSentinelPayload(
 
 function loadSchemaWithPlugins(): ConfigSchemaResponse {
   // Note: We can't easily cache this, as there are no callback that can invalidate
-  // our cache. However, loadConfig() and loadOpenClawPlugins() (called inside
+  // our cache. However, getRuntimeConfig() and loadOpenClawPlugins() (called inside
   // loadGatewayRuntimeConfigSchema) already cache their results, and buildConfigSchema()
   // is just a cheap transformation.
   return loadGatewayRuntimeConfigSchema();
@@ -456,7 +456,11 @@ export const configHandlers: GatewayRequestHandlers = {
     if (!(await ensureResolvableSecretRefsOrRespond({ config: parsed.config, respond }))) {
       return;
     }
-    await writeConfigFile(parsed.config, writeOptions);
+    await replaceConfigFile({
+      nextConfig: parsed.config,
+      writeOptions,
+      afterWrite: { mode: "auto" },
+    });
     respond(
       true,
       {
@@ -576,7 +580,11 @@ export const configHandlers: GatewayRequestHandlers = {
       snapshot.config,
       validated.config,
     );
-    await writeConfigFile(validated.config, writeOptions);
+    await replaceConfigFile({
+      nextConfig: validated.config,
+      writeOptions,
+      afterWrite: { mode: "auto" },
+    });
 
     const { sessionKey, note, restartDelayMs, deliveryContext, threadId } =
       resolveConfigRestartRequest(params);
@@ -649,7 +657,11 @@ export const configHandlers: GatewayRequestHandlers = {
     // Compare before the write so we invalidate clients authenticated against the
     // previous shared secret immediately after the config update succeeds.
     const disconnectSharedAuthClients = didSharedGatewayAuthChange(snapshot.config, parsed.config);
-    await writeConfigFile(parsed.config, writeOptions);
+    await replaceConfigFile({
+      nextConfig: parsed.config,
+      writeOptions,
+      afterWrite: { mode: "auto" },
+    });
 
     const { sessionKey, note, restartDelayMs, deliveryContext, threadId } =
       resolveConfigRestartRequest(params);
@@ -716,57 +728,6 @@ export const configHandlers: GatewayRequestHandlers = {
         { ok: false, path: configPath, error: "failed to open config file" },
         undefined,
       );
-    }
-  },
-  // FORK 2026-04-18: open an arbitrary absolute file path in the system's
-  // default viewer (xdg-open on Linux, `open` on macOS, Start-Process on
-  // Windows). Used by Tinker UI links to let the user click e.g.
-  // fractal-prompt.md and have it open in their OS markdown handler.
-  //
-  // Safety: path MUST be absolute (start with "/"), MUST NOT contain
-  // ".." segments, and MUST exist as a regular file. No shell expansion —
-  // resolveConfigOpenCommand/execConfigOpenCommand invoke execFile with
-  // the path as a single argv element.
-  "config.openExternalFile": async ({ params, respond, context }) => {
-    const fs = await import("node:fs");
-    const nodePath = await import("node:path");
-    const p = (params ?? {}) as { path?: unknown };
-    const raw = typeof p.path === "string" ? p.path : "";
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      respond(false, undefined, {
-        code: "INVALID_REQUEST" as const,
-        message: "config.openExternalFile: path required",
-      });
-      return;
-    }
-    const expanded =
-      trimmed.startsWith("~/") || trimmed === "~"
-        ? nodePath.join(process.env.HOME ?? "/", trimmed.slice(1))
-        : trimmed;
-    const resolved = nodePath.resolve(expanded);
-    if (!nodePath.isAbsolute(resolved) || resolved.includes("..")) {
-      respond(true, { ok: false, error: "path must be absolute" }, undefined);
-      return;
-    }
-    try {
-      const stat = fs.statSync(resolved);
-      if (!stat.isFile()) {
-        respond(true, { ok: false, error: "not a regular file" }, undefined);
-        return;
-      }
-    } catch {
-      respond(true, { ok: false, error: "file not found" }, undefined);
-      return;
-    }
-    try {
-      await execConfigOpenCommand(resolveConfigOpenCommand(resolved));
-      respond(true, { ok: true, path: resolved }, undefined);
-    } catch (error) {
-      context?.logGateway?.warn(
-        `config.openExternalFile failed path=${sanitizeLookupPathForLog(resolved)}: ${formatConfigOpenError(error)}`,
-      );
-      respond(true, { ok: false, path: resolved, error: "failed to open file" }, undefined);
     }
   },
 };
