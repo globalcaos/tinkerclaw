@@ -6,6 +6,8 @@ export type MemorySearchResult = {
   startLine: number;
   endLine: number;
   score: number;
+  vectorScore?: number;
+  textScore?: number;
   snippet: string;
   source: MemorySource;
   citation?: string;
@@ -62,7 +64,12 @@ export type MemoryProviderStatus = {
 export interface MemorySearchManager {
   search(
     query: string,
-    opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
+    opts?: {
+      maxResults?: number;
+      minScore?: number;
+      sessionKey?: string;
+      sources?: MemorySource[];
+    },
   ): Promise<MemorySearchResult[]>;
   readFile(params: {
     relPath: string;
