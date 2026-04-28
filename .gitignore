@@ -127,6 +127,7 @@ db/
 crm_data/
 sessions/
 !src/config/sessions/
+!src/sessions/
 employees.txt
 *.sqlite
 *.db
