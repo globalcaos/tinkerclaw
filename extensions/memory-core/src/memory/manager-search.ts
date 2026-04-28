@@ -1,4 +1,3 @@
-// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import type { DatabaseSync } from "node:sqlite";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
 import {
@@ -6,28 +5,11 @@ import {
   parseEmbedding,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
-/**
- * Update access tracking metadata for a set of chunk IDs.
- * Called after every search that returns results so we can track
- * how frequently each chunk is retrieved (used by Phase 1 metadata).
- */
-function trackAccess(db: DatabaseSync, ids: string[]): void {
-  if (ids.length === 0) {
-    return;
-  }
-  const now = Date.now();
-  const stmt = db.prepare(
-    `UPDATE chunks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?`,
-  );
-  for (const id of ids) {
-    stmt.run(now, id);
-  }
-}
-
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
 const FTS_QUERY_TOKEN_RE = /[\p{L}\p{N}_]+/gu;
 const SHORT_CJK_TRIGRAM_RE = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u3131-\u3163]/u;
+const VECTOR_KNN_OVERSAMPLE_FACTOR = 8;
 
 export type SearchSource = string;
 
@@ -89,6 +71,16 @@ function buildMatchQueryFromTerms(terms: string[]): string | null {
   return quoted.join(" AND ");
 }
 
+function readCount(row: { count?: number | bigint } | undefined): number {
+  if (typeof row?.count === "bigint") {
+    return Number(row.count);
+  }
+  if (typeof row?.count === "number") {
+    return row.count;
+  }
+  return 0;
+}
+
 function planKeywordSearch(params: {
   query: string;
   ftsTokenizer?: "unicode61" | "trigram";
@@ -141,32 +133,68 @@ export async function searchVector(params: {
     return [];
   }
   if (await params.ensureVectorReady(params.queryVec.length)) {
-    const rows = params.db
-      .prepare(
-        `SELECT c.id, c.path, c.start_line, c.end_line, c.text,\n` +
-          `       c.source,\n` +
-          `       vec_distance_cosine(v.embedding, ?) AS dist\n` +
-          `  FROM ${params.vectorTable} v\n` +
-          `  JOIN chunks c ON c.id = v.id\n` +
-          ` WHERE c.model = ?${params.sourceFilterVec.sql}\n` +
-          ` ORDER BY dist ASC\n` +
-          ` LIMIT ?`,
-      )
-      .all(
-        vectorToBlob(params.queryVec),
-        params.providerModel,
-        ...params.sourceFilterVec.params,
-        params.limit,
-      ) as Array<{
-      id: string;
-      path: string;
-      start_line: number;
-      end_line: number;
-      text: string;
-      source: SearchSource;
-      dist: number;
-    }>;
-    const results = rows.map((row) => ({
+    // Use sqlite-vec's native KNN (MATCH ? AND k = ?) for candidate selection,
+    // which runs in ~O(log N + k) via the vec0 index, instead of the previous
+    // full-table scan over vec_distance_cosine(). Keep vec_distance_cosine() in
+    // the SELECT so `score = 1 - dist` stays in the cosine [0, 1] range the
+    // downstream merge/minScore pipeline expects. (chunks_vec is created with
+    // sqlite-vec's default L2 distance, so v.distance cannot be used directly
+    // for scoring.)
+    const qBlob = vectorToBlob(params.queryVec);
+    const runVectorQuery = (candidateLimit: number) =>
+      params.db
+        .prepare(
+          `SELECT c.id, c.path, c.start_line, c.end_line, c.text,\n` +
+            `       c.source,\n` +
+            `       vec_distance_cosine(v.embedding, ?) AS dist\n` +
+            `  FROM ${params.vectorTable} v\n` +
+            `  JOIN chunks c ON c.id = v.id\n` +
+            ` WHERE v.embedding MATCH ? AND k = ? AND c.model = ?${params.sourceFilterVec.sql}\n` +
+            ` ORDER BY dist ASC\n` +
+            ` LIMIT ?`,
+        )
+        .all(
+          qBlob,
+          qBlob,
+          candidateLimit,
+          params.providerModel,
+          ...params.sourceFilterVec.params,
+          params.limit,
+        ) as Array<{
+        id: string;
+        path: string;
+        start_line: number;
+        end_line: number;
+        text: string;
+        source: SearchSource;
+        dist: number;
+      }>;
+
+    const candidateLimit = params.limit * VECTOR_KNN_OVERSAMPLE_FACTOR;
+    let rows = runVectorQuery(candidateLimit);
+    if (rows.length < params.limit) {
+      const matchingChunkCount = readCount(
+        params.db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM chunks c WHERE c.model = ?${params.sourceFilterVec.sql}`,
+          )
+          .get(params.providerModel, ...params.sourceFilterVec.params) as
+          | { count?: number | bigint }
+          | undefined,
+      );
+      if (matchingChunkCount > rows.length) {
+        const vectorCount = readCount(
+          params.db.prepare(`SELECT COUNT(*) AS count FROM ${params.vectorTable}`).get() as
+            | { count?: number | bigint }
+            | undefined,
+        );
+        if (vectorCount > candidateLimit) {
+          rows = runVectorQuery(vectorCount);
+        }
+      }
+    }
+
+    return rows.map((row) => ({
       id: row.id,
       path: row.path,
       startLine: row.start_line,
@@ -175,11 +203,6 @@ export async function searchVector(params: {
       snippet: truncateUtf16Safe(row.text, params.snippetMaxChars),
       source: row.source,
     }));
-    trackAccess(
-      params.db,
-      results.map((r) => r.id),
-    );
-    return results;
   }
 
   const candidates = listChunks({
@@ -193,7 +216,7 @@ export async function searchVector(params: {
       score: cosineSimilarity(params.queryVec, chunk.embedding),
     }))
     .filter((entry) => Number.isFinite(entry.score));
-  const fallbackResults = scored
+  return scored
     .toSorted((a, b) => b.score - a.score)
     .slice(0, params.limit)
     .map((entry) => ({
@@ -205,11 +228,6 @@ export async function searchVector(params: {
       snippet: truncateUtf16Safe(entry.chunk.text, params.snippetMaxChars),
       source: entry.chunk.source,
     }));
-  trackAccess(
-    params.db,
-    fallbackResults.map((r) => r.id),
-  );
-  return fallbackResults;
 }
 
 export function listChunks(params: {

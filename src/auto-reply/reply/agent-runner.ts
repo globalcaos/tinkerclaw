@@ -871,6 +871,7 @@ export async function runReplyAgent(params: {
   sessionEntry?: SessionEntry;
   sessionStore?: Record<string, SessionEntry>;
   sessionKey?: string;
+  runtimePolicySessionKey?: string;
   storePath?: string;
   defaultModel: string;
   agentCfgContextTokens?: number;
@@ -907,6 +908,7 @@ export async function runReplyAgent(params: {
     sessionEntry,
     sessionStore,
     sessionKey,
+    runtimePolicySessionKey,
     storePath,
     defaultModel,
     agentCfgContextTokens,
@@ -1116,6 +1118,7 @@ export async function runReplyAgent(params: {
       sessionEntry: activeSessionEntry,
       sessionStore: activeSessionStore,
       sessionKey,
+      runtimePolicySessionKey,
       storePath,
       isHeartbeat,
       replyOperation,
@@ -1135,6 +1138,7 @@ export async function runReplyAgent(params: {
       sessionEntry: activeSessionEntry,
       sessionStore: activeSessionStore,
       sessionKey,
+      runtimePolicySessionKey,
       storePath,
       isHeartbeat,
       replyOperation,
@@ -1218,6 +1222,7 @@ export async function runReplyAgent(params: {
       resetSessionAfterRoleOrderingConflict,
       isHeartbeat,
       sessionKey,
+      runtimePolicySessionKey,
       getActiveSessionEntry: () => activeSessionEntry,
       activeSessionStore,
       storePath,
