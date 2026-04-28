@@ -27,23 +27,50 @@ import { setResumeSessionId } from "./session-map.js";
 
 const log = createSubsystemLogger("tinkerclaw-cc-bridge");
 
-// FORK 2026-04-18: read the amygdala + fractal prompt .md files at spawn
-// time and append their FULL text to the system prompt. Keeps the per-turn
-// UI injection tiny ("follow your system-prompt rules") while giving Opus
-// the actual rule text in its permanent context. Read once per worker
-// spawn; cost paid only on the ~12s cold-start, not per turn.
+// FORK 2026-04-18 (paths de-hardcoded 2026-04-28 per bible §5.76):
+// read the amygdala + fractal prompt .md files at spawn time and append
+// their FULL text to the system prompt. Keeps the per-turn UI injection
+// tiny ("follow your system-prompt rules") while giving the model the
+// actual rule text in its permanent context. Read once per worker spawn;
+// cost paid only on the ~12s cold-start, not per turn.
+//
+// Resolution order per bible §5.76 (config → workspace → bundled):
+//   1. env var override                  (TINKERCLAW_AMYGDALA_PROMPT etc.)
+//   2. ~/.openclaw/workspace/<name>.md   (user override, outside repo)
+//   3. $OPENCLAW_BUNDLED_PLUGINS_DIR/<plugin>/<name>.md  (runtime bundle)
+//   4. ~/src/tinkerclaw/extensions/<plugin>/<name>.md   (dev clone)
+//   5. relative to this module's __dirname              (npm-style install)
+function resolvePromptFile(plugin: string, file: string, envVar: string): string[] {
+  const candidates: string[] = [];
+  const fromEnv = process.env[envVar];
+  if (fromEnv) {
+    candidates.push(fromEnv);
+  }
+  candidates.push(path.join(os.homedir(), ".openclaw", "workspace", file));
+  const bundleRoot = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+  if (bundleRoot) {
+    candidates.push(path.join(bundleRoot, plugin, file));
+  }
+  candidates.push(path.join(os.homedir(), "src", "tinkerclaw", "extensions", plugin, file));
+  candidates.push(path.join(__dirname, "..", "..", plugin, file));
+  return candidates;
+}
 const PROMPT_FILES: Array<{ label: string; paths: string[] }> = [
   {
     label: "amygdala",
-    paths: [
-      "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-learned-intuition/amygdala-prompt.md",
-    ],
+    paths: resolvePromptFile(
+      "tinkerclaw-learned-intuition",
+      "amygdala-prompt.md",
+      "TINKERCLAW_AMYGDALA_PROMPT",
+    ),
   },
   {
     label: "fractal",
-    paths: [
-      "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md",
-    ],
+    paths: resolvePromptFile(
+      "tinkerclaw-fractal-reflection",
+      "fractal-prompt.md",
+      "TINKERCLAW_FRACTAL_PROMPT",
+    ),
   },
 ];
 function readPromptFile(paths: string[]): string | null {
@@ -71,11 +98,17 @@ function resolveRecipeStateCliPath(): string {
   return resolveForkScript("openclaw-recipe-state.mjs", "OPENCLAW_RECIPE_STATE_BIN");
 }
 function resolveForkScript(name: string, envVar: string): string {
+  // FORK 2026-04-28 (bible §5.76): no `/home/<user>/...` literals.
+  // Order: env override → bundled scripts dir (production via
+  // OPENCLAW_BUNDLED_PLUGINS_DIR's parent) → ~/src/tinkerclaw clone (dev) →
+  // workspace-side script override.
+  const bundleRoot = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
   const candidates = [
     process.env[envVar] ?? "",
-    `/home/<user>/src/tinkerclaw/scripts/${name}`,
+    bundleRoot ? path.join(bundleRoot, "..", "scripts", name) : "",
     path.join(os.homedir(), "src", "tinkerclaw", "scripts", name),
     path.join(os.homedir(), ".openclaw", "workspace", "scripts", name),
+    path.join(__dirname, "..", "..", "..", "scripts", name),
   ].filter(Boolean);
   for (const p of candidates) {
     try {
@@ -263,10 +296,17 @@ function buildToolChoiceBlock(): string {
 }
 
 function resolveRecipesDirPath(): string {
+  // FORK 2026-04-28 (bible §5.76): no `/home/<user>/...` literals.
+  // Order: env override → workspace recipes dir (user-added recipes) →
+  // bundled prefrontal recipes (shipped catalog) → ~/src clone (dev).
+  const bundleRoot = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
   const candidates = [
-    "/home/<user>/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes",
+    process.env.TINKERCLAW_RECIPES_DIR ?? "",
+    path.join(os.homedir(), ".openclaw", "workspace", "recipes"),
+    bundleRoot ? path.join(bundleRoot, "tinkerclaw-prefrontal", "recipes") : "",
     path.join(os.homedir(), "src", "tinkerclaw", "extensions", "tinkerclaw-prefrontal", "recipes"),
-  ];
+    path.join(__dirname, "..", "..", "tinkerclaw-prefrontal", "recipes"),
+  ].filter(Boolean);
   for (const p of candidates) {
     try {
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
@@ -659,8 +699,29 @@ export class ClaudeCodeWorker extends EventEmitter {
     // to what a nested claude expects.)
     cleanEnv.CLAUDECODE = "1";
     cleanEnv.CLAUDE_CODE_ENTRYPOINT = "cli";
+    // FORK 2026-04-28 (bible §5.76): probe for the user's claude install at
+    // runtime instead of hardcoding `/home/<user>/.local/...`. claude-cli
+    // installs land under `~/.local/share/claude/versions/latest` for the
+    // upstream installer; if that's missing, omit the env var entirely and
+    // let claude-cli detect its own install path. The var is a marker that
+    // tells nested CC sessions where the parent install lives — empty is
+    // better than wrong.
     if (!cleanEnv.CLAUDE_CODE_EXECPATH) {
-      cleanEnv.CLAUDE_CODE_EXECPATH = "/home/<user>/.local/share/claude/versions/latest";
+      const probedExecPath = path.join(
+        os.homedir(),
+        ".local",
+        "share",
+        "claude",
+        "versions",
+        "latest",
+      );
+      try {
+        if (fs.existsSync(probedExecPath)) {
+          cleanEnv.CLAUDE_CODE_EXECPATH = probedExecPath;
+        }
+      } catch {
+        /* leave unset; claude-cli detects its own install */
+      }
     }
     // FORK 2026-04-20, REGRESSION FIXED 2026-04-24:
     // The original provider-agnostic subagent bridge commit (601e8a3561)
