@@ -152,6 +152,32 @@ describe("stripAssistantInternalScaffolding", () => {
       );
     });
 
+    it("strips standalone bracketed local-model tool blocks", () => {
+      expectVisibleText(
+        [
+          "Let me check.",
+          "[mempalace_mempalace_search]",
+          '{"query":"codename","wing":"personal","room":"identities"}',
+          "[END_TOOL_REQUEST]",
+          "Done.",
+        ].join("\n"),
+        "Let me check.\n\nDone.",
+      );
+    });
+
+    it("strips bracketed local-model tool blocks with named closing tags", () => {
+      expectVisibleText(
+        [
+          "Before",
+          "[mempalace_mempalace_search]",
+          '{"query":"codename","limit":1}',
+          "[/mempalace_mempalace_search]",
+          "After",
+        ].join("\n"),
+        "Before\n\nAfter",
+      );
+    });
+
     it("strips Qwen-style <tool_call> with nested <function=...> XML", () => {
       expectVisibleText(
         "prefix\n<tool_call><function=read><parameter=path>/home/user</parameter></function></tool_call>\nsuffix",
@@ -502,6 +528,12 @@ describe("sanitizeAssistantVisibleText", () => {
 
     expect(sanitizeAssistantVisibleText(input)).toBe("Visible answer");
   });
+
+  it("drops malformed reasoning before orphan close tags when final text follows", () => {
+    expect(sanitizeAssistantVisibleText("private chain of thought </think> Visible answer")).toBe(
+      "Visible answer",
+    );
+  });
 });
 
 describe("sanitizeAssistantVisibleTextWithProfile", () => {
@@ -509,6 +541,15 @@ describe("sanitizeAssistantVisibleTextWithProfile", () => {
     const input = ["Hi ", '<tool_result>{"output":"hidden"}</tool_result>', "there"].join("");
 
     expect(sanitizeAssistantVisibleTextWithProfile(input, "history")).toBe("Hi there");
+  });
+
+  it("uses the history profile to drop malformed reasoning before orphan close tags", () => {
+    expect(
+      sanitizeAssistantVisibleTextWithProfile(
+        "private chain of thought </think> Visible answer",
+        "history",
+      ),
+    ).toBe(" Visible answer");
   });
 
   it("uses the internal-scaffolding profile to preserve downgraded tool text behavior", () => {

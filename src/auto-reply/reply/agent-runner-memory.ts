@@ -542,7 +542,7 @@ export async function runPreflightCompactionIfNeeded(params: {
   if (entry) {
     const previousSessionId = params.followupRun.run.sessionId;
     params.followupRun.run.sessionId = entry.sessionId;
-    params.replyOperation.updateSessionId(entry.sessionId);
+    params.replyOperation?.updateSessionId(entry.sessionId);
     if (entry.sessionFile) {
       params.followupRun.run.sessionFile = entry.sessionFile;
     }
