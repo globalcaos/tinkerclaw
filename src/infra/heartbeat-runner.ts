@@ -749,7 +749,7 @@ function resolveHeartbeatRunPrompt(params: {
         .map((event) => event.text)
         .join("\n")
     : hasExecCompletion
-      ? buildExecEventPrompt({ deliverToUser: params.canRelayToUser })
+      ? buildExecEventPrompt(pendingEvents, { deliverToUser: params.canRelayToUser })
       : hasCronEvents
         ? buildCronEventPrompt(cronEvents, { deliverToUser: params.canRelayToUser })
         : resolveHeartbeatPrompt(params.cfg, params.heartbeat);
