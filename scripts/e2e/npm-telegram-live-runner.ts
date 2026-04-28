@@ -1,11 +1,9 @@
-#!/usr/bin/env -S node --import tsx
-// Telegram npm-live Docker harness.
-// Runs QA live transport code against the published package installed in Docker.
+// Telegram package Docker harness.
+// Runs QA live transport code against the package candidate installed in Docker.
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { runTelegramQaLive } from "../../extensions/qa-lab/src/live-transports/telegram/telegram-live.runtime.ts";
 
 function parseBoolean(value: string | undefined) {
   const normalized = value?.trim().toLowerCase();
@@ -25,10 +23,6 @@ function resolveCredentialSource(env: NodeJS.ProcessEnv) {
 
 function resolveCredentialRole(env: NodeJS.ProcessEnv) {
   return env.OPENCLAW_NPM_TELEGRAM_CREDENTIAL_ROLE ?? env.OPENCLAW_QA_CREDENTIAL_ROLE;
-}
-
-function formatErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function resolveTrustedOpenClawCommand(rawCommand: string) {
@@ -56,6 +50,8 @@ async function resolveTrustedOpenClawCommand(rawCommand: string) {
 }
 
 async function main() {
+  const { runTelegramQaLive } =
+    await import("../../extensions/qa-lab/src/live-transports/telegram/telegram-live.runtime.ts");
   const rawSutOpenClawCommand = process.env.OPENCLAW_NPM_TELEGRAM_SUT_COMMAND?.trim();
   if (!rawSutOpenClawCommand) {
     throw new Error("Missing OPENCLAW_NPM_TELEGRAM_SUT_COMMAND.");
@@ -81,9 +77,9 @@ async function main() {
     credentialRole: resolveCredentialRole(process.env),
   });
 
-  process.stdout.write(`NPM Telegram QA report: ${result.reportPath}\n`);
-  process.stdout.write(`NPM Telegram QA summary: ${result.summaryPath}\n`);
-  process.stdout.write(`NPM Telegram QA observed messages: ${result.observedMessagesPath}\n`);
+  process.stdout.write(`Package Telegram QA report: ${result.reportPath}\n`);
+  process.stdout.write(`Package Telegram QA summary: ${result.summaryPath}\n`);
+  process.stdout.write(`Package Telegram QA observed messages: ${result.observedMessagesPath}\n`);
   if (
     !parseBoolean(process.env.OPENCLAW_NPM_TELEGRAM_ALLOW_FAILURES) &&
     result.scenarios.some((scenario) => scenario.status === "fail")
@@ -92,9 +88,20 @@ async function main() {
   }
 }
 
+async function formatRunnerErrorMessage(error: unknown) {
+  try {
+    const { formatErrorMessage } = await import("../../dist/infra/errors.js");
+    return formatErrorMessage(error);
+  } catch {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => {
-    process.stderr.write(`npm telegram live e2e failed: ${formatErrorMessage(error)}\n`);
+  main().catch(async (error) => {
+    process.stderr.write(
+      `package telegram live e2e failed: ${await formatRunnerErrorMessage(error)}\n`,
+    );
     process.exitCode = 1;
   });
 }

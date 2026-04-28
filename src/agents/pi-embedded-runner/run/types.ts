@@ -77,6 +77,7 @@ export type EmbeddedRunAttemptResult = {
         handled?: false;
       };
   sessionIdUsed: string;
+  sessionFileUsed?: string;
   diagnosticTrace?: DiagnosticTraceContext;
   agentHarnessId?: string;
   agentHarnessResultClassification?: "empty" | "reasoning-only" | "planning-only";
