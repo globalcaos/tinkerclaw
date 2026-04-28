@@ -12,7 +12,14 @@ import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
-import { listEmbeddedExtensionFactories } from "../../plugins/embedded-extension-factory.js";
+// FORK 2026-04-28 chunk-13: upstream removed embedded-extension-factory.
+// listEmbeddedExtensionFactories() has been replaced by an in-tree iterator
+// over the new plugin runtime (see chunk-13 lessons). Stubbed inline here
+// so the runtime keeps working until apply-fork-wiring grows a patch for
+// the new lookup path.
+function listEmbeddedExtensionFactories(): never[] {
+  return [];
+}
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";

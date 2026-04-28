@@ -181,7 +181,8 @@ ui/src/ui/theme-variants.browser.test.ts
 ui/src/ui/__screenshots__
 ui/src/ui/views/__screenshots__
 ui/.vitest-attachments
-docs/superpowers
+docs/superpowers/plans/
+docs/superpowers/brainstorm/
 
 # Deprecated changelog fragment workflow
 changelog/fragments/
