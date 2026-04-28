@@ -103,6 +103,8 @@ USER.md
 .agents/skills/*
 !.agents/skills/blacksmith-testbox/
 !.agents/skills/blacksmith-testbox/**
+!.agents/skills/discord-clawd/
+!.agents/skills/discord-clawd/**
 !.agents/skills/openclaw-ghsa-maintainer/
 !.agents/skills/openclaw-ghsa-maintainer/**
 !.agents/skills/openclaw-parallels-smoke/
