@@ -17,13 +17,19 @@ discovery, native thread resume, native compaction, and app-server execution.
 OpenClaw still owns chat channels, session files, model selection, tools,
 approvals, media delivery, and the visible transcript mirror.
 
-Native Codex turns also respect the shared `before_prompt_build`,
-`before_compaction`, and `after_compaction` plugin hooks, so prompt shims and
-compaction-aware automation can stay aligned with the PI harness.
-Native Codex turns also respect the shared `before_prompt_build`,
-`before_compaction`, `after_compaction`, `llm_input`, `llm_output`, and
-`agent_end` plugin hooks, so prompt shims, compaction-aware automation, and
-lifecycle observers can stay aligned with the PI harness.
+Native Codex turns also respect the shared plugin hooks so prompt shims,
+compaction-aware automation, tool middleware, and lifecycle observers stay
+aligned with the PI harness:
+
+- `before_prompt_build`
+- `before_compaction`, `after_compaction`
+- `llm_input`, `llm_output`
+- `tool_result`, `after_tool_call`
+- `before_message_write`
+- `agent_end`
+
+Bundled plugins can also register a Codex app-server extension factory to add
+async `tool_result` middleware.
 
 The harness is off by default. It is selected only when the `codex` plugin is
 enabled and the resolved model is a `codex/*` model, or when you explicitly
@@ -298,44 +304,9 @@ To opt in to Codex guardian-reviewed approvals, set `appServer.mode:
 }
 ```
 
-Guardian mode expands to:
+Guardian is a native Codex approval reviewer. When Codex asks to leave the sandbox, write outside the workspace, or add permissions like network access, Codex routes that approval request to a reviewer subagent instead of a human prompt. The reviewer applies Codex's risk framework and approves or denies the specific request. Use Guardian when you want more guardrails than YOLO mode but still need unattended agents to make progress.
 
-```json5
-{
-  plugins: {
-    entries: {
-      codex: {
-        enabled: true,
-        config: {
-          appServer: {
-            mode: "guardian",
-            approvalPolicy: "on-request",
-            approvalsReviewer: "guardian_subagent",
-            sandbox: "workspace-write",
-          },
-        },
-      },
-    },
-  },
-}
-```
-
-Guardian is a native Codex approval reviewer. When Codex asks to leave the
-sandbox, write outside the workspace, or add permissions such as network access,
-Codex routes that approval request to a reviewer subagent instead of a human
-prompt. The reviewer gathers context and applies Codex's risk framework, then
-approves or denies the specific request. Guardian is useful when you want more
-guardrails than YOLO mode but still need unattended agents and heartbeats to
-make progress.
-
-The Docker live harness includes a Guardian probe when
-`OPENCLAW_LIVE_CODEX_HARNESS_GUARDIAN_PROBE=1`. It starts the Codex harness in
-Guardian mode, verifies that a benign escalated shell command is approved, and
-verifies that a fake-secret upload to an untrusted external destination is
-denied so the agent asks back for explicit approval.
-
-The individual policy fields still win over `mode`, so advanced deployments can
-mix the preset with explicit choices.
+The `guardian` preset expands to `approvalPolicy: "on-request"`, `approvalsReviewer: "guardian_subagent"`, and `sandbox: "workspace-write"`. Individual policy fields still override `mode`, so advanced deployments can mix the preset with explicit choices.
 
 For an already-running app-server, use WebSocket transport:
 

@@ -766,6 +766,10 @@ export async function runPreparedReply(
     },
   };
 
+  // FORK 2026-04-28: replyThreadingOverride was previously computed and passed
+  // to runReplyAgent here, but chunk-9 of the upstream catch-up dropped that
+  // parameter from the target signature. Re-add when fork's reply-threading
+  // override needs to re-land. See apply-fork-wiring patches log.
   return runReplyAgent({
     commandBody: prefixedCommandBody,
     followupRun,
@@ -799,5 +803,8 @@ export async function runPreparedReply(
     shouldInjectGroupIntro,
     typingMode,
     resetTriggered: effectiveResetTriggered,
+    // FORK: replyThreadingOverride dropped in chunk-9 — target function type
+    // doesn't accept it. Re-wire when fork's reply-threading override needs to
+    // re-land via apply-fork-wiring.
   });
 }
