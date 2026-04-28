@@ -128,6 +128,12 @@ const explicitNeverBundleDependencies = [
   "@lancedb/lancedb",
   "@matrix-org/matrix-sdk-crypto-nodejs",
   "matrix-js-sdk",
+  // FORK 2026-03-03: native addons must NEVER be inlined — they reference
+  // __filename which is undefined in ESM bundles. better-sqlite3 + bindings
+  // crash gateway boot if bundled. Upstream merges wipe this; re-add via
+  // apply-fork-wiring after every merge.
+  "better-sqlite3",
+  "bindings",
   ...bundledPluginRuntimeDependencies,
 ].toSorted((left, right) => left.localeCompare(right));
 
