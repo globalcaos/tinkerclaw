@@ -1,23 +1,21 @@
 ---
-summary: "Generate and edit images using configured providers (OpenAI, Google Gemini, fal, MiniMax, ComfyUI, Vydra, xAI)"
+summary: "Generate and edit images using configured providers (OpenAI, OpenAI Codex OAuth, Google Gemini, fal, MiniMax, ComfyUI, Vydra, xAI)"
 read_when:
   - Generating images via the agent
   - Configuring image generation providers and models
   - Understanding the image_generate tool parameters
-title: "Image Generation"
+title: "Image generation"
 ---
-
-# Image Generation
 
 The `image_generate` tool lets the agent create and edit images using your configured providers. Generated images are delivered automatically as media attachments in the agent's reply.
 
 <Note>
-The tool only appears when at least one image generation provider is available. If you don't see `image_generate` in your agent's tools, configure `agents.defaults.imageGenerationModel` or set up a provider API key.
+The tool only appears when at least one image generation provider is available. If you don't see `image_generate` in your agent's tools, configure `agents.defaults.imageGenerationModel`, set up a provider API key, or sign in with OpenAI Codex OAuth.
 </Note>
 
 ## Quick start
 
-1. Set an API key for at least one provider (for example `OPENAI_API_KEY` or `GEMINI_API_KEY`).
+1. Set an API key for at least one provider (for example `OPENAI_API_KEY` or `GEMINI_API_KEY`) or sign in with OpenAI Codex OAuth.
 2. Optionally set your preferred model:
 
 ```json5
@@ -32,15 +30,21 @@ The tool only appears when at least one image generation provider is available. 
 }
 ```
 
-3. Ask the agent: _"Generate an image of a friendly lobster mascot."_
+Codex OAuth uses the same `openai/gpt-image-2` model ref. When an
+`openai-codex` OAuth profile is configured, OpenClaw routes image requests
+through that same OAuth profile instead of first trying `OPENAI_API_KEY`.
+Explicit custom `models.providers.openai` image config, such as an API key or
+custom/Azure base URL, opts back into the direct OpenAI Images API route.
+
+3. Ask the agent: _"Generate an image of a friendly robot mascot."_
 
 The agent calls `image_generate` automatically. No tool allow-listing needed — it's enabled by default when a provider is available.
 
 ## Supported providers
 
-| Provider | Default model                    | Edit support                       | API key                                               |
+| Provider | Default model                    | Edit support                       | Auth                                                  |
 | -------- | -------------------------------- | ---------------------------------- | ----------------------------------------------------- |
-| OpenAI   | `gpt-image-2`                    | Yes (up to 5 images)               | `OPENAI_API_KEY`                                      |
+| OpenAI   | `gpt-image-2`                    | Yes (up to 4 images)               | `OPENAI_API_KEY` or OpenAI Codex OAuth                |
 | Google   | `gemini-3.1-flash-image-preview` | Yes                                | `GEMINI_API_KEY` or `GOOGLE_API_KEY`                  |
 | fal      | `fal-ai/flux/dev`                | Yes                                | `FAL_KEY`                                             |
 | MiniMax  | `image-01`                       | Yes (subject reference)            | `MINIMAX_API_KEY` or MiniMax OAuth (`minimax-portal`) |
@@ -56,18 +60,45 @@ Use `action: "list"` to inspect available providers and models at runtime:
 
 ## Tool parameters
 
-| Parameter     | Type     | Description                                                                           |
-| ------------- | -------- | ------------------------------------------------------------------------------------- |
-| `prompt`      | string   | Image generation prompt (required for `action: "generate"`)                           |
-| `action`      | string   | `"generate"` (default) or `"list"` to inspect providers                               |
-| `model`       | string   | Provider/model override, e.g. `openai/gpt-image-2`                                    |
-| `image`       | string   | Single reference image path or URL for edit mode                                      |
-| `images`      | string[] | Multiple reference images for edit mode (up to 5)                                     |
-| `size`        | string   | Size hint: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`            |
-| `aspectRatio` | string   | Aspect ratio: `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9` |
-| `resolution`  | string   | Resolution hint: `1K`, `2K`, or `4K`                                                  |
-| `count`       | number   | Number of images to generate (1–4)                                                    |
-| `filename`    | string   | Output filename hint                                                                  |
+<ParamField path="prompt" type="string" required>
+Image generation prompt. Required for `action: "generate"`.
+</ParamField>
+
+<ParamField path="action" type="'generate' | 'list'" default="generate">
+Use `"list"` to inspect available providers and models at runtime.
+</ParamField>
+
+<ParamField path="model" type="string">
+Provider/model override, e.g. `openai/gpt-image-2`.
+</ParamField>
+
+<ParamField path="image" type="string">
+Single reference image path or URL for edit mode.
+</ParamField>
+
+<ParamField path="images" type="string[]">
+Multiple reference images for edit mode (up to 5).
+</ParamField>
+
+<ParamField path="size" type="string">
+Size hint: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`.
+</ParamField>
+
+<ParamField path="aspectRatio" type="string">
+Aspect ratio: `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`.
+</ParamField>
+
+<ParamField path="resolution" type="'1K' | '2K' | '4K'">
+Resolution hint.
+</ParamField>
+
+<ParamField path="count" type="number">
+Number of images to generate (1–4).
+</ParamField>
+
+<ParamField path="filename" type="string">
+Output filename hint.
+</ParamField>
 
 Not all providers support all parameters. When a fallback provider supports a nearby geometry option instead of the exact requested one, OpenClaw remaps to the closest supported size, aspect ratio, or resolution before submission. Truly unsupported overrides are still reported in the tool result.
 
@@ -126,7 +157,13 @@ OpenAI, Google, and xAI support up to 5 reference images via the `images` parame
 
 ### OpenAI `gpt-image-2`
 
-OpenAI image generation defaults to `openai/gpt-image-2`. The older
+OpenAI image generation defaults to `openai/gpt-image-2`. If an
+`openai-codex` OAuth profile is configured, OpenClaw reuses the same OAuth
+profile used by Codex subscription chat models and sends the image request
+through the Codex Responses backend; it does not silently fall back to
+`OPENAI_API_KEY` for that request. To force direct OpenAI Images API routing,
+configure `models.providers.openai` explicitly with an API key, custom base URL,
+or Azure endpoint. The older
 `openai/gpt-image-1` model can still be selected explicitly, but new OpenAI
 image-generation and image-editing requests should use `gpt-image-2`.
 

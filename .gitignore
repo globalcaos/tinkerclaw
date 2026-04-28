@@ -144,6 +144,7 @@ skills/
 !.agents/skills/
 !src/agents/skills/
 !extensions/*/skills/
+!/skills/
 config/
 !src/config/
 !extensions/*/src/config*
