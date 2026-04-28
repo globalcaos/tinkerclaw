@@ -1,7 +1,10 @@
 {
   "id": "tinkerclaw-identity-persistence",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Identity Persistence",
-  "description": "CORTEX — Persona injection from SOUL.md, EWMA SyncScore drift detection, mid-context identity reinforcement, and observation extraction",
+  "description": "CORTEX \u2014 Persona injection from SOUL.md, EWMA SyncScore drift detection, mid-context identity reinforcement, and observation extraction",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

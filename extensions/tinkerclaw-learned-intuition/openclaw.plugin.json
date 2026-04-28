@@ -1,7 +1,10 @@
 {
   "id": "tinkerclaw-learned-intuition",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Learned Intuition",
-  "description": "AMYGDALA — Neural safety gate trained on real failures. 10 ONNX networks evaluate every action. Falls back to rules when models unavailable.",
+  "description": "AMYGDALA \u2014 Neural safety gate trained on real failures. 10 ONNX networks evaluate every action. Falls back to rules when models unavailable.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -11,9 +14,18 @@
         "default": 1,
         "description": "Deployment phase (1=observe-only, 2+=active blocking)"
       },
-      "alphaPrudence": { "type": "number", "default": 0.0 },
-      "aegisEnabled": { "type": "boolean", "default": false },
-      "observeOnly": { "type": "boolean", "default": true },
+      "alphaPrudence": {
+        "type": "number",
+        "default": 0.0
+      },
+      "aegisEnabled": {
+        "type": "boolean",
+        "default": false
+      },
+      "observeOnly": {
+        "type": "boolean",
+        "default": true
+      },
       "modelsDir": {
         "type": "string",
         "description": "Path to ONNX models directory (defaults to ~/src/tinkerclaw/models/amygdala)"
