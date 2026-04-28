@@ -1,7 +1,10 @@
 {
   "id": "tinkerclaw-round-table",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Round Table",
-  "description": "SYNAPSE — Multi-model debate via RAAC protocol with cognitive diversity scoring. Makes cheap models smarter than expensive ones.",
+  "description": "SYNAPSE \u2014 Multi-model debate via RAAC protocol with cognitive diversity scoring. Makes cheap models smarter than expensive ones.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -11,7 +14,10 @@
         "enum": ["quick", "standard", "deep"],
         "default": "standard"
       },
-      "maxRounds": { "type": "number", "default": 6 }
+      "maxRounds": {
+        "type": "number",
+        "default": 6
+      }
     }
   }
 }
