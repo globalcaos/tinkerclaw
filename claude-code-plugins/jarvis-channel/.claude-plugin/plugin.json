@@ -1,0 +1,11 @@
+{
+  "name": "jarvis-channel",
+  "description": "Connect your Claude Code CLI to a running OpenClaw gateway. Adds an MCP server that exposes your Jarvis tools (memory, calendar, channels, etc.) to claude, plus slash commands to inspect gateway state.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Oscar Serra",
+    "url": "https://github.com/oscarserra"
+  },
+  "homepage": "https://github.com/oscarserra/tinkerclaw/tree/main/claude-code-plugins/jarvis-channel",
+  "license": "Apache-2.0"
+}
