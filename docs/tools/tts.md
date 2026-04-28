@@ -7,18 +7,21 @@ read_when:
 title: "Text-to-speech"
 ---
 
-OpenClaw can convert outbound replies into audio using ElevenLabs, Google Gemini, Gradium, Local CLI, Microsoft, MiniMax, OpenAI, Vydra, xAI, or Xiaomi MiMo.
+OpenClaw can convert outbound replies into audio using Azure Speech, ElevenLabs, Google Gemini, Gradium, Inworld, Local CLI, Microsoft, MiniMax, OpenAI, Volcengine, Vydra, xAI, or Xiaomi MiMo.
 It works anywhere OpenClaw can send audio.
 
 ## Supported services
 
+- **Azure Speech** (primary or fallback provider; uses the Azure AI Speech REST API)
 - **ElevenLabs** (primary or fallback provider)
 - **Google Gemini** (primary or fallback provider; uses Gemini API TTS)
 - **Gradium** (primary or fallback provider; supports voice-note and telephony output)
+- **Inworld** (primary or fallback provider; uses the Inworld streaming TTS API)
 - **Local CLI** (primary or fallback provider; runs a configured local TTS command)
 - **Microsoft** (primary or fallback provider; current bundled implementation uses `node-edge-tts`)
 - **MiniMax** (primary or fallback provider; uses the T2A v2 API)
 - **OpenAI** (primary or fallback provider; also used for summaries)
+- **Volcengine** (primary or fallback provider; uses the BytePlus Seed Speech HTTP API)
 - **Vydra** (primary or fallback provider; shared image, video, and speech provider)
 - **xAI** (primary or fallback provider; uses the xAI TTS API)
 - **Xiaomi MiMo** (primary or fallback provider; uses MiMo TTS through Xiaomi chat completions)
@@ -38,15 +41,21 @@ or ElevenLabs.
 
 ## Optional keys
 
-If you want OpenAI, ElevenLabs, Google Gemini, Gradium, MiniMax, Vydra, xAI, or Xiaomi MiMo:
+If you want Azure Speech, ElevenLabs, Google Gemini, Gradium, Inworld, MiniMax, OpenAI, Volcengine, Vydra, xAI, or Xiaomi MiMo:
 
+- `AZURE_SPEECH_KEY` plus `AZURE_SPEECH_REGION` (also accepts
+  `AZURE_SPEECH_API_KEY`, `SPEECH_KEY`, and `SPEECH_REGION`)
 - `ELEVENLABS_API_KEY` (or `XI_API_KEY`)
 - `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)
 - `GRADIUM_API_KEY`
+- `INWORLD_API_KEY`
 - `MINIMAX_API_KEY`; MiniMax TTS also accepts Token Plan auth via
   `MINIMAX_OAUTH_TOKEN`, `MINIMAX_CODE_PLAN_KEY`, or
   `MINIMAX_CODING_API_KEY`
 - `OPENAI_API_KEY`
+- `VOLCENGINE_TTS_API_KEY` (or `BYTEPLUS_SEED_SPEECH_API_KEY`);
+  legacy AppID/token auth also accepts `VOLCENGINE_TTS_APPID` and
+  `VOLCENGINE_TTS_TOKEN`
 - `VYDRA_API_KEY`
 - `XAI_API_KEY`
 - `XIAOMI_API_KEY`
@@ -61,10 +70,14 @@ so that provider must also be authenticated if you enable summaries.
 
 - [OpenAI Text-to-Speech guide](https://platform.openai.com/docs/guides/text-to-speech)
 - [OpenAI Audio API reference](https://platform.openai.com/docs/api-reference/audio)
+- [Azure Speech REST text-to-speech](https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech)
+- [Azure Speech provider](/providers/azure-speech)
 - [ElevenLabs Text to Speech](https://elevenlabs.io/docs/api-reference/text-to-speech)
 - [ElevenLabs Authentication](https://elevenlabs.io/docs/api-reference/authentication)
 - [Gradium](/providers/gradium)
+- [Inworld TTS API](https://docs.inworld.ai/tts/tts)
 - [MiniMax T2A v2 API](https://platform.minimaxi.com/document/T2A%20V2)
+- [Volcengine TTS HTTP API](/providers/volcengine#text-to-speech)
 - [Xiaomi MiMo speech synthesis](/providers/xiaomi#text-to-speech)
 - [node-edge-tts](https://github.com/SchneeHertz/node-edge-tts)
 - [Microsoft Speech output formats](https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech#audio-outputs)
@@ -95,6 +108,51 @@ Full schema is in [Gateway configuration](/gateway/configuration).
   },
 }
 ```
+
+### Per-agent voice overrides
+
+Use `agents.list[].tts` when one agent should speak with a different provider,
+voice, model, style, or auto-TTS mode. The agent block deep-merges over
+`messages.tts`, so provider credentials can stay in the global provider config.
+
+```json5
+{
+  messages: {
+    tts: {
+      auto: "always",
+      provider: "elevenlabs",
+      providers: {
+        elevenlabs: {
+          apiKey: "${ELEVENLABS_API_KEY}",
+          model: "eleven_multilingual_v2",
+        },
+      },
+    },
+  },
+  agents: {
+    list: [
+      {
+        id: "reader",
+        tts: {
+          providers: {
+            elevenlabs: {
+              voiceId: "EXAVITQu4vr4xnSDxMaL",
+            },
+          },
+        },
+      },
+    ],
+  },
+}
+```
+
+Precedence for automatic replies, `/tts audio`, `/tts status`, and the `tts`
+agent tool is:
+
+1. `messages.tts`
+2. active `agents.list[].tts`
+3. local `/tts` preferences for this host
+4. inline `[[tts:...]]` directives when model overrides are enabled
 
 ### OpenAI primary with ElevenLabs fallback
 
@@ -136,6 +194,36 @@ Full schema is in [Gateway configuration](/gateway/configuration).
   },
 }
 ```
+
+### Azure Speech primary
+
+```json5
+{
+  messages: {
+    tts: {
+      auto: "always",
+      provider: "azure-speech",
+      providers: {
+        "azure-speech": {
+          // apiKey falls back to AZURE_SPEECH_KEY.
+          // region falls back to AZURE_SPEECH_REGION.
+          voice: "en-US-JennyNeural",
+          lang: "en-US",
+          outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+          voiceNoteOutputFormat: "ogg-24khz-16bit-mono-opus",
+        },
+      },
+    },
+  },
+}
+```
+
+Azure Speech uses a Speech resource key, not an Azure OpenAI key. Resolution
+order is `messages.tts.providers.azure-speech.apiKey` ->
+`AZURE_SPEECH_KEY` -> `AZURE_SPEECH_API_KEY` -> `SPEECH_KEY`, plus
+`messages.tts.providers.azure-speech.region` -> `AZURE_SPEECH_REGION` ->
+`SPEECH_REGION` for the region. New config should use `azure-speech`; `azure`
+is accepted as a provider alias.
 
 ### Microsoft primary (no API key)
 
@@ -216,6 +304,64 @@ restricted to the Gemini API is valid here, and it is the same style of key used
 by the bundled Google image-generation provider. Resolution order is
 `messages.tts.providers.google.apiKey` -> `models.providers.google.apiKey` ->
 `GEMINI_API_KEY` -> `GOOGLE_API_KEY`.
+
+### Inworld primary
+
+```json5
+{
+  messages: {
+    tts: {
+      auto: "always",
+      provider: "inworld",
+      providers: {
+        inworld: {
+          apiKey: "inworld_api_key",
+          baseUrl: "https://api.inworld.ai",
+          voiceId: "Sarah",
+          modelId: "inworld-tts-1.5-max",
+          temperature: 0.8,
+        },
+      },
+    },
+  },
+}
+```
+
+The `apiKey` value must be the Base64-encoded credential string copied
+verbatim from the Inworld dashboard (Workspace > API Keys). The provider
+sends it as `Authorization: Basic <apiKey>` without any additional
+encoding, so do not pass a raw bearer token and do not Base64-encode it
+yourself. The key falls back to the `INWORLD_API_KEY` env var. See
+[Inworld provider](/providers/inworld) for full setup.
+
+### Volcengine primary
+
+```json5
+{
+  messages: {
+    tts: {
+      auto: "always",
+      provider: "volcengine",
+      providers: {
+        volcengine: {
+          apiKey: "byteplus_seed_speech_api_key",
+          resourceId: "seed-tts-1.0",
+          voice: "en_female_anna_mars_bigtts",
+          speedRatio: 1.0,
+        },
+      },
+    },
+  },
+}
+```
+
+Volcengine TTS uses the BytePlus Seed Speech API key from the Speech Console,
+not the OpenAI-compatible `VOLCANO_ENGINE_API_KEY` used for Doubao model
+providers. Resolution order is `messages.tts.providers.volcengine.apiKey` ->
+`VOLCENGINE_TTS_API_KEY` -> `BYTEPLUS_SEED_SPEECH_API_KEY`. Legacy AppID/token
+auth still works through `messages.tts.providers.volcengine.appId` / `token` or
+`VOLCENGINE_TTS_APPID` / `VOLCENGINE_TTS_TOKEN`. Voice-note targets request
+provider-native `ogg_opus`; normal audio-file targets request `mp3`.
 
 ### xAI primary
 
@@ -415,7 +561,7 @@ Then run:
   - `tagged` only sends audio when the reply includes `[[tts:key=value]]` directives or a `[[tts:text]]...[[/tts:text]]` block.
 - `enabled`: legacy toggle (doctor migrates this to `auto`).
 - `mode`: `"final"` (default) or `"all"` (includes tool/block replies).
-- `provider`: speech provider id such as `"elevenlabs"`, `"google"`, `"gradium"`, `"microsoft"`, `"minimax"`, `"openai"`, `"vydra"`, `"xai"`, or `"xiaomi"` (fallback is automatic).
+- `provider`: speech provider id such as `"elevenlabs"`, `"google"`, `"gradium"`, `"inworld"`, `"microsoft"`, `"minimax"`, `"openai"`, `"volcengine"`, `"vydra"`, `"xai"`, or `"xiaomi"` (fallback is automatic).
 - If `provider` is **unset**, OpenClaw uses the first configured speech provider in registry auto-select order.
 - Legacy `provider: "edge"` config is repaired by `openclaw doctor --fix` and
   rewritten to `provider: "microsoft"`.
@@ -429,7 +575,21 @@ Then run:
 - `maxTextLength`: hard cap for TTS input (chars). `/tts audio` fails if exceeded.
 - `timeoutMs`: request timeout (ms).
 - `prefsPath`: override the local prefs JSON path (provider/limit/summary).
-- `apiKey` values fall back to env vars (`ELEVENLABS_API_KEY`/`XI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `GRADIUM_API_KEY`, `MINIMAX_API_KEY`, `OPENAI_API_KEY`, `VYDRA_API_KEY`, `XAI_API_KEY`, `XIAOMI_API_KEY`).
+- `apiKey` values fall back to env vars (`AZURE_SPEECH_KEY`/`AZURE_SPEECH_API_KEY`/`SPEECH_KEY`, `ELEVENLABS_API_KEY`/`XI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `GRADIUM_API_KEY`, `INWORLD_API_KEY`, `MINIMAX_API_KEY`, `OPENAI_API_KEY`, `VYDRA_API_KEY`, `XAI_API_KEY`, `XIAOMI_API_KEY`). Volcengine uses `appId`/`token` instead.
+- `providers.azure-speech.apiKey`: Azure Speech resource key (env:
+  `AZURE_SPEECH_KEY`, `AZURE_SPEECH_API_KEY`, or `SPEECH_KEY`).
+- `providers.azure-speech.region`: Azure Speech region such as `eastus` (env:
+  `AZURE_SPEECH_REGION` or `SPEECH_REGION`).
+- `providers.azure-speech.endpoint` / `providers.azure-speech.baseUrl`: optional
+  Azure Speech endpoint/base URL override.
+- `providers.azure-speech.voice`: Azure voice ShortName (default
+  `en-US-JennyNeural`).
+- `providers.azure-speech.lang`: SSML language code (default `en-US`).
+- `providers.azure-speech.outputFormat`: Azure `X-Microsoft-OutputFormat` for
+  standard audio output (default `audio-24khz-48kbitrate-mono-mp3`).
+- `providers.azure-speech.voiceNoteOutputFormat`: Azure
+  `X-Microsoft-OutputFormat` for voice-note output (default
+  `ogg-24khz-16bit-mono-opus`).
 - `providers.elevenlabs.baseUrl`: override ElevenLabs API base URL.
 - `providers.openai.baseUrl`: override the OpenAI TTS endpoint.
   - Resolution order: `messages.tts.providers.openai.baseUrl` -> `OPENAI_TTS_BASE_URL` -> `https://api.openai.com/v1`
@@ -453,6 +613,10 @@ Then run:
 - `providers.tts-local-cli.timeoutMs`: command timeout in milliseconds (default `120000`).
 - `providers.tts-local-cli.cwd`: optional command working directory.
 - `providers.tts-local-cli.env`: optional string environment overrides for the command.
+- `providers.inworld.baseUrl`: override Inworld API base URL (default `https://api.inworld.ai`).
+- `providers.inworld.voiceId`: Inworld voice identifier (default `Sarah`).
+- `providers.inworld.modelId`: Inworld TTS model (default `inworld-tts-1.5-max`; also supports `inworld-tts-1.5-mini`, `inworld-tts-1-max`, `inworld-tts-1`).
+- `providers.inworld.temperature`: sampling temperature `0..2` (optional).
 - `providers.google.model`: Gemini TTS model (default `gemini-3.1-flash-tts-preview`).
 - `providers.google.voiceName`: Gemini prebuilt voice name (default `Kore`; `voice` is also accepted).
 - `providers.google.audioProfile`: natural-language style prompt prepended before the spoken text.
@@ -461,6 +625,21 @@ Then run:
   - If `messages.tts.providers.google.apiKey` is omitted, TTS can reuse `models.providers.google.apiKey` before env fallback.
 - `providers.gradium.baseUrl`: override Gradium API base URL (default `https://api.gradium.ai`).
 - `providers.gradium.voiceId`: Gradium voice identifier (default Emma, `YTpq7expH9539ERJ`).
+- `providers.volcengine.apiKey`: BytePlus Seed Speech API key (env:
+  `VOLCENGINE_TTS_API_KEY` or `BYTEPLUS_SEED_SPEECH_API_KEY`).
+- `providers.volcengine.resourceId`: BytePlus Seed Speech resource id (default
+  `seed-tts-1.0`, env: `VOLCENGINE_TTS_RESOURCE_ID`; use `seed-tts-2.0` when
+  your BytePlus project has TTS 2.0 entitlement).
+- `providers.volcengine.appKey`: BytePlus Seed Speech app key header (default
+  `aGjiRDfUWi`, env: `VOLCENGINE_TTS_APP_KEY`).
+- `providers.volcengine.baseUrl`: override the Seed Speech TTS HTTP endpoint
+  (env: `VOLCENGINE_TTS_BASE_URL`).
+- `providers.volcengine.appId`: legacy Volcengine Speech Console application id (env: `VOLCENGINE_TTS_APPID`).
+- `providers.volcengine.token`: legacy Volcengine Speech Console access token (env: `VOLCENGINE_TTS_TOKEN`).
+- `providers.volcengine.cluster`: legacy Volcengine TTS cluster (default `volcano_tts`, env: `VOLCENGINE_TTS_CLUSTER`).
+- `providers.volcengine.voice`: voice type (default `en_female_anna_mars_bigtts`, env: `VOLCENGINE_TTS_VOICE`).
+- `providers.volcengine.speedRatio`: provider-native speed ratio.
+- `providers.volcengine.emotion`: provider-native emotion tag.
 - `providers.xai.apiKey`: xAI TTS API key (env: `XAI_API_KEY`).
 - `providers.xai.baseUrl`: override the xAI TTS base URL (default `https://api.x.ai/v1`, env: `XAI_BASE_URL`).
 - `providers.xai.voiceId`: xAI voice id (default `eve`; current live voices: `ara`, `eve`, `leo`, `rex`, `sal`, `una`).
@@ -514,12 +693,13 @@ Here you go.
 
 Available directive keys (when enabled):
 
-- `provider` (registered speech provider id, for example `openai`, `elevenlabs`, `google`, `gradium`, `minimax`, `microsoft`, `vydra`, `xai`, or `xiaomi`; requires `allowProvider: true`)
-- `voice` (OpenAI, Gradium, or Xiaomi voice), `voiceName` / `voice_name` / `google_voice` (Google voice), or `voiceId` (ElevenLabs / Gradium / MiniMax / xAI)
+- `provider` (registered speech provider id, for example `openai`, `elevenlabs`, `google`, `gradium`, `minimax`, `microsoft`, `volcengine`, `vydra`, `xai`, or `xiaomi`; requires `allowProvider: true`)
+- `voice` (OpenAI, Gradium, Volcengine, or Xiaomi voice), `voiceName` / `voice_name` / `google_voice` (Google voice), or `voiceId` (ElevenLabs / Gradium / MiniMax / xAI)
 - `model` (OpenAI TTS model, ElevenLabs model id, MiniMax model, or Xiaomi MiMo TTS model) or `google_model` (Google TTS model)
 - `stability`, `similarityBoost`, `style`, `speed`, `useSpeakerBoost`
 - `vol` / `volume` (MiniMax volume, 0-10)
 - `pitch` (MiniMax integer pitch, -12 to 12; fractional values are truncated before the MiniMax request)
+- `emotion` (Volcengine emotion tag)
 - `applyTextNormalization` (`auto|on|off`)
 - `languageCode` (ISO 639-1)
 - `seed`
@@ -567,25 +747,30 @@ Stored fields:
 - `maxLength` (summary threshold; default 1500 chars)
 - `summarize` (default `true`)
 
-These override `messages.tts.*` for that host.
+These override the effective config from `messages.tts` plus the active
+`agents.list[].tts` block for that host.
 
 ## Output formats (fixed)
 
 - **Feishu / Matrix / Telegram / WhatsApp**: voice-note replies prefer Opus (`opus_48000_64` from ElevenLabs, `opus` from OpenAI).
   - 48kHz / 64kbps is a good voice message tradeoff.
-- **Feishu**: when a voice-note reply is produced as MP3/WAV/M4A or another
-  likely audio file, the Feishu plugin transcodes it to 48kHz Ogg/Opus with
-  `ffmpeg` before sending the native `audio` bubble. If conversion fails, Feishu
-  receives the original file as an attachment.
+- **Feishu / WhatsApp**: when a voice-note reply is produced as MP3/WebM/WAV/M4A
+  or another likely audio file, the channel plugin transcodes it to 48kHz
+  Ogg/Opus with `ffmpeg` before sending the native voice message. WhatsApp sends
+  the result through the Baileys `audio` payload with `ptt: true` and
+  `audio/ogg; codecs=opus`. If conversion fails, Feishu receives the original
+  file as an attachment; WhatsApp send fails rather than posting an incompatible
+  PTT payload.
 - **Other channels**: MP3 (`mp3_44100_128` from ElevenLabs, `mp3` from OpenAI).
   - 44.1kHz / 128kbps is the default balance for speech clarity.
-- **MiniMax**: MP3 (`speech-2.8-hd` model, 32kHz sample rate) for normal audio attachments. For voice-note targets such as Feishu and Telegram, OpenClaw transcodes the MiniMax MP3 to 48kHz Opus with `ffmpeg` before delivery.
-- **Xiaomi MiMo**: MP3 by default, or WAV when configured. For voice-note targets such as Feishu and Telegram, OpenClaw transcodes Xiaomi output to 48kHz Opus with `ffmpeg` before delivery.
+- **MiniMax**: MP3 (`speech-2.8-hd` model, 32kHz sample rate) for normal audio attachments. For voice-note targets such as Feishu, Telegram, and WhatsApp, OpenClaw transcodes the MiniMax MP3 to 48kHz Opus with `ffmpeg` before delivery.
+- **Xiaomi MiMo**: MP3 by default, or WAV when configured. For voice-note targets such as Feishu, Telegram, and WhatsApp, OpenClaw transcodes Xiaomi output to 48kHz Opus with `ffmpeg` before delivery.
 - **Local CLI**: uses the configured `outputFormat`. Voice-note targets are
   converted to Ogg/Opus and telephony output is converted to raw 16 kHz mono PCM
   with `ffmpeg`.
-- **Google Gemini**: Gemini API TTS returns raw 24kHz PCM. OpenClaw wraps it as WAV for audio attachments and returns PCM directly for Talk/telephony. Native Opus voice-note format is not supported by this path.
+- **Google Gemini**: Gemini API TTS returns raw 24kHz PCM. OpenClaw wraps it as WAV for audio attachments, transcodes it to 48kHz Opus for voice-note targets, and returns PCM directly for Talk/telephony.
 - **Gradium**: WAV for audio attachments, Opus for voice-note targets, and `ulaw_8000` at 8 kHz for telephony.
+- **Inworld**: MP3 for normal audio attachments, native `OGG_OPUS` for voice-note targets, and raw `PCM` at 22050 Hz for Talk/telephony.
 - **xAI**: MP3 by default; `responseFormat` may be `mp3`, `wav`, `pcm`, `mulaw`, or `alaw`. OpenClaw uses xAI's batch REST TTS endpoint and returns a complete audio attachment; xAI's streaming TTS WebSocket is not used by this provider path. Native Opus voice-note format is not supported by this path.
 - **Microsoft**: uses `microsoft.outputFormat` (default `audio-24khz-48kbitrate-mono-mp3`).
   - The bundled transport accepts an `outputFormat`, but not all formats are available from the service.
@@ -636,6 +821,10 @@ Discord note: `/tts` is a built-in Discord command, so OpenClaw registers
 /tts off
 /tts on
 /tts status
+/tts chat on
+/tts chat off
+/tts chat default
+/tts latest
 /tts provider openai
 /tts limit 2000
 /tts summary off
@@ -648,13 +837,17 @@ Notes:
 - `commands.text` or native command registration must be enabled.
 - Config `messages.tts.auto` accepts `off|always|inbound|tagged`.
 - `/tts on` writes the local TTS preference to `always`; `/tts off` writes it to `off`.
+- `/tts chat on|off|default` writes a session-scoped auto-TTS override for the current chat.
 - Use config when you want `inbound` or `tagged` defaults.
 - `limit` and `summary` are stored in local prefs, not the main config.
 - `/tts audio` generates a one-off audio reply (does not toggle TTS on).
+- `/tts latest` reads the latest assistant reply from the current session transcript and sends it as audio once. It stores only a hash of that reply on the session entry to suppress duplicate voice sends.
 - `/tts status` includes fallback visibility for the latest attempt:
   - success fallback: `Fallback: <primary> -> <used>` plus `Attempts: ...`
   - failure: `Error: ...` plus `Attempts: ...`
   - detailed diagnostics: `Attempt details: provider:outcome(reasonCode) latency`
+- `/status` shows the active TTS mode plus configured provider, model, voice,
+  and sanitized custom endpoint metadata when TTS is enabled.
 - OpenAI and ElevenLabs API failures now include parsed provider error detail and request id (when returned by the provider), which is surfaced in TTS errors/logs.
 
 ## Agent tool
@@ -662,9 +855,10 @@ Notes:
 The `tts` tool converts text to speech and returns an audio attachment for
 reply delivery. When the channel is Feishu, Matrix, Telegram, or WhatsApp,
 the audio is delivered as a voice message rather than a file attachment.
-Feishu can transcode non-Opus TTS output on this path when `ffmpeg` is
-available.
-WhatsApp sends visible text separately from PTT voice-note audio because clients
+Feishu and WhatsApp can transcode non-Opus TTS output on this path when
+`ffmpeg` is available.
+WhatsApp sends audio through Baileys as a PTT voice note (`audio` with
+`ptt: true`), and sends visible text separately from PTT audio because clients
 do not consistently render captions on voice notes.
 It accepts optional `channel` and `timeoutMs` fields; `timeoutMs` is a
 per-call provider request timeout in milliseconds.
