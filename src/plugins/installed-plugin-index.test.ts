@@ -4,8 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginCandidate } from "./discovery.js";
 import {
   diffInstalledPluginIndexInvalidationReasons,
+  getInstalledPluginRecord,
+  isInstalledPluginEnabled,
+  listEnabledInstalledPluginRecords,
+  listInstalledPluginContributionIds,
+  listInstalledPluginRecords,
   loadInstalledPluginIndex,
   refreshInstalledPluginIndex,
+  resolveInstalledPluginContributionOwners,
   resolveInstalledPluginContributions,
 } from "./installed-plugin-index.js";
 import { recordPluginInstall } from "./installs.js";
@@ -148,7 +154,8 @@ describe("installed plugin index", () => {
 
     expect(index).toMatchObject({
       version: 1,
-      generatedAt: "2026-04-25T12:00:00.000Z",
+      migrationVersion: 2,
+      generatedAtMs: 1777118400000,
       plugins: [
         {
           pluginId: "demo",
@@ -190,8 +197,10 @@ describe("installed plugin index", () => {
       ],
     });
     expect(index.plugins[0]?.manifestHash).toMatch(/^[a-f0-9]{64}$/u);
-    expect(index.plugins[0]?.packageJsonHash).toMatch(/^[a-f0-9]{64}$/u);
-    expect(index.plugins[0]?.packageJsonPath).toBe(path.join(fixture.rootDir, "package.json"));
+    expect(index.plugins[0]?.packageJson).toMatchObject({
+      path: "package.json",
+      hash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
     expect(index.plugins[0]?.installRecord).toBeUndefined();
     expect(index.plugins[0]?.installRecordHash).toBeUndefined();
 
@@ -199,6 +208,114 @@ describe("installed plugin index", () => {
     expect(contributions.providers.get("demo")).toEqual(["demo"]);
     expect(contributions.channels.get("demo-chat")).toEqual(["demo"]);
     expect(contributions.contracts.get("tools")).toEqual(["demo"]);
+  });
+
+  it("exposes cold registry records and owners for existing plugins without install ledgers", () => {
+    const fixture = createRichPluginFixture();
+    const index = loadInstalledPluginIndex({
+      candidates: [fixture.candidate],
+      env: hermeticEnv(),
+    });
+
+    expect(listInstalledPluginRecords(index).map((plugin) => plugin.pluginId)).toEqual(["demo"]);
+    expect(listEnabledInstalledPluginRecords(index).map((plugin) => plugin.pluginId)).toEqual([
+      "demo",
+    ]);
+    const record = getInstalledPluginRecord(index, "demo");
+    expect(record).toMatchObject({
+      pluginId: "demo",
+      enabled: true,
+    });
+    expect(record?.installRecord).toBeUndefined();
+    expect(isInstalledPluginEnabled(index, "demo")).toBe(true);
+    expect(listInstalledPluginContributionIds(index, "providers")).toEqual(["demo"]);
+    expect(resolveInstalledPluginContributionOwners(index, "providers", "demo")).toEqual(["demo"]);
+    expect(resolveInstalledPluginContributionOwners(index, "channels", "demo-chat")).toEqual([
+      "demo",
+    ]);
+  });
+
+  it("keeps disabled plugins in inventory while excluding them from cold owner resolution", () => {
+    const fixture = createRichPluginFixture();
+    const index = loadInstalledPluginIndex({
+      candidates: [fixture.candidate],
+      config: {
+        plugins: {
+          entries: {
+            demo: {
+              enabled: false,
+            },
+          },
+        },
+      },
+      env: hermeticEnv(),
+    });
+
+    expect(listInstalledPluginRecords(index).map((plugin) => plugin.pluginId)).toEqual(["demo"]);
+    const config = {
+      plugins: {
+        entries: {
+          demo: {
+            enabled: false,
+          },
+        },
+      },
+    };
+    expect(listEnabledInstalledPluginRecords(index, config)).toEqual([]);
+    expect(getInstalledPluginRecord(index, "demo")).toMatchObject({
+      pluginId: "demo",
+      enabled: false,
+    });
+    expect(isInstalledPluginEnabled(index, "demo", config)).toBe(false);
+    expect(listInstalledPluginContributionIds(index, "providers", { config })).toEqual([]);
+    expect(
+      listInstalledPluginContributionIds(index, "providers", { includeDisabled: true }),
+    ).toEqual(["demo"]);
+    expect(
+      resolveInstalledPluginContributionOwners(index, "providers", "demo", { config }),
+    ).toEqual([]);
+    expect(
+      resolveInstalledPluginContributionOwners(index, "providers", "demo", {
+        includeDisabled: true,
+      }),
+    ).toEqual(["demo"]);
+  });
+
+  it("uses runtime plugin id normalization for legacy enablement aliases", () => {
+    const rootDir = makeTempDir();
+    writeRuntimeEntry(rootDir);
+    writePluginManifest(rootDir, {
+      id: "openai",
+      configSchema: { type: "object" },
+      providers: ["openai"],
+    });
+
+    const config = {
+      plugins: {
+        entries: {
+          "openai-codex": {
+            enabled: false,
+          },
+        },
+      },
+    };
+    const index = loadInstalledPluginIndex({
+      candidates: [
+        createPluginCandidate({
+          rootDir,
+          idHint: "openai",
+          origin: "bundled",
+        }),
+      ],
+      config,
+      env: hermeticEnv(),
+    });
+
+    expect(index.plugins[0]).toMatchObject({
+      pluginId: "openai",
+      enabled: false,
+    });
+    expect(listEnabledInstalledPluginRecords(index, config)).toEqual([]);
   });
 
   it("records the config install ledger separately from package install intent", () => {
@@ -400,6 +517,77 @@ describe("installed plugin index", () => {
     ]);
   });
 
+  it("treats enablement changes as policy invalidation", () => {
+    const fixture = createRichPluginFixture();
+    const previous = loadInstalledPluginIndex({
+      candidates: [fixture.candidate],
+      config: {
+        plugins: {
+          entries: {
+            demo: {
+              enabled: true,
+            },
+          },
+        },
+      },
+      env: hermeticEnv(),
+    });
+    const current = loadInstalledPluginIndex({
+      candidates: [fixture.candidate],
+      config: {
+        plugins: {
+          entries: {
+            demo: {
+              enabled: false,
+            },
+          },
+        },
+      },
+      env: hermeticEnv(),
+    });
+
+    expect(diffInstalledPluginIndexInvalidationReasons(previous, current)).toEqual([
+      "policy-changed",
+    ]);
+  });
+
+  it("does not mark enabled-only migration snapshots stale for omitted disabled plugins", () => {
+    const enabledFixture = createRichPluginFixture();
+    const disabledFixture = createRichPluginFixture();
+    writePluginManifest(disabledFixture.rootDir, {
+      id: "disabled-demo",
+      name: "Disabled Demo",
+      configSchema: { type: "object" },
+      providers: ["disabled-demo"],
+    });
+    const current = loadInstalledPluginIndex({
+      candidates: [
+        enabledFixture.candidate,
+        {
+          ...disabledFixture.candidate,
+          idHint: "disabled-demo",
+        },
+      ],
+      config: {
+        plugins: {
+          entries: {
+            "disabled-demo": {
+              enabled: false,
+            },
+          },
+        },
+      },
+      env: hermeticEnv(),
+    });
+    const migratedEnabledOnly = {
+      ...current,
+      refreshReason: "migration" as const,
+      plugins: current.plugins.filter((plugin) => plugin.enabled),
+    };
+
+    expect(diffInstalledPluginIndexInvalidationReasons(migratedEnabledOnly, current)).toEqual([]);
+  });
+
   it("marks disabled plugins without dropping their cold contributions", () => {
     const fixture = createRichPluginFixture();
 
@@ -417,6 +605,17 @@ describe("installed plugin index", () => {
       env: hermeticEnv(),
     });
 
+    expect(
+      isInstalledPluginEnabled(index, "demo", {
+        plugins: {
+          entries: {
+            demo: {
+              enabled: false,
+            },
+          },
+        },
+      }),
+    ).toBe(false);
     expect(index.plugins[0]?.enabled).toBe(false);
     expect(index.plugins[0]?.contributions.providers).toEqual(["demo"]);
   });
@@ -433,7 +632,7 @@ describe("installed plugin index", () => {
     expect(index.refreshReason).toBe("manual");
   });
 
-  it("diffs invalidation reasons for manifest, package, source, host, and compat changes", () => {
+  it("diffs invalidation reasons for manifest, package, source, host, compat, and migration changes", () => {
     const fixture = createRichPluginFixture();
     const previous = loadInstalledPluginIndex({
       candidates: [fixture.candidate],
@@ -480,11 +679,13 @@ describe("installed plugin index", () => {
         env: hermeticEnv({ OPENCLAW_VERSION: "2026.4.26" }),
       }),
       compatRegistryVersion: "different-compat-registry",
+      migrationVersion: 3 as 2,
     };
 
     expect(diffInstalledPluginIndexInvalidationReasons(previous, current)).toEqual([
       "compat-registry-changed",
       "host-contract-changed",
+      "migration",
       "source-changed",
       "stale-manifest",
       "stale-package",
