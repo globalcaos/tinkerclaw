@@ -42,6 +42,13 @@ import {
   resolveGlobalInstallSpec,
 } from "../../infra/update-global.js";
 import { runGatewayUpdate, type UpdateRunResult } from "../../infra/update-runner.js";
+import {
+  loadPluginInstallRecords,
+  PLUGIN_INSTALLS_CONFIG_PATH,
+  withoutPluginInstallRecords,
+  writePersistedPluginInstallLedger,
+  withPluginInstallRecords,
+} from "../../plugins/install-ledger-store.js";
 import { syncPluginsForUpdateChannel, updateNpmInstalledPlugins } from "../../plugins/update.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -57,6 +64,8 @@ import {
   terminateStaleGatewayPids,
   waitForGatewayHealthyRestart,
 } from "../daemon-cli/restart-health.js";
+import { listPersistedBundledPluginLocationBridges } from "../plugins-location-bridges.js";
+import { refreshPluginRegistryAfterConfigMutation } from "../plugins-registry-refresh.js";
 import { createUpdateProgress, printResult } from "./progress.js";
 import { prepareRestartScript, runRestartScript } from "./restart-helper.js";
 import {
@@ -575,10 +584,16 @@ async function updatePluginsAfterCoreUpdate(params: {
     defaultRuntime.log(theme.heading("Updating plugins..."));
   }
 
-  const syncResult = await syncPluginsForUpdateChannel({
+  const pluginInstallRecords = await loadPluginInstallRecords({
     config: params.configSnapshot.sourceConfig,
+  });
+  const syncResult = await syncPluginsForUpdateChannel({
+    config: withPluginInstallRecords(params.configSnapshot.sourceConfig, pluginInstallRecords),
     channel: params.channel,
     workspaceDir: params.root,
+    externalizedBundledPluginBridges: await listPersistedBundledPluginLocationBridges({
+      workspaceDir: params.root,
+    }),
     logger: pluginLogger,
   });
   let pluginConfig = syncResult.config;
@@ -615,9 +630,18 @@ async function updatePluginsAfterCoreUpdate(params: {
   pluginConfig = npmResult.config;
 
   if (syncResult.changed || npmResult.changed) {
+    await writePersistedPluginInstallLedger(pluginConfig.plugins?.installs ?? {});
+    const nextConfig = withoutPluginInstallRecords(pluginConfig);
     await replaceConfigFile({
-      nextConfig: pluginConfig,
+      nextConfig,
       baseHash: params.configSnapshot.hash,
+      writeOptions: { unsetPaths: [Array.from(PLUGIN_INSTALLS_CONFIG_PATH)] },
+    });
+    await refreshPluginRegistryAfterConfigMutation({
+      config: nextConfig,
+      reason: "source-changed",
+      workspaceDir: params.root,
+      logger: pluginLogger,
     });
   }
 

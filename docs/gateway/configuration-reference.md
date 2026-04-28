@@ -186,9 +186,14 @@ See [MCP](/cli/mcp#openclaw-as-an-mcp-client-registry) and
 - Enabled Claude bundle plugins can also contribute embedded Pi defaults from `settings.json`; OpenClaw applies those as sanitized agent settings, not as raw OpenClaw config patches.
 - `plugins.slots.memory`: pick the active memory plugin id, or `"none"` to disable memory plugins.
 - `plugins.slots.contextEngine`: pick the active context engine plugin id; defaults to `"legacy"` unless you install and select another engine.
-- `plugins.installs`: CLI-managed install metadata used by `openclaw plugins update`.
-  - Includes `source`, `spec`, `sourcePath`, `installPath`, `version`, `resolvedName`, `resolvedVersion`, `resolvedSpec`, `integrity`, `shasum`, `resolvedAt`, `installedAt`.
-  - Treat `plugins.installs.*` as managed state; prefer CLI commands over manual edits.
+- `plugins.installs`: deprecated compatibility fallback for legacy
+  CLI-managed install metadata. New plugin installs write the managed
+  `plugins/installs.json` state ledger instead.
+  - Legacy records include `source`, `spec`, `sourcePath`, `installPath`,
+    `version`, `resolvedName`, `resolvedVersion`, `resolvedSpec`, `integrity`,
+    `shasum`, `resolvedAt`, `installedAt`.
+  - Treat `plugins.installs.*` as managed state; prefer CLI commands over
+    manual edits.
 
 See [Plugins](/tools/plugin).
 
@@ -253,6 +258,12 @@ See [Plugins](/tools/plugin).
 - `profiles.*.cdpUrl` accepts `http://`, `https://`, `ws://`, and `wss://`.
   Use HTTP(S) when you want OpenClaw to discover `/json/version`; use WS(S)
   when your provider gives you a direct DevTools WebSocket URL.
+- `remoteCdpTimeoutMs` and `remoteCdpHandshakeTimeoutMs` apply to remote and
+  `attachOnly` CDP reachability plus tab-opening requests. Managed loopback
+  profiles keep local CDP defaults.
+- If an externally managed CDP service is reachable through loopback, set that
+  profile's `attachOnly: true`; otherwise OpenClaw treats the loopback port as a
+  local managed browser profile and may report local port ownership errors.
 - `existing-session` profiles use Chrome MCP instead of CDP and can attach on
   the selected host or through a connected browser node.
 - `existing-session` profiles can set `userDataDir` to target a specific
@@ -266,8 +277,15 @@ See [Plugins](/tools/plugin).
 - Local managed profiles can set `executablePath` to override the global
   `browser.executablePath` for that profile. Use this to run one profile in
   Chrome and another in Brave.
+- Local managed profiles use `browser.localLaunchTimeoutMs` for Chrome CDP HTTP
+  discovery after process start and `browser.localCdpReadyTimeoutMs` for
+  post-launch CDP websocket readiness. Raise them on slower hosts where Chrome
+  starts successfully but readiness checks race startup. Both values must be
+  positive integers up to `120000` ms; invalid config values are rejected.
 - Auto-detect order: default browser if Chromium-based → Chrome → Brave → Edge → Chromium → Chrome Canary.
-- `browser.executablePath` accepts `~` for your OS home directory.
+- `browser.executablePath` and `browser.profiles.<name>.executablePath` both
+  accept `~` and `~/...` for your OS home directory before Chromium launch.
+  Per-profile `userDataDir` on `existing-session` profiles is also tilde-expanded.
 - Control service: loopback only (port derived from `gateway.port`, default `18791`).
 - `extraArgs` appends extra launch flags to local Chromium startup (for example
   `--disable-gpu`, window sizing, or debug flags).

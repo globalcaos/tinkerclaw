@@ -8,6 +8,7 @@ import {
   normalizeCdpHttpBaseForJsonEndpoints,
 } from "./cdp.helpers.js";
 import { appendCdpPath, createTargetViaCdp, normalizeCdpWsUrl } from "./cdp.js";
+import type { CdpActionTimeouts } from "./cdp.js";
 import { getChromeMcpModule } from "./chrome-mcp.runtime.js";
 import type { ResolvedBrowserProfile } from "./config.js";
 import { BrowserTabNotFoundError, BrowserTargetAmbiguousError } from "./errors.js";
@@ -140,11 +141,21 @@ export function createProfileTabOps({
         profile,
       }),
     });
+  const getRemoteCdpActionTimeouts = (): CdpActionTimeouts | undefined => {
+    if (profile.cdpIsLoopback && !profile.attachOnly) {
+      return undefined;
+    }
+    const resolved = state().resolved;
+    return {
+      httpTimeoutMs: resolved.remoteCdpTimeoutMs,
+      handshakeTimeoutMs: resolved.remoteCdpHandshakeTimeoutMs,
+    };
+  };
 
   const readTabs = async (): Promise<BrowserTab[]> => {
     if (capabilities.usesChromeMcp) {
       const { listChromeMcpTabs } = await getChromeMcpModule();
-      return await listChromeMcpTabs(profile.name, profile.userDataDir);
+      return await listChromeMcpTabs(profile.name, profile);
     }
 
     if (capabilities.usesPersistentPlaywright) {
@@ -231,7 +242,7 @@ export function createProfileTabOps({
     if (capabilities.usesChromeMcp) {
       await assertBrowserNavigationAllowed({ url, ...ssrfPolicyOpts });
       const { openChromeMcpTab } = await getChromeMcpModule();
-      const page = await openChromeMcpTab(profile.name, url, profile.userDataDir);
+      const page = await openChromeMcpTab(profile.name, url, profile);
       const profileState = getProfileState();
       profileState.lastTargetId = page.targetId;
       await assertBrowserNavigationResultAllowed({ url: page.url, ...ssrfPolicyOpts });
@@ -270,11 +281,16 @@ export function createProfileTabOps({
     }
 
     await assertBrowserNavigationAllowed({ url, ...ssrfPolicyOpts });
-    const createdViaCdp = await createTargetViaCdp({
+    const cdpActionTimeouts = getRemoteCdpActionTimeouts();
+    const createTargetOpts: Parameters<typeof createTargetViaCdp>[0] = {
       cdpUrl: profile.cdpUrl,
       url,
       ssrfPolicy: getCdpControlPolicy(),
-    })
+    };
+    if (cdpActionTimeouts) {
+      createTargetOpts.timeouts = cdpActionTimeouts;
+    }
+    const createdViaCdp = await createTargetViaCdp(createTargetOpts)
       .then((r) => r.targetId)
       .catch(() => null);
 
@@ -310,7 +326,7 @@ export function createProfileTabOps({
       : `${endpointUrl.toString()}?${encoded}`;
     const created = await fetchJson<CdpTarget>(
       endpoint,
-      CDP_JSON_NEW_TIMEOUT_MS,
+      cdpActionTimeouts?.httpTimeoutMs ?? CDP_JSON_NEW_TIMEOUT_MS,
       {
         method: "PUT",
       },
@@ -319,7 +335,7 @@ export function createProfileTabOps({
       if (String(err).includes("HTTP 405")) {
         return await fetchJson<CdpTarget>(
           endpoint,
-          CDP_JSON_NEW_TIMEOUT_MS,
+          cdpActionTimeouts?.httpTimeoutMs ?? CDP_JSON_NEW_TIMEOUT_MS,
           undefined,
           getCdpControlPolicy(),
         );
