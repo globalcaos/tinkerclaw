@@ -10,6 +10,7 @@ import {
 import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import { getRuntimeConfig } from "../../../config/config.js";
 import { emitTrustedDiagnosticEvent } from "../../../infra/diagnostic-events.js";
 import {
   createChildDiagnosticTraceContext,
@@ -78,6 +79,7 @@ import { resolveOpenClawReferencePaths } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
+import { stripRuntimeContextCustomMessages } from "../../internal-runtime-context.js";
 import { buildModelAliasLines } from "../../model-alias-lines.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
@@ -315,6 +317,7 @@ import {
   shouldPreemptivelyCompactBeforePrompt,
 } from "./preemptive-compaction.js";
 import {
+  buildRuntimeContextSystemContext,
   queueRuntimeContextForNextTurn,
   resolveRuntimeContextPromptParts,
 } from "./runtime-context-prompt.js";
@@ -481,7 +484,8 @@ export function applyEmbeddedAttemptToolsAllow<T extends { name: string }>(
 }
 
 export function normalizeMessagesForLlmBoundary(messages: AgentMessage[]): AgentMessage[] {
-  return stripToolResultDetails(normalizeAssistantReplayContent(messages));
+  const normalized = stripToolResultDetails(normalizeAssistantReplayContent(messages));
+  return stripRuntimeContextCustomMessages(normalized);
 }
 
 export function shouldCreateBundleMcpRuntimeForAttempt(params: {
@@ -1129,6 +1133,7 @@ export async function runEmbeddedAttempt(
         workspaceNotes: workspaceNotes?.length ? workspaceNotes : undefined,
         reactionGuidance,
         promptMode: effectivePromptMode,
+        silentReplyPromptMode: params.silentReplyPromptMode,
         acpEnabled: isAcpRuntimeSpawnAvailable({
           config: params.config,
           sandboxed: sandboxInfo?.enabled === true,
@@ -2095,9 +2100,6 @@ export async function runEmbeddedAttempt(
         getUsageTotals,
         getCompactionCount,
       } = subscription;
-      // FORK 2026-04-28 chunk-21: getLastCompactionTokensAfter dropped from
-      // EmbeddedPiSubscribe in upstream's compaction-handler refactor. Stubbed
-      // until apply-fork-wiring grows a patch for the new telemetry surface.
       const getLastCompactionTokensAfter = (): number | undefined => undefined;
 
       const queueHandle: EmbeddedPiQueueHandle & {
@@ -2257,6 +2259,7 @@ export async function runEmbeddedAttempt(
         const promptBuildMessages =
           pruneProcessedHistoryImages(activeSession.messages) ?? activeSession.messages;
         const hookResult = await resolvePromptBuildHookResult({
+          config: params.config ?? getRuntimeConfig(),
           prompt: params.prompt,
           messages: promptBuildMessages,
           hookCtx,
@@ -2268,6 +2271,12 @@ export async function runEmbeddedAttempt(
             effectivePrompt = `${hookResult.prependContext}\n\n${effectivePrompt}`;
             log.debug(
               `hooks: prepended context to prompt (${hookResult.prependContext.length} chars)`,
+            );
+          }
+          if (hookResult?.appendContext) {
+            effectivePrompt = `${effectivePrompt}\n\n${hookResult.appendContext}`;
+            log.debug(
+              `hooks: appended context to prompt (${hookResult.appendContext.length} chars)`,
             );
           }
           const legacySystemPrompt = normalizeOptionalString(hookResult?.systemPrompt) ?? "";
@@ -2661,31 +2670,47 @@ export async function runEmbeddedAttempt(
             if (promptSubmission.runtimeOnly) {
               await abortable(activeSession.prompt(promptSubmission.prompt));
             } else {
-              await queueRuntimeContextForNextTurn({
-                session: activeSession,
-                runtimeContext: promptSubmission.runtimeContext,
-              });
-
-              // FORK: mid-context persona re-injection when SyncScore drops
-              {
-                const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
-                  activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
-                  systemPromptText ?? "",
-                  log,
-                );
-                if (reinjectResult.reinjected && systemPromptText != null) {
-                  systemPromptText = reinjectResult.systemPromptText;
-                }
+              const runtimeContext = promptSubmission.runtimeContext?.trim();
+              const runtimeSystemPrompt = runtimeContext
+                ? composeSystemPromptWithHookContext({
+                    baseSystemPrompt: systemPromptText,
+                    appendSystemContext: buildRuntimeContextSystemContext(runtimeContext),
+                  })
+                : undefined;
+              if (runtimeSystemPrompt) {
+                applySystemPromptOverrideToSession(activeSession, runtimeSystemPrompt);
               }
+              try {
+                await queueRuntimeContextForNextTurn({
+                  session: activeSession,
+                  runtimeContext,
+                });
 
-              // Only pass images option if there are actually images to pass
-              // This avoids potential issues with models that don't expect the images parameter
-              if (imageResult.images.length > 0) {
-                await abortable(
-                  activeSession.prompt(promptSubmission.prompt, { images: imageResult.images }),
-                );
-              } else {
-                await abortable(activeSession.prompt(promptSubmission.prompt));
+                // FORK: mid-context persona re-injection when SyncScore drops
+                {
+                  const reinjectResult = _forkAttemptHooks.applyMidContextReinjectHook(
+                    activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
+                    systemPromptText ?? "",
+                    log,
+                  );
+                  if (reinjectResult.reinjected && systemPromptText != null) {
+                    systemPromptText = reinjectResult.systemPromptText;
+                  }
+                }
+
+                // Only pass images option if there are actually images to pass
+                // This avoids potential issues with models that don't expect the images parameter
+                if (imageResult.images.length > 0) {
+                  await abortable(
+                    activeSession.prompt(promptSubmission.prompt, { images: imageResult.images }),
+                  );
+                } else {
+                  await abortable(activeSession.prompt(promptSubmission.prompt));
+                }
+              } finally {
+                if (runtimeSystemPrompt) {
+                  applySystemPromptOverrideToSession(activeSession, systemPromptText);
+                }
               }
             }
           }

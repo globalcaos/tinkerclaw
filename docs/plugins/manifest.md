@@ -735,11 +735,10 @@ Alias targets must be top-level providers owned by the same plugin. When a
 provider-filtered list uses an alias, OpenClaw can read the owning manifest and
 apply alias API/base URL overrides without loading provider runtime.
 
-`suppressions` is the preferred static replacement for provider runtime
-`suppressBuiltInModel` hooks. Suppression entries are honored only when the
-provider is owned by the plugin or declared as a `modelCatalog.aliases` key that
-targets an owned provider. Runtime suppression hooks still run as deprecated
-compatibility fallback for plugins that have not migrated.
+`suppressions` replaces the old provider runtime `suppressBuiltInModel` hook.
+Suppression entries are honored only when the provider is owned by the plugin or
+declared as a `modelCatalog.aliases` key that targets an owned provider. Runtime
+suppression hooks are no longer called during model resolution.
 
 Provider fields:
 
@@ -772,9 +771,22 @@ Model fields:
 | `replacedBy`    | `string`                                                       | Replacement provider-local model id for deprecated rows.                    |
 | `tags`          | `string[]`                                                     | Stable tags used by pickers and filters.                                    |
 
-Do not put runtime-only data in `modelCatalog`. If a provider needs account
-state, an API request, or local process discovery to know the complete model
-set, declare that provider as `refreshable` or `runtime` in `discovery`.
+Suppression fields:
+
+| Field                      | Type       | What it means                                                                                             |
+| -------------------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `provider`                 | `string`   | Provider id for the upstream row to suppress. Must be owned by this plugin or declared as an owned alias. |
+| `model`                    | `string`   | Provider-local model id to suppress.                                                                      |
+| `reason`                   | `string`   | Optional message shown when the suppressed row is requested directly.                                     |
+| `when.baseUrlHosts`        | `string[]` | Optional list of effective provider base URL hosts required before the suppression applies.               |
+| `when.providerConfigApiIn` | `string[]` | Optional list of exact provider-config `api` values required before the suppression applies.              |
+
+Do not put runtime-only data in `modelCatalog`. Use `static` only when manifest
+rows are complete enough for provider-filtered list and picker surfaces to skip
+registry/runtime discovery. Use `refreshable` when manifest rows are useful
+listable seeds or supplements but a refresh/cache can add more rows later;
+refreshable rows are not authoritative by themselves. Use `runtime` when OpenClaw
+must load provider runtime to know the list.
 
 ## modelIdNormalization reference
 
