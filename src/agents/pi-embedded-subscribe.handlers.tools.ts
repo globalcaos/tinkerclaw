@@ -576,6 +576,7 @@ async function emitToolResultOutput(params: {
   queuePendingToolMedia(ctx, {
     mediaUrls: pendingMediaUrls,
     ...(mediaReply.audioAsVoice ? { audioAsVoice: true } : {}),
+    ...(mediaReply.trustedLocalMedia ? { trustedLocalMedia: true } : {}),
   });
 }
 

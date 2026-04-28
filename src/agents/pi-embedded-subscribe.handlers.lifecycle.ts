@@ -117,6 +117,10 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
 
   const rateLimit = ctx.params.modelProvider === "anthropic" ? getRateLimitSnapshot() : undefined;
   const emitLifecycleTerminal = () => {
+    const terminalMeta = {
+      ...(ctx.state.terminalStopReason ? { stopReason: ctx.state.terminalStopReason } : {}),
+      ...(ctx.state.yielded === true ? { yielded: true } : {}),
+    };
     if (isError) {
       emitAgentEvent({
         runId: ctx.params.runId,
@@ -124,6 +128,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
         data: {
           phase: "error",
           error: lifecycleErrorText ?? "LLM request failed.",
+          ...terminalMeta,
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),
           endedAt: Date.now(),
@@ -134,6 +139,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
         data: {
           phase: "error",
           error: lifecycleErrorText ?? "LLM request failed.",
+          ...terminalMeta,
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),
         },
@@ -145,6 +151,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
       stream: "lifecycle",
       data: {
         phase: "end",
+        ...terminalMeta,
         ...(livenessState ? { livenessState } : {}),
         ...(replayInvalid ? { replayInvalid } : {}),
         endedAt: Date.now(),
@@ -159,6 +166,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
       stream: "lifecycle",
       data: {
         phase: "end",
+        ...terminalMeta,
         ...(livenessState ? { livenessState } : {}),
         ...(replayInvalid ? { replayInvalid } : {}),
       },
