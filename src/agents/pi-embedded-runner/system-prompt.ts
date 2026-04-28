@@ -5,7 +5,7 @@ import type { ResolvedTimeFormat } from "../date-time.js";
 import type { EmbeddedContextFile } from "../pi-embedded-helpers.js";
 import type { ProviderSystemPromptContribution } from "../system-prompt-contribution.js";
 import { buildAgentSystemPrompt } from "../system-prompt.js";
-import type { PromptMode } from "../system-prompt.types.js";
+import type { PromptMode, SilentReplyPromptMode } from "../system-prompt.types.js";
 import type { EmbeddedSandboxInfo } from "./types.js";
 import type { ReasoningLevel, ThinkLevel } from "./utils.js";
 
@@ -33,6 +33,8 @@ export function buildEmbeddedSystemPrompt(params: {
   amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
+  /** Controls the generic silent-reply section. Channel-aware prompts can set "none". */
+  silentReplyPromptMode?: SilentReplyPromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
   acpEnabled?: boolean;
   /** Registered runtime slash/native command names such as `codex`. */
@@ -84,6 +86,7 @@ export function buildEmbeddedSystemPrompt(params: {
     personaBlock: params.personaBlock,
     amygdalaNudge: params.amygdalaNudge,
     promptMode: params.promptMode,
+    silentReplyPromptMode: params.silentReplyPromptMode,
     acpEnabled: params.acpEnabled,
     nativeCommandNames: params.nativeCommandNames,
     nativeCommandGuidanceLines: params.nativeCommandGuidanceLines,

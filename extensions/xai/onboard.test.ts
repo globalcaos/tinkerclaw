@@ -1,13 +1,13 @@
 import {
   resolveAgentModelFallbackValues,
   resolveAgentModelPrimaryValue,
-} from "@openclaw/plugin-sdk/provider-onboard";
-import { describe, expect, it } from "vitest";
+} from "openclaw/plugin-sdk/provider-onboard";
 import {
   createConfigWithFallbacks,
   createLegacyProviderConfig,
   EXPECTED_FALLBACKS,
-} from "../../test/helpers/plugins/onboard-config.js";
+} from "openclaw/plugin-sdk/provider-test-contracts";
+import { describe, expect, it } from "vitest";
 import { applyXaiConfig, applyXaiProviderConfig, XAI_DEFAULT_MODEL_REF } from "./onboard.js";
 
 describe("xai onboard", () => {
