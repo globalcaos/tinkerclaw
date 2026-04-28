@@ -206,6 +206,7 @@ describe("openai image generation provider", () => {
     expect(provider.capabilities.output).toEqual({
       formats: ["png", "jpeg", "webp"],
       qualities: ["low", "medium", "high", "auto"],
+      backgrounds: ["transparent", "opaque", "auto"],
     });
   });
 
@@ -443,11 +444,7 @@ describe("openai image generation provider", () => {
       prompt: "Transparent sticker",
       cfg: {},
       outputFormat: "png",
-      providerOptions: {
-        openai: {
-          background: "transparent",
-        },
-      },
+      background: "transparent",
     });
 
     expect(postJsonRequestMock).toHaveBeenCalledWith(
@@ -1319,6 +1316,35 @@ describe("openai image generation provider", () => {
             n: 1,
             size: "1024x1024",
           },
+          timeoutMs: 600_000,
+        }),
+      );
+    });
+
+    it("lets explicit timeoutMs override the Azure image default", async () => {
+      mockGeneratedPngResponse();
+
+      const provider = buildOpenAIImageGenerationProvider();
+      await provider.generateImage({
+        provider: "openai",
+        model: "gpt-image-2-1",
+        prompt: "Azure cat",
+        cfg: {
+          models: {
+            providers: {
+              openai: {
+                baseUrl: "https://myresource.openai.azure.com/openai/v1",
+                models: [],
+              },
+            },
+          },
+        },
+        timeoutMs: 123_456,
+      });
+
+      expect(postJsonRequestMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          timeoutMs: 123_456,
         }),
       );
     });

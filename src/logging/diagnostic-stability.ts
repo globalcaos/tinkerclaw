@@ -254,6 +254,7 @@ function sanitizeDiagnosticEvent(event: DiagnosticEventPayload): DiagnosticStabi
       record.bytes = event.promptChars;
       record.context =
         event.contextTokenBudget !== undefined ? { limit: event.contextTokenBudget } : undefined;
+      record.bytes = event.promptChars;
       break;
     case "diagnostic.heartbeat":
       record.webhooks = { ...event.webhooks };
@@ -343,6 +344,12 @@ function sanitizeDiagnosticEvent(event: DiagnosticEventPayload): DiagnosticStabi
       record.channel = event.channel;
       record.pluginId = event.pluginId;
       assignReasonCode(record, event.reason);
+      break;
+    case "telemetry.exporter":
+      record.source = event.exporter;
+      record.target = event.signal;
+      record.outcome = event.status;
+      assignReasonCode(record, event.reason ?? event.errorCategory);
       break;
   }
 

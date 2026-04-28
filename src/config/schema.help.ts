@@ -148,6 +148,8 @@ export const FIELD_HELP: Record<string, string> = {
     "Provider-specific Talk settings keyed by provider id. During migration, prefer this over legacy talk.* keys.",
   "talk.providers.*": "Provider-owned Talk config fields for the matching provider id.",
   "talk.providers.*.apiKey": "Provider API key for Talk mode.", // pragma: allowlist secret
+  "talk.speechLocale":
+    'BCP 47 locale id for Talk speech recognition on device nodes, for example "ru-RU". Leave unset to use each device default.',
   "talk.interruptOnSpeech":
     "If true (default), stop assistant speech when the user starts speaking in Talk mode. Keep enabled for conversational turn-taking.",
   "talk.silenceTimeoutMs": `Milliseconds of user silence before Talk mode finalizes and sends the current transcript. Leave unset to keep the platform default pause window (${describeTalkSilenceTimeoutDefaults()}).`,
@@ -518,6 +520,10 @@ export const FIELD_HELP: Record<string, string> = {
     'Binding kind. Use "route" (or omit for legacy route entries) for normal routing, and "acp" for persistent ACP conversation bindings.',
   "bindings[].agentId":
     "Target agent ID that receives traffic when the corresponding binding match rule is satisfied. Use valid configured agent IDs only so routing does not fail at runtime.",
+  "bindings[].session":
+    "Optional route session overrides for conversations matched by this binding. Use this when a narrow route should keep the same agent but isolate session continuity differently.",
+  "bindings[].session.dmScope":
+    'Optional DM session scope override for this route binding. For example, keep global session.dmScope="main" while using "per-account-channel-peer" for selected direct peers.',
   "bindings[].match":
     "Match rule object for deciding when a binding applies, including channel and optional account/peer constraints. Keep rules narrow to avoid accidental agent takeover across contexts.",
   "bindings[].match.channel":
@@ -560,6 +566,12 @@ export const FIELD_HELP: Record<string, string> = {
     "Enables OpenTelemetry export pipeline for traces, metrics, and logs based on configured endpoint/protocol settings. Keep disabled unless your collector endpoint and auth are fully configured.",
   "diagnostics.otel.endpoint":
     "Collector endpoint URL used for OpenTelemetry export transport, including scheme and port. Use a reachable, trusted collector endpoint and monitor ingestion errors after rollout.",
+  "diagnostics.otel.tracesEndpoint":
+    "Signal-specific OTLP/HTTP trace endpoint. When set, this overrides diagnostics.otel.endpoint and OTEL_EXPORTER_OTLP_ENDPOINT for trace export only.",
+  "diagnostics.otel.metricsEndpoint":
+    "Signal-specific OTLP/HTTP metrics endpoint. When set, this overrides diagnostics.otel.endpoint and OTEL_EXPORTER_OTLP_ENDPOINT for metrics export only.",
+  "diagnostics.otel.logsEndpoint":
+    "Signal-specific OTLP/HTTP logs endpoint. When set, this overrides diagnostics.otel.endpoint and OTEL_EXPORTER_OTLP_ENDPOINT for log export only.",
   "diagnostics.otel.protocol":
     'OTel transport protocol for telemetry export: "http/protobuf" or "grpc" depending on collector support. Use the protocol your observability backend expects to avoid dropped telemetry payloads.',
   "diagnostics.otel.headers":
@@ -1107,6 +1119,8 @@ export const FIELD_HELP: Record<string, string> = {
     "Watches memory files and schedules index updates from file-change events (chokidar). Enable for near-real-time freshness; disable on very large workspaces if watch churn is too noisy.",
   "agents.defaults.memorySearch.sync.watchDebounceMs":
     "Debounce window in milliseconds for coalescing rapid file-watch events before reindex runs. Increase to reduce churn on frequently-written files, or lower for faster freshness.",
+  "agents.defaults.memorySearch.sync.embeddingBatchTimeoutSeconds":
+    "Overrides the timeout for inline embedding batches during memory indexing. Leave unset to use provider defaults: 600 seconds for local/self-hosted providers such as local, Ollama, and LM Studio, and 120 seconds for hosted providers.",
   "agents.defaults.memorySearch.sync.sessions.deltaBytes":
     "Requires at least this many newly appended bytes before session transcript changes trigger reindex (default: 100000). Increase to reduce frequent small reindexes, or lower for faster transcript freshness.",
   "agents.defaults.memorySearch.sync.sessions.deltaMessages":
@@ -1149,7 +1163,7 @@ export const FIELD_HELP: Record<string, string> = {
   "plugins.entries.*.hooks.allowPromptInjection":
     "Controls whether this plugin may mutate prompts through typed hooks. Set false to block `before_prompt_build` and ignore prompt-mutating fields from legacy `before_agent_start`, while preserving legacy `modelOverride` and `providerOverride` behavior.",
   "plugins.entries.*.hooks.allowConversationAccess":
-    "Controls whether this plugin may read raw conversation content from typed hooks such as `llm_input`, `llm_output`, and `agent_end`. Non-bundled plugins must opt in explicitly.",
+    "Controls whether this plugin may read raw conversation content from typed hooks such as `llm_input`, `llm_output`, `before_agent_finalize`, and `agent_end`. Non-bundled plugins must opt in explicitly.",
   "plugins.entries.*.subagent":
     "Per-plugin subagent runtime controls for model override trust and allowlists. Keep this unset unless a plugin must explicitly steer subagent model selection.",
   "plugins.entries.*.subagent.allowModelOverride":
@@ -1162,31 +1176,6 @@ export const FIELD_HELP: Record<string, string> = {
     "Per-plugin environment variable map injected for that plugin runtime context only. Use this to scope provider credentials to one plugin instead of sharing global process environment.",
   "plugins.entries.*.config":
     "Plugin-defined configuration payload interpreted by that plugin's own schema and validation rules. Use only documented fields from the plugin to prevent ignored or invalid settings.",
-  "plugins.installs":
-    "Deprecated compatibility fallback for legacy CLI-managed install metadata. New plugin installs use the state-managed `plugins/installs.json` ledger.",
-  "plugins.installs.*.source": 'Install source ("npm", "archive", or "path").',
-  "plugins.installs.*.spec": "Original npm spec used for install (if source is npm).",
-  "plugins.installs.*.sourcePath": "Original archive/path used for install (if any).",
-  "plugins.installs.*.installPath": "Resolved install directory for the installed plugin bundle.",
-  "plugins.installs.*.version": "Version recorded at install time (if available).",
-  "plugins.installs.*.resolvedName": "Resolved npm package name from the fetched artifact.",
-  "plugins.installs.*.resolvedVersion":
-    "Resolved npm package version from the fetched artifact (useful for non-pinned specs).",
-  "plugins.installs.*.resolvedSpec":
-    "Resolved exact npm spec (<name>@<version>) from the fetched artifact.",
-  "plugins.installs.*.integrity":
-    "Resolved npm dist integrity hash for the fetched artifact (if reported by npm).",
-  "plugins.installs.*.shasum":
-    "Resolved npm dist shasum for the fetched artifact (if reported by npm).",
-  "plugins.installs.*.resolvedAt":
-    "ISO timestamp when npm package metadata was last resolved for this install record.",
-  "plugins.installs.*.installedAt": "ISO timestamp of last install/update.",
-  "plugins.installs.*.marketplaceName":
-    "Marketplace display name recorded for marketplace-backed plugin installs (if available).",
-  "plugins.installs.*.marketplaceSource":
-    "Original marketplace source used to resolve the install (for example a repo path or Git URL).",
-  "plugins.installs.*.marketplacePlugin":
-    "Plugin entry name inside the source marketplace, used for later updates.",
   "agents.list.*.identity.avatar":
     "Agent avatar (workspace-relative path, http(s) URL, or data URI).",
   "agents.defaults.model.primary": "Primary model (provider/model).",

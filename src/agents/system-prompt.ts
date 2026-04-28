@@ -130,12 +130,9 @@ function buildHeartbeatSection(params: { isMinimal: boolean; heartbeatPrompt?: s
   }
   return [
     "## Heartbeats",
-    // FORK: HEARTBEAT_OK must be scoped STRICTLY to heartbeat polls — the model
-    // otherwise generalizes it to fractal reflection prompts and system injections.
-    'If AND ONLY IF the current user message is a heartbeat poll (matches the heartbeat prompt text above) and nothing needs attention, reply exactly "HEARTBEAT_OK".',
-    'Do NOT emit "HEARTBEAT_OK" in response to any other kind of message — in particular NOT to fractal reflection prompts, system injections, skill invocations, or ordinary user turns. The sentinel is scoped exclusively to heartbeat polls that match the heartbeat prompt text above.',
-    'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
-    'If a heartbeat poll arrives and something actually needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
+    "If the current user message is a heartbeat poll and nothing needs attention, reply exactly:",
+    "HEARTBEAT_OK",
+    'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
     "",
   ];
 }
@@ -384,6 +381,14 @@ function buildMessagingSection(params: {
   ];
 }
 
+function hasNativeCommand(params: { nativeCommandNames?: string[]; command: string }): boolean {
+  const target = normalizeLowercaseStringOrEmpty(params.command);
+  return (params.nativeCommandNames ?? []).some((name) => {
+    const normalized = normalizeLowercaseStringOrEmpty(name).replace(/^\/+/, "");
+    return normalized === target;
+  });
+}
+
 function buildVoiceSection(params: { isMinimal: boolean; ttsHint?: string }) {
   if (params.isMinimal) {
     return [];
@@ -460,14 +465,12 @@ export function buildAgentSystemPrompt(params: {
   sourcePath?: string;
   workspaceNotes?: string[];
   ttsHint?: string;
-  /** Tier 1 persona block from CORTEX runtime — injected near the top, always cached. */
-  personaBlock?: string;
-  /** FORK: AMYGDALA personality nudge — behavioural adjustments from the thermostat. */
-  amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
   acpEnabled?: boolean;
+  /** Registered runtime slash/native command names such as `codex`. */
+  nativeCommandNames?: string[];
   runtimeInfo?: {
     agentId?: string;
     host?: string;
@@ -576,6 +579,10 @@ export function buildAgentSystemPrompt(params: {
   const availableTools = new Set(normalizedTools);
   const hasSessionsSpawn = availableTools.has("sessions_spawn");
   const acpHarnessSpawnAllowed = hasSessionsSpawn && acpSpawnRuntimeEnabled;
+  const nativeCodexCommandAvailable = hasNativeCommand({
+    nativeCommandNames: params.nativeCommandNames,
+    command: "codex",
+  });
   const externalToolSummaries = new Map<string, string>();
   for (const [key, value] of Object.entries(params.toolSummaries ?? {})) {
     const normalized = key.trim().toLowerCase();
@@ -698,19 +705,6 @@ export function buildAgentSystemPrompt(params: {
   const lines = [
     "You are a personal assistant running inside OpenClaw.",
     "",
-    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached.
-    ...(params.personaBlock ? [params.personaBlock, ""] : []),
-    // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
-    ...(params.amygdalaNudge?.length
-      ? [
-          "## AMYGDALA Personality Nudge (active)",
-          "The Personality networks detected drift from your target personality. Adjustments:",
-          ...params.amygdalaNudge.map((a) => `- ${a}`),
-          "",
-        ]
-      : []),
-    // FORK: Tier 1 persona block from CORTEX runtime — injected near the top for identity reinforcement.
-    ...(params.personaBlock ? [params.personaBlock, ""] : []),
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",
@@ -738,10 +732,15 @@ export function buildAgentSystemPrompt(params: {
     `For long waits, avoid rapid poll loops: use ${execToolName} with enough yieldMs or ${processToolName}(action=poll, timeout=<ms>).`,
     "If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.",
     'Sub-agents start isolated by default. Use `sessions_spawn` with `context:"fork"` only when the child needs the current transcript context; otherwise omit `context` or use `context:"isolated"`.',
+    ...(nativeCodexCommandAvailable
+      ? [
+          "Native Codex app-server plugin is available (`/codex ...`). For Codex bind/control/thread/resume/steer/stop requests, prefer `/codex bind`, `/codex threads`, `/codex resume`, `/codex steer`, and `/codex stop` over ACP.",
+          "Use ACP for Codex only when the user explicitly asks for ACP/acpx or wants to test the ACP path.",
+        ]
+      : []),
     ...(acpHarnessSpawnAllowed
       ? [
-          'For requests like "do this in claude code/cursor/gemini" or similar ACP harnesses, treat it as ACP harness intent and call `sessions_spawn` with `runtime: "acp"`.',
-          "For Codex conversation binding/control, prefer the native Codex app-server plugin path (`/codex bind`, `/codex threads`, `/codex resume`). Use ACP for Codex only when the user explicitly asks for ACP/`/acp`, or for background child sessions where native Codex runtime spawn is not exposed.",
+          'For requests like "do this in claude code/cursor/gemini/opencode" or similar ACP harnesses, treat it as ACP harness intent and call `sessions_spawn` with `runtime: "acp"`.',
           'On Discord, default ACP harness requests to thread-bound persistent sessions (`thread: true`, `mode: "session"`) unless the user asks otherwise.',
           "Set `agentId` explicitly unless `acp.defaultAgent` is configured, and do not route ACP harness requests through `subagents`/`agents_list` or local PTY exec flows.",
           'For ACP harness thread spawns, do not call `message` with `action=thread-create`; use `sessions_spawn` (`runtime: "acp"`, `thread: true`) as the single thread creation path.',

@@ -1,5 +1,8 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { DiagnosticTraceContext } from "./diagnostic-trace-context.js";
+import {
+  formatDiagnosticTraceparent,
+  type DiagnosticTraceContext,
+} from "./diagnostic-trace-context.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 
 export type DiagnosticSessionState = "idle" | "processing" | "waiting";
@@ -349,6 +352,22 @@ export type DiagnosticLogRecordEvent = DiagnosticBaseEvent & {
   };
 };
 
+export type DiagnosticTelemetryExporterEvent = DiagnosticBaseEvent & {
+  type: "telemetry.exporter";
+  exporter: string;
+  signal: "traces" | "metrics" | "logs";
+  status: "started" | "failure" | "dropped";
+  reason?:
+    | "configured"
+    | "emit_failed"
+    | "handler_failed"
+    | "queue_full"
+    | "shutdown_failed"
+    | "start_failed"
+    | "unsupported_protocol";
+  errorCategory?: string;
+};
+
 export type DiagnosticEventPayload =
   | DiagnosticUsageEvent
   | DiagnosticWebhookReceivedEvent
@@ -379,7 +398,8 @@ export type DiagnosticEventPayload =
   | DiagnosticMemorySampleEvent
   | DiagnosticMemoryPressureEvent
   | DiagnosticPayloadLargeEvent
-  | DiagnosticLogRecordEvent;
+  | DiagnosticLogRecordEvent
+  | DiagnosticTelemetryExporterEvent;
 
 export type DiagnosticEventInput = DiagnosticEventPayload extends infer Event
   ? Event extends DiagnosticEventPayload
@@ -413,6 +433,7 @@ type DiagnosticEventsGlobalState = {
 
 const MAX_ASYNC_DIAGNOSTIC_EVENTS = 10_000;
 const DIAGNOSTIC_EVENTS_STATE_KEY = Symbol.for("openclaw.diagnosticEvents.state.v1");
+const dispatchedTrustedDiagnosticMetadata = new WeakSet<object>();
 const ASYNC_DIAGNOSTIC_EVENT_TYPES = new Set<DiagnosticEventPayload["type"]>([
   "tool.execution.started",
   "tool.execution.completed",
@@ -500,7 +521,10 @@ function dispatchDiagnosticEvent(
   try {
     for (const listener of state.listeners) {
       try {
-        listener(cloneDiagnosticEventForListener(enriched), Object.freeze({ ...metadata }));
+        listener(
+          cloneDiagnosticEventForListener(enriched),
+          createDiagnosticMetadataForListener(metadata),
+        );
       } catch (err) {
         const errorMessage =
           err instanceof Error
@@ -517,6 +541,16 @@ function dispatchDiagnosticEvent(
   } finally {
     state.dispatchDepth -= 1;
   }
+}
+
+function createDiagnosticMetadataForListener(
+  metadata: DiagnosticEventMetadata,
+): DiagnosticEventMetadata {
+  const listenerMetadata = Object.freeze({ ...metadata });
+  if (listenerMetadata.trusted) {
+    dispatchedTrustedDiagnosticMetadata.add(listenerMetadata);
+  }
+  return listenerMetadata;
 }
 
 function cloneDiagnosticEventForListener(event: DiagnosticEventPayload): DiagnosticEventPayload {
@@ -621,6 +655,16 @@ export function onDiagnosticEvent(listener: (evt: DiagnosticEventPayload) => voi
     }
     listener(event);
   });
+}
+
+export function formatDiagnosticTraceparentForPropagation(
+  event: { trace?: DiagnosticTraceContext },
+  metadata: DiagnosticEventMetadata,
+): string | undefined {
+  if (!metadata.trusted || !dispatchedTrustedDiagnosticMetadata.has(metadata)) {
+    return undefined;
+  }
+  return formatDiagnosticTraceparent(event.trace);
 }
 
 export function resetDiagnosticEventsForTest(): void {
