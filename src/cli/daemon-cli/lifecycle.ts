@@ -250,7 +250,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
             ),
           );
         } else {
-          stdout.push(`Gateway booting (PID ${health.runtime.pid ?? "?"}).`);
+          stdout.write(`Gateway booting (PID ${health.runtime.pid ?? "?"}).\n`);
         }
         return; // success — gateway IS running, just not listening yet
       }
