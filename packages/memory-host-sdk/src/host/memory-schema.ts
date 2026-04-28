@@ -1,6 +1,6 @@
 // Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
 import type { DatabaseSync } from "node:sqlite";
-import { formatErrorMessage } from "../../../../src/infra/errors.js";
+import { formatErrorMessage } from "./error-utils.js";
 
 export function ensureMemoryIndexSchema(params: {
   db: DatabaseSync;

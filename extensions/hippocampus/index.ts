@@ -6,7 +6,7 @@
  * register the plugin ID with the discovery system so the openclaw.json config entry
  * passes validation.
  */
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/memory-core";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/channel-plugin-common";
 
 const hippocampusPlugin = {
   id: "hippocampus",

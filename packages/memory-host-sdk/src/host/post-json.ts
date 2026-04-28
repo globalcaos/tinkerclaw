@@ -1,11 +1,11 @@
-// Intent: clean code refactoring applied (naming, clarity, DRY, magic numbers)
-import type { SsrFPolicy } from "../../../../src/infra/net/ssrf.js";
 import { withRemoteHttpResponse } from "./remote-http.js";
+import type { SsrFPolicy } from "./ssrf-policy.js";
 
 export async function postJson<T>(params: {
   url: string;
   headers: Record<string, string>;
   ssrfPolicy?: SsrFPolicy;
+  fetchImpl?: typeof fetch;
   body: unknown;
   errorPrefix: string;
   attachStatus?: boolean;
@@ -14,6 +14,7 @@ export async function postJson<T>(params: {
   return await withRemoteHttpResponse({
     url: params.url,
     ssrfPolicy: params.ssrfPolicy,
+    fetchImpl: params.fetchImpl,
     init: {
       method: "POST",
       headers: params.headers,

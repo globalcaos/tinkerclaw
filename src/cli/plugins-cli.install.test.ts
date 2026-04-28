@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { installedPluginRoot } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { installedPluginRoot } from "../../test/helpers/bundled-plugin-paths.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   applyExclusiveSlotSelection,
@@ -502,9 +502,7 @@ describe("plugins cli install", () => {
 
     const writtenConfig = writeConfigFile.mock.calls.at(-1)?.[0] as OpenClawConfig;
     expect(writtenConfig.plugins?.entries?.["memory-lancedb"]).toBeUndefined();
-    expect(writtenConfig.plugins?.load?.paths).toEqual(
-      expect.arrayContaining(["/existing/plugin", expect.stringContaining("memory-lancedb")]),
-    );
+    expect(writtenConfig.plugins?.load?.paths).toEqual(["/existing/plugin"]);
     expect(writePersistedInstalledPluginIndexInstallRecords).toHaveBeenCalledWith({
       "memory-lancedb": expect.objectContaining({
         source: "path",
