@@ -1,6 +1,10 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 
-const db = new Database("/home/<user>/.openclaw/data/anatomy-timeline.db", { readonly: true });
+const dbPath =
+  process.env.OPENCLAW_ANATOMY_DB ?? join(homedir(), ".openclaw", "data", "anatomy-timeline.db");
+const db = new Database(dbPath, { readonly: true });
 
 console.log("=== TABLE COUNT ===", db.prepare("SELECT COUNT(*) as n FROM anatomy_events").get());
 

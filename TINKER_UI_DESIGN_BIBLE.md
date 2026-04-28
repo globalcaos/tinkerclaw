@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-27 (cc-bridge stream parser — post-tool text recovery via per-block tracking + `result.result` reconciliation in the success path; before this fix, every tool-heavy turn looked like Jarvis "died after N tool calls" because the post-tool summary was silently dropped — only the 120-char preamble made it to the persisted assistant message. Earlier today: UI chrome cleanup — Story Mode 🎬 deleted, Models renamed "Side panel" 🗂️, Prefrontal "Orchestration" inner header removed.)
+> Last updated: 2026-04-28 (§5.76 public/private boundary + git-pull contract — Jarvis ships as the day-0 default; user overrides live in `~/.openclaw/workspace/`; resolution order config → workspace → bundled; five hardcoded `/home/<user>/...` paths in `worker.ts` and `db-probe.mjs` to fix; chrome-extension token-leak placeholder to replace; narration / subagent-helper / tool-choice / persona / briefing default prompts extracted to `extensions/tinkerclaw-cc-bridge/{personas,prompts}/` and loaded via shared resolver. The "Sam test" + "Day-90 test" are the structural guarantees.)
 
 ---
 
@@ -1341,6 +1341,160 @@ No functional loss: `claude-cli` maintains its own tool catalog via `--permissio
   - Not retroactive — entries already in `session-map.json` from before this commit (hashed by systemPrompt only) stay readable but won't be matched by future requests, which now hash with sessionId. They become inert dead weight.
   - Not a substitute for `/clear`'s tab-key rotation. The local rotation is still important: `chat.history` with the old key would still return the just-archived transcript in flight, and the tab-key swap prevents that race.
 - **Files:** `src/agents/pi-embedded-runner/run/attempt.ts` (smuggle `__openclawSessionId`), `extensions/tinkerclaw-cc-bridge/src/stream.ts` (`deriveSessionKey` hashes sessionId + reorders pipedOptions extraction so sessionId is available before key derivation), `tinker-ui/src/app.ts` (`/clear` calls `sessions.reset` instead of `sessions.delete`; topbar `/new` resets the abandoned `tinker:*` key before rotating), `scripts/check-reset-cascade.mjs` (new verification harness).
+
+### 5.76 Public/Private Boundary & The Git-Pull Contract (2026-04-28)
+
+This section defines the rules that let `tinkerclaw` ship as a public GitHub repo someone can clone-and-run while keeping personal data out of the public surface AND letting an existing user `git pull` for upstream improvements without losing any personalisation.
+
+#### 5.76a The product story
+
+`tinkerclaw` is shipped as **"Jarvis, ready to play, with hooks to make him yours."** Day-0 cloners get a working assistant — JARVIS persona, working briefing on `/new`, JARVIS voice, all cognitive plugins composed — without any setup beyond `pnpm install && pnpm build && openclaw start`. They override anything they want, in increasing precedence:
+
+1. Explicit config (`~/.openclaw/openclaw.json` — outside repo)
+2. Workspace file (`~/.openclaw/workspace/<file>` — outside repo)
+3. Bundled default (`extensions/tinkerclaw-cc-bridge/{personas,prompts}/<file>` — in repo)
+
+The bundled default is always present; first-boot never hits a missing-file path. Override layers are opt-in and live outside the repo so `git pull` cannot touch them.
+
+#### 5.76b The hard contract: program in repo, data outside
+
+The single rule that makes the whole system safe under `git pull`:
+
+| Lives in `~/src/tinkerclaw/` (repo)                                                  | Lives in `~/.openclaw/workspace/` (outside repo)                   |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Code (worker.ts, stream.ts, gateway patches, extensions)                             | User persona override (`SOUL.md`)                                  |
+| Bundled defaults (`personas/jarvis-default.md`, `prompts/briefing-default.md`, etc.) | User briefing override (`BRIEFING.md`)                             |
+| Contract documents (READMEs, PATCHES, CHANGELOG, this bible)                         | User recipes / cron / memory / heartbeat                           |
+| Config schema and shipped sample                                                     | Trained Personality NN (`models/amygdala/onnx/personality_*.onnx`) |
+|                                                                                      | Live runtime state (sessions, anatomy timeline, OAuth credentials) |
+
+`git pull` rewrites the left column freely. It cannot reach the right column because git operates on the working tree at `~/src/tinkerclaw/` and stops there. No exceptions — anything user-editable that's allowed inside the repo is the trap that breaks the whole contract on the next pull.
+
+The `.gitignore` already enforces the asymmetric half (private files in the repo are excluded — `SOUL.md`, `morning-briefings/`, `models/amygdala/{checkpoints,onnx}/personality_*`, `data/amygdala/personality-nudge.json`). The new rule the boundary adds: **users do not personalize bundled defaults in-place; they place overrides in the workspace.**
+
+#### 5.76c File categories — what `git pull` does to each
+
+Every public-repo file falls in exactly one of three buckets:
+
+| Category                               | What it is                                                                                                                                                                                                              | Override path                               | What `git pull` does                                                                                    |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Bundled default with override hook** | `personas/jarvis-default.md`, `prompts/briefing-default.md`, `prompts/narration-contract.md`, `prompts/subagent-helper.md`, `prompts/tool-choice.md`                                                                    | Workspace file resolved before the bundle   | Refreshes the bundle. Workspace override (if present) is untouched and continues to win.                |
+| **Library code**                       | `extensions/**/src/*.ts`, `src/fork/**`, `src/gateway/**`, `tinker-ui/src/**`                                                                                                                                           | None — fork the repo if you want to diverge | Refreshes. Users with workspace overrides see no change in behaviour; users who forked merge as normal. |
+| **Read-only contract**                 | `FORK.md`, `FORK_SETUP.md`, `FORK_PATCHES.md`, `CHANGELOG-FORK.md`, `COGNITIVE_PLUGINS_GUIDE.md`, `TINKER_UI_DESIGN_BIBLE.md`, every extension `README.md` and recipe under `extensions/tinkerclaw-prefrontal/recipes/` | None — read, don't edit                     | Refreshes. Users read changes via the changelog.                                                        |
+
+There is no fourth category called "ship a default but expect users to edit it in place." Eliminating that category is what makes the contract robust.
+
+#### 5.76d Resolution order in code
+
+For each bundled-default-with-override-hook file, the loader applies the same three-step resolution. Implemented as a shared helper in `extensions/tinkerclaw-cc-bridge/src/prompt-loader.ts`:
+
+```
+resolvePromptPath(name) →
+  1. cfg.prompts?.[name]Path ?? cfg.cognitive?.[name]Path  (config — outside repo)
+  2. path.join(workspaceDir, <name>.md)                    (workspace — outside repo)
+  3. path.join(__dirname, "../{personas,prompts}", <name>) (bundled default — in repo)
+```
+
+The first existing path wins. The bundled default at step 3 is guaranteed to exist (shipped in the repo). Steps 1 and 2 are opt-in. No file-not-found errors at boot under any combination of presence/absence.
+
+For the persona, the resolution lives in `src/fork/attempt-hooks.ts:getPersonaBlock` which reads `<workspaceDir>/SOUL.md` first and falls back to the bundled `jarvis-default.md`. For the briefing, the resolution lives in `tinker-ui/src/app.ts:buildInjectedPrompt` which reads `briefingPath` from cc-bridge config (resolved by the gateway). For the cc-bridge prompt blocks (narration / subagent-helper / tool-choice), the resolution lives in `cc-bridge/src/worker.ts:buildAppendedPromptRules`.
+
+#### 5.76e Day-0 defaults — what ships in the repo
+
+- **`extensions/tinkerclaw-cc-bridge/personas/jarvis-default.md`** — JARVIS persona, day-0 default. Sardonic, capable, formal-British voice; based on the canonical Iron Man character (widely known, not personal). Cloners override by creating `~/.openclaw/workspace/SOUL.md`.
+- **`extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md`** — generic morning-briefing template. Pattern + voice rules + category-based source discovery (HEARTBEAT, daily memory, recent commits — skip silently if missing). Cloners override by creating `~/.openclaw/workspace/BRIEFING.md`.
+- **`extensions/tinkerclaw-cc-bridge/prompts/narration-contract.md`** — the grandma-proof bar: per-tool narration rule + banned phrasings + bad/good examples. Extracted from `worker.ts:buildChatNarrationBlock`.
+- **`extensions/tinkerclaw-cc-bridge/prompts/subagent-helper.md`** — how to spawn OpenClaw subagents from inside cc-bridge. Extracted from `worker.ts:buildSubagentHelperBlock`.
+- **`extensions/tinkerclaw-cc-bridge/prompts/tool-choice.md`** — tool-routing decision tree (WebSearch vs WebFetch, etc.). Extracted from `worker.ts:buildToolChoiceBlock`.
+- **JARVIS voice (`skills/jarvis-voice/SKILL.md`)** — default-on TTS skill. Cloners disable via the skills panel or replace with another voice skill.
+
+Day-0 user experience: clone, install, build, start. Get JARVIS speaking sardonically through cc-bridge with full grandma-proof tool narration, full briefing on `/new`, and JARVIS voice (assuming `ffmpeg` + `aplay` are present from the skill manifest).
+
+#### 5.76f Drift detection on startup
+
+Each bundled default ships with a frontmatter `default-version: <semver>` line. When a workspace override exists, the loader compares the workspace file's stamped `default-version` (written by `openclaw <name> init`) to the current bundled `default-version`. If they differ:
+
+```
+[cc-bridge] persona override at default-version 1.0; bundled default is at 1.2.
+            run 'openclaw persona diff' to see changes; 'openclaw persona reset' to reseed.
+            (your override always wins; this is informational.)
+```
+
+INFO level log line. No automatic action. The user's override always wins; the message just notifies that improvements are available upstream.
+
+#### 5.76g The seed-edit-revert lifecycle
+
+The `openclaw` CLI exposes one verb per overridable file with three subcommands:
+
+```
+openclaw persona init              # copies personas/jarvis-default.md → ~/.openclaw/workspace/SOUL.md, opens $EDITOR
+openclaw persona diff              # diffs workspace SOUL.md against current bundled jarvis-default.md
+openclaw persona migrate           # if user accidentally edited the in-repo default, copies their diff to workspace + git-checkouts the repo file
+openclaw persona reset [--force]   # backs up workspace SOUL.md, copies fresh bundled default
+openclaw briefing {init,diff,migrate,reset}    # same shape for briefing-default.md
+openclaw narration {init,diff,migrate,reset}   # same shape for narration-contract.md (power-user override)
+openclaw recipes new <name>                    # creates ~/.openclaw/workspace/recipes/<name>.md from a template
+```
+
+Each `init` refuses to overwrite an existing workspace file (asks `--force`), copies the bundled default verbatim, stamps `default-version` in frontmatter, and opens `$EDITOR`. The verbs are documented in `FORK_SETUP.md`.
+
+The CLI scaffolding is filed as a follow-up — bible §5.76g documents the shape; first cut of the resolution order ships without the CLI commands. The boot-time drift log line ships with the loader.
+
+#### 5.76h Scenario-B trap: in-repo edits
+
+Some users will ignore the documented path and edit `extensions/tinkerclaw-cc-bridge/personas/jarvis-default.md` in place. `git pull` will conflict the next time upstream touches that file. The repo defends with two redundant signals:
+
+1. **`pnpm doctor`** (or first-run check on gateway boot) scans `extensions/tinkerclaw-cc-bridge/{personas,prompts}/` for local modifications via `git diff --quiet` and prints:
+   > Your repo has edits to bundled `jarvis-default.md`. These belong in `~/.openclaw/workspace/SOUL.md`, not in the repo. Run `openclaw persona migrate` to copy your edits to the workspace and revert the repo file. Until then, `git pull` will conflict on this file.
+2. **`git-hooks/pre-merge`** (opt-in via `core.hooksPath`) prints the same warning before letting a `git pull` proceed.
+
+`openclaw persona migrate` copies the user's diff vs. the upstream-tracked version into `~/.openclaw/workspace/SOUL.md`, then `git checkout` the repo file. After that, normal resolution order kicks in and `git pull` is safe.
+
+#### 5.76i The two tests
+
+Two tests every change to the public-repo surface must pass:
+
+- **The "Sam test"** (fresh clone): a stranger named Sam clones the repo, runs `pnpm install && pnpm build && openclaw start`, says hello in Tinker. Jarvis replies through cc-bridge with the bundled persona, the bundled briefing on `/new`, the bundled voice, full grandma-proof tool narration. No setup, no errors, no missing-file references in the assistant's mouth. Sam has done nothing personal yet — everything works from the bundle.
+- **The "Day-90 test"** (existing user `git pull`): a cloner who has been using the repo for 90 days has a personalized `~/.openclaw/workspace/SOUL.md`, a custom `BRIEFING.md`, a trained `personality_*.onnx`, custom recipes under `~/.openclaw/workspace/recipes/`. They run `git pull`. The pull updates the bundled defaults, the library code, the contracts. **Their workspace is untouched.** Boot logs flag the drift between their SOUL.md (default-version 1.0) and the new bundled default (1.2); they read `openclaw persona diff` if interested; they keep their override otherwise. Total disruption: zero.
+
+Both tests must pass by design (resolution order + filesystem separation), not by user discipline.
+
+#### 5.76j What stays gitignored
+
+The `.gitignore` continues to exclude personal files that would otherwise leak through the public-repo surface if they ended up in the repo working tree:
+
+```
+# Personal — these belong in ~/.openclaw/workspace/, never in the repo
+SOUL.md                                          # personal persona override
+morning-briefings/                               # rendered briefing outputs
+
+# Trained personality NN — public Prudence ensemble ships, Personality is per-deployment
+models/amygdala/checkpoints/personality_*.pt
+models/amygdala/checkpoints/personality_*.json
+models/amygdala/onnx/personality_*.onnx
+models/amygdala/onnx/personality_*.onnx.data
+models/amygdala/personality-*.onnx
+models/amygdala/personality-*.onnx.data
+data/amygdala/personality-nudge.json             # nightly training output
+```
+
+That's the entire list — narrow because most personalization paths route to `~/.openclaw/workspace/` which is outside the repo and therefore doesn't need a `.gitignore` entry.
+
+#### 5.76k Files (this contract)
+
+- `extensions/tinkerclaw-cc-bridge/personas/jarvis-default.md` _(NEW — day-0 persona default)_
+- `extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md` _(NEW — day-0 briefing default)_
+- `extensions/tinkerclaw-cc-bridge/prompts/narration-contract.md` _(NEW — extracted from worker.ts)_
+- `extensions/tinkerclaw-cc-bridge/prompts/subagent-helper.md` _(NEW — extracted from worker.ts)_
+- `extensions/tinkerclaw-cc-bridge/prompts/tool-choice.md` _(NEW — extracted from worker.ts)_
+- `extensions/tinkerclaw-cc-bridge/src/prompt-loader.ts` _(NEW — three-step resolution helper)_
+- `extensions/tinkerclaw-cc-bridge/src/worker.ts` (use loader; remove the five hardcoded `/home/<user>/...` paths)
+- `extensions/tinkerclaw-cc-bridge/README.md` _(NEW — anatomy + override conventions)_
+- `extensions/tinkerclaw-browser-relay/chrome-extension/options.html` (replace literal gateway-token placeholder)
+- `scripts/db-probe.mjs` (replace `/home/<user>/.openclaw/...` with `os.homedir()`-resolved path)
+- `src/fork/attempt-hooks.ts` (`getPersonaBlock` falls back to bundled `jarvis-default.md`)
+- `tinker-ui/src/app.ts:buildInjectedPrompt` (briefing path resolved from cc-bridge config, falls back to bundled `briefing-default.md`)
+- `FORK_SETUP.md` (new "Personalize in the workspace, never in the repo" paragraph at the top)
 
 ---
 
