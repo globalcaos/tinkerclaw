@@ -119,5 +119,7 @@ export type EmbeddedRunAttemptResult = {
   setTerminalLifecycleMeta?: (meta: {
     replayInvalid?: boolean;
     livenessState?: EmbeddedRunLivenessState;
+    stopReason?: string;
+    yielded?: boolean;
   }) => void;
 };
