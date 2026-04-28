@@ -37,6 +37,7 @@ apps/android/benchmark/results/
 # Bun build artifacts
 *.bun-build
 apps/macos/.build/
+apps/macos-mlx-tts/.build/
 apps/shared/MoltbotKit/.build/
 apps/shared/OpenClawKit/.build/
 apps/shared/OpenClawKit/Package.resolved
@@ -58,6 +59,7 @@ vendor/
 apps/ios/Clawdbot.xcodeproj/
 apps/ios/Clawdbot.xcodeproj/**
 apps/macos/.build/**
+apps/macos-mlx-tts/.build/**
 **/*.bun-build
 apps/ios/*.xcfilelist
 
@@ -141,9 +143,11 @@ morning-briefings/
 skills/
 !.agents/skills/
 !src/agents/skills/
+!extensions/*/skills/
 config/
 !src/config/
 !extensions/*/src/config*
+!extensions/*/src/engine/config/
 !ui/src/ui/controllers/config/
 
 # Local iOS signing overrides
