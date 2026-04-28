@@ -1498,6 +1498,87 @@ That's the entire list — narrow because most personalization paths route to `~
 
 ---
 
+### 5.77 Anthropic Opus 4.7 Prompting Standards (2026-04-28)
+
+**Why this section exists.** Opus 4.7 follows literal instructions more strictly than 4.6 and is less aggressive about its own embellishments. Prompts that worked fine on 4.6 ("HARD RULE: never do X", "MUST do Y", all-caps emphasis, vague exhortations) under-perform on 4.7 — the model now does exactly what you ask, no more, no less. Every prompt the fork ships needs to be written for that contract.
+
+This section is the standard. Every `.md` file under `~/src/tinkerclaw/extensions/*/prompts/`, `~/src/tinkerclaw/extensions/*/personas/`, `~/.openclaw/workspace/*.md` (workspace overrides), and every skill `SKILL.md` in `~/.openclaw/workspace/skills/` follows it.
+
+#### 5.77a The eight rules
+
+1. **Wrap blocks in named XML tags.** Use semantic names that describe the block's purpose: `<role>`, `<task>`, `<voice>`, `<examples>`, `<rules>`, `<override_priority>`, `<verbosity>`, `<output_format>`, `<why_this_matters>`, `<scope>`. Avoid generic names like `<section1>`. The tags let the model reference structure when reasoning about which rule applies; without them it has to infer boundaries from headings.
+
+2. **Examples go in `<example>` blocks with sub-tags.**
+
+   ```xml
+   <example>
+   <scenario>What's happening</scenario>
+   <bad>What not to do, and a brief reason it fails</bad>
+   <good>The right move</good>
+   <why>One sentence on what makes the good version right</why>
+   </example>
+   ```
+
+   The sub-tags let the model parse the example without conflating "bad" and "good" prose.
+
+3. **Motivation-first framing.** Lead with WHY a rule exists before WHAT to do. 4.7 follows literal instructions; without motivation it can't extrapolate to edge cases the rule didn't anticipate.
+
+4. **Reframe negatives as positives where possible.**
+   - "Don't fabricate" → "Honest 'no signal' reports are valuable because false positives waste downstream attention"
+   - "Never do Y" → "Do Z instead because Y leads to W"
+     Keep strict negation only where there is a genuine safety boundary the model must not cross.
+
+5. **Dial back CAPS / MUST / NEVER / HARD RULE.** 4.7 is more responsive to calm specific phrasing than to shouted imperatives. Replace ALL-CAPS words with normal case unless the emphasis is genuinely load-bearing. Replace "MUST"/"NEVER" with concrete description of the desired behaviour. The 4.6-era pattern of stacking imperatives ("CRITICAL", "ABSOLUTELY", "BLOCKING REQUIREMENT") makes 4.7 freeze rather than act.
+
+6. **Add an explicit `<override_priority>` block** when a prompt could be overridden by user instructions. State the priority order plainly: user explicit instructions > this prompt > system defaults. Without it, 4.7 may treat the prompt as the highest authority and ignore conflicting user input.
+
+7. **Concrete over abstract.** Replace vague nouns ("the code", "the user", "things") with specific anchors: "the `cc-bridge` worker.ts", "the user's `~/.openclaw/workspace/`". Vague nouns let the model wander; concrete anchors keep it on the artifact you actually mean.
+
+8. **Length: keep or shorten.** Don't pad. If a section can lose 30% of its words without losing meaning, do it. 4.7 reads everything literally — every word competes for attention.
+
+#### 5.77b Two modes — pick per file
+
+A file is **HEAVY** (full Opus 4.7 treatment) if it tells a future LLM how to behave: voice, tools, output format, decision rules.
+
+- Examples: `BRIEFING.md`, `SOUL.md`, `IDENTITY.md`, `VOICE.md`, `USER.md`, `VISION.md`, `AGENTS.md`, `TOOLS.md`, `HEARTBEAT.md`, `SESSION.md`, `MOLTBOOK.md`, `COGNITIVE_PLUGINS_GUIDE.md`, `CLAUDE.md`, every `skills/*/SKILL.md`, every `.agent/workflows/*.md`, every `extensions/*/prompts/*.md` and `extensions/*/personas/*.md`.
+
+A file is **LIGHT** (typo + structure pass only, NEVER rewrite) if it records what happened, what someone thinks, or factual data.
+
+- Examples: anything in `memory/` (daily journals, archives, ai-research, ChatGPT imports), `bank/contacts*.md`, `bank/opinions.md`, `bank/experience.md`, `CHANGELOG-FORK.md`, `index_costos.md`, `moltbook_findings.md`, anything in `bank/reference/` that reads as notes (not instructions).
+
+When ambiguous: read the first 30 lines. If it addresses a future LLM ("you are…", "your task is…", instructions in second person), it's HEAVY. Otherwise LIGHT.
+
+#### 5.77c LIGHT mode — what is allowed
+
+NEVER rewrite content. NEVER add XML tags. NEVER restructure prose.
+
+Allowed:
+
+- Fix obvious typos (your/you're, definately → definitely)
+- Fix broken markdown (unclosed code fences, malformed lists, broken links)
+- Normalise heading levels if a file mixes `#` and `##` for same-level items
+- Trim trailing whitespace; collapse runs of 3+ blank lines to 2
+
+When in doubt on a memory file: leave it alone. We are not rewriting history.
+
+#### 5.77d Where the standard is canonical
+
+The full revision guide lives at `/tmp/opus47-revision-guide.md` during a sweep, but the canonical reference is **this section**. New prompts go through this rubric at write-time, not as an afterthought. New skill `SKILL.md` files start in HEAVY format. New workspace overrides start in HEAVY format.
+
+For non-text-prompt files (configs, schemas, code), 5.77 does not apply — the rules here are about LLM-facing prose.
+
+#### 5.77e Commits that established the baseline
+
+- `b2ab809651` — first sweep: 4 standalone bundled prompts revised (jarvis-default, briefing-default, amygdala-prompt, fractal-prompt).
+- `dfceb60241` — second sweep: 3 prompt fragments extracted from `worker.ts` into `prompts/` (narration-contract, tool-choice, subagent-helper) under the same standard.
+- `2026-04-28 sweep` — full workspace pass (~125 HEAVY prompts, ~470 LIGHT-touched memories) to bring every existing `.md` under §5.77.
+
+#### 5.77f When the standard changes
+
+If Anthropic publishes new guidance for Opus 4.8 or later, append §5.78 rather than rewriting §5.77. Old prompts revised under §5.77 are still valid; new prompts pick up the latest. Roll a `default-version: 1.x → 2.0` bump on bundled prompt frontmatter when the rules change in a way that would alter the rendered prompt.
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.
