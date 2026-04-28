@@ -157,6 +157,7 @@ const PluginEntrySchema = z
     hooks: z
       .object({
         allowPromptInjection: z.boolean().optional(),
+        allowConversationAccess: z.boolean().optional(),
       })
       .strict()
       .optional(),

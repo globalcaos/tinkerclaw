@@ -3,7 +3,7 @@ summary: "Run OpenClaw embedded agent turns through the bundled Codex app-server
 title: "Codex harness"
 read_when:
   - You want to use the bundled Codex app-server harness
-  - You need Codex model refs and config examples
+  - You need Codex harness config examples
   - You want to disable PI fallback for Codex-only deployments
 ---
 
@@ -25,17 +25,18 @@ These are in-process OpenClaw hooks, not Codex `hooks.json` command hooks:
 - `before_message_write` for mirrored transcript records
 - `agent_end`
 
-Bundled plugins can also register a Codex app-server extension factory to add
-async `tool_result` middleware. That middleware runs for OpenClaw dynamic tools
-after OpenClaw executes the tool and before the result is returned to Codex. It
-is separate from the public `tool_result_persist` plugin hook, which transforms
-OpenClaw-owned transcript tool-result writes.
+Plugins can also register harness-neutral tool-result middleware to rewrite
+OpenClaw dynamic tool results after OpenClaw executes the tool and before the
+result is returned to Codex. This is separate from the public
+`tool_result_persist` plugin hook, which transforms OpenClaw-owned transcript
+tool-result writes.
 
 The harness is off by default. New configs should keep OpenAI model refs
 canonical as `openai/gpt-*` and explicitly force
 `embeddedHarness.runtime: "codex"` or `OPENCLAW_AGENT_RUNTIME=codex` when they
 want native app-server execution. Legacy `codex/*` model refs still auto-select
-the harness for compatibility.
+the harness for compatibility, but they are not shown as normal model/provider
+choices.
 
 ## Pick the right model prefix
 
@@ -54,10 +55,11 @@ GPT-5.5 is currently subscription/OAuth-only in OpenClaw. Use
 app-server harness. Direct API-key access for `openai/gpt-5.5` is supported
 once OpenAI enables GPT-5.5 on the public API.
 
-Legacy `codex/gpt-*` refs remain accepted as compatibility aliases. New PI
-Codex OAuth configs should use `openai-codex/gpt-*`; new native app-server
-harness configs should use `openai/gpt-*` plus `embeddedHarness.runtime:
-"codex"`.
+Legacy `codex/gpt-*` refs remain accepted as compatibility aliases. Doctor
+compatibility migration rewrites legacy primary `codex/*` refs to `openai/*`
+and records the Codex harness policy separately. New PI Codex OAuth configs
+should use `openai-codex/gpt-*`; new native app-server harness configs should
+use `openai/gpt-*` plus `embeddedHarness.runtime: "codex"`.
 
 `agents.defaults.imageModel` follows the same prefix split. Use
 `openai-codex/gpt-*` when image understanding should run through the OpenAI
@@ -535,6 +537,10 @@ events into the existing OpenClaw hook contract where the semantics are honest.
 Until then, OpenClaw's `before_compaction`, `after_compaction`, `llm_input`, and
 `llm_output` events are adapter-level observations, not byte-for-byte captures
 of Codex's internal request or compaction payloads.
+
+Codex native `hook/started` and `hook/completed` app-server notifications are
+projected as `codex_app_server.hook` agent events for trajectory and debugging.
+They do not invoke OpenClaw plugin hooks.
 
 ## Tools, media, and compaction
 
