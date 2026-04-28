@@ -65,6 +65,8 @@ Packaged OpenClaw installs do not eagerly install every bundled plugin's
 runtime dependency tree. When a bundled OpenClaw-owned plugin is active from
 plugin config, legacy channel config, or a default-enabled manifest, startup
 repairs only that plugin's declared runtime dependencies before importing it.
+Persisted channel auth state alone does not activate a bundled channel for
+Gateway startup runtime-dependency repair.
 Explicit disablement still wins: `plugins.entries.<id>.enabled: false`,
 `plugins.deny`, `plugins.enabled: false`, and `channels.<id>.enabled: false`
 prevent automatic bundled runtime-dependency repair for that plugin/channel.
@@ -178,7 +180,9 @@ OpenClaw scans for plugins in this order (first match wins):
 
 <Steps>
   <Step title="Config paths">
-    `plugins.load.paths` — explicit file or directory paths.
+    `plugins.load.paths` — explicit file or directory paths. Paths that point
+    back at OpenClaw's own packaged bundled plugin directories are ignored;
+    run `openclaw doctor --fix` to remove those stale aliases.
   </Step>
 
   <Step title="Workspace plugins">
@@ -208,7 +212,7 @@ OpenClaw scans for plugins in this order (first match wins):
   runtime
 - OpenAI-family Codex routes keep separate plugin boundaries:
   `openai-codex/*` belongs to the OpenAI plugin, while the bundled Codex
-  app-server plugin is selected by `embeddedHarness.runtime: "codex"` or legacy
+  app-server plugin is selected by `agentRuntime.id: "codex"` or legacy
   `codex/*` model refs
 
 ## Troubleshooting runtime hooks
