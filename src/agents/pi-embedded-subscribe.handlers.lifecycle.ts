@@ -17,8 +17,8 @@ import { isPromiseLike } from "./pi-embedded-subscribe.promise.js";
 import { isAssistantMessage } from "./pi-embedded-utils.js";
 
 export {
-  handleAutoCompactionEnd,
-  handleAutoCompactionStart,
+  handleCompactionEnd,
+  handleCompactionStart,
 } from "./pi-embedded-subscribe.handlers.compaction.js";
 
 export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
@@ -108,8 +108,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
     ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId} isError=${isError}`);
   }
 
-  const rateLimit =
-    ctx.params.modelProvider === "anthropic" ? getRateLimitSnapshot() : undefined;
+  const rateLimit = ctx.params.modelProvider === "anthropic" ? getRateLimitSnapshot() : undefined;
   const emitLifecycleTerminal = () => {
     if (isError) {
       emitAgentEvent({
