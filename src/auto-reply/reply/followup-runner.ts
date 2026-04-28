@@ -136,6 +136,8 @@ export function createFollowupRunner(params: {
   };
 
   return async (queued: FollowupRun) => {
+    const queuedImages = queued.images ?? opts?.images;
+    const queuedImageOrder = queued.imageOrder ?? opts?.imageOrder;
     queued.run.config = await resolveQueuedReplyExecutionConfig(queued.run.config, {
       originatingChannel: queued.originatingChannel,
       messageProvider: queued.run.messageProvider,
@@ -277,6 +279,8 @@ export function createFollowupRunner(params: {
                 bashElevated: run.bashElevated,
                 timeoutMs: run.timeoutMs,
                 runId,
+                images: queuedImages,
+                imageOrder: queuedImageOrder,
                 allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
                 blockReplyBreak: run.blockReplyBreak,
                 bootstrapPromptWarningSignaturesSeen,

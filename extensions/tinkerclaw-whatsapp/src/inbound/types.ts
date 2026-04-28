@@ -35,6 +35,15 @@ export type ActiveWebListener = {
   close?: () => Promise<void>;
 };
 
+export type WhatsAppStructuredContactContext = {
+  kind: "contact" | "contacts";
+  total: number;
+  contacts: Array<{
+    name?: string;
+    phones?: string[];
+  }>;
+};
+
 export type WebInboundMessage = {
   id?: string;
   from: string; // conversation id: E.164 for direct chats, group JID for groups
@@ -73,6 +82,12 @@ export type WebInboundMessage = {
   mediaType?: string;
   mediaFileName?: string;
   mediaUrl?: string;
+  untrustedStructuredContext?: Array<{
+    label: string;
+    source?: string;
+    type?: string;
+    payload: unknown;
+  }>;
   wasMentioned?: boolean;
   /** True when this message was recovered from offline catch-up (append), not real-time. */
   isOfflineRecovery?: boolean;

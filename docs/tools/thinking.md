@@ -2,10 +2,8 @@
 summary: "Directive syntax for /think, /fast, /verbose, /trace, and reasoning visibility"
 read_when:
   - Adjusting thinking, fast-mode, or verbose directive parsing or defaults
-title: "Thinking Levels"
+title: "Thinking levels"
 ---
-
-# Thinking Levels (/think directives)
 
 ## What it does
 
