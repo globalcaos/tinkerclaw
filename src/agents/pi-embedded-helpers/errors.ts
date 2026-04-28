@@ -270,6 +270,9 @@ export type ProviderRuntimeFailureKind =
   | "schema"
   | "sandbox_blocked"
   | "replay_invalid"
+  | "empty_response"
+  | "no_error_details"
+  | "unclassified"
   | "unknown";
 
 const BILLING_402_HINTS = [
@@ -856,7 +859,7 @@ function classifyFailoverClassificationFromMessage(
     return toReasonClassification("format");
   }
   if (isExactUnknownNoDetailsError(raw)) {
-    return toReasonClassification("unknown");
+    return toReasonClassification("no_error_details");
   }
   if (isTimeoutErrorMessage(raw)) {
     return toReasonClassification("timeout");
@@ -905,7 +908,7 @@ export function classifyProviderRuntimeFailureKind(
   const status = inferSignalStatus(normalizedSignal);
 
   if (!message && typeof status !== "number") {
-    return "unknown";
+    return "empty_response";
   }
   if (normalizedSignal.code === "refresh_contention") {
     return "refresh_contention";
@@ -963,7 +966,10 @@ export function classifyProviderRuntimeFailureKind(
   if (message && isTimeoutTransportErrorMessage(message, status)) {
     return "timeout";
   }
-  return "unknown";
+  if (message && isExactUnknownNoDetailsError(message)) {
+    return "no_error_details";
+  }
+  return "unclassified";
 }
 
 export function formatAssistantErrorText(

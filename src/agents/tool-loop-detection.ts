@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
-import type { SessionState } from "../logging/diagnostic-session-state.js";
+import type { SessionState, ToolCallRecord } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isPlainObject } from "../utils.js";
 
@@ -57,6 +57,23 @@ type ResolvedLoopDetectionConfig = {
     pingPong: boolean;
   };
 };
+
+export type ToolLoopDetectionScope = {
+  runId?: string;
+};
+
+function normalizeRunId(runId?: string): string | undefined {
+  const trimmed = runId?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function selectHistoryForScope(
+  history: readonly ToolCallRecord[],
+  scope?: ToolLoopDetectionScope,
+): ToolCallRecord[] {
+  const runId = normalizeRunId(scope?.runId);
+  return history.filter((record) => normalizeRunId(record.runId) === runId);
+}
 
 function asPositiveInt(value: number | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
@@ -206,6 +223,14 @@ function stringField(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function nonEmptyStringField(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
 function hashExecToolOutcome(details: Record<string, unknown>, text: string): string | undefined {
   const status = stringField(details.status);
   if (!status) {
@@ -224,7 +249,7 @@ function hashExecToolOutcome(details: Record<string, unknown>, text: string): st
       status,
       exitCode: typeof details.exitCode === "number" ? details.exitCode : null,
       timedOut: details.timedOut === true,
-      output: stringField(details.aggregated) ?? text,
+      output: nonEmptyStringField(details.aggregated) ?? text,
     });
   }
 
@@ -475,12 +500,13 @@ export function detectToolCallLoop(
   toolName: string,
   params: unknown,
   config?: ToolLoopDetectionConfig,
+  scope?: ToolLoopDetectionScope,
 ): LoopDetectionResult {
   const resolvedConfig = resolveLoopDetectionConfig(config);
   if (!resolvedConfig.enabled) {
     return { stuck: false };
   }
-  const history = state.toolCallHistory ?? [];
+  const history = selectHistoryForScope(state.toolCallHistory ?? [], scope);
   const currentHash = hashToolCall(toolName, params);
   const unknownToolStreak = getUnknownToolRepeatStreak(history, toolName);
   const noProgress = getNoProgressStreak(history, toolName, currentHash);
@@ -617,8 +643,10 @@ export function recordToolCall(
   params: unknown,
   toolCallId?: string,
   config?: ToolLoopDetectionConfig,
+  scope?: ToolLoopDetectionScope,
 ): void {
   const resolvedConfig = resolveLoopDetectionConfig(config);
+  const runId = normalizeRunId(scope?.runId);
   if (!state.toolCallHistory) {
     state.toolCallHistory = [];
   }
@@ -627,6 +655,7 @@ export function recordToolCall(
     toolName,
     argsHash: hashToolCall(toolName, params),
     toolCallId,
+    ...(runId && { runId }),
     timestamp: Date.now(),
   });
 
@@ -647,9 +676,11 @@ export function recordToolCallOutcome(
     result?: unknown;
     error?: unknown;
     config?: ToolLoopDetectionConfig;
+    runId?: string;
   },
 ): void {
   const resolvedConfig = resolveLoopDetectionConfig(params.config);
+  const runId = normalizeRunId(params.runId);
   const outcome = hashToolOutcome(params.toolName, params.toolParams, params.result, params.error);
   const resultHash = outcome.resultHash;
   if (!resultHash) {
@@ -665,6 +696,9 @@ export function recordToolCallOutcome(
   for (let i = state.toolCallHistory.length - 1; i >= 0; i -= 1) {
     const call = state.toolCallHistory[i];
     if (!call) {
+      continue;
+    }
+    if (normalizeRunId(call.runId) !== runId) {
       continue;
     }
     if (params.toolCallId && call.toolCallId !== params.toolCallId) {
@@ -687,6 +721,7 @@ export function recordToolCallOutcome(
       toolName: params.toolName,
       argsHash,
       toolCallId: params.toolCallId,
+      ...(runId && { runId }),
       resultHash,
       unknownToolName: outcome.unknownToolName,
       timestamp: Date.now(),

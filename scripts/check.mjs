@@ -30,6 +30,15 @@ export async function main(argv = process.argv.slice(2)) {
       parallel: true,
       commands: [
         { name: "conflict markers", args: ["check:no-conflict-markers"] },
+        { name: "changelog attributions", args: ["check:changelog-attributions"] },
+        {
+          name: "guarded extension wildcard re-exports",
+          args: ["lint:extensions:no-guarded-wildcard-reexports"],
+        },
+        {
+          name: "plugin-sdk wildcard re-exports",
+          args: ["lint:extensions:no-plugin-sdk-wildcard-reexports"],
+        },
         { name: "tool display", args: ["tool-display:check"] },
         { name: "host env policy", args: ["check:host-env-policy:swift"] },
       ],
