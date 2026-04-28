@@ -3,7 +3,7 @@ summary: "Voice Call plugin: outbound + inbound calls via Twilio/Telnyx/Plivo (p
 read_when:
   - You want to place an outbound voice call from OpenClaw
   - You are configuring or developing the voice-call plugin
-title: "Voice Call Plugin"
+title: "Voice call plugin"
 ---
 
 # Voice Call (plugin)
@@ -501,3 +501,9 @@ This repo ships a matching skill doc at `skills/voice-call/SKILL.md`.
 - `voicecall.speak` (`callId`, `message`)
 - `voicecall.end` (`callId`)
 - `voicecall.status` (`callId`)
+
+## Related
+
+- [Text-to-speech](/tools/tts)
+- [Talk mode](/nodes/talk)
+- [Voice wake](/nodes/voicewake)
