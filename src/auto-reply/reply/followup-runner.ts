@@ -289,6 +289,13 @@ export function createFollowupRunner(params: {
                     bootstrapPromptWarningSignaturesSeen.length - 1
                   ],
                 onAgentEvent: (evt) => {
+                  if (evt.stream.startsWith("codex_app_server.")) {
+                    emitAgentEvent({
+                      runId,
+                      stream: evt.stream,
+                      data: evt.data,
+                    });
+                  }
                   if (evt.stream !== "compaction") {
                     return;
                   }
