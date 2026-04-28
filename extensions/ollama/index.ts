@@ -166,6 +166,13 @@ export default definePluginEntry({
       contributeResolvedModelCompat: ({ model }) =>
         usesOllamaOpenAICompatTransport(model) ? { supportsUsageInStreaming: true } : undefined,
       resolveReasoningOutputMode: () => "native",
+      resolveThinkingProfile: ({ reasoning }) => ({
+        levels:
+          reasoning === true
+            ? [{ id: "off" }, { id: "low" }, { id: "medium" }, { id: "high" }, { id: "max" }]
+            : [{ id: "off" }],
+        defaultLevel: "off",
+      }),
       wrapStreamFn: createConfiguredOllamaCompatStreamWrapper,
       createEmbeddingProvider: async ({ config, model, remote }) => {
         const { provider, client } = await createOllamaEmbeddingProvider({

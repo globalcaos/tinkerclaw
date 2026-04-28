@@ -22,15 +22,26 @@ describe("scripts/test-projects changed-target routing", () => {
         "src/shared/string-normalization.ts",
         "src/utils/provider-utils.ts",
       ]),
-    ).toEqual(["src/shared/string-normalization.ts", "src/utils/provider-utils.ts"]);
+    ).toEqual(["src/shared/string-normalization.test.ts", "src/utils/provider-utils.test.ts"]);
   });
 
-  it("keeps the broad changed run for Vitest wiring edits", () => {
+  it("keeps changed mode focused by default for Vitest wiring edits", () => {
     expect(
       resolveChangedTargetArgs(["--changed", "origin/main"], process.cwd(), () => [
         "test/vitest/vitest.shared.config.ts",
         "src/utils/provider-utils.ts",
       ]),
+    ).toEqual(["src/utils/provider-utils.test.ts"]);
+  });
+
+  it("keeps the broad changed run available for Vitest wiring edits", () => {
+    expect(
+      resolveChangedTargetArgs(
+        ["--changed", "origin/main"],
+        process.cwd(),
+        () => ["test/vitest/vitest.shared.config.ts", "src/utils/provider-utils.ts"],
+        { env: { OPENCLAW_TEST_CHANGED_BROAD: "1" } },
+      ),
     ).toBeNull();
   });
 
@@ -123,18 +134,55 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.extension-browser.config.ts",
         forwardedArgs: [],
-        includePatterns: ["extensions/browser/src/browser/**/*.test.ts"],
+        includePatterns: ["extensions/browser/src/browser/cdp.helpers.test.ts"],
         watchMode: false,
       },
     ]);
   });
 
-  it("keeps the broad changed run for shared test helpers", () => {
+  it("keeps shared test helpers cheap by default when no precise target exists", () => {
     expect(
       resolveChangedTargetArgs(["--changed", "origin/main"], process.cwd(), () => [
         "test/helpers/channels/plugin.ts",
       ]),
+    ).toEqual([]);
+  });
+
+  it("keeps the broad changed run available for shared test helpers", () => {
+    expect(
+      resolveChangedTargetArgs(
+        ["--changed", "origin/main"],
+        process.cwd(),
+        () => ["test/helpers/channels/plugin.ts"],
+        { env: { OPENCLAW_TEST_CHANGED_BROAD: "1" } },
+      ),
     ).toBeNull();
+  });
+
+  it("routes channel helper edits through the tests that import them", () => {
+    expect(resolveChangedTestTargetPlan(["test/helpers/channels/directory-ids.ts"])).toEqual({
+      mode: "targets",
+      targets: [
+        "extensions/discord/src/directory-contract.test.ts",
+        "extensions/slack/src/directory-contract.test.ts",
+        "extensions/telegram/src/directory-contract.test.ts",
+      ],
+    });
+  });
+
+  it("routes channel contract helper edits through contract shards", () => {
+    const plan = resolveChangedTestTargetPlan([
+      "test/helpers/channels/registry-backed-contract-shards.ts",
+    ]);
+
+    expect(plan.mode).toBe("targets");
+    expect(plan.targets).toContain(
+      "src/channels/plugins/contracts/plugin.registry-backed-shard-a.contract.test.ts",
+    );
+    expect(plan.targets).toContain(
+      "src/channels/plugins/contracts/threading.registry-backed-shard-h.contract.test.ts",
+    );
+    expect(plan.targets).not.toContain("extensions/discord/src/channel-actions.contract.test.ts");
   });
 
   it("routes precise plugin contract helpers without broad-running every shard", () => {
@@ -148,11 +196,22 @@ describe("scripts/test-projects changed-target routing", () => {
     ]);
   });
 
-  it("keeps the broad changed run for unknown root surfaces", () => {
+  it("keeps unknown root surfaces cheap by default", () => {
     expect(
       resolveChangedTargetArgs(["--changed", "origin/main"], process.cwd(), () => [
         "unknown/file.txt",
       ]),
+    ).toEqual([]);
+  });
+
+  it("keeps the broad changed run available for unknown root surfaces", () => {
+    expect(
+      resolveChangedTargetArgs(
+        ["--changed", "origin/main"],
+        process.cwd(),
+        () => ["unknown/file.txt"],
+        { env: { OPENCLAW_TEST_CHANGED_BROAD: "1" } },
+      ),
     ).toBeNull();
   });
 
@@ -178,10 +237,28 @@ describe("scripts/test-projects changed-target routing", () => {
     ).toEqual([]);
   });
 
-  it("adds extension tests for public plugin SDK changes", () => {
+  it("keeps public plugin SDK changes focused by default", () => {
     const plans = buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
       "src/plugin-sdk/provider-entry.ts",
     ]);
+
+    expect(plans).toEqual([
+      {
+        config: "test/vitest/vitest.unit-fast.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["src/plugin-sdk/provider-entry.test.ts"],
+        watchMode: false,
+      },
+    ]);
+  });
+
+  it("adds extension tests for public plugin SDK changes in broad changed mode", () => {
+    const plans = buildVitestRunPlans(
+      ["--changed", "origin/main"],
+      process.cwd(),
+      () => ["src/plugin-sdk/provider-entry.ts"],
+      { env: { OPENCLAW_TEST_CHANGED_BROAD: "1" } },
+    );
 
     expect(plans).toEqual([
       {
@@ -208,7 +285,7 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.extension-providers.config.ts",
         forwardedArgs: [],
-        includePatterns: ["extensions/lmstudio/src/**/*.test.ts"],
+        includePatterns: ["extensions/lmstudio/src/runtime.test.ts"],
         watchMode: false,
       },
     ]);
@@ -392,7 +469,7 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.utils.config.ts",
         forwardedArgs: [],
-        includePatterns: ["src/utils/**/*.test.ts"],
+        includePatterns: ["src/utils/provider-utils.test.ts"],
         watchMode: false,
       },
     ]);
@@ -459,16 +536,34 @@ describe("scripts/test-projects changed-target routing", () => {
     ]);
   });
 
-  it("keeps non-allowlisted plugin-sdk source files on the heavy lane plus extension tests", () => {
+  it("routes plugin-sdk source files with sibling tests narrowly by default", () => {
     const plans = buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
       "src/plugin-sdk/facade-runtime.ts",
     ]);
 
     expect(plans).toEqual([
       {
-        config: "test/vitest/vitest.plugin-sdk.config.ts",
+        config: "test/vitest/vitest.bundled.config.ts",
         forwardedArgs: [],
-        includePatterns: ["src/plugin-sdk/**/*.test.ts"],
+        includePatterns: ["src/plugin-sdk/facade-runtime.test.ts"],
+        watchMode: false,
+      },
+    ]);
+  });
+
+  it("routes plugin-sdk source files with sibling tests plus extensions in broad changed mode", () => {
+    const plans = buildVitestRunPlans(
+      ["--changed", "origin/main"],
+      process.cwd(),
+      () => ["src/plugin-sdk/facade-runtime.ts"],
+      { env: { OPENCLAW_TEST_CHANGED_BROAD: "1" } },
+    );
+
+    expect(plans).toEqual([
+      {
+        config: "test/vitest/vitest.bundled.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["src/plugin-sdk/facade-runtime.test.ts"],
         watchMode: false,
       },
       ...listFullExtensionVitestProjectConfigs().map((config) => ({
@@ -480,7 +575,7 @@ describe("scripts/test-projects changed-target routing", () => {
     ]);
   });
 
-  it("keeps non-allowlisted commands source files on the heavy lane", () => {
+  it("routes command source files with sibling tests narrowly on the command lane", () => {
     const plans = buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
       "src/commands/channels.add.ts",
     ]);
@@ -489,10 +584,34 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.commands.config.ts",
         forwardedArgs: [],
-        includePatterns: ["src/commands/**/*.test.ts"],
+        includePatterns: ["src/commands/channels.add.test.ts"],
         watchMode: false,
       },
     ]);
+  });
+
+  it("keeps changed mode to precise targets by default", () => {
+    expect(resolveChangedTestTargetPlan(["package.json", "src/commands/channels.add.ts"])).toEqual({
+      mode: "targets",
+      targets: ["src/commands/channels.add.test.ts"],
+    });
+  });
+
+  it("keeps broad changed fallback available through explicit env", () => {
+    expect(
+      resolveChangedTestTargetPlan(["package.json", "src/commands/channels.add.ts"], {
+        env: { OPENCLAW_TEST_CHANGED_BROAD: "1" },
+      }),
+    ).toEqual({
+      mode: "broad",
+      targets: [],
+    });
+  });
+
+  it("uses import-graph targets in default changed mode", () => {
+    expect(
+      resolveChangedTestTargetPlan(["test/helpers/plugins/plugin-registration.ts"]).targets,
+    ).toContain("extensions/openrouter/index.test.ts");
   });
 
   it.each([

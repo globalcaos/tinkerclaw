@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  isBundledRuntimeDepsInstallStagePath,
   PACKAGE_DIST_INVENTORY_RELATIVE_PATH,
   writePackageDistInventory,
 } from "../src/infra/package-dist-inventory.ts";
@@ -78,19 +79,27 @@ const forbiddenPrefixes = [
   "dist/OpenClaw.app/",
   "dist/extensions/qa-channel/",
   "dist/extensions/qa-lab/",
+  "dist/plugin-sdk/extensions/qa-channel/",
   "dist/plugin-sdk/extensions/qa-lab/",
+  "dist/plugin-sdk/qa-channel.",
+  "dist/plugin-sdk/qa-channel-protocol.",
   "dist/plugin-sdk/qa-lab.",
   "dist/plugin-sdk/qa-runtime.",
+  "dist/plugin-sdk/src/plugin-sdk/qa-channel.d.ts",
+  "dist/plugin-sdk/src/plugin-sdk/qa-channel-protocol.d.ts",
   "dist/plugin-sdk/src/plugin-sdk/qa-lab.d.ts",
   "dist/plugin-sdk/src/plugin-sdk/qa-runtime.d.ts",
   "dist/qa-runtime-",
   "dist/plugin-sdk/.tsbuildinfo",
   "docs/.generated/",
+  "docs/channels/qa-channel.md",
   "qa/",
 ];
 const forbiddenPrivateQaContentMarkers = [
   "//#region extensions/qa-lab/",
   "qa-channel/runtime-api.js",
+  "qa-channel.js",
+  "qa-channel-protocol.js",
   "qa-lab/cli.js",
   "qa-lab/runtime-api.js",
 ] as const;
@@ -585,6 +594,7 @@ export function collectForbiddenPackPaths(paths: Iterable<string>): string[] {
   return [...paths]
     .filter(
       (path) =>
+        isBundledRuntimeDepsInstallStagePath(path) ||
         forbiddenPrefixes.some((prefix) => path.startsWith(prefix)) ||
         /(^|\/)\.openclaw-runtime-deps-[^/]+(\/|$)/u.test(path) ||
         path.endsWith("/.openclaw-runtime-deps-stamp.json") ||
@@ -600,9 +610,6 @@ export function collectForbiddenPackContentPaths(
   const textPathPattern = /\.(?:[cm]?js|d\.ts|json|md|mjs|cjs)$/u;
   return [...paths]
     .filter((packedPath) => {
-      if (packedPath === PACKAGE_DIST_INVENTORY_RELATIVE_PATH) {
-        return false;
-      }
       if (!forbiddenPrivateQaContentScanPrefixes.some((prefix) => packedPath.startsWith(prefix))) {
         return false;
       }

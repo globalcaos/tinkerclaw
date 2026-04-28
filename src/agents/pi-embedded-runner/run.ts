@@ -1808,6 +1808,7 @@ export async function runEmbeddedPiAgent(
             model: activeErrorContext.model,
             verboseLevel: params.verboseLevel,
             reasoningLevel: params.reasoningLevel,
+            thinkingLevel: params.thinkLevel,
             toolResultFormat: resolvedToolResultFormat,
             suppressToolErrorWarnings: params.suppressToolErrorWarnings,
             inlineToolResultsAllowed: false,
