@@ -135,6 +135,7 @@ auth-profiles.json
 memory/
 !src/memory/
 !extensions/*/src/memory/
+!qa/scenarios/memory/
 !.agents/*/
 morning-briefings/
 skills/
