@@ -149,6 +149,7 @@ config/
 !extensions/*/src/config*
 !extensions/*/src/engine/config/
 !ui/src/ui/controllers/config/
+!qa/scenarios/config/
 
 # Local iOS signing overrides
 apps/ios/LocalSigning.xcconfig
