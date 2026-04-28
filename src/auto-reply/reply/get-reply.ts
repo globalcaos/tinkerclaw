@@ -9,12 +9,9 @@ import { resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
-import { type OpenClawConfig, loadConfig } from "../../config/config.js";
-// FORK: applyMergePatch + session resume helpers — call sites moved/inlined
-// upstream as of 2026-04-28 chunk-2/3 merges. Imports demoted to comments;
-// re-enable when fork-wiring or a new patch needs them.
-// import { applyMergePatch } from "../../config/merge-patch.js";
-// import { writeSessionResume } from "../../infra/session-resume.js";
+import { type OpenClawConfig, getRuntimeConfig } from "../../config/config.js";
+// FORK: clearSessionResume retained for fork's session-reset cascade.
+// applyMergePatch + writeSessionResume call sites moved/inlined upstream.
 import { clearSessionResume } from "../../infra/session-resume.js";
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
@@ -167,7 +164,7 @@ export async function getReplyFromConfig(
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
   const isFastTestEnv = process.env.OPENCLAW_TEST_FAST === "1";
   const cfg = resolveGetReplyConfig({
-    loadConfig,
+    getRuntimeConfig,
     isFastTestEnv,
     configOverride,
   });

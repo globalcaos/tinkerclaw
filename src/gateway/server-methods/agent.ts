@@ -24,7 +24,6 @@ import {
   shouldApplyStartupContext,
 } from "../../auto-reply/reply/startup-context.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
-import { loadConfig } from "../../config/config.js";
 import {
   evaluateSessionFreshness,
   mergeSessionEntry,
@@ -456,7 +455,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
     const providerOverride = allowModelOverride ? request.provider : undefined;
     const modelOverride = allowModelOverride ? request.model : undefined;
-    const cfg = loadConfig();
+    const cfg = context.getRuntimeConfig();
     const idem = request.idempotencyKey;
     const normalizedSpawned = normalizeSpawnedRunMetadata({
       groupId: request.groupId,
@@ -810,6 +809,10 @@ export const agentHandlers: GatewayRequestHandlers = {
         request.bootstrapContextRunKind !== "heartbeat" &&
         !request.internalEvents?.length;
       const labelValue = normalizeOptionalString(request.label) || entry?.label;
+      const pluginOwnerId =
+        entry === undefined
+          ? normalizeOptionalString(client?.internal?.pluginRuntimeOwnerId)
+          : normalizeOptionalString(entry.pluginOwnerId);
       const sessionAgent = resolveAgentIdFromSessionKey(canonicalKey);
       spawnedByValue = canonicalizeSpawnedByForAgent(cfg, sessionAgent, entry?.spawnedBy);
       let inheritedGroup:
@@ -886,6 +889,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         groupId: resolvedGroupId ?? entry?.groupId,
         groupChannel: resolvedGroupChannel ?? entry?.groupChannel,
         space: resolvedGroupSpace ?? entry?.space,
+        ...(pluginOwnerId ? { pluginOwnerId } : {}),
         cliSessionIds: entry?.cliSessionIds,
         cliSessionBindings: entry?.cliSessionBindings,
         claudeCliSessionId: entry?.claudeCliSessionId,
@@ -1205,7 +1209,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       }
     }
   },
-  "agent.identity.get": ({ params, respond }) => {
+  "agent.identity.get": ({ params, respond, context }) => {
     if (!validateAgentIdentityParams(params)) {
       respond(
         false,
@@ -1249,7 +1253,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       }
       agentId = resolved;
     }
-    const cfg = loadConfig();
+    const cfg = context.getRuntimeConfig();
     const identity = resolveAssistantIdentity({ cfg, agentId });
     const avatarValue =
       resolveAssistantAvatarUrl({
