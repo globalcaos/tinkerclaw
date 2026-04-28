@@ -1,5 +1,6 @@
 {
   "id": "prefrontal",
+  "activation": { "onStartup": true },
   "name": "Prefrontal",
   "description": "Real-time agent topology tracking with force-directed graph visualization",
   "version": "0.1.0",

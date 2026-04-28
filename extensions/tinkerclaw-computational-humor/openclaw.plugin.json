@@ -1,14 +1,27 @@
 {
   "id": "tinkerclaw-computational-humor",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Computational Humor",
-  "description": "LIMBIC — Humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture, and calibration.",
+  "description": "LIMBIC \u2014 Humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture, and calibration.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "frequency": { "type": "string", "enum": ["off", "low", "medium", "high"], "default": "low" },
-      "sensitivityThreshold": { "type": "number", "default": 0.8 },
-      "embeddingProvider": { "type": "string", "default": "ollama" }
+      "frequency": {
+        "type": "string",
+        "enum": ["off", "low", "medium", "high"],
+        "default": "low"
+      },
+      "sensitivityThreshold": {
+        "type": "number",
+        "default": 0.8
+      },
+      "embeddingProvider": {
+        "type": "string",
+        "default": "ollama"
+      }
     }
   }
 }

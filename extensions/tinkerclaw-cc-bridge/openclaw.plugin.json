@@ -1,5 +1,8 @@
 {
   "id": "tinkerclaw-cc-bridge",
+  "activation": {
+    "onProviders": ["claude-code"]
+  },
   "enabledByDefault": true,
   "providers": ["claude-code"],
   "providerAuthEnvVars": {
@@ -31,12 +34,16 @@
       },
       "disallowedTools": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Tools to disable inside claude (OpenClaw owns the tool loop)."
       },
       "warmOnBoot": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Session keys to pre-spawn at gateway start (e.g., agent:main:main)."
       }
     }

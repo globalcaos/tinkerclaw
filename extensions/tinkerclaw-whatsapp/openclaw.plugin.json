@@ -1,5 +1,8 @@
 {
   "id": "tinkerclaw-whatsapp",
+  "activation": {
+    "onChannels": ["whatsapp"]
+  },
   "channels": ["whatsapp"],
   "configSchema": {
     "type": "object",

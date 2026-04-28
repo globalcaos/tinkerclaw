@@ -1,17 +1,35 @@
 {
   "id": "tinkerclaw-total-recall",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Total Recall",
-  "description": "ENGRAM — Episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation, and artifact externalization",
+  "description": "ENGRAM \u2014 Episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation, and artifact externalization",
   "kind": "memory",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "budgetTokens": { "type": "number", "default": 2000 },
-      "embeddingProvider": { "type": "string", "default": "ollama" },
-      "embeddingModel": { "type": "string", "default": "mxbai-embed-large" },
-      "retentionDays": { "type": ["number", "null"], "default": null },
-      "pointerMode": { "type": "boolean", "default": true }
+      "budgetTokens": {
+        "type": "number",
+        "default": 2000
+      },
+      "embeddingProvider": {
+        "type": "string",
+        "default": "ollama"
+      },
+      "embeddingModel": {
+        "type": "string",
+        "default": "mxbai-embed-large"
+      },
+      "retentionDays": {
+        "type": ["number", "null"],
+        "default": null
+      },
+      "pointerMode": {
+        "type": "boolean",
+        "default": true
+      }
     }
   }
 }

@@ -1,21 +1,30 @@
 {
   "id": "tinkerclaw-memory-enhancements",
+  "activation": {
+    "onStartup": true
+  },
   "name": "Memory Enhancements",
-  "description": "Four layered wins on top of upstream memory-core: O(1) anchor → chunk hippocampus index, task-conditioned retrieval scoring, structured contradiction-gate on writes, and compaction-aware message capture. Drop-in plugin — upstream memory-core stays exactly as shipped. Designed to be published on ClawHub.",
+  "description": "Four layered wins on top of upstream memory-core: O(1) anchor \u2192 chunk hippocampus index, task-conditioned retrieval scoring, structured contradiction-gate on writes, and compaction-aware message capture. Drop-in plugin \u2014 upstream memory-core stays exactly as shipped. Designed to be published on ClawHub.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean", "default": true },
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
       "hippocampusIndex": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
           "indexDir": {
             "type": "string",
             "default": "~/.openclaw/state/memory-enhancements/hippocampus",
-            "description": "Where the pre-computed anchor → chunk concept index is stored."
+            "description": "Where the pre-computed anchor \u2192 chunk concept index is stored."
           },
           "minConceptLength": {
             "type": "number",
@@ -33,7 +42,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
           "taskWeight": {
             "type": "number",
             "default": 0.3,
@@ -45,7 +57,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
           "mode": {
             "type": "string",
             "enum": ["warn", "block"],
@@ -58,7 +73,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
           "captureMode": {
             "type": "string",
             "enum": ["dropped-only", "full-context"],
