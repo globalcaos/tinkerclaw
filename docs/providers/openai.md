@@ -262,7 +262,8 @@ PNG/WebP output; the current `gpt-image-2` API rejects
 
 For a transparent-background request, agents should call `image_generate` with
 `model: "openai/gpt-image-1.5"`, `outputFormat: "png"` or `"webp"`, and
-`openai.background: "transparent"`. OpenClaw also protects the public OpenAI and
+`background: "transparent"`; the older `openai.background` provider option is
+still accepted. OpenClaw also protects the public OpenAI and
 OpenAI Codex OAuth routes by rewriting default `openai/gpt-image-2` transparent
 requests to `gpt-image-1.5`; Azure and custom OpenAI-compatible endpoints keep
 their configured deployment/model names.
@@ -273,13 +274,14 @@ The same setting is exposed for headless CLI runs:
 openclaw infer image generate \
   --model openai/gpt-image-1.5 \
   --output-format png \
-  --openai-background transparent \
+  --background transparent \
   --prompt "A simple red circle sticker on a transparent background" \
   --json
 ```
 
-Use the same `--output-format` and `--openai-background` flags with
+Use the same `--output-format` and `--background` flags with
 `openclaw infer image edit` when starting from an input file.
+`--openai-background` remains available as an OpenAI-specific alias.
 
 For Codex OAuth installs, keep the same `openai/gpt-image-2` ref. When an
 `openai-codex` OAuth profile is configured, OpenClaw resolves that stored OAuth
@@ -302,7 +304,7 @@ Generate:
 Generate a transparent PNG:
 
 ```
-/tool image_generate model=openai/gpt-image-1.5 prompt="A simple red circle sticker on a transparent background" outputFormat=png openai='{"background":"transparent"}'
+/tool image_generate model=openai/gpt-image-1.5 prompt="A simple red circle sticker on a transparent background" outputFormat=png background=transparent
 ```
 
 Edit:
@@ -541,6 +543,8 @@ For image-generation requests on a recognized Azure host, OpenClaw:
 - Sends the `api-key` header instead of `Authorization: Bearer`
 - Uses deployment-scoped paths (`/openai/deployments/{deployment}/...`)
 - Appends `?api-version=...` to each request
+- Uses a 600s default request timeout for Azure image-generation calls.
+  Per-call `timeoutMs` values still override this default.
 
 Other base URLs (public OpenAI, OpenAI-compatible proxies) keep the standard
 OpenAI image request shape.
@@ -825,6 +829,7 @@ the Server-side compaction accordion below.
     - Use looser compat behavior
     - Strip Completions `store` from non-native `openai-completions` payloads
     - Accept advanced `params.extra_body`/`params.extraBody` pass-through JSON for OpenAI-compatible Completions proxies
+    - Accept `params.chat_template_kwargs` for OpenAI-compatible Completions proxies such as vLLM
     - Do not force strict tool schemas or native-only headers
 
     Azure OpenAI uses native transport and compat behavior but does not receive the hidden attribution headers.
