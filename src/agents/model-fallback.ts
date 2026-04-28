@@ -8,9 +8,9 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
 import { hasAnyAuthProfileStoreSource } from "./auth-profiles/source-check.js";
+import type { AuthProfileStore } from "./auth-profiles/types.js";
 // FORK: cost-aware model routing — see ~/.openclaw/workspace/memory/knowledge/cost-aware-model-routing.md
 import { isCandidateAllowed } from "./billing-gate.js";
-import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
   FailoverError,
@@ -377,6 +377,25 @@ function resolveImageFallbackCandidates(params: {
   }
 
   return candidates;
+}
+
+function resolveImageFallbackDefaultProvider(cfg: OpenClawConfig | undefined): string {
+  const configuredPrimary = resolveAgentModelPrimaryValue(cfg?.agents?.defaults?.imageModel);
+  if (configuredPrimary?.trim()) {
+    const aliasIndex = buildModelAliasIndex({
+      cfg: cfg ?? {},
+      defaultProvider: DEFAULT_PROVIDER,
+    });
+    const resolved = resolveModelRefFromString({
+      raw: configuredPrimary,
+      defaultProvider: DEFAULT_PROVIDER,
+      aliasIndex,
+    });
+    if (resolved?.ref.provider) {
+      return resolved.ref.provider;
+    }
+  }
+  return DEFAULT_PROVIDER;
 }
 
 function resolveFallbackCandidates(params: {
@@ -950,7 +969,7 @@ export async function runWithImageModelFallback<T>(params: {
 }): Promise<ModelFallbackRunResult<T>> {
   const candidates = resolveImageFallbackCandidates({
     cfg: params.cfg,
-    defaultProvider: DEFAULT_PROVIDER,
+    defaultProvider: resolveImageFallbackDefaultProvider(params.cfg),
     modelOverride: params.modelOverride,
   });
   if (candidates.length === 0) {

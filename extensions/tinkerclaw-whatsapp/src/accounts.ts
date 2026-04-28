@@ -36,6 +36,7 @@ export type ResolvedWhatsAppAccount = {
   ackReaction?: WhatsAppAccountConfig["ackReaction"];
   reactionLevel?: WhatsAppAccountConfig["reactionLevel"];
   groups?: WhatsAppAccountConfig["groups"];
+  direct?: WhatsAppAccountConfig["direct"];
   debounceMs?: number;
   /** Request full history sync from WhatsApp (OPT-IN, default false). */
   syncFullHistory?: boolean;
@@ -153,6 +154,7 @@ export function resolveWhatsAppAccount(params: {
     ackReaction: merged.ackReaction ?? rootCfg?.ackReaction,
     reactionLevel: merged.reactionLevel ?? rootCfg?.reactionLevel,
     groups: merged.groups ?? rootCfg?.groups,
+    direct: merged.direct,
     debounceMs: merged.debounceMs ?? rootCfg?.debounceMs,
     syncFullHistory: merged.syncFullHistory ?? rootCfg?.syncFullHistory ?? false,
   };
