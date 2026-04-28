@@ -69,6 +69,7 @@ import {
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
 import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
+import { resolveOriginMessageProvider } from "./origin-routing.js";
 import type { FollowupRun } from "./queue.js";
 import { createBlockReplyDeliveryHandler } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
@@ -566,6 +567,7 @@ export async function runAgentTurnWithFallback(params: {
   commandBody: string;
   followupRun: FollowupRun;
   sessionCtx: TemplateContext;
+  replyThreading?: TemplateContext["ReplyThreading"];
   replyOperation?: ReplyOperation;
   opts?: GetReplyOptions;
   typingSignals: TypingSignaler;
@@ -842,6 +844,7 @@ export async function runAgentTurnWithFallback(params: {
         ? createBlockReplyDeliveryHandler({
             onBlockReply: params.opts.onBlockReply,
             currentMessageId: params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid,
+            replyThreading: params.replyThreading,
             normalizeStreamingText,
             applyReplyToMode: params.applyReplyToMode,
             normalizeMediaPaths: replyMediaContext.normalizePayload,
@@ -894,6 +897,10 @@ export async function runAgentTurnWithFallback(params: {
               provider === params.followupRun.run.provider
                 ? params.followupRun.run.authProfileId
                 : undefined;
+            const hookMessageProvider = resolveOriginMessageProvider({
+              originatingChannel: params.followupRun.originatingChannel,
+              provider: params.sessionCtx.Provider,
+            });
             return (async () => {
               let lifecycleTerminalEmitted = false;
               try {
@@ -901,6 +908,7 @@ export async function runAgentTurnWithFallback(params: {
                   sessionId: params.followupRun.run.sessionId,
                   sessionKey: params.sessionKey,
                   agentId: params.followupRun.run.agentId,
+                  trigger: params.isHeartbeat ? "heartbeat" : "user",
                   sessionFile: params.followupRun.run.sessionFile,
                   workspaceDir: params.followupRun.run.workspaceDir,
                   config: runtimeConfig,
@@ -924,7 +932,8 @@ export async function runAgentTurnWithFallback(params: {
                   images: params.opts?.images,
                   imageOrder: params.opts?.imageOrder,
                   skillsSnapshot: params.followupRun.run.skillsSnapshot,
-                  messageProvider: params.followupRun.run.messageProvider,
+                  messageChannel: params.followupRun.originatingChannel ?? undefined,
+                  messageProvider: hookMessageProvider,
                   agentAccountId: params.followupRun.run.agentAccountId,
                   senderIsOwner: params.followupRun.run.senderIsOwner,
                   abortSignal: params.replyOperation?.abortSignal ?? params.opts?.abortSignal,
