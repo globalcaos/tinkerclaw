@@ -15,7 +15,11 @@ function relativeSymlinkTarget(sourcePath, targetPath) {
 function shouldFallbackToCopy(error) {
   return (
     process.platform === "win32" &&
-    (error?.code === "EPERM" || error?.code === "EINVAL" || error?.code === "UNKNOWN")
+    (error?.code === "EACCES" ||
+      error?.code === "EINVAL" ||
+      error?.code === "ENOSYS" ||
+      error?.code === "EPERM" ||
+      error?.code === "UNKNOWN")
   );
 }
 
@@ -128,33 +132,24 @@ function shouldWrapRuntimeJsFile(sourcePath) {
   return path.extname(sourcePath) === ".js";
 }
 
-function shouldCopyRuntimeFile(sourcePath) {
-  const relativePath = sourcePath.replace(/\\/g, "/");
-  if (
-    relativePath.endsWith("/package.json") ||
-    relativePath.endsWith("/openclaw.plugin.json") ||
-    relativePath.endsWith("/.codex-plugin/plugin.json") ||
-    relativePath.endsWith("/.claude-plugin/plugin.json") ||
-    relativePath.endsWith("/.cursor-plugin/plugin.json") ||
-    relativePath.endsWith("/SKILL.md")
-  ) {
-    return true;
-  }
-  // FORK: Extensions may ship runtime assets next to their entrypoint that
-  // the compiled JS reads at load time (fractal-prompt.md). Without this
-  // they'd fall through to symlink staging.
-  //
-  // CRITICAL: upstream's plugin manifest loader now rejects SYMLINK
-  // manifests ("unsafe plugin manifest path" validation in
-  // src/plugins/manifest.ts). Without the explicit `return true` above
-  // for manifest/package paths, this function fell through (missing
-  // body after the if) and every plugin load failed at gateway startup.
-  // The `if () { return true }` shape is load-bearing.
-  const ext = path.extname(relativePath).toLowerCase();
-  if (ext === ".md" || ext === ".txt" || ext === ".yaml" || ext === ".yml") {
-    return true;
-  }
-  return false;
+function isBundledSkillRuntimePath(relativePath) {
+  return relativePath === "skills" || relativePath.startsWith("skills/");
+}
+
+function isPathOrNestedPath(relativePath, nestedPath) {
+  return relativePath === nestedPath || relativePath.endsWith(`/${nestedPath}`);
+}
+
+function shouldCopyRuntimeFile(relativePath) {
+  return (
+    isBundledSkillRuntimePath(relativePath) ||
+    isPathOrNestedPath(relativePath, "package.json") ||
+    isPathOrNestedPath(relativePath, "openclaw.plugin.json") ||
+    isPathOrNestedPath(relativePath, ".codex-plugin/plugin.json") ||
+    isPathOrNestedPath(relativePath, ".claude-plugin/plugin.json") ||
+    isPathOrNestedPath(relativePath, ".cursor-plugin/plugin.json") ||
+    isPathOrNestedPath(relativePath, "SKILL.md")
+  );
 }
 
 function hasDefaultExport(sourcePath) {
@@ -192,7 +187,7 @@ function writeRuntimeModuleWrapper(sourcePath, targetPath) {
   );
 }
 
-function stagePluginRuntimeOverlay(sourceDir, targetDir) {
+function stagePluginRuntimeOverlay(sourceDir, targetDir, relativeDir = "") {
   fs.mkdirSync(targetDir, { recursive: true });
 
   for (const dirent of fs.readdirSync(sourceDir, { withFileTypes: true })) {
@@ -202,13 +197,18 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
 
     const sourcePath = path.join(sourceDir, dirent.name);
     const targetPath = path.join(targetDir, dirent.name);
+    const relativePath = path.join(relativeDir, dirent.name).replace(/\\/g, "/");
 
     if (dirent.isDirectory()) {
-      stagePluginRuntimeOverlay(sourcePath, targetPath);
+      stagePluginRuntimeOverlay(sourcePath, targetPath, relativePath);
       continue;
     }
 
     if (dirent.isSymbolicLink()) {
+      if (isBundledSkillRuntimePath(relativePath)) {
+        copyPathFallback(sourcePath, targetPath);
+        continue;
+      }
       ensureSymlink(fs.readlinkSync(sourcePath), targetPath, undefined, sourcePath);
       continue;
     }
@@ -222,7 +222,7 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
       continue;
     }
 
-    if (shouldCopyRuntimeFile(sourcePath)) {
+    if (shouldCopyRuntimeFile(relativePath)) {
       fs.copyFileSync(sourcePath, targetPath);
       continue;
     }

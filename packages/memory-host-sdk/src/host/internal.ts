@@ -21,6 +21,9 @@ import {
   type MemoryMultimodalSettings,
 } from "./multimodal.js";
 
+export { hashText } from "./hash.js";
+import { hashText } from "./hash.js";
+
 export type MemoryFileEntry = {
   path: string;
   absPath: string;
@@ -203,10 +206,6 @@ export async function listMemoryFiles(
     deduped.push(entry);
   }
   return deduped;
-}
-
-export function hashText(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 export async function buildFileEntry(
