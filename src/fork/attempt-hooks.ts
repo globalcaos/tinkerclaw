@@ -67,18 +67,75 @@ function isInlineMode(subsystem: string): boolean {
  * Load CortexRuntime from SOUL.md/persona-state.json and return the
  * Tier 1 persona block for system-prompt injection.
  * Called once per run, before buildEmbeddedSystemPrompt.
+ *
+ * FORK 2026-04-28 (bible §5.76): three-step resolution order so a
+ * fresh-clone day-0 user gets the bundled JARVIS persona without any
+ * workspace setup, while existing users with a workspace SOUL.md keep
+ * it as the authoritative override.
+ *
+ *   1. Workspace `<effectiveWorkspace>/SOUL.md` (user override)
+ *   2. Bundled `extensions/tinkerclaw-cc-bridge/personas/jarvis-default.md`
+ *   3. undefined (cortex disabled or both files missing)
  */
 export function getPersonaBlock(effectiveWorkspace: string): string | undefined {
   if (!isInlineMode("cortex")) {
     return undefined;
   }
+  // Step 1: workspace override.
   try {
     const soulPath = join(effectiveWorkspace, "SOUL.md");
     const rt = createCortexRuntime({ soulPath });
-    return rt.getPersonaBlock() || undefined;
+    const block = rt.getPersonaBlock();
+    if (block) {
+      return block;
+    }
   } catch {
-    return undefined;
+    /* fall through to bundled default */
   }
+  // Step 2: bundled jarvis-default.md. We don't go through CortexRuntime here
+  // because the bundled file is plain markdown, not a CORTEX state file —
+  // CortexRuntime expects state-tracking semantics that the bundled default
+  // doesn't carry. Read raw and return.
+  try {
+    const candidates = resolveBundledPersonaCandidates();
+    for (const p of candidates) {
+      try {
+        const txt = readFileSync(p, "utf8");
+        if (txt.trim().length > 0) {
+          return txt;
+        }
+      } catch {
+        /* try next */
+      }
+    }
+  } catch {
+    /* both missing; return undefined */
+  }
+  return undefined;
+}
+
+function resolveBundledPersonaCandidates(): string[] {
+  const candidates: string[] = [];
+  const fromEnv = process.env.TINKERCLAW_PERSONA_DEFAULT;
+  if (fromEnv) {
+    candidates.push(fromEnv);
+  }
+  const bundleRoot = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+  if (bundleRoot) {
+    candidates.push(join(bundleRoot, "tinkerclaw-cc-bridge", "personas", "jarvis-default.md"));
+  }
+  candidates.push(
+    join(
+      process.env.HOME ?? "/tmp",
+      "src",
+      "tinkerclaw",
+      "extensions",
+      "tinkerclaw-cc-bridge",
+      "personas",
+      "jarvis-default.md",
+    ),
+  );
+  return candidates;
 }
 
 // ---------------------------------------------------------------------------

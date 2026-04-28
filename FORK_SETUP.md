@@ -2,6 +2,22 @@
 
 > **For agents:** Read this file completely before taking any action. This is your onboarding guide for the Tinkerclaw fork of OpenClaw. Follow each section in order. Ask your human operator for confirmation before making changes to auth credentials or systemd services.
 
+## The git-pull contract: personalize in the workspace, never in the repo
+
+The repo (`~/src/tinkerclaw/`) is upstream's. `git pull` will rewrite it. Your persona, briefing, recipes, and any prompt overrides go in `~/.openclaw/workspace/` — outside the repo, where `git pull` cannot reach.
+
+The bundled defaults at `extensions/tinkerclaw-cc-bridge/{personas,prompts}/` are what you get on day 0: JARVIS persona, working briefing on `/new`, full grandma-proof tool narration. They work without any setup. To make Jarvis your own, drop a file at `~/.openclaw/workspace/SOUL.md` (overrides the persona) or `~/.openclaw/workspace/BRIEFING.md` (overrides the briefing template). The gateway always prefers your workspace file over the bundled default; `git pull` keeps refreshing the bundle without ever touching your override.
+
+Resolution order for every overridable prompt:
+
+```
+1. Explicit config in ~/.openclaw/openclaw.json   (outside repo)
+2. ~/.openclaw/workspace/<file>                   (outside repo)
+3. extensions/tinkerclaw-cc-bridge/.../<file>     (in repo, bundled default)
+```
+
+See `TINKER_UI_DESIGN_BIBLE.md` §5.76 for the full contract, the "Sam test" (fresh-clone day-0 experience) and the "Day-90 test" (existing user `git pull` safety).
+
 ## What This Fork Adds
 
 Tinkerclaw is a personal AI assistant fork of OpenClaw with cognitive extensions:
