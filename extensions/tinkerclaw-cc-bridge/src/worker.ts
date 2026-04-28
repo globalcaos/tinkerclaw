@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { DEFAULT_BINARY, DEFAULT_DISALLOWED_TOOLS, DEFAULT_PERMISSION_MODE } from "./defaults.js";
+import { loadPromptFile } from "./prompt-loader.js";
 import {
   type CcStreamStdoutLine,
   type CcStreamStdoutResult,
@@ -120,119 +121,35 @@ function resolveForkScript(name: string, envVar: string): string {
   return "";
 }
 
-// FORK 2026-04-20: one short system-prompt paragraph teaching Jarvis how to
-// spawn OpenClaw subagents from inside cc-bridge (where his native tool set
-// is only Bash/Read/Write/Edit/Grep/Glob). This writes the same kind of hint
-// a normal pi-agent-core run would get from the sessions_spawn tool
-// description -- intentionally brief to stay out of Opus's way. Skipped if
-// the CLI binary isn't locatable at worker spawn time.
+// FORK 2026-04-20 (extracted to prompts/subagent-helper.md 2026-04-28 per
+// bible §5.76): one short system-prompt block teaching how to spawn
+// OpenClaw subagents from inside cc-bridge (where the native tool set is
+// only Bash / Read / Write / Edit / Grep / Glob). The content lives in a
+// markdown file under `prompts/`; this function only resolves the runtime
+// CLI paths and asks the loader to substitute them. Skipped if the spawn
+// CLI is not locatable at worker spawn time.
 function buildSubagentHelperBlock(): string {
   const bin = resolveSpawnSubagentCliPath();
   if (!bin) {
     return "";
   }
-  // FORK 2026-04-24: interpolate absolute paths into the narration directly
-  // instead of exporting `$OPENCLAW_SPAWN_SUBAGENT_BIN` / `$OPENCLAW_RECIPE_STATE_BIN`
-  // to the child's env. Anthropic's harness detector matches on the `OPENCLAW_*`
-  // env prefix and routes matching requests to the overage billing pool —
-  // we strip those above, so we can't re-add them here. The scripts read the
-  // gateway token from `~/.openclaw/openclaw.json` when no env is set, so
-  // everything still works.
   const recipeBin = resolveRecipeStateCliPath();
   const recipesDir = resolveRecipesDirPath();
-  return [
-    "",
-    "",
-    "<!-- TINKERCLAW SUBAGENT HELPER -- loaded at worker spawn -->",
-    "## Spawning subagents",
-    "",
-    "When a task is big enough that a parallel sub-run would help (long research,",
-    "multi-file refactor, independent audit, section-by-section paper revision),",
-    "dispatch it to an OpenClaw subagent so Prefrontal can track it and the user",
-    "sees live progress in the panel.",
-    "",
-    "Invoke via Bash:",
-    "",
-    `    node ${bin} --task "<instruction>" \\`,
-    '         --label "<short-name>" \\',
-    "         [--model claude-code/claude-opus-4-7] \\",
-    "         [--thinking medium] \\",
-    "         [--timeout 600] \\",
-    "         --json",
-    "",
-    "The CLI prints one JSON object with `childSessionKey` and `runId` on stdout.",
-    "Use `--json` when you want to parse it; drop it for a human-readable line.",
-    "",
-    "The helper speaks the fork's WS RPC `fork.subagents.spawn`, which wraps the",
-    "same `spawnSubagentDirect` path OpenClaw's native `sessions_spawn` tool uses.",
-    "Prefrontal's `subagent_spawning` hook fires automatically, so the panel will",
-    "light up as soon as the child starts. When the current harness is swapped",
-    "for a regular LLM provider (anthropic/openai/etc) the native sessions_spawn",
-    "tool takes over automatically — you don't need to rewrite orchestration code.",
-    "",
-    "Guidelines:",
-    "- Only spawn when it actually parallelizes. Small tasks stay inline.",
-    "- Prefer `claude-code/claude-haiku-4-5` for minimal tasks (lookups, format),",
-    "  `claude-code/claude-sonnet-4-6` for standard, `claude-code/claude-opus-4-7`",
-    "  only for genuinely hard reasoning.",
-    "- Always pass a short `--label` so the Prefrontal tree is readable.",
-    "- Do NOT narrate dispatches in your chat reply. The user watches the",
-    "  redesigned Prefrontal panel for orchestration; your chat should stay",
-    "  focused on the actual answer / product. Use the recipe-state CLI below",
-    "  to publish what's happening behind the scenes.",
-    "",
-    "## Orchestration observability",
-    "",
-    `Use the recipe-state CLI at ${recipeBin || "<not-installed>"} to push what the user`,
-    "sees in the Prefrontal panel -- recipe id, current step, in-flight labels,",
-    "and a rolling trail of actions:",
-    "",
-    "    # announce / advance recipe state (call on every Step transition)",
-    `    node ${recipeBin} --recipe revise-paper \\`,
-    '         --step 3 --total 6 --step-name "evidence check" --cap 3 \\',
-    "         --in-flight '§3-oauth-check,§7-NemoClaw-ev'",
-    "",
-    "    # push a trail event (dispatch, complete, note, transition, warn)",
-    `    node ${recipeBin} --trail dispatch \\`,
-    "         --label '§7-NemoClaw-ev' --message 'sonnet, ~240s budget'",
-    `    node ${recipeBin} --trail complete \\`,
-    "         --label '§2-threat-ref' --message '6s · 340w delta'",
-    `    node ${recipeBin} --trail transition \\`,
-    "         --label 'Step 3 → Step 4' --message 'evidence clean; tightening prose'",
-    "",
-    "Rule of thumb: every `spawn-subagent` call gets a paired `--trail dispatch`",
-    "event BEFORE the spawn, and a paired `--trail complete` or `--trail warn`",
-    "event AFTER you see the child's result. Every recipe-step change gets a",
-    "`--recipe ... --step N` call. The user reads this panel instead of chat",
-    "narration, so keep it honest and current.",
-    ...(recipesDir
-      ? [
-          "",
-          "## Recipes (structured playbooks)",
-          "",
-          `A catalog of hand-written orchestration recipes lives at ${recipesDir}.`,
-          "Each recipe is a markdown file with YAML frontmatter (schema=recipe/1.0)",
-          "and numbered Steps, Constraints, Safety Notes, and Failures Overcome.",
-          "When the user's task matches a recipe's `triggers`, READ the recipe",
-          "FIRST, use its Steps as the skeleton of your plan, and reference the",
-          "recipe id in your orchestration narration so the user can follow the",
-          "same playbook. Key catalog entries:",
-          "",
-          "- `writing/revise-paper.md` — paper improvement pass (structure audit,",
-          "  evidence check, prose tightening, fresh additions, final pass).",
-          "- `writing/write-paper.md`, `writing/brainstorm.md`, `writing/write-plan.md`",
-          "- `coding/{code-review,debug,feature,refactor,plan,verify}.md`",
-          "- `analysis/{investigate,dependency-analysis}.md`",
-          "- See `recipes/CATALOG.md` for the full index.",
-          "",
-          "Recipes are PLAYBOOKS, not executable code. Combine them with the",
-          "subagent helper: dispatch each Step in a recipe to its own subagent",
-          "when the Step is independent and parallelizable, execute sequentially",
-          "otherwise.",
-        ]
-      : []),
-  ].join("\n");
+  return loadPromptFile({
+    plugin: "tinkerclaw-cc-bridge",
+    subdir: "prompts",
+    file: "subagent-helper.md",
+    envVar: "TINKERCLAW_SUBAGENT_HELPER_PROMPT",
+    substitutions: {
+      SPAWN_SUBAGENT_BIN: bin,
+      RECIPE_STATE_BIN: recipeBin || "<not-installed>",
+      RECIPES_DIR: recipesDir || "<not-installed>",
+    },
+  });
 }
+
+// (Subagent helper content moved to prompts/subagent-helper.md — see
+// loadPromptFile call above. Inline content removed 2026-04-28.)
 
 // FORK 2026-04-20: tool-choice guidance. Claude Code 2.1.114 exposes a dozen
 // tools as DEFERRED (WebSearch, WebFetch, Monitor, PushNotification,
@@ -244,55 +161,12 @@ function buildSubagentHelperBlock(): string {
 // out). This short block teaches the decision tree so he stops asking the
 // user for URLs he could search for himself.
 function buildToolChoiceBlock(): string {
-  return [
-    "",
-    "",
-    "<!-- TINKERCLAW TOOL-CHOICE HINTS — loaded at worker spawn -->",
-    "## Tool choice",
-    "",
-    "Some capabilities are DEFERRED: the tool name exists, but the schema must",
-    'be loaded before use — `ToolSearch({query:"select:<Name>"})`, then call',
-    "the tool normally. Deferred tools include WebSearch, WebFetch, Monitor,",
-    "PushNotification, NotebookEdit, CronCreate/List/Delete, EnterPlanMode,",
-    "TaskCreate/List/Get/Update/Stop/Output, and the mcp__* auth tools.",
-    "",
-    "Pick the right one:",
-    "",
-    "- **WebSearch** — you need to FIND a URL, identify the current state of a",
-    "  topic, discover a domain you don't know, or check whether something",
-    "  exists on the web. Use it instead of guessing domains. If the user",
-    "  references an external page they are viewing and you don't have the",
-    "  link, WebSearch it once before asking them to paste it.",
-    "- **WebFetch** — you have a specific URL and want the content. Don't",
-    "  WebFetch guessed domains; WebSearch first, then fetch the hit.",
-    "- **Monitor** — watch a file, process, or log for a condition. Use it",
-    "  instead of `sleep` loops or self-paced wake-ups when a specific event",
-    "  signals readiness.",
-    "- **PushNotification** — alert the user about a significant event when",
-    "  they're not looking at the chat (build finished, long-running task",
-    "  complete, important decision needed). Do NOT use for routine status.",
-    "- **CronCreate/Delete/List** — schedule a repeating task in OpenClaw's",
-    "  cron system. Use for recurring work, not one-offs (ScheduleWakeup or",
-    "  Monitor is better for one-offs).",
-    "- **EnterPlanMode** — switch into read-only plan mode. Use only when the",
-    "  user explicitly asks for a plan-before-action gate; otherwise plan",
-    "  inline in chat.",
-    "- **TaskCreate/Update/List/Get/Stop** — create a structured task list",
-    "  for multi-step work (3+ distinct steps). Mark each step complete as",
-    "  you finish it so the user can track progress without scrolling chat.",
-    "",
-    "Anti-patterns:",
-    "",
-    "- Guessing URLs and WebFetching them. Symptom: TLS errors, connection",
-    "  refused, 404s in a row. Cure: WebSearch.",
-    "- Polling a file via `sleep; test -f` in a loop. Cure: Monitor.",
-    '- Posting routine "still working" updates in chat. The user watches the',
-    "  Prefrontal panel for status (recipe-state + trail events). Reserve",
-    "  chat for substantive output.",
-    "- Re-asking the user for information that's inferable from the workspace",
-    "  (a specific paper path, a known config file, a recent commit). Grep or",
-    "  WebSearch first; ask only when genuinely ambiguous.",
-  ].join("\n");
+  return loadPromptFile({
+    plugin: "tinkerclaw-cc-bridge",
+    subdir: "prompts",
+    file: "tool-choice.md",
+    envVar: "TINKERCLAW_TOOL_CHOICE_PROMPT",
+  });
 }
 
 function resolveRecipesDirPath(): string {
@@ -327,137 +201,16 @@ function resolveRecipesDirPath(): string {
 // long investigations and multi-file edits. This block reinstates substance
 // narration in chat while keeping mechanics out.
 function buildChatNarrationBlock(): string {
-  return [
-    "",
-    "",
-    "<!-- TINKERCLAW CHAT NARRATION — loaded at worker spawn -->",
-    "## Pre-tool narration (HARD RULE — apply before reading anything else)",
-    "",
-    "**Every tool call MUST be preceded by one assistant text block — a single",
-    "sentence stating the artifact and the question this call serves. No tool",
-    "call goes out unannounced; treat the sentence as part of the call itself.**",
-    "If you find yourself about to emit a tool_use without a preceding text",
-    "block, stop and write the sentence first. This applies to the very first",
-    "tool call of a turn, to back-to-back calls in a chain, and to the final",
-    "verification call before the wrap-up.",
-    "",
-    "## Why this matters",
-    "",
-    "Tool calls in the Tinker UI render as a single collapsed line by default;",
-    "the line is the last sentence of whatever text you wrote BEFORE the call,",
-    "trimmed to ~160 characters. the user reads those lines top-to-bottom as the",
-    "story of what you did. Each line, plus the original prompt, must be enough",
-    "for someone non-technical to follow what you're doing and why.",
-    "",
-    "If you skip the sentence, the row in the UI still renders — but with a",
-    "mechanical fallback summary of the tool's arguments, which is exactly",
-    "the wall-of-greps result we are trying to avoid. Empty narration is the",
-    "failure mode, not a quiet success.",
-    "",
-    "## The grandma-proof bar",
-    "",
-    "Imagine the user's grandmother reading the chat with no expanded views and no",
-    "knowledge of the codebase. She has the original prompt and your collapsed",
-    "tool-row sentences. Can she tell what each step is doing AND why this step",
-    "instead of any other? If yes, the line is good. If she'd read it and",
-    "shrug, the line is wrong.",
-    "",
-    "**Concrete rules for every pre-tool sentence:**",
-    "",
-    "1. **Name the artifact.** Real file path or specific symbol or actual",
-    "   string you searched for — not a generic noun. *attempt-hooks.ts:onTurnComplete*,",
-    "   *the `--resume` arg in cc-bridge worker.ts*, *the literal string",
-    '   "performGatewaySessionReset"*. NEVER say "the code", "a file",',
-    '   "a section", "the relevant module", "this part of the codebase".',
-    "2. **State the question or move.** Why this artifact, why now? Not the",
-    "   mechanical action. *Pulling up onTurnComplete to see if the drain",
-    "   actually fires after the assistant text persists* — the call is",
-    "   `read-file`, but the sentence states the QUESTION. *Searching for",
-    "   `performGatewaySessionReset` to find every gateway path that resets a",
-    "   session* — the call is `grep`, the sentence says the GOAL.",
-    "3. **Connect to the user's prompt.** A single sentence in isolation may be",
-    "   fine, but the chain across calls should advance toward what the user",
-    "   asked for. Read your last three lines plus the user's prompt — does it",
-    "   read like a story building to a result?",
-    "",
-    "## Anti-pattern catalog (do NOT emit these)",
-    "",
-    "Banned phrases — verbatim or in spirit. Each one fails the grandma test:",
-    "",
-    "- *performing an action* / *running a command* / *executing a tool* —",
-    "  reduces every step to noise. Name the artifact and the question instead.",
-    "- *reading a section of the code to understand how it works* — which",
-    "  section? understand what about it? Replace with the actual file:line or",
-    "   symbol and the specific question. Bad: *reading a section of the code",
-    "  to understand how it works.* Good: *Reading worker.ts:buildSubagentHelperBlock",
-    "  to confirm it interpolates the recipe path before the LLM sees it.*",
-    "- *checking something* / *looking around* / *gathering context* / *exploring",
-    "  the codebase* — vague exploration. Replace with the named artifact and",
-    "  the specific hypothesis being tested.",
-    "- *making changes* / *applying a fix* / *updating the file* — which file?",
-    "  what change? Replace with the file + the user-facing behavior change.",
-    "  Bad: *applying a fix.* Good: *Adding the openclawSessionId hash so /reset",
-    "  spawns a fresh claude subprocess instead of `--resume`-ing the old one.*",
-    "- *as requested* / *per the request* / *as the user asked* — empty filler.",
-    "  Restate WHAT specifically from the prompt this call serves.",
-    "- Bare verbs without an object: *searching*, *editing*, *running*,",
-    "  *checking*, *verifying*. The object is what makes it grandma-proof.",
-    "",
-    "If you find yourself about to write any of those, the prose is wrong —",
-    "open the artifact name and the question instead.",
-    "",
-    "## Side-by-side examples",
-    "",
-    "Bad → Good rewrites you should pattern-match against:",
-    "",
-    "- Bad: *Searching the code for a pattern.*",
-    "  Good: *Looking for where the reset handler drops the workspace arg so",
-    "  I know where to patch.*",
-    "- Bad: *Reading a file.*",
-    "  Good: *Pulling up the failing test in run.test.ts to see which assertion",
-    "  actually fires.*",
-    "- Bad: *Running a command.*",
-    "  Good: *Rebuilding dist so the gateway picks up the narration block.*",
-    "- Bad: *Performing the action.*",
-    "  Good: *Restarting the gateway so the new system prompt actually loads —",
-    "  Vite HMR doesn't catch backend changes.*",
-    "- Bad: *Reading a section of the code to understand how it works.*",
-    "  Good: *Walking through `deriveSessionKey` in cc-bridge stream.ts to see",
-    "  whether sessionId already feeds the hash, before I add it.*",
-    "",
-    "## Other moments that need a sentence",
-    "",
-    "- **At findings, pivots, and blockers** between tool calls: ONE sentence.",
-    "  *Found it — line 331 drops the workspace arg.* *That path doesn't exist;",
-    "  pivoting to the plugin manifest.* These sentences also become the title",
-    "  of the NEXT tool call, so they double as story glue.",
-    "- **End-of-turn**: 1–2 sentences. What changed, what's next. Nothing else.",
-    "",
-    "Brief is good. Silent is not. A complex task with zero chat text between",
-    "tool calls reads as a wall of greps — even if Prefrontal shows activity.",
-    "Purpose sentences turn that wall into a narrative that builds to the fix.",
-    "",
-    "## What NOT to narrate",
-    "",
-    "- Subagent dispatches, recipe-step transitions, trail events — those go",
-    "  through the recipe-state CLI (path above) to Prefrontal, not to chat.",
-    "- Running commentary on your own thought process (\"let me think… now I'll",
-    '  check…"). State results and decisions, not deliberation.',
-    "- Mechanical restatements of the tool's argument list. The UI shows the",
-    "  args on expand; the collapsed line is the PURPOSE, not the command.",
-    "",
-    "## Split of concerns",
-    "",
-    "- **Prefrontal panel** — orchestration mechanics. Dispatches, recipe steps,",
-    "  spawn/complete trails. Owned by the recipe-state CLI.",
-    "- **Chat text** — substance. What you found, what you're doing with it,",
-    "  what you concluded, where you're stuck. Owned by you in plain prose.",
-    "",
-    "These complement each other. Don't duplicate orchestration into chat, and",
-    "don't push substance into trails. If the user ever has to flip between",
-    "panels to know where you are, the split was wrong.",
-  ].join("\n");
+  return loadPromptFile({
+    plugin: "tinkerclaw-cc-bridge",
+    subdir: "prompts",
+    file: "narration-contract.md",
+    envVar: "TINKERCLAW_NARRATION_PROMPT",
+  });
 }
+
+// (Narration content moved to prompts/narration-contract.md — see
+// loadPromptFile call above. Inline content removed 2026-04-28.)
 
 function buildAppendedPromptRules(): string {
   const blocks: string[] = [];
