@@ -271,6 +271,7 @@ async function dispatchPluginDiscordInteractiveEvent(params: {
             text: buildPluginBindingResolvedText(resolved),
           },
           {
+            cfg: params.ctx.cfg,
             accountId: params.ctx.accountId,
           },
         );

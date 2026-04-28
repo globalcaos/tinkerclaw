@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 // FORK: engram/hybrid-retrieval runtime wiring. These imports back the
 // `compactionMode === "engram"` branch below and were lost in the 2026-04-15
 // stratified upstream merge.
@@ -11,8 +12,7 @@ import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
+import { listEmbeddedExtensionFactories } from "../../plugins/embedded-extension-factory.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
@@ -197,47 +197,52 @@ export function buildEmbeddedExtensionFactories(params: {
         model: "mxbai-embed-large",
         fallback: "none",
       })
-        .then(({ provider }: { provider: import("../../memory/embeddings.js").EmbeddingProvider }) => {
-          if (needsLimbic) {
-            const semanticRuntime = createLimbicRuntime(
-              eventStore!,
-              { embeddingProvider: provider },
-              cortexRuntime,
-            );
-            setLimbicRuntime(params.sessionManager, semanticRuntime);
-          }
+        .then(
+          ({ provider }: { provider: import("../../memory/embeddings.js").EmbeddingProvider }) => {
+            if (needsLimbic) {
+              const semanticRuntime = createLimbicRuntime(
+                eventStore!,
+                { embeddingProvider: provider },
+                cortexRuntime,
+              );
+              setLimbicRuntime(params.sessionManager, semanticRuntime);
+            }
 
-          if (needsEngram) {
-            const embCache = createEmbeddingCache(engramBaseDir!, 1024);
-            const embedFn: import("../../memory/engram/embedding-worker.js").EmbedFn = async (
-              texts,
-            ) => {
-              const vectors = await provider.embedBatch(texts);
-              return vectors.map((v: number[]) => new Float32Array(v));
-            };
-            setRetrievalRuntime(params.sessionManager, {
-              eventStore: eventStore!,
-              searchIndex: globalFtsSearch,
-              embeddingCache: embCache,
-              embedFn,
-            });
-            const worker = createEmbeddingWorker({
-              embedFn,
-              cache: embCache,
-              batchSize: 16,
-              batchTimeoutMs: 10000,
-              onError: (err: Error) => console.warn(`[engram] Embedding worker error: ${err.message}`),
-            });
-            const origAppend = eventStore!.append.bind(eventStore!);
-            eventStore!.append = (event: Parameters<typeof origAppend>[0]) => {
-              const result = origAppend(event);
-              // FORK: enqueue the materialized event (with id/timestamp), not the input draft.
-              worker.enqueue(result);
-              return result;
-            };
-          }
-          console.log("[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)");
-        })
+            if (needsEngram) {
+              const embCache = createEmbeddingCache(engramBaseDir!, 1024);
+              const embedFn: import("../../memory/engram/embedding-worker.js").EmbedFn = async (
+                texts,
+              ) => {
+                const vectors = await provider.embedBatch(texts);
+                return vectors.map((v: number[]) => new Float32Array(v));
+              };
+              setRetrievalRuntime(params.sessionManager, {
+                eventStore: eventStore!,
+                searchIndex: globalFtsSearch,
+                embeddingCache: embCache,
+                embedFn,
+              });
+              const worker = createEmbeddingWorker({
+                embedFn,
+                cache: embCache,
+                batchSize: 16,
+                batchTimeoutMs: 10000,
+                onError: (err: Error) =>
+                  console.warn(`[engram] Embedding worker error: ${err.message}`),
+              });
+              const origAppend = eventStore!.append.bind(eventStore!);
+              eventStore!.append = (event: Parameters<typeof origAppend>[0]) => {
+                const result = origAppend(event);
+                // FORK: enqueue the materialized event (with id/timestamp), not the input draft.
+                worker.enqueue(result);
+                return result;
+              };
+            }
+            console.log(
+              "[engram] Hybrid retrieval active: FTS + vector (ollama/mxbai-embed-large)",
+            );
+          },
+        )
         .catch((err: unknown) => {
           console.warn(`[fork] Ollama embedding unavailable, FTS-only retrieval: ${err}`);
         });
@@ -272,6 +277,7 @@ export function buildEmbeddedExtensionFactories(params: {
   if (pruningFactory) {
     factories.push(pruningFactory);
   }
+  factories.push(...listEmbeddedExtensionFactories());
   return factories;
 }
 

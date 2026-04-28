@@ -8,7 +8,13 @@ import {
 } from "./tool-policy-shared.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
-export { expandToolGroups, normalizeToolList, normalizeToolName, resolveToolProfilePolicy, TOOL_GROUPS };
+export {
+  expandToolGroups,
+  normalizeToolList,
+  normalizeToolName,
+  resolveToolProfilePolicy,
+  TOOL_GROUPS,
+};
 export type { ToolProfileId } from "./tool-policy-shared.js";
 
 // Keep tool-policy browser-safe: do not import tools/common at runtime.
@@ -40,7 +46,6 @@ const OWNER_ONLY_TOOL_NAME_FALLBACKS = new Set<string>([
  * file replacement of `tool-policy.ts`.
  */
 const OWNER_ONLY_TOOL_APPROVAL_CLASS_FALLBACKS = new Map<string, OwnerOnlyToolApprovalClass>([
-  ["whatsapp_login", "interactive"],
   ["cron", "control_plane"],
   ["gateway", "control_plane"],
   ["nodes", "exec_capable"],

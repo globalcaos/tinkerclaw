@@ -9,6 +9,7 @@ import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
 import { readWebSelfIdentityForDecision, WhatsAppAuthUnstableError } from "../auth-store.js";
 import { getPrimaryIdentityId, resolveComparableIdentity } from "../identity.js";
 import { DEFAULT_RECONNECT_POLICY, computeBackoff, sleepWithAbort } from "../reconnect.js";
+import type { OpenClawConfig } from "../runtime-api.js";
 import { createWaSocket, formatError, getStatusCode, waitForWaConnection } from "../session.js";
 import { resolveJidToE164 } from "../text-runtime.js";
 import { checkInboundAccessControl } from "./access-control.js";
@@ -52,6 +53,7 @@ function isNonEmptyString(value: string | undefined): value is string {
 }
 
 export type MonitorWebInboxOptions = {
+  cfg: OpenClawConfig;
   verbose: boolean;
   accountId: string;
   authDir: string;
@@ -383,6 +385,7 @@ export async function attachWebInboxToSocket(
     // FORK: Extract message body before access control for triggerPrefix evaluation
     const messageBody = extractText(msg.message ?? undefined) ?? "";
     const access = await checkInboundAccessControl({
+      cfg: options.cfg,
       accountId: options.accountId,
       from,
       selfE164: self.e164 ?? null,
