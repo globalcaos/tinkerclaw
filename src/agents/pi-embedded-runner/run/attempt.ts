@@ -2095,6 +2095,10 @@ export async function runEmbeddedAttempt(
         getUsageTotals,
         getCompactionCount,
       } = subscription;
+      // FORK 2026-04-28 chunk-21: getLastCompactionTokensAfter dropped from
+      // EmbeddedPiSubscribe in upstream's compaction-handler refactor. Stubbed
+      // until apply-fork-wiring grows a patch for the new telemetry surface.
+      const getLastCompactionTokensAfter = (): number | undefined => undefined;
 
       const queueHandle: EmbeddedPiQueueHandle & {
         kind: "embedded";
@@ -3226,6 +3230,7 @@ export async function runEmbeddedAttempt(
         attemptUsage,
         promptCache,
         compactionCount: getCompactionCount(),
+        compactionTokensAfter: getLastCompactionTokensAfter(),
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
         yieldDetected: yieldDetected || undefined,

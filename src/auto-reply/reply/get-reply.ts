@@ -10,8 +10,9 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, getRuntimeConfig } from "../../config/config.js";
+import { logVerbose } from "../../globals.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 // FORK: clearSessionResume retained for fork's session-reset cascade.
-// applyMergePatch + writeSessionResume call sites moved/inlined upstream.
 import { clearSessionResume } from "../../infra/session-resume.js";
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
@@ -140,9 +141,17 @@ async function applyMediaUnderstandingIfNeeded(params: {
   if (!hasInboundMedia(params.ctx)) {
     return false;
   }
-  const { applyMediaUnderstanding } = await loadMediaUnderstandingApplyRuntime();
-  await applyMediaUnderstanding(params);
-  return true;
+  try {
+    const { applyMediaUnderstanding } = await loadMediaUnderstandingApplyRuntime();
+    await applyMediaUnderstanding(params);
+    return true;
+  } catch (err) {
+    mediaUnderstandingApplyRuntimePromise = null;
+    logVerbose(
+      `media understanding failed, proceeding with raw content: ${formatErrorMessage(err)}`,
+    );
+    return false;
+  }
 }
 
 async function applyLinkUnderstandingIfNeeded(params: {
@@ -152,9 +161,17 @@ async function applyLinkUnderstandingIfNeeded(params: {
   if (!hasLinkCandidate(params.ctx)) {
     return false;
   }
-  const { applyLinkUnderstanding } = await loadLinkUnderstandingApplyRuntime();
-  await applyLinkUnderstanding(params);
-  return true;
+  try {
+    const { applyLinkUnderstanding } = await loadLinkUnderstandingApplyRuntime();
+    await applyLinkUnderstanding(params);
+    return true;
+  } catch (err) {
+    linkUnderstandingApplyRuntimePromise = null;
+    logVerbose(
+      `link understanding failed, proceeding with raw content: ${formatErrorMessage(err)}`,
+    );
+    return false;
+  }
 }
 
 export async function getReplyFromConfig(
@@ -331,7 +348,7 @@ export async function getReplyFromConfig(
         groupChannel:
           sessionEntry.groupChannel ?? sessionCtx.GroupChannel ?? finalized.GroupChannel,
         groupSubject: sessionEntry.subject ?? sessionCtx.GroupSubject ?? finalized.GroupSubject,
-        parentSessionKey: sessionCtx.ParentSessionKey,
+        parentSessionKey: sessionCtx.ModelParentSessionKey ?? sessionCtx.ParentSessionKey,
       })
     : null;
   const hasSessionModelOverride = Boolean(
@@ -342,7 +359,10 @@ export async function getReplyFromConfig(
     sessionEntry,
     sessionStore,
     sessionKey,
-    parentSessionKey: sessionEntry.parentSessionKey ?? sessionCtx.ParentSessionKey,
+    parentSessionKey:
+      sessionEntry.parentSessionKey ??
+      sessionCtx.ModelParentSessionKey ??
+      sessionCtx.ParentSessionKey,
     defaultProvider,
   });
   if (storedModelOverride?.model && !hasResolvedHeartbeatModelOverride) {

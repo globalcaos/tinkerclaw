@@ -11,6 +11,10 @@ Local is doable, but OpenClaw expects large context + strong defenses against pr
 
 If you want the lowest-friction local setup, start with [LM Studio](/providers/lmstudio) or [Ollama](/providers/ollama) and `openclaw onboard`. This page is the opinionated guide for higher-end local stacks and custom OpenAI-compatible local servers.
 
+<Warning>
+**WSL2 + Ollama + NVIDIA/CUDA users:** The official Ollama Linux installer enables a systemd service with `Restart=always`. On WSL2 GPU setups, autostart can reload the last model during boot and pin host memory. If your WSL2 VM repeatedly restarts after enabling Ollama, see [WSL2 crash loop](/providers/ollama#wsl2-crash-loop-repeated-reboots).
+</Warning>
+
 ## Recommended: LM Studio + large local model (Responses API)
 
 Best current local stack. Load a large model in LM Studio (for example, a full-size Qwen, DeepSeek, or Llama build), enable the local server (default `http://127.0.0.1:1234`), and use Responses API to keep reasoning separate from final text.
@@ -113,17 +117,26 @@ Swap the primary and fallback order; keep the same providers block and `models.m
 
 ## Other OpenAI-compatible local proxies
 
-vLLM, LiteLLM, OAI-proxy, or custom gateways work if they expose an OpenAI-style `/v1` endpoint. Replace the provider block above with your endpoint and model ID:
+MLX (`mlx_lm.server`), vLLM, SGLang, LiteLLM, OAI-proxy, or custom
+gateways work if they expose an OpenAI-style `/v1/chat/completions`
+endpoint. Use the Chat Completions adapter unless the backend explicitly
+documents `/v1/responses` support. Replace the provider block above with your
+endpoint and model ID:
 
 ```json5
 {
+  agents: {
+    defaults: {
+      model: { primary: "local/my-local-model" },
+    },
+  },
   models: {
     mode: "merge",
     providers: {
       local: {
         baseUrl: "http://127.0.0.1:8000/v1",
         apiKey: "sk-local",
-        api: "openai-responses",
+        api: "openai-completions",
         timeoutSeconds: 300,
         models: [
           {
@@ -141,6 +154,19 @@ vLLM, LiteLLM, OAI-proxy, or custom gateways work if they expose an OpenAI-style
   },
 }
 ```
+
+If `api` is omitted on a custom provider with a `baseUrl`, OpenClaw defaults to
+`openai-completions`. Loopback endpoints such as `127.0.0.1` are trusted
+automatically; LAN, tailnet, and private DNS endpoints still need
+`request.allowPrivateNetwork: true`.
+
+The `models.providers.<id>.models[].id` value is provider-local. Do not
+include the provider prefix there. For example, an MLX server started with
+`mlx_lm.server --model mlx-community/Qwen3-30B-A3B-6bit` should use this
+catalog id and model ref:
+
+- `models.providers.mlx.models[].id: "mlx-community/Qwen3-30B-A3B-6bit"`
+- `agents.defaults.model.primary: "mlx/mlx-community/Qwen3-30B-A3B-6bit"`
 
 Keep `models.mode: "merge"` so hosted models stay available as fallbacks.
 Use `models.providers.<id>.timeoutSeconds` for slow local or remote model

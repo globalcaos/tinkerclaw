@@ -53,6 +53,13 @@ export function handleCompactionEnd(
   const wasAborted = Boolean(evt.aborted);
   if (hasResult && !wasAborted) {
     ctx.incrementCompactionCount();
+    const tokensAfter =
+      typeof evt.result === "object" && evt.result
+        ? (evt.result as { tokensAfter?: unknown }).tokensAfter
+        : undefined;
+    // FORK 2026-04-28 chunk-21: noteCompactionTokensAfter dropped upstream;
+    // telemetry path collapsed to compaction-retry signaling only.
+    void tokensAfter;
     const observedCompactionCount = ctx.getCompactionCount();
     void reconcileSessionStoreCompactionCountAfterSuccess({
       sessionKey: ctx.params.sessionKey,

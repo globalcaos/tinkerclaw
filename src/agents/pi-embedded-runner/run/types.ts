@@ -103,6 +103,7 @@ export type EmbeddedRunAttemptResult = {
   attemptUsage?: NormalizedUsage;
   promptCache?: ContextEnginePromptCacheInfo;
   compactionCount?: number;
+  compactionTokensAfter?: number;
   /** Client tool call detected (OpenResponses hosted tools). */
   clientToolCall?: { name: string; params: Record<string, unknown> };
   /** Per-turn context anatomy — decomposition of what was sent to the model. */
