@@ -10,13 +10,12 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
-// FORK: applyMergePatch supports the `configOverride` parameter on
-// getReplyFromConfig, allowing callers (tests, harness) to deep-merge over
-// the on-disk config without mutating it.
-import { applyMergePatch } from "../../config/merge-patch.js";
-import { defaultRuntime } from "../../runtime.js";
 // FORK: session resume helpers persist gateway state across restarts.
-import { clearSessionResume, writeSessionResume } from "../../infra/session-resume.js";
+// applyMergePatch + writeSessionResume currently have no call site after the
+// 2026-04-28 chunk-2 merge — call sites moved/inlined upstream. Re-add when
+// fork-wiring or a new fork patch needs them.
+import { clearSessionResume } from "../../infra/session-resume.js";
+import { defaultRuntime } from "../../runtime.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import type { GetReplyOptions } from "../get-reply-options.types.js";
@@ -53,6 +52,13 @@ let sessionResetModelRuntimePromise: Promise<
 let stageSandboxMediaRuntimePromise: Promise<
   typeof import("./stage-sandbox-media.runtime.js")
 > | null = null;
+let mediaUnderstandingApplyRuntimePromise: Promise<
+  typeof import("../../media-understanding/apply.runtime.js")
+> | null = null;
+let linkUnderstandingApplyRuntimePromise: Promise<
+  typeof import("../../link-understanding/apply.runtime.js")
+> | null = null;
+let commandsCoreRuntimePromise: Promise<typeof import("./commands-core.runtime.js")> | null = null;
 
 function loadSessionResetModelRuntime() {
   sessionResetModelRuntimePromise ??= import("./session-reset-model.runtime.js");
@@ -62,6 +68,21 @@ function loadSessionResetModelRuntime() {
 function loadStageSandboxMediaRuntime() {
   stageSandboxMediaRuntimePromise ??= import("./stage-sandbox-media.runtime.js");
   return stageSandboxMediaRuntimePromise;
+}
+
+function loadMediaUnderstandingApplyRuntime() {
+  mediaUnderstandingApplyRuntimePromise ??= import("../../media-understanding/apply.runtime.js");
+  return mediaUnderstandingApplyRuntimePromise;
+}
+
+function loadLinkUnderstandingApplyRuntime() {
+  linkUnderstandingApplyRuntimePromise ??= import("../../link-understanding/apply.runtime.js");
+  return linkUnderstandingApplyRuntimePromise;
+}
+
+function loadCommandsCoreRuntime() {
+  commandsCoreRuntimePromise ??= import("./commands-core.runtime.js");
+  return commandsCoreRuntimePromise;
 }
 
 let hookRunnerGlobalPromise: Promise<typeof import("../../plugins/hook-runner-global.js")> | null =
@@ -132,7 +153,7 @@ async function applyMediaUnderstandingIfNeeded(params: {
   if (!hasInboundMedia(params.ctx)) {
     return false;
   }
-  const { applyMediaUnderstanding } = await import("../../media-understanding/apply.runtime.js");
+  const { applyMediaUnderstanding } = await loadMediaUnderstandingApplyRuntime();
   await applyMediaUnderstanding(params);
   return true;
 }
@@ -144,7 +165,7 @@ async function applyLinkUnderstandingIfNeeded(params: {
   if (!hasLinkCandidate(params.ctx)) {
     return false;
   }
-  const { applyLinkUnderstanding } = await import("../../link-understanding/apply.runtime.js");
+  const { applyLinkUnderstanding } = await loadLinkUnderstandingApplyRuntime();
   await applyLinkUnderstanding(params);
   return true;
 }
@@ -495,7 +516,7 @@ export async function getReplyFromConfig(
     if (!resetMatch) {
       return;
     }
-    const { emitResetCommandHooks } = await import("./commands-core.runtime.js");
+    const { emitResetCommandHooks } = await loadCommandsCoreRuntime();
     const action: ResetCommandAction = resetMatch[1] === "reset" ? "reset" : "new";
     await emitResetCommandHooks({
       action,

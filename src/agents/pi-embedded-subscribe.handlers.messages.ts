@@ -5,6 +5,7 @@ import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
+import { coerceChatContentText } from "../shared/chat-content.js";
 import {
   parseAssistantTextSignature,
   resolveAssistantMessagePhase,
@@ -45,31 +46,6 @@ const stripTrailingDirective = (text: string): string => {
     return text;
   }
   return text.slice(0, openIndex);
-};
-
-const coerceText = (value: unknown): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value == null) {
-    return "";
-  }
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "bigint" ||
-    typeof value === "symbol"
-  ) {
-    return String(value);
-  }
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value) ?? "";
-    } catch {
-      return "";
-    }
-  }
-  return "";
 };
 
 function shouldSuppressAssistantVisibleOutput(message: AgentMessage | undefined): boolean {
@@ -122,12 +98,6 @@ function emitReasoningEnd(ctx: EmbeddedPiSubscribeContext) {
     return;
   }
   ctx.state.reasoningStreamOpen = false;
-  // FORK: emit thinking-end event for Tinker UI thinking block separation
-  emitAgentEvent({
-    runId: ctx.params.runId,
-    stream: "thinking",
-    data: { phase: "end" },
-  });
   void ctx.params.onReasoningEnd?.();
 }
 
@@ -195,12 +165,12 @@ export function resolveSilentReplyFallbackText(params: {
   text: unknown;
   messagingToolSentTexts: string[];
 }): string {
-  const text = coerceText(params.text);
+  const text = coerceChatContentText(params.text);
   const trimmed = text.trim();
   if (trimmed !== SILENT_REPLY_TOKEN) {
     return text;
   }
-  const fallback = coerceText(params.messagingToolSentTexts.at(-1)).trim();
+  const fallback = coerceChatContentText(params.messagingToolSentTexts.at(-1)).trim();
   if (!fallback) {
     return text;
   }
@@ -345,31 +315,15 @@ export function handleMessageUpdate(
       content: thinkingContent,
     });
     if (ctx.state.streamReasoning) {
-      // FORK: Track per-block thinking text (not accumulated across rounds).
-      // extractAssistantThinking(msg) returns ALL blocks — would duplicate
-      // earlier rounds in subsequent thinking temps on the Tinker UI.
-      if (evtType === "thinking_start") {
-        ctx.state.currentThinkingBlock = "";
-      }
-      if (thinkingDelta) {
-        ctx.state.currentThinkingBlock += thinkingDelta;
-      } else if (thinkingContent && !ctx.state.currentThinkingBlock) {
-        ctx.state.currentThinkingBlock = thinkingContent;
-      }
-      ctx.emitReasoningStream(ctx.state.currentThinkingBlock);
-    }
-    // Count thinking chars from delta (incremental, avoids double-counting full content)
-    if (evtType === "thinking_delta" && thinkingDelta) {
-      ctx.state.responseBreakdown.thinkingChars += thinkingDelta.length;
+      // Prefer full partial-message thinking when available; fall back to event payloads.
+      const partialThinking = extractAssistantThinking(msg);
+      ctx.emitReasoningStream(partialThinking || thinkingContent || thinkingDelta);
     }
     if (evtType === "thinking_end") {
       if (!ctx.state.reasoningStreamOpen) {
         openReasoningStream(ctx);
       }
       emitReasoningEnd(ctx);
-      // FORK: Reset per-round tracking so the next thinking block starts fresh
-      ctx.state.currentThinkingBlock = "";
-      ctx.state.lastStreamedReasoning = undefined;
     }
     return;
   }
@@ -419,7 +373,9 @@ export function handleMessageUpdate(
   if (deliveryPhase === "commentary") {
     return;
   }
-  const phaseAwareVisibleText = coerceText(extractAssistantVisibleText(partialAssistant)).trim();
+  const phaseAwareVisibleText = coerceChatContentText(
+    extractAssistantVisibleText(partialAssistant),
+  ).trim();
   const shouldUsePhaseAwareBlockReply = Boolean(deliveryPhase);
 
   if (chunk) {
@@ -433,14 +389,17 @@ export function handleMessageUpdate(
     // Handle partial <think> tags: stream whatever reasoning is visible so far.
     ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
   }
-
-  const next = ctx
-    .stripBlockTags(ctx.state.deltaBuffer, {
-      thinking: false,
-      final: false,
-      inlineCode: createInlineCodeState(),
-    })
-    .trim();
+  const next =
+    phaseAwareVisibleText ||
+    (deliveryPhase === "final_answer"
+      ? ""
+      : ctx
+          .stripBlockTags(ctx.state.deltaBuffer, {
+            thinking: false,
+            final: false,
+            inlineCode: createInlineCodeState(),
+          })
+          .trim());
   if (next) {
     const wasThinking = ctx.state.partialBlockState.thinking;
     const visibleDelta = chunk ? ctx.stripBlockTags(chunk, ctx.state.partialBlockState) : "";
@@ -533,8 +492,9 @@ export function handleMessageUpdate(
     evtType === "text_end" &&
     ctx.state.blockReplyBreak === "text_end"
   ) {
+    const assistantMessageIndex = ctx.state.assistantMessageIndex;
     void Promise.resolve()
-      .then(() => ctx.flushBlockReplyBuffer())
+      .then(() => ctx.flushBlockReplyBuffer({ assistantMessageIndex }))
       .catch((err) => {
         ctx.log.debug(`text_end block reply flush failed: ${String(err)}`);
       });
@@ -561,7 +521,8 @@ export function handleMessageEnd(
   }
   promoteThinkingTagsToBlocks(assistantMessage);
 
-  const rawText = coerceText(extractAssistantText(assistantMessage));
+  const rawText = coerceChatContentText(extractAssistantText(assistantMessage));
+  const rawVisibleText = coerceChatContentText(extractAssistantVisibleText(assistantMessage));
   appendRawStream({
     ts: Date.now(),
     event: "assistant_message_end",
@@ -572,7 +533,7 @@ export function handleMessageEnd(
   });
 
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
+    text: ctx.stripBlockTags(rawVisibleText, { thinking: false, final: false }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
   const rawThinking =
@@ -619,7 +580,8 @@ export function handleMessageEnd(
   ) {
     const data = buildAssistantStreamData({
       text: cleanedText,
-      delta: cleanedText,
+      delta: finalStreamDelta,
+      replace: shouldReplaceFinalStream,
       mediaUrls,
       phase: assistantPhase,
     });
@@ -633,6 +595,7 @@ export function handleMessageEnd(
       data,
     });
     ctx.state.emittedAssistantUpdate = true;
+    ctx.state.lastStreamedAssistantCleaned = cleanedText;
   }
 
   const silentExpectedWithoutSentinel =
@@ -696,32 +659,50 @@ export function handleMessageEnd(
     }
   };
 
+  const hasBufferedBlockReply = ctx.blockChunker
+    ? ctx.blockChunker.hasBuffered()
+    : ctx.state.blockBuffer.length > 0;
+
   if (
     !ctx.params.silentExpected &&
     !suppressDeterministicApprovalOutput &&
     text &&
     onBlockReply &&
     (ctx.state.blockReplyBreak === "message_end" ||
-      (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0))
+      hasBufferedBlockReply ||
+      text !== ctx.state.lastBlockReplyText)
   ) {
-    if (ctx.blockChunker?.hasBuffered()) {
+    if (hasBufferedBlockReply && ctx.blockChunker?.hasBuffered()) {
       ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
       ctx.blockChunker.reset();
     } else if (text !== ctx.state.lastBlockReplyText) {
-      // Check for duplicates before emitting (same logic as emitBlockChunk).
-      const normalizedText = normalizeTextForComparison(text);
-      if (
-        isMessagingToolDuplicateNormalized(
-          normalizedText,
-          ctx.state.messagingToolSentTextsNormalized,
-        )
-      ) {
+      // Guard: for text_end channels, if text_end already delivered content
+      // (lastBlockReplyText is set), skip this safety send. The text comparison
+      // here uses a different stripping pipeline (stripBlockTags with reset state)
+      // than emitBlockChunk (stripBlockTags with running blockState +
+      // stripDowngradedToolCallText), which can false-positive. When text_end
+      // didn't deliver (e.g. commentary suppressed, provider skipped text_end),
+      // lastBlockReplyText is still null and message_end must deliver.
+      if (ctx.state.blockReplyBreak === "text_end" && ctx.state.lastBlockReplyText != null) {
         ctx.log.debug(
-          `Skipping message_end block reply - already sent via messaging tool: ${text.slice(0, 50)}...`,
+          `Skipping message_end safety send for text_end channel - content already delivered via text_end`,
         );
       } else {
-        ctx.state.lastBlockReplyText = text;
-        emitSplitResultAsBlockReply(ctx.consumeReplyDirectives(text, { final: true }));
+        // Check for duplicates before emitting (same logic as emitBlockChunk).
+        const normalizedText = normalizeTextForComparison(text);
+        if (
+          isMessagingToolDuplicateNormalized(
+            normalizedText,
+            ctx.state.messagingToolSentTextsNormalized,
+          )
+        ) {
+          ctx.log.debug(
+            `Skipping message_end block reply - already sent via messaging tool: ${text.slice(0, 50)}...`,
+          );
+        } else {
+          ctx.state.lastBlockReplyText = text;
+          emitSplitResultAsBlockReply(ctx.consumeReplyDirectives(text, { final: true }));
+        }
       }
     }
   }
