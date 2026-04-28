@@ -1,15 +1,56 @@
 {
-  "name": "@openclaw/tinkerclaw-cc-bridge",
+  "name": "@oscarserra/openclaw-cc-bridge",
   "version": "0.1.0",
-  "private": true,
-  "description": "FORK: OpenClaw provider that drives the real Claude Code CLI as a persistent subprocess per session. Inherits ~/.claude/.credentials.json OAuth — flat-rate entitlement, no API key.",
+  "description": "OpenClaw provider that drives the real Claude Code CLI as a persistent subprocess per session. Inherits the user's existing ~/.claude/.credentials.json OAuth — turns a flat-rate Claude Code subscription into your gateway's primary provider.",
+  "keywords": [
+    "anthropic",
+    "claude-code",
+    "oauth",
+    "openclaw",
+    "openclaw-plugin",
+    "subscription"
+  ],
+  "homepage": "https://github.com/oscarserra/tinkerclaw#readme",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oscarserra/tinkerclaw.git",
+    "directory": "extensions/tinkerclaw-cc-bridge"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "prompts/",
+    "personas/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
   "devDependencies": {
-    "@openclaw/plugin-sdk": "workspace:*"
+    "@openclaw/plugin-sdk": "workspace:*",
+    "openclaw": "workspace:*"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": true
+    }
   }
 }
