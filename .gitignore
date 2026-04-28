@@ -143,6 +143,7 @@ skills/
 config/
 !src/config/
 !extensions/*/src/config*
+!ui/src/ui/controllers/config/
 
 # Local iOS signing overrides
 apps/ios/LocalSigning.xcconfig
