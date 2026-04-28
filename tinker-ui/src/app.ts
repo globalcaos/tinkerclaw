@@ -2915,13 +2915,19 @@ function applyInjectToggleChrome(): void {
 //      without digging through amygdala/fractal noise unrelated to /new.
 function buildInjectedPrompt(userText: string): string {
   const trimmed = userText.trim();
-  // Bare /new or /reset (or /new-with-no-args): replace the standard
-  // section template with a BRIEFING.md pointer so the LLM reads the
-  // right file and the user can edit the briefing logic in place.
+  // FORK 2026-04-28 (bible §5.76): the injected suffix names two paths in
+  // resolution order — workspace (override) → bundled default. Whichever
+  // exists wins, both for fresh clones (workspace missing → falls back to
+  // the bundled briefing-default.md) and for users who have customised
+  // their briefing (workspace present → ignored fallback). The persona
+  // file's resolution order ensures the same fallback for SOUL.md.
   if (/^\/(new|reset)$/i.test(trimmed)) {
     return (
       userText +
-      "\n\n---\n\n**Session Startup.** Read and follow the full contents of `~/.openclaw/workspace/BRIEFING.md` — that file is the single source of truth for the session-start briefing and the /new flow. Edit it directly if you want to change the briefing format."
+      "\n\n---\n\n**Session Startup.** Read and follow whichever of these briefing files exists (try in order, take the first found): " +
+      "`~/.openclaw/workspace/BRIEFING.md` (your workspace override, if present), then " +
+      "`~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md` (the bundled day-0 fallback). " +
+      "Edit the workspace file (or seed one with `openclaw briefing init`) if you want to change the briefing format — `git pull` will keep refreshing the bundled fallback without touching your workspace override."
     );
   }
 
