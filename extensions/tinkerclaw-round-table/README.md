@@ -1,51 +1,35 @@
 # Round Table
 
-> Multi-model adversarial debate via RAAC protocol with cognitive diversity scoring.
+> Three models, one answer — cheaper than calling Opus once. RAAC debate protocol with cognitive diversity scoring.
 
-**Paper:** J6 — Multi-Model Adversarial Debate (SYNAPSE)
-**Status:** Production (deployed 6+ months)
-**Vanilla OpenClaw:** Yes — drop-in installation
+Hard problems aren't decided by one expensive model thinking longer. They're decided by three or more models with different reasoning styles arguing it out.
 
-## What It Does
-
-Exposes a `synapse_debate` tool the agent can invoke on any question where a single perspective is insufficient. The tool runs a structured 5-phase deliberation (Propose → Challenge → Defend → Synthesize → Ratify) across multiple model profiles chosen for cognitive diversity. The result is a confidence-scored consensus with full debate traces, dissenting opinions, and action items. On hard problems, this pattern reliably outperforms larger single-model calls at a fraction of the cost.
+The plugin exposes a `synapse_debate` tool the agent can call on any question where one perspective isn't enough. The tool selects 3–5 model profiles chosen for cognitive diversity (logical, creative, critical, systematic, integrative), assigns adversarial roles, and runs the 5-phase RAAC protocol: Propose → Challenge → Defend → Synthesize → Ratify. Convergence is detected when the synthesis stabilizes. The result is a confidence-scored consensus (0.3–1.0) with full debate traces, dissenting opinions, and action items. Three Sonnets debating beats one Opus alone on most non-trivial questions, at a fraction of the cost.
 
 ## Install
 
-1. Copy this folder to `~/.openclaw/workspace/extensions/tinkerclaw-round-table/`
-2. Add to `openclaw.json`:
+```bash
+openclaw plugins install @globalcaos/openclaw-round-table
+```
+
+Enable it in `openclaw.json`:
 
 ```json
-{
-  "plugins": {
-    "allow": ["tinkerclaw-round-table"],
-    "entries": {
-      "tinkerclaw-round-table": {
-        "enabled": true,
-        "config": {
-          "defaultDepth": "standard",
-          "maxRounds": 6
-        }
-      }
-    }
-  }
+"plugins": {
+  "allow": ["tinkerclaw-round-table"],
+  "entries": { "tinkerclaw-round-table": { "enabled": true } }
 }
 ```
 
-3. Restart gateway
+## Pairs Well With
 
-## Configuration
+- **[@globalcaos/openclaw-total-recall](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-total-recall)** — debate traces persist in ENGRAM instead of a local JSONL. Your agent recalls past arguments and stops re-deliberating questions it already settled.
+- **[@globalcaos/openclaw-learned-intuition](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-learned-intuition)** — synthesis is just text until it ships as an action. AMYGDALA vetoes risky ratifications before the panel's confidence translates to a tool call.
+- **[@globalcaos/openclaw-fractal-reflection](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-fractal-reflection)** — what surprised the panel? The four-level reflection runs after the debate so the agent learns the meta-pattern, not just the answer.
 
-| Key            | Default      | Description                                                          |
-| -------------- | ------------ | -------------------------------------------------------------------- |
-| `defaultDepth` | `"standard"` | Default debate depth: `quick` (2 rounds), `standard` (4), `deep` (6) |
-| `maxRounds`    | `6`          | Hard cap on debate rounds regardless of depth setting                |
+---
 
-## Dependencies
+👉 **https://github.com/globalcaos/tinkerclaw**
+👉 **https://thetinkerzone.com**
 
-- Required: none
-- Optional: Total Recall — debate traces are stored in its event store when active; otherwise falls back to `~/.openclaw/synapse/traces.jsonl`
-
-## How It Works
-
-The extension registers a single `synapse_debate` tool. When called, it selects 3–5 provider profiles with diverse strengths (logical, creative, critical, systematic, integrative), assigns adversarial roles, and runs the RAAC protocol. Each round participants propose, challenge each other's proposals, defend against attacks, synthesize across positions, and vote to ratify or amend. Convergence is detected when the synthesis stabilizes. The final result includes a confidence score (0.3–1.0), consensus text, dissenting votes, and round-by-round traces. Traces are persisted via Total Recall if available, or written to a local JSONL file. Shared state is written to `~/.openclaw/cognitive/round-table.json`.
+_Clone it. Fork it. Break it. Make it yours._
