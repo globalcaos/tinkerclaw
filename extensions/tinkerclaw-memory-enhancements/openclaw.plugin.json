@@ -4,7 +4,7 @@
     "onStartup": true
   },
   "name": "Memory Enhancements",
-  "description": "Four layered wins on top of upstream memory-core: O(1) anchor \u2192 chunk hippocampus index, task-conditioned retrieval scoring, structured contradiction-gate on writes, and compaction-aware message capture. Drop-in plugin \u2014 upstream memory-core stays exactly as shipped. Designed to be published on ClawHub.",
+  "description": "Memory-core companions, mostly observers in v0.1. Live: O(1) anchor \u2192 chunk hippocampus index. Scaffolded but log-only: task-conditioned retrieval scoring, contradiction-gate on writes, compaction-aware capture. The compaction-capture hook does NOT delay compaction \u2014 it logs which messages would have been dropped. Real persistence + true eviction land in v0.2.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -72,16 +72,17 @@
       "compactionCapture": {
         "type": "object",
         "additionalProperties": false,
+        "description": "v0.1 OBSERVER-ONLY: logs which messages would be dropped on compaction. Does NOT delay compaction and does NOT persist anything yet \u2014 those land in v0.2.",
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": true
+            "default": false
           },
           "captureMode": {
             "type": "string",
             "enum": ["dropped-only", "full-context"],
             "default": "dropped-only",
-            "description": "dropped-only: snapshot only messages about to be lost. full-context: snapshot entire context window."
+            "description": "dropped-only: log only messages about to be lost. full-context: log entire context window. v0.1 is log-only either way."
           }
         }
       }
