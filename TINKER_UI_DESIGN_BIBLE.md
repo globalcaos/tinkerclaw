@@ -1579,6 +1579,79 @@ If Anthropic publishes new guidance for Opus 4.8 or later, append §5.78 rather 
 
 ---
 
+### 5.78 Branch Policy: `main` is shippable, `develop` is for tinkering (2026-04-29)
+
+**Rule.** Effective today: only fully working versions go to `origin/main` on github.com/globalcaos/tinkerclaw. All in-progress work — partial merges, untested experiments, half-built features — happens on a local `develop` branch.
+
+#### 5.78a Why
+
+Cloners (and our own future selves) read `origin/main` expecting it to build, run, and be coherent. Pushing half-merged or broken work to main turns the repo into a minefield: someone clones, hits a build error, can't tell if it's their setup or the repo itself, and burns an hour figuring it out. A separate `develop` branch absorbs that mess locally so `main` can stay clean.
+
+#### 5.78b The workflow
+
+```
+develop (local, may be broken at any moment)
+   │
+   │  when a chunk of work is fully tested:
+   │  - build green
+   │  - gateway boots clean
+   │  - smoke test passes (`/jarvis-status` answers, model probe replies)
+   │  - any new fork-wiring patches verified idempotent
+   │
+   ▼
+main (local, snapshot of last known-good)
+   │
+   │  push (Jarvis owns this, never Claude Code directly)
+   │
+   ▼
+origin/main on github
+```
+
+After each merge to main:
+
+```bash
+git checkout main
+# main is now pristine
+git push origin main          # Jarvis pushes — see "NEVER push" rule
+
+git checkout develop
+git reset --hard main          # develop becomes a fresh copy of main
+# continue tinkering on develop
+```
+
+#### 5.78c What "fully working" means before merging develop → main
+
+A non-negotiable checklist:
+
+- `pnpm build` exits 0 with `NODE_OPTIONS=--max-old-space-size=8192`.
+- Gateway boots cleanly (`openclaw-restart --full`, `curl /healthz` returns `{"ok":true,"status":"live"}`).
+- `apply-fork-wiring.mjs` runs idempotent (re-running prints "already wired" for everything).
+- A smoke probe through cc-bridge replies (e.g. SMOKE-OK).
+- For changes to plugin manifests: each plugin still appears in the gateway plugin list at boot.
+- For changes to docs/scripts only: skip the build gate, but verify the doc renders or the script `node --check`s clean.
+
+If any of these fails, fix on `develop`; do not merge.
+
+#### 5.78d When the merge is messy (e.g. another big upstream catch-up)
+
+The 23-chunk supervised merge from 2026-04-28 is the worst case. Even there, the process was: do the merge on develop, accumulate fork-wiring patches, verify each chunk builds, only THEN merge develop → main. Don't push intermediate chunks to origin/main; the only thing origin/main sees is the final caught-up state.
+
+#### 5.78e What develop is allowed to be
+
+- Half-merged upstream chunks
+- Experimental plugins not yet wired up
+- Disabled features (`enabled: false` in openclaw.json) being tested
+- Broken builds during refactors
+- Stashes that aren't ready
+
+Anything that would embarrass us if a stranger cloned `main` and tripped on it.
+
+#### 5.78f What about other branches?
+
+Existing topic branches (`feat/...`, `fix/...`, `pr/...`, `wip/...`) are still fine for isolated work. They merge into `develop`, not into `main` directly. The two long-lived branches are `main` (clean) and `develop` (messy).
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.
