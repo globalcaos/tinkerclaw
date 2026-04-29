@@ -138,9 +138,15 @@ export default definePluginEntry({
     //    Snapshots messages about to be dropped. Persists via memory-core's
     //    public artifacts interface.
     // ---------------------------------------------------------------------
-    const ccEnabled = cfg.compactionCapture?.enabled !== false;
+    const ccEnabled = cfg.compactionCapture?.enabled === true;
     if (ccEnabled) {
       const captureMode = cfg.compactionCapture?.captureMode ?? "dropped-only";
+      api.logger.warn(
+        `[memory-enhancements] compaction-capture: ENABLED in v0.1 OBSERVER mode. ` +
+          `This hook does NOT delay compaction and does NOT persist anything; it only logs ` +
+          `which messages would have been dropped (mode=${captureMode}). Real eviction + persistence ` +
+          `lands in v0.2. Disable in config if you don't want the noise.`,
+      );
       api.on(
         "before_compaction",
         async (
@@ -154,14 +160,14 @@ export default definePluginEntry({
             return;
           }
           api.logger.info(
-            `[memory-enhancements] compaction-capture: session=${ctx.sessionKey ?? "?"} will drop ${willDrop} of ${total} messages (mode=${captureMode}). v0.1 logs only; v0.2 will persist via memory-core public artifacts.`,
+            `[memory-enhancements] compaction-capture (observer): session=${ctx.sessionKey ?? "?"} would drop ${willDrop} of ${total} messages (mode=${captureMode})`,
           );
         },
       );
     }
 
     api.logger.info(
-      "[memory-enhancements] ready — hippocampus index live, other 3 features scaffolded for v0.2",
+      "[memory-enhancements] ready — hippocampus index live; scoring/contradiction-gate/compaction-capture remain v0.1 scaffolds (see plugin description).",
     );
   },
 });
