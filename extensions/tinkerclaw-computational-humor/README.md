@@ -1,53 +1,35 @@
 # Computational Humor
 
-> Humor generation via embedding geometry — bridge discovery between distant concepts.
+> Your agent jokes. You laugh — it remembers. Humor from embedding geometry, calibrated by your reactions.
 
-**Paper:** J7 — Humor from Bisociation
-**Status:** Production (deployed 6+ months)
-**Vanilla OpenClaw:** Yes — drop-in installation
+Most agents are funny by accident. This one is funny on purpose, and gets funnier.
 
-## What It Does
-
-Adds an emotional and social intelligence layer that gives the agent a calibrated sense of humor. It discovers bridges between semantically distant concepts in embedding space (bisociation), gating attempts through a sensitivity threshold to avoid misfires. Positive user reactions (laughter, emoji, affirmation) are captured and fed back into the calibration loop so humor improves over time. Setting `frequency` to `off` disables the extension entirely with zero overhead.
+When the LIMBIC layer notices two semantically distant concepts that bridge in embedding space — the bisociation behind every good joke — it considers attempting humor. A sensitivity threshold (default `0.8`) filters misfires. The next user message is scanned for laughter, emoji, affirmations, or dead air; that signal is captured and fed back into calibration so future attempts lean toward what actually lands. Frequency knobs go from `off` (zero overhead) to `high` (50% turn rate). Persona-aware humor preferences are read from Identity Persistence at startup if it's installed.
 
 ## Install
 
-1. Copy this folder to `~/.openclaw/workspace/extensions/tinkerclaw-computational-humor/`
-2. Add to `openclaw.json`:
+```bash
+openclaw plugins install @globalcaos/openclaw-computational-humor
+```
+
+Enable it in `openclaw.json`:
 
 ```json
-{
-  "plugins": {
-    "allow": ["tinkerclaw-computational-humor"],
-    "entries": {
-      "tinkerclaw-computational-humor": {
-        "enabled": true,
-        "config": {
-          "frequency": "low",
-          "sensitivityThreshold": 0.8,
-          "embeddingProvider": "ollama"
-        }
-      }
-    }
-  }
+"plugins": {
+  "allow": ["tinkerclaw-computational-humor"],
+  "entries": { "tinkerclaw-computational-humor": { "enabled": true } }
 }
 ```
 
-3. Restart gateway
+## Pairs Well With
 
-## Configuration
+- **[@globalcaos/openclaw-identity-persistence](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-identity-persistence)** — your SOUL.md tells LIMBIC what flavor of humor matches the agent's persona, instead of generic LLM banter.
+- **[@globalcaos/openclaw-total-recall](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-total-recall)** — past laughter survives compaction. Calibration carries across sessions, not just within one.
+- **[@globalcaos/openclaw-fractal-reflection](https://github.com/globalcaos/tinkerclaw/tree/main/extensions/tinkerclaw-fractal-reflection)** — the agent reflects on what landed and what bombed; humor improves with the same loop that improves everything else.
 
-| Key                    | Default    | Description                                                                 |
-| ---------------------- | ---------- | --------------------------------------------------------------------------- |
-| `frequency`            | `"low"`    | Humor attempt rate: `off`, `low` (10%), `medium` (25%), `high` (50%)        |
-| `sensitivityThreshold` | `0.8`      | Minimum bridge strength to attempt humor (0.0–1.0, higher = more selective) |
-| `embeddingProvider`    | `"ollama"` | Embedding provider used for concept bridge discovery                        |
+---
 
-## Dependencies
+👉 **https://github.com/globalcaos/tinkerclaw**
+👉 **https://thetinkerzone.com**
 
-- Required: none (starts with FNV-1a hash fallback; upgrades asynchronously when Ollama is available)
-- Optional: Ollama — enables full embedding-geometry bridge discovery. Identity Persistence — provides persona humor calibration (preferred patterns, audience model) from `~/.openclaw/cognitive/identity-persistence.json`
-
-## How It Works
-
-Two hooks are registered. `before_prompt_build` increments a turn counter, evaluates the current humor calibration state (pending attempts, known associations, preferred bisociation patterns), and appends a compact `[LIMBIC humor calibration: ...]` context line to the system prompt so the LLM knows its humor parameters. The `llm_output` hook scans the next user message for positive reaction signals (laugh tokens, emoji, affirmations) and, if a pending humor attempt ID is active, records the reaction to recalibrate future attempts. Humor settings from Identity Persistence are read at startup from `~/.openclaw/cognitive/identity-persistence.json`. Shared state is written to `~/.openclaw/cognitive/computational-humor.json`.
+_Clone it. Fork it. Break it. Make it yours._
