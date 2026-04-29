@@ -606,11 +606,24 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
 
       if (path.startsWith("/json")) {
-        const token = getRelayAuthTokenFromRequest(req, url);
-        if (!token || !relayAuthTokens.has(token)) {
-          res.writeHead(401);
-          res.end("Unauthorized");
-          return;
+        // FORK 2026-04-29 (Bible §5.81): /json/version and /json/list are
+        // read-only discovery endpoints (browser version + list of attached
+        // targets). They do not accept commands and do not expose the WS
+        // command channel beyond a URL string. Tinkerclaw's gateway calls
+        // them to bootstrap the chrome-relay profile, but the upstream gate
+        // requires an HMAC token the gateway doesn't currently plumb through.
+        // Relaxation: allow loopback callers without auth, since the relay
+        // server is already loopback-bound and same-host trust is the model.
+        // The /cdp WebSocket (where commands actually flow) keeps its token
+        // gate untouched a few lines below.
+        const isLoopback = isLoopbackAddress(req.socket?.remoteAddress);
+        if (!isLoopback) {
+          const token = getRelayAuthTokenFromRequest(req, url);
+          if (!token || !relayAuthTokens.has(token)) {
+            res.writeHead(401);
+            res.end("Unauthorized");
+            return;
+          }
         }
       }
 

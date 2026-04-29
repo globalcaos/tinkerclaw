@@ -400,6 +400,26 @@ export async function launchOpenClawChrome(
   profile: ResolvedBrowserProfile,
   launchOptions: ManagedBrowserHeadlessOptions = {},
 ): Promise<RunningChrome> {
+  // FORK 2026-04-29 (Bible §5.81): Tinkerclaw policy forbids spawning new
+  // browser windows from agent flows. The only sanctioned access path is the
+  // in-page browser-relay extension on the `chrome-relay` profile, which
+  // exposes ONLY the specific tabs the user explicitly clicks "share" on.
+  // Direct CDP-port attach (e.g. cdpPort: 9222) is also blocked — see
+  // resolveProfile's guard — because it would expose every tab in the
+  // user's Chrome, defeating the per-tab consent model. Any path that
+  // reached this launcher means a profile resolved with driver=openclaw,
+  // which is the spawn-new path. Refuse loudly. The env escape hatch is
+  // for doctor/test only.
+  if (process.env.OPENCLAW_ALLOW_UNSAFE_BROWSER !== "1") {
+    throw new Error(
+      `[browser] Tinkerclaw refuses to spawn a new browser for profile "${profile.name}". ` +
+        `Fork policy: relay-extension only (Bible §5.81). Use the "chrome-relay" profile ` +
+        `and click "share this tab" on the relay extension icon for each tab the agent ` +
+        `should be able to see. The current profile resolved with driver="openclaw", ` +
+        `which is the spawn-new path this guard blocks. ` +
+        `Test-only escape: OPENCLAW_ALLOW_UNSAFE_BROWSER=1.`,
+    );
+  }
   if (!profile.cdpIsLoopback) {
     throw new Error(`Profile "${profile.name}" is remote; cannot launch local Chrome.`);
   }

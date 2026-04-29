@@ -416,29 +416,67 @@ function readToolTimeoutMs(params: Record<string, unknown>) {
     : undefined;
 }
 
+// FORK 2026-04-29 (Bible §5.81): action-level enforcement of relay-only policy.
+// These actions are blocked even before reaching the daemon — they would
+// either spawn a new browser, control the entire daemon, or open new tabs
+// outside the user's per-tab consent model.
+const TINKERCLAW_BLOCKED_BROWSER_ACTIONS = new Set(["start", "stop", "profiles", "open"]);
+
+function enforceTinkerclawBrowserPolicy(params: {
+  action: string;
+  profile: string | undefined;
+  target: string | undefined;
+  requestedNode: string | undefined;
+}): void {
+  if (process.env.OPENCLAW_ALLOW_UNSAFE_BROWSER === "1") {
+    return;
+  }
+  if (TINKERCLAW_BLOCKED_BROWSER_ACTIONS.has(params.action)) {
+    throw new Error(
+      `[browser] Tinkerclaw blocks action "${params.action}". Per Bible §5.81 the agent ` +
+        `cannot start/stop the browser daemon, enumerate profiles, or open new tabs. ` +
+        `It can only act on tabs the user has explicitly shared via the relay extension.`,
+    );
+  }
+  if (params.profile && params.profile !== "chrome-relay") {
+    throw new Error(
+      `[browser] Tinkerclaw allows only profile="chrome-relay". Got profile="${params.profile}". ` +
+        `The user's regular Chrome (profile="user") and the spawn-new-Chrome path ` +
+        `(profile="openclaw") are blocked — they would expose every tab in the browser. ` +
+        `Use chrome-relay; the user shares specific tabs via the relay extension popup.`,
+    );
+  }
+  if (params.target === "node" || params.requestedNode) {
+    throw new Error(
+      `[browser] Tinkerclaw blocks target="node" and node-hosted browser proxy routing. ` +
+        `Per Bible §5.81 only the local relay-extension transport is allowed.`,
+    );
+  }
+}
+
 export function createBrowserTool(opts?: {
   sandboxBridgeUrl?: string;
   allowHostControl?: boolean;
   agentSessionKey?: string;
 }): AnyAgentTool {
-  const targetDefault = opts?.sandboxBridgeUrl ? "sandbox" : "host";
-  const hostHint =
-    opts?.allowHostControl === false ? "Host target blocked by policy." : "Host target allowed.";
+  // FORK 2026-04-29 (Bible §5.81): description rewritten so the agent's mental
+  // model matches the policy. Removed all references to the spawned `openclaw`
+  // profile, the broad-scope `user` profile, the node-hosted browser proxy,
+  // and daemon-management actions (start/stop/profiles). What's left is
+  // exactly what the agent IS allowed to do.
+  void opts;
   return {
     label: "Browser",
     name: "browser",
     description: [
-      "Control the browser via OpenClaw's browser control server (status/start/stop/profiles/tabs/open/snapshot/screenshot/actions).",
-      "Browser choice: omit profile by default for the isolated OpenClaw-managed browser (`openclaw`).",
-      'For the logged-in user browser, use profile="user". A supported Chromium-based browser (v144+) must be running on the selected host or browser node. Use only when existing logins/cookies matter and the user is present.',
-      'For profile="user" or other existing-session profiles, omit timeoutMs on act:type, evaluate, hover, scrollIntoView, drag, select, and fill; that driver rejects per-call timeout overrides for those actions.',
-      'When a node-hosted browser proxy is available, the tool may auto-route to it. Pin a node with node=<id|name> or target="node".',
-      "When using refs from snapshot (e.g. e12), keep the same tab: prefer passing targetId from the snapshot response into subsequent actions (act/click/type/etc). For tab operations, targetId also accepts tabId handles (t1) and labels from action=tabs.",
-      "For multi-step browser work, login checks, stale refs, duplicate tabs, or Google Meet flows, use the bundled browser-automation skill when it is available.",
+      "Read/interact with browser tabs the user has explicitly shared via the Tinkerclaw relay extension. Per-tab consent only — you cannot see tabs the user hasn't shared.",
+      'Profile is fixed: profile="chrome-relay" (this is the only allowed profile and it is the default; do not specify another).',
+      "Allowed actions: doctor, status, tabs, focus, close, snapshot, screenshot, navigate, console, pdf, upload, dialog, act, cookies. Blocked: start, stop, profiles, open — those would either touch the browser daemon or open new tabs outside the consent model.",
+      'Allowed targets: omit (default). Blocked: target="node" (no remote browser routing).',
+      "For tab operations, targetId accepts tabId handles (t1) and labels from action=tabs. snapshot+act is the standard UI-automation pattern.",
+      "If the relay returns no shared tabs, stop and tell the user — do not retry, do not open a new tab, do not propose enabling --remote-debugging-port or starting a managed browser.",
       'For stable, self-resolving refs across calls, use snapshot with refs="aria" (Playwright aria-ref ids). Default refs="role" are role+name-based.',
-      "Use snapshot+act for UI automation. Avoid act:wait by default; use only in exceptional cases when no reliable UI state exists.",
-      `target selects browser location (sandbox|host|node). Default: ${targetDefault}.`,
-      hostHint,
+      "For multi-step flows, login checks, or stale refs, use the bundled browser-automation skill when it is available.",
     ].join(" "),
     parameters: BrowserToolSchema,
     execute: async (_toolCallId, args) => {
@@ -448,6 +486,11 @@ export function createBrowserTool(opts?: {
       const requestedNode = readStringParam(params, "node");
       const requestedTimeoutMs = readToolTimeoutMs(params);
       let target = readStringParam(params, "target") as "sandbox" | "host" | "node" | undefined;
+      // FORK 2026-04-29 (Bible §5.81): enforce policy *before* any backend
+      // dispatch — surface a clear rejection at the agent's tool boundary
+      // rather than letting the request hang on the daemon waiting for a
+      // path that no longer exists.
+      enforceTinkerclawBrowserPolicy({ action, profile, target, requestedNode });
       const configuredNode = browserToolDeps
         .getRuntimeConfig()
         .gateway?.nodes?.browser?.node?.trim();

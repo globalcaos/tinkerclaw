@@ -1788,6 +1788,71 @@ jq '."agent:main:main".compactionCount' ~/.openclaw/agents/main/sessions/session
 
 ---
 
+### 5.81 Browser Policy: relay-extension only, per-tab consent (2026-04-29)
+
+**Rule.** Tinkerclaw agents see browser tabs **only via the in-page relay extension**, and only the specific tabs the user has explicitly clicked "share" on. Three access paths are blocked by code:
+
+1. **Spawning a new browser** — refused by `launchOpenClawChrome` guard.
+2. **Direct CDP-port attach** (e.g. `cdpPort: 9222` to the user's regular Chrome) — refused by `resolveProfile` guard. Would expose _every_ tab.
+3. **Remote CDP attach** — refused by `cdpIsLoopback` checks elsewhere in the plugin. Would expose tabs in a remote browser to the agent.
+
+The only sanctioned profile is `chrome-relay`: `driver: "existing-session"`, no `cdpPort`, no `cdpUrl` configured. It routes through the gateway's relay subsystem, which only forwards messages to tabs the user has explicitly shared via the relay extension popup.
+
+#### 5.81a Why this strict shape
+
+Three threat models, all real, all hit on 2026-04-29:
+
+1. **Agent spawns its own Chrome.** Inherits a fresh, unauthenticated profile. Every task on a logged-in service ("create npm token", "open Slack", "view a Google Doc") becomes "log in first" — and the credentials live in a directory the agent owns. Beyond the friction, this leaks the auth surface to the agent, which is the opposite of what the user wants.
+2. **Agent attaches to user's regular Chrome via direct CDP port.** With `--remote-debugging-port=9222` set, the entire browser is a single auth scope: every tab, every cookie, every saved password. An agent told to "look at npmjs.com" can read your bank tab. The relay extension scopes per-tab; direct CDP attach can't.
+3. **Agent attaches to a remote browser.** Any agent on the host could be tricked into pointing CDP at a malicious URL and exfiltrating everything that browser sees. Block remote attaches at config-load time.
+
+The relay extension's per-tab consent model is the only one that's actually safe under "the user has 100 tabs open and one of them is sensitive". This rule reflects that.
+
+#### 5.81b How it's enforced
+
+Three layers:
+
+1. **`launchOpenClawChrome` hard guard** in `extensions/browser/src/browser/chrome.ts`. Throws on entry unless `OPENCLAW_ALLOW_UNSAFE_BROWSER=1` is set. Blocks the spawn-new-Chrome path.
+
+2. **`resolveProfile` direct-attach guard** in `extensions/browser/src/browser/config.ts`. If a profile declares `driver: "existing-session"` _and_ a numeric `cdpPort`, throws at resolution. Blocks the user-tab-broad-scope path. Same env escape hatch.
+
+3. **Configuration in `~/.openclaw/openclaw.json`**:
+
+   ```json
+   "browser": {
+     "defaultProfile": "chrome-relay",
+     "attachOnly": true,
+     "profiles": {
+       "chrome-relay": { "driver": "existing-session" }
+     }
+   }
+   ```
+
+   Only one profile, only the relay shape. The upstream-injected `openclaw` (spawn) profile still appears in the resolved profile list (defensive default in `ensureDefaultProfile`), but the guard in (1) blocks any actual spawn attempt. The `user` profile (`cdpPort: 9222`) was removed for the reason in 5.81a-#2.
+
+#### 5.81c What an agent should do when asked to "use the browser"
+
+- **Before any tool call**, list the tabs the user has shared via the relay. If the list is empty, stop and tell the user "no tabs are currently shared — click the relay extension icon on the tab you want me to see, then I'll retry". Do not navigate, do not retry.
+- **The user has the page you need open _and shared_.** The first turn should target a shared tab by URL match or title. Use the relay's "act on shared tab" actions, never "open a new tab" (the relay won't see a new tab unless the user explicitly shares it).
+- **Login state belongs to the user.** Never attempt to log the agent in.
+- **CDP handshake budget.** Relay-routed CDP can take 1-3s on first connection per tab. Plan turns so the slow step is the handshake, not _that plus a 60s thinking step plus a screenshot plus a click_. Break work into multiple turns when in doubt.
+
+#### 5.81d Common regressions and how to spot them
+
+- **`[browser/chrome] 🦞 openclaw browser started (custom) profile "openclaw"` in the journal.** Spawn-guard bypassed. Re-apply the chrome.ts patch.
+- **`browser.request` timing out at 45s with no useful error.** Relay extension isn't connected to any tab, OR the tab the agent picked isn't shared. Tell user, don't retry.
+- **A future merge re-introduces a `user` profile with `cdpPort` in upstream defaults.** The resolveProfile guard will throw at the first attach attempt — the error message names the profile. Drop the profile from `~/.openclaw/openclaw.json`.
+- **Agent reports "Tinkerclaw forbids direct CDP-port attach".** That's the resolveProfile guard. Either the config has a `cdpPort` profile (drop it) or upstream injected one (file an apply-fork-wiring patch).
+
+#### 5.81e Files
+
+- Spawn guard: `extensions/browser/src/browser/chrome.ts:launchOpenClawChrome` (top of function)
+- Direct-attach guard: `extensions/browser/src/browser/config.ts:resolveProfile` (just after `driver` is computed)
+- Config: `~/.openclaw/openclaw.json` → `browser.defaultProfile = "chrome-relay"`, `browser.attachOnly = true`, only the `chrome-relay` profile listed
+- Bypass (test-only, never set in prod): `OPENCLAW_ALLOW_UNSAFE_BROWSER=1`
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.

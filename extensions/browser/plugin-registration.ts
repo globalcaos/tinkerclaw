@@ -20,24 +20,23 @@ function createLazyBrowserTool(opts?: {
   allowHostControl?: boolean;
   agentSessionKey?: string;
 }): AnyAgentTool {
-  const targetDefault = opts?.sandboxBridgeUrl ? "sandbox" : "host";
-  const hostHint =
-    opts?.allowHostControl === false ? "Host target blocked by policy." : "Host target allowed.";
+  // FORK 2026-04-29 (Bible §5.81): description must match what the eager
+  // tool exposes after lazy-load — the agent reads this string at planning
+  // time, before the runtime is imported. If it advertises start/stop or
+  // the openclaw/user profiles, the agent will try them and the policy
+  // throws will land mid-turn instead of preventing the call entirely.
   return {
     label: "Browser",
     name: "browser",
     description: [
-      "Control the browser via OpenClaw's browser control server (status/start/stop/profiles/tabs/open/snapshot/screenshot/actions).",
-      "Browser choice: omit profile by default for the isolated OpenClaw-managed browser (`openclaw`).",
-      'For the logged-in user browser, use profile="user". A supported Chromium-based browser (v144+) must be running on the selected host or browser node. Use only when existing logins/cookies matter and the user is present.',
-      'For profile="user" or other existing-session profiles, omit timeoutMs on act:type, evaluate, hover, scrollIntoView, drag, select, and fill; that driver rejects per-call timeout overrides for those actions.',
-      'When a node-hosted browser proxy is available, the tool may auto-route to it. Pin a node with node=<id|name> or target="node".',
-      "When using refs from snapshot (e.g. e12), keep the same tab: prefer passing targetId from the snapshot response into subsequent actions (act/click/type/etc). For tab operations, targetId also accepts tabId handles (t1) and labels from action=tabs.",
-      "For multi-step browser work, login checks, stale refs, duplicate tabs, or Google Meet flows, use the bundled browser-automation skill when it is available.",
+      "Read/interact with browser tabs the user has explicitly shared via the Tinkerclaw relay extension. Per-tab consent only — you cannot see tabs the user hasn't shared.",
+      'Profile is fixed: profile="chrome-relay" (this is the only allowed profile and it is the default; do not specify another).',
+      "Allowed actions: doctor, status, tabs, focus, close, snapshot, screenshot, navigate, console, pdf, upload, dialog, act, cookies. Blocked: start, stop, profiles, open — those would either touch the browser daemon or open new tabs outside the consent model.",
+      'Allowed targets: omit (default). Blocked: target="node" (no remote browser routing).',
+      "For tab operations, targetId accepts tabId handles (t1) and labels from action=tabs. snapshot+act is the standard UI-automation pattern.",
+      "If the relay returns no shared tabs, stop and tell the user — do not retry, do not open a new tab, do not propose enabling --remote-debugging-port or starting a managed browser.",
       'For stable, self-resolving refs across calls, use snapshot with refs="aria" (Playwright aria-ref ids). Default refs="role" are role+name-based.',
-      "Use snapshot+act for UI automation. Avoid act:wait by default; use only in exceptional cases when no reliable UI state exists.",
-      `target selects browser location (sandbox|host|node). Default: ${targetDefault}.`,
-      hostHint,
+      "For multi-step flows, login checks, or stale refs, use the bundled browser-automation skill when it is available.",
     ].join(" "),
     parameters: BrowserToolSchema,
     execute: async (toolCallId, args, signal, onUpdate) => {

@@ -306,6 +306,14 @@ function ensureDefaultProfile(
   legacyCdpUrl?: string,
 ): Record<string, BrowserProfileConfig> {
   const result = { ...profiles };
+  // FORK 2026-04-29 (Bible §5.81): upstream auto-injects an "openclaw" profile
+  // wired to the spawn-new-Chrome path. Even though launchOpenClawChrome
+  // already refuses to spawn, the profile's mere presence muddies the catalog
+  // shown to agents and tempts them toward the wrong tool call. Skip the
+  // injection in Tinkerclaw production. Test escape: OPENCLAW_ALLOW_UNSAFE_BROWSER=1.
+  if (process.env.OPENCLAW_ALLOW_UNSAFE_BROWSER !== "1") {
+    return result;
+  }
   if (!result[DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME]) {
     result[DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME] = {
       cdpPort: legacyCdpPort ?? derivedDefaultCdpPort ?? DEFAULT_BROWSER_CDP_PORT_RANGE_START,
@@ -320,6 +328,13 @@ function ensureDefaultUserBrowserProfile(
   profiles: Record<string, BrowserProfileConfig>,
 ): Record<string, BrowserProfileConfig> {
   const result = { ...profiles };
+  // FORK 2026-04-29 (Bible §5.81): upstream auto-injects a "user" profile that
+  // lets agents attach to the user's regular Chrome (and see every tab in it).
+  // Tinkerclaw forbids this — only chrome-relay (per-tab consent) is allowed.
+  // Skip the injection unless explicitly opted in for tests.
+  if (process.env.OPENCLAW_ALLOW_UNSAFE_BROWSER !== "1") {
+    return result;
+  }
   if (result.user) {
     return result;
   }
@@ -469,6 +484,28 @@ export function resolveProfile(
   let cdpPort = profile.cdpPort ?? 0;
   let cdpUrl = "";
   const driver = profile.driver === "existing-session" ? "existing-session" : "openclaw";
+
+  // FORK 2026-04-29 (Bible §5.81): direct CDP-port attach is forbidden in
+  // Tinkerclaw. The only sanctioned existing-session shape is the in-page
+  // browser-relay extension (no cdpPort, the relay routes per-shared-tab).
+  // A profile that declares `cdpPort: <n>` with `driver: "existing-session"`
+  // would attach to whatever Chrome is on that port and see ALL its tabs —
+  // breaking the per-tab consent model the relay enforces. Reject at
+  // resolution so the request fails fast with a clear message instead of
+  // hanging on a 45-second timeout.
+  if (
+    driver === "existing-session" &&
+    cdpPort > 0 &&
+    process.env.OPENCLAW_ALLOW_UNSAFE_BROWSER !== "1"
+  ) {
+    throw new Error(
+      `[browser] Tinkerclaw forbids direct CDP-port attach. Profile "${profileName}" ` +
+        `declares cdpPort=${cdpPort}, which would expose every tab in the user's Chrome. ` +
+        `Fork policy: use the "chrome-relay" profile (no cdpPort) and click "share this ` +
+        `tab" on the relay extension icon for each tab the agent should see (Bible §5.81). ` +
+        `Test-only escape: OPENCLAW_ALLOW_UNSAFE_BROWSER=1.`,
+    );
+  }
   const headless = profile.headless ?? resolved.headless;
   const headlessSource =
     typeof profile.headless === "boolean" ? "profile" : resolved.headlessSource;

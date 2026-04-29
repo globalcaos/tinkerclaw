@@ -230,6 +230,13 @@ function getTabByTargetId(targetId) {
 }
 
 async function attachTab(tabId, opts = {}) {
+  // FORK 2026-04-29 (Bible §5.81): tab may have been closed between the
+  // caller's tab-pick and this attach. Translate the stale-tab race into a
+  // clean error instead of an uncaught promise rejection.
+  const exists = await chrome.tabs.get(tabId).catch(() => null)
+  if (!exists) {
+    throw new Error(`Tab ${tabId} no longer exists (closed before attach)`)
+  }
   const debuggee = { tabId }
   await chrome.debugger.attach(debuggee, '1.3')
   await chrome.debugger.sendCommand(debuggee, 'Page.enable').catch(() => {})
@@ -452,6 +459,44 @@ function onDebuggerDetach(source, reason) {
   if (!tabs.has(tabId)) return
   void detachTab(tabId, reason)
 }
+
+// FORK 2026-04-29 (Bible §5.81): clean up stale tab state proactively when a
+// shared tab is closed. Without this, tabBySession/childSessionToTab keep the
+// stale id and the next forwardCDPCommand referencing that session throws
+// "No tab with id: <n>" (uncaught in promise) — which is exactly what the user
+// reported. We hear about closure twice (chrome.tabs.onRemoved here AND
+// chrome.debugger.onDetach when the auto-detach fires), so detachTab is
+// idempotent: the second call is a no-op because tabs.has(tabId) is false.
+chrome.tabs.onRemoved.addListener((tabId, _info) => {
+  if (!tabs.has(tabId)) {
+    // Still scrub any reverse-mapped sessions in case attach raced past tabs.set.
+    for (const [sessionId, mapped] of tabBySession.entries()) {
+      if (mapped === tabId) tabBySession.delete(sessionId)
+    }
+    for (const [childSessionId, parentTabId] of childSessionToTab.entries()) {
+      if (parentTabId === tabId) childSessionToTab.delete(childSessionId)
+    }
+    return
+  }
+  void detachTab(tabId, 'tab-closed').catch(() => {
+    // chrome.debugger.detach for an already-gone tab throws — ignore.
+  })
+})
+
+// FORK 2026-04-29 (Bible §5.81): swallow unhandled rejections in the service
+// worker so a single race (tab closed between attach and the next command)
+// doesn't surface to the user as a console-spew error. We still log so
+// regressions are visible in chrome://extensions service-worker logs.
+self.addEventListener('unhandledrejection', (event) => {
+  const message = String(event.reason?.message ?? event.reason ?? 'unknown')
+  if (message.startsWith('No tab with id:')) {
+    // Stale-tab race; cleanup is handled elsewhere (onRemoved + onDetach).
+    event.preventDefault()
+    console.debug('[relay] swallowed stale-tab race:', message)
+    return
+  }
+  console.warn('[relay] unhandled rejection:', message, nowStack())
+})
 
 chrome.action.onClicked.addListener(() => void connectOrToggleForActiveTab())
 
