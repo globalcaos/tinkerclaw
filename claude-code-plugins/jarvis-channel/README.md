@@ -1,44 +1,85 @@
-# `jarvis-channel` — a Claude Code plugin that connects to your OpenClaw gateway
+# `jarvis-channel` — a Claude Code plugin that talks to your OpenClaw gateway
 
-This plugin lives on the **Claude Code side**. It lets your local `claude` CLI talk to a running OpenClaw gateway — pulling memory, querying calendar/reminders/etc through the gateway's MCP surface, and delegating work back to your long-lived Jarvis agent.
+This plugin lives on the **Claude Code side**. Once installed, your local `claude` CLI gets:
 
-If you're looking for the OpenClaw-side plugin (the one that lets your gateway _use_ Claude Code as a model provider), that's `@oscarserra/openclaw-cc-bridge`. They're complementary — install both for a full round-trip setup.
+- An **MCP server entry** pointed at your running OpenClaw gateway, so any tools the gateway exposes via MCP become callable from `claude`.
+- Two **slash commands** (`/jarvis-status`, `/jarvis-send`) for talking to your gateway directly.
 
-## What you need
+It's the mirror image of the openclaw-side cc-bridge. They're independent — install one, both, or neither.
 
-1. A running **OpenClaw gateway** on `localhost:18789` (or set `JARVIS_GATEWAY_URL`).
-2. **Claude Code** CLI (`claude` on PATH).
-3. Your gateway token in env: `OPENCLAW_GATEWAY_TOKEN=...`. Find it in your `~/.openclaw/openclaw.json` or via `openclaw gateway token show`.
+---
 
-## Install
+## How Claude Code finds plugins (the bit that confused you)
 
-### Option A — via plugin marketplace (when published)
+Claude Code does NOT scan arbitrary paths. It only loads plugins from one of two places:
 
-```bash
-/plugin install jarvis-channel@oscarserra-marketplace
+1. **`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`** — installed via `/plugin install ...`. Marketplaces are git repos that Claude clones. The plugin author ships a `marketplace.json` manifest at the root of their repo; users add the marketplace, then install plugins from it.
+2. **A local symlink under `~/.claude/plugins/cache/`** — the dev/manual path. Claude Code's plugin loader walks the cache dir at startup and reads any `.claude-plugin/plugin.json` it finds, regardless of whether a marketplace registered it.
+
+The directory `claude-code-plugins/jarvis-channel/` inside the **tinkerclaw repo** is just the **source** of the plugin. Nothing happens automatically — you have to either set up the tinkerclaw repo as a marketplace (path A) or symlink the subdirectory into Claude's cache (path B).
+
+I'll describe both.
+
+---
+
+## Install — path A (marketplace, recommended once published)
+
+If you've published a marketplace manifest for tinkerclaw (see `MARKETPLACE.md` at the repo root for setup), users run:
+
+```
+/plugin marketplace add globalcaos/tinkerclaw
+/plugin install jarvis-channel@globalcaos
 ```
 
-### Option B — manual symlink (recommended while we're alpha)
+Claude Code clones tinkerclaw to `~/.claude/plugins/cache/globalcaos/tinkerclaw/<version>/`, reads the marketplace manifest, finds `jarvis-channel`, and registers its `.mcp.json` + slash commands.
+
+This is the cleanest user experience but requires you to publish the marketplace manifest first.
+
+## Install — path B (symlink, alpha-friendly)
+
+For now, while we're alpha and the marketplace isn't published yet:
 
 ```bash
-git clone https://github.com/oscarserra/tinkerclaw ~/src/tinkerclaw 2>/dev/null || true
+# 1. Have the tinkerclaw repo somewhere on disk:
+git clone https://github.com/globalcaos/tinkerclaw ~/src/tinkerclaw
+
+# 2. Make the cache dir Claude scans:
 mkdir -p ~/.claude/plugins/cache/manual
-ln -s ~/src/tinkerclaw/claude-code-plugins/jarvis-channel ~/.claude/plugins/cache/manual/jarvis-channel
+
+# 3. Symlink THIS subdirectory (jarvis-channel/) into the cache:
+ln -s ~/src/tinkerclaw/claude-code-plugins/jarvis-channel \
+      ~/.claude/plugins/cache/manual/jarvis-channel
+
+# 4. Confirm the structure Claude expects:
+ls ~/.claude/plugins/cache/manual/jarvis-channel/.claude-plugin/plugin.json
+# Should print: ~/.claude/plugins/cache/manual/jarvis-channel/.claude-plugin/plugin.json
 ```
 
-Then in your shell config (`~/.bashrc`, `~/.zshrc`, etc.):
+That symlink is the actual mechanism. Claude Code starts up → walks `~/.claude/plugins/cache/*/*/` → finds `manual/jarvis-channel/.claude-plugin/plugin.json` → registers the plugin. The fact that it's a symlink to a subdir of your tinkerclaw clone is invisible to Claude Code; it just sees a plugin directory.
+
+If you `git pull` in `~/src/tinkerclaw`, the symlinked plugin updates automatically. Restart `claude` to pick up changes.
+
+---
+
+## Then set the gateway token
+
+Either install path requires the gateway token in the env where `claude` runs. Add to your `~/.bashrc` / `~/.zshrc`:
 
 ```bash
+# Token from your running gateway:
 export OPENCLAW_GATEWAY_TOKEN="$(grep -oE '"token":\s*"[^"]+' ~/.openclaw/openclaw.json | cut -d\" -f4 | head -1)"
-# Optional overrides:
+
+# Optional overrides (defaults shown):
 # export JARVIS_GATEWAY_URL="http://127.0.0.1:18789/mcp"
 # export JARVIS_SESSION_KEY="agent:main:main"
 # export JARVIS_AGENT_ID="main"
 ```
 
-Restart `claude`. The plugin auto-loads on next session start.
+Restart your terminal so the new env propagates, then start `claude`.
 
-## Verify
+---
+
+## Verify it's wired up
 
 In a `claude` session:
 
@@ -46,65 +87,75 @@ In a `claude` session:
 /jarvis-status
 ```
 
-You should see your gateway's health, primary model, and recent activity. If you see `gateway not reachable`, the token is wrong or the gateway isn't running.
+If you see a one-screen report of your gateway's health, primary model, and recent sessions — done. If you see "gateway not reachable", the gateway isn't running or the token is wrong.
 
-## What it gives you
+---
 
-### MCP tools (auto-discovered by claude)
+## What you get
 
-The plugin's `.mcp.json` registers the openclaw gateway as an HTTP MCP server. Claude can then call any tool the gateway exposes through MCP. Out of the box that includes (depending on your enabled OpenClaw plugins):
+### MCP tools (auto-discovered)
 
-- `jarvis_send_message` — drop a message into your gateway's primary session
-- `jarvis_query_memory` — search your indexed memory store
-- `jarvis_calendar_events` — read upcoming events (if calendar plugin is set up)
-- `jarvis_reminders_add` — push a reminder (if reminders plugin is set up)
-- `jarvis_recent_sessions` — list active gateway sessions
-- … plus whatever else your gateway loads
+The `.mcp.json` registers your openclaw gateway as an HTTP MCP server. Any tools your gateway exposes via MCP become callable from claude. Out of the box (depending on which OpenClaw plugins you have enabled):
 
-What's actually available depends on which OpenClaw plugins you have installed. The MCP server reflects them dynamically.
+- `jarvis_send_message`
+- `jarvis_query_memory`
+- `jarvis_calendar_events`
+- `jarvis_reminders_add`
+- `jarvis_recent_sessions`
+- … plus whatever your gateway loads
+
+The MCP surface is dynamic — only enabled OpenClaw plugins appear. If a tool is missing, check your `~/.openclaw/openclaw.json`.
 
 ### Slash commands
 
-- **`/jarvis-status`** — one-screen gateway state check
-- **`/jarvis-send <message>`** — delegate work back to your Jarvis (returns its reply quoted)
+- **`/jarvis-status`** — gateway health + model + recent activity
+- **`/jarvis-send <message>`** — drop a message into your Jarvis's primary session and report back what it says
 
-More to come (`/jarvis-pull-memory`, `/jarvis-recent-context`) once the gateway-MCP surface stabilizes.
+---
 
-## How it works
+## Architecture
 
 ```
 [ claude CLI session ]
         │
-        │  MCP HTTP (stdio: false)
+        │  reads ~/.claude/plugins/cache/*/jarvis-channel/.mcp.json
         ▼
-[ ~/.claude/plugins/.../jarvis-channel/.mcp.json ]
+[ MCP HTTP request ]
         │
         │  http://127.0.0.1:18789/mcp
         │  Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}
         ▼
-[ openclaw gateway MCP endpoint ]
+[ openclaw gateway /mcp endpoint ]
         │
         ▼
 [ your tools, your memory, your channels ]
 ```
 
-The plugin is essentially **a thin pre-configured MCP-server entry plus two slash commands**. The heavy lifting is on the gateway side; this plugin just gives `claude` a stable URL to reach it and translates the auth headers.
+This plugin is **just** the `.mcp.json` + the two slash commands. The heavy lifting is on the gateway side; this plugin gives `claude` a stable URL and the right auth header.
+
+---
 
 ## Troubleshooting
 
-**`gateway not reachable`** — Check `curl -s http://127.0.0.1:18789/healthz`. If that fails, your gateway isn't running. Run `openclaw gateway start`. If it succeeds but the slash command still fails, your token is wrong.
+**`gateway not reachable`** — Run `curl -s http://127.0.0.1:18789/healthz`. If it fails, the gateway isn't running (`openclaw gateway start`). If it works but the slash command still fails, your token is missing or stale.
 
-**`MCP server returned 401`** — `OPENCLAW_GATEWAY_TOKEN` is missing or stale. Re-export it from `~/.openclaw/openclaw.json`.
+**`MCP server returned 401`** — `OPENCLAW_GATEWAY_TOKEN` isn't set or has changed. Re-export it from `~/.openclaw/openclaw.json`.
 
-**`Tool not found: jarvis_*`** — That tool isn't exposed by your gateway's MCP surface. Check your `~/.openclaw/openclaw.json` plugins section. The MCP surface is dynamic — only enabled OpenClaw plugins appear.
+**`Tool not found: jarvis_*`** — That tool isn't in your gateway's MCP surface. Check `~/.openclaw/openclaw.json` plugins section. Each enabled plugin contributes its own tools.
 
-**Plugin doesn't auto-load** — Make sure the symlink target exists and `claude --debug` shows it being scanned. Claude Code reads `~/.claude/plugins/cache/*/jarvis-channel/.claude-plugin/plugin.json`.
+**Plugin doesn't show up at all** — Make sure the symlink target exists and `claude --debug` lists it during startup. If you used path A, run `/plugin list` to see what's loaded.
+
+**Symlink fails on Windows** — Use `mklink /D` instead of `ln -s`, or stick to path A.
+
+---
 
 ## Limitations (alpha)
 
-- **Single-host assumption.** This plugin assumes your gateway is on `127.0.0.1:18789`. Remote gateways (Tailscale, VPN, etc.) work too — set `JARVIS_GATEWAY_URL=http://your.host:18789/mcp`. But the auth model is still single-token; multi-tenant setups need the pairing flow instead.
-- **No streaming.** MCP HTTP is request/response. Streaming Jarvis reasoning back into your `claude` session would need an MCP streaming spec or a custom WS client. v0.1 just blocks on the final answer.
-- **No write-back to claude state.** Tools called via this plugin update your gateway's session, not your `claude` conversation. They're separate brains; this plugin is the bridge.
+- **Single-host assumption.** Default URL is `127.0.0.1:18789`. For remote gateways, set `JARVIS_GATEWAY_URL` to e.g. `http://your.tailscale.host:18789/mcp`. Auth is still single-token; multi-tenant setups need the pairing flow on the gateway side.
+- **No streaming.** MCP HTTP is request/response. Streaming Jarvis reasoning back into your `claude` session isn't supported in this version.
+- **Two separate brains.** Tools called via this plugin update your gateway's session, not your `claude` conversation. They're independent agents that can talk; this plugin is the bridge.
+
+---
 
 ## License
 
@@ -112,5 +163,5 @@ Apache-2.0. Not affiliated with Anthropic.
 
 ## See also
 
-- **OpenClaw side**: `@oscarserra/openclaw-cc-bridge` — install on your gateway so it can use your Claude Code subscription as primary provider. Round-trip: claude → gateway → claude (via cc-bridge) → result.
-- **Full Jarvis**: <https://github.com/oscarserra/tinkerclaw> — the complete personal-assistant stack this plugin lives in.
+- The full Jarvis stack: <https://github.com/globalcaos/tinkerclaw>
+- Marketplace setup for path A: see `MARKETPLACE.md` at the repo root once published.

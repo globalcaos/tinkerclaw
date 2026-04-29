@@ -1,11 +1,46 @@
 {
-  "name": "@tinkerclaw/computational-humor",
+  "name": "@globalcaos/openclaw-computational-humor",
   "version": "0.1.0",
-  "description": "LIMBIC — Humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture, and calibration.",
+  "description": "OpenClaw plugin: LIMBIC — humor from embedding geometry. Bridge discovery, sensitivity gating, reaction capture, calibration.",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin"
+  ],
+  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/globalcaos/tinkerclaw.git",
+    "directory": "extensions/tinkerclaw-computational-humor"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": true
+    }
   }
 }

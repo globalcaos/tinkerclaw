@@ -1,11 +1,46 @@
 {
-  "name": "@tinkerclaw/fractal-reflection",
+  "name": "@globalcaos/openclaw-fractal-reflection",
   "version": "0.1.0",
-  "description": "Post-turn self-reflection with 4-level framework (specific, pattern, system, worldview)",
+  "description": "OpenClaw plugin: post-turn self-reflection with a 4-level framework. The agent reflects on what it did, finds patterns, improves.",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin"
+  ],
+  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/globalcaos/tinkerclaw.git",
+    "directory": "extensions/tinkerclaw-fractal-reflection"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": true
+    }
   }
 }

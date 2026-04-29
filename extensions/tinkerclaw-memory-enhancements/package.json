@@ -1,11 +1,46 @@
 {
-  "name": "@tinkerclaw/memory-enhancements",
+  "name": "@globalcaos/openclaw-memory-enhancements",
   "version": "0.1.0",
-  "description": "Four layered retrieval, write-safety and compaction enhancements for upstream memory-core.",
+  "description": "OpenClaw plugin: four layered wins on top of upstream memory-core — O(1) anchor→chunk hippocampus index, task-conditioned retrieval, contradiction-gate on writes, compaction-aware capture.",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin"
+  ],
+  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/globalcaos/tinkerclaw.git",
+    "directory": "extensions/tinkerclaw-memory-enhancements"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": true
+    }
   }
 }

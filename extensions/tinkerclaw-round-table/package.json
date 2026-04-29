@@ -1,11 +1,46 @@
 {
-  "name": "@tinkerclaw/round-table",
+  "name": "@globalcaos/openclaw-round-table",
   "version": "0.1.0",
-  "description": "SYNAPSE — Multi-model debate via RAAC protocol with cognitive diversity scoring",
+  "description": "OpenClaw plugin: SYNAPSE — multi-model debate via RAAC protocol with cognitive diversity scoring. Makes cheap models smarter than expensive ones.",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin"
+  ],
+  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/globalcaos/tinkerclaw.git",
+    "directory": "extensions/tinkerclaw-round-table"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": true
+    }
   }
 }
