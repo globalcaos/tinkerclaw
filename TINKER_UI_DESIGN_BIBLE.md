@@ -1652,6 +1652,86 @@ Existing topic branches (`feat/...`, `fix/...`, `pr/...`, `wip/...`) are still f
 
 ---
 
+### 5.79 Heartbeat Architecture: Computational Cron, Conditional LLM (2026-04-29)
+
+**Rule.** The heartbeat is a **computational gate**, not an AI loop. TypeScript (not an LLM) decides every fire whether anything actually needs Jarvis's attention. The LLM is invoked only when the gate confirms there is work to do.
+
+The model summoned by the gate is **`claude-code/claude-opus-4-7`** — full reasoning, our flat-rate via cc-bridge.
+
+#### 5.79a How the gate decides
+
+Every interval (`agents.defaults.heartbeat.every`, default `1h`), the gateway runs the heartbeat tick. Inside `src/infra/heartbeat-runner.ts:resolveHeartbeatRunPrompt`, pure TypeScript checks four signals:
+
+1. **Pending cron events** — outputs from scheduled crons (daily-fork-sync, life-butler, security-updates, etc.) that emitted a system event but haven't been read by the agent.
+2. **Pending exec completions** — background bash commands that finished while no agent turn was active.
+3. **Fractal reflection hooks** — post-turn reflection events queued from a previous run.
+4. **Scheduled tasks in `~/.openclaw/workspace/HEARTBEAT.md`** — YAML `tasks:` block with `name`, `interval`, `prompt` per task. The gate runs `isTaskDue(task)` for each — only tasks past their interval since their last run.
+
+If all four are empty, the gate returns `prompt === null` and the heartbeat short-circuits at line 888: `return { status: "skipped", reason: "no-tasks-due" }`. **No LLM call. No subprocess. No cost.**
+
+If any signal has content, the gate builds a prompt (`buildCronEventPrompt` for cron events, `buildExecEventPrompt` for completions, raw fractal text for reflection, or HEARTBEAT.md task prompts) and dispatches a single agent turn with the configured model.
+
+#### 5.79b Why this shape
+
+Two failure modes the design forecloses:
+
+- **AI deciding when to be invoked.** A model that fires every interval and asks itself "is there anything to do?" burns 1-2 cents per fire whether the answer is yes or no. At 1h cadence that's $4-8/day; at 5min cadence (the merge regression) it's $50-100/day on a flat-rate account, plus the surface_error noise when the account is out of usage.
+- **AI deciding what counts as "due".** The model would re-derive task schedules from text every fire. The gate uses real intervals stored in state and compares to clock time — deterministic.
+
+The LLM's job is downstream of the gate: read the events the gate flagged, decide what to do about them, optionally relay to user. That's the work that actually benefits from reasoning.
+
+#### 5.79c Configuration touchpoints
+
+In `~/.openclaw/openclaw.json`:
+
+```json
+"agents": {
+  "defaults": {
+    "heartbeat": {
+      "every": "1h",
+      "model": "claude-code/claude-opus-4-7",
+      "session": "heartbeat",
+      "target": "none"
+    }
+  }
+}
+```
+
+- `every`: interval between gate ticks. Lower = the gate notices new events faster but adds tick overhead. `1h` is the empirical sweet spot for the user's workload.
+- `model`: opus-4-7 by design. The work the LLM ends up doing (reading 2026-04-25-fork-sync.md and deciding if a follow-up cron edit is needed) is reasoning-heavy; haiku is too thin.
+- `session: "heartbeat"`: heartbeat runs in its own session, never main. Prevents 2026-02-21 webchat-disruption regression where heartbeat content leaked to user-facing sessions.
+- `target: "none"`: no delivery channel. Heartbeat never relays to WhatsApp/Discord/etc. unless explicitly told to in a task prompt.
+
+In `~/.openclaw/workspace/HEARTBEAT.md`: by default, just `# Heartbeat Tasks`. Stays empty most of the time. Add tasks as YAML `tasks:` block when needed:
+
+```yaml
+tasks:
+  - name: check-urgent-emails
+    interval: 4h
+    prompt: "Check inbox for unread emails marked urgent. Surface anything from family or healthcare."
+```
+
+The parser at `src/auto-reply/heartbeat.ts:parseHeartbeatTasks` reads this format. Free-form prose outside a `tasks:` block is ignored — including any XML scaffolding accidentally added by the prompt-revision sweep (the 2026-04-28 audit flagged exactly this case).
+
+#### 5.79d Common regressions and how to spot them
+
+- **`heartbeat.model` set to a dead/metered account** → every gate-positive fire surfaces `LLM request rejected: out of extra usage` in the gateway log. Fix: switch to a flat-rate model (cc-bridge claude-code/\* or local ollama).
+- **`heartbeat.every` shrunk to `5m` or smaller** → more gate ticks, faster reaction to events but linear cost increase if the gate's ever wrong. Default back to `1h` unless there's a real reason.
+- **HEARTBEAT.md filled with prose** that looks like tasks but isn't in the `tasks:` YAML block → parser ignores it, no gate trigger from there. Visible only in journalctl as gate-positive fires that come from cron events, not HEARTBEAT.md.
+- **`session: "main"`** (the original bug) → heartbeat content contaminates main session, leaks to webchat as a red box. Always `"heartbeat"`.
+
+#### 5.79e Verification
+
+After any change to heartbeat config, watch one cycle:
+
+```bash
+journalctl --user -u openclaw-gateway.service -f --no-pager | grep -E "heartbeat|trigger=heartbeat"
+```
+
+Expected: `status=skipped reason=no-tasks-due` on most ticks; gate-positive fires only when there are real pending events. If you see LLM calls every interval regardless of pending events, the gate broke — check `resolveHeartbeatRunPrompt` for an upstream-merge regression.
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.
