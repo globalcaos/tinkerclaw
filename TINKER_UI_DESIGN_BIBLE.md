@@ -1732,6 +1732,62 @@ Expected: `status=skipped reason=no-tasks-due` on most ticks; gate-positive fire
 
 ---
 
+### 5.80 Context Window, Compaction, and the Visibility Contract (2026-04-29)
+
+**Rule.** A user's interaction history with Jarvis is **never silently truncated, hidden, or rolled out of view**. Compaction is allowed, but it must (a) be a visible event in the Tinker UI, and (b) leave the conversation continuous from the user's perspective — the summary stays in the active transcript, not in a stranded jsonl file.
+
+This section codifies four issues diagnosed on 2026-04-29 after a session compaction lost visibility of the publish-prompt dispatch.
+
+#### 5.80a The four issues, in order of severity
+
+1. **Live `~/.openclaw/openclaw.json` did not declare `contextWindow` for the `claude-code` provider models.** Resolution chain in `src/agents/context-window-guard.ts:resolveContextWindowInfo` falls through `cfg.models.providers.X.models[i].contextWindow` → runtime model → `DEFAULT_CONTEXT_TOKENS = 200_000`. Result: every persisted run for `claude-code/claude-opus-4-7` recorded `contextTokens: 200000` in `sessions.json`, triggering compaction at ~150k instead of ~750k.
+
+2. **`tinkerclaw-memory-enhancements` v0.1 is observation-only.** `extensions/tinkerclaw-memory-enhancements/index.ts:144-160` registers a `before_compaction` hook whose body says `v0.1 logs only; v0.2 will persist via memory-core public artifacts`. It does not delay compaction (the hook fires after compaction is decided), and it does not persist anything. The plugin-config flag `compactionCapture.enabled: true` is misleading — there is nothing to enable yet.
+
+3. **Compaction does generate a summary, but the UI hides it.** `src/agents/pi-embedded-runner/compact.ts` invokes `piGenerateSummary` (engram + pointerMode is the active mode in this fork) and writes the result into a _new_ `sessionId.jsonl`. The pre-compaction transcript stays on disk at the old `sessionId.jsonl` but the Tinker UI loads only the current `sessionId`, so the user's old context appears erased.
+
+4. **No compaction-event surfacing in Tinker UI.** Today the only signal is `compactionCount` increasing in `sessions.json`. The user's first hint is "where did my conversation go" rather than "[compacted N messages → summary, prior transcript at … ]".
+
+#### 5.80b Standing rules
+
+- **Per-model `contextWindow` is mandatory** in `~/.openclaw/openclaw.json` under `models.providers.<id>.models[i]`. Do not rely on cc-bridge's `defaults.ts` fallback; runtime reads the live config first. Current values: `claude-opus-4-7: 1_000_000`, `claude-sonnet-4-6: 1_000_000`, `claude-haiku-4-5: 200_000`. After any merge that rewrites the models block, restore these values.
+- **A "compacted" session is the same conversation as before.** The Tinker UI must show the user a banner at the boundary (`▼ N messages compacted into a summary above`), and clicking it expands the pre-compaction transcript inline. The user must never have to ask "where did my history go".
+- **Architect-level prompts to Jarvis stay in `agent:main:main`.** Do not spawn subagent sessionKeys to dodge compaction; that hides the work from the user, which is exactly what 5.80 forbids. If the main session is approaching budget, show the warning, summarize on demand, but do not silently relocate the conversation.
+- **Memory eviction is upstream of compaction, not in the `before_compaction` hook.** A real `tinkerclaw-memory-enhancements` v0.2 must persist evictable messages (or chunks of them) to memory-core _while there is still budget headroom_, not when compaction has already been triggered. Until v0.2 lands, do not market the plugin as a compaction-delayer.
+
+#### 5.80c Diagnostic checks
+
+```bash
+# Live contextWindow per provider as the gateway sees it (post-restart)
+openclaw gateway call models.list --params '{}' --json \
+  | jq '.models[] | select(.provider == "claude-code") | {id, contextWindow}'
+# Expected: claude-opus-4-7 → 1000000, claude-sonnet-4-6 → 1000000, claude-haiku-4-5 → 200000
+```
+
+```bash
+# Persisted contextTokens for the live main session
+jq '."agent:main:main".compactionCount' ~/.openclaw/agents/main/sessions/sessions.json
+# Then grep recent runs for contextTokens — every claude-opus-4-7 run should now show 1000000
+```
+
+#### 5.80d Status of the four issues (live state, 2026-04-29)
+
+| #   | Issue                                                                 | Status                                                                                                                                                                                                                                                                                              |
+| --- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 200k context window for `claude-code/claude-opus-4-7` & `sonnet-4-6`  | **Fixed.** `~/.openclaw/openclaw.json` now declares per-model `contextWindow` (1M / 1M / 200k). Verify with `openclaw gateway call models.list`.                                                                                                                                                    |
+| 2   | `tinkerclaw-memory-enhancements` masquerading as a compaction-delayer | **Honesty fix shipped.** Plugin description, config-schema (`compactionCapture.enabled` defaults to `false`), and runtime log now say "v0.1 observer-only; real eviction lands in v0.2". Live config flipped `compactionCapture.enabled: false`.                                                    |
+| 3   | Compaction summary not visible in UI                                  | **Server-side enrichment shipped.** `src/gateway/session-utils.fs.ts` now propagates `summary`, `tokensBefore`, `tokensAfter` from the JSONL `type:"compaction"` entry into the synthetic `__openclaw.kind === "compaction"` system message returned by `chat.history`.                             |
+| 4   | Tinker UI doesn't render the summary                                  | **Banner shipped.** `tinker-ui/src/app.ts` (renderMsg, line ~3310) renders an expandable `<div class="msg-compaction-banner">` showing the summary text + `before → after tok` token diff. CSS at `base.css:.msg-compaction-banner`. Falls back to the minimal divider when no summary is captured. |
+
+#### 5.80e Known follow-ups
+
+- **`compactionCheckpoints` not populating** for the live `agent:main:main` entry in `sessions.json`. The wiring in `compact.ts:1150` calls `persistSessionCompactionCheckpoint`, but historic entries were never written. The first new compaction post-2026-04-29 should populate the array; if it doesn't, instrument the catch block on line 1170 with a louder warning.
+- **`[No messages to compact]` summaries.** Most compaction entries in the existing transcripts have `summary: "[No messages to compact]"` and `tokensAfter: null`, suggesting compaction triggered against the wrong message-set or against a fork-rotated transcript. Track separately under §5.80e — the visibility plumbing is correct, the summarizer's data is the gap.
+- **`tinkerclaw-memory-enhancements` v0.2:** real eviction-to-memory-core _before_ the compaction threshold. Spec the hook contract upstream first (memory-core's public artifact API), then implement.
+- **Click-to-expand prior transcript:** today the banner expands the _summary_. A v2 of this UI could also load the pre-compaction `sessionId.jsonl` (path is in `compactionCheckpoints[].preCompaction.sessionFile`) and inline its messages between the click target and the next message.
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.

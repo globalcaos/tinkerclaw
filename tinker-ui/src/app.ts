@@ -3300,15 +3300,46 @@ function renderMsg(
     return h;
   }
 
-  // FORK (2026-04-21): synthetic compaction markers. session-utils.fs.ts on
-  // the server emits one role:"system" message with text "Compaction" (and
-  // __openclaw.kind === "compaction") per transcript compaction entry. The
-  // old default was a full system bubble, which on a freshly-loaded session
-  // with 227k tokens of historical context plastered the chat with bare
-  // "Compaction" cards that read as an error. Render a minimal divider
-  // instead — it still marks the boundary but doesn't masquerade as a message.
+  // FORK (2026-04-21, enriched 2026-04-29 §5.80): synthetic compaction markers.
+  // session-utils.fs.ts on the server emits one role:"system" entry per transcript
+  // compaction record, now carrying { summary, tokensBefore, tokensAfter } in
+  // __openclaw. Render an expandable banner so the user sees what was retained,
+  // not just that something happened.
   if (msg.__openclaw?.kind === "compaction") {
-    return `<div class="msg-compaction-divider"><span class="msg-compaction-label">context consolidated</span></div>`;
+    const meta = msg.__openclaw as {
+      summary?: string;
+      tokensBefore?: number;
+      tokensAfter?: number;
+    };
+    const summary = typeof meta.summary === "string" ? meta.summary : "";
+    const before = typeof meta.tokensBefore === "number" ? meta.tokensBefore : undefined;
+    const after = typeof meta.tokensAfter === "number" ? meta.tokensAfter : undefined;
+    const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`);
+    const tokenLabel =
+      typeof before === "number" && typeof after === "number"
+        ? `${fmt(before)} → ${fmt(after)} tok`
+        : typeof before === "number"
+          ? `${fmt(before)} tok compacted`
+          : "";
+    if (!summary.trim()) {
+      // No summary captured — fall back to the minimal divider so old transcripts
+      // still render cleanly.
+      return `<div class="msg-compaction-divider"><span class="msg-compaction-label">context consolidated${tokenLabel ? ` · ${tokenLabel}` : ""}</span></div>`;
+    }
+    const summaryHtml = md(summary);
+    const tokenSpan = tokenLabel
+      ? `<span class="msg-compaction-banner-tokens">${esc(tokenLabel)}</span>`
+      : "";
+    return (
+      `<div class="msg-compaction-banner" data-msg-idx="${idx}" onclick="this.classList.toggle('is-open')">` +
+      `<div class="msg-compaction-banner-header">` +
+      `<span class="msg-compaction-banner-chevron">▶</span>` +
+      `<span>context compacted — click to expand summary</span>` +
+      tokenSpan +
+      `</div>` +
+      `<div class="msg-compaction-banner-summary">${summaryHtml}</div>` +
+      `</div>`
+    );
   }
   let blockIdx = 0;
   let hasNonToolContent = false;

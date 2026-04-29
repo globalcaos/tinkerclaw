@@ -143,14 +143,26 @@ export function readSessionMessages(
         const ts = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
         const timestamp = Number.isFinite(ts) ? ts : Date.now();
         messageSeq += 1;
+        const summary = typeof entry.summary === "string" ? entry.summary : undefined;
+        const tokensBefore =
+          typeof entry.tokensBefore === "number" && Number.isFinite(entry.tokensBefore)
+            ? entry.tokensBefore
+            : undefined;
+        const tokensAfter =
+          typeof entry.tokensAfter === "number" && Number.isFinite(entry.tokensAfter)
+            ? entry.tokensAfter
+            : undefined;
         messages.push({
           role: "system",
-          content: [{ type: "text", text: "Compaction" }],
+          content: [{ type: "text", text: summary?.trim() || "Compaction" }],
           timestamp,
           __openclaw: {
             kind: "compaction",
             id: typeof entry.id === "string" ? entry.id : undefined,
             seq: messageSeq,
+            ...(summary?.trim() ? { summary: summary.trim() } : {}),
+            ...(typeof tokensBefore === "number" ? { tokensBefore } : {}),
+            ...(typeof tokensAfter === "number" ? { tokensAfter } : {}),
           },
         });
       }
@@ -183,14 +195,26 @@ export function readSessionMessages(
         const ts = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : Number.NaN;
         const timestamp = Number.isFinite(ts) ? ts : Date.now();
         messageSeq += 1;
+        const summary = typeof parsed.summary === "string" ? parsed.summary : undefined;
+        const tokensBefore =
+          typeof parsed.tokensBefore === "number" && Number.isFinite(parsed.tokensBefore)
+            ? parsed.tokensBefore
+            : undefined;
+        const tokensAfter =
+          typeof parsed.tokensAfter === "number" && Number.isFinite(parsed.tokensAfter)
+            ? parsed.tokensAfter
+            : undefined;
         messages.push({
           role: "system",
-          content: [{ type: "text", text: "Compaction" }],
+          content: [{ type: "text", text: summary?.trim() || "Compaction" }],
           timestamp,
           __openclaw: {
             kind: "compaction",
             id: typeof parsed.id === "string" ? parsed.id : undefined,
             seq: messageSeq,
+            ...(summary?.trim() ? { summary: summary.trim() } : {}),
+            ...(typeof tokensBefore === "number" ? { tokensBefore } : {}),
+            ...(typeof tokensAfter === "number" ? { tokensAfter } : {}),
           },
         });
       }
