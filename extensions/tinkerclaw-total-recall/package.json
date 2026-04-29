@@ -1,13 +1,20 @@
 {
   "name": "@globalcaos/openclaw-total-recall",
   "version": "0.1.0",
-  "description": "OpenClaw plugin: ENGRAM — episodic memory with FTS + vector retrieval, pointer compaction, sleep consolidation, artifact externalization.",
+  "description": "Yesterday's chat got compacted away? Per-session event store with FTS + vector recall — pulled back on demand.",
   "keywords": [
     "openclaw",
     "openclaw-plugin"
   ],
-  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "homepage": "https://thetinkerzone.com",
+  "bugs": {
+    "url": "https://github.com/globalcaos/tinkerclaw/issues"
+  },
   "license": "Apache-2.0",
+  "author": {
+    "name": "globalcaos",
+    "url": "https://thetinkerzone.com"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/globalcaos/tinkerclaw.git",

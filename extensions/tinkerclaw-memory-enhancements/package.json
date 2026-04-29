@@ -1,13 +1,20 @@
 {
   "name": "@globalcaos/openclaw-memory-enhancements",
   "version": "0.1.0",
-  "description": "OpenClaw plugin: four layered wins on top of upstream memory-core — O(1) anchor→chunk hippocampus index, task-conditioned retrieval, contradiction-gate on writes, compaction-aware capture.",
+  "description": "Same concept, twentieth time — why search again? O(1) hippocampus index layered on upstream memory-core.",
   "keywords": [
     "openclaw",
     "openclaw-plugin"
   ],
-  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "homepage": "https://thetinkerzone.com",
+  "bugs": {
+    "url": "https://github.com/globalcaos/tinkerclaw/issues"
+  },
   "license": "Apache-2.0",
+  "author": {
+    "name": "globalcaos",
+    "url": "https://thetinkerzone.com"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/globalcaos/tinkerclaw.git",

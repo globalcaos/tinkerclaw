@@ -1,13 +1,20 @@
 {
   "name": "@globalcaos/openclaw-learned-intuition",
   "version": "0.1.0",
-  "description": "OpenClaw plugin: AMYGDALA — neural safety gate trained on real failures. Public Prudence networks evaluate every action; falls back to rules when models unavailable.",
+  "description": "Five neural networks vote yes/no on every tool call — trained on real failures, rules fallback if models miss.",
   "keywords": [
     "openclaw",
     "openclaw-plugin"
   ],
-  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "homepage": "https://thetinkerzone.com",
+  "bugs": {
+    "url": "https://github.com/globalcaos/tinkerclaw/issues"
+  },
   "license": "Apache-2.0",
+  "author": {
+    "name": "globalcaos",
+    "url": "https://thetinkerzone.com"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/globalcaos/tinkerclaw.git",

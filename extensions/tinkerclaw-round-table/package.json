@@ -1,13 +1,20 @@
 {
   "name": "@globalcaos/openclaw-round-table",
   "version": "0.1.0",
-  "description": "OpenClaw plugin: SYNAPSE — multi-model debate via RAAC protocol with cognitive diversity scoring. Makes cheap models smarter than expensive ones.",
+  "description": "Three models, one answer — cheaper than calling Opus once. RAAC debate protocol with cognitive diversity scoring.",
   "keywords": [
     "openclaw",
     "openclaw-plugin"
   ],
-  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "homepage": "https://thetinkerzone.com",
+  "bugs": {
+    "url": "https://github.com/globalcaos/tinkerclaw/issues"
+  },
   "license": "Apache-2.0",
+  "author": {
+    "name": "globalcaos",
+    "url": "https://thetinkerzone.com"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/globalcaos/tinkerclaw.git",
