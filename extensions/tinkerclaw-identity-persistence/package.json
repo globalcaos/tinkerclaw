@@ -1,11 +1,46 @@
 {
-  "name": "@tinkerclaw/identity-persistence",
+  "name": "@globalcaos/openclaw-identity-persistence",
   "version": "0.1.0",
-  "description": "CORTEX — Persona injection from SOUL.md, EWMA SyncScore drift detection, mid-context identity reinforcement, and observation extraction",
+  "description": "OpenClaw plugin: CORTEX — persona injection from a SOUL.md, EWMA SyncScore drift detection, mid-context identity reinforcement.",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin"
+  ],
+  "homepage": "https://github.com/globalcaos/tinkerclaw#readme",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/globalcaos/tinkerclaw.git",
+    "directory": "extensions/tinkerclaw-identity-persistence"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": true
+    }
   }
 }
