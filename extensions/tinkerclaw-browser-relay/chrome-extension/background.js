@@ -60,7 +60,9 @@ async function getRelayPort() {
 async function getRelayToken() {
   // Try stored token first
   const stored = await chrome.storage.local.get(["relayToken"]);
-  if (stored.relayToken) {return stored.relayToken;}
+  if (stored.relayToken) {
+    return stored.relayToken;
+  }
 
   // Auto-discover: probe the relay status endpoint (no auth needed for status)
   const port = await getRelayPort();
@@ -83,8 +85,13 @@ async function getRelayToken() {
 
 function setBadge(tabId, kind) {
   const cfg = BADGE[kind];
-  void chrome.action.setBadgeText({ tabId, text: cfg.text });
-  void chrome.action.setBadgeBackgroundColor({ tabId, color: cfg.color });
+  // FORK 2026-04-29 (Bible §5.81): each chrome.action.set* call rejects with
+  // "No tab with id: <n>" when invoked against a tab that was closed mid-flight.
+  // setBadge is called from many paths (attach error path, detachTab, etc.)
+  // and the previous code only caught one of three promises — leaving two
+  // unhandled rejections per stale call. Catch all three.
+  void chrome.action.setBadgeText({ tabId, text: cfg.text }).catch(() => {});
+  void chrome.action.setBadgeBackgroundColor({ tabId, color: cfg.color }).catch(() => {});
   void chrome.action.setBadgeTextColor({ tabId, color: "#FFFFFF" }).catch(() => {});
 }
 
@@ -398,6 +405,13 @@ function getTabByTargetId(targetId) {
 // ---------------------------------------------------------------------------
 
 async function attachTab(tabId, opts = {}) {
+  // FORK 2026-04-29 (Bible §5.81): tab may have been closed between caller's
+  // tab-pick and this attach. Translate the stale-tab race into a clean
+  // throw instead of an uncaught promise rejection.
+  const exists = await chrome.tabs.get(tabId).catch(() => null);
+  if (!exists) {
+    throw new Error(`Tab ${tabId} no longer exists (closed before attach)`);
+  }
   const debuggee = { tabId };
   await chrome.debugger.attach(debuggee, "1.3");
   await chrome.debugger.sendCommand(debuggee, "Page.enable").catch(() => {});
@@ -416,10 +430,12 @@ async function attachTab(tabId, opts = {}) {
 
   tabs.set(tabId, { state: "connected", sessionId, targetId, attachOrder });
   tabBySession.set(sessionId, tabId);
-  void chrome.action.setTitle({
-    tabId,
-    title: "Tinkerclaw Browser Relay: shared (click to unshare)",
-  });
+  void chrome.action
+    .setTitle({
+      tabId,
+      title: "Tinkerclaw Browser Relay: shared (click to unshare)",
+    })
+    .catch(() => {});
 
   if (!opts.skipAttachedEvent) {
     sendToRelay({
@@ -473,10 +489,12 @@ async function detachTab(tabId, reason) {
   }
 
   setBadge(tabId, "off");
-  void chrome.action.setTitle({
-    tabId,
-    title: "Tinkerclaw Browser Relay (click to share)",
-  });
+  void chrome.action
+    .setTitle({
+      tabId,
+      title: "Tinkerclaw Browser Relay (click to share)",
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -654,10 +672,12 @@ async function connectOrToggleForActiveTab() {
   // Share
   tabs.set(tabId, { state: "connecting" });
   setBadge(tabId, "connecting");
-  void chrome.action.setTitle({
-    tabId,
-    title: "Tinkerclaw Browser Relay: connecting to relay\u2026",
-  });
+  void chrome.action
+    .setTitle({
+      tabId,
+      title: "Tinkerclaw Browser Relay: connecting to relay\u2026",
+    })
+    .catch(() => {});
 
   try {
     await ensureRelayConnection();
@@ -668,10 +688,12 @@ async function connectOrToggleForActiveTab() {
   } catch (err) {
     tabs.delete(tabId);
     setBadge(tabId, "error");
-    void chrome.action.setTitle({
-      tabId,
-      title: "Tinkerclaw Browser Relay: relay not running",
-    });
+    void chrome.action
+      .setTitle({
+        tabId,
+        title: "Tinkerclaw Browser Relay: relay not running",
+      })
+      .catch(() => {});
     const message = err instanceof Error ? err.message : String(err);
     console.warn("Tinkerclaw attach failed:", message);
   }
@@ -684,7 +706,18 @@ chrome.action.onClicked.addListener(() => void connectOrToggleForActiveTab());
 // ---------------------------------------------------------------------------
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  // FORK 2026-04-29 (Bible §5.81): scrub reverse mappings even when tab isn't
+  // in the primary `tabs` Map. attachTab races can leave a stale entry in
+  // tabBySession/childSessionToTab if the tab closed before tabs.set fully
+  // resolved; without this scrub the next forwardCDPCommand referencing that
+  // session would resolve to a dead tabId and throw "No tab with id".
   if (!tabs.has(tabId)) {
+    for (const [sessionId, mapped] of tabBySession.entries()) {
+      if (mapped === tabId) tabBySession.delete(sessionId);
+    }
+    for (const [childSessionId, parentTabId] of childSessionToTab.entries()) {
+      if (parentTabId === tabId) childSessionToTab.delete(childSessionId);
+    }
     return;
   }
   void (async () => {
@@ -692,6 +725,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     await saveSharedTabs();
     updateGlobalBadge();
   })();
+});
+
+// FORK 2026-04-29 (Bible §5.81): final defense-in-depth — swallow unhandled
+// "No tab with id" rejections from any chrome API site we missed. The Map
+// cleanup above is the real fix; this handler keeps a single missed catch
+// from spamming the service-worker console and (in extreme cases) tearing
+// down the worker.
+self.addEventListener("unhandledrejection", (event) => {
+  const message = String(event.reason?.message ?? event.reason ?? "unknown");
+  if (message.startsWith("No tab with id:")) {
+    event.preventDefault();
+    console.debug("[tinkerclaw-relay] swallowed stale-tab race:", message);
+    return;
+  }
+  console.warn("[tinkerclaw-relay] unhandled rejection:", message);
 });
 
 // ---------------------------------------------------------------------------
