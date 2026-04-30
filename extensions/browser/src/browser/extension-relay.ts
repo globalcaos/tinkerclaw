@@ -528,7 +528,28 @@ export async function ensureChromeExtensionRelayServer(opts: {
     };
 
     const ensureTargetEventsForClient = (ws: WebSocket, mode: "autoAttach" | "discover") => {
+      // FORK 2026-04-30 (Bible §5.81f): replay BOTH Target.targetCreated AND
+      // Target.attachedToTarget for every connected target on autoAttach.
+      // chrome-devtools-mcp uses puppeteer's connectOverCDP, which calls
+      // Target.setAutoAttach but populates browser.targets() from
+      // Target.targetCreated events (not from attached events). Without
+      // the targetCreated replay, puppeteer's list_pages returns empty
+      // even though the relay is forwarding correctly — the chrome-mcp
+      // attach times out waiting for tabs to become available.
       for (const target of connectedTargets.values()) {
+        // FORK 2026-04-30 (Bible §5.81f): Target.targetCreated announces a
+        // target's EXISTENCE; Target.attachedToTarget announces ATTACHMENT.
+        // Chrome distinguishes them via the `attached` flag — created with
+        // attached:false, then attachedToTarget with attached:true. Sending
+        // both with attached:true (which we did initially) confuses
+        // Playwright's CRBrowser into thinking the target is already
+        // attached on creation, suppressing the second event's effects.
+        ws.send(
+          JSON.stringify({
+            method: "Target.targetCreated",
+            params: { targetInfo: { ...target.targetInfo, attached: false } },
+          } satisfies CdpEvent),
+        );
         if (mode === "autoAttach") {
           ws.send(
             JSON.stringify({
@@ -538,13 +559,6 @@ export async function ensureChromeExtensionRelayServer(opts: {
                 targetInfo: { ...target.targetInfo, attached: true },
                 waitingForDebugger: false,
               },
-            } satisfies CdpEvent),
-          );
-        } else {
-          ws.send(
-            JSON.stringify({
-              method: "Target.targetCreated",
-              params: { targetInfo: { ...target.targetInfo, attached: true } },
             } satisfies CdpEvent),
           );
         }
@@ -1121,6 +1135,15 @@ export async function ensureChromeExtensionRelayServer(opts: {
         try {
           const result = await routeCdpCommand(cmd);
 
+          // FORK 2026-04-30 (Bible §5.81f): send the response BEFORE replaying
+          // target events. Both Playwright and puppeteer set up their CDPSession
+          // event handlers as part of their post-response init flow. If we
+          // emit Target.attachedToTarget events before the setAutoAttach
+          // response lands, they're delivered into a not-yet-attached handler
+          // and dropped — resulting in browser.pages() returning empty even
+          // though the relay forwarded everything.
+          sendResponseToCdp(ws, { id: cmd.id, sessionId: cmd.sessionId, result });
+
           if (cmd.method === "Target.setAutoAttach" && !cmd.sessionId) {
             ensureTargetEventsForClient(ws, "autoAttach");
           }
@@ -1151,8 +1174,6 @@ export async function ensureChromeExtensionRelayServer(opts: {
               }
             }
           }
-
-          sendResponseToCdp(ws, { id: cmd.id, sessionId: cmd.sessionId, result });
         } catch (err) {
           pruneStaleTargetsFromCommandFailure(cmd, err);
           sendResponseToCdp(ws, {
