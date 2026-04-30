@@ -5,11 +5,14 @@ import type { Duplex } from "node:stream";
 import WebSocket, { WebSocketServer } from "ws";
 import { isLoopbackAddress, isLoopbackHost } from "../gateway/net.js";
 import { rawDataToString } from "../infra/ws.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   probeAuthenticatedOpenClawRelay,
   resolveRelayAcceptedTokensForPort,
   resolveRelayAuthTokenForPort,
 } from "./extension-relay-auth.js";
+
+const log = createSubsystemLogger("browser/extension-relay");
 
 type CdpCommand = {
   id: number;
@@ -62,6 +65,9 @@ type TargetInfo = {
   title?: string;
   url?: string;
   attached?: boolean;
+  // FORK 2026-04-30 (Bible §5.81f): synthetic context id so Playwright's
+  // browser-level CDP assertions pass on tab-scoped relay sessions.
+  browserContextId?: string;
 };
 
 type AttachedToTargetEvent = {
@@ -69,6 +75,24 @@ type AttachedToTargetEvent = {
   targetInfo: TargetInfo;
   waitingForDebugger?: boolean;
 };
+
+// FORK 2026-04-30 (Bible §5.81f): the relay extension uses chrome.debugger.attach({tabId})
+// which is permanently tab-scoped — Chrome refuses browser-level CDP methods on those
+// sessions. Playwright's connectOverCDP path expects a single virtual browser context
+// the relay can pretend to be. Every targetInfo carrying out of the relay carries this
+// context id so Playwright's `assert(targetInfo.browserContextId, ...)` (crBrowser.js:147)
+// passes, and Target.getBrowserContexts returns this id.
+const SYNTHETIC_BROWSER_CONTEXT_ID = "default";
+
+function withSyntheticBrowserContextId<T extends TargetInfo>(targetInfo: T): T {
+  if ((targetInfo as TargetInfo & { browserContextId?: string }).browserContextId) {
+    return targetInfo;
+  }
+  return {
+    ...targetInfo,
+    browserContextId: SYNTHETIC_BROWSER_CONTEXT_ID,
+  } as T;
+}
 
 type DetachedFromTargetEvent = {
   sessionId: string;
@@ -383,13 +407,42 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
       const id = conn.nextId++;
       const routed = { ...payload, id };
+      // FORK 2026-04-30 (Bible §5.81f): trace forwarded commands when the
+      // OPENCLAW_RELAY_CDP_TRACE env var is set. Off by default — at steady
+      // state Playwright fires hundreds of CDP messages per page-init and
+      // logging them all is noise; on-demand diagnostics for regressions.
+      const traceEnabled = process.env.OPENCLAW_RELAY_CDP_TRACE === "1";
+      const traceMethod = payload.params.method;
+      const traceStart = traceEnabled ? Date.now() : 0;
+      if (traceEnabled) {
+        log.info(
+          `[relay-cdp] → ext id=${id} method=${traceMethod} sessionId=${sessionId ?? "none"}`,
+        );
+      }
       conn.ws.send(JSON.stringify(routed));
       return await new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
           conn.pending.delete(id);
+          // Always log timeouts — those are real signals.
+          log.warn(
+            `[relay-cdp] ✗ ext id=${id} method=${traceMethod} TIMEOUT after ${
+              traceEnabled ? Date.now() - traceStart : ">30000"
+            }ms`,
+          );
           reject(new Error(`extension request timeout: ${payload.params.method}`));
         }, 30_000);
-        conn.pending.set(id, { resolve, reject, timer });
+        conn.pending.set(id, {
+          resolve: (v: unknown) => {
+            if (traceEnabled) {
+              log.info(
+                `[relay-cdp] ✓ ext id=${id} method=${traceMethod} ok ${Date.now() - traceStart}ms`,
+              );
+            }
+            resolve(v);
+          },
+          reject,
+          timer,
+        });
       });
     };
 
@@ -552,6 +605,37 @@ export async function ensureChromeExtensionRelayServer(opts: {
           }
           throw new Error("target not found");
         }
+        // FORK 2026-04-30 (Bible §5.81f): the relay pretends to be a single-context
+        // browser. Playwright's connectOverCDP path enumerates contexts, creates one
+        // for the persistent flow, and asks for permissions. We synthesize stable
+        // answers so the handshake completes without forwarding browser-level
+        // methods to chrome.debugger (which only knows tab-scoped CDP).
+        case "Target.getBrowserContexts":
+          return { browserContextIds: [SYNTHETIC_BROWSER_CONTEXT_ID] };
+        case "Target.createBrowserContext":
+          // Playwright will then try Target.createTarget against this id; that
+          // call falls through to the extension which blocks tab creation per
+          // Bible §5.81. The disabled error is the truthful answer — agents
+          // ask the user to share a tab; they do not open new ones.
+          return { browserContextId: SYNTHETIC_BROWSER_CONTEXT_ID };
+        case "Target.disposeBrowserContext":
+          return {};
+        case "Browser.grantPermissions":
+        case "Browser.resetPermissions":
+          // No-op: the relay can't enforce permissions on chrome.debugger
+          // sessions. Returning {} lets Playwright proceed; agents that depend
+          // on grants should treat them as best-effort. Documented in §5.81f.
+          return {};
+        case "Storage.getCookies":
+          // v1: empty list, regardless of the requested URL/context. The flows
+          // we care about (npm publish, generic UI automation) don't depend on
+          // storage-scoped cookies. If a future agent needs cookies, route via
+          // chrome.cookies API in the extension — see §5.81f Open Work.
+          return { cookies: [] };
+        case "Storage.setCookies":
+        case "Storage.clearCookies":
+          // v1: no-op. Same rationale as Storage.getCookies.
+          return {};
         default: {
           return await sendToExtension(
             {
@@ -774,10 +858,25 @@ export async function ensureChromeExtensionRelayServer(opts: {
       }
 
       if (pathname === "/cdp") {
-        const token = getRelayAuthTokenFromRequest(req, url);
-        if (!token || !relayAuthTokens.has(token)) {
-          rejectUpgrade(socket, 401, "Unauthorized");
-          return;
+        // FORK 2026-04-29 (Bible §5.81): /cdp is the actual CDP command
+        // channel. Upstream gates it on an HMAC token the gateway doesn't
+        // currently plumb through to its existing-session WS upgrades.
+        // Tinkerclaw's threat model is single-user, loopback-only:
+        // - The relay listens only on 127.0.0.1.
+        // - Even an unauthenticated local caller can only send commands
+        //   that the relay extension would forward, and the extension
+        //   only forwards to tabs the user explicitly clicked "share" on.
+        //   That per-tab consent is the actual security boundary.
+        // So allow loopback callers without a token. Non-loopback callers
+        // (impossible given the bind) keep the gate as a defense-in-depth
+        // backstop.
+        const isLoopback = isLoopbackAddress(req.socket?.remoteAddress);
+        if (!isLoopback) {
+          const token = getRelayAuthTokenFromRequest(req, url);
+          if (!token || !relayAuthTokens.has(token)) {
+            rejectUpgrade(socket, 401, "Unauthorized");
+            return;
+          }
         }
         // Allow CDP clients to connect even during brief extension worker drops.
         // Individual commands already wait briefly for extension reconnect.
@@ -873,7 +972,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
               connectedTargets.set(attached.sessionId, {
                 sessionId: attached.sessionId,
                 targetId: nextTargetId,
-                targetInfo: attached.targetInfo,
+                targetInfo: withSyntheticBrowserContextId(attached.targetInfo),
               });
               if (changedTarget && prevTargetId) {
                 broadcastToCdpClients({
@@ -883,7 +982,19 @@ export async function ensureChromeExtensionRelayServer(opts: {
                 });
               }
               if (!prev || changedTarget) {
-                broadcastToCdpClients({ method, params, sessionId });
+                // FORK 2026-04-30 (Bible §5.81f): rebuild the broadcast params
+                // with the synthetic browserContextId injected. The raw params
+                // from the extension lacks this field; Playwright asserts on it
+                // (crBrowser.js:147) and rejects the connection if missing.
+                const broadcastParams = {
+                  ...attached,
+                  targetInfo: withSyntheticBrowserContextId(attached.targetInfo),
+                };
+                broadcastToCdpClients({
+                  method,
+                  params: broadcastParams as unknown as Record<string, unknown>,
+                  sessionId,
+                });
               }
               return;
             }
@@ -922,9 +1033,24 @@ export async function ensureChromeExtensionRelayServer(opts: {
                 }
                 connectedTargets.set(sid, {
                   ...target,
-                  targetInfo: { ...target.targetInfo, ...(targetInfo as object) },
+                  // FORK 2026-04-30 (Bible §5.81f): re-inject browserContextId
+                  // since the merge-spread can be overwritten by the extension's
+                  // payload (which lacks the field).
+                  targetInfo: withSyntheticBrowserContextId({
+                    ...target.targetInfo,
+                    ...(targetInfo as object),
+                  } as TargetInfo),
                 });
               }
+              // FORK 2026-04-30 (Bible §5.81f): also rebuild the broadcast params
+              // so downstream Playwright sees a consistent browserContextId.
+              const enriched = withSyntheticBrowserContextId(targetInfo as TargetInfo);
+              broadcastToCdpClients({
+                method,
+                params: { ...changed, targetInfo: enriched } as unknown as Record<string, unknown>,
+                sessionId,
+              });
+              return;
             }
           }
 

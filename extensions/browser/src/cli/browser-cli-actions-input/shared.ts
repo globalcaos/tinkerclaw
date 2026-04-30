@@ -29,6 +29,15 @@ export async function callBrowserAct<T = unknown>(params: {
   body: Record<string, unknown>;
   timeoutMs?: number;
 }): Promise<T> {
+  // FORK 2026-04-30 (Bible §5.81f): bumped from 20s to 60s. The chrome-relay
+  // profile path goes through a chrome-mcp subprocess which spawns on first
+  // call after gateway restart and runs Playwright's connectOverCDP — the
+  // full handshake against an already-loaded page like npmjs.com sends 250+
+  // CDP messages and routinely takes 8-15s before the first userland
+  // operation can run. 20s was upstream's tight budget for managed Chrome
+  // (no subprocess overhead). For our relay path 60s is the realistic floor;
+  // anything tighter and Jarvis sees "browser request timed out" on every
+  // first call after restart even when the relay is healthy.
   return await callBrowserRequest<T>(
     params.parent,
     {
@@ -37,7 +46,7 @@ export async function callBrowserAct<T = unknown>(params: {
       query: params.profile ? { profile: params.profile } : undefined,
       body: params.body,
     },
-    { timeoutMs: params.timeoutMs ?? 20000 },
+    { timeoutMs: params.timeoutMs ?? 60000 },
   );
 }
 
