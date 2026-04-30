@@ -277,6 +277,48 @@ async function ensureRelayConnection() {
       chrome.debugger.onEvent.addListener(onDebuggerEvent);
       chrome.debugger.onDetach.addListener(onDebuggerDetach);
     }
+
+    // FORK 2026-04-30 (Bible §5.81f): on reconnect, re-announce every shared
+    // tab to the new relay server. The gateway-side relay's connectedTargets
+    // Map is per-process and gets wiped on every gateway restart. Without
+    // re-announcement, the relay sees connected:true,count:1 but has no
+    // targets to forward to — so the user thinks the share is broken when
+    // really only the announce step is missing.
+    for (const [tabId, tab] of tabs.entries()) {
+      if (tab.state !== "connected" || !tab.sessionId || !tab.targetId) {
+        continue;
+      }
+      try {
+        // Re-fetch the targetInfo since the tab's URL/title may have changed.
+        const info = /** @type {any} */ (
+          await chrome.debugger.sendCommand({ tabId }, "Target.getTargetInfo").catch(() => null)
+        );
+        const targetInfo = info?.targetInfo ?? {
+          targetId: tab.targetId,
+          type: "page",
+          title: "",
+          url: "",
+        };
+        sendToRelay({
+          method: "forwardCDPEvent",
+          params: {
+            method: "Target.attachedToTarget",
+            params: {
+              sessionId: tab.sessionId,
+              targetInfo: { ...targetInfo, attached: true },
+              waitingForDebugger: false,
+            },
+          },
+        });
+      } catch (err) {
+        console.warn(
+          "[tinkerclaw-relay] re-announce failed for tab",
+          tabId,
+          ":",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
   })();
 
   try {
@@ -287,6 +329,7 @@ async function ensureRelayConnection() {
 }
 
 let reconnectTimer = null;
+let reconnectBackoffMs = 1000;
 
 function onRelayClosed(reason) {
   relayWs = null;
@@ -301,20 +344,30 @@ function onRelayClosed(reason) {
   }
   updateGlobalBadge();
 
-  // Auto-reconnect after 5 seconds if we have shared tabs
+  // FORK 2026-04-30 (Bible §5.81f): aggressive auto-reconnect with exponential
+  // backoff (1s → 2s → 4s → 8s → 15s cap). Without this, gateway restarts
+  // require a manual click to re-share — defeating the "should stay shared
+  // forever" requirement. We retry indefinitely while tabs.size > 0; the user
+  // can stop it by explicitly unsharing each tab via the extension popup.
   if (tabs.size > 0 && !reconnectTimer) {
-    console.log("Tinkerclaw: relay disconnected, reconnecting in 5s...");
+    console.log(
+      `[tinkerclaw-relay] disconnected (${reason}), reconnecting in ${reconnectBackoffMs}ms...`,
+    );
     reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
       try {
         await ensureRelayConnection();
-        console.log("Tinkerclaw: relay reconnected with", tabs.size, "tabs still attached");
+        console.log(`[tinkerclaw-relay] reconnected with ${tabs.size} tabs still attached`);
+        reconnectBackoffMs = 1000; // reset backoff on success
       } catch (err) {
-        console.warn("Tinkerclaw: reconnect failed:", err.message);
-        // Try again
+        console.warn(
+          `[tinkerclaw-relay] reconnect failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        // Backoff: 1s → 2s → 4s → 8s → 15s cap
+        reconnectBackoffMs = Math.min(reconnectBackoffMs * 2, 15000);
         onRelayClosed("reconnect_failed");
       }
-    }, 5000);
+    }, reconnectBackoffMs);
   }
 }
 
@@ -600,6 +653,35 @@ async function handleForwardCdpCommand(msg) {
 // Debugger event listeners
 // ---------------------------------------------------------------------------
 
+// FORK 2026-04-30 (Bible §5.81f): events worth forwarding from chrome.debugger.
+// Without this filter, Playwright sees Target.attachedToTarget events for every
+// iframe/worker/isolated-world that chrome auto-attaches to, treats each as a
+// separate page, runs full CRPage init on each, and the cumulative latency on
+// pages like npmjs.com (50+ subframes) blows the gateway's 20s timeout. We
+// only need top-level Page/Runtime/Network/DOM/etc. events for the user-shared
+// root tab; child sessions are noise we synthesize past in the relay's
+// routeCdpCommand.
+function shouldForwardDebuggerEvent(source, method, params, tab) {
+  // Always forward main-session events (no source.sessionId means root).
+  if (!source.sessionId) {
+    return true;
+  }
+  // For Target.* events, only forward if the targetInfo.targetId matches the
+  // shared tab's known root target. This drops attachedToTarget events for
+  // iframes/workers, which would otherwise cause Playwright to spawn 100+
+  // child CRPages that all want full init.
+  if (method === "Target.attachedToTarget" || method === "Target.targetCreated") {
+    const targetId = params?.targetInfo?.targetId;
+    return targetId === tab.targetId;
+  }
+  if (method === "Target.detachedFromTarget" || method === "Target.targetDestroyed") {
+    return params?.targetId === tab.targetId;
+  }
+  // Drop child-session events for everything else — Playwright doesn't have a
+  // session to route them to (we never advertised the child session).
+  return false;
+}
+
 function onDebuggerEvent(source, method, params) {
   const tabId = source.tabId;
   if (!tabId) {
@@ -607,6 +689,10 @@ function onDebuggerEvent(source, method, params) {
   }
   const tab = tabs.get(tabId);
   if (!tab?.sessionId) {
+    return;
+  }
+
+  if (!shouldForwardDebuggerEvent(source, method, params, tab)) {
     return;
   }
 
@@ -622,7 +708,12 @@ function onDebuggerEvent(source, method, params) {
     sendToRelay({
       method: "forwardCDPEvent",
       params: {
-        sessionId: source.sessionId || tab.sessionId,
+        // FORK 2026-04-30: events forwarded from the root chrome.debugger
+        // session always carry our advertised tab.sessionId, never chrome's
+        // internal source.sessionId — Playwright uses the sessionId to route
+        // to a child session, and we don't want it routing to sessions we
+        // never advertised.
+        sessionId: tab.sessionId,
         method,
         params,
       },
@@ -666,6 +757,7 @@ async function connectOrToggleForActiveTab() {
     await detachTab(tabId, "toggle");
     await saveSharedTabs();
     updateGlobalBadge();
+    await ensureKeepAlive();
     return;
   }
 
@@ -685,6 +777,7 @@ async function connectOrToggleForActiveTab() {
     await addTabToGroup(tabId);
     await saveSharedTabs();
     updateGlobalBadge();
+    await ensureKeepAlive();
   } catch (err) {
     tabs.delete(tabId);
     setBadge(tabId, "error");
@@ -724,6 +817,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     await detachTab(tabId, "tab_closed");
     await saveSharedTabs();
     updateGlobalBadge();
+    await ensureKeepAlive();
   })();
 });
 
@@ -743,15 +837,71 @@ self.addEventListener("unhandledrejection", (event) => {
 });
 
 // ---------------------------------------------------------------------------
+// Service worker keep-alive (Bible §5.81f)
+// ---------------------------------------------------------------------------
+// MV3 service workers idle out after 30 seconds of inactivity. If the relay
+// is down for >30s, the worker sleeps and the reconnect timer never fires —
+// leaving the user thinking sharing was lost. chrome.alarms with 25s period
+// pokes the worker awake every cycle while there are shared tabs, so the
+// reconnect loop keeps running across long gateway downtimes (full restarts,
+// upstream merges, anything that takes minutes).
+
+const KEEP_ALIVE_ALARM = "tinkerclaw-relay-keepalive";
+
+async function ensureKeepAlive() {
+  try {
+    if (tabs.size === 0) {
+      await chrome.alarms.clear(KEEP_ALIVE_ALARM);
+      return;
+    }
+    const existing = await chrome.alarms.get(KEEP_ALIVE_ALARM);
+    if (existing) {
+      return;
+    }
+    await chrome.alarms.create(KEEP_ALIVE_ALARM, {
+      periodInMinutes: 25 / 60, // 25 seconds, the longest interval that
+      // reliably keeps the service worker warm under MV3.
+    });
+  } catch (err) {
+    console.warn(
+      "[tinkerclaw-relay] keep-alive setup failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== KEEP_ALIVE_ALARM) {
+    return;
+  }
+  // Cheap touch — keeps the worker awake AND nudges reconnect if we're down.
+  if (relayWs && relayWs.readyState === WebSocket.OPEN) {
+    return;
+  }
+  if (tabs.size > 0 && !reconnectTimer) {
+    void ensureRelayConnection().catch((err) => {
+      console.debug(
+        "[tinkerclaw-relay] keep-alive reconnect attempt failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Service worker startup — restore previously shared tabs
 // ---------------------------------------------------------------------------
 
 restoreSharedTabs().then(() => {
   updateGlobalBadge();
+  void ensureKeepAlive();
   // Try to reconnect to relay if we have shared tabs
   if (tabs.size > 0) {
     ensureRelayConnection().catch((err) => {
-      console.warn("Tinkerclaw: relay reconnect on startup failed:", err.message);
+      console.warn(
+        "[tinkerclaw-relay] relay reconnect on startup failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     });
   }
 });

@@ -3,6 +3,9 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/text-runtime";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+
+const log = createSubsystemLogger("browser/browser-request");
 import {
   ErrorCodes,
   applyBrowserProxyPaths,
@@ -248,6 +251,15 @@ export async function handleBrowserGatewayRequest({
     return;
   }
 
+  // FORK 2026-04-30 (Bible §5.81f): trace browser.request lifecycle when
+  // OPENCLAW_RELAY_CDP_TRACE=1. Lets us pinpoint where the 20s timeout is
+  // actually spent (Playwright connect, page lookup, dispatcher dispatch).
+  const traceBrowserRequest = process.env.OPENCLAW_RELAY_CDP_TRACE === "1";
+  const traceStart = traceBrowserRequest ? Date.now() : 0;
+  const tracePath = `${methodRaw} ${path}`;
+  if (traceBrowserRequest) {
+    log.info(`[browser.request] → ${tracePath} timeoutMs=${timeoutMs ?? "none"}`);
+  }
   let result;
   try {
     result = timeoutMs
@@ -270,8 +282,18 @@ export async function handleBrowserGatewayRequest({
           body,
         });
   } catch (err) {
+    if (traceBrowserRequest) {
+      log.warn(
+        `[browser.request] ✗ ${tracePath} after ${Date.now() - traceStart}ms: ${String(err)}`,
+      );
+    }
     respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
     return;
+  }
+  if (traceBrowserRequest) {
+    log.info(
+      `[browser.request] ✓ ${tracePath} status=${result.status} ${Date.now() - traceStart}ms`,
+    );
   }
 
   if (result.status >= 400) {

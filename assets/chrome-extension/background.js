@@ -425,11 +425,27 @@ async function handleForwardCdpCommand(msg) {
   return await chrome.debugger.sendCommand(debuggerSession, method, params)
 }
 
+// FORK 2026-04-30 (Bible §5.81f): iframe/worker storm filter — mirror of the
+// fork extension's logic so both copies stay in sync.
+function shouldForwardDebuggerEvent(source, method, params, tab) {
+  if (!source.sessionId) return true
+  if (method === 'Target.attachedToTarget' || method === 'Target.targetCreated') {
+    const targetId = params?.targetInfo?.targetId
+    return targetId === tab.targetId
+  }
+  if (method === 'Target.detachedFromTarget' || method === 'Target.targetDestroyed') {
+    return params?.targetId === tab.targetId
+  }
+  return false
+}
+
 function onDebuggerEvent(source, method, params) {
   const tabId = source.tabId
   if (!tabId) return
   const tab = tabs.get(tabId)
   if (!tab?.sessionId) return
+
+  if (!shouldForwardDebuggerEvent(source, method, params, tab)) return
 
   if (method === 'Target.attachedToTarget' && params?.sessionId) {
     childSessionToTab.set(String(params.sessionId), tabId)
@@ -443,7 +459,7 @@ function onDebuggerEvent(source, method, params) {
     sendToRelay({
       method: 'forwardCDPEvent',
       params: {
-        sessionId: source.sessionId || tab.sessionId,
+        sessionId: tab.sessionId,
         method,
         params,
       },
