@@ -18,6 +18,32 @@ export function getBrowserProfileCapabilities(
   profile: ResolvedBrowserProfile,
 ): BrowserProfileCapabilities {
   if (profile.driver === "existing-session") {
+    // FORK 2026-04-30 (Bible §5.81f): chrome-relay bypasses both upstream
+    // browser-driving paths because both have incompatible attach semantics
+    // for tab-scoped chrome.debugger sessions:
+    // - chrome-devtools-mcp (puppeteer): list_pages times out — pages
+    //   never appear in browser.pages() through our relay.
+    // - Playwright connectOverCDP: same — browser.contexts()[0].pages()
+    //   returns empty even when our relay is forwarding correctly.
+    //
+    // For chrome-relay, route tab listing directly through the relay's
+    // /json/list endpoint (which we know works — the relay extension
+    // populates it from chrome.debugger.attach). Page-level operations
+    // still go through Playwright via the per-tab WS URL each /json/list
+    // entry provides; the per-tab WS bypasses the broken browser-context
+    // discovery path entirely.
+    if (profile.name === "chrome-relay") {
+      return {
+        mode: "local-existing-session",
+        isRemote: false,
+        usesChromeMcp: false,
+        usesPersistentPlaywright: false,
+        supportsPerTabWs: true,
+        supportsJsonTabEndpoints: true,
+        supportsReset: false,
+        supportsManagedTabLimit: false,
+      };
+    }
     return {
       mode: "local-existing-session",
       isRemote: false,

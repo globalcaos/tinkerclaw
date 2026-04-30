@@ -21,7 +21,13 @@ export const PROFILE_WS_REACHABILITY_MIN_TIMEOUT_MS = 200;
 export const PROFILE_WS_REACHABILITY_MAX_TIMEOUT_MS = 2000;
 export const PROFILE_ATTACH_RETRY_TIMEOUT_MS = 1200;
 export const PROFILE_POST_RESTART_WS_TIMEOUT_MS = 600;
-export const CHROME_MCP_ATTACH_READY_WINDOW_MS = 8000;
+// FORK 2026-04-30 (Bible §5.81f): bumped from 8s to 30s. The chrome-relay
+// path runs `npx -y chrome-devtools-mcp@latest` on first call after gateway
+// restart; that subprocess spawns + does puppeteer connectOverCDP +
+// list_pages on an already-loaded page. 8s was upstream's tight budget for
+// a managed Chrome where the subprocess is already warm; for our relay path
+// it's tight even on the second call. 30s is the realistic floor.
+export const CHROME_MCP_ATTACH_READY_WINDOW_MS = 30_000;
 export const CHROME_MCP_ATTACH_READY_POLL_MS = 200;
 
 export function usesFastLoopbackCdpProbeClass(params: {
