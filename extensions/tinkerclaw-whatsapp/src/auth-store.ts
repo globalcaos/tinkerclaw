@@ -136,7 +136,12 @@ export async function webAuthExists(authDir: string = resolveDefaultWebAuthDir()
     }
   }
 
-  maybeRestoreCredsFromBackup(resolvedAuthDir);
+  // FORK 2026-04-30: upstream merge reintroduced the old function name
+  // `maybeRestoreCredsFromBackup` as a call here even though the fork's
+  // canonical name is `restoreCredsFromBackupIfNeeded`. The merge-guardian
+  // doesn't yet auto-rewrite this site. Same pattern as the 2026-02-22
+  // shouldHideHeartbeatChatOutput regression.
+  await restoreCredsFromBackupIfNeeded(resolvedAuthDir);
   const credsPath = resolveWebCredsPath(resolvedAuthDir);
   try {
     await fs.access(resolvedAuthDir);
