@@ -3,7 +3,7 @@
   "name": "Tinkerclaw Browser Relay",
   "version": "1.0.0",
   "description": "Share browser tabs with Jarvis. Shared tabs appear in a brown 'Tinker Shared' tab group.",
-  "permissions": ["debugger", "tabs", "tabGroups", "storage", "activeTab"],
+  "permissions": ["debugger", "tabs", "tabGroups", "storage", "activeTab", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

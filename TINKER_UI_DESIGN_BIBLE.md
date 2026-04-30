@@ -1851,6 +1851,85 @@ Three layers:
 - Config: `~/.openclaw/openclaw.json` → `browser.defaultProfile = "chrome-relay"`, `browser.attachOnly = true`, only the `chrome-relay` profile listed
 - Bypass (test-only, never set in prod): `OPENCLAW_ALLOW_UNSAFE_BROWSER=1`
 
+### 5.81f Browser-relay CDP bridge: synthesizers, persistence, iframe filter (2026-04-30)
+
+The `chrome-relay` profile attaches to user-shared tabs via the in-page extension's `chrome.debugger.attach({tabId})` API. That API is permanently tab-scoped — Chrome refuses browser-level CDP methods on those sessions. Upstream's recent merge routes the gateway's `existing-session` profile through Playwright's `connectOverCDP`, which expects a full browser-level handshake. The relay reconciles this gap by **synthesizing** browser-level methods at the relay server (so they never reach `chrome.debugger`) and **filtering** chrome.debugger events down to the user-shared root targets only.
+
+#### 5.81f-a Synthesizers in `extension-relay.ts:routeCdpCommand`
+
+The relay pretends to be a single-context browser. Methods that respond entirely from the relay (never forwarded to the extension):
+
+| method                         | response                                 | rationale                                                                                 |
+| ------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `Browser.getVersion`           | constant build info                      | Playwright reads `userAgent` to detect headful vs headless.                               |
+| `Browser.setDownloadBehavior`  | `{}`                                     | Per-context download config; no-op on the relay.                                          |
+| `Browser.grantPermissions`     | `{}`                                     | Can't enforce permissions on chrome.debugger sessions; accepting lets Playwright proceed. |
+| `Browser.resetPermissions`     | `{}`                                     | Same as above.                                                                            |
+| `Target.setAutoAttach`         | `{}`                                     | Auto-attach is the relay extension's responsibility, not chrome.debugger's.               |
+| `Target.setDiscoverTargets`    | `{}`                                     | Same.                                                                                     |
+| `Target.getTargets`            | `{ targetInfos: [...connectedTargets] }` | Computed from the relay's per-shared-tab map.                                             |
+| `Target.getTargetInfo`         | computed lookup                          | Same.                                                                                     |
+| `Target.attachToTarget`        | computed sessionId lookup                | Same.                                                                                     |
+| `Target.getBrowserContexts`    | `{ browserContextIds: ["default"] }`     | One synthetic context.                                                                    |
+| `Target.createBrowserContext`  | `{ browserContextId: "default" }`        | Returns the synthetic context; subsequent `Target.createTarget` is blocked per §5.81.     |
+| `Target.disposeBrowserContext` | `{}`                                     | No-op.                                                                                    |
+| `Storage.getCookies`           | `{ cookies: [] }`                        | v1 stub; deferred to `chrome.cookies` proxy in a future iteration.                        |
+| `Storage.setCookies`           | `{}`                                     | Same.                                                                                     |
+| `Storage.clearCookies`         | `{}`                                     | Same.                                                                                     |
+
+Every other CDP method falls through to `chrome.debugger.sendCommand` on the user-shared tab.
+
+The synthetic browser context id `"default"` is also injected into every emitted `Target.attachedToTarget` and `Target.targetInfoChanged` event — Playwright's `crBrowser.js:147` asserts `targetInfo.browserContextId` is set, and tab-scoped CDP sessions don't include this field by default.
+
+#### 5.81f-b Iframe / worker storm filter
+
+`chrome.debugger.onEvent` fires for **every** target attached to the tab, including nested iframes, web workers, service workers, and isolated worlds. Without filtering, the extension would forward 50–250+ `Target.attachedToTarget` events per shared tab; Playwright would create a child CRPage for each and run full init (50+ CDP commands per page) on all of them. On a busy site like npmjs.com, the cumulative latency exceeds the gateway's 20s `browser.request` timeout — the agent gets `browser request timed out` even though the relay is up and forwarding correctly.
+
+The fix is in `chrome-extension/background.js:shouldForwardDebuggerEvent`: only forward events for the **root shared tab's `targetId`**. Child-session events are dropped at the extension boundary. The relay never broadcasts them, so Playwright never sees them, so it never spawns child CRPages it can't drive.
+
+The filter only allows:
+
+- **All main-session events** (no `source.sessionId`).
+- **`Target.attachedToTarget` / `Target.targetCreated`** when `params.targetInfo.targetId === tab.targetId`.
+- **`Target.detachedFromTarget` / `Target.targetDestroyed`** when `params.targetId === tab.targetId`.
+
+Everything else from child sessions is dropped.
+
+#### 5.81f-c Persistence and auto-reconnect (the "stay shared forever" rule)
+
+**Rule.** A tab the user has clicked "share" on stays shared until the user explicitly unshares or closes it. Gateway restarts, browser restarts, service worker idle-out — none of these should cost the user a click.
+
+Three layers make this happen (all in `extensions/tinkerclaw-browser-relay/chrome-extension/background.js`):
+
+1. **Persistence to `chrome.storage.local`** in `saveSharedTabs` after every share/unshare/tab-close. The "Tinker Shared" tab group acts as a secondary persistence layer that survives full browser restart (since chrome.storage.local survives across browser sessions, but tabIds change — group-by-title gives us a way to rediscover them).
+2. **Re-announcement on relay reconnect** in `ensureRelayConnection`: after the WS opens, iterate every entry in the `tabs` Map and emit `Target.attachedToTarget` for each. The relay's `connectedTargets` Map is per-process and gets wiped on every gateway restart — without re-announcement, `/extension/status` shows `connected:true,count:1` but the relay has no targets to forward CDP commands to.
+3. **Aggressive reconnect with exponential backoff** in `onRelayClosed`: 1s → 2s → 4s → 8s → 15s cap, retried indefinitely while `tabs.size > 0`. The user can stop it only by explicitly unsharing each tab.
+
+#### 5.81f-d Service-worker keep-alive
+
+MV3 service workers idle out after 30 seconds. If the gateway is down for >30s and the worker sleeps, the reconnect timer never fires, the alarm is missed. We register a `chrome.alarms` named `tinkerclaw-relay-keepalive` with a **25-second period** while `tabs.size > 0`. The alarm handler is a cheap touch that:
+
+- Wakes the worker.
+- If `relayWs` is not OPEN and no `reconnectTimer` is pending, kicks off `ensureRelayConnection`.
+
+The alarm is created in `ensureKeepAlive`, called after share, unshare, tab-close, and on service-worker startup. The `alarms` permission was added to `manifest.json`.
+
+#### 5.81f-e The chrome.debugger infobar
+
+When `chrome.debugger.attach()` is called, Chrome shows a yellow infobar at the top of the affected tab: `"Tinkerclaw Browser Relay" started debugging this browser. Cancel`. This is a Chrome-mandated security UX — there is no way to suppress it from extension code, and there shouldn't be: it's the user's signal that an extension is reading/writing the page.
+
+The only way to hide it is to launch Chrome with `--silent-debugger-extension-api`. This is a startup flag, not an extension-controllable setting. the user runs Chrome via a desktop shortcut he edits to include the flag; document this once in the README rather than repeatedly explaining the warning is inherent.
+
+#### 5.81f-f Tracing
+
+The relay's `sendToExtension` can log every forwarded CDP method + duration when `OPENCLAW_RELAY_CDP_TRACE=1` is set. Off by default — Playwright's CRPage init sends 200+ messages and logging them all is noise. Turn on for regression diagnosis only.
+
+#### 5.81f-g Open follow-ups
+
+- **Storage.getCookies / Storage.setCookies real proxy** via `chrome.cookies.*` API in the extension. Today's empty-list stub is fine for npm-publish-style flows but breaks anything that probes login state. Spec exists in `docs/superpowers/specs/2026-04-29-browser-relay-cdp-bridge-design.md` §4.2.
+- **Playwright connection caching at the gateway.** Each `browser.request` may currently open a fresh `connectOverCDP`; with iframe filtering, init time drops from 20s to ~2s, but reusing the connection across requests would make tool calls near-instant. Investigate `browser-tool.runtime.ts` connection management.
+- **Multi-context simulation.** Today the relay reports one virtual context. If a future agent flow needs multiple contexts, extend the synthesizer.
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker
