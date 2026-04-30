@@ -494,6 +494,84 @@ export async function highlightViaPlaywright(opts: {
   }
 }
 
+// FORK 2026-04-30 (Bible §5.81f): visible click indicator. the user watches the
+// shared tab while Jarvis drives it; without a visual marker every click feels
+// invisible and untraceable. Inject a brown cursor + growing yellow ring at
+// the click coords for 500ms BEFORE the actual click fires, so the user can
+// see what the agent is about to do.
+const TINKERCLAW_CLICK_INDICATOR_DELAY_MS = 500;
+
+async function showTinkerclawClickIndicator(page: Page, x: number, y: number): Promise<void> {
+  try {
+    await page.evaluate(
+      ([px, py]) => {
+        const cursor = document.createElement("div");
+        cursor.setAttribute("data-tinkerclaw-click-indicator", "cursor");
+        cursor.style.cssText = [
+          "position: fixed",
+          `left: ${px}px`,
+          `top: ${py}px`,
+          "width: 0",
+          "height: 0",
+          "border-left: 10px solid transparent",
+          "border-right: 10px solid transparent",
+          "border-top: 16px solid #8B4513",
+          "transform: rotate(-25deg)",
+          "transform-origin: top left",
+          "z-index: 2147483647",
+          "pointer-events: none",
+          "filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4))",
+        ].join("; ");
+        const ring = document.createElement("div");
+        ring.setAttribute("data-tinkerclaw-click-indicator", "ring");
+        ring.style.cssText = [
+          "position: fixed",
+          `left: ${px - 6}px`,
+          `top: ${py - 6}px`,
+          "width: 12px",
+          "height: 12px",
+          "border: 3px solid #FFD700",
+          "border-radius: 50%",
+          "background: rgba(255, 215, 0, 0.35)",
+          "z-index: 2147483646",
+          "pointer-events: none",
+          "transition: all 500ms cubic-bezier(0.4, 0, 0.2, 1)",
+          "box-shadow: 0 0 8px rgba(255, 215, 0, 0.6)",
+        ].join("; ");
+        document.body.appendChild(cursor);
+        document.body.appendChild(ring);
+        requestAnimationFrame(() => {
+          ring.style.left = `${px - 32}px`;
+          ring.style.top = `${py - 32}px`;
+          ring.style.width = "64px";
+          ring.style.height = "64px";
+          ring.style.background = "rgba(255, 215, 0, 0.05)";
+          ring.style.opacity = "0.4";
+        });
+        setTimeout(() => {
+          cursor.remove();
+          ring.remove();
+        }, 700);
+      },
+      [x, y],
+    );
+  } catch {
+    // best-effort visual; never block the click on render failures
+  }
+}
+
+async function indicatorCoordsForLocator(locator: {
+  boundingBox: () => Promise<{ x: number; y: number; width: number; height: number } | null>;
+}): Promise<{ x: number; y: number } | null> {
+  try {
+    const box = await locator.boundingBox();
+    if (!box) return null;
+    return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+  } catch {
+    return null;
+  }
+}
+
 export async function clickViaPlaywright(opts: {
   cdpUrl: string;
   targetId?: string;
@@ -557,6 +635,15 @@ export async function clickViaPlaywright(opts: {
           await awaitActionWithAbort(locator.hover({ timeout }), abortPromise);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
+        // FORK 2026-04-30 (Bible §5.81f): visual click indicator. Show a brown
+        // cursor + growing yellow ring at click coords for 500ms before firing
+        // the click — the user watches the shared tab and needs to see where the
+        // agent is about to act.
+        const indicatorCoords = await indicatorCoordsForLocator(locator);
+        if (indicatorCoords) {
+          await showTinkerclawClickIndicator(page, indicatorCoords.x, indicatorCoords.y);
+          await new Promise((r) => setTimeout(r, TINKERCLAW_CLICK_INDICATOR_DELAY_MS));
+        }
         if (opts.doubleClick) {
           await awaitActionWithAbort(
             locator.dblclick({
@@ -607,6 +694,9 @@ export async function clickCoordsViaPlaywright(opts: {
   const previousUrl = page.url();
   await assertInteractionNavigationCompletedSafely({
     action: async () => {
+      // FORK 2026-04-30 (Bible §5.81f): visual click indicator before coords-click.
+      await showTinkerclawClickIndicator(page, opts.x, opts.y);
+      await new Promise((r) => setTimeout(r, TINKERCLAW_CLICK_INDICATOR_DELAY_MS));
       await page.mouse.click(opts.x, opts.y, {
         button: opts.button,
         clickCount: opts.doubleClick ? 2 : 1,
