@@ -201,6 +201,17 @@ function buildBundledPluginNeverBundlePredicate(packageJson: {
     if (isPluginSdkSelfReference(id)) {
       return true;
     }
+    // FORK 2026-04-30: native addons (better-sqlite3, bindings, lancedb, ...)
+    // must NEVER be inlined — they reference __filename which is undefined in
+    // ESM bundles and crash the gateway on first call. The unified core build
+    // already enforces this via explicitNeverBundleDependencies; staged plugin
+    // builds were missing it, which let `bindings` leak into
+    // dist/extensions/tinkerclaw-whatsapp/db-*.js and crash gateway boot
+    // whenever WhatsApp touched its history DB. Honor the same global list
+    // here.
+    if (shouldNeverBundleDependency(id)) {
+      return true;
+    }
     return runtimeDependencies.some((dependency) => {
       return id === dependency || id.startsWith(`${dependency}/`);
     });

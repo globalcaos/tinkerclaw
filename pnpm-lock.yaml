@@ -69,6 +69,12 @@ importers:
       '@vincentkoc/qrcode-tui':
         specifier: 0.2.1
         version: 0.2.1
+      '@whatsmeow-node/linux-x64':
+        specifier: 0.5.3
+        version: 0.5.3
+      '@whatsmeow-node/whatsmeow-node':
+        specifier: 0.5.3
+        version: 0.5.3
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -1349,19 +1355,53 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
-  extensions/tinkerclaw-computational-humor: {}
+  extensions/tinkerclaw-computational-humor:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
 
-  extensions/tinkerclaw-fractal-reflection: {}
+  extensions/tinkerclaw-fractal-reflection:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
 
-  extensions/tinkerclaw-identity-persistence: {}
+  extensions/tinkerclaw-identity-persistence:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
 
-  extensions/tinkerclaw-learned-intuition: {}
+  extensions/tinkerclaw-learned-intuition:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
 
-  extensions/tinkerclaw-memory-enhancements: {}
+  extensions/tinkerclaw-memory-enhancements:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
 
-  extensions/tinkerclaw-round-table: {}
+  extensions/tinkerclaw-people:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
-  extensions/tinkerclaw-total-recall: {}
+  extensions/tinkerclaw-round-table:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
+
+  extensions/tinkerclaw-total-recall:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.25'
+        version: 2026.4.27
 
   extensions/tinkerclaw-whatsapp:
     dependencies:
@@ -4833,6 +4873,47 @@ packages:
   '@wasm-audio-decoders/opus-ml@0.0.2':
     resolution: {integrity: sha512-58rWEqDGg+CKCyEeKm2KoxxSwTWtHh/NLTW9ObR4K8CGF6VwuuGudEI1CtniS/oSRmL1nJq/eh8MKARiluw4DQ==}
 
+  '@whatsmeow-node/darwin-arm64@0.5.3':
+    resolution: {integrity: sha512-Ui0sAsRqvOvzHrg1KBTRx0FGplLnYlnix73s01iAmrvj5rWy0XcGNPe0iABeZN1tjpqGYu2pU0n34O6r9NqxYw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@whatsmeow-node/darwin-x64@0.5.3':
+    resolution: {integrity: sha512-Q95/ny0nWTVneGiOUh60Icb717yISHBgMMmV7OjxM55sGG7fdarXuibmL7s2GApwecDlqnwxMH+eJO2mSWUj1g==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@whatsmeow-node/linux-arm64@0.5.3':
+    resolution: {integrity: sha512-tMXmFotShuj536LB0FRp2A3oWkGeYAOrzhQtx02Gb+flleIJPhJaFWqe2jQW6sW3lGEhXRTcHsZ4rE0kgfu/hA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@whatsmeow-node/linux-x64-musl@0.5.3':
+    resolution: {integrity: sha512-YPacywbyllp623jsjoMuAx74RKdgxphwZ2zN/cxrjkOUAAtSLImBfoxo+z7XBHEVpiCoaKbVrxBTOOagFVGJIQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@whatsmeow-node/linux-x64@0.5.3':
+    resolution: {integrity: sha512-wYd02EwWKjZR0ckKVkqwKKvCyvXqBfhmEjS4uEePKbjrgcnJGNSmrhtsXuVlH5Ns3SPrvQgt+DcktTX9FNlFlA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@whatsmeow-node/whatsmeow-node@0.5.3':
+    resolution: {integrity: sha512-ecs34YA4TK4BQ38DY0/G6c1DKGaOlVA9++0kt20NCYkNYDjEv1EF9S4d6vvRk+Of77Pn3x3roFh6L1cWt7ZDcg==}
+    engines: {node: '>=18'}
+
+  '@whatsmeow-node/win32-arm64@0.5.3':
+    resolution: {integrity: sha512-QtgbHjfuGwiR3JBZv3DTDMofImsn4U0F+AMT60Xh1UwJyUQY/hBDRmCGavLqRKPzauDaywpcJ7rs2B5umtDJ0A==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@whatsmeow-node/win32-x64@0.5.3':
+    resolution: {integrity: sha512-7PdEViDyxj0DkgJtGXU0UuI/W1dyDMeGmEKn8DMe7SYkCSl9+P6TvcIiSoPGAyXtS/gQBSpNkXxUM40z6aaXqg==}
+    cpu: [x64]
+    os: [win32]
+
   '@whiskeysockets/baileys@7.0.0-rc.9':
     resolution: {integrity: sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==}
     engines: {node: '>=20.0.0'}
@@ -6876,6 +6957,11 @@ packages:
         optional: true
       zod:
         optional: true
+
+  openclaw@2026.4.27:
+    resolution: {integrity: sha512-99UOcRI6hOYGY76NmJQkMtBpuDjlkiCn5bAilMnDIaMG0mQOQjB8ZQ5pMzS1Zzos1ENJH8ddvBki6JwVaYPxRA==}
+    engines: {node: '>=22.14.0'}
+    hasBin: true
 
   openshell@0.1.0:
     resolution: {integrity: sha512-B7jLewH+d73hraWcrSFgNOjvd+frW5JPejkTpqgj2EJBjX/Yk1Y4blgP5pDl4FwrBxfmwsTKR08Uwgrdo+xpSg==}
@@ -12163,6 +12249,36 @@ snapshots:
       '@wasm-audio-decoders/common': 9.0.7
     optional: true
 
+  '@whatsmeow-node/darwin-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/darwin-x64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-x64-musl@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/linux-x64@0.5.3': {}
+
+  '@whatsmeow-node/whatsmeow-node@0.5.3':
+    optionalDependencies:
+      '@whatsmeow-node/darwin-arm64': 0.5.3
+      '@whatsmeow-node/darwin-x64': 0.5.3
+      '@whatsmeow-node/linux-arm64': 0.5.3
+      '@whatsmeow-node/linux-x64': 0.5.3
+      '@whatsmeow-node/linux-x64-musl': 0.5.3
+      '@whatsmeow-node/win32-arm64': 0.5.3
+      '@whatsmeow-node/win32-x64': 0.5.3
+
+  '@whatsmeow-node/win32-arm64@0.5.3':
+    optional: true
+
+  '@whatsmeow-node/win32-x64@0.5.3':
+    optional: true
+
   '@whiskeysockets/baileys@7.0.0-rc.9(patch_hash=23ec8efe1484afa57c51b96955ba331d1467521a8e676a18c2690da7e70a6201)(audio-decode@2.2.3)(jimp@1.6.1)(sharp@0.34.5)':
     dependencies:
       '@cacheable/node-cache': 1.7.6
@@ -14583,6 +14699,51 @@ snapshots:
     optionalDependencies:
       ws: 8.20.0
       zod: 4.3.6
+
+  openclaw@2026.4.27:
+    dependencies:
+      '@agentclientprotocol/sdk': 0.20.0(zod@4.3.6)
+      '@clack/prompts': 1.2.0
+      '@lydell/node-pty': 1.2.0-beta.12
+      '@mariozechner/pi-agent-core': 0.70.5(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-ai': 0.70.5(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-coding-agent': 0.70.5(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-tui': 0.70.5
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      '@vincentkoc/qrcode-tui': 0.2.1
+      ajv: 8.20.0
+      chalk: 5.6.2
+      chokidar: 5.0.0
+      commander: 14.0.3
+      croner: 10.0.1
+      dotenv: 17.4.2
+      file-type: 22.0.1
+      global-agent: 4.1.3
+      https-proxy-agent: 9.0.0
+      ipaddr.js: 2.3.0
+      jiti: 2.6.1
+      json5: 2.2.3
+      jszip: 3.10.1
+      markdown-it: 14.1.1
+      openai: 6.34.0(ws@8.20.0)(zod@4.3.6)
+      osc-progress: 0.3.0
+      proxy-agent: 8.0.1
+      semver: 7.7.4
+      sqlite-vec: 0.1.9
+      tar: 7.5.13
+      tslog: 4.10.2
+      typebox: 1.1.33
+      undici: 8.1.0
+      web-push: 3.6.7
+      ws: 8.20.0
+      yaml: 2.8.3
+      zod: 4.3.6
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - aws-crt
+      - bufferutil
+      - supports-color
+      - utf-8-validate
 
   openshell@0.1.0:
     dependencies:

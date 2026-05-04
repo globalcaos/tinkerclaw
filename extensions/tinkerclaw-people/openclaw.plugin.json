@@ -1,0 +1,37 @@
+{
+  "id": "tinkerclaw-people",
+  "name": "People Profiles",
+  "description": "Per-person markdown profiles auto-maintained from WhatsApp activity. Exposes people.* gateway methods so the agent can resolve a name to a profile and read it before claiming 'I don't have context'.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "peopleDir": {
+        "type": "string",
+        "description": "Directory holding per-person profiles. Defaults to ~/.openclaw/workspace/memory/people/"
+      },
+      "whatsappDb": {
+        "type": "string",
+        "description": "Path to whatsapp-history.db. Defaults to ~/.openclaw/data/whatsapp-history.db"
+      },
+      "workPeopleMd": {
+        "type": "string",
+        "description": "Path to the legacy work/people.md table that supplies emails. Defaults to ~/.openclaw/workspace/memory/work/people.md"
+      },
+      "selfJid": {
+        "type": "string",
+        "description": "Self WhatsApp JID to exclude from DM partners. Defaults to inferring from from_me=1 rows."
+      }
+    }
+  },
+  "uiHints": {
+    "peopleDir": {
+      "label": "People dir",
+      "help": "Where per-person markdown profiles live."
+    }
+  }
+}

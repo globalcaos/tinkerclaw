@@ -296,10 +296,20 @@ export async function dispatchWhatsAppBufferedReply(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info: { kind: ReplyLifecycleKind }) => {
+        // FORK 2026-05-03: dichotomic-search marker — confirm dispatcher chain
+        // actually invoked deliver(). Earlier we saw queuedFinal=true but no
+        // wire send; need to know if this callback ever runs.
+        console.log(
+          `[DELIVERY-DICHOTOMY] deliver() callback called kind=${info.kind} hasText=${!!(payload as { text?: string }).text} textLen=${((payload as { text?: string }).text ?? "").length}`,
+        );
         const deliveryPayload = resolveWhatsAppDeliverablePayload(payload, info);
         if (!deliveryPayload) {
+          console.log(
+            `[DELIVERY-DICHOTOMY] deliver() resolveWhatsAppDeliverablePayload returned null — skipping`,
+          );
           return;
         }
+        console.log(`[DELIVERY-DICHOTOMY] deliver() invoking deliverWebReply`);
         await params.deliverReply({
           replyResult: deliveryPayload,
           msg: params.msg,

@@ -85,10 +85,26 @@ export function createBaileysAdapter(opts: BaileysAdapterOptions) {
   const { wmClient } = opts;
   const ev = new BaileysEventBridge(wmClient);
 
-  let selfJid: string | null = opts.selfJid ?? null;
-
+  // FORK 2026-05-03: deterministic selfJid seeding. The "connected" event
+  // listener was racing — sometimes the event fired before the listener
+  // attached (especially when the connection was already up at adapter
+  // construction time), leaving sock.user.id=null and breaking access-control.
+  // Now we seed from THREE sources in priority order:
+  //   1. opts.selfJid (explicit override)
+  //   2. wmClient.__initJid (set by createWmClient from init().jid — deterministic for paired stores)
+  //   3. wmClient.on("connected") (still attached as a fallback for fresh pairings)
+  // This makes selfJid populated synchronously after createWmClient returns,
+  // and the listener acts as a backup for cases (1) and (2) miss.
+  const initJid = (wmClient as unknown as { __initJid?: string }).__initJid ?? null;
+  let selfJid: string | null = opts.selfJid ?? initJid ?? null;
+  console.log(
+    `[wm-adapter] selfJid seeded initial=${selfJid} (from ${
+      opts.selfJid ? "opts" : initJid ? "init" : "none"
+    })`,
+  );
   wmClient.on("connected", ({ jid }) => {
     selfJid = jid;
+    console.log(`[wm-adapter] connected event captured selfJid=${jid}`);
   });
 
   const adapter = {
@@ -112,14 +128,84 @@ export function createBaileysAdapter(opts: BaileysAdapterOptions) {
     },
 
     sendMessage: async (jid: string, content: AnyMessageContent) => {
-      // Convert Baileys message format to whatsmeow format
+      // Convert Baileys message format to whatsmeow format. The whatsmeow
+      // sendMessage returns SendResponse = { id, timestamp }; the Baileys
+      // callers (inbound/monitor.ts:rememberOutboundMessage at line 232)
+      // read result.key.id to track outbound ids and match echoes.
+      // FORK 2026-05-01: wrap the SendResponse into a Baileys-shaped key so
+      // upstream sendTrackedMessage gets a real id instead of "unknown".
+      let resp: { id: string; timestamp?: number };
       if (typeof content === "object" && "text" in content) {
-        return wmClient.sendMessage(jid, {
+        resp = (await wmClient.sendMessage(jid, {
           conversation: content.text as string,
-        });
+        })) as { id: string; timestamp?: number };
+      } else if (typeof content === "object" && "poll" in content) {
+        // FORK 2026-05-03: whatsmeow-node's MessageContent only accepts text /
+        // extended-text shapes; polls go through a dedicated method
+        // `sendPollCreation(jid, name, options, selectableCount)`. Without
+        // this branch sendRawMessage trips "unknown field 'poll'" in proto
+        // parsing. The Baileys-shaped { poll: { name, values, selectableCount } }
+        // maps 1:1.
+        const poll = (
+          content as { poll: { name: string; values: string[]; selectableCount?: number } }
+        ).poll;
+        resp = await (
+          wmClient as unknown as {
+            sendPollCreation: (
+              jid: string,
+              name: string,
+              options: string[],
+              selectableCount: number,
+            ) => Promise<{ id: string; timestamp?: number }>;
+          }
+        ).sendPollCreation(jid, poll.name, poll.values, poll.selectableCount ?? 1);
+      } else if (typeof content === "object" && "react" in content) {
+        // FORK 2026-05-04: same class of bug as polls. whatsmeow-node has a
+        // dedicated `sendReaction(chat, sender, id, reaction)` and rejects
+        // Baileys-shaped `{react: {text, key}}` payloads via sendRawMessage.
+        // Without this branch the thinking-reaction heartbeat (and any other
+        // reaction send) silently no-ops at the wire — visible symptom: emoji
+        // never appears on the user's message.
+        const reactPayload = (
+          content as {
+            react: {
+              text: string;
+              key: { remoteJid?: string; id: string; fromMe?: boolean; participant?: string };
+            };
+          }
+        ).react;
+        const reactChat = reactPayload.key.remoteJid ?? jid;
+        const reactSender = reactPayload.key.participant ?? reactPayload.key.remoteJid ?? jid;
+        try {
+          resp = await (
+            wmClient as unknown as {
+              sendReaction: (
+                chat: string,
+                sender: string,
+                id: string,
+                reaction: string,
+              ) => Promise<{ id: string; timestamp?: number }>;
+            }
+          ).sendReaction(reactChat, reactSender, reactPayload.key.id, reactPayload.text);
+          console.log(
+            `[wm-adapter] reaction sent chat=${reactChat} msgId=${reactPayload.key.id} emoji=${JSON.stringify(reactPayload.text)}`,
+          );
+        } catch (err) {
+          console.log(
+            `[wm-adapter] reaction FAILED chat=${reactChat} msgId=${reactPayload.key.id} emoji=${JSON.stringify(reactPayload.text)} err=${String(err).slice(0, 200)}`,
+          );
+          throw err;
+        }
+      } else {
+        resp = (await wmClient.sendRawMessage(jid, content)) as {
+          id: string;
+          timestamp?: number;
+        };
       }
-      // For other message types, try sendRawMessage
-      return wmClient.sendRawMessage(jid, content);
+      return {
+        key: { id: resp.id, remoteJid: jid, fromMe: true },
+        messageTimestamp: resp.timestamp,
+      };
     },
 
     sendPresenceUpdate: async (presence: WAPresence, jid?: string) => {

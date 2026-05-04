@@ -1,16 +1,18 @@
 import { buildDmGroupAccountAllowlistAdapter } from "openclaw/plugin-sdk/allowlist-config-edit";
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
-// FORK: whatsmeow login — side-effect import forces bundler inclusion
-import "./login-qr-wm.js";
 // WhatsApp-specific imports from local extension code (moved from src/web/ and src/channels/plugins/)
 import {
   listWhatsAppAccountIds,
   resolveWhatsAppAccount,
   type ResolvedWhatsAppAccount,
 } from "./accounts.js";
+// FORK: whatsmeow login — side-effect import forces bundler inclusion
+import "./login-qr-wm.js";
 import { handleWhatsAppAction } from "./action-runtime.js";
 import { createWhatsAppLoginTool } from "./agent-tools-login.js";
 import type { WebChannelStatus } from "./auto-reply/types.js";
+// FORK 2026-05-01: backend selector decides Baileys vs. whatsmeow at startAccount.
+import { isWhatsmeowBackend } from "./backend-selector.js";
 import {
   listWhatsAppDirectoryGroupsFromConfig,
   listWhatsAppDirectoryPeersFromConfig,
@@ -715,6 +717,26 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const account = ctx.account;
+      // FORK 2026-05-01: route to whatsmeow monitor when the backend env flag
+      // is set; the Baileys monitor would no-op against the missing creds.json
+      // and leave connected:false forever after a successful QR pair.
+      if (isWhatsmeowBackend()) {
+        ctx.log?.info(`[${account.accountId}] starting provider (whatsmeow)`);
+        const { monitorWebChannelWm } = await import("./auto-reply/monitor-wm.js");
+        return monitorWebChannelWm(
+          getWhatsAppRuntime().logging.shouldLogVerbose(),
+          undefined,
+          true,
+          undefined,
+          ctx.runtime,
+          ctx.abortSignal,
+          {
+            statusSink: (next: WebChannelStatus) =>
+              ctx.setStatus({ accountId: ctx.accountId, ...next }),
+            accountId: account.accountId,
+          },
+        );
+      }
       const { e164, jid } = (await loadWhatsAppChannelRuntime()).readWebSelfId(account.authDir);
       const identity = e164 ? e164 : jid ? `jid ${jid}` : "unknown";
       ctx.log?.info(`[${account.accountId}] starting provider (${identity})`);

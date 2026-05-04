@@ -83,6 +83,74 @@ export function createWebOnMessageHandler(params: {
   };
 
   return async (msg: WebInboundMsg) => {
+    // FORK 2026-05-03: trigger gate + third-party guard prepend.
+    //   - If chat is in noPrefixChats: any allowlisted sender triggers.
+    //   - Else: body must start with triggerPrefix (case-insensitive).
+    //   - For non-owner senders: prepend thirdPartyGuardPrompt to the body.
+    // Owner status comes from msg.fromMe; allowlist gating already happened
+    // upstream in checkInboundAccessControl.
+    {
+      const liveCfg = getRuntimeConfig();
+      const wa = (liveCfg.channels?.whatsapp ?? {}) as {
+        noPrefixChats?: string[];
+        triggerPrefix?: string;
+        thirdPartyGuardPrompt?: string;
+      };
+      const noPrefixChats = wa.noPrefixChats ?? [];
+      const triggerPrefix = (wa.triggerPrefix ?? "").trim();
+      const guardPrompt = wa.thirdPartyGuardPrompt ?? "";
+      const chatJid = msg.conversationId ?? msg.from;
+      const isOwner = msg.fromMe === true;
+      const inNoPrefix = noPrefixChats.includes(chatJid);
+      const body = msg.body ?? "";
+      const lowerBody = body.toLowerCase().trimStart();
+      const lowerPrefix = triggerPrefix.toLowerCase();
+      const hasPrefix =
+        lowerPrefix.length > 0 &&
+        (lowerBody === lowerPrefix ||
+          lowerBody.startsWith(`${lowerPrefix} `) ||
+          lowerBody.startsWith(`${lowerPrefix},`) ||
+          lowerBody.startsWith(`${lowerPrefix}.`) ||
+          lowerBody.startsWith(`${lowerPrefix}!`) ||
+          lowerBody.startsWith(`${lowerPrefix}?`) ||
+          lowerBody.startsWith(`${lowerPrefix}:`));
+
+      if (!inNoPrefix && !hasPrefix) {
+        console.log(
+          `[wa-trigger] silent (no-prefix-chat=false body-prefix=false): chat=${chatJid} bodyHead=${JSON.stringify(body.slice(0, 40))}`,
+        );
+        return;
+      }
+
+      let workingBody = body;
+      // Strip the trigger word so Jarvis doesn't see redundant "jarvis ..." in
+      // the message envelope when the prefix was the gate (only outside no-prefix
+      // chats — inside them, body is left untouched).
+      if (hasPrefix && !inNoPrefix) {
+        const original = body.trimStart();
+        const stripped = original.slice(triggerPrefix.length).replace(/^[\s,.!?:]+/, "");
+        // Preserve any leading whitespace that was in the original body.
+        const leadingWs = body.length - body.trimStart().length;
+        workingBody = body.slice(0, leadingWs) + stripped;
+      }
+
+      if (!isOwner && guardPrompt) {
+        const senderName = msg.senderName ?? msg.pushName ?? "unknown";
+        const senderId = msg.senderE164 ?? msg.senderJid ?? "unknown";
+        const filledGuard = guardPrompt
+          .replaceAll("{senderName}", senderName)
+          .replaceAll("{senderId}", senderId);
+        workingBody = `${filledGuard}\n\nMessage:\n${workingBody}`;
+      }
+
+      if (workingBody !== body) {
+        msg.body = workingBody;
+      }
+      console.log(
+        `[wa-trigger] firing owner=${isOwner} inNoPrefix=${inNoPrefix} hasPrefix=${hasPrefix} chat=${chatJid}`,
+      );
+    }
+
     const conversationId = msg.conversationId ?? msg.from;
     const peerId = resolvePeerId(msg);
     // Fresh config for bindings lookup; other routing inputs are payload-derived.

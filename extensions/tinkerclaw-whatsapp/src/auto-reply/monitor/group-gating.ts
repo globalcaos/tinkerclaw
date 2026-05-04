@@ -169,7 +169,21 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     sessionKey: params.sessionKey,
     conversationId: params.conversationId,
   });
-  const requireMention = activation !== "always";
+  // FORK 2026-05-03: chats in noPrefixChats act as if activation="always" — no
+  // mention/tag/prefix required, allowlisted senders trigger by typing. The
+  // body-prefix gate already ran in createWebOnMessageHandler; this just
+  // ensures the legacy mention-required path doesn't undo that decision for
+  // chats explicitly opted into the no-prefix list.
+  const noPrefixChats =
+    (params.cfg as { channels?: { whatsapp?: { noPrefixChats?: string[] } } }).channels?.whatsapp
+      ?.noPrefixChats ?? [];
+  const inNoPrefixList = noPrefixChats.includes(params.conversationId);
+  const requireMention = activation !== "always" && !inNoPrefixList;
+  if (inNoPrefixList) {
+    console.log(
+      `[wa-trigger] group-gating: skipping mention requirement (noPrefixChats match) chat=${params.conversationId}`,
+    );
+  }
   const replyContext = getReplyContext(params.msg, params.authDir);
   const sharedNumberSelfChat = params.selfChatMode === true;
   // Detect reply-to-bot: compare JIDs, LIDs, and E.164 numbers.

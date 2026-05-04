@@ -576,7 +576,17 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
 
         pushStart();
         pushThinkingEnd();
-        pushTextEnd();
+        // FORK 2026-05-04 (truncation fix): pushTextEnd() used to fire HERE,
+        // before the tail-recover reconciliation below. That caused the
+        // text_end event (and the consumer's force=true block-chunker drain)
+        // to land on the streamed-scratch text — typically a 100-byte
+        // preamble — so when tail-recover later emitted text_delta with the
+        // 2KB+ result_text, those late deltas arrived AFTER text_end.
+        // Downstream pi-embedded-subscribe.handleMessageEnd then skipped the
+        // safety re-send because lastBlockReplyText was already set, silently
+        // dropping the actual answer. Now pushTextEnd() fires only after the
+        // result is reconciled (lines below + the error path), so text_end
+        // always carries the final accumulated text.
 
         const result = finalLine as CcStreamStdoutResult;
         const usage = buildUsage(result.usage);
@@ -619,6 +629,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           // replaces any partial streamed content with it. No need to keep
           // flushing text_start/end events — the message_end event drives
           // the UI's final render.
+          pushTextEnd();
           stream.push({ type: "done", reason: "stop", message: finalMessage });
           return;
         }
@@ -680,6 +691,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             `emit done reason=stop content.len=${finalMessage.content.length} text_block=${finalMessage.content.some((c) => (c as { type?: string }).type === "text")}`,
           );
         }
+        pushTextEnd();
         stream.push({ type: "done", reason: "stop", message: finalMessage });
       } catch (err) {
         worker.off("stream_line", onStreamLine);

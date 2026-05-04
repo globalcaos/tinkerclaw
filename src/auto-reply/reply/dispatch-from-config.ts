@@ -1057,6 +1057,10 @@ export async function dispatchReplyFromConfig(
     const replyConfig = withFullRuntimeReplyConfig(
       params.configOverride ? (applyMergePatch(cfg, params.configOverride) as OpenClawConfig) : cfg,
     );
+    // FORK 2026-05-03: dichotomic-search markers — capture replyResolver
+    // shape on entry/exit so we can see whether the agent actually produced
+    // a reply payload and what kind/length came back.
+    console.log(`[DELIVERY-DICHOTOMY] replyResolver invoked`);
     const replyResult = await replyResolver(
       ctx,
       {
@@ -1259,6 +1263,9 @@ export async function dispatchReplyFromConfig(
       },
       replyConfig,
     );
+    console.log(
+      `[DELIVERY-DICHOTOMY] replyResolver returned: type=${typeof replyResult} isArray=${Array.isArray(replyResult)} truthy=${!!replyResult} keys=${replyResult && typeof replyResult === "object" ? Object.keys(replyResult).slice(0, 8).join(",") : "n/a"}`,
+    );
 
     if (ctx.AcpDispatchTailAfterReset === true) {
       // Command handling prepared a trailing prompt after ACP in-place reset.
@@ -1304,6 +1311,14 @@ export async function dispatchReplyFromConfig(
 
     const replies = replyResult ? (Array.isArray(replyResult) ? replyResult : [replyResult]) : [];
 
+    // FORK 2026-05-03: dichotomic-search markers for the WhatsApp inbound
+    // delivery gap. Jarvis's response was being silently dropped between
+    // agent_end and the wire send. These let us see which branch decides
+    // the final fate.
+    console.log(
+      `[DELIVERY-DICHOTOMY] entering reply loop: replyResult.exists=${!!replyResult} replies.count=${replies.length} suppressDelivery=${suppressDelivery}`,
+    );
+
     let queuedFinal = false;
     let routedFinalCount = 0;
     if (!suppressDelivery) {
@@ -1311,9 +1326,16 @@ export async function dispatchReplyFromConfig(
         // Suppress reasoning payloads from channel delivery — channels using this
         // generic dispatch path do not have a dedicated reasoning lane.
         if (reply.isReasoning === true) {
+          console.log(`[DELIVERY-DICHOTOMY] skipping reasoning reply`);
           continue;
         }
+        console.log(
+          `[DELIVERY-DICHOTOMY] calling sendFinalPayload kind=${(reply as { kind?: string }).kind ?? "?"} textLen=${(reply as { text?: string }).text?.length ?? 0}`,
+        );
         const finalReply = await sendFinalPayload(reply);
+        console.log(
+          `[DELIVERY-DICHOTOMY] sendFinalPayload returned queuedFinal=${finalReply.queuedFinal} routedFinalCount=${finalReply.routedFinalCount}`,
+        );
         queuedFinal = finalReply.queuedFinal || queuedFinal;
         routedFinalCount += finalReply.routedFinalCount;
       }
