@@ -60,6 +60,14 @@ const WhatsAppSharedSchema = z.object({
   groupPolicy: GroupPolicySchema.optional().default("allowlist"),
   triggerPrefix: z.string().optional(),
   triggerPrefixExempt: z.array(z.string()).optional(),
+  // FORK 2026-05-03: chats (DM JIDs and/or group JIDs) where no body prefix
+  // is required to trigger Jarvis. Outside this list, allowlisted senders
+  // (including the owner) must start their message with `triggerPrefix`.
+  noPrefixChats: z.array(z.string()).optional(),
+  // FORK 2026-05-03: optional security guard prepended to inbound text from
+  // third parties (non-owner senders). Two placeholders: {senderName} and
+  // {senderId}. Owner messages are never prepended.
+  thirdPartyGuardPrompt: z.string().optional(),
   historyLimit: z.number().int().min(0).optional(),
   dmHistoryLimit: z.number().int().min(0).optional(),
   dms: z.record(z.string(), DmConfigSchema.optional()).optional(),

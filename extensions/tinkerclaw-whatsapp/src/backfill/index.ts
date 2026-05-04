@@ -56,10 +56,18 @@ interface WhatsmeowLikeClient {
  * Uses the last-connected timestamp to determine actual downtime.
  */
 export function requestBackfill(client: WhatsmeowLikeClient, jid: string): void {
+  // FORK 2026-05-01: visible diagnostics — pino logger for this module was
+  // getting filtered out of the gateway journal, leaving us blind to whether
+  // backfill was actually firing. console.log always reaches systemd capture.
+  const visible = (msg: string, extra?: Record<string, unknown>) => {
+    console.log(`[wa-backfill] ${msg}${extra ? " " + JSON.stringify(extra) : ""}`);
+  };
+  visible("requestBackfill invoked", { jid });
   void (async () => {
     try {
       const db = getDb();
       if (!db) {
+        visible("aborted — getDb() returned null");
         return;
       }
 
@@ -72,12 +80,15 @@ export function requestBackfill(client: WhatsmeowLikeClient, jid: string): void 
       } else {
         downtimeSeconds = 3600;
         logger.info("No last-connected timestamp found — assuming 1h downtime");
+        visible("no last-connected anchor; assuming 1h downtime");
       }
 
       const downtimeMinutes = Math.round(downtimeSeconds / 60);
+      visible("computed downtime", { downtimeSeconds, downtimeMinutes });
 
       if (downtimeSeconds < 300) {
         logger.info({ downtimeMinutes }, "Backfill skipped — downtime under 5 minutes");
+        visible("skipped — downtime < 5 min", { downtimeMinutes });
         return;
       }
 
@@ -104,6 +115,7 @@ export function requestBackfill(client: WhatsmeowLikeClient, jid: string): void 
 
       if (staleChats.length === 0) {
         logger.info({ downtimeMinutes }, "No stale chats found for backfill");
+        visible("no stale chats found", { downtimeMinutes });
         return;
       }
 
@@ -111,6 +123,11 @@ export function requestBackfill(client: WhatsmeowLikeClient, jid: string): void 
         { count: staleChats.length, downtimeMinutes },
         "Found stale chats — requesting backfill (DMs + groups)",
       );
+      visible("found stale chats — dispatching", {
+        count: staleChats.length,
+        downtimeMinutes,
+        oldestChat: staleChats[staleChats.length - 1]?.chat,
+      });
 
       let delay = 0;
       for (const chat of staleChats) {
@@ -140,9 +157,11 @@ export function requestBackfill(client: WhatsmeowLikeClient, jid: string): void 
             })
             .then(() => {
               logger.info({ chat: chat.chat }, "Backfill request sent");
+              visible("backfill request sent", { chat: chat.chat });
             })
             .catch((err: unknown) => {
               logger.warn({ chat: chat.chat, error: String(err) }, "Backfill request failed");
+              visible("backfill request failed", { chat: chat.chat, error: String(err) });
             });
         }, delay);
       }

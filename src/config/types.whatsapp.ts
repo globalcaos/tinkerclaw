@@ -124,6 +124,10 @@ type WhatsAppConfigCore = {
   messagePrefix?: string;
   /** Outbound response prefix override. */
   responsePrefix?: string;
+  /** FORK 2026-05-03: chat JIDs (DMs or groups) where no body prefix is required to trigger Jarvis. */
+  noPrefixChats?: string[];
+  /** FORK 2026-05-03: optional security guard prepended to inbound text from non-owner senders. */
+  thirdPartyGuardPrompt?: string;
 };
 
 export type WhatsAppConfig = WhatsAppConfigCore &

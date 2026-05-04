@@ -42,6 +42,23 @@ export const DEFAULT_DISALLOWED_TOOLS = [
 /** Permission mode passed to claude so it doesn't wait for human approval on tool calls. */
 export const DEFAULT_PERMISSION_MODE = "bypassPermissions" as const;
 
+/**
+ * FORK 2026-05-04: extra plugin directories the cc-bridge passes to
+ * claude-cli via `--plugin-dir`. Without this, Jarvis cannot see any of the
+ * 88 skills in `~/.openclaw/workspace/skills/` (notably `outlook-hack` and
+ * `teams-hack`) because claude-code only loads skills from PLUGINS, not from
+ * `${cwd}/.claude/skills/`. The wrapper at the path below has a `skills`
+ * symlink pointing at the workspace skills dir, giving claude-code the
+ * expected `<plugin-root>/skills/<name>/SKILL.md` layout.
+ *
+ * If the wrapper directory doesn't exist on a host (fresh clone, different
+ * deployment), claude-cli logs a warning and continues — Jarvis just sees
+ * fewer skills. Safe default.
+ */
+export const DEFAULT_PLUGIN_DIRS = [
+  path.join(homedir(), ".openclaw", "jarvis-plugins", "jarvis-skills"),
+];
+
 // FORK (2026-04-21): per-model contextWindow. Previously catalog.ts hardcoded
 // 200_000 for every model, which made pi-agent-core think Opus 4.7 had the
 // old 200k window and triggered preemptive compaction on turn 0 the moment

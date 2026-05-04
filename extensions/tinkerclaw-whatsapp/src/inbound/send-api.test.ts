@@ -260,4 +260,99 @@ describe("createWebSendApi", () => {
       }),
     );
   });
+
+  // FORK 2026-05-02: programmatic outbound persona prefix.
+  describe("outbound persona prefix", () => {
+    it("prepends the configured prefix to plain text bodies", async () => {
+      const prefixed = createWebSendApi({
+        sock: { sendMessage, sendPresenceUpdate },
+        defaultAccountId: "main",
+        resolveOutboundPrefix: () => "🤖",
+      });
+      await prefixed.sendMessage("+1555", "hello world");
+      expect(sendMessage).toHaveBeenCalledWith("1555@s.whatsapp.net", {
+        text: "🤖 hello world",
+      });
+    });
+
+    it("is idempotent — does not double-prefix already-prefixed text", async () => {
+      const prefixed = createWebSendApi({
+        sock: { sendMessage, sendPresenceUpdate },
+        defaultAccountId: "main",
+        resolveOutboundPrefix: () => "🤖",
+      });
+      await prefixed.sendMessage("+1555", "🤖 already labeled");
+      expect(sendMessage).toHaveBeenCalledWith("1555@s.whatsapp.net", {
+        text: "🤖 already labeled",
+      });
+    });
+
+    it("prefixes media captions but not empty captions", async () => {
+      const prefixed = createWebSendApi({
+        sock: { sendMessage, sendPresenceUpdate },
+        defaultAccountId: "main",
+        resolveOutboundPrefix: () => "🤖",
+      });
+      const img = Buffer.from("png");
+      await prefixed.sendMessage("+1555", "look at this", img, "image/png");
+      expect(sendMessage).toHaveBeenCalledWith(
+        "1555@s.whatsapp.net",
+        expect.objectContaining({
+          image: img,
+          caption: "🤖 look at this",
+        }),
+      );
+      sendMessage.mockClear();
+      await prefixed.sendMessage("+1555", "", img, "image/png");
+      expect(sendMessage).toHaveBeenCalledWith(
+        "1555@s.whatsapp.net",
+        expect.objectContaining({
+          image: img,
+          caption: undefined,
+        }),
+      );
+    });
+
+    it("prefixes the poll question only", async () => {
+      const prefixed = createWebSendApi({
+        sock: { sendMessage, sendPresenceUpdate },
+        defaultAccountId: "main",
+        resolveOutboundPrefix: () => "🤖",
+      });
+      await prefixed.sendPoll("+1555", { question: "lunch?", options: ["yes", "no"] });
+      expect(sendMessage).toHaveBeenCalledWith(
+        "1555@s.whatsapp.net",
+        expect.objectContaining({
+          poll: expect.objectContaining({
+            name: "🤖 lunch?",
+            values: ["yes", "no"],
+          }),
+        }),
+      );
+    });
+
+    it("does not prefix reactions (the reaction is the icon itself)", async () => {
+      const prefixed = createWebSendApi({
+        sock: { sendMessage, sendPresenceUpdate },
+        defaultAccountId: "main",
+        resolveOutboundPrefix: () => "🤖",
+      });
+      await prefixed.sendReaction("+1555", "msg-id", "👍", false);
+      expect(sendMessage).toHaveBeenCalledWith(
+        "1555@s.whatsapp.net",
+        expect.objectContaining({
+          react: expect.objectContaining({ text: "👍" }),
+        }),
+      );
+    });
+
+    it("no-ops cleanly when no prefix is configured (backward compat)", async () => {
+      // No resolveOutboundPrefix → pass through unchanged. Same shape as the
+      // existing non-prefix tests above.
+      await api.sendMessage("+1555", "no prefix here");
+      expect(sendMessage).toHaveBeenCalledWith("1555@s.whatsapp.net", {
+        text: "no prefix here",
+      });
+    });
+  });
 });
