@@ -1140,6 +1140,26 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Lifecycle-fields fix (commit `1d66f53705`, 2026-04-20):** `handleAgentStart` was reading `ctx.params.modelId / modelProvider / authProfileId`, but those fields were never declared on `SubscribeEmbeddedPiSessionParams` nor passed from `attempt.ts`. Every lifecycle `phase:"start"` event therefore went out with `model: undefined`, and the UI filter at `app.ts:1614` (`p.data?.model`) silently dropped the event for cc-bridge — anthropic/ollama only worked because another enrichment path happened to cover the gap. Fix adds the fields to the params type and forwards them in `attempt.ts`, so all 4 thinking indicators (chat "Opus", session panel, model glow, prefrontal tree) now animate for claude-code turns.
 - **Files:** `extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/pi-embedded-subscribe.types.ts`, `src/agents/pi-embedded-runner/run/attempt.ts` (forward model/provider/profile)
 
+**§5.66a Workspace skills exposed to Jarvis via `--plugin-dir` (FORK 2026-05-04).**
+
+claude-code only loads skills from PLUGINS — it does NOT scan `${cwd}/.claude/skills/` or `~/.claude/skills/` for user-level skills. Jarvis runs at cwd `~/.openclaw/jarvis-workspace/` and saw zero workspace skills until this fix. **Symptom**: the user asked "can you read my outlook now?" and Jarvis answered "No — I don't have an Outlook connector wired up here. Available mail/calendar tools are Gmail, Google Calendar, Google Drive (deferred MCP auth tools)." The 88 skills at `~/.openclaw/workspace/skills/` (including `outlook-hack` and `teams-hack`) were invisible.
+
+**Wrapper plugin layout** at `~/.openclaw/jarvis-plugins/jarvis-skills/`:
+
+- `.claude-plugin/plugin.json` — minimal manifest (`{name, description, version, license}`). REQUIRED — without it claude-cli silently doesn't recognize the directory as a plugin.
+- `skills/` — symlink to `~/.openclaw/workspace/skills/`. Re-exports the canonical catalog without copying.
+
+**cc-bridge wiring**:
+
+- `extensions/tinkerclaw-cc-bridge/src/defaults.ts` — `DEFAULT_PLUGIN_DIRS = [<wrapper path>]`.
+- `extensions/tinkerclaw-cc-bridge/src/worker.ts` — `WorkerSpawnParams.pluginDirs` field; spawn now pushes `--plugin-dir <path>` per entry. Repeatable for additional plugin dirs in future.
+
+**Verified end-to-end:** Jarvis confirms `jarvis-skills:outlook-hack` loads via the Skill tool; on the practical "can you read my outlook?" prompt, his first move is `Skill jarvis-skills:outlook-hack`.
+
+**Diagnostic gotcha — skills are discoverable but not enumerable in this mode.** claude-code in `-p`+stream-json (cc-bridge's mode) does NOT inject an "available skills" system reminder beyond the `using-superpowers` content from the SessionStart hook. Asking Jarvis "list every skill" can yield a hallucinated "none" because the model has no enumerable list in context — only the `Skill` tool. Ask instead "what would you do for X?" and the right skill name appears via discovery. Future improvement candidate: append a compact skill index (names + 1-line descriptions) to `--append-system-prompt`.
+
+**Don't regress:** if you ever move skills to a different path, update `DEFAULT_PLUGIN_DIRS` AND keep the manifest at `<plugin-root>/.claude-plugin/plugin.json`. Symlink-only is not enough.
+
 ### 5.67 Amygdala + Fractal Injection Pipeline (2026-04-18)
 
 - **Status:** `DEPLOYED`
@@ -1306,6 +1326,15 @@ No functional loss: `claude-cli` maintains its own tool catalog via `--permissio
   - Not the same as §5.74's tool-call replay. That fix landed tool_use/tool_result entries in the jsonl; this fix lands the assistant TEXT in the jsonl. They compose: `/new` history now shows user prompt → tool bubbles (from §5.74) → preamble + briefing (from §5.73a).
   - Not retroactive — turns persisted before this commit are stuck with whatever truncated text made it. Future turns are whole.
 - **Files:** `extensions/tinkerclaw-cc-bridge/src/stream.ts` (per-block maps, multi-block parser branches, `result.result` reconciliation in the success path).
+
+**§5.73b cc-bridge truncation — `text_end` fired before tail-recover (FORK 2026-05-04).**
+
+- **Status:** `DEPLOYED`
+- **Symptom:** Multi-step turns where the streamed scratch text diverged from `result.result` only delivered the streamed preamble (~100 B) to the user, even though the cc-bridge logged `tail-recover: streamed 105B, result_text 2457B, replacing (diverged)` and `done.message.content` carried the full text.
+- **Root cause:** `pushTextEnd()` was called immediately after `worker.send` resolved (old line 579), BEFORE the tail-recover reconciliation block (lines 626-665). The downstream `pi-embedded-subscribe.handleMessageEnd` (`src/agents/pi-embedded-subscribe.handlers.messages.ts:841`) drained its block-chunker on `text_end` and recorded `lastBlockReplyText`. The late `text_delta` from the tail-recover then arrived AFTER `text_end` (a protocol violation), and the message_end safety re-send was guarded by `lastBlockReplyText != null`, silently dropping the actual answer.
+- **Fix:** removed the early `pushTextEnd()`; added it just before each `done` push (success path AFTER the tail-recover, error path AFTER the envelope reset; catch block already had it). Net: `text_end` always carries the FINAL accumulated text.
+- **Don't regress:** `pushTextEnd` is guarded by `if (!textStarted || textEnded) return;`, so call sites are idempotent — if you ADD a new exit path that emits `done`, you also need a `pushTextEnd()` immediately before it.
+- **Files:** `extensions/tinkerclaw-cc-bridge/src/stream.ts`.
 
 ### 5.74 cc-bridge Tool Call Replay in Session History (2026-04-25)
 
@@ -2447,34 +2476,101 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **senderE164 Resolution:** Resolves sender phone number for `fromMe` group messages where Baileys lacks the `participant` field.
 - **Files:** `extensions/whatsapp/src/`, `src/whatsapp-history/`
 
-### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30, updated 2026-04-12)
+### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30, **rewritten 2026-05-03, prefix story added 2026-05-04**)
 
-- **Status:** `DEPLOYED`
-- **File:** `extensions/whatsapp/src/inbound/access-control.ts` (upstream) — being migrated to `extensions/tinkerclaw-whatsapp/` (plugin created, not yet wired)
-- **Config keys:** `channels.whatsapp.triggerPrefix`, `channels.whatsapp.allowFrom`, `channels.whatsapp.groupAllowFrom`, `channels.whatsapp.dmPolicy`, `channels.whatsapp.groupPolicy`
-- **Unified model:** One decision tree for both DMs and groups. The `triggerPrefix` (configured per-agent, no hardcoded name) is the universal gate for non-self-chat interactions.
+- **Status:** `DEPLOYED` — applies to the whatsmeow-backed `extensions/tinkerclaw-whatsapp/` plugin which now owns the `whatsapp` channel id.
+- **Files:** `extensions/tinkerclaw-whatsapp/src/inbound/access-control.ts` (sender allowlist gate, owner-fromMe bypass), `extensions/tinkerclaw-whatsapp/src/inbound/monitor.ts` (self-DM via LID rescue + chat-jid rewrite), `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/on-message.ts` (chat/prefix gate + guard prepend), `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/group-gating.ts` (mention requirement bypass for chats in `noPrefixChats`), `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts` (persona prefix module — single source for icon/name), `extensions/tinkerclaw-whatsapp/src/inbound/send-api.ts` + `extensions/tinkerclaw-whatsapp/src/auto-reply/deliver-reply.ts` (apply persona prefix on every outbound).
+- **Config keys:** `channels.whatsapp.allowFrom`, `channels.whatsapp.noPrefixChats`, `channels.whatsapp.triggerPrefix`, `channels.whatsapp.thirdPartyGuardPrompt`, `channels.whatsapp.messagePrefix`, `channels.whatsapp.dmPolicy`, `messages.groupChat.visibleReplies`. Deprecated/optional: `groupAllowFrom`, `groupPolicy`, `triggerPrefixExempt`.
 
-**4-Tier Access Control Model (2026-04-12):** First match wins. Agent identity is configured via `triggerPrefix` — no hardcoded "jarvis". Group exemption is **dynamic** (group name contains `triggerPrefix`, case-insensitive), not a static JID list. The old `triggerPrefixExempt` JID array is **deprecated** and will be removed from config in a future task.
+**Persona prefix (icon/AI-name) — `outbound-prefix.ts` (2026-05-04).**
 
-1. **Self-chat** — sender phone equals linked account phone → allowed, no prefix required.
-2. **Tier 1 — Owner DM** — `isFromMe` and not a group → allowed, no prefix required.
-3. **Tier 2 — Agent group** — group name contains `triggerPrefix` (case-insensitive) → allowed for senders in `groupAllowFrom`, no prefix required.
-4. **Tier 3 — Authorized DM** — sender in `allowFrom` → allowed WITH prefix.
-5. **Tier 4 — Everything else** — owner only, WITH prefix.
+Every WhatsApp message Jarvis sends is decorated with a configurable persona string at the wire layer — the agent cannot "forget" the icon. Single source of truth lives in `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts`:
 
-**Decision table:**
+- **Code default** — `DEFAULT_OUTBOUND_PREFIX = "🤖"`. Edit this constant to change the persona for every clone of the fork.
+- **Per-deployment override** — set `channels.whatsapp.messagePrefix` in `~/.openclaw/openclaw.json`. Recommended path; survives upstream merges. Examples: `"🤖"`, `"🤖 Jarvis:"`, `"🦾 Atlas —"`.
+- **Resolution order** — per-account `messagePrefix` (via `accounts.ts:resolveWhatsAppAccount`) → channel-level `messagePrefix` → global `messages.messagePrefix` → `DEFAULT_OUTBOUND_PREFIX`.
+- **Applied at TWO outbound surfaces**, both consuming the shared module:
+  - `inbound/send-api.ts:createWebSendApi` — explicit sends initiated via `openclaw message send`, the architect's `chat.send` dispatch, etc.
+  - `auto-reply/deliver-reply.ts:deliverWebReply` — auto-reply path for inbound-triggered Jarvis runs (DM and group replies). Prefix applied **before** markdown conversion + chunking so it counts toward the chunk-size budget and survives md→WA conversion. Media captions and audio-trailing text are covered automatically because they're built from the same prefixed `textChunks`.
+- **Idempotent** — text already starting with the configured prefix is left untouched, so Jarvis adding the icon himself doesn't double-apply.
+- **Skipped for** — empty bodies, reactions (the reaction's emoji is the icon), presence/composing events.
 
-| Who                | Where                    | Prefix needed? | Result                                         |
-| ------------------ | ------------------------ | -------------- | ---------------------------------------------- |
-| Self-chat          | Message yourself         | No             | Always triggers                                |
-| the user (fromMe)     | Any DM                   | No             | Always triggers (Tier 1)                       |
-| the user (fromMe)     | Agent group (name match) | No             | Triggers (Tier 2, bypasses prefix)             |
-| the user (fromMe)     | Non-agent group          | "jarvis ..."   | Triggers (Tier 4)                              |
-| Allowlisted person | Agent group (name match) | No             | Triggers (sender must be in groupAllowFrom)    |
-| Allowlisted person | Non-agent group          | "jarvis ..."   | Triggers (sender must be in groupAllowFrom)    |
-| Allowlisted person | DM                       | "jarvis ..."   | Triggers (Tier 3, sender must be in allowFrom) |
-| Allowlisted person | Anywhere, no prefix      | —              | Ignored (unless agent group)                   |
-| Anyone else        | Anywhere                 | —              | Always blocked, even with prefix               |
+**Unified model — no DM/group distinction in code (2026-05-03).**
+
+**Two whitelists drive the decision:**
+
+1. **`allowFrom`** — set of senders (E.164 phones, JIDs, LIDs) allowed to trigger Jarvis at all. Owner is implicit. Anyone outside this list is dropped silently at access-control.
+2. **`noPrefixChats`** — set of chat JIDs (DMs _and/or_ groups) where no body-prefix or @mention is required to trigger. Outside this list, allowlisted senders (including the owner) must start the message with `triggerPrefix` (e.g. `jarvis …`) — otherwise dropped silently after the trigger gate.
+
+**Owner behavior (`isFromMe`):**
+
+- Always passes the sender allowlist (access-control fast-path: `if (isFromMe) → allowed` regardless of chat type — `inbound/access-control.ts:checkInboundAccessControl`).
+- Still subject to the chat/prefix gate (must be in `noPrefixChats` _or_ body starts with `triggerPrefix`).
+- Never gets the third-party guard prepended.
+
+**Third-party (allowlisted but not owner) behavior:**
+
+- Allowlist must include their identifier (E.164 _or_ `…@lid`). LID-only matches don't auto-resolve to E.164.
+- Subject to the chat/prefix gate identically to the owner.
+- Their message body is prepended with `thirdPartyGuardPrompt` before reaching Jarvis. Two placeholders: `{senderName}`, `{senderId}`. Default text frames the request as potentially adversarial and instructs Jarvis to evaluate legitimacy + safety before acting/disclosing.
+
+**Decision matrix:**
+
+| Sender             | Chat in `noPrefixChats` | Body starts with `triggerPrefix` | Trigger?  | Guard prepended? |
+| ------------------ | ----------------------- | -------------------------------- | --------- | ---------------- |
+| Owner (`isFromMe`) | yes                     | any                              | ✅        | no               |
+| Owner              | no                      | yes                              | ✅        | no               |
+| Owner              | no                      | no                               | ❌ silent | –                |
+| Allowlisted other  | yes                     | any                              | ✅        | yes              |
+| Allowlisted other  | no                      | yes                              | ✅        | yes              |
+| Allowlisted other  | no                      | no                               | ❌ silent | –                |
+| Not allowlisted    | any                     | any                              | ❌ silent | –                |
+
+**Auto-seed of `noPrefixChats`:** on first config bootstrap, the helper script seeds `noPrefixChats` with (a) the owner's self-DM JID and (b) every group whose name contains `triggerPrefix` (case-insensitive — e.g. all `Jarvis 🤖 …` groups). Curated manually thereafter; new matching groups can be added by hand or via re-running the seed script.
+
+**Self-DM via LID rescue — owner-LID gate (FORK 2026-05-04, fixes sister-DM trigger bug).**
+
+Whatsmeow occasionally delivers the owner's true self-DM with `chat=<owner-lid>@lid` instead of the canonical `<owner-e164>@s.whatsapp.net`. To keep downstream routing consistent, `inbound/monitor.ts:normalizeInboundMessage` rewrites the chat JID + `msg.key.remoteJid` to the canonical phone JID — but ONLY when the LID is positively identified as the owner's. Two signals (priority order):
+
+1. `self.lid` populated AND equal to `remoteJid` — authoritative.
+2. **Fallback (config truth):** `remoteJid` listed in BOTH `channels.whatsapp.noPrefixChats` AND `channels.whatsapp.allowFrom`. Both lists declaring the LID as owner's self-chat alias is treated as positive identification. Required because `sock.user.lid` is currently null on whatsmeow auth state.
+
+If neither matches, the rescue is skipped — but **`from` is set to the LID itself** (FORK 2026-05-04 follow-up). This keeps the owner-prefix path open: the user can still say `Jarvis …` from a non-self LID chat (e.g. a contact's DM delivered via their LID) and trigger normally. Sister's-LID is not in `noPrefixChats`, so the prefix gate decides — silent without `Jarvis …`, fires with it. The reply routes back to the same LID, so the peer sees the answer (user directive's "always reply in the same chat that triggered him" rule). Sister's _own_ (fromMe=false) messages drop earlier at `resolveInboundJid → null`, so they never reach this branch.
+
+**Companion semantic fix:** for any `fromMe=true` DM, `senderE164` falls back to `self.e164` (was: `from`). Without this, the sender-profile prefetch tries to resolve the peer's profile when the body actually came from the user.
+
+**Why this matters:** The pre-2026-05-04 rescue accepted ANY `@lid` chat with `fromMe=true`. When the owner DMed a non-listed contact (sister, friend) whose chat was delivered as `<their-lid>@lid`, the rescue rewrote that chat to the owner's self-DM. Two cascading bugs followed: (1) trigger gate fired (self-DM is in `noPrefixChats`) → Jarvis replied to a non-Jarvis-addressed message; (2) reply routed back to the rewritten chat (owner's self-DM) instead of the original peer chat — leak of reply into wrong chat. Pinned and fixed at `inbound/monitor.ts:normalizeInboundMessage` (LID rescue block).
+
+**Pipeline (where each gate fires):**
+
+1. `checkInboundAccessControl` (access-control.ts) — drops messages from non-allowlisted senders. Owner-fromMe early-returns `allowed=true`.
+2. `createWebOnMessageHandler` (on-message.ts) — applies the `noPrefixChats` + `triggerPrefix` chat/prefix gate. Strips the trigger word from the body when the prefix was the gate. Prepends `thirdPartyGuardPrompt` for non-owner senders.
+3. `applyGroupGating` (group-gating.ts) — for groups outside `noPrefixChats`, still requires a mention/tag. For groups in `noPrefixChats`, mention requirement is bypassed.
+
+**Observable journal log lines (with the diagnostic taps live):**
+
+- `[wa-debug] owner-fromMe bypass: group=… from=… chat=…` — access-control fast-path fired.
+- `[wa-debug] access: allowed=true|false …` — access-control decision.
+- `[wa-debug] self-DM via LID rescue: chat=…(matchesSelfLid=… matchesConfig=…)` — rescue fired (owner-LID identified, chat rewritten to canonical phone JID).
+- `[wa-debug] LID rescue SKIPPED: chat=… …` — rescue declined (LID not the owner's). Message will drop at `if (!from)`.
+- `[wa-trigger] firing owner=… inNoPrefix=… hasPrefix=… chat=…` — chat/prefix gate passed; agent dispatch begins.
+- `[wa-trigger] silent (no-prefix-chat=false body-prefix=false)` — message dropped at chat/prefix gate.
+- `[wa-trigger] group-gating: skipping mention requirement (noPrefixChats match)` — group-gating bypassed for noPrefixChats chat.
+
+**Inbound envelope enrichment (FORK 2026-05-04 — sender profile + recent thread + people-RPC hint).**
+
+Every WhatsApp inbound that reaches the agent carries a structured preamble built in `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/message-line.ts:buildInboundLine`:
+
+1. **`[people-profiles]` hint** with the EXACT CLI to look up additional people: `openclaw gateway call people.resolve --params '{"query":"<name>"}'` and `people.read --params '{"slug":"<slug>"}'`. Necessary because there are no `people.*` tools in claude-code's catalog — the route is openclaw-gateway-call via Bash.
+2. **`[sender-profile slug=<slug>] … [/sender-profile]`** — pre-resolved profile of whoever sent the message. Fields: display name, role, manual context, rolling summary (~30d), recent asks. Built by `people-prefetch.ts` which reads `~/.openclaw/workspace/memory/people/_aliases.json` (60s LRU cache), matches by phone-suffix (≥9 digits) or `@lid`, then reads `<slug>.md`. Self-contained: no cross-plugin import of `tinkerclaw-people` (tolerates the people plugin being absent or its `peopleDir` overridden).
+3. **`[recent-thread last=N] … [/recent-thread]`** — last 6 messages in this chat (excluding the current one), built by `thread-prefetch.ts` querying `whatsapp-history.db` via the shared `getDb()` singleton. Newest-first SQL, rendered oldest-first, ~1.4 KB cap, lines clipped to 220 chars. Loose `chat_jid = ? OR LIKE %digits%` match handles bare-E.164 vs full-JID inputs.
+4. The standard `[<channel> | <chatType>] from:<id> ts:<…>` envelope wrapper, `messagePrefix`-prefixed body, and `[Replying to …]` reply-context block.
+
+**Failure mode:** every prefetch is wrapped in try/catch returning empty — inbound processing must never break because of a memory or DB read failure. Empty profile sections (`_(empty — first cron run will populate.)_`) are detected and skipped, so seeded-but-not-yet-summarized profiles don't pollute the envelope.
+
+**Why this matters:** the agent grounds in _who_ is writing and _what was just said_ without needing a tool round-trip. The hint at the top still teaches him to call `people.resolve` for _other_ people referenced in the body. Together, the three blocks shave the cold-start cost of reconstructing local context.
+
+**Don't regress:** the `fromMe` skip on the hint was REMOVED on 2026-05-04 — the user's own messages must also receive the preamble because he routinely asks Jarvis about _other_ people. If you reintroduce a `fromMe` filter, only filter the recent-thread block, never the hint or sender-profile.
 
 **New standalone plugin — `extensions/tinkerclaw-whatsapp/` (2026-04-12):** Fork WhatsApp code extracted into a self-contained plugin. Uses whatsmeow-node (Go subprocess) as the only backend; Baileys adapter translates events so existing message processing code works unchanged. Includes SQLite history with FTS5, multi-agent routing/congestion/budget/lifecycle, and the 4-tier access model above. **Status:** created and builds, not yet wired into gateway config — upstream `extensions/whatsapp/` still runs. Enabling the new plugin requires disabling the upstream extension (both claim channel ID `whatsapp`). Full localization deferred: plugin currently re-exports `whatsappPlugin` and `monitorWebInbox` from upstream. See `~/.openclaw/workspace/memory/knowledge/tinkerclaw-whatsapp-plugin.md`.
 

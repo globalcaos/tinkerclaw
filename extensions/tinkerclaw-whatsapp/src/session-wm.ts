@@ -39,8 +39,9 @@ async function loadCreateClient(): Promise<(opts: { store: string }) => Whatsmeo
   } catch (err) {
     throw new Error(
       "whatsmeow-node is not installed. Install the optional Go addon with " +
-      "`pnpm add @whatsmeow-node/whatsmeow-node` (requires Go toolchain). " +
-      `Underlying error: ${err instanceof Error ? err.message : String(err)}`, { cause: err },
+        "`pnpm add @whatsmeow-node/whatsmeow-node` (requires Go toolchain). " +
+        `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 }
@@ -93,6 +94,28 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
       logger.debug({ wmLevel: level }, msg);
     });
   }
+  // FORK 2026-05-03 (re-enabled): full payload event tap for self-DM diagnosis.
+  // Earlier conclusion (whatsmeow doesn't fire `message` for peer_msg) is
+  // worth re-verifying since group fromMe text DOES make it through. Logs
+  // the FULL event payload to journal so we can grep for actual body text.
+  const allEvents = [
+    "message",
+    "message:receipt",
+    "history_sync",
+    "chat_presence",
+    "presence",
+    "stream_error",
+  ];
+  for (const ev of allEvents) {
+    client.on(ev, (payload: unknown) => {
+      try {
+        const summary = JSON.stringify(payload).slice(0, 1500);
+        console.log(`[wm-event-full] ${ev}: ${summary}`);
+      } catch {
+        console.log(`[wm-event-full] ${ev}: <unserializable>`);
+      }
+    });
+  }
 
   // ── Error safety net ──
   client.on("error", (err) => {
@@ -107,8 +130,18 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
     logger.warn({ error: String(err) }, "whatsmeow history capture failed to bind");
   }
 
-  // Init (loads store, but does not connect)
-  await client.init();
+  // Init (loads store, but does not connect). InitResult carries the stored
+  // self JID for already-paired sessions — this is DETERMINISTIC, unlike the
+  // "connected" event listener which raced on some boots and left
+  // sock.user.id=null. Stash on the client so the adapter can seed selfJid
+  // from a known-non-null source.
+  const initResult = await client.init();
+  if (initResult?.jid) {
+    (client as unknown as { __initJid?: string }).__initJid = initResult.jid;
+    console.log(`[wm-session] init() returned jid=${initResult.jid}`);
+  } else {
+    console.log("[wm-session] init() returned no jid (unpaired or fresh store)");
+  }
 
   activeClient = client;
   return client;
@@ -128,7 +161,14 @@ export async function connectWmClient(client: WhatsmeowClient, timeoutMs = 60_00
   }
 }
 
-/** Gracefully disconnect. */
+/** Gracefully disconnect AND terminate the Go subprocess.
+ *
+ * FORK 2026-05-01: whatsmeow-node's `client.disconnect()` only sends a
+ * "disconnect" IPC message — the Go subprocess keeps running. On every
+ * reconnect cycle that left the prior subprocess alive, so over a day
+ * we accumulated 6 leaked `whatsmeow-node` processes all holding the
+ * same SQLite store open. We now also call `client.close()` (which does
+ * `this.proc.kill()`) so the subprocess actually exits. */
 export async function disconnectWmClient(client?: WhatsmeowClient): Promise<void> {
   const c = client ?? activeClient;
   if (!c) {
@@ -136,6 +176,12 @@ export async function disconnectWmClient(client?: WhatsmeowClient): Promise<void
   }
   try {
     await c.disconnect();
+  } catch {
+    // best-effort
+  }
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: optional addon, see top-of-file structural type
+    (c as any).close?.();
   } catch {
     // best-effort
   }

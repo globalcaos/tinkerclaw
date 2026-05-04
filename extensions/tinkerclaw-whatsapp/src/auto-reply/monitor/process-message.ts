@@ -20,6 +20,8 @@ import {
   resolveWhatsAppInboundPolicy,
   type ResolvedWhatsAppInboundPolicy,
 } from "../../inbound-policy.js";
+// FORK 2026-05-04: persona-aware heartbeat emojis ([🤔, persona-icon]).
+import { resolveThinkingEmojis } from "../../outbound-prefix.js";
 import { newConnectionId } from "../../reconnect.js";
 import { formatError } from "../../session.js";
 import {
@@ -63,6 +65,12 @@ import {
   type LoadConfigFn,
   type resolveAgentRoute,
 } from "./runtime-api.js";
+// FORK 2026-05-04: thinking-reaction lifecycle wiring. The module exists
+// (thinking-reaction.ts) but its start()/stop() were never called from the
+// auto-reply path — the user's "alternating thinking/looking icons" feature
+// was wired in code but disconnected. Now invoked here so every inbound
+// that triggers Jarvis gets the heartbeat + final ⚡ on completion.
+import { createThinkingReaction } from "./thinking-reaction.js";
 
 const WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS = {
   maxConcurrency: 8,
@@ -337,6 +345,30 @@ export async function processMessage(params: {
     });
   }
 
+  // FORK 2026-05-04: heartbeat alternates [🤔, persona-icon] on the inbound
+  // message while Jarvis thinks; reaction is CLEARED on stop (no final emoji
+  // — the "done" signal is delivered by deliverWebReply as a separate ⚡
+  // text message). The persona icon is derived from `messagePrefix` via
+  // resolvePersonaIcon, so changing the icon flips the heartbeat too. Per-
+  // deployment override: `channels.whatsapp.thinkingReaction.{intervalMs}`.
+  const thinkingReactionConfig = (
+    params.cfg.channels?.whatsapp as
+      | {
+          thinkingReaction?: { intervalMs?: number };
+        }
+      | undefined
+  )?.thinkingReaction;
+  const thinkingReaction = createThinkingReaction({
+    messageId: params.msg.id,
+    chatId: params.msg.chatId,
+    senderJid: params.msg.senderJid,
+    accountId: account.accountId,
+    emojis: resolveThinkingEmojis(params.cfg, account.accountId),
+    intervalMs: thinkingReactionConfig?.intervalMs,
+    finalEmoji: "",
+  });
+  thinkingReaction.start();
+
   const correlationId = params.msg.id ?? newConnectionId();
   params.replyLogger.info(
     {
@@ -469,28 +501,36 @@ export async function processMessage(params: {
   });
   trackBackgroundTask(params.backgroundTasks, metaTask);
 
-  const didSendReply = await dispatchWhatsAppBufferedReply({
-    cfg: params.cfg,
-    connectionId: params.connectionId,
-    context: ctxPayload,
-    conversationId,
-    deliverReply: deliverWebReply,
-    groupHistories: params.groupHistories,
-    groupHistoryKey: params.groupHistoryKey,
-    maxMediaBytes: params.maxMediaBytes,
-    maxMediaTextChunkLimit: params.maxMediaTextChunkLimit,
-    msg: params.msg,
-    onModelSelected,
-    rememberSentText: params.rememberSentText,
-    replyLogger: params.replyLogger,
-    replyPipeline: {
-      ...replyPipeline,
-      responsePrefix,
-    },
-    replyResolver: params.replyResolver,
-    route: params.route,
-    shouldClearGroupHistory,
-  });
+  // FORK 2026-05-04: try/finally ensures the thinking heartbeat ALWAYS stops
+  // (and applies the final ⚡) even if dispatch throws. Without this, an
+  // error mid-flight would leave the heartbeat ticking forever.
+  let didSendReply = false;
+  try {
+    didSendReply = await dispatchWhatsAppBufferedReply({
+      cfg: params.cfg,
+      connectionId: params.connectionId,
+      context: ctxPayload,
+      conversationId,
+      deliverReply: deliverWebReply,
+      groupHistories: params.groupHistories,
+      groupHistoryKey: params.groupHistoryKey,
+      maxMediaBytes: params.maxMediaBytes,
+      maxMediaTextChunkLimit: params.maxMediaTextChunkLimit,
+      msg: params.msg,
+      onModelSelected,
+      rememberSentText: params.rememberSentText,
+      replyLogger: params.replyLogger,
+      replyPipeline: {
+        ...replyPipeline,
+        responsePrefix,
+      },
+      replyResolver: params.replyResolver,
+      route: params.route,
+      shouldClearGroupHistory,
+    });
+  } finally {
+    thinkingReaction.stop();
+  }
   removeAckReactionHandleAfterReply({
     removeAfterReply: Boolean(params.cfg.messages?.removeAckAfterReply && didSendReply),
     ackReaction,

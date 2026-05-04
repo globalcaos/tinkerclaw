@@ -28,6 +28,13 @@ import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { insertMessage, upsertChat, type MessageRecord } from "./db.js";
 
 const logger = getChildLogger({ module: "wa-history-wm" });
+// FORK 2026-05-01: a parallel visible log channel — the wa-history-wm pino
+// child was getting filtered out of the gateway journal, leaving us blind
+// to whether backfill was firing. Use console.log for the load-bearing
+// lifecycle markers so they always reach systemd's journal capture.
+const visible = (msg: string, extra?: Record<string, unknown>) => {
+  console.log(`[wa-history-wm] ${msg}${extra ? " " + JSON.stringify(extra) : ""}`);
+};
 
 /**
  * Extract text from a whatsmeow-node message payload.
@@ -130,9 +137,11 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
   // Guard: skip binding if client is a stub (whatsmeow-node not installed)
   if (!client || (client as unknown as { _isStub?: boolean })._isStub) {
     logger.info("Skipping whatsmeow history capture (stub client)");
+    visible("skipping bind — stub client");
     return;
   }
   logger.info("Binding whatsmeow history capture");
+  visible("binding whatsmeow history capture");
 
   // FORK: whatsmeow-node payload shapes are dynamic — treat via Record casts.
   type WmMessageInfo = {
@@ -185,11 +194,14 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
 
   client.on("connected", ({ jid }: { jid: string }) => {
     logger.info({ jid }, "Connected — history capture active (wm)");
+    visible("connected event received", { jid });
     connectedJid = jid;
     void loadBackfill().then((mod) => {
       if (!mod) {
+        visible("backfill module unavailable on connected");
         return;
       }
+      visible("invoking requestBackfill from connected handler", { jid });
       mod.requestBackfill(client, jid);
       void mod.writeLastConnected();
     });
@@ -201,16 +213,21 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
   setTimeout(() => {
     if (!connectedJid) {
       logger.info("Deferred backfill check — 'connected' event not yet received, running anyway");
+      visible("8s deferred backfill firing — connected event was missed");
       // Try with empty JID — the DB query doesn't need it if lastSender is populated
       void loadBackfill().then((mod) => mod?.requestBackfill(client, ""));
+    } else {
+      visible("8s deferred check — connected already observed; skipping", { jid: connectedJid });
     }
   }, 8000);
 
   // Second attempt at 60s in case the first was too early (session still stabilizing)
   setTimeout(() => {
     logger.info("Scheduled backfill check (60s post-bind)");
+    visible("60s scheduled backfill firing", { jid: connectedJid ?? "" });
     void loadBackfill().then((mod) => mod?.requestBackfill(client, connectedJid ?? ""));
   }, 60_000);
 
   logger.info("whatsmeow history capture bound successfully");
+  visible("bind complete; awaiting connected event");
 }

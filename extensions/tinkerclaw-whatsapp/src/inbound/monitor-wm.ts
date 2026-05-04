@@ -59,11 +59,18 @@ export async function createWmMonitorSocket(options: {
     verbose: options.verbose,
   });
 
-  await connectWmClient(client);
-
+  // FORK 2026-05-03: build the Baileys adapter BEFORE connectWmClient. The
+  // adapter installs a `wmClient.on("connected", ...)` listener that captures
+  // the self-JID; if we connect first, the event fires and is gone before
+  // the listener attaches, leaving sock.user.id permanently null. Symptom:
+  // every inbound DM gets dropped with "selfE164=null" → access-control's
+  // owner-DM (Tier 1) check can't match `from` against `selfE164` →
+  // `[wa-debug] DROP: access denied from=+34555111000 ... fromMe=true`.
   const adapter = createBaileysAdapter({
     wmClient: client,
   });
+
+  await connectWmClient(client);
 
   logger.info("whatsmeow monitor socket created and connected");
 

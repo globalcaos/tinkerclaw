@@ -3,10 +3,20 @@ import type { AnyMessageContent, proto, WAMessage, WASocket } from "@whiskeysock
 import { createInboundDebouncer, formatLocationText } from "openclaw/plugin-sdk/channel-inbound";
 import { recordChannelActivity } from "openclaw/plugin-sdk/channel-runtime";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
+import { getRuntimeConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
+// FORK 2026-05-02: pull the account resolver + runtime config so we can give
+// createWebSendApi the per-account messagePrefix lookup it needs to enforce
+// the persona icon on every outbound message.
+import { resolveWhatsAppAccount } from "../accounts.js";
 import { readWebSelfIdentityForDecision, WhatsAppAuthUnstableError } from "../auth-store.js";
+// FORK 2026-05-01: setGroupMetadataFetcher is called below (4-tier agent-group
+// detection) but its import was missing — produced ReferenceError on first
+// connect under whatsmeow backend, silently masked under Baileys when earlier
+// errors short-circuited. Add the import here.
+import { setGroupMetadataFetcher } from "../group-name-cache.js";
 import { getPrimaryIdentityId, resolveComparableIdentity } from "../identity.js";
 import { DEFAULT_RECONNECT_POLICY, computeBackoff, sleepWithAbort } from "../reconnect.js";
 import type { OpenClawConfig } from "../runtime-api.js";
@@ -124,6 +134,14 @@ export async function attachWebInboxToSocket(
     logVerbose(`Failed to send 'available' presence on connect: ${String(err)}`);
   }
 
+  // FORK 2026-05-03: visible diagnostic — selfE164 keeps coming up null in
+  // access-control even after the wm adapter captures selfJid. Probe both the
+  // input (sock.user.id getter) and the output (resolved e164/jid/lid).
+  const userInputId = (sock.user as { id?: string | null } | undefined)?.id ?? null;
+  const userInputLid = (sock.user as { lid?: string | null } | undefined)?.lid ?? null;
+  console.log(
+    `[wa-debug] readWebSelfIdentityForDecision input authDir=${options.authDir} sock.user.id=${userInputId} sock.user.lid=${userInputLid}`,
+  );
   const selfIdentity = await readWebSelfIdentityForDecision(
     options.authDir,
     sock.user as { id?: string | null; lid?: string | null } | undefined,
@@ -134,6 +152,9 @@ export async function attachWebInboxToSocket(
     );
   }
   const self = selfIdentity.identity;
+  console.log(
+    `[wa-debug] readWebSelfIdentityForDecision output e164=${self.e164 ?? null} jid=${self.jid ?? null} lid=${self.lid ?? null}`,
+  );
   type QueuedInboundMessage = WebInboundMessage & {
     dedupeKey?: string;
   };
@@ -332,7 +353,9 @@ export async function attachWebInboxToSocket(
     msg: WAMessage,
   ): Promise<NormalizedInboundMessage | null> => {
     const id = msg.key?.id ?? undefined;
-    const remoteJid = msg.key?.remoteJid;
+    // FORK 2026-05-03: `let` (was const) so the self-DM via LID rescue below
+    // can rebind it to the canonical phone JID after rewriting msg.key.remoteJid.
+    let remoteJid = msg.key?.remoteJid;
     if (!remoteJid) {
       console.log(`[wa-debug] DROP: no remoteJid id=${id}`);
       return null;
@@ -359,18 +382,113 @@ export async function attachWebInboxToSocket(
       return null;
     }
     const participantJid = msg.key?.participant ?? undefined;
-    const from = group ? remoteJid : await resolveInboundJid(remoteJid);
+    // FORK 2026-05-03: self-DM via LID rescue. When the owner messages
+    // himself, whatsmeow can deliver the inbound with chat=<owner-lid>@lid
+    // instead of chat=<owner-e164>@s.whatsapp.net. To keep the rest of the
+    // pipeline consistent (which assumes the owner-self chat JID is the
+    // standard `<phone>@s.whatsapp.net` form for routing/peer resolution),
+    // rewrite both the local `remoteJid` and `msg.key.remoteJid` so
+    // downstream code (normalize, dispatch, outbound chatId) sees the
+    // canonical phone JID. Without this, the trigger gate fires but
+    // downstream routing silently drops the msg.
+    //
+    // FORK 2026-05-04 (CRITICAL FIX — sister-DM trigger bug): The original
+    // rescue only checked `fromMe + chat ends with @lid`. That is NOT
+    // sufficient to identify a self-DM: when the owner DMs another contact
+    // whose chat is delivered as `<their-lid>@lid` (sister, friend, etc),
+    // `fromMe=true` because the message originated on the owner's phone, but
+    // the chat is the OTHER person's LID — not the owner's. The old rescue
+    // would rewrite that chat to the owner's self-DM, causing two cascading
+    // bugs: (1) the trigger gate would fire (self-DM is in `noPrefixChats`),
+    // making Jarvis reply to a non-Jarvis-addressed message; (2) the reply
+    // routed back to the rewritten chat (owner self-DM) instead of the
+    // original peer, leaking the reply into the user's self-chat. The fix:
+    // ONLY rescue when we have positive evidence the LID belongs to the
+    // owner. Two signals (in priority order):
+    //   (a) `self.lid` is populated and matches `remoteJid` — authoritative.
+    //   (b) `remoteJid` is explicitly listed in `channels.whatsapp.noPrefixChats`
+    //       AND `channels.whatsapp.allowFrom` — both lists declare this LID
+    //       is the owner's self-chat alias (config truth, used as fallback
+    //       because `self.lid` is currently null on whatsmeow auth state).
+    // If neither matches, do NOT rescue — `from` stays null, and the
+    // standard `if (!from)` guard drops the message. That is the correct
+    // outcome for an unknown LID DM.
+    let from = group ? remoteJid : await resolveInboundJid(remoteJid);
+    const isOwnerLidCandidate =
+      !from &&
+      !group &&
+      msg.key?.fromMe === true &&
+      typeof remoteJid === "string" &&
+      /(@lid|@hosted\.lid)$/i.test(remoteJid) &&
+      self.e164;
+    if (isOwnerLidCandidate) {
+      const lidString = remoteJid as string;
+      // (a) authoritative — owner's LID known and matches.
+      const matchesSelfLid =
+        typeof self.lid === "string" && self.lid.length > 0 && self.lid === lidString;
+      // (b) config-truth fallback — LID configured as owner's self alias.
+      const wa = (
+        options.cfg.channels as
+          | { whatsapp?: { noPrefixChats?: string[]; allowFrom?: string[] } }
+          | undefined
+      )?.whatsapp;
+      const noPrefixChats = wa?.noPrefixChats ?? [];
+      const allowFrom = wa?.allowFrom ?? [];
+      const matchesConfiguredOwnerLid =
+        noPrefixChats.includes(lidString) && allowFrom.includes(lidString);
+      if (matchesSelfLid || matchesConfiguredOwnerLid) {
+        const originalLid = lidString;
+        from = self.e164;
+        const selfPhoneJid = `${self.e164!.replace(/^\+/, "")}@s.whatsapp.net`;
+        remoteJid = selfPhoneJid;
+        if (msg.key) {
+          (msg.key as { remoteJid?: string }).remoteJid = selfPhoneJid;
+        }
+        console.log(
+          `[wa-debug] self-DM via LID rescue: chat=${originalLid} → owner e164=${self.e164} jid=${selfPhoneJid} id=${id} (matchesSelfLid=${matchesSelfLid} matchesConfig=${matchesConfiguredOwnerLid})`,
+        );
+      } else {
+        // FORK 2026-05-04 (post-rescue-fix): still let owner's prefixed
+        // messages through. The previous version of this branch left `from`
+        // null, which dropped at the guard below — meaning the user literally
+        // could not say "Jarvis …" in a non-self LID chat (e.g. a sister DM
+        // delivered as <her-lid>@lid). Use the LID itself as the chat
+        // identifier so the standard pipeline runs:
+        //   - access-control: owner-fromMe fast-paths to allowed; sister's
+        //     own (fromMe=false) messages already dropped above because
+        //     resolveInboundJid returned null, so they never reach this
+        //     branch.
+        //   - trigger gate: chat (LID) is NOT in `noPrefixChats`, so the
+        //     body-prefix gate decides — silent without "Jarvis …", fires
+        //     with it.
+        //   - reply routing: `msg.from` is the LID, so the reply lands back
+        //     in the same chat (sister sees it). This honours the user's
+        //     "always reply in the same chat that triggered him" rule.
+        from = lidString;
+        console.log(
+          `[wa-debug] LID rescue SKIPPED: chat=${lidString} fromMe=true but LID not in self.lid (${self.lid ?? "null"}) and not in noPrefixChats∩allowFrom — using LID as chat identifier (owner-prefix path open) id=${id}`,
+        );
+      }
+    }
     if (!from) {
       console.log(`[wa-debug] DROP: resolveInboundJid returned null jid=${remoteJid} id=${id}`);
       return null;
     }
+    // FORK 2026-05-04: for fromMe DMs, the sender is the OWNER (the user), not
+    // the peer in `from`. Without this, downstream people-prefetch tries to
+    // resolve the peer's profile when the body really came from the owner —
+    // notably wrong on the new owner-prefix-via-LID-chat path where `from`
+    // is the peer's LID. self.e164 is the canonical sender for any fromMe
+    // message, group or DM.
     const senderE164 = group
       ? participantJid
         ? await resolveInboundJid(participantJid)
         : Boolean(msg.key?.fromMe) && self.e164
           ? self.e164 // FORK: fromMe group messages lack participant — use own E164
           : null
-      : from;
+      : Boolean(msg.key?.fromMe) && self.e164
+        ? self.e164
+        : from;
 
     let groupSubject: string | undefined;
     let groupParticipants: string[] | undefined;
@@ -724,8 +842,30 @@ export async function attachWebInboxToSocket(
         }
         return currentSock.sendPresenceUpdate(presence, jid);
       },
+      // biome-ignore lint/suspicious/noExplicitAny: presenceSubscribe is on the
+      // Baileys socket but our wm-adapter declares a no-op; cast to keep types
+      // permissive without the WASocket import here.
+      presenceSubscribe: async (jid: string) => {
+        const currentSock = getCurrentSock() as unknown as {
+          presenceSubscribe?: (jid: string) => Promise<void>;
+        } | null;
+        await currentSock?.presenceSubscribe?.(jid);
+      },
     },
     defaultAccountId: options.accountId,
+    // FORK 2026-05-02: outbound persona-prefix resolver. Reads the live
+    // openclaw.json snapshot every send so config edits are picked up
+    // without a process restart (runtime-config-snapshot already handles
+    // hot-reload). Per-account override > channel-level > global.
+    resolveOutboundPrefix: (accountId: string) => {
+      try {
+        const cfg = getRuntimeConfig();
+        const account = resolveWhatsAppAccount({ cfg, accountId });
+        return account.messagePrefix?.trim() || undefined;
+      } catch {
+        return undefined;
+      }
+    },
   });
 
   return {

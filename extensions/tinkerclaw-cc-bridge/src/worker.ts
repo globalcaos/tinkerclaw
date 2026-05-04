@@ -16,7 +16,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
-import { DEFAULT_BINARY, DEFAULT_DISALLOWED_TOOLS, DEFAULT_PERMISSION_MODE } from "./defaults.js";
+import {
+  DEFAULT_BINARY,
+  DEFAULT_DISALLOWED_TOOLS,
+  DEFAULT_PERMISSION_MODE,
+  DEFAULT_PLUGIN_DIRS,
+} from "./defaults.js";
 import { loadPromptFile } from "./prompt-loader.js";
 import {
   type CcStreamStdoutLine,
@@ -236,6 +241,13 @@ export type WorkerSpawnParams = {
   disallowedTools?: string[];
   model?: string;
   resumeSessionId?: string;
+  /**
+   * FORK 2026-05-04: extra plugin directories to load. Each becomes
+   * `--plugin-dir <path>` on claude-cli's command line. Defaults to the
+   * jarvis-skills wrapper that re-exports `~/.openclaw/workspace/skills/`
+   * as a plugin (see `DEFAULT_PLUGIN_DIRS`).
+   */
+  pluginDirs?: string[];
 };
 
 export type WorkerTurnParams = {
@@ -289,6 +301,22 @@ export class ClaudeCodeWorker extends EventEmitter {
     const disallowed = this.params.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
     if (disallowed.length > 0) {
       args.push("--disallowedTools", disallowed.join(","));
+    }
+    // FORK 2026-05-04: claude-code only loads skills from PLUGINS, not from
+    // `${cwd}/.claude/skills/`. Workspace skills live at
+    // `~/.openclaw/workspace/skills/<name>/SKILL.md` (88 of them, including
+    // outlook-hack and teams-hack). A wrapper at `~/.openclaw/jarvis-plugins/
+    // jarvis-skills/skills` symlinks to that dir so the layout matches the
+    // plugin spec (`<plugin-root>/skills/<name>/SKILL.md`). Each --plugin-dir
+    // is one plugin root; repeatable. Without this Jarvis literally couldn't
+    // see outlook-hack or teams-hack — he answered the user with "no Outlook
+    // connector wired up" because his skill catalog was empty.
+    const pluginDirs = this.params.pluginDirs ?? DEFAULT_PLUGIN_DIRS;
+    for (const dir of pluginDirs) {
+      const trimmed = dir?.trim();
+      if (trimmed) {
+        args.push("--plugin-dir", trimmed);
+      }
     }
     // FORK 2026-04-18: also append the amygdala + fractal rule files so
     // Opus always has the rules in context — the per-turn UI injection

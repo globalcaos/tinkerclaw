@@ -4,8 +4,16 @@ import type {
   WAPresence,
 } from "@whiskeysockets/baileys";
 import { recordChannelActivity } from "openclaw/plugin-sdk/channel-activity-runtime";
+// FORK 2026-05-04: shared persona-prefix helper (used by both the explicit
+// send path here and the auto-reply path in deliver-reply.ts).
+import { applyOutboundPrefix } from "../outbound-prefix.js";
 import { buildQuotedMessageOptions } from "../quoted-message.js";
 import { toWhatsappJid } from "../text-runtime.js";
+// FORK 2026-05-01: trackSentMessageId is called at line 98 below but the
+// import was missing — same regression class as the setGroupMetadataFetcher
+// import gap. Surfaced once the whatsmeow outbound path actually reached the
+// echo-tracking step.
+import { trackSentMessageId } from "./sent-ids.js";
 import type { ActiveWebSendOptions } from "./types.js";
 
 function recordWhatsAppOutbound(accountId: string) {
@@ -22,6 +30,10 @@ function resolveOutboundMessageId(result: unknown): string {
     : "unknown";
 }
 
+// FORK 2026-05-04: applyOutboundPrefix moved to ../outbound-prefix.ts as a
+// shared helper used by both the explicit-send path (this file) and the
+// auto-reply path (deliver-reply.ts).
+
 export function createWebSendApi(params: {
   sock: {
     sendMessage: (
@@ -33,7 +45,14 @@ export function createWebSendApi(params: {
     presenceSubscribe: (jid: string) => Promise<void>;
   };
   defaultAccountId: string;
+  // FORK 2026-05-02: programmatic outbound prefix resolver. Returns the
+  // configured prefix (per-account → channel → global) for the given account,
+  // or undefined to skip. Optional for backward compat with the existing
+  // send-api.test.ts harness — when omitted, no prefix is applied.
+  resolveOutboundPrefix?: (accountId: string) => string | undefined;
 }) {
+  const prefixFor = (accountId: string): string | undefined =>
+    params.resolveOutboundPrefix?.(accountId);
   return {
     sendMessage: async (
       to: string,
@@ -43,12 +62,17 @@ export function createWebSendApi(params: {
       sendOptions?: ActiveWebSendOptions,
     ): Promise<{ messageId: string }> => {
       const jid = toWhatsappJid(to);
+      const accountId = sendOptions?.accountId ?? params.defaultAccountId;
+      // FORK 2026-05-02: apply the persona prefix to the text body BEFORE
+      // building the payload so it covers caption-bearing media too. Audio
+      // (no caption) gets the prefix on the trailing text payload below.
+      const decoratedText = applyOutboundPrefix(text, prefixFor(accountId));
       let payload: AnyMessageContent;
       if (mediaBuffer && mediaType) {
         if (mediaType.startsWith("image/")) {
           payload = {
             image: mediaBuffer,
-            caption: text || undefined,
+            caption: decoratedText || undefined,
             mimetype: mediaType,
           };
         } else if (mediaType.startsWith("audio/")) {
@@ -57,7 +81,7 @@ export function createWebSendApi(params: {
           const gifPlayback = sendOptions?.gifPlayback;
           payload = {
             video: mediaBuffer,
-            caption: text || undefined,
+            caption: decoratedText || undefined,
             mimetype: mediaType,
             ...(gifPlayback ? { gifPlayback: true } : {}),
           };
@@ -66,12 +90,12 @@ export function createWebSendApi(params: {
           payload = {
             document: mediaBuffer,
             fileName,
-            caption: text || undefined,
+            caption: decoratedText || undefined,
             mimetype: mediaType,
           };
         }
       } else {
-        payload = { text };
+        payload = { text: decoratedText };
       }
       const quotedOpts = buildQuotedMessageOptions({
         messageId: sendOptions?.quotedMessageKey?.id,
@@ -84,14 +108,14 @@ export function createWebSendApi(params: {
         ? await params.sock.sendMessage(jid, payload, quotedOpts)
         : await params.sock.sendMessage(jid, payload);
       if (mediaBuffer && mediaType?.startsWith("audio/") && text.trim()) {
-        const textPayload: AnyMessageContent = { text };
+        // FORK 2026-05-02: audio-with-trailing-text path also gets the prefix.
+        const textPayload: AnyMessageContent = { text: decoratedText };
         if (quotedOpts) {
           await params.sock.sendMessage(jid, textPayload, quotedOpts);
         } else {
           await params.sock.sendMessage(jid, textPayload);
         }
       }
-      const accountId = sendOptions?.accountId ?? params.defaultAccountId;
       recordWhatsAppOutbound(accountId);
       const messageId = resolveOutboundMessageId(result);
       if (messageId !== "unknown") {
@@ -104,9 +128,15 @@ export function createWebSendApi(params: {
       poll: { question: string; options: string[]; maxSelections?: number },
     ): Promise<{ messageId: string }> => {
       const jid = toWhatsappJid(to);
+      // FORK 2026-05-02: poll question gets the prefix (it's text the
+      // recipient sees as the prompt). Options stay untouched.
+      const decoratedQuestion = applyOutboundPrefix(
+        poll.question,
+        prefixFor(params.defaultAccountId),
+      );
       const result = await params.sock.sendMessage(jid, {
         poll: {
-          name: poll.question,
+          name: decoratedQuestion,
           values: poll.options,
           selectableCount: poll.maxSelections ?? 1,
         },
