@@ -1610,7 +1610,7 @@ If Anthropic publishes new guidance for Opus 4.8 or later, append §5.78 rather 
 
 ### 5.78 Branch Policy: `main` is shippable, `develop` is for tinkering (2026-04-29)
 
-**Rule.** Effective today: only fully working versions go to `origin/main` on github.com/globalcaos/tinkerclaw. All in-progress work — partial merges, untested experiments, half-built features — happens on a local `develop` branch.
+**Rule.** Effective today: only fully working versions go to `origin/main` on the public GitHub fork. All in-progress work — partial merges, untested experiments, half-built features — happens on a local `develop` branch.
 
 #### 5.78a Why
 
@@ -2535,11 +2535,11 @@ Whatsmeow occasionally delivers the owner's true self-DM with `chat=<owner-lid>@
 1. `self.lid` populated AND equal to `remoteJid` — authoritative.
 2. **Fallback (config truth):** `remoteJid` listed in BOTH `channels.whatsapp.noPrefixChats` AND `channels.whatsapp.allowFrom`. Both lists declaring the LID as owner's self-chat alias is treated as positive identification. Required because `sock.user.lid` is currently null on whatsmeow auth state.
 
-If neither matches, the rescue is skipped — but **`from` is set to the LID itself** (FORK 2026-05-04 follow-up). This keeps the owner-prefix path open: the user can still say `Jarvis …` from a non-self LID chat (e.g. a contact's DM delivered via their LID) and trigger normally. Sister's-LID is not in `noPrefixChats`, so the prefix gate decides — silent without `Jarvis …`, fires with it. The reply routes back to the same LID, so the peer sees the answer (user directive's "always reply in the same chat that triggered him" rule). Sister's _own_ (fromMe=false) messages drop earlier at `resolveInboundJid → null`, so they never reach this branch.
+If neither matches, the rescue is skipped — but **`from` is set to the LID itself** (FORK 2026-05-04 follow-up). This keeps the owner-prefix path open: the user can still say `Jarvis …` from a non-self LID chat (e.g. a peer's DM delivered via their LID) and trigger normally. The peer's LID is not in `noPrefixChats`, so the prefix gate decides — silent without `Jarvis …`, fires with it. The reply routes back to the same LID, so the peer sees the answer (per the same-chat reply rule). The peer's _own_ (fromMe=false) messages drop earlier at `resolveInboundJid → null`, so they never reach this branch.
 
 **Companion semantic fix:** for any `fromMe=true` DM, `senderE164` falls back to `self.e164` (was: `from`). Without this, the sender-profile prefetch tries to resolve the peer's profile when the body actually came from the user.
 
-**Why this matters:** The pre-2026-05-04 rescue accepted ANY `@lid` chat with `fromMe=true`. When the owner DMed a non-listed contact (sister, friend) whose chat was delivered as `<their-lid>@lid`, the rescue rewrote that chat to the owner's self-DM. Two cascading bugs followed: (1) trigger gate fired (self-DM is in `noPrefixChats`) → Jarvis replied to a non-Jarvis-addressed message; (2) reply routed back to the rewritten chat (owner's self-DM) instead of the original peer chat — leak of reply into wrong chat. Pinned and fixed at `inbound/monitor.ts:normalizeInboundMessage` (LID rescue block).
+**Why this matters:** The pre-2026-05-04 rescue accepted ANY `@lid` chat with `fromMe=true`. When the owner DMed a non-allowlisted contact whose chat was delivered as `<their-lid>@lid`, the rescue rewrote that chat to the owner's self-DM. Two cascading bugs followed: (1) trigger gate fired (self-DM is in `noPrefixChats`) → Jarvis replied to a non-Jarvis-addressed message; (2) reply routed back to the rewritten chat (owner's self-DM) instead of the original peer chat — leak of reply into wrong chat. Pinned and fixed at `inbound/monitor.ts:normalizeInboundMessage` (LID rescue block).
 
 **Pipeline (where each gate fires):**
 
