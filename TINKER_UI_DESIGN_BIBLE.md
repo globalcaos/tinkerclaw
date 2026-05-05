@@ -1327,6 +1327,15 @@ No functional loss: `claude-cli` maintains its own tool catalog via `--permissio
   - Not retroactive — turns persisted before this commit are stuck with whatever truncated text made it. Future turns are whole.
 - **Files:** `extensions/tinkerclaw-cc-bridge/src/stream.ts` (per-block maps, multi-block parser branches, `result.result` reconciliation in the success path).
 
+**§5.66b cc-bridge idle-watchdog timeout bumped to 600s (FORK 2026-05-05).**
+
+- **Status:** `DEPLOYED`
+- **Symptom:** A heavy WhatsApp ask ("Read outlook + list project state") surfaced as `🤖 ⚠️ Something went wrong while processing your request.` Both first AND retry attempts SIGTERMed at ~128s; journal showed `[llm-idle-timeout] claude-code/claude-opus-4-7 produced no reply before the idle watchdog`.
+- **Root cause:** pi-agent-core's `streamWithIdleTimeout` (`src/agents/pi-embedded-runner/run/llm-idle-timeout.ts`) resets per pi-ai stream event. cc-bridge intentionally does NOT push `stream` events during tool work — tool_use blocks would trigger re-execution via OpenClaw's exec tool (see FORK 2026-04-22 in stream.ts). On a long claude-cli tool chain (e.g. several outlook-mail-fetch + people.read calls in series), no pi-ai events flow → idle timer ticks past 120s default → subprocess SIGTERMed mid-work. Both retries hitting this surface as `surface_error/timeout`.
+- **Fix:** provider-level `timeoutSeconds: 600` in `extensions/tinkerclaw-cc-bridge/src/catalog.ts:buildClaudeCodeProviderConfig`. pi-agent-core's `resolveLlmIdleTimeoutMs` ONLY reads `providerConfig.timeoutSeconds` (via `applyConfiguredProviderOverrides → resolveProviderRequestTimeoutMs`); a `requestTimeoutMs` field on the catalog model object is silently ignored. The new constant `DEFAULT_REQUEST_TIMEOUT_MS = 600_000` lives in `defaults.ts`.
+- **Don't regress:** if you ever switch to `requestTimeoutMs` on individual models (which feels more natural), pi-agent-core won't pick it up — the override path is the provider-level field. The model object's `requestTimeoutMs` IS read further down (provider-transport-fetch.ts) but only AFTER the provider config has populated it via `applyConfiguredProviderOverrides`.
+- **Open follow-up (proper fix):** stream.ts should push a no-op stream event (or repurpose `start`) for every claude-cli line during tool work, so the idle watchdog resets the way pi-agent-core expects rather than relying on a wider absolute timeout. The current bump masks the symptom; a tool chain >10 min would still hit it.
+
 **§5.73b cc-bridge truncation — `text_end` fired before tail-recover (FORK 2026-05-04).**
 
 - **Status:** `DEPLOYED`

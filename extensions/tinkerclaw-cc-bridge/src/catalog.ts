@@ -6,7 +6,12 @@
  * OpenClaw's model-router understands.
  */
 import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
-import { DEFAULT_MODELS, MODEL_ALIASES, PROVIDER_ID } from "./defaults.js";
+import {
+  DEFAULT_MODELS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  MODEL_ALIASES,
+  PROVIDER_ID,
+} from "./defaults.js";
 
 export function buildClaudeCodeProviderConfig(): ModelProviderConfig {
   const models = DEFAULT_MODELS.map((m) => ({
@@ -30,6 +35,18 @@ export function buildClaudeCodeProviderConfig(): ModelProviderConfig {
     baseUrl: "local://claude-cli",
     api: "anthropic-messages",
     apiKey: "claude-code-oauth",
+    // FORK 2026-05-05: provider-level `timeoutSeconds` is what
+    // pi-agent-core's `resolveLlmIdleTimeoutMs` reads (per-model
+    // requestTimeoutMs alone is ignored — only the provider config feeds
+    // `applyConfiguredProviderOverrides → resolveProviderRequestTimeoutMs`).
+    // Bumped from the default 120s because claude-cli's tool work emits NO
+    // `stream.push` events to pi-ai (FORK 2026-04-22), so a long tool chain
+    // looks idle even though claude is actively working — at 120s the
+    // watchdog SIGTERMs the subprocess and on a heavy turn both attempts
+    // can fail, surfacing as `__ERR_ENV__:Something went wrong while
+    // processing your request` over WhatsApp. 600s is generous; the
+    // model-fallback layer still bails on truly stuck subprocesses.
+    timeoutSeconds: Math.floor(DEFAULT_REQUEST_TIMEOUT_MS / 1000),
     models: models as unknown as ModelProviderConfig["models"],
   };
 }

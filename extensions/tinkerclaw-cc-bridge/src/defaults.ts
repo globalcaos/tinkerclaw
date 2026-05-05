@@ -64,6 +64,20 @@ export const DEFAULT_PLUGIN_DIRS = [
 // old 200k window and triggered preemptive compaction on turn 0 the moment
 // the bootstrap stack + main-session history loaded past 200k. Opus 4.7 and
 // Sonnet 4.6 are the 1M-context variants; Opus 4.6 and Haiku 4.5 keep 200k.
+//
+// FORK 2026-05-05: provider-level idle timeout. pi-agent-core's
+// `resolveLlmIdleTimeoutMs` only reads from `providerConfig.timeoutSeconds`
+// — per-model `requestTimeoutMs` alone is ignored. claude-cli's tool work
+// emits NO `stream.push` events to pi-ai (tool_use blocks would trigger
+// re-execution; see FORK 2026-04-22 in stream.ts), so a long tool chain
+// looks "idle" to the watchdog even though claude is actively working. With
+// the default 120s a complex turn (e.g. "read outlook AND list project
+// state from memory") fires the idle timer twice and surfaces
+// `__ERR_ENV__:Something went wrong while processing your request` over WA.
+// 10 min is generous enough for heavy turns; the model-fallback layer will
+// still bail correctly on truly stuck subprocesses.
+export const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+
 export const DEFAULT_MODELS = [
   { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, contextWindow: 1_000_000 },
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200_000 },
