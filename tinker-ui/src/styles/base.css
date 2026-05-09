@@ -3388,12 +3388,18 @@ code.fs-link.fs-link-error {
   display: inline-flex;
   flex-direction: column;
   align-self: flex-end;
-  align-items: flex-start;
+  /* width: max-content sizes the row to its widest child (the bubble) so the
+   * row stays anchored to the right edge of the messages column. Without this,
+   * the row stretches the full container width and its left-aligned children
+   * (bubble + timestamp) end up on the LEFT side of the screen — visually
+   * indistinguishable from an assistant message. */
+  width: max-content;
   max-width: 100%;
+  align-items: flex-start;
 }
 .user-row > .msg.user {
-  /* The bubble keeps its own align-self/background; we don't override visuals.
-   * Just clear the flex container's flex-end since the row is the new parent. */
+  /* Bubble is the row's only "wide" child; let it grow to the row's width
+   * (which equals the bubble's natural content width via width:max-content). */
   align-self: stretch;
 }
 .msg-timestamp {
