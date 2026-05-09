@@ -27,7 +27,14 @@ const BASE_METHODS = [
   "tts.setProvider",
   "tts.setPersona",
   "config.get",
-  "config.models",
+  // FORK 2026-05-09: removed "config.models" — this list feeds `coreGatewayMethods`
+  // (plugins/registry.ts:262) which rejects plugin registrations on reserved names.
+  // The actual `config.models` core handler was deleted at some point but the
+  // reservation lingered, so the budget-panel plugin's `registerGatewayMethod`
+  // got rejected with "already registered" while no real handler served calls.
+  // Removing the reservation lets budget-panel claim the namespace and the
+  // Tinker UI models panel / thinking-indicator-with-model-name / session-glow
+  // start working again.
   "config.set",
   "config.apply",
   "config.patch",
