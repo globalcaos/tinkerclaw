@@ -2432,12 +2432,24 @@ async function send(text: string) {
   // the renderer can offer a click-to-expand view. `_fullPrompt` holds the
   // actual string that was sent to claude — useful both for debugging and
   // for the user to confirm what instructions landed with their turn.
-  const fullPromptForDebug = buildInjectedPrompt(text);
+  const fullPromptForDebug = await buildInjectedPrompt(text);
   const hasInjection = fullPromptForDebug.length > text.length + 16;
+  // Detect briefing injection by header sentinel, distinguishes from amygdala/fractal injections.
+  const isBriefingInjection =
+    /^\/(new|reset)$/i.test(text.trim()) &&
+    fullPromptForDebug.includes("Execute the morning briefing NOW");
+  let briefingPath: string | undefined;
+  if (isBriefingInjection) {
+    const m = fullPromptForDebug.match(/Briefing source: `([^`]+)`/);
+    if (m) {
+      briefingPath = m[1];
+    }
+  }
   messages.push({
     role: "user",
     content: [{ type: "text", text }],
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
+    ...(briefingPath ? { _briefingPath: briefingPath } : {}),
     ...(isQueued ? { _queued: true } : {}),
   });
   updateChat();
@@ -2913,15 +2925,45 @@ function applyInjectToggleChrome(): void {
 //   2. The user wants to see the BRIEFING.md path in the expandable _fullPrompt
 //      so they can edit that file directly to change the briefing format,
 //      without digging through amygdala/fractal noise unrelated to /new.
-function buildInjectedPrompt(userText: string): string {
+//
+// FORK 2026-05-09: buildBriefingPrompt injects the resolved BRIEFING.md
+// content directly so Jarvis executes it without a read-file round-trip.
+// Called by buildInjectedPrompt when briefing.resolve RPC succeeds.
+function buildBriefingPrompt(briefingPath: string, content: string): string {
+  return (
+    "/new\n\n---\n\n" +
+    "**Execute the morning briefing NOW.** Begin by running every step in the briefing below, top to bottom, without asking permission. The user already requested the briefing by typing `/new`. Do not ask whether to proceed — proceed.\n\n" +
+    "Briefing source: `" +
+    briefingPath +
+    "`\n\n" +
+    "---\n\n" +
+    content
+  );
+}
+
+async function buildInjectedPrompt(userText: string): Promise<string> {
   const trimmed = userText.trim();
-  // FORK 2026-04-28 (bible §5.76): the injected suffix names two paths in
-  // resolution order — workspace (override) → bundled default. Whichever
-  // exists wins, both for fresh clones (workspace missing → falls back to
-  // the bundled briefing-default.md) and for users who have customised
-  // their briefing (workspace present → ignored fallback). The persona
-  // file's resolution order ensures the same fallback for SOUL.md.
+  // FORK 2026-05-09: try briefing.resolve RPC to inline the full BRIEFING.md
+  // content so Jarvis executes it immediately without a read-file round-trip.
+  // FORK 2026-04-28 (bible §5.76): soft fallback names two paths in resolution
+  // order — workspace (override) → bundled default. Whichever exists wins,
+  // both for fresh clones (workspace missing → falls back to briefing-default.md)
+  // and for users who have customised their briefing. Fallback fires when the
+  // RPC is unavailable (gateway offline, plugin not loaded, etc).
   if (/^\/(new|reset)$/i.test(trimmed)) {
+    try {
+      const resolved = await req<{
+        path: string | null;
+        source: "workspace" | "bundled" | null;
+        content: string | null;
+      }>("briefing.resolve", {});
+      if (resolved && resolved.path && resolved.content) {
+        return buildBriefingPrompt(resolved.path, resolved.content);
+      }
+    } catch (err) {
+      console.warn("[briefing.resolve] failed, falling back to soft suffix:", err);
+    }
+    // Fallback: soft suffix preserves day-0 sanity if RPC is unavailable.
     return (
       userText +
       "\n\n---\n\n**Session Startup.** Read and follow whichever of these briefing files exists (try in order, take the first found): " +
