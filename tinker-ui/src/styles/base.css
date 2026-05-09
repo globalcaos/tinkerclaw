@@ -3366,3 +3366,21 @@ code.fs-link.fs-link-error {
   padding: 0.75rem;
   border: 1px solid #30363d;
 }
+
+/* Briefing injection bubble — /new with embedded BRIEFING.md content */
+.briefing-toggle > .briefing-summary {
+  cursor: pointer;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+.briefing-toggle > .briefing-summary:hover {
+  opacity: 1;
+}
+.briefing-path-link {
+  font-family: var(--font-mono, monospace);
+  text-decoration: underline dotted;
+  color: inherit;
+}
+.briefing-path-link:hover {
+  text-decoration: underline solid;
+}
