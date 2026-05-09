@@ -16,6 +16,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 /** Candidate relative paths from this file's dist location to briefing-default.md. */
@@ -53,15 +54,22 @@ async function readIfExists(p: string): Promise<string | null> {
 export const briefingHandlers: GatewayRequestHandlers = {
   "briefing.resolve": async ({ params, context, respond }) => {
     const cfg = context.getRuntimeConfig();
-    const workspaceDir = (cfg as { workspaceDir?: string }).workspaceDir;
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
 
     // 1. Workspace override — user-editable BRIEFING.md
     if (workspaceDir) {
       const wsPath = path.join(workspaceDir, "BRIEFING.md");
-      const wsContent = await readIfExists(wsPath);
-      if (wsContent !== null) {
-        respond(true, { path: wsPath, source: "workspace", content: wsContent }, undefined);
-        return;
+      try {
+        const wsContent = await readIfExists(wsPath);
+        if (wsContent !== null) {
+          respond(true, { path: wsPath, source: "workspace", content: wsContent }, undefined);
+          return;
+        }
+      } catch (err) {
+        console.warn(
+          `[briefing.resolve] workspace read failed at ${wsPath}, falling back to bundled:`,
+          err,
+        );
       }
     }
 
