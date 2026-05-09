@@ -3377,17 +3377,34 @@ code.fs-link.fs-link-error {
   opacity: 1;
 }
 
-/* FORK 2026-05-09 Feature A — User-bubble absolute-time timestamp gutter */
-/* The timestamp span sits OUTSIDE the .msg.user div so it appears to the left */
+/* FORK 2026-05-09 Feature A (revised) — User-bubble absolute-time timestamp.
+ * Sits BELOW the bubble at its bottom-left corner, OUTSIDE the green container.
+ * `.user-row` wraps the bubble + timestamp as a flex column. The row is
+ * right-aligned with the user message stack (align-self: flex-end) and the
+ * children are left-aligned within the row, so the timestamp drops on a
+ * new line directly under the bubble's bottom-left.
+ */
+.user-row {
+  display: inline-flex;
+  flex-direction: column;
+  align-self: flex-end;
+  align-items: flex-start;
+  max-width: 100%;
+}
+.user-row > .msg.user {
+  /* The bubble keeps its own align-self/background; we don't override visuals.
+   * Just clear the flex container's flex-end since the row is the new parent. */
+  align-self: stretch;
+}
 .msg-timestamp {
-  display: inline-block;
-  margin-right: 6px;
+  display: block;
+  margin-top: 2px;
+  margin-left: 4px;
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  vertical-align: top;
   opacity: 0.65;
-  line-height: 1.4;
+  line-height: 1.2;
   user-select: none;
 }
 
