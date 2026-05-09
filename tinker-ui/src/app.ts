@@ -3093,7 +3093,7 @@ function renderUserBubbleWithPromptToggle(
       `${md(userText)}` +
       `<details class="user-prompt-toggle briefing-toggle">` +
       `<summary class="user-prompt-summary briefing-summary">` +
-      `⚡ Executing <a href="#" class="briefing-path-link" data-path="${safePath}">${safePath}</a>` +
+      `⚡ Executing <code class="fs-link" data-path="${safePath}" title="Click to open in system viewer">${safePath}</code>` +
       `</summary>` +
       `<div class="user-prompt-full">${md(full)}</div>` +
       `</details>` +
@@ -5638,29 +5638,6 @@ function init() {
       hintEl.style.opacity = "0";
       hintTarget = null;
     }
-  });
-
-  // FORK 2026-05-09: Delegated click handler for briefing-path-link — opens the
-  // injected BRIEFING.md file in the system editor via the files.openInEditor RPC.
-  document.addEventListener("click", (ev) => {
-    const briefingLink = (ev.target as HTMLElement | null)?.closest?.(
-      "a.briefing-path-link",
-    ) as HTMLAnchorElement | null;
-    if (!briefingLink) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    const p = briefingLink.getAttribute("data-path");
-    if (!p) return;
-    req<{ ok: boolean; reason?: string }>("files.openInEditor", { path: p }).then(
-      (res) => {
-        if (!res?.ok) {
-          console.warn("[files.openInEditor] failed:", res?.reason);
-        }
-      },
-      (err) => {
-        console.warn("[files.openInEditor] RPC error:", err);
-      },
-    );
   });
 
   const ta = $("chat-textarea") as HTMLTextAreaElement;
