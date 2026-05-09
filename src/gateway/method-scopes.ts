@@ -93,6 +93,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "skills.detail",
     "voicewake.get",
     "voicewake.routing.get",
+    "briefing.resolve",
     "sessions.list",
     "sessions.get",
     "sessions.preview",
@@ -164,6 +165,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
   ],
   [ADMIN_SCOPE]: [
     "channels.start",
+    "files.openInEditor",
     "channels.logout",
     "agents.create",
     "agents.update",

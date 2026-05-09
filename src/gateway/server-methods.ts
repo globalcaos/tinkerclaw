@@ -8,6 +8,7 @@ import { ErrorCodes, errorShape } from "./protocol/index.js";
 import { isRoleAuthorizedForMethod, parseGatewayRole } from "./role-policy.js";
 import { agentHandlers } from "./server-methods/agent.js";
 import { agentsHandlers } from "./server-methods/agents.js";
+import { briefingHandlers } from "./server-methods/briefing.js";
 import { channelsHandlers } from "./server-methods/channels.js";
 import { chatHandlers } from "./server-methods/chat.js";
 import { commandsHandlers } from "./server-methods/commands.js";
@@ -18,6 +19,7 @@ import { deviceHandlers } from "./server-methods/devices.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
 import { doctorHandlers } from "./server-methods/doctor.js";
 import { execApprovalsHandlers } from "./server-methods/exec-approvals.js";
+import { filesOpenHandlers } from "./server-methods/files-open.js";
 import { forensicHandlers } from "./server-methods/forensic.js";
 import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
@@ -80,6 +82,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...voicewakeHandlers,
   ...voicewakeRoutingHandlers,
   ...healthHandlers,
+  ...briefingHandlers,
   ...channelsHandlers,
   ...chatHandlers,
   ...commandsHandlers,
@@ -114,6 +117,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...usageHandlers,
   ...agentHandlers,
   ...agentsHandlers,
+  ...filesOpenHandlers,
   ...forensicHandlers,
 };
 
