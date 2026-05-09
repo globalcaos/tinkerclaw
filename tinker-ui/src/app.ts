@@ -1300,11 +1300,14 @@ function onEvent(evt: unknown) {
             textBlock.text = segmentText;
           }
         } else {
-          // Create a new temporary message
+          // Create a new temporary message.
+          // FORK 2026-05-09 (Feature B): stamp bubble start time so the final
+          // promoted message can display an elapsed chip.
           messages.push({
             role: "assistant",
             content: [{ type: "text", text: segmentText }],
             _temporary: true,
+            _bubbleStartedAt: Date.now(),
           });
           streamMsgIdx = messages.length - 1;
         }
@@ -1332,6 +1335,21 @@ function onEvent(evt: unknown) {
         // markdown elements (tables, lists) that span tool-call boundaries
         // render correctly as a single block.
         const hadTemps = messages.some((m: unknown) => m._temporary);
+        // FORK 2026-05-09 (Feature B): capture bubble start time from the
+        // first temporary text assistant message so the promoted message can
+        // carry it forward for elapsed-chip rendering.
+        const firstTempText = messages.find(
+          (m: unknown) =>
+            m._temporary &&
+            m.role === "assistant" &&
+            Array.isArray(m.content) &&
+            m.content.some((b: unknown) => b.type === "text"),
+        );
+        const inheritedBubbleStart =
+          typeof firstTempText?._bubbleStartedAt === "number"
+            ? firstTempText._bubbleStartedAt
+            : undefined;
+        const bubbleEndedAt = Date.now();
         if (hadTemps && p.message) {
           // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
@@ -1352,11 +1370,16 @@ function onEvent(evt: unknown) {
             return isToolMsg;
           });
 
-          // Insert the complete text as a single non-temp message after the last tool row
+          // Insert the complete text as a single non-temp message after the last tool row.
+          // FORK 2026-05-09 (Feature B): carry timing metadata forward so the
+          // elapsed chip renders on the final promoted bubble.
           if (finalText.trim()) {
             messages.push({
               role: "assistant",
               content: [{ type: "text", text: finalText }],
+              ...(inheritedBubbleStart !== undefined
+                ? { _bubbleStartedAt: inheritedBubbleStart, _bubbleEndedAt: bubbleEndedAt }
+                : {}),
             });
           }
 
@@ -1367,9 +1390,14 @@ function onEvent(evt: unknown) {
             }
           }
         } else if (hadTemps) {
-          // No server final message — promote temps as-is (fallback)
+          // No server final message — promote temps as-is (fallback).
+          // FORK 2026-05-09 (Feature B): stamp _bubbleEndedAt on the last
+          // temp text message before promoting.
           for (const m of messages) {
             if (m._temporary) {
+              if (m.role === "assistant" && m._bubbleStartedAt) {
+                m._bubbleEndedAt = bubbleEndedAt;
+              }
               delete m._temporary;
             }
           }
@@ -3486,6 +3514,50 @@ function renderSystemMsg(text: string, idx: number): string {
   return h;
 }
 
+// FORK 2026-05-09 (Feature B): Format elapsed seconds as "+Ns" or "+1m12s".
+function formatElapsed(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) {
+    return `+${s}s`;
+  }
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `+${m}m${rem}s` : `+${m}m`;
+}
+
+// FORK 2026-05-09 (Feature B): Walk backward from idx to find the most recent
+// user message's _promptStartedAt. Returns undefined when unavailable so the
+// chip is simply omitted rather than showing incorrect data.
+function findPrecedingPromptStart(msgs: unknown[], idx: number): number | undefined {
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = msgs[i] as Record<string, unknown>;
+    if (m.role === "user" && typeof m._promptStartedAt === "number") {
+      return m._promptStartedAt;
+    }
+  }
+  return undefined;
+}
+
+// FORK 2026-05-09 (Feature B): Build the elapsed chip HTML or empty string.
+// Uses _bubbleEndedAt vs the preceding user _promptStartedAt.
+// References the module-level `messages` array (always the active tab's copy).
+function elapsedChip(msg: unknown, idx: number): string {
+  const m = msg as Record<string, unknown>;
+  const endedAt = typeof m._bubbleEndedAt === "number" ? m._bubbleEndedAt : undefined;
+  if (endedAt === undefined) {
+    return "";
+  }
+  const startedAt = findPrecedingPromptStart(messages, idx);
+  if (startedAt === undefined) {
+    return "";
+  }
+  const elapsed = endedAt - startedAt;
+  if (elapsed < 0) {
+    return "";
+  }
+  return `<span class="msg-elapsed">${formatElapsed(elapsed)}</span>`;
+}
+
 function renderMsg(
   msg: unknown,
   idx: number,
@@ -3686,7 +3758,8 @@ function renderMsg(
         const openAttr = hasAction ? " open" : "";
         h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
       } else {
-        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}</div>`;
+        // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
+        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
       }
     } else {
       h += renderSystemMsg(text, idx);
@@ -3819,7 +3892,8 @@ function renderMsg(
             activeRecipeStep && !isThinking
               ? `<div class="recipe-step-tag">${esc(activeRecipeStep)}</div>`
               : "";
-          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${stepTag}</div>`;
+          // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
+          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}</div>`;
         }
       } else {
         h += renderSystemMsg(text, idx);
