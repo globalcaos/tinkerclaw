@@ -93,6 +93,9 @@ let streamProfileId = "";
 let frozenTextEnd = 0;
 /** Length of the last full delta text received (used to set frozenTextEnd on tool freeze). */
 let lastDeltaLen = 0;
+/** FORK 2026-05-09 (Feature C): wall-clock ms of the most recent text_delta arrival.
+ * Used to detect gaps >5s and split assistant bubbles. Reset on final/error/clear. */
+let lastDeltaAt = 0;
 let sending = false;
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
@@ -394,6 +397,8 @@ interface TabState {
   streamRunId: string | null;
   frozenTextEnd: number;
   lastDeltaLen: number;
+  /** FORK 2026-05-09 (Feature C): timestamp of the last delta for gap detection. */
+  lastDeltaAt: number;
   sending: boolean;
   currentTurnNumber: number;
   expandedTools: Set<string>;
@@ -409,6 +414,7 @@ function freshTabState(): TabState {
     streamRunId: null,
     frozenTextEnd: 0,
     lastDeltaLen: 0,
+    lastDeltaAt: 0,
     sending: false,
     currentTurnNumber: 0,
     expandedTools: new Set(),
@@ -427,6 +433,7 @@ function saveCurrentTabState() {
   s.streamRunId = streamRunId;
   s.frozenTextEnd = frozenTextEnd;
   s.lastDeltaLen = lastDeltaLen;
+  s.lastDeltaAt = lastDeltaAt;
   s.sending = sending;
   s.currentTurnNumber = currentTurnNumber;
   s.expandedTools = expandedTools;
@@ -445,6 +452,7 @@ function loadTabState(tabId: string) {
   streamRunId = s.streamRunId;
   frozenTextEnd = s.frozenTextEnd;
   lastDeltaLen = s.lastDeltaLen;
+  lastDeltaAt = s.lastDeltaAt;
   sending = s.sending;
   currentTurnNumber = s.currentTurnNumber;
   expandedTools = s.expandedTools;
@@ -986,6 +994,7 @@ function gwConnect() {
     streamMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
+    lastDeltaAt = 0;
     streamRunId = null;
     activeRuns.clear();
     saveActiveRuns();
@@ -1289,8 +1298,40 @@ function onEvent(evt: unknown) {
       }
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
+        // FORK 2026-05-09 (Feature C): detect >5s gap between deltas and split
+        // the streaming bubble. When a gap is detected we promote the current
+        // temp bubble to permanent (it keeps its content and gets _bubbleEndedAt),
+        // then start a fresh temp bubble for the incoming delta. We reuse
+        // frozenTextEnd to tell the next delta to slice off the already-rendered
+        // text — the same mechanism used for tool-call thinking freezes.
+        // This must NOT interfere with tail-recover: pre-gap bubbles are
+        // promoted to permanent so the final filter (which only removes _temporary
+        // text messages) leaves them intact; only the most-recent post-gap bubble
+        // is replaced by the server's authoritative final text.
+        const nowDelta = Date.now();
+        const gapMs = lastDeltaAt > 0 ? nowDelta - lastDeltaAt : 0;
+        const currentBubbleHasContent =
+          streamMsgIdx >= 0 &&
+          !!messages[streamMsgIdx]?._temporary &&
+          (() => {
+            const tb = (
+              messages[streamMsgIdx].content as Array<{ type: string; text?: string }>
+            )?.find?.((b) => b.type === "text");
+            return typeof tb?.text === "string" && tb.text.length > 0;
+          })();
+        if (gapMs > 5000 && currentBubbleHasContent) {
+          // Finalize the current temp bubble: promote it to permanent and stamp end time.
+          const gapBubble = messages[streamMsgIdx] as Record<string, unknown>;
+          gapBubble._bubbleEndedAt = lastDeltaAt;
+          delete gapBubble._temporary;
+          // Record where the accumulated text stands so the next segmentText
+          // starts from the right offset (parallel to frozenTextEnd on tool freeze).
+          frozenTextEnd = lastDeltaLen;
+          streamMsgIdx = -1;
+        }
         lastDeltaLen = deltaText.length;
-        // Slice off text already shown in frozen thinking bubbles
+        lastDeltaAt = nowDelta;
+        // Slice off text already shown in frozen thinking bubbles or pre-gap bubbles.
         const segmentText = frozenTextEnd > 0 ? deltaText.slice(frozenTextEnd) : deltaText;
         if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
           // Update existing temporary message's text
@@ -1301,13 +1342,13 @@ function onEvent(evt: unknown) {
           }
         } else {
           // Create a new temporary message.
-          // FORK 2026-05-09 (Feature B): stamp bubble start time so the final
+          // FORK 2026-05-09 (Features B+C): stamp bubble start time so the final
           // promoted message can display an elapsed chip.
           messages.push({
             role: "assistant",
             content: [{ type: "text", text: segmentText }],
             _temporary: true,
-            _bubbleStartedAt: Date.now(),
+            _bubbleStartedAt: nowDelta,
           });
           streamMsgIdx = messages.length - 1;
         }
@@ -1463,6 +1504,7 @@ function onEvent(evt: unknown) {
       streamMsgIdx = -1;
       frozenTextEnd = 0;
       lastDeltaLen = 0;
+      lastDeltaAt = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
       // FORK: Chat final/error is authoritative — if the lifecycle "end" agent event
       // was missed (dropped frame, JS error, session key mismatch), activeRuns would
@@ -2283,6 +2325,7 @@ async function loadChat() {
   streamMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  lastDeltaAt = 0;
   messages = res.messages ?? [];
   // FORK 2026-05-09: Reconstruct _fullPrompt / _briefingPath for historical
   // user messages. The gateway persists the full injected prompt as the
@@ -2433,6 +2476,7 @@ async function send(text: string) {
     streamRunId = null;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
+    lastDeltaAt = 0;
     sending = false;
     currentTurnNumber = 0;
     expandedTools = new Set();
@@ -2563,6 +2607,7 @@ function retryProvider(provider: string) {
   streamMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  lastDeltaAt = 0;
   messages = messages.filter(
     (m) => !((m._isError || m._isWarning) && m._retryProvider === provider),
   );
@@ -2597,6 +2642,7 @@ async function abort() {
   streamMsgIdx = -1;
   frozenTextEnd = 0;
   lastDeltaLen = 0;
+  lastDeltaAt = 0;
   streamRunId = null;
   activeRuns.clear();
   updateChat();
@@ -7921,6 +7967,7 @@ function init() {
     streamMsgIdx = -1;
     frozenTextEnd = 0;
     lastDeltaLen = 0;
+    lastDeltaAt = 0;
     streamRunId = null;
     sending = false;
     if (sessionKey) {
