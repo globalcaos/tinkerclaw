@@ -2910,8 +2910,8 @@ function applyInjectToggleChrome(): void {
 //      bodyStripped non-empty on the server, which bypasses the
 //      isBareSessionReset → SESSION.md → BRIEFING.md path entirely. That's
 //      why /new wasn't producing the briefing before.
-//   2. the user wants to see the BRIEFING.md path in the expandable _fullPrompt
-//      so he can edit that file directly to change the briefing format,
+//   2. The user wants to see the BRIEFING.md path in the expandable _fullPrompt
+//      so they can edit that file directly to change the briefing format,
 //      without digging through amygdala/fractal noise unrelated to /new.
 function buildInjectedPrompt(userText: string): string {
   const trimmed = userText.trim();
@@ -3645,7 +3645,7 @@ function renderMsg(
       h += `<div class="tool-row" data-tid="${tid}"><span class="status ${statusCls}">${statusIcon}</span><span class="detail">${esc(title)}</span></div>`;
       if (exp) {
         // FORK (2026-04-24): expanded view = command first, then full stdout
-        // of the command. the user's explicit design: description is the only
+        // of the command. Explicit design: description is the only
         // thing visible until you click. Everything you need to judge the
         // call lives in the expansion — what ran, and what came back.
         h += `<div class="tool-detail">${toolExpandedDetail(block.name, a)}`;

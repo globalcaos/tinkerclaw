@@ -59,7 +59,7 @@ Actions:
 
 Examples:
 - Search for keyword: { "action": "search", "query": "fusion reactor" }
-- Find what the user said: { "action": "search", "sender": "the user", "limit": 20 }
+- Find what a sender said: { "action": "search", "sender": "<name>", "limit": 20 }
 - Messages from a chat: { "action": "search", "chat": "Max-Jarvis", "limit": 50 }
 - My messages only: { "action": "search", "fromMe": true, "limit": 30 }
 - Import exports: { "action": "import", "path": "/path/to/exports" }`,

@@ -93,4 +93,13 @@ export type WebInboundMessage = {
   wasMentioned?: boolean;
   /** True when this message was recovered from offline catch-up (append), not real-time. */
   isOfflineRecovery?: boolean;
+  /**
+   * FORK 2026-05-09: set true by `createWebOnMessageHandler`'s trigger gate when
+   * the owner addressed Jarvis by the configured `triggerPrefix` (e.g. "Jarvis,
+   * …"). Honoured by `applyGroupGating` to bypass the mention/activation
+   * requirement so the owner+prefix path triggers in any chat — DM, group, LID,
+   * self — without per-chat allowlisting. Non-owner senders never set this
+   * flag; they remain subject to normal mention/activation gating.
+   */
+  ownerPrefixTriggered?: boolean;
 };

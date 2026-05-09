@@ -402,7 +402,7 @@ export async function attachWebInboxToSocket(
     // bugs: (1) the trigger gate would fire (self-DM is in `noPrefixChats`),
     // making Jarvis reply to a non-Jarvis-addressed message; (2) the reply
     // routed back to the rewritten chat (owner self-DM) instead of the
-    // original peer, leaking the reply into the user's self-chat. The fix:
+    // original peer, leaking the reply into the owner's self-chat. The fix:
     // ONLY rescue when we have positive evidence the LID belongs to the
     // owner. Two signals (in priority order):
     //   (a) `self.lid` is populated and matches `remoteJid` — authoritative.
@@ -451,10 +451,10 @@ export async function attachWebInboxToSocket(
         // FORK 2026-05-04 (post-rescue-fix): still let owner's prefixed
         // messages through. The previous version of this branch left `from`
         // null, which dropped at the guard below — meaning the user literally
-        // could not say "Jarvis …" in a non-self LID chat (e.g. a sister DM
-        // delivered as <her-lid>@lid). Use the LID itself as the chat
+        // could not say "Jarvis …" in a non-self LID chat (e.g. a peer DM
+        // delivered as <their-lid>@lid). Use the LID itself as the chat
         // identifier so the standard pipeline runs:
-        //   - access-control: owner-fromMe fast-paths to allowed; sister's
+        //   - access-control: owner-fromMe fast-paths to allowed; the peer's
         //     own (fromMe=false) messages already dropped above because
         //     resolveInboundJid returned null, so they never reach this
         //     branch.
@@ -462,7 +462,7 @@ export async function attachWebInboxToSocket(
         //     body-prefix gate decides — silent without "Jarvis …", fires
         //     with it.
         //   - reply routing: `msg.from` is the LID, so the reply lands back
-        //     in the same chat (sister sees it). This honours the user's
+        //     in the same chat (the peer sees it). This honours the user's
         //     "always reply in the same chat that triggered him" rule.
         from = lidString;
         console.log(
@@ -474,7 +474,7 @@ export async function attachWebInboxToSocket(
       console.log(`[wa-debug] DROP: resolveInboundJid returned null jid=${remoteJid} id=${id}`);
       return null;
     }
-    // FORK 2026-05-04: for fromMe DMs, the sender is the OWNER (the user), not
+    // FORK 2026-05-04: for fromMe DMs, the sender is the OWNER, not
     // the peer in `from`. Without this, downstream people-prefetch tries to
     // resolve the peer's profile when the body really came from the owner —
     // notably wrong on the new owner-prefix-via-LID-chat path where `from`

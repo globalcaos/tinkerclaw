@@ -2,7 +2,7 @@
  * FORK: tinkerclaw-people — profile markdown parsing.
  *
  * Computes deltaSinceLastConsult by extracting the "Recent asks" section and
- * keeping only date-prefixed bullets newer than `lastConsultedBythe user`. We
+ * keeping only date-prefixed bullets newer than `lastConsultedByOwner`. We
  * keep the parsing tolerant: bullets are `- YYYY-MM-DD ...` lines.
  */
 
@@ -30,15 +30,15 @@ export function extractRecentAsks(profileMd: string): { line: string; date: stri
   return out;
 }
 
-export function computeDelta(profileMd: string, lastConsultedBythe userIso?: string): string {
+export function computeDelta(profileMd: string, lastConsultedByOwnerIso?: string): string {
   if (!profileMd.trim()) return "";
   const bullets = extractRecentAsks(profileMd);
   if (bullets.length === 0) return "";
-  if (!lastConsultedBythe userIso) {
+  if (!lastConsultedByOwnerIso) {
     // first consult — show everything
     return bullets.map((b) => b.line).join("\n");
   }
-  const cutoffDate = lastConsultedBythe userIso.slice(0, 10); // YYYY-MM-DD
+  const cutoffDate = lastConsultedByOwnerIso.slice(0, 10); // YYYY-MM-DD
   const fresh = bullets.filter((b) => b.date > cutoffDate);
   return fresh.map((b) => b.line).join("\n");
 }

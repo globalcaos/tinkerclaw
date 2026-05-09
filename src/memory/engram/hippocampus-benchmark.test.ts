@@ -308,8 +308,8 @@ describe("A1: Pronoun expansion ablation (placeholder)", () => {
   // Blocked: needs pronoun resolution ('he'/'she'/'it' → entity names) before re-query
 
   it("A1-api-readiness: jaccard handles pronoun-resolved vs raw queries identically (no-op until A1)", () => {
-    const raw = "the user committed change to memory module";
-    const cSet = new Set(["oscar", "memory", "module", "commit", "change", "engram"]);
+    const raw = "Owner committed change to memory module";
+    const cSet = new Set(["owner", "memory", "module", "commit", "change", "engram"]);
     const rSet = new Set(
       raw
         .toLowerCase()

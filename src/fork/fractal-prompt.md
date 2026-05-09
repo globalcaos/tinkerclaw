@@ -91,15 +91,18 @@ A stale reference, outdated instruction, missing entry, better default?
 Recipes are structured workflows in `extensions/tinkerclaw-prefrontal/recipes/` that encode the best way to handle recurring tasks. Reflection is where recipes evolve.
 
 **If you followed a recipe this turn:**
+
 - Did it help? Were all steps relevant, or did you skip some?
 - Did you hit a step that was wrong or missing? If so, **edit the recipe file now** — add the missing step, fix the wrong one, update the success criteria.
 - Would a different recipe have been a better fit? Name it and explain why. If it doesn't exist, note it for creation.
 
 **If you did NOT follow a recipe but should have:**
+
 - Was there an existing recipe that would have structured this task better? Name it.
 - Did you improvise a multi-step process that felt like it should be a recipe? If the pattern could recur, **create a new recipe now** — write a `.md` file in the appropriate `recipes/` subdirectory (coding, writing, operations, analysis, security, communication) following the existing format.
 
 **If the task was trivial (one tool call, one response):**
+
 - Say "No recipe needed."
 
 The goal: every hard-won operational insight gets encoded as a recipe step, so the next time this situation arises — even in a different session — the structured path is already there. Recipes are the compound interest of agent intelligence.
@@ -118,17 +121,17 @@ The test: could a future session's Jarvis, reading only the knowledge files, do 
 
 **If you HAVE**, write the rule NOW. Don't describe it — encode it.
 
-**Safety constraint — irreversibility gate.** The PREEMPT step encodes rules that make you act *without being asked*. This is powerful but dangerous. Before encoding any preemptive rule, check:
+**Safety constraint — irreversibility gate.** The PREEMPT step encodes rules that make you act _without being asked_. This is powerful but dangerous. Before encoding any preemptive rule, check:
 
 1. **Is the action reversible?** File writes, memory updates, paper edits, PDF rebuilds — reversible. Sending emails, posting to external channels, deleting data, running destructive commands — NOT reversible.
 2. **Reversible actions:** Encode the trigger→action rule freely. Act first, inform the user after.
-3. **Irreversible actions:** Encode the trigger as a *recommendation*, not an action. Format: "When [trigger], PROPOSE [action] to the user before executing." The rule fires, but it produces a suggestion, not an execution.
+3. **Irreversible actions:** Encode the trigger as a _recommendation_, not an action. Format: "When [trigger], PROPOSE [action] to the user before executing." The rule fires, but it produces a suggestion, not an execution.
 4. **When in doubt:** It's irreversible. Propose, don't act.
 
 Examples:
+
 - ✅ "When new implementation data arrives for a paper, update the paper and rebuild PDF" — reversible, encode as auto-action
-- ✅ "When the user mentions repo work, check the repo for changes" — read-only, encode as auto-action  
+- ✅ "When the user mentions repo work, check the repo for changes" — read-only, encode as auto-action
 - ⚠️ "When a Todoist task matches a completed email thread, close the task" — external side effect, encode as PROPOSE
 - ⚠️ "When a WhatsApp message needs follow-up, draft and send a reply" — irreversible send, encode as PROPOSE
 - ❌ NEVER encode rules that delete files, restart services, send messages to external contacts, or make financial commitments without explicit approval
-

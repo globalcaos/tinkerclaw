@@ -104,7 +104,7 @@ export function resolveQuery(
     }
   }
 
-  // 4b) substring/firstname (no fuzz, but tolerate "Alex" matching "Alex REDACTED-NAME")
+  // 4b) substring/firstname (no fuzz, but tolerate e.g. "Iván" matching "Iván Núñez")
   for (const [slug, alias] of Object.entries(aliases)) {
     const candidates = [alias.displayName, ...(alias.names ?? [])];
     if (

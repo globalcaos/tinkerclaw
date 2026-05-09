@@ -494,7 +494,7 @@ export async function highlightViaPlaywright(opts: {
   }
 }
 
-// FORK 2026-04-30 (Bible §5.81f): visible click indicator. the user watches the
+// FORK 2026-04-30 (Bible §5.81f): visible click indicator. The user watches the
 // shared tab while Jarvis drives it; without a visual marker every click feels
 // invisible and untraceable. Inject a brown cursor + growing yellow ring at
 // the click coords for 500ms BEFORE the actual click fires, so the user can

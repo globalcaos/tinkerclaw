@@ -104,7 +104,7 @@ function resolveRecipeStateCliPath(): string {
   return resolveForkScript("openclaw-recipe-state.mjs", "OPENCLAW_RECIPE_STATE_BIN");
 }
 function resolveForkScript(name: string, envVar: string): string {
-  // FORK 2026-04-28 (bible §5.76): no `/home/<user>/...` literals.
+  // FORK 2026-04-28 (bible §5.76): no hardcoded absolute home paths.
   // Order: env override → bundled scripts dir (production via
   // OPENCLAW_BUNDLED_PLUGINS_DIR's parent) → ~/src/tinkerclaw clone (dev) →
   // workspace-side script override.
@@ -175,7 +175,7 @@ function buildToolChoiceBlock(): string {
 }
 
 function resolveRecipesDirPath(): string {
-  // FORK 2026-04-28 (bible §5.76): no `/home/<user>/...` literals.
+  // FORK 2026-04-28 (bible §5.76): no hardcoded absolute home paths.
   // Order: env override → workspace recipes dir (user-added recipes) →
   // bundled prefrontal recipes (shipped catalog) → ~/src clone (dev).
   const bundleRoot = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
@@ -481,7 +481,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     cleanEnv.CLAUDECODE = "1";
     cleanEnv.CLAUDE_CODE_ENTRYPOINT = "cli";
     // FORK 2026-04-28 (bible §5.76): probe for the user's claude install at
-    // runtime instead of hardcoding `/home/<user>/.local/...`. claude-cli
+    // runtime instead of hardcoding an absolute home path. claude-cli
     // installs land under `~/.local/share/claude/versions/latest` for the
     // upstream installer; if that's missing, omit the env var entirely and
     // let claude-cli detect its own install path. The var is a marker that

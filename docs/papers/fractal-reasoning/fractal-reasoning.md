@@ -1,6 +1,6 @@
 # Fractal Reasoning
 
-**Author:** Research Report — the user / JarvisOne AI Research  
+**Author:** Research Report — Oscar Serra / JarvisOne AI Research  
 **Version:** v7.0  
 **Date:** March 2026  
 **Keywords:** fractal data structures, LLM memory, retrieval-augmented generation, self-similarity, memory compression, hierarchical indexing, fractal metacognition

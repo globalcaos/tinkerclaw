@@ -1,7 +1,7 @@
 # Fork Sync Report Specification
 
 **Format:** Daily newspaper-style intelligence briefing
-**Audience:** the user (busy executive scan)
+**Audience:** The fork maintainer (busy executive scan)
 **Goal:** Keep fork updated, stay ahead of ecosystem
 
 ---
@@ -11,6 +11,7 @@
 ### 🗞️ FRONT PAGE
 
 #### Masthead
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  FORK SYNC DAILY                          [DATE]        │
@@ -19,6 +20,7 @@
 ```
 
 #### Lead Story (Most Important Finding)
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  HEADLINE: [Most significant discovery]                 │
@@ -36,6 +38,7 @@
 ```
 
 #### Secondary Stories (2-3 other findings)
+
 - Same format, smaller
 - Each with headline + subhead + key points + effort estimate
 
@@ -154,13 +157,13 @@ New/updated skills in the ecosystem:
 
 ## Metrics to Track (Consistent)
 
-| Metric | Description | Target |
-|--------|-------------|--------|
-| Commits Behind | vs upstream main | < 20 |
-| Days Since Merge | last upstream sync | < 7 |
-| Gems Found | valuable changes discovered | ongoing |
-| Fork Health | overall sync status | > 80% |
-| Skills Radar | new skills tracked | 3-5/week |
+| Metric           | Description                 | Target   |
+| ---------------- | --------------------------- | -------- |
+| Commits Behind   | vs upstream main            | < 20     |
+| Days Since Merge | last upstream sync          | < 7      |
+| Gems Found       | valuable changes discovered | ongoing  |
+| Fork Health      | overall sync status         | > 80%    |
+| Skills Radar     | new skills tracked          | 3-5/week |
 
 ---
 
@@ -192,4 +195,4 @@ New/updated skills in the ecosystem:
 
 ---
 
-*Spec created: 2026-02-08*
+_Spec created: 2026-02-08_

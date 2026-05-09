@@ -431,7 +431,7 @@ Merge-damage TS errors fall into these classes. Classify every error in `/tmp/ts
 
 Template for each subagent instruction (adapt per cluster):
 
-> You are fixing Cluster X in `/home/<user>/src/tinkerclaw`. Errors:
+> You are fixing Cluster X in the fork repo (cwd: `~/src/tinkerclaw` or wherever the fork is checked out). Errors:
 > [paste the errors from /tmp/tsc-new.log that belong to this cluster]
 >
 > Classify each error against the six-class taxonomy (Fork erosion / Upstream drift / Structural move / Merge-resolution defect / Test-fixture staleness / Dropped fork file). Method: classify, find the original fork source via `git log -S '<symbol>' --all`, restore properly.
@@ -523,7 +523,7 @@ Write a report to: `$HOME/Documents/AI_reports/Cron_Tasks/0445_Daily_Fork_Sync_R
 
 The report has TWO audiences and therefore TWO sections. The first section is for the user — grandma-proof, gaps-first, no jargon, no file paths, no variable names. The second section is for future merge agents — technical detail the user will never read. Order matters: the user's section goes FIRST because the user opens the file, reads the first screen, and decides whether to dig deeper.
 
-### 5a. Section 1 — FOR OSCAR (grandma-proof)
+### 5a. Section 1 — FOR THE USER (grandma-proof)
 
 Format: Markdown, ≤ 400 words total, narrative prose broken up by 3–5 clearly-named subheads. No tables unless the user asked for one. No code blocks. No file paths. Plain English, active voice. If you catch yourself writing a variable name, rewrite the sentence.
 

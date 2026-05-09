@@ -65,7 +65,7 @@ export async function createWmMonitorSocket(options: {
   // the listener attaches, leaving sock.user.id permanently null. Symptom:
   // every inbound DM gets dropped with "selfE164=null" → access-control's
   // owner-DM (Tier 1) check can't match `from` against `selfE164` →
-  // `[wa-debug] DROP: access denied from=+34555111000 ... fromMe=true`.
+  // `[wa-debug] DROP: access denied from=+<owner-e164> ... fromMe=true`.
   const adapter = createBaileysAdapter({
     wmClient: client,
   });

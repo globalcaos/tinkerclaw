@@ -49,9 +49,10 @@ export async function checkInboundAccessControl(params: {
     selfE164: params.selfE164,
   });
 
-  // FORK 2026-05-03: unified owner-fromMe bypass. Per the user's request, do not
-  // distinguish DM vs group at access-control. If the inbound message comes
-  // from the linked account itself (the user typing on his phone), allow
+  // FORK 2026-05-03: unified owner-fromMe bypass. Per the owner-prefix
+  // invariant, do not distinguish DM vs group at access-control. If the
+  // inbound message comes from the linked account itself (the user typing on
+  // their phone), allow
   // unconditionally — same rule whether the chat is a self-DM, a Jarvis-named
   // agent group, or any other group. Allowlist-based gating still applies to
   // messages from other people; only the owner gets the auto-bypass.
