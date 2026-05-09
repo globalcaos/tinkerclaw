@@ -3933,7 +3933,11 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
   }
   const name = modelId.split("/").slice(1).join("/") || modelId;
 
-  if (provider === "anthropic") {
+  // FORK 2026-05-09: claude-code is just a wrapper around the Anthropic API
+  // (uses the same cli-gm OAuth credentials and the same usage limits). Treat
+  // the two providers identically for the purposes of usage-bar rendering so
+  // models like `claude-code/claude-opus-4-7` show their 5h/7d utilization bars.
+  if (provider === "anthropic" || provider === "claude-code") {
     // Check if profile is disabled (billing cap, cooldown, etc.)
     const prof = keyId ? modelConfigData?.authProfiles?.[keyId] : null;
     if (prof?.disabled) {
