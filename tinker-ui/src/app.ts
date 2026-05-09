@@ -89,9 +89,11 @@ let streamMsgIdx = -1;
 let streamRunId: string | null = null;
 let streamProvider = "";
 let streamProfileId = "";
-/** Tracks how much of the server's accumulated text is already shown in frozen temp messages. */
-let frozenTextEnd = 0;
-/** Length of the last full delta text received (used to set frozenTextEnd on tool freeze). */
+/** Length of the last full delta text received (used to compute per-bubble
+ * `_segmentStart` when a new bubble is created mid-stream — tool freeze or
+ * >5s gap split). FORK 2026-05-09: replaced the global frozenTextEnd cursor
+ * with per-bubble `_segmentStart` so concurrent freezes (tool + gap) don't
+ * clobber each other's offsets. */
 let lastDeltaLen = 0;
 /** FORK 2026-05-09 (Feature C): wall-clock ms of the most recent text_delta arrival.
  * Used to detect gaps >5s and split assistant bubbles. Reset on final/error/clear. */
@@ -395,7 +397,6 @@ interface TabState {
   messages: unknown[];
   streamMsgIdx: number;
   streamRunId: string | null;
-  frozenTextEnd: number;
   lastDeltaLen: number;
   /** FORK 2026-05-09 (Feature C): timestamp of the last delta for gap detection. */
   lastDeltaAt: number;
@@ -412,7 +413,6 @@ function freshTabState(): TabState {
     messages: [],
     streamMsgIdx: -1,
     streamRunId: null,
-    frozenTextEnd: 0,
     lastDeltaLen: 0,
     lastDeltaAt: 0,
     sending: false,
@@ -431,7 +431,6 @@ function saveCurrentTabState() {
   s.messages = messages;
   s.streamMsgIdx = streamMsgIdx;
   s.streamRunId = streamRunId;
-  s.frozenTextEnd = frozenTextEnd;
   s.lastDeltaLen = lastDeltaLen;
   s.lastDeltaAt = lastDeltaAt;
   s.sending = sending;
@@ -450,7 +449,6 @@ function loadTabState(tabId: string) {
   messages = s.messages;
   streamMsgIdx = s.streamMsgIdx;
   streamRunId = s.streamRunId;
-  frozenTextEnd = s.frozenTextEnd;
   lastDeltaLen = s.lastDeltaLen;
   lastDeltaAt = s.lastDeltaAt;
   sending = s.sending;
@@ -992,7 +990,6 @@ function gwConnect() {
     connected = false;
     sending = false;
     streamMsgIdx = -1;
-    frozenTextEnd = 0;
     lastDeltaLen = 0;
     lastDeltaAt = 0;
     streamRunId = null;
@@ -1298,16 +1295,11 @@ function onEvent(evt: unknown) {
       }
       const deltaText = p.message?.content?.[0]?.text ?? "";
       if (deltaText) {
-        // FORK 2026-05-09 (Feature C): detect >5s gap between deltas and split
-        // the streaming bubble. When a gap is detected we promote the current
-        // temp bubble to permanent (it keeps its content and gets _bubbleEndedAt),
-        // then start a fresh temp bubble for the incoming delta. We reuse
-        // frozenTextEnd to tell the next delta to slice off the already-rendered
-        // text — the same mechanism used for tool-call thinking freezes.
-        // This must NOT interfere with tail-recover: pre-gap bubbles are
-        // promoted to permanent so the final filter (which only removes _temporary
-        // text messages) leaves them intact; only the most-recent post-gap bubble
-        // is replaced by the server's authoritative final text.
+        // FORK 2026-05-09 (Feature C, revised): detect >5s gap between deltas
+        // and split the streaming bubble. The bubble keeps `_temporary` so
+        // tail-recover can re-slice its content from the server-authoritative
+        // text using its own `_segmentStart` cursor — no global frozenTextEnd,
+        // no clobbering between concurrent freezes (tool + gap).
         const nowDelta = Date.now();
         const gapMs = lastDeltaAt > 0 ? nowDelta - lastDeltaAt : 0;
         const currentBubbleHasContent =
@@ -1320,35 +1312,40 @@ function onEvent(evt: unknown) {
             return typeof tb?.text === "string" && tb.text.length > 0;
           })();
         if (gapMs > 5000 && currentBubbleHasContent) {
-          // Finalize the current temp bubble: promote it to permanent and stamp end time.
+          // Stamp the gap-bubble's end time and detach it from streamMsgIdx so
+          // the next delta opens a new bubble. Bubble stays _temporary; the
+          // tail-recover at final time will re-slice its content from the
+          // authoritative finalText using its `_segmentStart`.
           const gapBubble = messages[streamMsgIdx] as Record<string, unknown>;
           gapBubble._bubbleEndedAt = lastDeltaAt;
-          delete gapBubble._temporary;
-          // Record where the accumulated text stands so the next segmentText
-          // starts from the right offset (parallel to frozenTextEnd on tool freeze).
-          frozenTextEnd = lastDeltaLen;
           streamMsgIdx = -1;
         }
+        // Capture cumulative offset BEFORE updating lastDeltaLen so the new
+        // bubble (if we create one) records where it begins.
+        const segmentStart = lastDeltaLen;
         lastDeltaLen = deltaText.length;
         lastDeltaAt = nowDelta;
-        // Slice off text already shown in frozen thinking bubbles or pre-gap bubbles.
-        const segmentText = frozenTextEnd > 0 ? deltaText.slice(frozenTextEnd) : deltaText;
         if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
-          // Update existing temporary message's text
+          // Append to existing bubble. Slice from this bubble's _segmentStart.
+          const bubble = messages[streamMsgIdx] as Record<string, unknown>;
+          const start = (bubble._segmentStart as number | undefined) ?? 0;
+          const segmentText = deltaText.slice(start);
           const content = messages[streamMsgIdx].content;
           const textBlock = content.find((b: unknown) => b.type === "text");
           if (textBlock) {
             textBlock.text = segmentText;
           }
         } else {
-          // Create a new temporary message.
-          // FORK 2026-05-09 (Features B+C): stamp bubble start time so the final
-          // promoted message can display an elapsed chip.
+          // Create a new bubble. Its _segmentStart is the cumulative offset
+          // captured before this delta updated lastDeltaLen — i.e. where the
+          // previous bubble (if any) ended in the cumulative stream.
+          const segmentText = deltaText.slice(segmentStart);
           messages.push({
             role: "assistant",
             content: [{ type: "text", text: segmentText }],
             _temporary: true,
             _bubbleStartedAt: nowDelta,
+            _segmentStart: segmentStart,
           });
           streamMsgIdx = messages.length - 1;
         }
@@ -1369,62 +1366,74 @@ function onEvent(evt: unknown) {
         // assistant text bubble and keep the remainder in the current one.
         mergeSentenceContinuations(messages);
 
-        // Promote temp messages to permanent.
-        // When tool calls split the streaming text (frozenTextEnd slicing),
-        // the final server message has the complete un-sliced text. Replace
-        // ALL temp text segments with the server's authoritative version so
-        // markdown elements (tables, lists) that span tool-call boundaries
-        // render correctly as a single block.
+        // FORK 2026-05-09 (revised tail-recover): with per-bubble `_segmentStart`,
+        // each temp text bubble knows where its slice begins in the cumulative
+        // server text. Re-slice each bubble's content from finalText using
+        // `_segmentStart`-to-next-bubble's-start (or to end-of-finalText for
+        // the last bubble), then promote in place. This preserves gap-split
+        // bubble structure across the truncation/divergence reconciliation
+        // (the original logic dropped all temp text bubbles and pushed a
+        // single new one, which would duplicate content with gap-splits).
         const hadTemps = messages.some((m: unknown) => m._temporary);
-        // FORK 2026-05-09 (Feature B): capture bubble start time from the
-        // first temporary text assistant message so the promoted message can
-        // carry it forward for elapsed-chip rendering.
-        const firstTempText = messages.find(
-          (m: unknown) =>
-            m._temporary &&
-            m.role === "assistant" &&
-            Array.isArray(m.content) &&
-            m.content.some((b: unknown) => b.type === "text"),
-        );
-        const inheritedBubbleStart =
-          typeof firstTempText?._bubbleStartedAt === "number"
-            ? firstTempText._bubbleStartedAt
-            : undefined;
         const bubbleEndedAt = Date.now();
         if (hadTemps && p.message) {
-          // Remove ALL temporary assistant text bubbles (keep tool_use/tool_result)
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
           const finalText = finalContent
             .filter((b: unknown) => b.type === "text")
             .map((b: unknown) => b.text ?? "")
             .join("");
 
-          // Remove temp text-only messages, keep temp tool messages
-          messages = messages.filter((m: unknown) => {
-            if (!m._temporary) {
-              return true;
+          // Collect all temp text bubbles in order with their segment starts.
+          const tempTextBubbles: { idx: number; segStart: number }[] = [];
+          for (let i = 0; i < messages.length; i++) {
+            const m = messages[i] as Record<string, unknown>;
+            if (
+              m._temporary &&
+              m.role === "assistant" &&
+              Array.isArray(m.content) &&
+              (m.content as Array<{ type: string }>).some((b) => b.type === "text")
+            ) {
+              tempTextBubbles.push({
+                idx: i,
+                segStart: (m._segmentStart as number | undefined) ?? 0,
+              });
             }
-            const c = Array.isArray(m.content) ? m.content : [];
-            const isToolMsg = c.some(
-              (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
-            );
-            return isToolMsg;
-          });
-
-          // Insert the complete text as a single non-temp message after the last tool row.
-          // FORK 2026-05-09 (Feature B): carry timing metadata forward so the
-          // elapsed chip renders on the final promoted bubble.
-          if (finalText.trim()) {
-            messages.push({
-              role: "assistant",
-              content: [{ type: "text", text: finalText }],
-              ...(inheritedBubbleStart !== undefined
-                ? { _bubbleStartedAt: inheritedBubbleStart, _bubbleEndedAt: bubbleEndedAt }
-                : {}),
-            });
           }
 
-          // Clean up remaining temp flags
+          if (tempTextBubbles.length === 0) {
+            // No temp text bubbles — push the authoritative text as a single
+            // new bubble (e.g. response is tool-only with no streamed text).
+            if (finalText.trim()) {
+              messages.push({
+                role: "assistant",
+                content: [{ type: "text", text: finalText }],
+                _bubbleEndedAt: bubbleEndedAt,
+              });
+            }
+          } else {
+            // Re-slice each temp text bubble from its _segmentStart up to the
+            // next bubble's _segmentStart (or end-of-finalText for the last).
+            for (let i = 0; i < tempTextBubbles.length; i++) {
+              const cur = tempTextBubbles[i];
+              const next = tempTextBubbles[i + 1];
+              const segEnd = next ? next.segStart : finalText.length;
+              const segText = finalText.slice(cur.segStart, segEnd);
+              const m = messages[cur.idx] as Record<string, unknown>;
+              const blocks = m.content as Array<{ type: string; text?: string }>;
+              for (const b of blocks) {
+                if (b.type === "text") {
+                  b.text = segText;
+                  break;
+                }
+              }
+              delete m._temporary;
+              if (typeof m._bubbleStartedAt === "number" && !m._bubbleEndedAt) {
+                m._bubbleEndedAt = bubbleEndedAt;
+              }
+            }
+          }
+
+          // Clean up remaining temp flags on tool messages etc.
           for (const m of messages) {
             if (m._temporary) {
               delete m._temporary;
@@ -1502,7 +1511,6 @@ function onEvent(evt: unknown) {
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
-      frozenTextEnd = 0;
       lastDeltaLen = 0;
       lastDeltaAt = 0;
       streamRunId = p.state !== "error" ? null : streamRunId;
@@ -1579,8 +1587,10 @@ function onEvent(evt: unknown) {
           }
         }
         updatePrefrontalTree();
-        // Freeze current streaming text — it becomes its own thinking bubble
-        frozenTextEnd = lastDeltaLen;
+        // Freeze current streaming text — it becomes its own thinking bubble.
+        // FORK 2026-05-09: with per-bubble `_segmentStart`, no global cursor
+        // is needed. The next text delta will open a new bubble whose
+        // `_segmentStart` captures the cumulative offset where it begins.
         streamMsgIdx = -1;
         // Add tool_use as a temporary message. FORK (2026-04-24): cc-bridge
         // attaches a `purpose` string to the event carrying the LLM's
@@ -2323,7 +2333,6 @@ async function loadChat() {
     return;
   }
   streamMsgIdx = -1;
-  frozenTextEnd = 0;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   messages = res.messages ?? [];
@@ -2474,7 +2483,6 @@ async function send(text: string) {
     messages = [];
     streamMsgIdx = -1;
     streamRunId = null;
-    frozenTextEnd = 0;
     lastDeltaLen = 0;
     lastDeltaAt = 0;
     sending = false;
@@ -2605,7 +2613,6 @@ function retryProvider(provider: string) {
   updateBudgetPanel();
   // Remove error messages from this provider and re-render
   streamMsgIdx = -1;
-  frozenTextEnd = 0;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   messages = messages.filter(
@@ -2640,7 +2647,6 @@ async function abort() {
   sending = false;
   messages = messages.filter((m: unknown) => !m._temporary);
   streamMsgIdx = -1;
-  frozenTextEnd = 0;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   streamRunId = null;
@@ -7973,7 +7979,6 @@ function init() {
 
     messages.length = 0;
     streamMsgIdx = -1;
-    frozenTextEnd = 0;
     lastDeltaLen = 0;
     lastDeltaAt = 0;
     streamRunId = null;
