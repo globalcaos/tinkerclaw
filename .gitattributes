@@ -5,6 +5,11 @@ src/gateway/server-methods/CLAUDE.md -text
 # Lockfile — always accept upstream, regenerate after merge
 pnpm-lock.yaml merge=ours
 
+# README.md — keep fork's gold-pass version through every upstream merge.
+# Without this, merge-upstream.sh would silently replace TinkerClaw's README
+# with upstream's OpenClaw one on every conflict.
+README.md merge=ours
+
 # TIER1 files — accept upstream + re-wire automatically via tier1-driver.sh
 src/agents/pi-embedded-runner/run/attempt.ts merge=tier1
 src/agents/pi-embedded-runner/run.ts merge=tier1

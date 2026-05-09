@@ -2,7 +2,8 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-04-28 (§5.76 public/private boundary + git-pull contract — Jarvis ships as the day-0 default; user overrides live in `~/.openclaw/workspace/`; resolution order config → workspace → bundled; five hardcoded `/home/<user>/...` paths in `worker.ts` and `db-probe.mjs` to fix; chrome-extension token-leak placeholder to replace; narration / subagent-helper / tool-choice / persona / briefing default prompts extracted to `extensions/tinkerclaw-cc-bridge/{personas,prompts}/` and loaded via shared resolver. The "Sam test" + "Day-90 test" are the structural guarantees.)
+> Last updated: 2026-05-09 (§5.44 WhatsApp thinking-reaction upgraded to persona-aware alternating heartbeat 🤔↔🤖 + final-empty clear + ⚡ done-separator-as-message — verified end-to-end in DM smoke-test. Single source of truth for persona icon + separator defaults lives in `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts`; cloners change `DEFAULT_OUTBOUND_PREFIX` constant or set `channels.whatsapp.messagePrefix` to flow the icon through outbound prefix and heartbeat alternation in lockstep. Two regression-class gotchas pinned: (1) reactions MUST route through `wmClient.sendReaction` not `sendMessage({react})` — Baileys-shaped payloads silently no-op at the whatsmeow wire; (2) any helper calling `requireRuntimeConfig` needs cfg plumbed in or fetched at call-time, otherwise the `.catch(() => {})` swallows the throw silently.)
+> Previously (2026-04-28): §5.76 public/private boundary + git-pull contract — Jarvis ships as the day-0 default; user overrides live in `~/.openclaw/workspace/`; resolution order config → workspace → bundled; five hardcoded `/home/<user>/...` paths in `worker.ts` and `db-probe.mjs` to fix; chrome-extension token-leak placeholder to replace; narration / subagent-helper / tool-choice / persona / briefing default prompts extracted to `extensions/tinkerclaw-cc-bridge/{personas,prompts}/` and loaded via shared resolver. The "Sam test" + "Day-90 test" are the structural guarantees.
 
 ---
 
@@ -932,11 +933,17 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Detection:** Messages containing `AMYGDALA` or `FRACTAL` prefixes in system event text.
 - **Files:** `app.ts` (renderMsg detection), `base.css` (tag color classes)
 
-### 5.44 WhatsApp Thinking Reaction (2026-02-18)
+### 5.44 WhatsApp Thinking Reaction — persona-aware heartbeat + done-separator (2026-02-18, **upgraded 2026-05-04, verified end-to-end 2026-05-09**)
 
-- **Status:** `DEPLOYED`
-- **What:** When processing a WhatsApp message, the bot adds a 🤔 reaction as a progress indicator. Reaction is removed on final delivery + a safety-net timeout after dispatch. Isolated in its own module for merge safety.
-- **Files:** `src/fork/thinking-reaction.ts` (extracted module), `attempt.ts` (hook point)
+- **Status:** `DEPLOYED & VERIFIED` — confirmed in DM smoke-test 2026-05-09: 🤔↔🤖 alternates while Jarvis thinks, reaction clears when the answer lands, reply starts with `🤖`, and a separate `⚡` message follows the reply.
+- **What:** While processing a WhatsApp message, the bot reacts to the user's message with an **alternating heartbeat** (default `🤔` ↔ persona icon `🤖`), then clears the reaction on final delivery, then sends a separate `⚡` plain-text message as a turn-end separator. The user gets visible "still thinking" liveness, an unambiguous "done" signal, and a clean visual break before the next turn.
+- **Heartbeat alternation:** `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/thinking-reaction.ts` toggles between `DEFAULT_THINKING_PRIMARY_EMOJI` (🤔) and the persona icon extracted from `outbound-prefix.ts` (🤖 by default; whatever the cloner sets `channels.whatsapp.messagePrefix` to in `~/.openclaw/openclaw.json`). Same `outbound-prefix.ts` source-of-truth means changing the persona icon flows automatically into the heartbeat alternation.
+- **Final clear:** when the agent run ends (success or error), the reaction is cleared by sending an empty `""` reaction — whatsmeow-node's `sendReaction(chat, sender, id, "")` removes the prior emoji. Safety-net timeout still in place if the lifecycle event is missed.
+- **Done-separator:** after the last reply chunk lands, `auto-reply/deliver-reply.ts:deliverWebReply` sends `DEFAULT_DONE_SEPARATOR_MESSAGE` (`⚡`) as a separate plain text message. Configurable via `channels.whatsapp.doneSeparator` (set `""` to disable). Runs after the prefixed reply chunks so the order is always: persona-prefixed reply → ⚡ separator.
+- **Cfg plumbing — important regression-class:** `sendReactionWhatsApp` requires the runtime config; the heartbeat module fetches it via `getRuntimeConfig()`. Without cfg the reaction silently no-ops — `requireRuntimeConfig` throws and the `.catch(() => {})` swallows. Any function in the WhatsApp plugin that calls `requireRuntimeConfig` must have config plumbed in or fetched at call-time; silent failure is the default.
+- **Wire path — important regression-class:** reactions go through `wmClient.sendReaction(chat, sender, id, reaction)`, NOT `sendMessage({react: …})`. Baileys-shaped `{react}` payloads silently no-op at the whatsmeow wire (proto mismatch — same class as the poll bug). Routing happens in `extensions/tinkerclaw-whatsapp/src/baileys-adapter-wm.ts:sendMessage` which detects `"react" in content`.
+- **Files:** `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/thinking-reaction.ts` (alternation lifecycle, final-empty clear), `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/process-message.ts` (heartbeat start/stop wiring), `extensions/tinkerclaw-whatsapp/src/auto-reply/deliver-reply.ts` (done-separator emit), `extensions/tinkerclaw-whatsapp/src/baileys-adapter-wm.ts` (reaction wire-routing), `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts` (single source for persona icon + done-separator default).
+- **Diagnostic taps (still live):** `[thinking-reaction] *` and `[wm-adapter] reaction send/fail` markers — keep until the integration is stable for a week then prune.
 
 ### 5.45 Session Glow — Active LLM Indicator (2026-03-28)
 
@@ -1687,6 +1694,24 @@ Anything that would embarrass us if a stranger cloned `main` and tripped on it.
 #### 5.78f What about other branches?
 
 Existing topic branches (`feat/...`, `fix/...`, `pr/...`, `wip/...`) are still fine for isolated work. They merge into `develop`, not into `main` directly. The two long-lived branches are `main` (clean) and `develop` (messy).
+
+#### 5.78g `develop` is local-only — never pushed (2026-05-09)
+
+`develop` exists ONLY on the user's machine. It MUST NOT be pushed to `origin`. The public GitHub fork (`origin/main`) is the only branch the world sees.
+
+**Lifecycle.**
+
+1. Tinker on `develop` until a chunk of work passes §5.78c.
+2. Merge `develop` → `main` locally (fast-forward when possible).
+3. Delete `develop` locally: `git branch -d develop`.
+4. Push `main` to `origin`. (Jarvis owns pushes — see "NEVER push" memory.)
+5. After push, recreate `develop` from `main`: `git checkout -b develop main`.
+
+**If `origin/develop` exists from a past mistake**, delete it during the next push: `git push origin --delete develop`.
+
+**Why local-only.** A pushed `develop` invites cloners to use it (it's the canonical "tinkering" name in many open-source projects). The instant someone bases work on it, we lose the freedom to nuke and recreate it. Keeping `develop` ephemeral and local also avoids the guilt of "this branch is broken but published" — there is no published broken branch.
+
+**README.md is `merge=ours`-protected** (`.gitattributes`, 2026-05-09). The fork's gold-pass TinkerClaw README auto-wins on every upstream conflict. Without this, the merge cron's `--theirs README.md` block silently replaced our README with upstream's OpenClaw one — happened repeatedly before the protection landed.
 
 ---
 
