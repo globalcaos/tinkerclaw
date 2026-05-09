@@ -1177,12 +1177,15 @@ claude-code only loads skills from PLUGINS — it does NOT scan `${cwd}/.claude/
 - **Icons:** Models icon changed from 🧠 to 🕸️ (pink brain reserved for amygdala). Icon glyphs: `🧠` amygdala, `🌿` fractal.
 - **Files:** `tinker-ui/src/app.ts` (`buildInjectedPrompt`, `loadInjectToggles`, `renderUserBubbleWithPromptToggle`, `splitSectionedReply`, `renderSectionedReply`), `tinker-ui/src/styles/base.css` (msg-amygdala, msg-user-with-prompt styles), `extensions/tinkerclaw-learned-intuition/amygdala-prompt.md`, `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`
 
-### 5.68 Clickable Filesystem Path Links (2026-04-19)
+### 5.68 Clickable Filesystem Path Links (2026-04-19, **server handler restored 2026-05-09 after upstream-merge wipe**)
 
 - **Status:** `DEPLOYED`
-- **What:** Any absolute path or `~/...` path rendered in a message (including the injected instruction suffix) becomes a `<code class="fs-link">` element. Clicking opens the file in the system's default viewer (markdown reader for `.md`, code editor for `.ts`, etc.) via a new `config.openExternalFile` RPC that shells out to `xdg-open` / `open` / `Start-Process` depending on platform.
+- **What:** Any absolute path or `~/...` path rendered in a message (including the injected instruction suffix) becomes a `<code class="fs-link">` element. Clicking opens the file in the system's default viewer (markdown reader for `.md`, code editor for `.ts`, etc.) via a `config.openExternalFile` RPC that shells out to `xdg-open` / `open` / `Start-Process` depending on platform.
 - **Why:** section 2 and 3 of every reply reference the pointer `.md` files — users need one-click access without leaving the chat.
-- **Files:** `tinker-ui/src/app.ts` (`md()` post-processor wraps paths, global click delegate calls `config.openExternalFile`), `src/gateway/server-methods/config.ts` (new RPC with path allowlisting + cross-platform spawn), CSS `code.fs-link` states: `idle`, `opening`, `opened`, `error`.
+- **Files:**
+  - `tinker-ui/src/app.ts` — `md()` post-processor wraps paths (line ~2581), global click delegate at line ~5777 calls `config.openExternalFile`. CSS state classes: `fs-link-opening`, `fs-link-opened`, `fs-link-error`.
+  - `src/gateway/server-methods/config-open-external.ts` — handler implementation. ADMIN_SCOPE (`method-scopes.ts`). Allowlist: workspaceDir, `~/.openclaw`, `~/src/tinkerclaw`, `~/src/jarvis-icu`. Tilde expansion + path-traversal rejection + cross-platform spawn (xdg-open / open / cmd.exe start). Test seam `__setSpawnImplForTest`.
+- **Don't regress (2026-05-09 incident):** the server-side handler was wiped by an upstream merge sometime between 2026-04-19 and 2026-05-09 — bible kept saying DEPLOYED, but a `grep -rn openExternalFile src/` returned zero hits. ALL `.fs-link` clicks across Tinker (recipe paths, system-message pointers, briefing path, fractal pointers) were silently rejected by the gateway with `unknown method`. Surfaced when the new /new briefing summary path didn't open. **Add `config.openExternalFile` to a fork-merge-guardian invariant check** so the next upstream merge that drops it fails the gate instead of shipping silently broken.
 
 ### 5.69 Envelope Error Rendering — `__ERR_ENV__:` (2026-04-19)
 
