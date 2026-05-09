@@ -1695,21 +1695,20 @@ Anything that would embarrass us if a stranger cloned `main` and tripped on it.
 
 Existing topic branches (`feat/...`, `fix/...`, `pr/...`, `wip/...`) are still fine for isolated work. They merge into `develop`, not into `main` directly. The two long-lived branches are `main` (clean) and `develop` (messy).
 
-#### 5.78g `develop` is local-only — never pushed (2026-05-09)
+#### 5.78g `develop` is the working branch, both local and pushed (2026-05-09)
 
-`develop` exists ONLY on the user's machine. It MUST NOT be pushed to `origin`. The public GitHub fork (`origin/main`) is the only branch the world sees.
+Both `develop` and `main` live on `origin`. We always work on `develop` and push it freely. `main` only advances when the user and the architect agree the current `develop` snapshot is stable and shippable.
+
+**Why dual-online.** A local-only `develop` (the previous policy, also written 2026-05-09) required a recreate-after-push dance every cycle and forbade cross-machine work. A pushed `develop` is plainer: one place for in-progress work, one place for shippable, both visible. Cloners who base work on `origin/develop` are choosing the unstable side knowingly — that's their call, not ours to prevent.
 
 **Lifecycle.**
 
-1. Tinker on `develop` until a chunk of work passes §5.78c.
-2. Merge `develop` → `main` locally (fast-forward when possible).
-3. Delete `develop` locally: `git branch -d develop`.
-4. Push `main` to `origin`. (Jarvis owns pushes — see "NEVER push" memory.)
-5. After push, recreate `develop` from `main`: `git checkout -b develop main`.
+1. Tinker on `develop`. Push freely.
+2. When `develop` passes §5.78c (build green, gateway boots, smoke probe replies, fork-wiring idempotent), merge `develop` → `main` locally — by **mutual agreement**, not solo.
+3. Push `main` to `origin`.
+4. `develop` keeps moving. No reset, no recreate.
 
-**If `origin/develop` exists from a past mistake**, delete it during the next push: `git push origin --delete develop`.
-
-**Why local-only.** A pushed `develop` invites cloners to use it (it's the canonical "tinkering" name in many open-source projects). The instant someone bases work on it, we lose the freedom to nuke and recreate it. Keeping `develop` ephemeral and local also avoids the guilt of "this branch is broken but published" — there is no published broken branch.
+**Push authority (2026-05-09).** The earlier "only Jarvis pushes" rule is lifted. Architect Claude Code may `git push` directly. **Topology check still mandatory** before every push: no private data into public `tinkerclaw`. The 2026-04-06 personality-NN leak is the reason that check is non-negotiable. `git push --force` / `--force-with-lease` and `--no-verify` still need explicit confirmation, especially against `main`.
 
 **README.md is `merge=ours`-protected** (`.gitattributes`, 2026-05-09). The fork's gold-pass TinkerClaw README auto-wins on every upstream conflict. Without this, the merge cron's `--theirs README.md` block silently replaced our README with upstream's OpenClaw one — happened repeatedly before the protection landed.
 
