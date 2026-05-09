@@ -2230,6 +2230,10 @@ async function loadChat() {
     if (targetTab) {
       const ts = tabStates.get(targetTab.id) ?? freshTabState();
       ts.messages = res.messages ?? [];
+      // FORK 2026-05-09: reconstruct injection fields for background-tab history.
+      for (const m of ts.messages) {
+        reconstructInjectionFields(m as Record<string, unknown>);
+      }
       ts.currentTurnNumber = ts.messages.filter((m: unknown) => m.role === "user").length;
       tabStates.set(targetTab.id, ts);
     }
@@ -2239,6 +2243,13 @@ async function loadChat() {
   frozenTextEnd = 0;
   lastDeltaLen = 0;
   messages = res.messages ?? [];
+  // FORK 2026-05-09: Reconstruct _fullPrompt / _briefingPath for historical
+  // user messages. The gateway persists the full injected prompt as the
+  // message body; client-only metadata is lost on refresh. Split at the
+  // injection separator so the bubble shows only the original user text.
+  for (const m of messages) {
+    reconstructInjectionFields(m as Record<string, unknown>);
+  }
   // Sync turn counter from loaded history
   const userMsgCount = messages.filter((m: unknown) => m.role === "user").length;
   currentTurnNumber = userMsgCount;
@@ -3071,6 +3082,77 @@ function splitSectionedReply(text: string): SectionedReply | null {
   }
   return result;
 }
+// FORK 2026-05-09: Detect and reconstruct _fullPrompt / _briefingPath for
+// historical user messages loaded from chat.history. The gateway persists the
+// FULL injected prompt as the user message body (that is what was actually
+// sent to Claude). After a hard refresh, messages arrive from the server
+// without the client-only _fullPrompt and _briefingPath fields, so the
+// renderer would display the raw injected text expanded in the bubble.
+//
+// This function checks whether the user text body contains a known injection
+// sentinel and, if so, splits it at the "\n\n---\n\n" boundary:
+//   - The pre-separator portion becomes the display text (original user text).
+//   - The full string becomes _fullPrompt.
+//   - For briefing injections, _briefingPath is extracted from the sentinel.
+//
+// Both injection types use "\n\n---\n\n" as separator (see buildInjectedPrompt).
+// Sentinels:
+//   Amygdala/fractal: "Structure this turn's reply as labelled sections"
+//   Briefing:         "Execute the morning briefing NOW"
+//                     + "Briefing source: `<path>`"
+const INJECTION_SEP = "\n\n---\n\n";
+function reconstructInjectionFields(msg: Record<string, unknown>): void {
+  // Only apply to user messages that haven't been reconstructed yet.
+  if (msg.role !== "user" || msg._fullPrompt) {
+    return;
+  }
+  // Extract the raw text body from either content-array or string form.
+  let rawText: string | null = null;
+  if (Array.isArray(msg.content)) {
+    const first = (msg.content as Array<{ type: string; text?: string }>).find(
+      (b) => b.type === "text",
+    );
+    if (first?.text) {
+      rawText = first.text;
+    }
+  } else if (typeof msg.content === "string") {
+    rawText = msg.content;
+  }
+  if (!rawText) {
+    return;
+  }
+  const sepIdx = rawText.indexOf(INJECTION_SEP);
+  if (sepIdx < 0) {
+    return;
+  }
+  const isBriefing = rawText.includes("Execute the morning briefing NOW");
+  const isAmygdala = rawText.includes("Structure this turn's reply as labelled sections");
+  if (!isBriefing && !isAmygdala) {
+    return;
+  }
+  // Reconstruct: pre-separator = original user text; full = _fullPrompt.
+  const originalText = rawText.slice(0, sepIdx);
+  msg._fullPrompt = rawText;
+  // Rewrite the stored text content to just the original so rendering uses it.
+  if (Array.isArray(msg.content)) {
+    const blocks = msg.content as Array<{ type: string; text?: string }>;
+    for (const b of blocks) {
+      if (b.type === "text" && b.text === rawText) {
+        b.text = originalText;
+        break;
+      }
+    }
+  } else if (typeof msg.content === "string") {
+    msg.content = originalText;
+  }
+  if (isBriefing) {
+    const m = rawText.match(/Briefing source: `([^`]+)`/);
+    if (m) {
+      msg._briefingPath = m[1];
+    }
+  }
+}
+
 // FORK 2026-04-18: render the user bubble. If the message was sent with
 // amygdala/fractal instructions appended, show the raw user text plus a
 // tiny clickable "📜 prompt" badge; clicking expands a <details> with the
