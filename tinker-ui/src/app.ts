@@ -3355,7 +3355,7 @@ function renderUserBubbleWithPromptToggle(
   );
 }
 
-function renderSectionedReply(sec: SectionedReply): string {
+function renderSectionedReply(sec: SectionedReply, elapsed: string = ""): string {
   // Visual order: ANSWER (expanded) → AMYGDALA (collapsed) → FRACTAL (collapsed).
   // Matches the instructed emission order. The splitter records whichever
   // sections it found, regardless of position in the text; this renderer
@@ -3364,14 +3364,17 @@ function renderSectionedReply(sec: SectionedReply): string {
   // IMPORTANT: if the splitter found amygdala OR fractal but NO answer marker,
   // the pre-marker content ("other") is actually the answer — promote it.
   // Otherwise the answer text falls on the floor.
+  // FORK 2026-05-09 (Feature B): the elapsed-chip is appended to the ANSWER
+  // bubble (the visible main reply). When sectioned answer falls through to
+  // raw `other`, attach to that bubble instead.
   let h = "";
   const effectiveAnswer =
     sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
   if (effectiveAnswer) {
-    h += `<div class="msg assistant">${md(effectiveAnswer)}</div>`;
+    h += `<div class="msg assistant">${md(effectiveAnswer)}${elapsed}</div>`;
   } else if (sec.other && !sec.amygdala && !sec.fractal) {
     // No markers at all — fall back to raw
-    h += `<div class="msg assistant">${md(sec.other)}</div>`;
+    h += `<div class="msg assistant">${md(sec.other)}${elapsed}</div>`;
   }
   if (sec.amygdala) {
     h +=
@@ -3760,7 +3763,7 @@ function renderMsg(
       if (!isThinking) {
         const sectioned = splitSectionedReply(text);
         if (sectioned && (sectioned.answer || sectioned.amygdala || sectioned.fractal)) {
-          h += renderSectionedReply(sectioned);
+          h += renderSectionedReply(sectioned, elapsedChip(msg, idx));
           return h;
         }
       }
@@ -3896,7 +3899,7 @@ function renderMsg(
         if (!isThinking) {
           const sectioned2 = splitSectionedReply(text);
           if (sectioned2 && (sectioned2.answer || sectioned2.amygdala || sectioned2.fractal)) {
-            h += renderSectionedReply(sectioned2);
+            h += renderSectionedReply(sectioned2, elapsedChip(msg, idx));
             return h;
           }
         }

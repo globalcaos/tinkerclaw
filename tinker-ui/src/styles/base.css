@@ -3385,22 +3385,25 @@ code.fs-link.fs-link-error {
  * new line directly under the bubble's bottom-left.
  */
 .user-row {
-  display: inline-flex;
+  /* `margin-left: auto` is the bulletproof right-align trick — works in flex
+   * parents AND block parents. align-self: flex-end alone was insufficient
+   * (presumably .messages flex direction was being overridden somewhere or
+   * the container changed shape). */
+  display: flex;
   flex-direction: column;
-  align-self: flex-end;
-  /* width: max-content sizes the row to its widest child (the bubble) so the
-   * row stays anchored to the right edge of the messages column. Without this,
-   * the row stretches the full container width and its left-aligned children
-   * (bubble + timestamp) end up on the LEFT side of the screen — visually
-   * indistinguishable from an assistant message. */
   width: max-content;
-  max-width: 100%;
+  max-width: 80%;
+  margin-left: auto;
+  /* Row right-aligned; children inside pinned to the row's LEFT edge so the
+   * timestamp drops directly under the bubble's bottom-left corner. */
   align-items: flex-start;
 }
 .user-row > .msg.user {
-  /* Bubble is the row's only "wide" child; let it grow to the row's width
-   * (which equals the bubble's natural content width via width:max-content). */
+  /* Bubble must NOT have its own align-self override or it'll fight the row.
+   * Stretch makes it match the row's content width. */
   align-self: stretch;
+  margin-left: 0;
+  margin-right: 0;
 }
 .msg-timestamp {
   display: block;
