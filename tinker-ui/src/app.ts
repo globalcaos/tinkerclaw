@@ -3303,41 +3303,49 @@ function renderUserBubbleWithPromptToggle(
   queuedBadge: string,
   idx: number,
 ): string {
-  // FORK 2026-05-09 (Feature A): left-gutter absolute timestamp chip.
+  // FORK 2026-05-09 (Feature A, revised): timestamp sits BELOW the bubble at
+  // its bottom-left corner, OUTSIDE the green container. Wrap the bubble +
+  // timestamp in a `.user-row` flex column so the timestamp drops on a new
+  // line aligned to the bubble's left edge instead of being a left-side
+  // gutter sibling. Empty wrapper-less render path when no timestamp is
+  // present (e.g. historical messages without server timestamp metadata).
   const tsSpan =
     typeof msg._promptStartedAt === "number"
       ? `<span class="msg-timestamp">${formatHHMMSS(msg._promptStartedAt)}</span>`
       : "";
+  const wrap = (inner: string): string =>
+    tsSpan ? `<div class="user-row">${inner}${tsSpan}</div>` : inner;
+
   if (!msg._fullPrompt || typeof msg._fullPrompt !== "string") {
-    return `${tsSpan}<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+    return wrap(
+      `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`,
+    );
   }
   const full = msg._fullPrompt;
   if (msg._briefingPath) {
     const safePath = escapeHtml(msg._briefingPath);
-    return (
-      `${tsSpan}` +
+    return wrap(
       `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
+        `${md(userText)}` +
+        `<details class="user-prompt-toggle briefing-toggle">` +
+        `<summary class="user-prompt-summary briefing-summary">` +
+        `⚡ Executing <code class="fs-link" data-path="${safePath}" title="Click to open in system viewer">${safePath}</code>` +
+        `</summary>` +
+        `<div class="user-prompt-full">${md(full)}</div>` +
+        `</details>` +
+        `${queuedBadge}` +
+        `</div>`,
+    );
+  }
+  return wrap(
+    `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
       `${md(userText)}` +
-      `<details class="user-prompt-toggle briefing-toggle">` +
-      `<summary class="user-prompt-summary briefing-summary">` +
-      `⚡ Executing <code class="fs-link" data-path="${safePath}" title="Click to open in system viewer">${safePath}</code>` +
-      `</summary>` +
+      `<details class="user-prompt-toggle">` +
+      `<summary class="user-prompt-summary">📜 view full prompt</summary>` +
       `<div class="user-prompt-full">${md(full)}</div>` +
       `</details>` +
       `${queuedBadge}` +
-      `</div>`
-    );
-  }
-  return (
-    `${tsSpan}` +
-    `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
-    `${md(userText)}` +
-    `<details class="user-prompt-toggle">` +
-    `<summary class="user-prompt-summary">📜 view full prompt</summary>` +
-    `<div class="user-prompt-full">${md(full)}</div>` +
-    `</details>` +
-    `${queuedBadge}` +
-    `</div>`
+      `</div>`,
   );
 }
 
