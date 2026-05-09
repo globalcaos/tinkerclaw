@@ -2231,8 +2231,21 @@ async function loadChat() {
       const ts = tabStates.get(targetTab.id) ?? freshTabState();
       ts.messages = res.messages ?? [];
       // FORK 2026-05-09: reconstruct injection fields for background-tab history.
+      // Also pull _promptStartedAt from server-side timestamp fields (Feature A).
       for (const m of ts.messages) {
         reconstructInjectionFields(m as Record<string, unknown>);
+        const rec = m as Record<string, unknown>;
+        if (rec.role === "user" && !rec._promptStartedAt) {
+          const ts2 = rec.createdAtMs ?? rec.timestamp;
+          if (typeof ts2 === "number") {
+            rec._promptStartedAt = ts2;
+          } else if (typeof ts2 === "string") {
+            const parsed2 = Date.parse(ts2 as string);
+            if (!isNaN(parsed2)) {
+              rec._promptStartedAt = parsed2;
+            }
+          }
+        }
       }
       ts.currentTurnNumber = ts.messages.filter((m: unknown) => m.role === "user").length;
       tabStates.set(targetTab.id, ts);
@@ -2247,8 +2260,21 @@ async function loadChat() {
   // user messages. The gateway persists the full injected prompt as the
   // message body; client-only metadata is lost on refresh. Split at the
   // injection separator so the bubble shows only the original user text.
+  // Also pull _promptStartedAt from server-side timestamp fields (Feature A).
   for (const m of messages) {
     reconstructInjectionFields(m as Record<string, unknown>);
+    const rec = m as Record<string, unknown>;
+    if (rec.role === "user" && !rec._promptStartedAt) {
+      const ts = rec.createdAtMs ?? rec.timestamp;
+      if (typeof ts === "number") {
+        rec._promptStartedAt = ts;
+      } else if (typeof ts === "string") {
+        const parsed = Date.parse(ts as string);
+        if (!isNaN(parsed)) {
+          rec._promptStartedAt = parsed;
+        }
+      }
+    }
   }
   // Sync turn counter from loaded history
   const userMsgCount = messages.filter((m: unknown) => m.role === "user").length;
@@ -2456,9 +2482,13 @@ async function send(text: string) {
       briefingPath = m[1];
     }
   }
+  // FORK 2026-05-09: Capture wall-clock send time so the user bubble can show
+  // an absolute HH:MM:SS timestamp on its left gutter (Feature A). Also used
+  // by assistant bubbles to compute elapsed seconds (Feature B).
   messages.push({
     role: "user",
     content: [{ type: "text", text }],
+    _promptStartedAt: Date.now(),
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
     ...(briefingPath ? { _briefingPath: briefingPath } : {}),
     ...(isQueued ? { _queued: true } : {}),
@@ -3163,26 +3193,55 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
       msg._briefingPath = m[1];
     }
   }
+  // FORK 2026-05-09 (Feature A): pull timestamp from server-side field if available.
+  // Gateway message records expose createdAtMs (number ms) or timestamp (ISO string).
+  // If neither is present we leave _promptStartedAt unset — no fabrication.
+  if (!msg._promptStartedAt) {
+    const ts = msg.createdAtMs ?? msg.timestamp;
+    if (typeof ts === "number") {
+      msg._promptStartedAt = ts;
+    } else if (typeof ts === "string") {
+      const parsed = Date.parse(ts);
+      if (!isNaN(parsed)) {
+        msg._promptStartedAt = parsed;
+      }
+    }
+  }
 }
 
 // FORK 2026-04-18: render the user bubble. If the message was sent with
 // amygdala/fractal instructions appended, show the raw user text plus a
 // tiny clickable "📜 prompt" badge; clicking expands a <details> with the
 // full text sent to the gateway (for user visibility + debugging).
+// FORK 2026-05-09 (Feature A): prepend HH:MM:SS absolute timestamp on the
+// left gutter when _promptStartedAt is present.
+function formatHHMMSS(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
 function renderUserBubbleWithPromptToggle(
   userText: string,
-  msg: { _fullPrompt?: string; _briefingPath?: string },
+  msg: { _fullPrompt?: string; _briefingPath?: string; _promptStartedAt?: number },
   queuedClass: string,
   queuedBadge: string,
   idx: number,
 ): string {
+  // FORK 2026-05-09 (Feature A): left-gutter absolute timestamp chip.
+  const tsSpan =
+    typeof msg._promptStartedAt === "number"
+      ? `<span class="msg-timestamp">${formatHHMMSS(msg._promptStartedAt)}</span>`
+      : "";
   if (!msg._fullPrompt || typeof msg._fullPrompt !== "string") {
-    return `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
+    return `${tsSpan}<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
   }
   const full = msg._fullPrompt;
   if (msg._briefingPath) {
     const safePath = escapeHtml(msg._briefingPath);
     return (
+      `${tsSpan}` +
       `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
       `${md(userText)}` +
       `<details class="user-prompt-toggle briefing-toggle">` +
@@ -3196,6 +3255,7 @@ function renderUserBubbleWithPromptToggle(
     );
   }
   return (
+    `${tsSpan}` +
     `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
     `${md(userText)}` +
     `<details class="user-prompt-toggle">` +

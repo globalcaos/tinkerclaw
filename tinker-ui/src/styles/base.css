@@ -3376,3 +3376,34 @@ code.fs-link.fs-link-error {
 .briefing-toggle > .briefing-summary:hover {
   opacity: 1;
 }
+
+/* FORK 2026-05-09 Feature A — User-bubble absolute-time timestamp gutter */
+/* The timestamp span sits OUTSIDE the .msg.user div so it appears to the left */
+.msg-timestamp {
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+  opacity: 0.65;
+  line-height: 1.4;
+  user-select: none;
+}
+
+/* FORK 2026-05-09 Feature B — Assistant-bubble elapsed-time chip (bottom-right) */
+.msg.assistant {
+  position: relative;
+}
+.msg.assistant .msg-elapsed {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+  pointer-events: none;
+  line-height: 1;
+  user-select: none;
+}
