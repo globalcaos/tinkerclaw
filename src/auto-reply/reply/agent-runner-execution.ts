@@ -40,6 +40,7 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
+import { buildErrorEnvelope } from "../../fork/error-envelope.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -760,7 +761,13 @@ function applyOpenAIGptChatReplyGuard(params: {
 }
 
 function buildRestartLifecycleReplyText(): string {
-  return "⚠️ Gateway is restarting. Please wait a few seconds and try again.";
+  // FORK 2026-05-09: emit as `__ERR_ENV__:` envelope (bible §5.69) so the
+  // Tinker UI renders it as an orange centered warning chip, not as raw
+  // assistant text. Category `lane_busy` (fatal=false) maps to the right
+  // visual treatment + icon. Headline + explanation come from the lookup
+  // entry in error-envelope.ts so wording stays consistent across surfaces.
+  const envelope = buildErrorEnvelope({ code: "lane_busy" });
+  return `__ERR_ENV__:${JSON.stringify(envelope)}`;
 }
 
 function resolveRestartLifecycleError(
