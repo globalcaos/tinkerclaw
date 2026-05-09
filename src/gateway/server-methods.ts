@@ -12,6 +12,7 @@ import { briefingHandlers } from "./server-methods/briefing.js";
 import { channelsHandlers } from "./server-methods/channels.js";
 import { chatHandlers } from "./server-methods/chat.js";
 import { commandsHandlers } from "./server-methods/commands.js";
+import { configOpenExternalHandlers } from "./server-methods/config-open-external.js";
 import { configHandlers } from "./server-methods/config.js";
 import { connectHandlers } from "./server-methods/connect.js";
 import { cronHandlers } from "./server-methods/cron.js";
@@ -96,6 +97,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...nativeHookRelayHandlers,
   ...pluginHostHookHandlers,
   ...configHandlers,
+  // FORK 2026-05-09: restored config.openExternalFile (bible §5.68 — was lost in an upstream merge).
+  ...configOpenExternalHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).
