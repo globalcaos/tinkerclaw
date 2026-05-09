@@ -3376,11 +3376,3 @@ code.fs-link.fs-link-error {
 .briefing-toggle > .briefing-summary:hover {
   opacity: 1;
 }
-.briefing-path-link {
-  font-family: var(--font-mono, monospace);
-  text-decoration: underline dotted;
-  color: inherit;
-}
-.briefing-path-link:hover {
-  text-decoration: underline solid;
-}

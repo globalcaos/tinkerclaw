@@ -165,7 +165,6 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
   ],
   [ADMIN_SCOPE]: [
     "channels.start",
-    "files.openInEditor",
     "channels.logout",
     "agents.create",
     "agents.update",
