@@ -23,6 +23,11 @@ import { filesOpenHandlers, __setSpawnImplForTest } from "./files-open.js";
 function makeContext() {
   return {
     getRuntimeConfig: () => ({}),
+    logGateway: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
   } as never;
 }
 
