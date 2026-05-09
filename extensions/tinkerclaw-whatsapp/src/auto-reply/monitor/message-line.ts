@@ -1,6 +1,8 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
 import { getPrimaryIdentityId, getReplyContext, getSenderIdentity } from "../../identity.js";
 import type { WebInboundMsg } from "../types.js";
+import { prefetchChatProfile } from "./chat-profile-prefetch.js";
+import { prefetchChatRhythm } from "./chat-rhythm-prefetch.js";
 import {
   formatInboundEnvelope,
   resolveMessagePrefix,
@@ -70,10 +72,20 @@ export function formatReplyContext(msg: WebInboundMsg) {
  * Build the agent-facing prelude for an inbound WhatsApp message.
  *
  * Composition (top to bottom):
- *   1. `[people-profiles]` static hint — how to look up names referenced in the body.
- *   2. `[sender-profile slug=…]…[/sender-profile]` — pre-resolved profile of the sender (when known).
- *   3. `[recent-thread last=N]…[/recent-thread]` — last ~6 messages of this chat, oldest-first.
- *   4. `[thread-escalation]` hint — exact `whatsapp_history` tool call to read further back.
+ *   1. `[chat-profile]` (groups only) — purpose, stakes, audience, guardrails,
+ *      format preferences. When missing, a bootstrap hint pointing Jarvis at
+ *      the file path so he can author it lazily as he learns the chat.
+ *   2. `[chat-rhythm]` — concrete length stats (median, P90) over the last
+ *      ~20 non-bot messages, with the "match this rhythm; propose long
+ *      answers, don't dump them" directive.
+ *   3. `[people-profiles]` static hint — how to look up names referenced in the body.
+ *   4. `[sender-profile slug=…]…[/sender-profile]` — pre-resolved profile of the sender (when known).
+ *   5. `[recent-thread last=N]…[/recent-thread]` — last ~6 messages of this chat, oldest-first.
+ *   6. `[thread-escalation]` hint — exact `whatsapp_history` tool call to read further back.
+ *
+ * Profile-and-rhythm at the TOP because they frame everything below: same
+ * recent thread reads differently when the chat is "paid practice — careful"
+ * vs "tech peer — long-form welcome".
  *
  * Each block is appended only when its prefetch yields content. Trailing blank
  * lines separate blocks. The function never throws — prefetch failures
@@ -86,6 +98,33 @@ export function formatReplyContext(msg: WebInboundMsg) {
  */
 export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
   const { msg } = params;
+  const chatJid = msg.chatId || msg.from;
+
+  const chatProfile = (() => {
+    try {
+      return prefetchChatProfile({
+        chatType: msg.chatType,
+        chatJid,
+        groupSubject: msg.groupSubject,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  const chatProfileBlock = chatProfile ? `${chatProfile.block}\n\n` : "";
+
+  const chatRhythm = (() => {
+    try {
+      return prefetchChatRhythm({
+        chatJid,
+        beforeTimestamp: msg.timestamp,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  const chatRhythmBlock = chatRhythm ? `${chatRhythm.block}\n\n` : "";
+
   const senderProfile = (() => {
     try {
       return prefetchSenderProfile({
@@ -98,7 +137,6 @@ export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
   })();
   const senderProfileBlock = senderProfile ? `${senderProfile.block}\n\n` : "";
 
-  const chatJid = msg.chatId || msg.from;
   const recent = (() => {
     try {
       return prefetchRecentThread({
@@ -117,7 +155,10 @@ export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
     (msg.timestamp ? Math.floor(msg.timestamp / 1000) : Math.floor(Date.now() / 1000));
   const escalationBlock = `${buildThreadEscalationHint({ chatJid, oldestUnixSec })}\n\n`;
 
-  return `${PEOPLE_PROFILE_HINT}\n\n${senderProfileBlock}${threadBlock}${escalationBlock}`;
+  return (
+    `${chatProfileBlock}${chatRhythmBlock}` +
+    `${PEOPLE_PROFILE_HINT}\n\n${senderProfileBlock}${threadBlock}${escalationBlock}`
+  );
 }
 
 export function buildInboundLine(params: {
