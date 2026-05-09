@@ -3377,45 +3377,36 @@ code.fs-link.fs-link-error {
   opacity: 1;
 }
 
-/* FORK 2026-05-09 Feature A (revised) — User-bubble absolute-time timestamp.
- * Sits BELOW the bubble at its bottom-left corner, OUTSIDE the green container.
- * `.user-row` wraps the bubble + timestamp as a flex column. The row is
- * right-aligned with the user message stack (align-self: flex-end) and the
- * children are left-aligned within the row, so the timestamp drops on a
- * new line directly under the bubble's bottom-left.
+/* FORK 2026-05-09 Feature A (final, simplified) — User-bubble timestamp.
+ * The bubble carries a `data-timestamp` attribute and the value renders via
+ * an `::after` pseudo-element pinned to the bubble's bottom-left corner,
+ * outside the green container. No wrapper div — the bubble keeps its
+ * original `align-self: flex-end` and stays right-anchored in the messages
+ * flex column. Add bottom-margin via the attribute selector so the pseudo
+ * doesn't overlap the next message.
  */
-.user-row {
-  /* `margin-left: auto` is the bulletproof right-align trick — works in flex
-   * parents AND block parents. align-self: flex-end alone was insufficient
-   * (presumably .messages flex direction was being overridden somewhere or
-   * the container changed shape). */
-  display: flex;
-  flex-direction: column;
-  width: max-content;
-  max-width: 80%;
-  margin-left: auto;
-  /* Row right-aligned; children inside pinned to the row's LEFT edge so the
-   * timestamp drops directly under the bubble's bottom-left corner. */
-  align-items: flex-start;
+.msg.user[data-timestamp] {
+  position: relative;
+  margin-bottom: 16px;
 }
-.user-row > .msg.user {
-  /* Bubble must NOT have its own align-self override or it'll fight the row.
-   * Stretch makes it match the row's content width. */
-  align-self: stretch;
-  margin-left: 0;
-  margin-right: 0;
-}
-.msg-timestamp {
-  display: block;
-  margin-top: 2px;
-  margin-left: 4px;
+.msg.user[data-timestamp]::after {
+  content: attr(data-timestamp);
+  position: absolute;
+  left: 0;
+  bottom: -14px;
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   opacity: 0.65;
-  line-height: 1.2;
+  line-height: 1;
   user-select: none;
+  pointer-events: none;
+  white-space: nowrap;
 }
+/* Legacy .msg-timestamp / .user-row selectors retained as no-ops in case any
+ * historical rendered HTML still uses them; harmless if absent. */
+.msg-timestamp { display: none; }
+.user-row { display: contents; }
 
 /* FORK 2026-05-09 Feature B — Assistant-bubble elapsed-time chip (bottom-right) */
 .msg.assistant {
