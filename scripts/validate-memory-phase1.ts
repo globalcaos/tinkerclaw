@@ -53,7 +53,7 @@ assert(detectGranularity("memory/2024-03-15.md") === "detail", "daily log → de
 assert(detectGranularity("MEMORY.md") === "global", "MEMORY.md → global");
 assert(detectGranularity("memory/memory-index.md") === "global", "memory-index.md → global");
 assert(detectGranularity("memory/topics/work.md") === "topic", "topics/ → topic");
-assert(detectGranularity("bank/entities/the user.md") === "topic", "bank/ → topic");
+assert(detectGranularity("bank/entities/Owner.md") === "topic", "bank/ → topic");
 assert(
   detectGranularity("memory/projects/openclaw/index.md") === "topic",
   "projects/…/index.md → topic",
@@ -64,8 +64,8 @@ assert(detectGranularity("memory/misc/notes.md") === "detail", "misc file → de
 console.log("\n3. Checking detectTopicCluster()…");
 
 assert(
-  detectTopicCluster("bank/entities/the user.md") === "entity_oscar",
-  "bank/entities/the user.md → entity_oscar",
+  detectTopicCluster("bank/entities/Owner.md") === "entity_owner",
+  "bank/entities/Owner.md → entity_owner",
 );
 assert(
   detectTopicCluster("memory/topics/work_business.md") === "work_business",

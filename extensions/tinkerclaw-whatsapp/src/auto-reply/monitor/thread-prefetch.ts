@@ -37,7 +37,7 @@ function getStmt(): Database.Statement<unknown[], Row> | null {
       return stmtCache.stmt;
     }
     // chat_jid match is loose: callers may pass either the full JID
-    // (`34659418105@s.whatsapp.net`) or the bare E.164 (`+34555111000`).
+    // (`34600000000@s.whatsapp.net`) or the bare E.164 (`+34600000000`).
     // Substring match catches both — and group JIDs don't share digits with
     // any DM, so cross-contamination is impossible in practice.
     const stmt = db.prepare<unknown[], Row>(
@@ -70,22 +70,35 @@ function formatRow(r: Row, ownerLabel: string): string {
   return clip(`[${ts}] ${who}: ${body}`, MAX_LINE_CHARS);
 }
 
+export type RecentThreadResult = {
+  /** Rendered `[recent-thread]…[/recent-thread]` block, oldest-first. */
+  block: string;
+  /** Unix seconds of the oldest message included in `block`. Useful to feed
+   *  the `whatsapp_history` tool's `until` parameter for further read-back. */
+  oldestUnixSec: number;
+};
+
 /**
  * Build a compact recent-thread block for the agent envelope. Returns null
  * when the DB is unavailable or there are no prior messages in this chat.
+ *
+ * 2026-05-09: returns `{block, oldestUnixSec}` so the caller can advertise the
+ * exact `until` cursor to the agent's escalation hint (read older messages via
+ * the `whatsapp_history` tool). String-only callers (legacy tests) can still
+ * read `result?.block`.
  */
 export function prefetchRecentThread(params: {
   chatJid: string;
   beforeTimestamp?: number;
   ownerLabel?: string;
-}): string | null {
+}): RecentThreadResult | null {
   const stmt = getStmt();
   if (!stmt) return null;
 
   const before = params.beforeTimestamp
     ? Math.floor(params.beforeTimestamp / 1000)
     : Math.floor(Date.now() / 1000) + 1;
-  const ownerLabel = params.ownerLabel ?? "the user";
+  const ownerLabel = params.ownerLabel ?? "Owner";
 
   const bareJid = params.chatJid.replace(/^\+/, "").replace(/@.*$/, "");
   const likePattern = `%${bareJid}%`;
@@ -99,14 +112,13 @@ export function prefetchRecentThread(params: {
   if (!rows.length) return null;
 
   // DB returns newest-first; render oldest-first so the snippet reads forward.
-  const lines = rows
-    .slice()
-    .reverse()
-    .map((r) => formatRow(r, ownerLabel));
+  const ordered = rows.slice().reverse();
+  const oldestUnixSec = ordered[0]?.timestamp ?? before;
+  const lines = ordered.map((r) => formatRow(r, ownerLabel));
 
   let block = `[recent-thread last=${lines.length}]\n${lines.join("\n")}\n[/recent-thread]`;
   if (block.length > MAX_BLOCK_CHARS) {
     block = `${block.slice(0, MAX_BLOCK_CHARS - 1)}…`;
   }
-  return block;
+  return { block, oldestUnixSec };
 }

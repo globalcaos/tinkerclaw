@@ -23,7 +23,7 @@ export type PersonState = {
   lastWaTimestamp?: number;
   lastSummaryAt?: string;
   messagesSinceLastSummary?: number;
-  lastConsultedBythe user?: string;
+  lastConsultedByOwner?: string;
   lastInteraction?: string;
 };
 

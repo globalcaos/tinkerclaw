@@ -27,6 +27,35 @@ const PEOPLE_PROFILE_HINT = [
   'Only say "I don\'t have context" after `people.resolve` returns null.',
 ].join("\n");
 
+/**
+ * FORK 2026-05-09: thread-escalation hint. The `[recent-thread]` block
+ * eagerly inlines the last ~6 messages of the current chat. When the question
+ * needs older or wider context (mentioned-but-not-shown people, weeks-old
+ * recommendations, cross-chat lookups), Jarvis must escalate via the
+ * `whatsapp_history` tool. This hint hands him the exact `until` cursor and
+ * tool shape so he doesn't have to re-derive them.
+ *
+ * Rendered with the chat JID + the oldest timestamp shown in the
+ * `[recent-thread]` block (ISO-8601 UTC). When no `[recent-thread]` is
+ * present (no prior history), `<oldest_ts>` falls back to the inbound's own
+ * timestamp.
+ */
+function buildThreadEscalationHint(params: { chatJid: string; oldestUnixSec: number }): string {
+  const oldestIso = new Date(params.oldestUnixSec * 1000).toISOString();
+  return [
+    "[thread-escalation]",
+    "If the [recent-thread] block above doesn't cover what the user is asking about,",
+    "read further back in this chat by calling the `whatsapp_history` tool:",
+    `  action="search", chat="${params.chatJid}", until="${oldestIso}", limit=20`,
+    "Repeat with progressively older `until` values until you have enough context, or",
+    "until the messages are no longer relevant to the question. For cross-chat lookups,",
+    'add `query="<keyword>"` (full-text search across all chats).',
+    "Default to escalating once before answering when the user references something",
+    'not in the prelude (e.g. "ese libro", "lo que dije ayer", "el plan que comentamos").',
+    "[/thread-escalation]",
+  ].join("\n");
+}
+
 export function formatReplyContext(msg: WebInboundMsg) {
   const replyTo = getReplyContext(msg);
   if (!replyTo?.body) {
@@ -35,6 +64,60 @@ export function formatReplyContext(msg: WebInboundMsg) {
   const sender = replyTo.sender?.label ?? replyTo.sender?.e164 ?? "unknown sender";
   const idPart = replyTo.id ? ` id:${replyTo.id}` : "";
   return `[Replying to ${sender}${idPart}]\n${replyTo.body}\n[/Replying]`;
+}
+
+/**
+ * Build the agent-facing prelude for an inbound WhatsApp message.
+ *
+ * Composition (top to bottom):
+ *   1. `[people-profiles]` static hint — how to look up names referenced in the body.
+ *   2. `[sender-profile slug=…]…[/sender-profile]` — pre-resolved profile of the sender (when known).
+ *   3. `[recent-thread last=N]…[/recent-thread]` — last ~6 messages of this chat, oldest-first.
+ *   4. `[thread-escalation]` hint — exact `whatsapp_history` tool call to read further back.
+ *
+ * Each block is appended only when its prefetch yields content. Trailing blank
+ * lines separate blocks. The function never throws — prefetch failures
+ * collapse to empty sections.
+ *
+ * Designed to be prepended directly to `BodyForAgent` in process-message.ts.
+ * NOT wrapped in `formatInboundEnvelope` — that wrap is for the legacy `Body`
+ * (echo detection, fan-out history rendering); the prelude rides the modern
+ * `BodyForAgent` path that the LLM actually consumes.
+ */
+export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
+  const { msg } = params;
+  const senderProfile = (() => {
+    try {
+      return prefetchSenderProfile({
+        senderE164: msg.senderE164,
+        senderJid: msg.senderJid,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  const senderProfileBlock = senderProfile ? `${senderProfile.block}\n\n` : "";
+
+  const chatJid = msg.chatId || msg.from;
+  const recent = (() => {
+    try {
+      return prefetchRecentThread({
+        chatJid,
+        beforeTimestamp: msg.timestamp,
+        ownerLabel: msg.fromMe ? "Owner" : "Owner",
+      });
+    } catch {
+      return null;
+    }
+  })();
+  const threadBlock = recent ? `${recent.block}\n\n` : "";
+
+  const oldestUnixSec =
+    recent?.oldestUnixSec ??
+    (msg.timestamp ? Math.floor(msg.timestamp / 1000) : Math.floor(Date.now() / 1000));
+  const escalationBlock = `${buildThreadEscalationHint({ chatJid, oldestUnixSec })}\n\n`;
+
+  return `${PEOPLE_PROFILE_HINT}\n\n${senderProfileBlock}${threadBlock}${escalationBlock}`;
 }
 
 export function buildInboundLine(params: {
@@ -52,36 +135,10 @@ export function buildInboundLine(params: {
   });
   const prefixStr = messagePrefix ? `${messagePrefix} ` : "";
   const replyContext = formatReplyContext(msg);
-  // FORK: prepend the people-profile hint to every WhatsApp inbound. Owner-
-  // fromMe messages still get the hint+profile because the user's questions about
-  // *other* people (e.g. "summarize the Xavi project") need the same grounding.
-  const senderProfile = (() => {
-    try {
-      return prefetchSenderProfile({
-        senderE164: msg.senderE164,
-        senderJid: msg.senderJid,
-      });
-    } catch {
-      // Prefetch failures must never break inbound processing.
-      return null;
-    }
-  })();
-  const senderProfileBlock = senderProfile ? `${senderProfile.block}\n\n` : "";
-  // FORK 2026-05-04: also inline the last ~6 messages in this chat so the
-  // agent has back-reference context without grepping the history DB.
-  const threadBlock = (() => {
-    try {
-      const snippet = prefetchRecentThread({
-        chatJid: msg.chatId || msg.from,
-        beforeTimestamp: msg.timestamp,
-        ownerLabel: msg.fromMe ? "the user" : "the user",
-      });
-      return snippet ? `${snippet}\n\n` : "";
-    } catch {
-      return "";
-    }
-  })();
-  const peoplePreamble = `${PEOPLE_PROFILE_HINT}\n\n${senderProfileBlock}${threadBlock}`;
+  // FORK 2026-05-09: share the prelude builder with process-message so the
+  // BodyForAgent path receives the same blocks. The legacy envelope-shaped
+  // Body keeps its peoplePreamble for echo detection / fan-out history.
+  const peoplePreamble = buildInboundPrelude({ msg });
   const baseLine = `${peoplePreamble}${prefixStr}${msg.body}${replyContext ? `\n\n${replyContext}` : ""}`;
   const sender = getSenderIdentity(msg);
 

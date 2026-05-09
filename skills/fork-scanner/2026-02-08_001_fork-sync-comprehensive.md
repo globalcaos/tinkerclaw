@@ -127,7 +127,7 @@ npm test
 
 **License:** MIT (compatible)
 
-**Why we're skipping:** Not interested in Chinese integrations user directive's directive
+**Why we're skipping:** Not interested in Chinese integrations per the maintainer's directive
 
 ---
 
@@ -153,7 +153,7 @@ npm test
 
 # FEATURES WE'RE SKIPPING
 
-Per the user's directive, not interested in:
+Per the maintainer's directive, not interested in:
 
 - ❌ WeChat integration (CrayBotAGI/OpenCray)
 - ❌ DingTalk integration

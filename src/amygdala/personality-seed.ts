@@ -11,7 +11,7 @@ const EMBEDDING_DIM = 64;
 const INDICES_PER_DIM = 8;
 
 /**
- * the user's target personality — the thermostat temperature.
+ * The owner's target personality — the thermostat temperature.
  * These values define "how Jarvis should behave" as continuous targets.
  *
  * The Personality networks compare their output embeddings against this

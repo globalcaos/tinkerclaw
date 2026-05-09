@@ -2,7 +2,7 @@
 
 > Living document. Updated every time we work on Tinker UI features, fixes, or design changes.
 > Location: `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE.md` (tracked in GitHub fork)
-> Last updated: 2026-05-09 (§5.44 WhatsApp thinking-reaction upgraded to persona-aware alternating heartbeat 🤔↔🤖 + final-empty clear + ⚡ done-separator-as-message — verified end-to-end in DM smoke-test. Single source of truth for persona icon + separator defaults lives in `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts`; cloners change `DEFAULT_OUTBOUND_PREFIX` constant or set `channels.whatsapp.messagePrefix` to flow the icon through outbound prefix and heartbeat alternation in lockstep. Two regression-class gotchas pinned: (1) reactions MUST route through `wmClient.sendReaction` not `sendMessage({react})` — Baileys-shaped payloads silently no-op at the whatsmeow wire; (2) any helper calling `requireRuntimeConfig` needs cfg plumbed in or fetched at call-time, otherwise the `.catch(() => {})` swallows the throw silently.)
+> Last updated: 2026-05-09 (§11.6a — owner-prefix global invariant: owner+"Jarvis" prefix MUST trigger Jarvis from any chat — DM, group, LID, self — without per-chat allowlisting. Bug fixed: pre-fix, `applyGroupGating` independently demanded mention/activation/`noPrefixChats` for groups, so an owner-prefix in a fresh, unactivated group like _a paid-practice group_ silently dropped after the body-prefix gate stripped the trigger word. Fix propagates `msg.ownerPrefixTriggered` from on-message.ts → group-gating.ts so the two gates agree. Non-owner senders with prefix still go through normal mention/activation gating in groups. Same day: §5.44 WhatsApp thinking-reaction upgraded to persona-aware alternating heartbeat 🤔↔🤖 + final-empty clear + ⚡ done-separator-as-message — verified end-to-end in DM smoke-test. Single source of truth for persona icon + separator defaults lives in `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts`; cloners change `DEFAULT_OUTBOUND_PREFIX` constant or set `channels.whatsapp.messagePrefix` to flow the icon through outbound prefix and heartbeat alternation in lockstep. Two regression-class gotchas pinned: (1) reactions MUST route through `wmClient.sendReaction` not `sendMessage({react})` — Baileys-shaped payloads silently no-op at the whatsmeow wire; (2) any helper calling `requireRuntimeConfig` needs cfg plumbed in or fetched at call-time, otherwise the `.catch(() => {})` swallows the throw silently.)
 > Previously (2026-04-28): §5.76 public/private boundary + git-pull contract — Jarvis ships as the day-0 default; user overrides live in `~/.openclaw/workspace/`; resolution order config → workspace → bundled; five hardcoded `/home/<user>/...` paths in `worker.ts` and `db-probe.mjs` to fix; chrome-extension token-leak placeholder to replace; narration / subagent-helper / tool-choice / persona / briefing default prompts extracted to `extensions/tinkerclaw-cc-bridge/{personas,prompts}/` and loaded via shared resolver. The "Sam test" + "Day-90 test" are the structural guarantees.
 
 ---
@@ -1994,6 +1994,55 @@ The relay's `sendToExtension` can log every forwarded CDP method + duration when
 
 ---
 
+### 5.82 Cloner-utility mindset for the public fork (2026-05-09)
+
+**Rule.** Every commit pushed to `origin/main` or `origin/develop` is read by two distinct audiences. Optimize for both — anything that helps only the maintainer is leakage, anything that helps only cloners-from-zero is incomplete.
+
+**Audience A — fresh cloner.** Discovers TinkerClaw, runs `git clone`, has zero context. They want, in this order:
+
+1. Why this fork exists (`README.md`, `FORK.md` — five-second elevator pitch).
+2. How to stand up their own deployment with their own configs (`FORK_SETUP.md`, `CHANGELOG-FORK.md` for breaking-change history).
+3. Where the fork-specific extensions live (`extensions/tinkerclaw-*`) and what each one does (its `index.ts` JSDoc header + the README of any plugin with public docs).
+4. How to verify their build works (the §5.78c shippable checklist + smoke probe).
+
+If a fresh cloner hits a `<FirstName>-mentioned-this` comment, a hardcoded path that only exists on the maintainer's machine, or a config example that's actually the maintainer's real WhatsApp JID, they have to either guess or quit. Both outcomes lose us a contributor.
+
+**Audience B — pulling cloner.** Already has a deployment, runs `git pull`. Their asks, in order:
+
+1. **What changed since my last pull?** (`CHANGELOG-FORK.md`, plus the commit log between two SHAs.)
+2. **Does this break my config?** (Any new required keys, deprecated paths, schema migrations.)
+3. **What new features can I now turn on?** (Plugin additions, new openclaw.json keys with defaults.)
+4. **What should I test?** (Pointers to the smoke probes that exercise the new surfaces.)
+
+Pulling cloners read `git log` more than `README.md`. Commit messages and `CHANGELOG-FORK.md` entries are the primary surface — they should answer questions A1–A4 in the message body, not just describe what changed.
+
+**Concrete obligations on every public commit.**
+
+1. **PII pass before push.** Run the leak grep (`the user(?! Serra)`, `Xavi`, `Ortodó`, `Barcelona`, `/home/<user>`, business contacts, phone JIDs, glpat-, oserra@). Zero hits required. The full PII boundary lives in [feedback_public_repo_pii_boundary.md](in private memory) and §5.78g; this section just says: don't skip the grep.
+2. **Schema/config touch → CHANGELOG-FORK.md entry.** If you added or renamed an `openclaw.json` key, mention it under "Breaking changes" or "New optional config" with a one-line example. Pulling cloners diff CHANGELOG between their last-pulled SHA and HEAD; that's where they look.
+3. **New extension → README feature list update.** Mention it next to the existing `tinkerclaw-*` callouts. Even a one-line bullet ("`tinkerclaw-people`: profile resolver via `people.{resolve,read,list}`") is enough to make it discoverable.
+4. **Architectural rewrite → bible section.** Any time a fork-side subsystem changes shape (auth flow, channel routing, gating logic, persona pipeline), add or update a bible §5.x. The bible is where pulling cloners look when CHANGELOG is too terse.
+5. **Field rename in a plugin's persisted state → migration shim or call-out.** A renamed JSON field in `~/.openclaw/workspace/<plugin>/_state.json` orphans existing data on first read. Either ship a rename-on-load shim (preferred) or note the one-time noise in CHANGELOG so cloners don't think their data was lost.
+6. **Comments name-drop the maintainer? Replace with `the user`/`the operator`/`the owner`.** First-name "the user wants X" reads like an inside joke and triggers the PII pass. The comment exists for a reader; address that reader, not the absent author.
+
+**What might warrant a new top-level doc.** Ideas worth considering for cloner utility, separately from this guideline (each is optional, raise individually):
+
+- `CLONERS.md` — single-page "fresh-clone vs git-pull" orientation. Two columns: "First time? Read these in order." / "Pulling latest? Diff these files."
+- `extensions/README.md` — a one-paragraph-per-plugin index of all `tinkerclaw-*` extensions with their gateway methods and config keys.
+- `examples/openclaw.example.json` — a sanitized config showing the fork's recommended `channels`, `agents`, `plugins.allow` shape, with placeholders (`+your-phone-number`, `your.handle@gmail.com`) instead of real values.
+
+These are proposals — only create them when the maintainer agrees the cloner-utility gain is real. Don't pre-emptively author docs that nobody will read.
+
+**Anti-patterns this rule forbids.**
+
+- A commit message that only says "fix X" with no audience-A or audience-B context — both audiences need at least the WHY in plain language.
+- A new fork plugin landed without a README or a JSDoc header explaining the gateway methods it exposes.
+- A `noPrefixChats` or `allowFrom` example in a doc using a real WhatsApp JID instead of `<your-jid>@s.whatsapp.net`.
+- An IDE-formatted absolute path in a code comment ("ran from `/home/<user>/src/tinkerclaw`") — replace with `the fork repo`, `~/src/tinkerclaw`, or relative.
+- Deleting a public-API field without a shim or a CHANGELOG breaking-change entry.
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.
@@ -2509,7 +2558,7 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **senderE164 Resolution:** Resolves sender phone number for `fromMe` group messages where Baileys lacks the `participant` field.
 - **Files:** `extensions/whatsapp/src/`, `src/whatsapp-history/`
 
-### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30, **rewritten 2026-05-03, prefix story added 2026-05-04**)
+### 11.6a WhatsApp Trigger & Access Control Rules (2026-03-30, **rewritten 2026-05-03, prefix story added 2026-05-04, owner-prefix invariant + prelude→BodyForAgent + thread-escalation hint 2026-05-09**)
 
 - **Status:** `DEPLOYED` — applies to the whatsmeow-backed `extensions/tinkerclaw-whatsapp/` plugin which now owns the `whatsapp` channel id.
 - **Files:** `extensions/tinkerclaw-whatsapp/src/inbound/access-control.ts` (sender allowlist gate, owner-fromMe bypass), `extensions/tinkerclaw-whatsapp/src/inbound/monitor.ts` (self-DM via LID rescue + chat-jid rewrite), `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/on-message.ts` (chat/prefix gate + guard prepend), `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/group-gating.ts` (mention requirement bypass for chats in `noPrefixChats`), `extensions/tinkerclaw-whatsapp/src/outbound-prefix.ts` (persona prefix module — single source for icon/name), `extensions/tinkerclaw-whatsapp/src/inbound/send-api.ts` + `extensions/tinkerclaw-whatsapp/src/auto-reply/deliver-reply.ts` (apply persona prefix on every outbound).
@@ -2540,6 +2589,7 @@ Every WhatsApp message Jarvis sends is decorated with a configurable persona str
 - Always passes the sender allowlist (access-control fast-path: `if (isFromMe) → allowed` regardless of chat type — `inbound/access-control.ts:checkInboundAccessControl`).
 - Still subject to the chat/prefix gate (must be in `noPrefixChats` _or_ body starts with `triggerPrefix`).
 - Never gets the third-party guard prepended.
+- **Global invariant (2026-05-09):** **the owner saying `Jarvis …` MUST trigger Jarvis in any chat** — DM, group, LID-routed chat, self-DM — without per-chat allowlisting. The body-prefix gate is the owner's universal address. Any group-, mention-, or activation-level rule that demands extra ceremony for the owner-prefix path is a bug. Tests that must always pass: (1) owner says `Jarvis foo` in a fresh, unactivated group → fires; (2) owner says `Jarvis foo` in any 1:1 DM → fires; (3) owner says `Jarvis foo` in self-DM → fires.
 
 **Third-party (allowlisted but not owner) behavior:**
 
@@ -2577,8 +2627,10 @@ If neither matches, the rescue is skipped — but **`from` is set to the LID its
 **Pipeline (where each gate fires):**
 
 1. `checkInboundAccessControl` (access-control.ts) — drops messages from non-allowlisted senders. Owner-fromMe early-returns `allowed=true`.
-2. `createWebOnMessageHandler` (on-message.ts) — applies the `noPrefixChats` + `triggerPrefix` chat/prefix gate. Strips the trigger word from the body when the prefix was the gate. Prepends `thirdPartyGuardPrompt` for non-owner senders.
-3. `applyGroupGating` (group-gating.ts) — for groups outside `noPrefixChats`, still requires a mention/tag. For groups in `noPrefixChats`, mention requirement is bypassed.
+2. `createWebOnMessageHandler` (on-message.ts) — applies the `noPrefixChats` + `triggerPrefix` chat/prefix gate. Strips the trigger word from the body when the prefix was the gate. Prepends `thirdPartyGuardPrompt` for non-owner senders. **Sets `msg.ownerPrefixTriggered = (hasPrefix && isOwner)`** so downstream gates can honour the global invariant without re-deriving it (FORK 2026-05-09).
+3. `applyGroupGating` (group-gating.ts) — for groups outside `noPrefixChats`, requires a mention/tag UNLESS the upstream gate set `msg.ownerPrefixTriggered = true`. The mention bypass condition is `inNoPrefixList || msg.ownerPrefixTriggered` — both paths skip the mention check; non-owner senders never set the flag, so their messages still need a real mention/activation in unactivated groups (FORK 2026-05-09 — fixes silent drop of "Jarvis …" in groups outside `noPrefixChats`).
+
+**Why the two-gate signal exists (FORK 2026-05-09 root-cause).** Before the fix, on-message.ts's body-prefix gate accepted "Jarvis …" everywhere, but applyGroupGating independently demanded `activation==="always" || inNoPrefixList || @-mention`. For any group not yet in `noPrefixChats` and never `/always`-activated, the owner's `Jarvis …` silently dropped at line 223 of group-gating.ts because the body had already been stripped of the trigger word and there was no @mention. The two gates disagreed and the user-visible symptom was "Jarvis ignored me". The user refused the per-group `noPrefixChats` workaround — the invariant says the prefix itself is the authority. Fix unifies the gates by propagating `ownerPrefixTriggered` from gate 2 into gate 3.
 
 **Observable journal log lines (with the diagnostic taps live):**
 
@@ -2586,24 +2638,32 @@ If neither matches, the rescue is skipped — but **`from` is set to the LID its
 - `[wa-debug] access: allowed=true|false …` — access-control decision.
 - `[wa-debug] self-DM via LID rescue: chat=…(matchesSelfLid=… matchesConfig=…)` — rescue fired (owner-LID identified, chat rewritten to canonical phone JID).
 - `[wa-debug] LID rescue SKIPPED: chat=… …` — rescue declined (LID not the owner's). Message will drop at `if (!from)`.
-- `[wa-trigger] firing owner=… inNoPrefix=… hasPrefix=… chat=…` — chat/prefix gate passed; agent dispatch begins.
+- `[wa-trigger] firing owner=… inNoPrefix=… hasPrefix=… chat=… ownerPrefixTriggered=…` — chat/prefix gate passed; agent dispatch begins.
 - `[wa-trigger] silent (no-prefix-chat=false body-prefix=false)` — message dropped at chat/prefix gate.
-- `[wa-trigger] group-gating: skipping mention requirement (noPrefixChats match)` — group-gating bypassed for noPrefixChats chat.
+- `[wa-trigger] group-gating: skipping mention requirement (inNoPrefix=… ownerPrefix=…)` — group-gating bypassed; one or both paths fired.
 
-**Inbound envelope enrichment (FORK 2026-05-04 — sender profile + recent thread + people-RPC hint).**
+**Inbound envelope enrichment (FORK 2026-05-04 — sender profile + recent thread + people-RPC hint; prelude wiring corrected and thread-escalation tool hint added 2026-05-09).**
 
-Every WhatsApp inbound that reaches the agent carries a structured preamble built in `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/message-line.ts:buildInboundLine`:
+Every WhatsApp inbound that reaches the agent carries a structured preamble. **Where it lives now (FORK 2026-05-09):** the prelude is built by `extensions/tinkerclaw-whatsapp/src/auto-reply/monitor/message-line.ts:buildInboundPrelude` and **prepended directly to `BodyForAgent`** in `process-message.ts:444` (the field the LLM actually consumes — see `src/auto-reply/reply/inbound-context.ts:64`). The legacy `Body`/`combinedBody` field still receives the same prelude wrapped in `formatInboundEnvelope` for echo detection and fan-out history rendering, but it is no longer the agent-visible path.
+
+Composition (top to bottom of `BodyForAgent`):
 
 1. **`[people-profiles]` hint** with the EXACT CLI to look up additional people: `openclaw gateway call people.resolve --params '{"query":"<name>"}'` and `people.read --params '{"slug":"<slug>"}'`. Necessary because there are no `people.*` tools in claude-code's catalog — the route is openclaw-gateway-call via Bash.
 2. **`[sender-profile slug=<slug>] … [/sender-profile]`** — pre-resolved profile of whoever sent the message. Fields: display name, role, manual context, rolling summary (~30d), recent asks. Built by `people-prefetch.ts` which reads `~/.openclaw/workspace/memory/people/_aliases.json` (60s LRU cache), matches by phone-suffix (≥9 digits) or `@lid`, then reads `<slug>.md`. Self-contained: no cross-plugin import of `tinkerclaw-people` (tolerates the people plugin being absent or its `peopleDir` overridden).
-3. **`[recent-thread last=N] … [/recent-thread]`** — last 6 messages in this chat (excluding the current one), built by `thread-prefetch.ts` querying `whatsapp-history.db` via the shared `getDb()` singleton. Newest-first SQL, rendered oldest-first, ~1.4 KB cap, lines clipped to 220 chars. Loose `chat_jid = ? OR LIKE %digits%` match handles bare-E.164 vs full-JID inputs.
-4. The standard `[<channel> | <chatType>] from:<id> ts:<…>` envelope wrapper, `messagePrefix`-prefixed body, and `[Replying to …]` reply-context block.
+3. **`[recent-thread last=N] … [/recent-thread]`** — last 6 messages in this chat (excluding the current one), built by `thread-prefetch.ts` querying `whatsapp-history.db` via the shared `getDb()` singleton. Newest-first SQL, rendered oldest-first, ~1.4 KB cap, lines clipped to 220 chars. Loose `chat_jid = ? OR LIKE %digits%` match handles bare-E.164 vs full-JID inputs. Returns `{block, oldestUnixSec}` so the escalation hint below can advertise an exact `until` cursor.
+4. **`[thread-escalation]` hint (FORK 2026-05-09)** — explicit instruction telling the agent how to pull older context when the eager `[recent-thread]` block isn't enough. Inlines the chat JID and the ISO-8601 timestamp of the oldest message above, plus the exact `whatsapp_history` tool shape (`action="search", chat=…, until=…, limit=20`). Tells the agent to escalate once before answering when the user references something not in the prelude (e.g. _"ese libro", "lo que dije ayer", "el plan que comentamos"_).
+5. The user's body (stripped of the trigger prefix when the prefix was the gate; `thirdPartyGuardPrompt` prepended for non-owner senders) and any `[Replying to …]` reply-context block.
 
-**Failure mode:** every prefetch is wrapped in try/catch returning empty — inbound processing must never break because of a memory or DB read failure. Empty profile sections (`_(empty — first cron run will populate.)_`) are detected and skipped, so seeded-but-not-yet-summarized profiles don't pollute the envelope.
+**Two regimes — eager vs adaptive context (FORK 2026-05-09 design note).** The recent-thread block costs ~300 tokens and serves the **common case** ("respond to what was just said"). The escalation hint covers the **long-reach case** ("respond about something said weeks ago" / "summarise this whole thread"). Conflating both into a single tool would force every reply to pay a 1–3s tool round-trip; conflating both into a static prelude would either send too little or too much. The split is deliberate: eager prelude for grounding, `whatsapp_history` tool for adaptive depth, with the escalation hint teaching the agent when to flip between them. The agent decides "no longer relevant" — that judgment belongs to the LLM, not to a fixed window size.
 
-**Why this matters:** the agent grounds in _who_ is writing and _what was just said_ without needing a tool round-trip. The hint at the top still teaches him to call `people.resolve` for _other_ people referenced in the body. Together, the three blocks shave the cold-start cost of reconstructing local context.
+**Failure mode:** every prefetch is wrapped in try/catch returning empty — inbound processing must never break because of a memory or DB read failure. Empty profile sections (`_(empty — first cron run will populate.)_`) are detected and skipped, so seeded-but-not-yet-summarized profiles don't pollute the envelope. When the recent-thread DB has no prior messages (or DB unavailable), the `[thread-escalation]` block falls back to the inbound's own timestamp as `until` so the hint stays actionable.
 
-**Don't regress:** the `fromMe` skip on the hint was REMOVED on 2026-05-04 — the user's own messages must also receive the preamble because he routinely asks Jarvis about _other_ people. If you reintroduce a `fromMe` filter, only filter the recent-thread block, never the hint or sender-profile.
+**Why this matters:** the agent grounds in _who_ is writing and _what was just said_ without needing a tool round-trip in the common case. The escalation hint at the top still teaches him to dig further when needed. Together the four blocks shave the cold-start cost of reconstructing local context AND give the agent a clear extension path.
+
+**Don't regress:**
+
+- The `fromMe` skip on the hint was REMOVED on 2026-05-04 — the user's own messages must also receive the preamble because he routinely asks Jarvis about _other_ people. If you reintroduce a `fromMe` filter, only filter the recent-thread block, never the hint or sender-profile.
+- **The prelude must reach `BodyForAgent`, not just `Body`.** From 2026-05-04 to 2026-05-09 the prelude was wired into `combinedBody` → `Body` (legacy envelope-shaped field), but the LLM consumes `BodyForAgent`. Result: the prefetch features were silently dead for 5 days. Symptom that surfaces this regression: the agent replying with "no tengo contexto previo en esta conversación" / "I don't have prior context in this thread" despite the chat having visible recent traffic. Pin: audit `process-message.ts:444` — `bodyForAgent` MUST include the prelude (currently `${buildInboundPrelude(...)}${msgForAgent.body}`).
 
 **New standalone plugin — `extensions/tinkerclaw-whatsapp/` (2026-04-12):** Fork WhatsApp code extracted into a self-contained plugin. Uses whatsmeow-node (Go subprocess) as the only backend; Baileys adapter translates events so existing message processing code works unchanged. Includes SQLite history with FTS5, multi-agent routing/congestion/budget/lifecycle, and the 4-tier access model above. **Status:** created and builds, not yet wired into gateway config — upstream `extensions/whatsapp/` still runs. Enabling the new plugin requires disabling the upstream extension (both claim channel ID `whatsapp`). Full localization deferred: plugin currently re-exports `whatsappPlugin` and `monitorWebInbox` from upstream. See `~/.openclaw/workspace/memory/knowledge/tinkerclaw-whatsapp-plugin.md`.
 

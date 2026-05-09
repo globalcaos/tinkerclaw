@@ -324,7 +324,7 @@ const DATE_MONTH_PATTERN =
   /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi;
 
 // Capitalized word sequences mid-sentence (potential people names)
-// Supports accented chars common in Spanish/Catalan names (Raventós, Ortodó, García)
+// Supports accented chars common in Spanish/Catalan names (Núñez, Mañé, García)
 const MID_SENTENCE_NAMES =
   /(?<=\s)([A-ZÀ-ÚÑÇ][a-zà-úñçü]{1,20}(?:\s+[A-ZÀ-ÚÑÇ][a-zà-úñçü]{1,20}){0,2})(?=[\s,.'!?]|$)/g;
 

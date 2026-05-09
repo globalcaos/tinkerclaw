@@ -46,7 +46,7 @@ import {
   updateWhatsAppMainLastRoute,
 } from "./inbound-dispatch.js";
 import { trackBackgroundTask, updateLastRouteInBackground } from "./last-route.js";
-import { buildInboundLine } from "./message-line.js";
+import { buildInboundLine, buildInboundPrelude } from "./message-line.js";
 import {
   buildHistoryContextFromEntries,
   createChannelReplyPipeline,
@@ -441,8 +441,19 @@ export async function processMessage(params: {
           peerId: dmRouteTarget ?? params.msg.from,
         });
 
+  // FORK 2026-05-09: prepend the agent-facing prelude (people-profiles hint,
+  // sender-profile, recent-thread, thread-escalation tool hint) directly to
+  // BodyForAgent. The legacy Body/combinedBody path is what the original
+  // buildInboundLine envelope was built for — that still feeds echo
+  // detection, fan-out history rendering, and other consumers — but the LLM
+  // user message is sourced from BodyForAgent (see
+  // src/auto-reply/reply/inbound-context.ts:64), so the prefetch blocks
+  // never reached the model when only Body carried them. Prepending the
+  // prelude here closes the gap without touching the legacy field.
+  const agentPrelude = buildInboundPrelude({ msg: msgForAgent });
+  const bodyForAgent = `${agentPrelude}${msgForAgent.body}`;
   const ctxPayload = buildWhatsAppInboundContext({
-    bodyForAgent: msgForAgent.body,
+    bodyForAgent,
     combinedBody,
     commandBody: params.msg.body,
     commandAuthorized,
