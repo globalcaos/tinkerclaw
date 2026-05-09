@@ -513,7 +513,7 @@ export function detectGranularity(relPath: string): "detail" | "topic" | "global
 export function detectTopicCluster(relPath: string): string {
   const normalized = normalizeRelPath(relPath);
 
-  // bank/entities/the user.md → 'entity_oscar'
+  // bank/entities/Owner.md → 'entity_owner'
   const entityMatch = normalized.match(/bank\/entities\/(\w+)\.md$/);
   if (entityMatch) {
     return `entity_${entityMatch[1].toLowerCase()}`;

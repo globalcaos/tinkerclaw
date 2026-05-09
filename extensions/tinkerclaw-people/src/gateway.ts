@@ -4,7 +4,7 @@
  * Exposes four RPCs to the agent + operator tooling:
  *   - people.resolve({ query }) -> { slug, displayName } | null
  *   - people.read({ slug }) -> { profile_md, deltaSinceLastConsult }
- *       (advances lastConsultedBythe user)
+ *       (advances lastConsultedByOwner)
  *   - people.list() -> [{ slug, displayName, lastInteraction }]
  *   - people.update_consulted_at({ slug }) -> { ok: true }
  *
@@ -80,10 +80,10 @@ export function registerPeopleGatewayMethods(params: {
         }
         const state: StateMap = readState(cfg);
         const personState = state[slug] ?? {};
-        const deltaSinceLastConsult = computeDelta(profileMd, personState.lastConsultedBythe user);
-        // advance lastConsultedBythe user
+        const deltaSinceLastConsult = computeDelta(profileMd, personState.lastConsultedByOwner);
+        // advance lastConsultedByOwner
         const now = new Date().toISOString();
-        state[slug] = { ...personState, lastConsultedBythe user: now };
+        state[slug] = { ...personState, lastConsultedByOwner: now };
         writeState(cfg, state);
         respond(true, { profile_md: profileMd, deltaSinceLastConsult });
       } catch (err) {
@@ -148,9 +148,9 @@ export function registerPeopleGatewayMethods(params: {
         }
         const state = readState(cfg);
         const now = new Date().toISOString();
-        state[slug] = { ...(state[slug] ?? {}), lastConsultedBythe user: now };
+        state[slug] = { ...(state[slug] ?? {}), lastConsultedByOwner: now };
         writeState(cfg, state);
-        respond(true, { ok: true, lastConsultedBythe user: now });
+        respond(true, { ok: true, lastConsultedByOwner: now });
       } catch (err) {
         respond(false, undefined, {
           code: "internal_error",

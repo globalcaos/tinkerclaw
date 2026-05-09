@@ -199,7 +199,7 @@ We welcome contributions! This fork is about:
 
 ## 👤 About the Maintainer
 
-**Oscar Serra** — Telecom engineer, inventor, and AI enthusiast based in Barcelona. Building "The Tinker Zone" to document the journey of creating truly helpful AI assistants.
+**Oscar Serra** ([@globalcaos](https://github.com/globalcaos)) — Telecom engineer, inventor, and AI enthusiast. Building "The Tinker Zone" to document the journey of creating truly helpful AI assistants.
 
 - Philosophy: Trust first, Bashar-inspired (follow your highest excitement)
 - Setup: Ubuntu on MSI Creator laptop, Claude + Gemini + Manus

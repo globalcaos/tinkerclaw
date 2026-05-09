@@ -169,19 +169,30 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     sessionKey: params.sessionKey,
     conversationId: params.conversationId,
   });
-  // FORK 2026-05-03: chats in noPrefixChats act as if activation="always" — no
-  // mention/tag/prefix required, allowlisted senders trigger by typing. The
-  // body-prefix gate already ran in createWebOnMessageHandler; this just
-  // ensures the legacy mention-required path doesn't undo that decision for
-  // chats explicitly opted into the no-prefix list.
+  // FORK 2026-05-03 (extended 2026-05-09): chats in noPrefixChats act as if
+  // activation="always" — no mention/tag/prefix required, allowlisted senders
+  // trigger by typing. The body-prefix gate already ran in
+  // createWebOnMessageHandler; this just ensures the legacy mention-required
+  // path doesn't undo that decision for chats explicitly opted into the
+  // no-prefix list.
+  //
+  // 2026-05-09 (owner-prefix invariant): owner+"Jarvis" prefix must trigger in any
+  // chat — DM, group, LID, self — without per-chat allowlist. The
+  // `createWebOnMessageHandler` trigger gate sets `msg.ownerPrefixTriggered =
+  // true` when the OWNER addressed Jarvis by the configured triggerPrefix; we
+  // OR that into the bypass condition so a fresh, unactivated group with no
+  // mention still fires for the owner. Non-owner senders never set the flag,
+  // so they remain subject to normal mention/activation gating.
   const noPrefixChats =
     (params.cfg as { channels?: { whatsapp?: { noPrefixChats?: string[] } } }).channels?.whatsapp
       ?.noPrefixChats ?? [];
   const inNoPrefixList = noPrefixChats.includes(params.conversationId);
-  const requireMention = activation !== "always" && !inNoPrefixList;
-  if (inNoPrefixList) {
+  const ownerPrefixTriggered = params.msg.ownerPrefixTriggered === true;
+  const bypassMentionRequirement = inNoPrefixList || ownerPrefixTriggered;
+  const requireMention = activation !== "always" && !bypassMentionRequirement;
+  if (bypassMentionRequirement) {
     console.log(
-      `[wa-trigger] group-gating: skipping mention requirement (noPrefixChats match) chat=${params.conversationId}`,
+      `[wa-trigger] group-gating: skipping mention requirement (inNoPrefix=${inNoPrefixList} ownerPrefix=${ownerPrefixTriggered}) chat=${params.conversationId}`,
     );
   }
   const replyContext = getReplyContext(params.msg, params.authDir);

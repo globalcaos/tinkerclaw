@@ -247,7 +247,7 @@ Cross-cron transfer depends less on storing more and more on storing in the righ
 
 ### 4.1 Methodology and Limitations
 
-**System:** OpenClaw personal assistant (Jarvis), running on a Linux workstation. Primary model: Claude Opus 4. Cron models: mix of Opus, Sonnet, and Haiku. 13 autonomous cron jobs. One human operator (the user).
+**System:** OpenClaw personal assistant (Jarvis), running on a Linux workstation. Primary model: Claude Opus 4. Cron models: mix of Opus, Sonnet, and Haiku. 13 autonomous cron jobs. One human operator.
 
 **Period:** February 8 -- March 10, 2026 (30 days).
 
@@ -255,7 +255,7 @@ Cross-cron transfer depends less on storing more and more on storing in the righ
 
 **Labeling protocol:** Error instances were identified from cron receipts (non-zero exit codes, escalation flags) and operator-reported incidents. Error _classes_ were defined post hoc by the authors based on root-cause similarity. No inter-rater reliability was computed -- this is a single-system observational study, not a controlled experiment.
 
-**Confounds we acknowledge:** Over the 30-day period, the following changed simultaneously: prompt content (the variable under study), cron ordering (adjusted twice), model assignments (3 crons moved from Opus to Sonnet), operator familiarity (the user learned the system's capabilities), and upstream codebase (109 commits merged). We cannot isolate the contribution of prompt mutation from these confounds. The evidence is _consistent with_ the Sleep Consolidation hypothesis but does not _prove_ it.
+**Confounds we acknowledge:** Over the 30-day period, the following changed simultaneously: prompt content (the variable under study), cron ordering (adjusted twice), model assignments (3 crons moved from Opus to Sonnet), operator familiarity (the operator learned the system's capabilities), and upstream codebase (109 commits merged). We cannot isolate the contribution of prompt mutation from these confounds. The evidence is _consistent with_ the Sleep Consolidation hypothesis but does not _prove_ it.
 
 **What a controlled study would look like:** Run two identical agent deployments: one with nightly reflection enabled, one with static prompts. Measure error recurrence rate, human intervention frequency, task completion quality (rated by blind evaluators), and time-to-resolution for novel incidents. Duration: minimum 4 weeks. We have not conducted this study.
 
@@ -297,7 +297,7 @@ We tracked six error classes, defined by root-cause similarity:
 
 **Total tracked incidents:** 14 (weeks 1--2) to 3 (weeks 3--4), a 79% reduction. The emergence of "over-broad safety rules" as a _new_ error class in weeks 3--4 is especially notable. The error surface shifted from execution failures to policy failures. That pattern is consistent with a maturing system: once first-order mistakes are reduced, second-order distortions become easier to see.
 
-**Caveat:** We cannot cleanly distinguish between "errors eliminated by prompt mutation" and "errors eliminated by operator learning" (the user stopped triggering certain edge cases as he learned the system). The confound is real and uncontrolled.
+**Caveat:** We cannot cleanly distinguish between "errors eliminated by prompt mutation" and "errors eliminated by operator learning" (the operator stopped triggering certain edge cases as they learned the system). The confound is real and uncontrolled.
 
 ### 4.4 Token Economics
 
@@ -308,7 +308,7 @@ We tracked six error classes, defined by root-cause similarity:
 | Cleaning Lady          | ~8K          | $0.12             |
 | Total nightly overhead | ~43K         | $1.17             |
 
-Over 30 days, total reflection cost: approximately $35. We estimate 8 human-intervention incidents were avoided (based on error-class extinction -- incidents that would otherwise have required the user to debug and fix manually). Valuing operator time at $25/hr with an average 30-minute resolution yields approximately $200 saved.
+Over 30 days, total reflection cost: approximately $35. We estimate 8 human-intervention incidents were avoided (based on error-class extinction -- incidents that would otherwise have required the operator to debug and fix manually). Valuing operator time at $25/hr with an average 30-minute resolution yields approximately $200 saved.
 
 **Sensitivity analysis:** If operator time is valued at $15/hr (low estimate), ROI is 3.4x. At $50/hr (high estimate), ROI is 11.4x. If only 4 incidents were truly avoided (conservative), ROI at $25/hr is still 2.9x. Under every reasonable assumption, the reflection loop remains cost-positive, though the estimates are approximate.
 

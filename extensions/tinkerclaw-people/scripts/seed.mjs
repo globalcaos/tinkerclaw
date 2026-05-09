@@ -179,7 +179,7 @@ function parseWorkPeopleMd(p) {
 
 // Loose name-match against the table:
 // - exact lower
-// - first-letter + last-name probe against email local-part (e.g. "Xavi REDACTED-NAME" -> "x.ortodo")
+// - first-letter + last-name probe against email local-part (e.g. "Iván Núñez" -> "i.nunez")
 // - tokens shared (firstname OR lastname) — narrowed: requires 2+ shared tokens to avoid collisions
 function normalizeForMatch(s) {
   return s
@@ -209,7 +209,7 @@ function matchTableRow(workTable, displayName, contactName) {
   for (const c of cands) {
     const toks = c.split(/\s+/).filter(Boolean);
     if (toks.length >= 2) {
-      // try (first-initial).(last-token), and (first-initial).(second-token-to-last) for triples like "xavier ortodo serra"
+      // try (first-initial).(last-token), and (first-initial).(second-token-to-last) for triples like "ivan nunez perez"
       const candidates = new Set();
       candidates.add(`${toks[0][0]}.${toks[toks.length - 1]}`);
       if (toks.length >= 3) candidates.add(`${toks[0][0]}.${toks[toks.length - 2]}`);
@@ -219,8 +219,8 @@ function matchTableRow(workTable, displayName, contactName) {
       }
     }
   }
-  // 3) shared 2+ tokens with a row: e.g. "xavier ortodo serra" vs "xavi ortodó" → shared {ortodo}; only one token, so reject.
-  //    But: "Xavi Ortodo" vs "Xavi Ortodo" (normalized accents) should match.
+  // 3) shared 2+ tokens with a row: e.g. "ivan nunez perez" vs "iván núñez" → shared {nunez}; only one token, so reject.
+  //    But: "Iván Núñez" vs "Ivan Nunez" (normalized accents) should match.
   for (const c of cands) {
     const toks = new Set(c.split(/\s+/).filter((t) => t.length >= 3));
     if (toks.size === 0) continue;
@@ -230,7 +230,7 @@ function matchTableRow(workTable, displayName, contactName) {
       for (const t of toks) if (ktoks.has(t)) shared++;
       if (shared >= 2) return v;
       // single shared token is enough only if it's a meaningful surname (>=4 chars) AND first names
-      // share the same initial — protects against "Xavi" matching multiple Xaviers.
+      // share the same initial — protects against e.g. "Iván" matching multiple Iváns.
       if (shared === 1) {
         const firstA = c.split(/\s+/)[0] ?? "";
         const firstB = k.split(/\s+/)[0] ?? "";
@@ -408,7 +408,7 @@ function buildPointersSection(state) {
     `- \`lastWaTimestamp\`: ${state.lastWaTimestamp ?? ""}`,
     `- \`lastSummaryAt\`: ${state.lastSummaryAt ?? ""}`,
     `- \`messagesSinceLastSummary\`: ${state.messagesSinceLastSummary ?? 0}`,
-    `- \`lastConsultedBythe user\`: ${state.lastConsultedBythe user ?? ""}`,
+    `- \`lastConsultedByOwner\`: ${state.lastConsultedByOwner ?? ""}`,
   ].join("\n");
 }
 
@@ -692,9 +692,9 @@ async function main() {
     if (matched?.email) {
       bucket.emails.add(matched.email);
     }
-    // Prefer the hand-curated table name (e.g. "Xavi REDACTED-NAME") over the auto
-    // contact "Xavier REDACTED-NAME SERRA" — it's shorter and matches how the user
-    // refers to the person in conversation.
+    // Prefer the hand-curated table name (e.g. shortened "Iván Núñez") over
+    // the auto contact full legal name ("Iván Núñez García") — shorter form
+    // matches how the user refers to the person in conversation.
     if (matched?.name) {
       bucket.names.add(matched.name);
       bucket.displayName = matched.name;
@@ -792,7 +792,7 @@ async function main() {
       lastWaTimestamp: stateForPerson.lastWaTimestamp ?? newest?.timestamp,
       lastSummaryAt: stateForPerson.lastSummaryAt,
       messagesSinceLastSummary: stateForPerson.messagesSinceLastSummary ?? 0,
-      lastConsultedBythe user: stateForPerson.lastConsultedBythe user,
+      lastConsultedByOwner: stateForPerson.lastConsultedByOwner,
       lastInteraction: lastInteractionIso ?? stateForPerson.lastInteraction,
     };
     stateOut[slug] = newState;

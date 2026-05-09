@@ -149,7 +149,7 @@ The personality networks are pulled toward a **target vector** during training. 
 | `emoji_rate`    | No emoji                | Neutral | Frequent emoji           |
 | `assertiveness` | Passive / deferential   | Neutral | Confident / direct       |
 
-**Example target vector** (default the user persona):
+**Example target vector** (default operator persona):
 
 ```python
 target_vector = [
