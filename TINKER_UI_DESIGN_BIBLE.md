@@ -2700,19 +2700,19 @@ If the rhythm rule would push these out: drop body content first, never the scaf
 ### 11.6b /new briefing injection — full content + clickable path bubble (2026-05-09)
 
 - **Status:** `DEPLOYED` (architect side; pending end-to-end smoke test on host).
-- **What:** When the user types `/new` in Tinker UI, the client awaits a new gateway RPC `briefing.resolve` (workspace `BRIEFING.md` → bundled `briefing-default.md` fallback), then builds an imperative prompt with the briefing's full content inlined and sends it as the user message. The user bubble renders as a collapsed `<details>` with summary `⚡ Executing <path>`, where the path is a clickable monospace link that calls `files.openInEditor` to open the file in the host editor (`xdg-open`).
+- **What:** When the user types `/new` in Tinker UI, the client awaits a new gateway RPC `briefing.resolve` (workspace `BRIEFING.md` → bundled `briefing-default.md` fallback), then builds an imperative prompt with the briefing's full content inlined and sends it as the user message. The user bubble renders as a collapsed `<details>` with summary `⚡ Executing <path>`, where the path is rendered as `<code class="fs-link" data-path="…">` — reuses the existing fs-link delegated click handler at `tinker-ui/src/app.ts:5777` which calls the existing `config.openExternalFile` RPC to open the file via `xdg-open`/`open`/`Start-Process`.
 - **Replaces:** the prior soft "Read and follow whichever of these briefing files exists…" suffix that caused Opus 4.7 to acknowledge BRIEFING.md and ask permission instead of executing it. Symptom captured at the 2026-05-09 10:00 turn (33s, 258B reply, zero tool calls). The new wording — "Execute the morning briefing NOW … without asking permission" — forecloses the permission-asking failure mode.
 - **Files:**
   - `src/gateway/server-methods/briefing.ts` — `briefing.resolve` handler (READ_SCOPE). Workspace dir resolved via `resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg))` like `skills.ts`. EPERM/EACCES on workspace read falls through to bundled with `console.warn`.
-  - `src/gateway/server-methods/files-open.ts` — `files.openInEditor` handler (ADMIN_SCOPE). Allowlist: workspaceDir, `~/.openclaw`, `~/src/tinkerclaw`, `~/src/jarvis-icu`. Spawns `xdg-open` detached + `stdio:"ignore"` + `unref()`. Test seam `__setSpawnImplForTest`. **Note:** symlink-escape is not defended — relies on ADMIN_SCOPE gating + trusted callers.
-  - `src/gateway/server-methods.ts` + `src/gateway/method-scopes.ts` — RPC registration + scope policy.
-  - `tinker-ui/src/app.ts:buildBriefingPrompt` (new helper), `buildInjectedPrompt` (now async), `renderUserBubbleWithPromptToggle` (new `_briefingPath` branch), delegated click handler on `a.briefing-path-link` calling `files.openInEditor`.
-  - `tinker-ui/src/styles/base.css` — `.briefing-toggle`, `.briefing-summary`, `.briefing-path-link` rules.
-- **Fallback:** every failure mode degrades to today's soft-suffix behavior. RPC error → soft suffix. Bundled file missing → soft suffix. Workspace file unreadable → bundled, then soft suffix.
+  - `src/gateway/server-methods.ts` + `src/gateway/method-scopes.ts` — `briefing.resolve` registration + READ_SCOPE entry.
+  - `tinker-ui/src/app.ts:buildBriefingPrompt` (new helper), `buildInjectedPrompt` (now async), `renderUserBubbleWithPromptToggle` (new `_briefingPath` branch — emits `<code class="fs-link">`).
+  - `tinker-ui/src/styles/base.css` — `.briefing-toggle` + `.briefing-summary` rules. Path link uses existing `.fs-link` styles.
+- **Reuses (not new):** `config.openExternalFile` RPC + the global `.fs-link` delegated click handler. Don't add new file-open RPCs — this pattern already exists.
+- **Fallback:** every failure mode degrades to the soft-suffix behavior. RPC error → soft suffix. Bundled file missing → soft suffix. Workspace file unreadable → bundled, then soft suffix.
 - **Spec:** `docs/superpowers/specs/2026-05-09-new-briefing-injection-design.md` (in jarvis-icu).
 - **Plan:** `docs/superpowers/plans/2026-05-09-new-briefing-injection.md` (in jarvis-icu).
-- **Commits on develop:** `f6f178569a` → `94b08712a4` → `68fae5eddc` → `96ea105a71` → `c3ef3f99b1` → `e66cacea9e` → `4155fa7328`.
-- **Open polish (non-blocking):** `escapeHtml` in app.ts doesn't escape `'` (safe for double-quoted attribute use here, but defensively incomplete); `<a href="#">` could be `<button>` semantically; `?.closest?.()` redundant optional chain. Worth a follow-up polish PR.
+- **Commits on develop:** `f6f178569a` → `94b08712a4` → `c3ef3f99b1` → `e66cacea9e` → `4155fa7328` → `87064e9b95` → `fef8174aaf` (cleanup: dropped redundant `files.openInEditor` RPC after discovering `config.openExternalFile` already handled this).
+- **Lesson:** before adding ANY new file-open / shell-out RPC, search for existing patterns first — `grep -rn 'xdg-open\|openExternalFile\|fs-link'` would have surfaced the existing handler. The `files.openInEditor` RPC sat live for ~30 minutes before the user caught the duplication.
 - **Don't regress:** the imperative wording sentinel `"Execute the morning briefing NOW"` is dual-purpose — it tells the model what to do AND lets the call site detect a briefing injection (regex-match for `_briefingPath` extraction). Changing the wording requires updating both `buildBriefingPrompt` and the detection regex in the `send` call site.
 
 ### 11.7 Fork Infrastructure (2026-02 → 2026-03)
