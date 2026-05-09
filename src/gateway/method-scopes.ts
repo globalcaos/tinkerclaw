@@ -166,6 +166,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
   [ADMIN_SCOPE]: [
     "channels.start",
     "channels.logout",
+    "config.openExternalFile",
     "agents.create",
     "agents.update",
     "agents.delete",
