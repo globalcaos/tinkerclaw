@@ -1888,6 +1888,33 @@ export async function runEmbeddedAttempt(
         },
       );
 
+      // FORK 2026-04-24 (originally added in 2ad1400a0d, lost in an upstream
+      // merge, restored 2026-05-09): pipe runId + sessionKey + sessionId through
+      // streamFn options so cc-bridge (and any other provider that wants live
+      // tool-event attribution) can map the stream to the right run. pi-ai's
+      // SimpleStreamOptions doesn't carry these fields, so we smuggle them in
+      // as `__openclaw*` underscore-prefixed names — fork-owned, no collision
+      // with real pi-ai fields. Providers that don't care simply ignore them.
+      // Symptom of the previous wipe: cc-bridge's `runId` was always undefined
+      // (stream.ts:170/204 early-returned on every emitToolStart/Result call),
+      // so claude-cli tool calls were invisible in the Tinker UI even though
+      // the tool-event consumer at app.ts:1501 was wired correctly.
+      {
+        const piped = activeSession.agent.streamFn;
+        const pipedRunId = params.runId;
+        const pipedSessionKey = params.sessionKey;
+        const pipedSessionId = params.sessionId;
+        activeSession.agent.streamFn = (model, context, options) => {
+          const pipedOptions = {
+            ...options,
+            __openclawRunId: pipedRunId,
+            __openclawSessionKey: pipedSessionKey,
+            __openclawSessionId: pipedSessionId,
+          } as typeof options;
+          return piped(model, context, pipedOptions);
+        };
+      }
+
       try {
         if (isRawModelRun) {
           activeSession.agent.reset();
