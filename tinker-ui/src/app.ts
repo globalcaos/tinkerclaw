@@ -3077,7 +3077,7 @@ function splitSectionedReply(text: string): SectionedReply | null {
 // full text sent to the gateway (for user visibility + debugging).
 function renderUserBubbleWithPromptToggle(
   userText: string,
-  msg: { _fullPrompt?: string },
+  msg: { _fullPrompt?: string; _briefingPath?: string },
   queuedClass: string,
   queuedBadge: string,
   idx: number,
@@ -3086,6 +3086,21 @@ function renderUserBubbleWithPromptToggle(
     return `<div class="msg user${queuedClass}" data-msg-idx="${idx}">${md(userText)}${queuedBadge}</div>`;
   }
   const full = msg._fullPrompt;
+  if (msg._briefingPath) {
+    const safePath = escapeHtml(msg._briefingPath);
+    return (
+      `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
+      `${md(userText)}` +
+      `<details class="user-prompt-toggle briefing-toggle">` +
+      `<summary class="user-prompt-summary briefing-summary">` +
+      `⚡ Executing <a href="#" class="briefing-path-link" data-path="${safePath}">${safePath}</a>` +
+      `</summary>` +
+      `<div class="user-prompt-full">${md(full)}</div>` +
+      `</details>` +
+      `${queuedBadge}` +
+      `</div>`
+    );
+  }
   return (
     `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}">` +
     `${md(userText)}` +
@@ -5623,6 +5638,29 @@ function init() {
       hintEl.style.opacity = "0";
       hintTarget = null;
     }
+  });
+
+  // FORK 2026-05-09: Delegated click handler for briefing-path-link — opens the
+  // injected BRIEFING.md file in the system editor via the files.openInEditor RPC.
+  document.addEventListener("click", (ev) => {
+    const briefingLink = (ev.target as HTMLElement | null)?.closest?.(
+      "a.briefing-path-link",
+    ) as HTMLAnchorElement | null;
+    if (!briefingLink) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const p = briefingLink.getAttribute("data-path");
+    if (!p) return;
+    req<{ ok: boolean; reason?: string }>("files.openInEditor", { path: p }).then(
+      (res) => {
+        if (!res?.ok) {
+          console.warn("[files.openInEditor] failed:", res?.reason);
+        }
+      },
+      (err) => {
+        console.warn("[files.openInEditor] RPC error:", err);
+      },
+    );
   });
 
   const ta = $("chat-textarea") as HTMLTextAreaElement;
