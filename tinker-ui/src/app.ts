@@ -3125,7 +3125,19 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
   if (sepIdx < 0) {
     return;
   }
-  const isBriefing = rawText.includes("Execute the morning briefing NOW");
+  const isBriefingNew = rawText.includes("Execute the morning briefing NOW");
+  // FORK 2026-05-09: also match the legacy soft-suffix briefing wording so
+  // historical /new turns stored before the bossy-prompt rewrite collapse on
+  // refresh. Old: "Read and follow whichever of these briefing files exists".
+  const isBriefingLegacy = rawText.includes(
+    "Read and follow whichever of these briefing files exists",
+  );
+  // FORK 2026-05-09: catch any /new-shaped or /reset-shaped injection by
+  // structure (starts with the slash command + the standard injection
+  // separator), in case future briefing wording changes. Both old and new
+  // briefing paths use this exact prefix.
+  const isBriefingShape = /^\/(new|reset)\n\n---\n\n/i.test(rawText);
+  const isBriefing = isBriefingNew || isBriefingLegacy || isBriefingShape;
   const isAmygdala = rawText.includes("Structure this turn's reply as labelled sections");
   if (!isBriefing && !isAmygdala) {
     return;
@@ -5014,7 +5026,18 @@ function updateBudgetPanel() {
   const otherIds = Object.keys(models || {}).filter((id) => !chainSet.has(id));
   if (otherIds.length) {
     const open = !collapsedModelSections.has("configured");
-    otherIds.sort((a, b) => modelPerfRank(a) - modelPerfRank(b));
+    // FORK 2026-05-09: sort by explicit JSON rank first (user-chosen global
+    // performance order in openclaw.json), fall back to bible's tier-matching
+    // when rank is missing on both sides. This honors finer-grained orderings
+    // like gpt-5.5 above gpt-5.4 within the same tier.
+    otherIds.sort((a, b) => {
+      const ra = (models?.[a] as { rank?: number } | undefined)?.rank ?? 999;
+      const rb = (models?.[b] as { rank?: number } | undefined)?.rank ?? 999;
+      if (ra !== rb) {
+        return ra - rb;
+      }
+      return modelPerfRank(a) - modelPerfRank(b);
+    });
     html += `<div class="model-group${open ? " open" : ""}" data-section="configured">`;
     html += '<div class="model-group-label">CONFIGURED</div>';
     html += '<div class="model-group-body">';
