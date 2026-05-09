@@ -3279,35 +3279,49 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
   if (!rawText) {
     return;
   }
-  const sepIdx = rawText.indexOf(INJECTION_SEP);
-  if (sepIdx < 0) {
-    return;
-  }
+  // FORK 2026-05-09 (revised): detect injection by SENTINEL first, separator
+  // second. The persistence layer somewhere collapses `\n\n---\n\n` to `\n---\n`
+  // or strips the leading `/new\n\n` entirely, so requiring the exact separator
+  // misses real briefing turns. Sentinel-based detection catches them all.
   const isBriefingNew = rawText.includes("Execute the morning briefing NOW");
-  // FORK 2026-05-09: also match the legacy soft-suffix briefing wording so
-  // historical /new turns stored before the bossy-prompt rewrite collapse on
-  // refresh. Old: "Read and follow whichever of these briefing files exists".
   const isBriefingLegacy = rawText.includes(
     "Read and follow whichever of these briefing files exists",
   );
-  // FORK 2026-05-09: catch any /new-shaped or /reset-shaped injection by
-  // structure (starts with the slash command + the standard injection
-  // separator), in case future briefing wording changes. Both old and new
-  // briefing paths use this exact prefix.
-  const isBriefingShape = /^\/(new|reset)\n\n---\n\n/i.test(rawText);
+  const isBriefingShape = /^\s*\/(new|reset)\b/i.test(rawText);
   const isBriefing = isBriefingNew || isBriefingLegacy || isBriefingShape;
   const isAmygdala = rawText.includes("Structure this turn's reply as labelled sections");
   if (!isBriefing && !isAmygdala) {
     return;
   }
-  // Reconstruct: pre-separator = original user text; full = _fullPrompt.
-  const originalText = rawText.slice(0, sepIdx);
+  // Compute the visible user text. Three strategies, in order:
+  //   1. Strict separator found → split there.
+  //   2. Briefing detected without strict separator → synthetic "/new".
+  //   3. Amygdala detected without strict separator → take everything BEFORE
+  //      the "Structure this turn" sentinel as the user's typed text.
+  const sepIdx = rawText.indexOf(INJECTION_SEP);
+  let originalText: string;
+  if (sepIdx > 0) {
+    originalText = rawText.slice(0, sepIdx);
+  } else if (isBriefing) {
+    originalText = "/new";
+  } else {
+    // Amygdala fallback: split right before the directive marker. Tolerates
+    // collapsed whitespace and inline `---` separators.
+    const amygMatch = rawText.match(/^([\s\S]*?)\s*(?:---\s*)?\*{0,2}\s*Structure this turn/);
+    originalText = amygMatch ? amygMatch[1].trim() : rawText.slice(0, 200);
+    if (!originalText) {
+      originalText = rawText.slice(0, 200);
+    }
+  }
   msg._fullPrompt = rawText;
-  // Rewrite the stored text content to just the original so rendering uses it.
+  // Rewrite the FIRST text block (regardless of strict text===rawText match)
+  // so the bubble shows just the user-visible portion, not the full prompt.
+  // The strict equality check missed cases where multiple blocks exist or
+  // the persistence layer trimmed/normalized the text.
   if (Array.isArray(msg.content)) {
     const blocks = msg.content as Array<{ type: string; text?: string }>;
     for (const b of blocks) {
-      if (b.type === "text" && b.text === rawText) {
+      if (b.type === "text") {
         b.text = originalText;
         break;
       }
@@ -3316,9 +3330,18 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
     msg.content = originalText;
   }
   if (isBriefing) {
-    const m = rawText.match(/Briefing source: `([^`]+)`/);
-    if (m) {
-      msg._briefingPath = m[1];
+    // Try the canonical "Briefing source: `<path>`" pattern first; if absent
+    // (e.g. server stripped the label or collapsed whitespace), fall back to
+    // any backtick-quoted .md path that looks like a workspace BRIEFING file.
+    let pathMatch: RegExpMatchArray | null = rawText.match(/Briefing source:\s*`([^`]+)`/);
+    if (!pathMatch) {
+      pathMatch = rawText.match(/`((?:\/|~\/)[^`]*BRIEFING[^`]*\.md)`/);
+    }
+    if (!pathMatch) {
+      pathMatch = rawText.match(/((?:\/|~\/)[\w./-]*BRIEFING[\w./-]*\.md)/);
+    }
+    if (pathMatch) {
+      msg._briefingPath = pathMatch[1];
     }
   }
   // FORK 2026-05-09 (Feature A): pull timestamp from server-side field if available.
