@@ -1096,6 +1096,54 @@ function onFrame(f: unknown) {
   }
 }
 
+// FORK 2026-05-09 — mirror the rendered chat HTML to a file on the gateway
+// host (~/.openclaw/data/tinker-ui-snapshot.html) on every render, so the
+// architect-side Claude Code session can debug bubble layout / collapse
+// state / classes without a screen share. Calls `debug.dumpUiSnapshot`,
+// debounced 300ms. Best-effort; failures are silent.
+let _uiSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
+  if (_uiSnapshotTimer) {
+    clearTimeout(_uiSnapshotTimer);
+  }
+  _uiSnapshotTimer = setTimeout(() => {
+    _uiSnapshotTimer = null;
+    try {
+      // Capture the messages container plus key computed-styles for the LAST
+      // user + assistant bubbles, so layout regressions are diagnosable from
+      // text alone.
+      const lastUser = messagesEl.querySelector(".msg.user:last-of-type");
+      const lastAssistant = messagesEl.querySelector(".msg.assistant:last-of-type");
+      const computed = (e: Element | null) => {
+        if (!e) return null;
+        const cs = getComputedStyle(e);
+        return {
+          alignSelf: cs.alignSelf,
+          marginLeft: cs.marginLeft,
+          marginRight: cs.marginRight,
+          marginBottom: cs.marginBottom,
+          width: cs.width,
+          maxWidth: cs.maxWidth,
+          position: cs.position,
+          dataTimestamp: (e as HTMLElement).dataset.timestamp ?? null,
+        };
+      };
+      void req("debug.dumpUiSnapshot", {
+        html: messagesEl.outerHTML,
+        url: location.href,
+        viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
+        computedStyles: {
+          lastUserBubble: computed(lastUser),
+          lastAssistantBubble: computed(lastAssistant),
+          messagesContainer: computed(messagesEl),
+        },
+      }).catch(() => {});
+    } catch {
+      /* silent — debug-only */
+    }
+  }, 300);
+}
+
 function req<T = unknown>(method: string, params?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -4635,6 +4683,10 @@ function updateChat(skipScroll = false) {
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   const prevScrollTop = el.scrollTop;
   el.innerHTML = h;
+  // FORK 2026-05-09: mirror chat HTML to a file via gateway RPC so the
+  // architect-side Claude Code session can introspect the rendered DOM
+  // without a screen share. Debounced 300ms to avoid spam during streaming.
+  scheduleUiSnapshotDump(el);
 
   // Restore fractal open state
   if (openFractals.size > 0) {
