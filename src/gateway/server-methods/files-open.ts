@@ -11,6 +11,10 @@
  *   1. `path` must be a non-empty string.
  *   2. `path` must not contain `..` (traversal attempt).
  *
+ * Note: symlink escape is not defended against. A symlink inside the workspace
+ * that points outside the allowlist will still pass the path-resolve check.
+ * This RPC is gated by ADMIN_SCOPE in method-scopes.ts and callers are trusted.
+ *
  * The process is spawned detached with stdio:"ignore" and immediately unref()d so the
  * gateway does not wait for the editor to close.
  *
@@ -107,6 +111,7 @@ export const filesOpenHandlers: GatewayRequestHandlers = {
       fn("xdg-open", [absPath]);
       respond(true, { ok: true }, undefined);
     } catch (err) {
+      context.logGateway?.error?.("files.openInEditor spawn failed", { path: absPath, err });
       respond(true, { ok: false, reason: (err as Error).message }, undefined);
     }
   },
