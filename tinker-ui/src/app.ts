@@ -14,7 +14,12 @@ import {
 } from "./panels/prefrontal-tree.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 
-const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
+// FORK 2026-05-09: disable linkify — markdown-it was auto-converting plain
+// text like "BRIEFING.md" into <a href="http://BRIEFING.md"> which navigates
+// to a search/dictionary page when clicked. Real file paths still get the
+// click-to-open treatment via the `.fs-link` post-processor (see md() below).
+// Real URLs still link via explicit markdown syntax `[label](url)`.
+const mdParser = MarkdownIt({ html: false, linkify: false, breaks: true });
 
 // FORK 2026-04-20: Prefrontal debug channel. Turn on by visiting the page with
 // ?pfdebug=1 or by running `__pf.debug=true` in devtools. When on, every
@@ -3260,20 +3265,26 @@ function splitSectionedReply(text: string): SectionedReply | null {
 //                     + "Briefing source: `<path>`"
 const INJECTION_SEP = "\n\n---\n\n";
 function reconstructInjectionFields(msg: Record<string, unknown>): void {
-  // Only apply to user messages that haven't been reconstructed yet.
-  if (msg.role !== "user" || msg._fullPrompt) {
+  if (msg.role !== "user") {
     return;
   }
-  // Extract the raw text body from either content-array or string form.
+  // FORK 2026-05-09: use _fullPrompt as the source-of-truth if already set
+  // by a prior pass — that way subsequent reconstruct invocations can fix
+  // botched first-pass extractions (e.g. when the first pass set _fullPrompt
+  // but failed to extract _briefingPath because of a regex miss).
   let rawText: string | null = null;
-  if (Array.isArray(msg.content)) {
+  if (typeof msg._fullPrompt === "string" && (msg._fullPrompt as string).length > 0) {
+    rawText = msg._fullPrompt as string;
+  }
+  if (!rawText && Array.isArray(msg.content)) {
     const first = (msg.content as Array<{ type: string; text?: string }>).find(
       (b) => b.type === "text",
     );
     if (first?.text) {
       rawText = first.text;
     }
-  } else if (typeof msg.content === "string") {
+  }
+  if (!rawText && typeof msg.content === "string") {
     rawText = msg.content;
   }
   if (!rawText) {
@@ -3674,7 +3685,21 @@ function findPrecedingPromptStart(msgs: unknown[], idx: number): number | undefi
 // References the module-level `messages` array (always the active tab's copy).
 function elapsedChip(msg: unknown, idx: number): string {
   const m = msg as Record<string, unknown>;
-  const endedAt = typeof m._bubbleEndedAt === "number" ? m._bubbleEndedAt : undefined;
+  // FORK 2026-05-09: fall back to message-level server timestamps when the
+  // streaming-time `_bubbleEndedAt` is missing (i.e. historical messages
+  // loaded from chat.history that pre-date Feature B's instrumentation, or
+  // assistant messages loaded fresh on hard refresh).
+  let endedAt: number | undefined =
+    typeof m._bubbleEndedAt === "number" ? (m._bubbleEndedAt as number) : undefined;
+  if (endedAt === undefined) {
+    const ts = m.timestamp ?? m.createdAtMs ?? m.serverTime;
+    if (typeof ts === "number") {
+      endedAt = ts;
+    } else if (typeof ts === "string") {
+      const parsed = Date.parse(ts);
+      if (!isNaN(parsed)) endedAt = parsed;
+    }
+  }
   if (endedAt === undefined) {
     return "";
   }
@@ -3683,7 +3708,8 @@ function elapsedChip(msg: unknown, idx: number): string {
     return "";
   }
   const elapsed = endedAt - startedAt;
-  if (elapsed < 0) {
+  if (elapsed < 0 || elapsed > 24 * 3600 * 1000) {
+    // Negative (clock skew) or >24h (sane upper bound — likely a stale ts) → omit.
     return "";
   }
   return `<span class="msg-elapsed">${formatElapsed(elapsed)}</span>`;
