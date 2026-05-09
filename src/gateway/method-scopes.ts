@@ -167,6 +167,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "channels.start",
     "channels.logout",
     "config.openExternalFile",
+    "debug.dumpUiSnapshot",
     "agents.create",
     "agents.update",
     "agents.delete",

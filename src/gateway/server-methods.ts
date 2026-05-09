@@ -16,6 +16,7 @@ import { configOpenExternalHandlers } from "./server-methods/config-open-externa
 import { configHandlers } from "./server-methods/config.js";
 import { connectHandlers } from "./server-methods/connect.js";
 import { cronHandlers } from "./server-methods/cron.js";
+import { debugUiSnapshotHandlers } from "./server-methods/debug-ui-snapshot.js";
 import { deviceHandlers } from "./server-methods/devices.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
 import { doctorHandlers } from "./server-methods/doctor.js";
@@ -99,6 +100,10 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...configHandlers,
   // FORK 2026-05-09: restored config.openExternalFile (bible §5.68 — was lost in an upstream merge).
   ...configOpenExternalHandlers,
+  // FORK 2026-05-09: debug.dumpUiSnapshot — Tinker UI mirrors its rendered chat
+  // HTML to a file on every render so the architect-side Claude Code session
+  // can introspect the live DOM via simple Read(file). See bible §11.x.
+  ...debugUiSnapshotHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).
