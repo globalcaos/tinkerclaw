@@ -4867,29 +4867,46 @@ function providerOf(id: string): string {
 
 // Performance ranking for sorting configured models (lower = more performant).
 // Uses keyword matching against the model name portion of the ID.
+//
+// FORK 2026-05-09: extended tier 0 to recognize the o-series reasoning lineage
+// (-o1, -o3, -o5, etc.) and tier 1 to recognize gpt-4.x / gpt-5.x families.
+// Without these, gpt-4.1 / gpt-5.x / o3 fell through to tier 5 (everything-else)
+// and were ranked as lightweight despite being strong/frontier.
 function modelPerfRank(id: string): number {
   const lo = id.toLowerCase();
-  // Tier 0: frontier reasoning (opus, pro-preview, o1)
-  if (lo.includes("opus") || lo.includes("pro-preview") || lo.includes("-o1")) {
+  // Lightweight tag overrides everything — `o4-mini` etc. are mini variants
+  // even though their base name matches the o-series tier-0 regex.
+  // Use separator-prefixed regex so we don't false-positive on "mini" inside
+  // "gemini" or "lite" inside "elite".
+  const isLightweight = /[-/](?:mini|nano|lite)(?:[-/]|$)/.test(lo);
+  // Tier 0: frontier reasoning (opus, pro-preview, o-series reasoning).
+  // The /[-/]o\d+/ test catches `openai/o3`, `openai/o5`, `something-o7`, etc.,
+  // while still NOT matching `gpt-4o` (o is not preceded by a digit-segment).
+  if (
+    !isLightweight &&
+    (lo.includes("opus") || lo.includes("pro-preview") || /[-/]o\d+(?:[-/]|$)/.test(lo))
+  ) {
     return 0;
   }
-  // Tier 1: strong general (sonnet, pro, gpt-4o)
+  // Tier 1: strong general (sonnet, pro, gpt-4o, gpt-4.x, gpt-5.x).
   if (
     lo.includes("sonnet") ||
     (lo.includes("pro") && !lo.includes("preview")) ||
-    lo.includes("gpt-4o")
+    lo.includes("gpt-4o") ||
+    /gpt-[45](?:\.\d+)?(?:-pro)?$/.test(lo)
   ) {
     return 1;
   }
-  // Tier 2: balanced (flash non-lite, haiku)
+  // Tier 2: balanced (flash non-lite)
   if (lo.includes("flash") && !lo.includes("lite")) {
     return 2;
   }
+  // Tier 3: balanced-low (haiku)
   if (lo.includes("haiku")) {
     return 3;
   }
-  // Tier 3: lightweight / local
-  if (lo.includes("lite") || lo.includes("mini") || lo.includes("nano")) {
+  // Tier 4: lightweight / local
+  if (isLightweight) {
     return 4;
   }
   return 5;
