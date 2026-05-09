@@ -243,6 +243,13 @@ export async function startGatewaySidecars(params: {
             cleanedLocks: result.cleaned,
           });
         }
+        // FORK 2026-05-09: in addition to stale-lock-based marking, mark every
+        // status:"running" session at boot as interrupted. Graceful restarts
+        // release locks cleanly so the prior path missed them, leaving
+        // interrupted prompts to die silently. See bible §11.x.
+        const { markRunningMainSessionsAsInterrupted } =
+          await import("../agents/main-session-restart-recovery.js");
+        await markRunningMainSessionsAsInterrupted({ sessionsDir });
       }
     } catch (err) {
       params.log.warn(`session lock cleanup failed on startup: ${String(err)}`);

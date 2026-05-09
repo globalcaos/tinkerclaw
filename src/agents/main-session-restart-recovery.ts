@@ -152,6 +152,56 @@ async function resumeMainSession(params: {
   }
 }
 
+/**
+ * FORK 2026-05-09 — mark every status:"running" main session as interrupted
+ * at gateway boot, regardless of stale-lock state. The original
+ * `markRestartAbortedMainSessionsFromLocks` only fires when stale lock files
+ * are detected — i.e. unclean shutdowns. But the COMMON case (graceful
+ * `openclaw-restart`) releases locks cleanly during the drain window, leaving
+ * sessions with `status:"running"` but no stale locks. Without marking them,
+ * `recoverRestartAbortedMainSessions` skips them and the user never sees the
+ * "[System] Your previous turn was interrupted ... continue" injection — the
+ * interrupted prompt just dies silently.
+ *
+ * A session that's `status:"running"` AT BOOT is, by definition, interrupted:
+ * normal session lifecycle flips status to `done` or `failed` before the
+ * gateway exits cleanly. Anything still `running` was caught mid-turn.
+ */
+export async function markRunningMainSessionsAsInterrupted(params: {
+  sessionsDir: string;
+}): Promise<{ marked: number; skipped: number }> {
+  const result = { marked: 0, skipped: 0 };
+  const storePath = path.join(path.resolve(params.sessionsDir), "sessions.json");
+  await updateSessionStore(
+    storePath,
+    (store) => {
+      for (const [sessionKey, entry] of Object.entries(store)) {
+        if (!entry || entry.status !== "running") {
+          continue;
+        }
+        if (shouldSkipMainRecovery(entry, sessionKey)) {
+          result.skipped++;
+          continue;
+        }
+        if (entry.abortedLastRun) {
+          // Already marked — recovery will pick it up.
+          continue;
+        }
+        entry.abortedLastRun = true;
+        store[sessionKey] = entry;
+        result.marked++;
+      }
+    },
+    { skipMaintenance: true },
+  );
+  if (result.marked > 0) {
+    log.info(
+      `marked ${result.marked} interrupted main session(s) from running-at-boot state (skipped=${result.skipped})`,
+    );
+  }
+  return result;
+}
+
 export async function markRestartAbortedMainSessionsFromLocks(params: {
   sessionsDir: string;
   cleanedLocks: SessionLockInspection[];
