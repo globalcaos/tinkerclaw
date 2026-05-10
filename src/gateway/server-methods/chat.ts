@@ -2521,6 +2521,47 @@ export const chatHandlers: GatewayRequestHandlers = {
             }
           } else {
             void emitUserTranscriptUpdate();
+            // FORK 2026-05-10: backstop broadcastChatFinal for agent-started
+            // runs. The normal completion path is the agent-runtime lifecycle
+            // event (`emitChatFinal` in `server-chat.ts`), which fires on
+            // `lifecyclePhase=done` or `=error`. If that lifecycle event is
+            // dropped (e.g. control UI not visible flag, error envelope
+            // surfacing without the lifecycle hook firing, surface_error
+            // timeout where the run "completed" without throwing), the TUI
+            // spinner stays on `sending...` forever — this is exactly the
+            // 16:59:34 stuck-spinner symptom we hit when the cc-bridge LLM
+            // idle watchdog SIGTERMed.
+            // The backstop emits state="final" with whatever the dispatcher
+            // actually delivered (deliveredReplies). The spinner clears
+            // either way; if the lifecycle event already fired the client
+            // de-dupes by runId+state. If `deliveredReplies` is empty we
+            // still broadcast `final` with no message so the spinner clears.
+            // The agentRunSeq is delete()-d inside broadcastChatFinal so
+            // subsequent late events for this runId become no-ops.
+            const finalPayloads = deliveredReplies
+              .filter((entry) => entry.kind === "final")
+              .map((entry) => entry.payload);
+            const fallbackText =
+              finalPayloads
+                .map((p) => (typeof p?.text === "string" ? p.text.trim() : ""))
+                .filter(Boolean)
+                .join("\n\n") || undefined;
+            const fallbackMessage = fallbackText
+              ? {
+                  role: "assistant",
+                  content: [{ type: "text", text: fallbackText }],
+                  text: fallbackText,
+                  timestamp: Date.now(),
+                  stopReason: "stop",
+                  usage: { input: 0, output: 0, totalTokens: 0 },
+                }
+              : undefined;
+            broadcastChatFinal({
+              context,
+              runId: clientRunId,
+              sessionKey,
+              ...(fallbackMessage ? { message: fallbackMessage } : {}),
+            });
           }
           setGatewayDedupeEntry({
             dedupe: context.dedupe,
