@@ -248,6 +248,15 @@ export type WorkerSpawnParams = {
    * as a plugin (see `DEFAULT_PLUGIN_DIRS`).
    */
   pluginDirs?: string[];
+  /**
+   * FORK 2026-05-10: openclaw-side agent session id (the `sessionId` field
+   * of the OpenClaw session entry, e.g. `adf1152b-…`). Persisted alongside
+   * the claude-cli sessionId in `session-map.json` so the worker pool can
+   * fall back to looking up by openclaw sessionId when the cc-bridge
+   * sessionKey hash drifts across an interrupted-then-resumed turn. See
+   * `getLatestResumeSessionIdByOpenclawSessionId`.
+   */
+  openclawSessionId?: string;
 };
 
 export type WorkerTurnParams = {
@@ -604,7 +613,7 @@ export class ClaudeCodeWorker extends EventEmitter {
           // Best-effort; failures just mean amnesia on next restart, not
           // broken turns.
           try {
-            setResumeSessionId(this.sessionKey, sid);
+            setResumeSessionId(this.sessionKey, sid, this.params.openclawSessionId);
           } catch {
             // swallow
           }

@@ -21,6 +21,7 @@ import { deviceHandlers } from "./server-methods/devices.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
 import { doctorHandlers } from "./server-methods/doctor.js";
 import { execApprovalsHandlers } from "./server-methods/exec-approvals.js";
+import { filesResolveBareHandlers } from "./server-methods/files-resolve-bare.js";
 import { forensicHandlers } from "./server-methods/forensic.js";
 import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
@@ -104,6 +105,10 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // HTML to a file on every render so the architect-side Claude Code session
   // can introspect the live DOM via simple Read(file). See bible §11.x.
   ...debugUiSnapshotHandlers,
+  // FORK 2026-05-10: files.resolveBareName — bare-filename → absolute-path
+  // resolver that walks an allowlist of project roots so the click handler can
+  // open files referenced as just `BRIEFING.md` (no leading path) via xdg-open.
+  ...filesResolveBareHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).

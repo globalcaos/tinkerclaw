@@ -239,6 +239,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         systemPromptAppend: context.systemPrompt,
         disallowedTools,
         model: model.id,
+        // FORK 2026-05-10: thread the openclaw agent sessionId through so
+        // session-map can index by it for the across-restart resume path.
+        openclawSessionId,
       });
 
       let streamStarted = false;

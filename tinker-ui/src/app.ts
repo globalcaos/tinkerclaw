@@ -2756,6 +2756,25 @@ function md(text: string): string {
     /<code>(~\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf)|\/(?:home|usr|tmp|var|opt|etc)\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf))<\/code>/g,
     '<code class="fs-link" data-path="$1" title="Click to open in system viewer">$1</code>',
   );
+  // FORK 2026-05-10: ALSO wrap bare filenames (no slash, just `BRIEFING.md`)
+  // as clickable. Resolution to an absolute path is deferred to click time
+  // via the `files.resolveBareName` RPC — that way the markdown render stays
+  // synchronous and we avoid an RPC per render. Skip anything that already
+  // got the .fs-link class above. The whitelist of extensions matches the
+  // server-side allowlist behavior (we don't want `report.docx` resolving
+  // because it's neither a text file nor an OS-openable doc here).
+  h = h.replace(
+    /<code>([A-Za-z][\w.-]*\.(?:md|txt|ts|tsx|js|json|yaml|yml|png|jpg|jpeg|pdf|sh|py|css|html|toml|ini))<\/code>/g,
+    (full, name) => {
+      // If this <code> is already the start of an fs-link replacement (the
+      // earlier regex would have transformed it), skip. We can't easily look
+      // back through the string here, but the earlier regex always rewrites
+      // <code> → <code class="fs-link" so by the time we get here the bare
+      // <code> tag is guaranteed not to overlap with an absolute-path <code>.
+      const safe = String(name).replace(/"/g, "&quot;");
+      return `<code class="fs-link fs-link-bare" data-name="${safe}" title="Click to find &amp; open ${safe}">${name}</code>`;
+    },
+  );
   return h;
 }
 
@@ -6172,18 +6191,14 @@ function init() {
   // in pointers like fractal-prompt.md) becomes clickable. Calls the
   // gateway RPC config.openExternalFile which invokes xdg-open / open /
   // Start-Process with the path as a single argv element.
-  document.addEventListener("click", (ev) => {
-    const target = ev.target as HTMLElement | null;
-    const link = target?.closest(".fs-link") as HTMLElement | null;
-    if (!link) {
-      return;
-    }
-    const path = link.dataset.path;
-    if (!path) {
-      return;
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
+  //
+  // FORK 2026-05-10: Bare filenames (data-name only, no data-path) are
+  // resolved on first click via files.resolveBareName, then opened. The
+  // resolved path is cached on the element so subsequent clicks skip the
+  // resolver. A session-scope cache (bareNameCache) avoids re-resolving the
+  // same filename across multiple bubbles.
+  const bareNameCache = new Map<string, string | null>();
+  function openResolvedPath(link: HTMLElement, path: string): void {
     link.classList.add("fs-link-opening");
     req("config.openExternalFile", { path })
       .then((res: { ok?: boolean; error?: string; path?: string }) => {
@@ -6196,6 +6211,71 @@ function init() {
           link.classList.add("fs-link-opened");
           setTimeout(() => link.classList.remove("fs-link-opened"), 1500);
         }
+      })
+      .catch((err: unknown) => {
+        link.classList.remove("fs-link-opening");
+        link.classList.add("fs-link-error");
+        link.title = String(err);
+        setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+      });
+  }
+  document.addEventListener("click", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    const link = target?.closest(".fs-link") as HTMLElement | null;
+    if (!link) {
+      return;
+    }
+    const path = link.dataset.path;
+    if (path) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openResolvedPath(link, path);
+      return;
+    }
+    const name = link.dataset.name;
+    if (!name) {
+      return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    // Cached miss → flag as not found, no re-RPC
+    if (bareNameCache.has(name)) {
+      const cached = bareNameCache.get(name);
+      if (cached === null) {
+        link.classList.add("fs-link-error");
+        link.title = `not found in any allowlisted root`;
+        setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+        return;
+      }
+      link.dataset.path = cached as string;
+      openResolvedPath(link, cached as string);
+      return;
+    }
+    link.classList.add("fs-link-opening");
+    req("files.resolveBareName", { name })
+      .then((res: { matches?: string[]; ambiguous?: boolean; count?: number; reason?: string }) => {
+        link.classList.remove("fs-link-opening");
+        const matches = Array.isArray(res?.matches) ? res.matches : [];
+        if (matches.length === 0) {
+          bareNameCache.set(name, null);
+          link.classList.add("fs-link-error");
+          link.title = res?.reason ?? "not found in any allowlisted root";
+          setTimeout(() => link.classList.remove("fs-link-error"), 4000);
+          return;
+        }
+        // Single match (or first match in first-hit-root) — open it.
+        // For ambiguous results we still take the first; the server
+        // returns deterministic order (root-walk order), and the bible
+        // §5.68 invariant prefers workspace > tinkerclaw > jarvis-icu >
+        // ~/.openclaw. A future refinement can add an LLM disambiguation
+        // pass here (haiku-tier) when matches.length > 1.
+        const resolved = matches[0];
+        bareNameCache.set(name, resolved);
+        link.dataset.path = resolved;
+        if (res?.ambiguous) {
+          link.title = `${matches.length} matches, opening ${resolved}`;
+        }
+        openResolvedPath(link, resolved);
       })
       .catch((err: unknown) => {
         link.classList.remove("fs-link-opening");
