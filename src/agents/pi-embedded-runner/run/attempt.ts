@@ -1865,6 +1865,14 @@ export async function runEmbeddedAttempt(
         runTimeoutMs: params.timeoutMs !== configuredRunTimeoutMs ? params.timeoutMs : undefined,
         modelRequestTimeoutMs: (params.model as { requestTimeoutMs?: number }).requestTimeoutMs,
       });
+      // FORK 2026-05-10 DIAGNOSTIC (temp): log the resolved idle timeout so we
+      // can confirm whether the cc-bridge catalog's `timeoutSeconds: 600`
+      // actually reaches `params.model.requestTimeoutMs`. The bible §11 entry
+      // (2026-05-05) says it does, but the journal at 16:55 + 16:59 shows the
+      // watchdog firing at 138s/279s on heavy turns — possible regression.
+      log.info(
+        `[idle-timeout-diag] resolved idleTimeoutMs=${idleTimeoutMs} for runId=${params.runId} model=${params.model?.provider}/${params.model?.id} model.requestTimeoutMs=${(params.model as { requestTimeoutMs?: number }).requestTimeoutMs} params.timeoutMs=${params.timeoutMs} configuredRunTimeoutMs=${configuredRunTimeoutMs}`,
+      );
       if (idleTimeoutMs > 0) {
         activeSession.agent.streamFn = streamWithIdleTimeout(
           activeSession.agent.streamFn,

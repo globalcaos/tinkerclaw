@@ -94,6 +94,10 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "voicewake.get",
     "voicewake.routing.get",
     "briefing.resolve",
+    // FORK 2026-05-10: bare-filename → absolute-path resolver, used by
+    // Tinker UI's `.fs-link` click handler when the link only carries the
+    // basename (e.g. "BRIEFING.md") rather than a full path.
+    "files.resolveBareName",
     "sessions.list",
     "sessions.get",
     "sessions.preview",

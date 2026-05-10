@@ -115,11 +115,55 @@ async function markSessionFailed(params: {
   log.warn(`marked interrupted main session failed: ${params.sessionKey} (${params.reason})`);
 }
 
+/**
+ * FORK 2026-05-10 — push a visible orange `__ERR_ENV__:` envelope into the
+ * given session so the user SEES that the gateway interrupted their turn.
+ *
+ * Wording is deliberately uniform: we never tell the user to retry. Per
+ * the user's 2026-05-10 directive, every recovered session attempts resume
+ * (cc-bridge resumes via its own session-map → claude-cli --resume; native
+ * sessions resume via the `[System] continue from transcript` dispatch).
+ * The chip just acknowledges the restart so the user knows why a thinking
+ * dot disappeared and that work is being resumed.
+ *
+ * This is best-effort: if `chat.inject` fails, recovery still proceeds.
+ */
+async function pushRestartWarningEnvelope(params: { sessionKey: string }): Promise<void> {
+  const now = new Date();
+  const localTime = now.toLocaleTimeString("en-GB", { hour12: false });
+  const envelope = {
+    kind: "error",
+    id: `gw-restart-${now.getTime()}`,
+    fatal: false,
+    category: "busy",
+    headline: `Gateway restarted at ${localTime} — picking up where I stopped`,
+    explanation:
+      "Your previous turn was interrupted by a gateway restart. Resuming from the existing transcript — your chat context is preserved.",
+    icon: "🔄",
+    timestamp: now.toISOString(),
+  };
+  try {
+    await callGateway({
+      method: "chat.inject",
+      params: {
+        sessionKey: params.sessionKey,
+        message: `__ERR_ENV__:${JSON.stringify(envelope)}`,
+        label: "system",
+      },
+      timeoutMs: 5_000,
+    });
+    log.info(`pushed restart-warning envelope to ${params.sessionKey}`);
+  } catch (err) {
+    log.warn(`failed to push restart-warning envelope: ${String(err)}`);
+  }
+}
+
 async function resumeMainSession(params: {
   storePath: string;
   sessionKey: string;
 }): Promise<boolean> {
   try {
+    await pushRestartWarningEnvelope({ sessionKey: params.sessionKey });
     await callGateway<{ runId: string }>({
       method: "agent",
       params: {
@@ -283,15 +327,29 @@ async function recoverStore(params: {
       continue;
     }
 
+    // FORK 2026-05-10 (user directive): we no longer block resume on the tail
+    // check. The original `resumeBlockReason` heuristic was designed for
+    // native sessions where the agent owns the transcript; for cc-bridge
+    // sessions the agent transcript is empty mid-flight (cc-bridge runs in
+    // a subprocess), so the heuristic always returned "transcript tail is
+    // not resumable" and dropped recovery on the floor. Now:
+    //   - cc-bridge sessions: the [System] continue dispatch hits cc-bridge
+    //     which spawns claude-cli with `--resume <sessionId>` from its
+    //     session-map. claude-cli loads the prior conversation including
+    //     the user's prompt, sees the [System] continue, and finishes.
+    //   - native sessions with resumable tail: same as before — works.
+    //   - native sessions with assistant tail: a complete-looking turn IS
+    //     resumed via [System] continue. Edge case: completed turns get a
+    //     follow-up "continue" that the model may interpret as "anything
+    //     else?". Acceptable trade-off versus dropping recovery for the
+    //     common cc-bridge case.
+    // The chip wording deliberately omits any "please retry" hint; we
+    // promise the user we are picking up where we stopped.
     const resumeBlockReason = resolveMainSessionResumeBlockReason(messages);
     if (resumeBlockReason) {
-      await markSessionFailed({
-        storePath: params.storePath,
-        sessionKey,
-        reason: resumeBlockReason,
-      });
-      result.failed++;
-      continue;
+      log.info(
+        `attempting resume despite tail-check warning: ${sessionKey} (${resumeBlockReason})`,
+      );
     }
 
     const resumed = await resumeMainSession({

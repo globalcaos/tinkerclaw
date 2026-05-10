@@ -11,7 +11,7 @@
  * reset on every restart and Jarvis woke up amnesic even though the
  * transcript .jsonl files were sitting right there on disk.
  */
-import { getResumeSessionId } from "./session-map.js";
+import { getLatestResumeSessionIdByOpenclawSessionId, getResumeSessionId } from "./session-map.js";
 import { ClaudeCodeWorker, type WorkerSpawnParams } from "./worker.js";
 
 export class SessionWorkerPool {
@@ -25,11 +25,28 @@ export class SessionWorkerPool {
     if (existing && existing.sessionId && !params.resumeSessionId) {
       params = { ...params, resumeSessionId: existing.sessionId };
     }
-    // FORK (2026-04-22): if there's no live worker AND no in-memory
-    // sessionId to resume from, check the persisted session-map. That's
-    // the gateway-restart path where `existing` is always undefined.
+    // FORK (2026-04-22): no live worker, no in-memory sessionId → check
+    // persisted session-map. That's the gateway-restart path.
+    //
+    // FORK 2026-05-10: lookup priority has been REORDERED. The openclaw
+    // agent sessionId is canonical (one openclaw session = one
+    // conversation thread, /new creates a new sessionId), so when it's
+    // available we prefer the entry indexed by openclaw sessionId — that
+    // gives us the LATEST claude-cli session for this agent regardless of
+    // whether the cc-bridge sessionKey hash drifted (e.g. across an
+    // interrupted-then-resumed turn where the [System] continue dispatch
+    // shifts the systemPrompt prefix).
+    //
+    // The old sessionKey-only lookup is the fallback when openclawSessionId
+    // isn't supplied (legacy callers, pre-2026-05-10 entries).
     if (!params.resumeSessionId) {
-      const persisted = getResumeSessionId(params.sessionKey);
+      let persisted: string | undefined;
+      if (params.openclawSessionId) {
+        persisted = getLatestResumeSessionIdByOpenclawSessionId(params.openclawSessionId);
+      }
+      if (!persisted) {
+        persisted = getResumeSessionId(params.sessionKey);
+      }
       if (persisted) {
         params = { ...params, resumeSessionId: persisted };
       }
