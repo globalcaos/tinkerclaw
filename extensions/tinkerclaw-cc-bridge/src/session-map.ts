@@ -25,6 +25,17 @@ const MAP_PATH = path.join(os.homedir(), ".openclaw", "cc-bridge", "session-map.
 interface MapEntry {
   sessionId: string;
   updatedAt: number;
+  /**
+   * FORK 2026-05-10: openclaw-side session id (the agent session UUID, e.g.
+   * `adf1152b-…`). Recorded so we can find the latest cc-bridge claude-cli
+   * session for a given agent across cc-bridge sessionKey hash drift. The
+   * cc-bridge sessionKey embeds the systemPrompt hash, which can change
+   * across an interrupted-then-resumed turn (resume injects a [System]
+   * message into the prefix). Without this fallback index, the resume
+   * starts a fresh claude-cli session and Jarvis appears to forget the
+   * task that was just interrupted.
+   */
+  openclawSessionId?: string;
 }
 
 type SessionMap = Record<string, MapEntry>;
@@ -62,12 +73,57 @@ export function getResumeSessionId(sessionKey: string): string | undefined {
   return map[sessionKey]?.sessionId;
 }
 
-export function setResumeSessionId(sessionKey: string, sessionId: string): void {
+/**
+ * FORK 2026-05-10 — fallback resume lookup by openclaw agent sessionId.
+ *
+ * Use case: a turn was interrupted by a gateway restart. On resume the
+ * agent dispatches `[System] continue ...` with the same openclaw sessionId
+ * but a slightly different systemPrompt prefix (the [System] message
+ * itself), which produces a different cc-bridge sessionKey hash. The new
+ * sessionKey has no entry in the map, so the worker would spawn claude-cli
+ * fresh and lose the prior conversation. This helper scans the map for the
+ * most recently updated entry with a matching `openclawSessionId` and
+ * returns its `sessionId` so the new worker can `--resume` it.
+ *
+ * Returns undefined when there's no prior entry to recover (e.g. first
+ * turn of a session, or session-map was cleared).
+ */
+export function getLatestResumeSessionIdByOpenclawSessionId(
+  openclawSessionId: string,
+): string | undefined {
+  if (!openclawSessionId) {
+    return undefined;
+  }
   const map = loadSessionMap();
-  if (map[sessionKey]?.sessionId === sessionId) {
+  let bestSessionId: string | undefined;
+  let bestUpdatedAt = -1;
+  for (const entry of Object.values(map)) {
+    if (entry.openclawSessionId !== openclawSessionId) {
+      continue;
+    }
+    if (entry.updatedAt > bestUpdatedAt) {
+      bestUpdatedAt = entry.updatedAt;
+      bestSessionId = entry.sessionId;
+    }
+  }
+  return bestSessionId;
+}
+
+export function setResumeSessionId(
+  sessionKey: string,
+  sessionId: string,
+  openclawSessionId?: string,
+): void {
+  const map = loadSessionMap();
+  const existing = map[sessionKey];
+  if (existing?.sessionId === sessionId && existing.openclawSessionId === openclawSessionId) {
     return;
   }
-  map[sessionKey] = { sessionId, updatedAt: Date.now() };
+  map[sessionKey] = {
+    sessionId,
+    updatedAt: Date.now(),
+    ...(openclawSessionId ? { openclawSessionId } : {}),
+  };
   ensureDir();
   try {
     fs.writeFileSync(MAP_PATH, JSON.stringify(map, null, 2), "utf8");
