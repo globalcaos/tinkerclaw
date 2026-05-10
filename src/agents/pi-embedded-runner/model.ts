@@ -29,6 +29,11 @@ import {
 } from "../model-suppression.js";
 import { isLegacyModelsAddCodexMetadataModel } from "../openai-codex-models-add-legacy.js";
 import { discoverAuthStorage, discoverModels } from "../pi-model-discovery.js";
+// FORK 2026-05-10: see plugin-provider-config-overlay.ts for the rationale —
+// plugin-supplied provider-config defaults (most importantly `timeoutSeconds`)
+// have to be visible to `applyConfiguredProviderOverrides` at runtime, not
+// just at models.json write time.
+import { getPluginProviderConfigOverlay } from "../plugin-provider-config-overlay.js";
 import {
   attachModelProviderRequestTransport,
   resolveProviderRequestConfig,
@@ -333,14 +338,25 @@ function resolveConfiguredProviderConfig(
   provider: string,
 ): InlineProviderConfig | undefined {
   const configuredProviders = cfg?.models?.providers;
-  if (!configuredProviders) {
-    return undefined;
+  const exactProviderConfig = configuredProviders?.[provider];
+  const explicit =
+    exactProviderConfig ??
+    (configuredProviders ? findNormalizedProviderValue(configuredProviders, provider) : undefined);
+  // FORK 2026-05-10: merge plugin-supplied defaults under the explicit
+  // openclaw.json config. Explicit values still win on a per-key basis
+  // (the user's openclaw.json is authoritative), but keys the user hasn't
+  // set fall through to whatever the provider plugin registered. The
+  // canonical case today is cc-bridge registering `timeoutSeconds: 600`
+  // for `claude-code` so the LLM idle watchdog wraps with the wider
+  // window without forcing every host to mirror the value in its config.
+  const overlay = getPluginProviderConfigOverlay(provider);
+  if (!overlay) {
+    return explicit;
   }
-  const exactProviderConfig = configuredProviders[provider];
-  if (exactProviderConfig) {
-    return exactProviderConfig;
+  if (!explicit) {
+    return overlay as InlineProviderConfig;
   }
-  return findNormalizedProviderValue(configuredProviders, provider);
+  return { ...overlay, ...explicit } as InlineProviderConfig;
 }
 
 function isModelsAddMetadataModel(params: {

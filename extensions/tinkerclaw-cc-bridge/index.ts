@@ -19,12 +19,18 @@ import {
   type ProviderAuthResult,
   type ProviderDiscoveryContext,
 } from "openclaw/plugin-sdk/plugin-entry";
+// FORK 2026-05-10: register the static-side runtime defaults (currently
+// `timeoutSeconds: 600`) into the plugin overlay so the LLM idle watchdog
+// resolves them without requiring `~/.openclaw/openclaw.json` to mirror
+// the value. See `src/agents/plugin-provider-config-overlay.ts`.
+import { registerPluginProviderConfigOverlay } from "openclaw/plugin-sdk/provider-config-overlay";
 import { checkClaudeCredentials } from "./src/auth.js";
 import { buildClaudeCodeProviderConfig } from "./src/catalog.js";
 import {
   DEFAULT_BINARY,
   DEFAULT_CWD,
   DEFAULT_DISALLOWED_TOOLS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   PROVIDER_ID,
   PROVIDER_LABEL,
 } from "./src/defaults.js";
@@ -49,6 +55,15 @@ export default definePluginEntry({
       Array.isArray(pluginConfig.disallowedTools) && pluginConfig.disallowedTools.length > 0
         ? pluginConfig.disallowedTools
         : DEFAULT_DISALLOWED_TOOLS;
+
+    // FORK 2026-05-10: surface the cc-bridge runtime defaults to the LLM idle
+    // watchdog. `applyConfiguredProviderOverrides` reads `timeoutSeconds` off
+    // `cfg.models.providers["claude-code"]`; the overlay merges this value in
+    // when the user hasn't set it explicitly in openclaw.json, so heavy tool
+    // chains don't SIGTERM at the 120s default.
+    registerPluginProviderConfigOverlay(PROVIDER_ID, {
+      timeoutSeconds: Math.floor(DEFAULT_REQUEST_TIMEOUT_MS / 1000),
+    });
 
     api.registerProvider({
       id: PROVIDER_ID,
