@@ -56,7 +56,7 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 - **Surface:**
   - WhatsApp: envelope delivered as chunked text via `deliverWebReply`. User sees the chip.
   - Tinker UI: pre-2026-05-10 → spinner stuck on `sending...` (lifecycle event dropped). Post-fix → backstop `broadcastChatFinal` fires; chip renders, spinner clears.
-- **Resolution:** ensure `timeoutSeconds` is correctly resolved (see config-shape.md M1 ↔ that file). Architectural fix: cc-bridge should emit heartbeat stream events during tool work so the watchdog resets. See `tool-loop.md` open follow-up.
+- **Resolution:** ensure `timeoutSeconds` is correctly resolved (see config-shape.md M1 ↔ that file). Architectural fix LIVE 2026-05-11: cc-bridge now emits an empty-delta heartbeat every 25s during a turn so the watchdog resets without re-executing tools. The 600s overlay is now belt-and-suspenders rather than load-bearing. See `tool-loop.md`.
 - **Detection probe:** journal grep `[llm-idle-timeout]` lines, plus the `[idle-timeout-diag]` log shows the resolved timeout. Heavy turns hitting 138s/279s without `[idle-timeout-diag] idleTimeoutMs=600000` means the overlay path broke.
 - **Bug history:** 2026-05-05 catalog `timeoutSeconds:600` was dead code; 2026-05-10 fixed via plugin overlay (bible §11.6d, §11.6e).
 
