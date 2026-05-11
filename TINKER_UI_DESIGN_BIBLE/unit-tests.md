@@ -9,6 +9,10 @@ see_also: probes.md (the bible:invariants suite is the merge gate, this is the l
 verify:
   - name: vitest config exists in tinkerclaw
     cmd: python3 -c 'import os,glob; assert any(os.path.exists(p) for p in glob.glob(os.path.expanduser("~/src/tinkerclaw/test/vitest/vitest*.config.ts")))'
+  - name: pnpm test chains the bible:invariants runner (catches upstream-merge wipe of the chain)
+    cmd: python3 -c 'import json,os; p = json.load(open(os.path.expanduser("~/src/tinkerclaw/package.json"))); t = p["scripts"]["test"]; assert "test-invariants" in t or "bible:invariants" in t, f"upstream merge wiped the bible:invariants chain from the test script — current value: {t!r}. Restore it so every pnpm test run gates the bible contracts."'
+  - name: git-hooks/pre-push runs the bible:invariants gate (catches hook-removal regression)
+    cmd: python3 -c 'import os; p = os.path.expanduser("~/src/tinkerclaw/git-hooks/pre-push"); assert os.path.isfile(p), "pre-push hook missing"; t = open(p).read(); assert "bible:invariants" in t, "pre-push hook no longer runs bible:invariants"'
 ---
 
 # Unit tests — fork-side strategy
