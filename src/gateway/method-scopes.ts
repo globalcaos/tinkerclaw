@@ -109,6 +109,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "wa.recentOutbound",
     "gateway.stuckSessions",
     "gateway.diagnosticSessionCount",
+    "plugin.boot.status",
     "sessions.list",
     "sessions.get",
     "sessions.preview",
