@@ -6,6 +6,11 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — this is the one place to learn why fork tool-loop ≠ upstream
 see_also: flows.md (F1 cc-bridge spawn flow), failures.md (M1 idle-watchdog SIGTERM), config-shape.md (timeoutSeconds)
+verify:
+  - name: cc-bridge stream.ts still suppresses tool_use blocks from assistant.message.content
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
+  - name: idle-timeout-diag log line is emitted on each turn (idle watchdog is wrapped)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)

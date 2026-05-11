@@ -19,6 +19,8 @@ verify:
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","cron.listJobs"],capture_output=True,text=True); assert "jobCount" in r.stdout, r.stdout[-500:]'
   - name: debug.dumpUiSnapshot probe is live + snapshot exists
     cmd: python3 -c 'import subprocess,os; r=subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-500:]; assert os.path.isfile(os.path.expanduser("~/.openclaw/data/tinker-ui-snapshot.html"))'
+  - name: wa.recentOutbound probe is live
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","wa.recentOutbound","--params",json.dumps({"n":1})],capture_output=True,text=True,timeout=25); assert "\"rows\"" in r.stdout, r.stdout[-500:]'
 ---
 
 # Probes — inspection primitives registry

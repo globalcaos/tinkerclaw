@@ -7,6 +7,13 @@ last_verified_commit: HEAD
 single_owner: yes — UI-visual + UI-feature facts live here. Migrated from bible.md §3, §4, §5.1-§5.65 on 2026-05-11.
 see_also: flows.md (F1 chat.send pipeline that feeds the UI), lifecycles.md (L5 chat.send run states the UI subscribes to), topology.md (Tinker UI Vite process)
 note: this is the original prose from the bible, relocated verbatim. Some sections cross-reference §X.Y numbers that now resolve here in this file rather than the old bible.md.
+verify:
+  - name: Tinker UI source file exists at the expected path
+    cmd: test -f ~/src/tinkerclaw/tinker-ui/src/app.ts
+  - name: UI snapshot probe is reachable and the snapshot file is on disk
+    cmd: python3 -c 'import subprocess,os; subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True,timeout=25); assert os.path.isfile(os.path.expanduser("~/.openclaw/data/tinker-ui-snapshot.html"))'
+  - name: fs-link click handler is wired in app.ts (canonical fork pattern, not duplicated elsewhere)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "fs-link" in t and "config.openExternalFile" in t'
 ---
 
 # Tinker UI — layout, visual language, feature registry
