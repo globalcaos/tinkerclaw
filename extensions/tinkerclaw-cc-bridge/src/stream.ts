@@ -317,6 +317,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           log.debug(`emit start content.len=${p.content.length}`);
         }
         stream.push({ type: "start", partial: p });
+        recordPush();
       };
       const pushThinkingStart = () => {
         if (thinkingStarted) {
@@ -327,6 +328,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           log.debug(`emit thinking_start`);
         }
         stream.push({ type: "thinking_start", contentIndex: 0, partial: buildPartial() });
+        recordPush();
       };
       const pushThinkingEnd = () => {
         if (!thinkingStarted || thinkingEnded) {
@@ -342,6 +344,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           content: accumulatedThinking,
           partial: buildPartial(),
         });
+        recordPush();
       };
       const pushTextStart = () => {
         if (textStarted) {
@@ -352,6 +355,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           log.debug(`emit text_start contentIndex=${textIndex()}`);
         }
         stream.push({ type: "text_start", contentIndex: textIndex(), partial: buildPartial() });
+        recordPush();
       };
       const pushTextEnd = () => {
         if (!textStarted || textEnded) {
@@ -369,6 +373,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           content: accumulatedText,
           partial: buildPartial(),
         });
+        recordPush();
       };
 
       const pushThinkingDelta = (delta: string) => {
@@ -376,6 +381,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         pushThinkingStart();
         accumulatedThinking += delta;
         stream.push({ type: "thinking_delta", contentIndex: 0, delta, partial: buildPartial() });
+        recordPush();
       };
 
       const pushTextDelta = (delta: string) => {
@@ -396,6 +402,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           delta,
           partial: buildPartial(),
         });
+        recordPush();
       };
 
       // FORK 2026-04-20: progress heartbeat so we can tell from the gateway
@@ -416,6 +423,65 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           );
         }
       }, 45_000);
+
+      // FORK 2026-05-11: pi-ai idle-timer heartbeat (closes brainstorm item #5).
+      //
+      // Why this exists: cc-bridge intentionally suppresses tool_use stream
+      // events to pi-ai (FORK 2026-04-22, see tool-loop.md — forwarding them
+      // would re-execute via OpenClaw's exec tool). During long claude-cli
+      // tool chains this means pi-agent-core's `streamWithIdleTimeout` sees
+      // NO events for the duration of the tool work and SIGTERMs the run
+      // at the idle threshold. Mitigation today is provider-level
+      // `timeoutSeconds: 600` from the cc-bridge plugin overlay
+      // (bible §11.6e / config-shape.md T2), but that's load-bearing —
+      // lower it accidentally and the 2026-05-05 incident comes back.
+      //
+      // What this does: every 25s of silence (well under the 120s default
+      // and the 600s overlay), push an empty `text_delta` or `thinking_delta`
+      // through the pi-ai stream, depending on which content block is
+      // currently active. Empty delta is a no-op for accumulated content
+      // (string concat with "" preserves the value) but yields an event
+      // through `iterator.next()` so `streamWithIdleTimeout` resets its
+      // timer.
+      //
+      // What this does NOT do: emit a tool_use block (would re-execute);
+      // emit text outside an active content block (would violate pi-ai's
+      // protocol invariants — text_delta requires a preceding text_start).
+      // If neither thinking nor text is active (very early turn or the
+      // gap between text_end and the final `done` event), the heartbeat
+      // is suppressed — both windows are short and the idle timer can
+      // ride them comfortably.
+      let lastPiAiPushAt = turnStartedAt;
+      const HEARTBEAT_INTERVAL_MS = 25_000;
+      const recordPush = () => {
+        lastPiAiPushAt = Date.now();
+      };
+      const heartbeat = setInterval(() => {
+        const silentMs = Date.now() - lastPiAiPushAt;
+        if (silentMs < HEARTBEAT_INTERVAL_MS) {
+          return;
+        }
+        if (textStarted && !textEnded) {
+          stream.push({
+            type: "text_delta",
+            contentIndex: textIndex(),
+            delta: "",
+            partial: buildPartial(),
+          });
+          recordPush();
+        } else if (thinkingStarted && !thinkingEnded) {
+          stream.push({
+            type: "thinking_delta",
+            contentIndex: 0,
+            delta: "",
+            partial: buildPartial(),
+          });
+          recordPush();
+        }
+        // else: no active content block — pi-ai protocol invariants would be
+        // violated by an empty delta here, so we let this short window pass
+        // unprotected. The idle timer is wide enough that this is safe.
+      }, HEARTBEAT_INTERVAL_MS);
 
       const onStreamLine = (evt: WorkerEvent) => {
         if (evt.type !== "stream_line") {
@@ -598,6 +664,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         });
         worker.off("stream_line", onStreamLine);
         clearInterval(watchdog);
+        clearInterval(heartbeat);
 
         pushStart();
         pushThinkingEnd();
@@ -721,6 +788,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       } catch (err) {
         worker.off("stream_line", onStreamLine);
         clearInterval(watchdog);
+        clearInterval(heartbeat);
         const rawErr = formatErrorMessage(err);
         log.error(
           `claude-code turn failed after ${Math.round((Date.now() - turnStartedAt) / 1000)}s (${linesSeen} stream lines, text.len=${accumulatedText.length}, thinking.len=${accumulatedThinking.length}): ${rawErr}`,

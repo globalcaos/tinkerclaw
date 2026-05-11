@@ -11,6 +11,8 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
   - name: idle-timeout-diag log line is emitted on each turn (idle watchdog is wrapped)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
+  - name: cc-bridge heartbeat is wired in stream.ts (FORK 2026-05-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK 2026-05-11" in t and "heartbeat" in t.lower() and "HEARTBEAT_INTERVAL_MS" in t, "the cc-bridge heartbeat that resets pi-agent-core idle watchdog is missing or undocumented"'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -70,7 +72,7 @@ sequenceDiagram
 
 **Workaround (2026-05-05 / corrected 2026-05-10):** bump the idle timeout via provider-level `timeoutSeconds: 600` (cc-bridge plugin overlay path). Heavy turns now have 10 minutes per stretch of silence. See config-shape.md.
 
-**Architectural follow-up (open):** emit a heartbeat-only stream event from cc-bridge per claude-cli line during tool work. The heartbeat resets the idle timer without being a `tool_use` block (so it doesn't re-execute). Then the 600s timeout becomes belt-and-suspenders rather than load-bearing.
+**Architectural fix (LIVE 2026-05-11, commit on cc-bridge `stream.ts`):** cc-bridge now emits an empty-delta heartbeat through the pi-ai stream every 25s of silence during a turn. The 600s overlay timeout becomes belt-and-suspenders rather than load-bearing; a future accidental reset to 120s no longer reproduces the 2026-05-05 incident.
 
 ```mermaid
 sequenceDiagram
@@ -78,14 +80,27 @@ sequenceDiagram
   participant CC as cc-bridge stream.ts
   participant PI as pi-agent-core
 
-  loop every claude-cli line during tool chain
-    CLI->>CC: any stream-json line
-    CC->>PI: stream event {type:"heartbeat"} (PROPOSED)
-    Note over PI: streamWithIdleTimeout resets its timer
+  loop every 25s while no real event has fired
+    CC->>CC: heartbeat setInterval fires
+    alt textStarted && !textEnded
+      CC->>PI: { type: "text_delta", delta: "" }
+      Note over PI: streamWithIdleTimeout resets its timer
+    else thinkingStarted && !thinkingEnded
+      CC->>PI: { type: "thinking_delta", delta: "" }
+      Note over PI: streamWithIdleTimeout resets its timer
+    else
+      Note over CC: neither content block active — heartbeat suppressed (pi-ai protocol invariants)
+    end
   end
 ```
 
-The heartbeat event has no semantic content; its only job is to reset the timer.
+Empty delta is a no-op for accumulated content (string concat with `""` preserves the value) but yields an event through `iterator.next()` so `streamWithIdleTimeout` resets its timer. `recordPush()` is wired into every real push helper too, so the heartbeat only fires when no real event has fired for ≥25s — it doesn't double-pump on already-active streams.
+
+**Don't regress:**
+
+- The heartbeat MUST stay gated on `textStarted && !textEnded` (or thinking equivalent). Emitting a `text_delta` outside a `text_start...text_end` window violates pi-ai's discriminated-union invariants and will crash downstream consumers.
+- Never emit a `tool_use`-shaped event from the heartbeat path — that would re-execute the tool through OpenClaw's exec tool, exactly what the suppression above is preventing.
+- The 25s interval is chosen well under the 120s default and the 600s overlay. Lowering it further is fine; raising it past 60s reintroduces the risk that the overlay-as-load-bearing assumption silently returns.
 
 ## Don't regress
 
