@@ -1246,6 +1246,7 @@
     "android:test:integration": "OPENCLAW_LIVE_TEST=1 OPENCLAW_LIVE_ANDROID_NODE=1 node scripts/run-vitest.mjs run --config test/vitest/vitest.live.config.ts src/gateway/android-node.capabilities.live.test.ts",
     "android:test:third-party": "cd apps/android && ./gradlew :app:testThirdPartyDebugUnitTest",
     "audit:seams": "node scripts/audit-seams.mjs",
+    "bible:invariants": "node scripts/test-invariants.mjs",
     "build": "node scripts/build-all.mjs",
     "build:ci-artifacts": "node scripts/build-all.mjs ciArtifacts",
     "build:docker": "node scripts/tsdown-build.mjs && node scripts/check-cli-bootstrap-imports.mjs && node scripts/runtime-postbuild.mjs && node scripts/build-stamp.mjs && node scripts/runtime-postbuild-stamp.mjs && node --import tsx scripts/canvas-a2ui-copy.ts && node --import tsx scripts/copy-hook-metadata.ts && node --import tsx scripts/copy-export-html-templates.ts && node --import tsx scripts/write-build-info.ts && node --experimental-strip-types scripts/write-cli-startup-metadata.ts && node --import tsx scripts/write-cli-compat.ts",

@@ -6,6 +6,13 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — subagent + recipe orchestration facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop), tool-loop.md (why fork orchestration is different from upstream)
+verify:
+  - name: spawn helper script is executable
+    cmd: test -x ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
+  - name: recipe-state helper script is executable
+    cmd: test -x ~/src/tinkerclaw/scripts/openclaw-recipe-state.mjs
+  - name: recipe catalog has at least 10 recipes (recursive)
+    cmd: python3 -c 'import glob,os; assert len(glob.glob(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/*/*.md"))) >= 10'
 ---
 
 # Subagents, recipes, and Prefrontal observability

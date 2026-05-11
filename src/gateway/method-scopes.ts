@@ -98,6 +98,13 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     // Tinker UI's `.fs-link` click handler when the link only carries the
     // basename (e.g. "BRIEFING.md") rather than a full path.
     "files.resolveBareName",
+    // FORK 2026-05-11: J15 RSC probes (see bible/probes.md). All READ_SCOPE:
+    // returns inspection-only state, never credentials or write capability.
+    "debug.session.config",
+    "debug.session.state",
+    "debug.tail.lastN",
+    "cron.lastRun",
+    "cron.listJobs",
     "sessions.list",
     "sessions.get",
     "sessions.preview",

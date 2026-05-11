@@ -6,6 +6,13 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — model routing + auth profile order + billing logic live here
 see_also: config-shape.md (where these keys are read), failures.md (M1 idle watchdog, billing failures)
+verify:
+  - name: anthropic auth order is cli-gm only (subscription, not metered api)
+    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["auth"]["order"]["anthropic"] == ["anthropic:cli-gm"]'
+  - name: claude-code/claude-opus-4-7 is rank 2 in the models panel
+    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["agents"]["defaults"]["models"]["claude-code/claude-opus-4-7"]["rank"] == 2'
+  - name: primary model is claude-code/claude-opus-4-7
+    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["agents"]["defaults"]["model"]["primary"] == "claude-code/claude-opus-4-7"'
 ---
 
 # Auth + model routing

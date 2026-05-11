@@ -4,6 +4,11 @@ audience: AI (Claude, etc). Human readability is incidental, not the design goal
 codename: RSC (after retrosplenial cortex, per paper J15)
 last_verified: 2026-05-11
 last_verified_commit: HEAD
+verify:
+  - name: bible folder exists with expected count of files
+    cmd: python3 -c 'import glob,os; assert len(glob.glob(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/*.md"))) >= 14'
+  - name: gateway is reachable
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.identity.get"],capture_output=True,text=True); assert "deviceId" in r.stdout, r.stdout[-500:]'
 ---
 
 # Bible INDEX — tinkerclaw

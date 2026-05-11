@@ -6,6 +6,19 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — probe registry lives here. Other files reference probes by name; this file is the canonical list.
 see_also: J15 paper §4.4 (Agent-Feedback Symmetry), failures.md (which probe diagnoses which failure)
+verify:
+  - name: debug.session.config probe is live
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.config","--params",json.dumps({"provider":"claude-code"})],capture_output=True,text=True); assert "resolvedRequestTimeoutMs" in r.stdout, r.stdout[-500:]'
+  - name: debug.session.state probe is live
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.state","--params",json.dumps({"sessionKey":"agent:main:main"})],capture_output=True,text=True); assert "sessionKey" in r.stdout, r.stdout[-500:]'
+  - name: debug.tail.lastN probe is live
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.tail.lastN","--params",json.dumps({"sessionKey":"agent:main:main","n":3})],capture_output=True,text=True); assert ("events" in r.stdout) or ("error" in r.stdout), r.stdout[-500:]'
+  - name: cron.lastRun probe is live
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","cron.lastRun","--params",json.dumps({"jobId":"morning-briefing"})],capture_output=True,text=True); assert "receiptPath" in r.stdout, r.stdout[-500:]'
+  - name: cron.listJobs probe is live
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","cron.listJobs"],capture_output=True,text=True); assert "jobCount" in r.stdout, r.stdout[-500:]'
+  - name: debug.dumpUiSnapshot probe is live + snapshot exists
+    cmd: python3 -c 'import subprocess,os; r=subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-500:]; assert os.path.isfile(os.path.expanduser("~/.openclaw/data/tinker-ui-snapshot.html"))'
 ---
 
 # Probes — inspection primitives registry

@@ -15,7 +15,9 @@ import { commandsHandlers } from "./server-methods/commands.js";
 import { configOpenExternalHandlers } from "./server-methods/config-open-external.js";
 import { configHandlers } from "./server-methods/config.js";
 import { connectHandlers } from "./server-methods/connect.js";
+import { cronProbesHandlers } from "./server-methods/cron-probes.js";
 import { cronHandlers } from "./server-methods/cron.js";
+import { debugProbesHandlers } from "./server-methods/debug-probes.js";
 import { debugUiSnapshotHandlers } from "./server-methods/debug-ui-snapshot.js";
 import { deviceHandlers } from "./server-methods/devices.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
@@ -109,6 +111,10 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // resolver that walks an allowlist of project roots so the click handler can
   // open files referenced as just `BRIEFING.md` (no leading path) via xdg-open.
   ...filesResolveBareHandlers,
+  // FORK 2026-05-11: J15 RSC probes — debug.session.config, debug.session.state,
+  // debug.tail.lastN, cron.lastRun, cron.listJobs. See bible/probes.md.
+  ...debugProbesHandlers,
+  ...cronProbesHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).

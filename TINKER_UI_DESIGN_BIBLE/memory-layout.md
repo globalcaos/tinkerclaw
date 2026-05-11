@@ -6,6 +6,13 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — directory map + writer + retention live here
 see_also: topology.md (workspace symlinks), crons.md (writers), pii-boundary.md (everything under workspace/memory is PRIVATE)
+verify:
+  - name: workspace memory dir exists
+    cmd: test -d ~/.openclaw/workspace/memory
+  - name: people/ has profile files (at least 100)
+    cmd: '[ "$(ls ~/.openclaw/workspace/memory/people 2>/dev/null | wc -l)" -ge 100 ]'
+  - name: consolidation-state.json exists
+    cmd: test -f ~/.openclaw/workspace/memory/consolidation-state.json
 ---
 
 # Memory layout — workspace directory map
