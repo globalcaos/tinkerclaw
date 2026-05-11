@@ -6,7 +6,7 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 verify:
   - name: bible folder exists with expected count of files
-    cmd: python3 -c 'import glob,os; assert len(glob.glob(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/*.md"))) >= 14'
+    cmd: python3 -c 'import glob,os; assert len(glob.glob(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/*.md"))) >= 15'
   - name: gateway is reachable
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.identity.get"],capture_output=True,text=True); assert "deviceId" in r.stdout, r.stdout[-500:]'
 ---
@@ -33,6 +33,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "how do subagents and recipes work?" → `subagents-and-recipes.md`
    - "how should fork-side unit tests be scoped and named?" → `unit-tests.md`
    - "what's the WhatsApp trigger contract / LID rescue rules / chat-rhythm format?" → `wa-triggers.md`
+   - "what's the public-fork branch model / push authority / merge gate?" → `branch-policy.md`
    - "what's the intent / decision / don't-regress for §X.Y?" → `bible.md`
    - "how does this UI panel work / what's the visual convention?" → `tinker-ui.md`
    - "has this bug class been seen before?" → `bug-log.md`
@@ -61,6 +62,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 | `subagents-and-recipes.md` | Subagent spawn, recipe-state CLI, Prefrontal observability                                                                                                                                         | hand                             | ~150   |
 | `unit-tests.md`            | Fork-side unit-test scoping, naming, bible-coherence rules, priority backfill order                                                                                                                | hand                             | ~130   |
 | `wa-triggers.md`           | WhatsApp trigger contract — owner+prefix, noPrefixChats, LID rescue, prelude shape, chat-rhythm (former bible §11.6a, migrated 2026-05-11)                                                         | hand                             | ~160   |
+| `branch-policy.md`         | Public-fork branch model — develop vs main, push authority, README protection, PII pre-push hook (former bible §5.78, migrated 2026-05-11)                                                         | hand                             | ~100   |
 
 ## Discipline
 
