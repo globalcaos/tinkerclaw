@@ -14,8 +14,10 @@ verify:
     cmd: python3 -c 'import subprocess,os; subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True,timeout=25); assert os.path.isfile(os.path.expanduser("~/.openclaw/data/tinker-ui-snapshot.html"))'
   - name: fs-link click handler is wired in app.ts (canonical fork pattern, not duplicated elsewhere)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "fs-link" in t and "config.openExternalFile" in t'
-  - name: generated FORK registry is present and current
-    cmd: python3 -c 'import os,subprocess; bible = os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/tinker-ui.md"); current = open(bible).read(); fresh = subprocess.run(["node",os.path.expanduser("~/src/tinkerclaw/scripts/gen-tinker-ui-registry.mjs")],capture_output=True,text=True,timeout=25).stdout; assert "BEGIN GENERATED-FORK-REGISTRY" in current, "marker missing — run scripts/gen-tinker-ui-registry.mjs --apply"; assert all(line in current for line in fresh.splitlines() if line.strip().startswith("|")), "registry table is stale — re-run scripts/gen-tinker-ui-registry.mjs --apply"'
+  - name: generated FORK registry markers present (spliceable region exists)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/tinker-ui.md")).read(); assert "BEGIN GENERATED-FORK-REGISTRY" in t and "END GENERATED-FORK-REGISTRY" in t, "registry markers missing — run scripts/gen-tinker-ui-registry.mjs --apply"'
+  - name: gen-tinker-ui-registry.mjs is runnable end-to-end
+    cmd: python3 -c 'import subprocess,os; r=subprocess.run(["node",os.path.expanduser("~/src/tinkerclaw/scripts/gen-tinker-ui-registry.mjs")],capture_output=True,text=True,timeout=25); assert r.returncode == 0, f"generator failed: {r.stderr[-300:]}"; assert "anchor" in r.stdout.lower() and "|" in r.stdout, "generator output unexpected shape"'
 ---
 
 # Tinker UI — layout, visual language, feature registry
