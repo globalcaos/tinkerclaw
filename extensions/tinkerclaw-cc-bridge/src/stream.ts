@@ -244,6 +244,28 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         openclawSessionId,
       });
 
+      // FORK 2026-05-11: emit lifecycle:start so the TUI's activeRuns map
+      // picks up this run and renders the thinking indicator + side panels
+      // (sessions, model, prefrontal). Without this, cc-bridge runs only
+      // emit stream:"tool" events, which don't activate the indicator —
+      // the TUI stays on the local "sending..." placeholder until reply.
+      // Idempotent vs the embedded runner's handleAgentStart: same runId
+      // means Map.set overwrites cleanly.
+      if (runId) {
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "start",
+            startedAt: Date.now(),
+            model: model.id,
+            modelProvider: model.provider,
+            sessionKey: openclawSessionKey,
+          },
+        });
+      }
+
       let streamStarted = false;
       let thinkingStarted = false;
       let thinkingEnded = false;
@@ -742,6 +764,22 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           },
         });
       } finally {
+        // FORK 2026-05-11: matching lifecycle:end so the TUI's activeRuns
+        // entry is evicted (sessions / model / prefrontal panels go idle).
+        if (runId) {
+          emitAgentEvent({
+            runId,
+            sessionKey: openclawSessionKey,
+            stream: "lifecycle",
+            data: {
+              phase: "end",
+              endedAt: Date.now(),
+              model: model.id,
+              modelProvider: model.provider,
+              sessionKey: openclawSessionKey,
+            },
+          });
+        }
         stream.end();
       }
     };
