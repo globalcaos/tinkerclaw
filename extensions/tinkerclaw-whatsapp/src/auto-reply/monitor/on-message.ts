@@ -12,6 +12,7 @@ import type { MentionConfig } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
+import { decideTrigger } from "./decide-trigger.js";
 import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
@@ -100,63 +101,29 @@ export function createWebOnMessageHandler(params: {
       triggerPrefix?: string;
       thirdPartyGuardPrompt?: string;
     };
-    const noPrefixChats = wa.noPrefixChats ?? [];
-    const triggerPrefix = (wa.triggerPrefix ?? "").trim();
-    const guardPrompt = wa.thirdPartyGuardPrompt ?? "";
     const chatJid = msg.conversationId ?? msg.from;
-    const isOwner = msg.fromMe === true;
-    const inNoPrefix = noPrefixChats.includes(chatJid);
-    const body = msg.body ?? "";
-    const lowerBody = body.toLowerCase().trimStart();
-    const lowerPrefix = triggerPrefix.toLowerCase();
-    const hasPrefix =
-      lowerPrefix.length > 0 &&
-      (lowerBody === lowerPrefix ||
-        lowerBody.startsWith(`${lowerPrefix} `) ||
-        lowerBody.startsWith(`${lowerPrefix},`) ||
-        lowerBody.startsWith(`${lowerPrefix}.`) ||
-        lowerBody.startsWith(`${lowerPrefix}!`) ||
-        lowerBody.startsWith(`${lowerPrefix}?`) ||
-        lowerBody.startsWith(`${lowerPrefix}:`));
-
-    if (!inNoPrefix && !hasPrefix) {
+    const decision = decideTrigger({
+      body: msg.body ?? "",
+      fromMe: msg.fromMe === true,
+      chatJid,
+      noPrefixChats: wa.noPrefixChats ?? [],
+      triggerPrefix: (wa.triggerPrefix ?? "").trim(),
+      thirdPartyGuardPrompt: wa.thirdPartyGuardPrompt ?? "",
+      senderName: msg.senderName ?? msg.pushName ?? "unknown",
+      senderId: msg.senderE164 ?? msg.senderJid ?? "unknown",
+    });
+    if (!decision.fires) {
       console.log(
-        `[wa-trigger] silent (no-prefix-chat=false body-prefix=false): chat=${chatJid} bodyHead=${JSON.stringify(body.slice(0, 40))}`,
+        `[wa-trigger] silent (${decision.reason}): chat=${chatJid} bodyHead=${JSON.stringify((msg.body ?? "").slice(0, 40))}`,
       );
       return;
     }
-
-    let workingBody = body;
-    // Strip the trigger word so Jarvis doesn't see redundant "jarvis ..." in
-    // the message envelope when the prefix was the gate (only outside no-prefix
-    // chats — inside them, body is left untouched).
-    if (hasPrefix && !inNoPrefix) {
-      const original = body.trimStart();
-      const stripped = original.slice(triggerPrefix.length).replace(/^[\s,.!?:]+/, "");
-      // Preserve any leading whitespace that was in the original body.
-      const leadingWs = body.length - body.trimStart().length;
-      workingBody = body.slice(0, leadingWs) + stripped;
+    if (decision.workingBody !== (msg.body ?? "")) {
+      msg.body = decision.workingBody;
     }
-
-    if (!isOwner && guardPrompt) {
-      const senderName = msg.senderName ?? msg.pushName ?? "unknown";
-      const senderId = msg.senderE164 ?? msg.senderJid ?? "unknown";
-      const filledGuard = guardPrompt
-        .replaceAll("{senderName}", senderName)
-        .replaceAll("{senderId}", senderId);
-      workingBody = `${filledGuard}\n\nMessage:\n${workingBody}`;
-    }
-
-    if (workingBody !== body) {
-      msg.body = workingBody;
-    }
-    // Propagate the owner-prefix decision to downstream gates (group-gating
-    // notably) so they don't independently demand a mention/@-tag for chats
-    // outside `noPrefixChats`. Only the owner's prefix bypasses; non-owner
-    // senders still go through normal group-gating.
-    msg.ownerPrefixTriggered = hasPrefix && isOwner;
+    msg.ownerPrefixTriggered = decision.ownerPrefixTriggered;
     console.log(
-      `[wa-trigger] firing owner=${isOwner} inNoPrefix=${inNoPrefix} hasPrefix=${hasPrefix} chat=${chatJid} ownerPrefixTriggered=${msg.ownerPrefixTriggered}`,
+      `[wa-trigger] firing owner=${msg.fromMe === true} reason=${decision.reason} chat=${chatJid} ownerPrefixTriggered=${decision.ownerPrefixTriggered}`,
     );
 
     const conversationId = msg.conversationId ?? msg.from;
