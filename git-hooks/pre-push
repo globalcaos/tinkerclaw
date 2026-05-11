@@ -1,18 +1,49 @@
 #!/usr/bin/env bash
 # FORK 2026-05-11 — pre-push gate for the public fork.
 #
-# Today: PII leak grep (see scripts/pii-pre-push.sh).
-# Future: J15 `pnpm bible:invariants` gate on push to develop/main can be
-# added here once the runner is stable across all hosts.
+# Two gates run in order; both must pass or the push is blocked:
+#   1. PII leak grep (scripts/pii-pre-push.sh) — bypass: PII_GUARD=off
+#   2. Bible invariants (pnpm bible:invariants) — bypass: BIBLE_GUARD=off
+#
+# The invariants runner is tolerant of "gateway down" and "gateway stale"
+# (running on an older dist than HEAD). Those count as SKIP, not FAIL. A
+# real contract regression (file missing, grep doesn't match, RPC shape
+# changed) still blocks the push.
 
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 PII_SCRIPT="$ROOT_DIR/scripts/pii-pre-push.sh"
 
+# Gate 1 — PII leak grep
 if [[ ! -x "$PII_SCRIPT" ]]; then
   echo "[pre-push] missing: $PII_SCRIPT (run chmod +x and try again)" >&2
   exit 1
 fi
+# Capture stdin since the PII script reads the pre-push line format from it.
+PII_INPUT="$(cat)"
+if ! echo "$PII_INPUT" | "$PII_SCRIPT" "$@"; then
+  exit 1
+fi
 
-exec "$PII_SCRIPT" "$@"
+# Gate 2 — bible invariants merge gate
+if [[ "${BIBLE_GUARD:-}" == "off" ]]; then
+  echo "[bible:invariants] BIBLE_GUARD=off — skipping merge gate (bypass acknowledged)" >&2
+else
+  echo "[pre-push] running bible:invariants…" >&2
+  # cd to repo root so node + pnpm find the right project. The runner exits 0
+  # on all-pass OR all-skip-because-gateway-down; non-zero only on real fails.
+  if ! (cd "$ROOT_DIR" && pnpm bible:invariants); then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🛑 BLOCKED: bible:invariants failed" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "A J15 contract regressed. Run 'pnpm bible:invariants' to see the" >&2
+    echo "full failure list, then either fix the regression or update the" >&2
+    echo "bible verify entry to reflect the intentional change." >&2
+    echo "" >&2
+    echo "Bypass (for intentional WIP pushes to develop): BIBLE_GUARD=off git push" >&2
+    exit 1
+  fi
+fi
