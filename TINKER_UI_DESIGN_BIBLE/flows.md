@@ -6,6 +6,11 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — sequence-of-calls facts live here, not in bible.md
 see_also: lifecycles.md (state transitions per entity), failures.md (failure-mode propagation), topology.md (which components exist)
+verify:
+  - name: F1 — chat.send returns a runId synchronously (the dispatch path is alive)
+    cmd: python3 -c 'import subprocess,json,time; r=subprocess.run(["openclaw","gateway","call","chat.send","--params",json.dumps({"sessionKey":"agent:main:main","message":"FLOWS-F1-VERIFY","deliver":False,"idempotencyKey":f"flows-f1-{int(time.time()*1000)}"})],capture_output=True,text=True,timeout=25); assert "runId" in r.stdout, r.stdout[-500:]'
+  - name: F5 — briefing.resolve returns content (the /new path's resolver is alive)
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","briefing.resolve"],capture_output=True,text=True,timeout=25); j = json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); assert j.get("content") or j.get("path"), r.stdout[-500:]'
 ---
 
 # Flows — top pipelines

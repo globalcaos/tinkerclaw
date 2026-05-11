@@ -47,6 +47,7 @@ import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
 import { voicewakeRoutingHandlers } from "./server-methods/voicewake-routing.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
+import { waProbesHandlers } from "./server-methods/wa-probes.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
 
@@ -112,9 +113,11 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // open files referenced as just `BRIEFING.md` (no leading path) via xdg-open.
   ...filesResolveBareHandlers,
   // FORK 2026-05-11: J15 RSC probes — debug.session.config, debug.session.state,
-  // debug.tail.lastN, cron.lastRun, cron.listJobs. See bible/probes.md.
+  // debug.tail.lastN, cron.lastRun, cron.listJobs, wa.lastOutbound, wa.recentOutbound.
+  // See bible/probes.md.
   ...debugProbesHandlers,
   ...cronProbesHandlers,
+  ...waProbesHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).

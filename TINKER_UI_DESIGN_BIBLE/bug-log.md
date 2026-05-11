@@ -7,6 +7,11 @@ last_verified_commit: HEAD
 single_owner: yes — past-bug forensics live here. Migrated from bible.md §7 on 2026-05-11.
 see_also: failures.md (current failure-mode map by category — what to look for going forward), flows.md (pipelines whose disruption produced many of these bugs)
 note: this is the original prose from bible.md §7, relocated verbatim. New bug fixes are appended here, not added to bible.md.
+verify:
+  - name: bug-log.md grows monotonically (or stays equal) — never shrinks unexpectedly
+    cmd: python3 -c 'import os; n = sum(1 for _ in open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/bug-log.md"))); assert n >= 280, f"bug-log.md only {n} lines, did someone delete entries?"'
+  - name: every FIXED entry has a root-cause line
+    cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/bug-log.md")).read(); fixes = re.findall(r"^### (?:FIXED|~~FIXED): ", t, re.M); rcs = re.findall(r"^- \*\*Root cause", t, re.M); assert len(rcs) >= len(fixes) - 5, f"{len(fixes)} FIXED entries but only {len(rcs)} root-cause lines"'
 ---
 
 # Bug Fix Log

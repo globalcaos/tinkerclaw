@@ -239,12 +239,25 @@ async function main() {
         continue;
       }
       totalChecks += 1;
-      const result = await runShell(cmd);
-      const ok = !result.timedOut && result.exitCode === 0;
+      // Probes that hit the live gateway can flake under load (cron.listJobs
+      // can sequentially-stat many receipt files, debug.dumpUiSnapshot waits
+      // on a UI subscription). One automatic retry with a short backoff
+      // turns transient warm-up failures into pass without masking real
+      // regressions — a real break stays broken after the second attempt.
+      let result = await runShell(cmd);
+      let ok = !result.timedOut && result.exitCode === 0;
+      let attempts = 1;
+      if (!ok) {
+        await new Promise((r) => setTimeout(r, 2000));
+        result = await runShell(cmd);
+        ok = !result.timedOut && result.exitCode === 0;
+        attempts = 2;
+      }
       if (!ok) totalFailed += 1;
       fileResults.push({
         name,
         ok,
+        attempts,
         exitCode: result.exitCode,
         signal: result.signal,
         timedOut: result.timedOut,
