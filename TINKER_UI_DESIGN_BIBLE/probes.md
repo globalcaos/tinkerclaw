@@ -25,6 +25,8 @@ verify:
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.stuckSessions"],capture_output=True,text=True,timeout=25); assert "stuckCount" in r.stdout, r.stdout[-500:]'
   - name: gateway.diagnosticSessionCount probe is live
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.diagnosticSessionCount"],capture_output=True,text=True,timeout=25); assert "byState" in r.stdout, r.stdout[-500:]'
+  - name: plugin.boot.status probe is live + reports at least one plugin
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","plugin.boot.status"],capture_output=True,text=True,timeout=25); assert "byStatus" in r.stdout and "plugins" in r.stdout, r.stdout[-500:]'
 ---
 
 # Probes — inspection primitives registry
@@ -51,23 +53,24 @@ A probe is **deterministic** (same input → same output, clocks masked), **boun
 | sqlite3 read on `~/.openclaw/data/whatsapp-history.db`                            | WhatsApp message store                                                   | rows                                                                                                          | <500ms    | direct DB read                                                       |
 | `gateway.stuckSessions({thresholdMs?})` (RPC)                                     | live in-memory `diagnosticSessionStates` map, processing sessions only   | `{stuckCount, stuck[{sessionKey,sessionId,ageMs,queueDepth,lastToolCall}], totalSessions}`                    | <50ms     | `src/gateway/server-methods/gateway-probes.ts`, FORK 2026-05-11      |
 | `gateway.diagnosticSessionCount()` (RPC)                                          | size + state breakdown of the diagnostic session map                     | `{total, byState:{processing,idle,waiting}}`                                                                  | <50ms     | `src/gateway/server-methods/gateway-probes.ts`, FORK 2026-05-11      |
+| `plugin.boot.status({id?,status?})` (RPC)                                         | per-plugin load result from in-memory PluginRegistry                     | `{totalPlugins, byStatus:{loaded,disabled,error}, plugins:[{id,name,version,status,error,failurePhase,...}]}` | <100ms    | `src/gateway/server-methods/plugin-probes.ts`, FORK 2026-05-11       |
 
 ## Proposed probes (gaps)
 
 Each row is a surface where investigation is expensive today.
 
-| Probe                                     | Surface                                                                   | Cost saved                                                | Priority |
-| ----------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------- | -------- |
-| `debug.tail.lastN({sessionKey,n,since?})` | recent agent events for one session                                       | replaces ~30 journal greps                                | **HIGH** |
-| `debug.session.state({sessionKey})`       | lane state, worker liveness, idle timer remaining, queued replies, status | replaces grepping 6 files                                 | **HIGH** |
-| `debug.session.config({provider})`        | effective resolved provider + model with override chain                   | catches the timeoutSeconds-dead-code regression on commit | **HIGH** |
-| `wa.lastOutbound({chat,n})`               | last N WhatsApp outbound messages, including dropped/queued               | catches "Jarvis's reply never delivered" silently         | **HIGH** |
-| `cron.lastRun({jobId})`                   | last run state, exit code, duration, output tail                          | replaces manual receipt-grep                              | medium   |
-| `cc-bridge.workerInfo({sessionKey})`      | alive?, current cli sessionId, last turn duration, idle status            | catches stuck workers (needs plugin API to expose pool)   | medium   |
-| `wa.lastInbound({chat,n})`                | last N inbound messages for one chat                                      | symmetric companion to wa.lastOutbound                    | medium   |
-| `agent.dispatch.lastN({n})`               | last N chat.send / agent invocations gateway-wide                         | catches dispatch storms                                   | low      |
-| `plugin.boot.status`                      | per-plugin boot result (load ok / failed / disabled / version)            | catches M5 native-deps failures synchronously             | medium   |
-| `auth.profile.status({provider,profile})` | last refresh time, last failure, billing state                            | catches OAuth refresh-token issues before they surface    | low      |
+| Probe                                                              | Surface                                                                   | Cost saved                                                | Priority |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------- | -------- |
+| `debug.tail.lastN({sessionKey,n,since?})`                          | recent agent events for one session                                       | replaces ~30 journal greps                                | **HIGH** |
+| `debug.session.state({sessionKey})`                                | lane state, worker liveness, idle timer remaining, queued replies, status | replaces grepping 6 files                                 | **HIGH** |
+| `debug.session.config({provider})`                                 | effective resolved provider + model with override chain                   | catches the timeoutSeconds-dead-code regression on commit | **HIGH** |
+| `wa.lastOutbound({chat,n})`                                        | last N WhatsApp outbound messages, including dropped/queued               | catches "Jarvis's reply never delivered" silently         | **HIGH** |
+| `cron.lastRun({jobId})`                                            | last run state, exit code, duration, output tail                          | replaces manual receipt-grep                              | medium   |
+| `cc-bridge.workerInfo({sessionKey})`                               | alive?, current cli sessionId, last turn duration, idle status            | catches stuck workers (needs plugin API to expose pool)   | medium   |
+| `wa.lastInbound({chat,n})`                                         | last N inbound messages for one chat                                      | symmetric companion to wa.lastOutbound                    | medium   |
+| `agent.dispatch.lastN({n})`                                        | last N chat.send / agent invocations gateway-wide                         | catches dispatch storms                                   | low      |
+| ~~`plugin.boot.status`~~ — **LIVE 2026-05-11** (Live table above). | per-plugin boot result (load ok / failed / disabled / version)            | catches M5 native-deps failures synchronously             | shipped  |
+| `auth.profile.status({provider,profile})`                          | last refresh time, last failure, billing state                            | catches OAuth refresh-token issues before they surface    | low      |
 
 ## Discipline for adding new probes
 

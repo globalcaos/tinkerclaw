@@ -34,6 +34,7 @@ import { nativeHookRelayHandlers } from "./server-methods/native-hook-relay.js";
 import { nodePendingHandlers } from "./server-methods/nodes-pending.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
 import { pluginHostHookHandlers } from "./server-methods/plugin-host-hooks.js";
+import { pluginProbesHandlers } from "./server-methods/plugin-probes.js";
 import { pushHandlers } from "./server-methods/push.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
@@ -120,6 +121,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...cronProbesHandlers,
   ...waProbesHandlers,
   ...gatewayProbesHandlers,
+  ...pluginProbesHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).

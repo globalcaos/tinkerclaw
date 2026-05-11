@@ -99,7 +99,7 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 
 ### M5. Plugin native-deps missing at boot
 
-- **diagnose_with:** journal grep for `failed to load plugin` and `Cannot find module '@sinclair/typebox'` near boot. (Future: the proposed `plugin.boot.status` probe — see probes.md — would return per-plugin `loaded|failed|disabled` synchronously, replacing the journal grep.)
+- **diagnose_with:** `plugin.boot.status({status:"error"})` returns every plugin that failed to load with `error`, `failurePhase`, and `failedAt`. The 2026-05-11 example we hit: `tinkerclaw-round-table` and `tinkerclaw-total-recall` both with `Cannot find module '@sinclair/typebox'`. Probe replaces the journal grep that used to be the only path.
 - **Origin:** `pnpm.onlyBuiltDependencies` in `package.json` is wiped on upstream merges. After a merge, `better-sqlite3`, `opusscript`, `@discordjs/opus` are no longer pre-built.
 - **Propagation:** plugin import fails with `Cannot find module '@sinclair/typebox'` or similar native-binding errors.
 - **Surface:** gateway boot warning, plugin disabled, features silently missing. Today's example: `tinkerclaw-round-table` and `tinkerclaw-total-recall` fail to load.
@@ -112,7 +112,7 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 
 ### M6. plugin configSchema missing
 
-- **diagnose_with:** journal at boot — search for `config validation error` or `plugin manifest invalid`. If the gateway refuses to start with the entire plugin set, this is M6 (cascading), not M5 (single-plugin). Future probe: `plugin.boot.status` would distinguish the two cases.
+- **diagnose_with:** `plugin.boot.status({status:"error"})` — if a plugin's `failurePhase` is `"validation"`, the manifest itself is invalid (M6 territory); `"load"` means import-time crash (M5 territory); `"register"` means the plugin loaded but its `register()` hook threw. The phase distinguishes the cascading-config-validation failure (gateway refuses to start at all) from a single-plugin native-deps issue.
 - **Origin:** since 2026-03-05, upstream requires `configSchema` field in every `openclaw.plugin.json`. Forgetting it = config validation error loop blocks ALL plugins (cascading).
 - **Surface:** gateway boot fails entirely.
 - **Resolution:** add `configSchema: {}` (at minimum) to every fork plugin manifest. See bible's "Plugin manifests" rule.
