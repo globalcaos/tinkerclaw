@@ -105,6 +105,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "debug.tail.lastN",
     "cron.lastRun",
     "cron.listJobs",
+    "wa.lastOutbound",
+    "wa.recentOutbound",
     "sessions.list",
     "sessions.get",
     "sessions.preview",
