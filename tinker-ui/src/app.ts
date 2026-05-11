@@ -664,6 +664,7 @@ type ActiveRunInfo = {
   sessionKey?: string;
   phase: ActiveRunPhase;
   currentTool?: string;
+  state?: "restarting";
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 
@@ -727,6 +728,8 @@ const DRAFT_STORAGE_KEY = "tinker-draft";
 const unconfirmedRuns = new Set<string>();
 // Pending delayed deletes for activeRuns — cancelled when a fallback model re-uses the same runId
 const pendingRunDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+// FORK: Timer handle for the 30s restart prune; cleared on rapid restarts.
+let restartPruneTimer: ReturnType<typeof setTimeout> | null = null;
 
 function saveActiveRuns() {
   try {
@@ -758,26 +761,67 @@ function scheduleUnconfirmedPrune() {
   if (unconfirmedRuns.size === 0) {
     return;
   }
-  setTimeout(() => {
-    let changed = false;
-    for (const id of unconfirmedRuns) {
-      activeRuns.delete(id);
-      changed = true;
+  // FORK: split — normal unconfirmed runs get 5s, restarting runs get 30s.
+  const normalIds: string[] = [];
+  const restartIds: string[] = [];
+  for (const id of unconfirmedRuns) {
+    const info = activeRuns.get(id);
+    if (info?.state === "restarting") {
+      restartIds.push(id);
+    } else {
+      normalIds.push(id);
     }
-    unconfirmedRuns.clear();
-    if (changed) {
-      saveActiveRuns();
-      // FORK: Also reset sending and update UI — without this, the thinking
-      // indicator stays visible after pruning stale runs on reconnect.
-      if (activeRuns.size === 0) {
-        sending = false;
+  }
+  if (normalIds.length > 0) {
+    setTimeout(() => {
+      let changed = false;
+      for (const id of normalIds) {
+        if (unconfirmedRuns.has(id)) {
+          activeRuns.delete(id);
+          unconfirmedRuns.delete(id);
+          changed = true;
+        }
       }
-      updateBudgetPanel();
-      updatePrefrontalTree();
-      updateChat();
-      updateBtn();
+      if (changed) {
+        saveActiveRuns();
+        // FORK: Also reset sending and update UI — without this, the thinking
+        // indicator stays visible after pruning stale runs on reconnect.
+        if (activeRuns.size === 0) {
+          sending = false;
+        }
+        updateBudgetPanel();
+        updatePrefrontalTree();
+        updateChat();
+        updateBtn();
+      }
+    }, 5000);
+  }
+  if (restartIds.length > 0) {
+    if (restartPruneTimer) {
+      clearTimeout(restartPruneTimer);
     }
-  }, 5000);
+    restartPruneTimer = setTimeout(() => {
+      restartPruneTimer = null;
+      let changed = false;
+      for (const id of restartIds) {
+        if (unconfirmedRuns.has(id)) {
+          activeRuns.delete(id);
+          unconfirmedRuns.delete(id);
+          changed = true;
+        }
+      }
+      if (changed) {
+        saveActiveRuns();
+        if (activeRuns.size === 0) {
+          sending = false;
+        }
+        updateBudgetPanel();
+        updatePrefrontalTree();
+        updateChat();
+        updateBtn();
+      }
+    }, 30000);
+  }
 }
 
 // Restore on load
@@ -998,8 +1042,12 @@ function gwConnect() {
     lastDeltaLen = 0;
     lastDeltaAt = 0;
     streamRunId = null;
-    activeRuns.clear();
-    saveActiveRuns();
+    // FORK: Preserve activeRuns during graceful restart (state set by shutdown handler).
+    const hasRestartingRuns = [...activeRuns.values()].some((r) => r.state === "restarting");
+    if (!hasRestartingRuns) {
+      activeRuns.clear();
+      saveActiveRuns();
+    }
     updateDots();
     updateBtn();
     updateChat();
@@ -1083,6 +1131,19 @@ function onFrame(f: unknown) {
             });
         })
         .catch((e) => console.error("connect:", e));
+      return;
+    }
+    // FORK: Graceful restart — mark active runs as "restarting" to hold the indicator.
+    // Intentionally returns early so onEvent() does not process the shutdown frame.
+    if (f.event === "shutdown" && f.payload?.restartExpectedMs != null) {
+      if (activeRuns.size > 0) {
+        for (const [, info] of activeRuns) {
+          info.state = "restarting";
+        }
+        saveActiveRuns();
+        startThinkingTick();
+        updateChat();
+      }
       return;
     }
     onEvent(f);
@@ -4175,10 +4236,12 @@ function renderThinkingIndicator(): string {
       const subagentTag = isSubagentDescendant
         ? ` <span class="thinking-subagent-tag" title="subagent">▸</span>`
         : "";
+      const badge =
+        info.state === "restarting" ? `<span class="restart-badge">RESTARTING</span>` : "";
       const row = `<div class="thinking-run${isSubagentDescendant ? " thinking-run-subagent" : ""}" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${subagentTag}${recipeLabel}</span>
-  <span class="thinking-elapsed">${elapsed}s</span>
+  ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
       if (isSubagentDescendant) {
