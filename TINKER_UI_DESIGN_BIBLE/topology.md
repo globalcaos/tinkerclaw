@@ -6,6 +6,13 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — process map, plugin inventory, channel inventory, workspace symlinks live here
 see_also: flows.md (how they talk), config-shape.md (what configures them)
+verify:
+  - name: gateway listening on 18789
+    cmd: ss -ltn 2>/dev/null | grep -q ':18789' || netstat -ltn 2>/dev/null | grep -q ':18789'
+  - name: cc-bridge plugin loaded
+    cmd: journalctl --user -u openclaw-gateway.service --since '15 minutes ago' --no-pager 2>&1 | grep -q 'tinkerclaw-cc-bridge'
+  - name: workspace symlinks present (skills NOT symlinked per design)
+    cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
 ---
 
 # Topology — components, ports, plugins, channels, symlinks

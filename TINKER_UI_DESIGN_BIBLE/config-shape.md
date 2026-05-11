@@ -6,6 +6,13 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — config-flow facts live here
 see_also: topology.md (what runs), auth-routing.md (which model is picked), tool-loop.md (why cc-bridge has its own timeout)
+verify:
+  - name: claude-code provider overlay resolves timeoutSeconds=600
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.config","--params",json.dumps({"provider":"claude-code"})],capture_output=True,text=True); assert "\"resolvedRequestTimeoutMs\": 600000" in r.stdout, r.stdout[-500:]'
+  - name: agents.defaults.timeoutSeconds is 900 in openclaw.json
+    cmd: python3 -c 'import json,os; assert json.load(open(os.path.expanduser("~/.openclaw/openclaw.json")))["agents"]["defaults"]["timeoutSeconds"] == 900'
+  - name: claude-code timeoutSeconds is NOT manually set in openclaw.json (must come from overlay)
+    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); cc = cfg["models"]["providers"]["claude-code"]; assert "timeoutSeconds" not in cc'
 ---
 
 # Config shape — openclaw.json flow into runtime

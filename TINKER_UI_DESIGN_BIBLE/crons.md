@@ -6,6 +6,13 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — cron facts live here. The actual job config is in ~/.openclaw/cron/jobs.json (auto-extractable).
 see_also: topology.md (where cron runs), failures.md (M9 auto-merge regressions)
+verify:
+  - name: daily-fork-sync cron is DISABLED (per J15 §5 — re-enable only after merge gate ships)
+    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/cron/jobs.json"))); job = next((j for j in cfg.get("jobs", []) if j.get("id") == "daily-fork-sync"), None); assert job is None or not job.get("enabled", False)'
+  - name: morning-briefing cron has at least one receipt
+    cmd: python3 -c 'import os; p = os.path.expanduser("~/.openclaw/cron/runs/morning-briefing.jsonl"); assert os.path.getsize(p) > 0'
+  - name: model-rank-refresh cron is registered
+    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/cron/jobs.json"))); assert any(j.get("id") == "model-rank-refresh" for j in cfg.get("jobs", []))'
 ---
 
 # Cron registry + auto-merge policy
