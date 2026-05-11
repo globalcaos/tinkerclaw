@@ -6,6 +6,17 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — failure-mode propagation lives here. Reads like a debug runbook.
 see_also: flows.md (the pipelines whose disruption causes these failures), lifecycles.md (which transitions don't fire), probes.md (what to call to diagnose)
+verify:
+  - name: M1 — claude-code idle timeout is 600000ms (NOT 120000)
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.config","--params",json.dumps({"provider":"claude-code"})],capture_output=True,text=True); assert "\"resolvedRequestTimeoutMs\": 600000" in r.stdout, r.stdout[-500:]'
+  - name: M3 fork RPC alive — config.openExternalFile
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","config.openExternalFile","--params",json.dumps({"path":"/dev/null"})],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-500:]'
+  - name: M3 fork RPC alive — files.resolveBareName
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","files.resolveBareName","--params",json.dumps({"name":"BRIEFING.md"})],capture_output=True,text=True); assert "matches" in r.stdout, r.stdout[-500:]'
+  - name: M3 fork RPC alive — briefing.resolve
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","briefing.resolve"],capture_output=True,text=True); assert ("\"path\"" in r.stdout) or ("\"content\"" in r.stdout), r.stdout[-500:]'
+  - name: M3 fork RPC alive — debug.dumpUiSnapshot
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-500:]'
 ---
 
 # Failure-mode map
