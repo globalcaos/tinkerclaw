@@ -31,28 +31,34 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "is this string safe to publish?" → `pii-boundary.md`
    - "where does memory dir X live, who writes it?" → `memory-layout.md`
    - "how do subagents and recipes work?" → `subagents-and-recipes.md`
+   - "how should fork-side unit tests be scoped and named?" → `unit-tests.md`
    - "what's the intent / decision / don't-regress for §X.Y?" → `bible.md`
+   - "how does this UI panel work / what's the visual convention?" → `tinker-ui.md`
+   - "has this bug class been seen before?" → `bug-log.md`
 3. **Trust the frontmatter `last_verified` + `last_verified_commit` anchors.** Anything older than the most recent file in `git log src/` referenced by the section should be re-verified before relying on it.
 4. **Do NOT re-narrate facts that live in another file.** Cross-reference them with `see also:` annotations. Single owner per fact.
 
 ## Files
 
-| File                       | Compresses                                                                                                                                                                | Generation                       | ~Lines |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------ |
-| `INDEX.md`                 | This map                                                                                                                                                                  | hand                             | ~80    |
-| `bible.md`                 | Narrative, intent, decisions, don't-regress rules. The original 3,085-line file, preserved verbatim. Will slim incrementally as the twelve structural files absorb facts. | hand                             | ~3085  |
-| `flows.md`                 | Sequence diagrams (Mermaid) for the top pipelines                                                                                                                         | hand + auto-validatable          | ~300   |
-| `lifecycles.md`            | State machines for sessions, workers, messages, recovery                                                                                                                  | hand + auto-validatable          | ~200   |
-| `topology.md`              | Components, ports, plugins, channels, workspace symlinks                                                                                                                  | mixed                            | ~250   |
-| `config-shape.md`          | Settings flow from openclaw.json to runtime; override chains; dead-code traps                                                                                             | mixed                            | ~400   |
-| `failures.md`              | Failure-mode propagation maps                                                                                                                                             | hand                             | ~300   |
-| `probes.md`                | Inspection primitives registry (live + proposed)                                                                                                                          | auto from gateway methods + hand | ~150   |
-| `tool-loop.md`             | Why cc-bridge tool calls don't round-trip through OpenClaw exec                                                                                                           | hand                             | ~150   |
-| `auth-routing.md`          | Cost-aware model routing, failover, billing tiers                                                                                                                         | mixed                            | ~150   |
-| `crons.md`                 | Cron registry + auto-merge policy                                                                                                                                         | auto from jobs.json + hand       | ~150   |
-| `pii-boundary.md`          | Public-OK vs private-only, leak-grep regex, sanitization workflow                                                                                                         | hand                             | ~100   |
-| `memory-layout.md`         | Workspace memory directory layout, writers, retention                                                                                                                     | mixed                            | ~150   |
-| `subagents-and-recipes.md` | Subagent spawn, recipe-state CLI, Prefrontal observability                                                                                                                | hand                             | ~150   |
+| File                       | Compresses                                                                                                                                                                                         | Generation                       | ~Lines |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------ |
+| `INDEX.md`                 | This map                                                                                                                                                                                           | hand                             | ~80    |
+| `bible.md`                 | Narrative, intent, decisions, don't-regress rules. Slimmed 2026-05-11 from 3,085 lines to ~1,730 after extracting tinker-ui.md and bug-log.md. Continues to slim as structural files absorb facts. | hand                             | ~1730  |
+| `tinker-ui.md`             | Layout, visual language, UI feature registry (former bible §3, §4, §5.1-§5.65, migrated 2026-05-11)                                                                                                | hand                             | ~1095  |
+| `bug-log.md`               | Historical bug-fix log — root causes, fixes, lessons (former bible §7). New fixes are appended here, not to bible.md.                                                                              | hand                             | ~290   |
+| `flows.md`                 | Sequence diagrams (Mermaid) for the top pipelines                                                                                                                                                  | hand + auto-validatable          | ~300   |
+| `lifecycles.md`            | State machines for sessions, workers, messages, recovery                                                                                                                                           | hand + auto-validatable          | ~200   |
+| `topology.md`              | Components, ports, plugins, channels, workspace symlinks                                                                                                                                           | mixed                            | ~250   |
+| `config-shape.md`          | Settings flow from openclaw.json to runtime; override chains; dead-code traps                                                                                                                      | mixed                            | ~400   |
+| `failures.md`              | Failure-mode propagation maps                                                                                                                                                                      | hand                             | ~300   |
+| `probes.md`                | Inspection primitives registry (live + proposed)                                                                                                                                                   | auto from gateway methods + hand | ~150   |
+| `tool-loop.md`             | Why cc-bridge tool calls don't round-trip through OpenClaw exec                                                                                                                                    | hand                             | ~150   |
+| `auth-routing.md`          | Cost-aware model routing, failover, billing tiers                                                                                                                                                  | mixed                            | ~150   |
+| `crons.md`                 | Cron registry + auto-merge policy                                                                                                                                                                  | auto from jobs.json + hand       | ~150   |
+| `pii-boundary.md`          | Public-OK vs private-only, leak-grep regex, sanitization workflow                                                                                                                                  | hand                             | ~100   |
+| `memory-layout.md`         | Workspace memory directory layout, writers, retention                                                                                                                                              | mixed                            | ~150   |
+| `subagents-and-recipes.md` | Subagent spawn, recipe-state CLI, Prefrontal observability                                                                                                                                         | hand                             | ~150   |
+| `unit-tests.md`            | Fork-side unit-test scoping, naming, bible-coherence rules, priority backfill order                                                                                                                | hand                             | ~130   |
 
 ## Discipline
 
