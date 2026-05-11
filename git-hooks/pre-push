@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# FORK 2026-05-11 — pre-push gate for the public fork.
+#
+# Today: PII leak grep (see scripts/pii-pre-push.sh).
+# Future: J15 `pnpm bible:invariants` gate on push to develop/main can be
+# added here once the runner is stable across all hosts.
+
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+PII_SCRIPT="$ROOT_DIR/scripts/pii-pre-push.sh"
+
+if [[ ! -x "$PII_SCRIPT" ]]; then
+  echo "[pre-push] missing: $PII_SCRIPT (run chmod +x and try again)" >&2
+  exit 1
+fi
+
+exec "$PII_SCRIPT" "$@"

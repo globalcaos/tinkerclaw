@@ -25,6 +25,7 @@ import { doctorHandlers } from "./server-methods/doctor.js";
 import { execApprovalsHandlers } from "./server-methods/exec-approvals.js";
 import { filesResolveBareHandlers } from "./server-methods/files-resolve-bare.js";
 import { forensicHandlers } from "./server-methods/forensic.js";
+import { gatewayProbesHandlers } from "./server-methods/gateway-probes.js";
 import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsAuthStatusHandlers } from "./server-methods/models-auth-status.js";
@@ -118,6 +119,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...debugProbesHandlers,
   ...cronProbesHandlers,
   ...waProbesHandlers,
+  ...gatewayProbesHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).

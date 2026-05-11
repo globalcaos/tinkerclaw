@@ -107,6 +107,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "cron.listJobs",
     "wa.lastOutbound",
     "wa.recentOutbound",
+    "gateway.stuckSessions",
+    "gateway.diagnosticSessionCount",
     "sessions.list",
     "sessions.get",
     "sessions.preview",

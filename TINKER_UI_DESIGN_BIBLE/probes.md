@@ -21,6 +21,10 @@ verify:
     cmd: python3 -c 'import subprocess,os; r=subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-500:]; assert os.path.isfile(os.path.expanduser("~/.openclaw/data/tinker-ui-snapshot.html"))'
   - name: wa.recentOutbound probe is live
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","wa.recentOutbound","--params",json.dumps({"n":1})],capture_output=True,text=True,timeout=25); assert "\"rows\"" in r.stdout, r.stdout[-500:]'
+  - name: gateway.stuckSessions probe is live
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.stuckSessions"],capture_output=True,text=True,timeout=25); assert "stuckCount" in r.stdout, r.stdout[-500:]'
+  - name: gateway.diagnosticSessionCount probe is live
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.diagnosticSessionCount"],capture_output=True,text=True,timeout=25); assert "byState" in r.stdout, r.stdout[-500:]'
 ---
 
 # Probes — inspection primitives registry
@@ -45,6 +49,8 @@ A probe is **deterministic** (same input → same output, clocks masked), **boun
 | `forensic.{getMode,getLive,listDumps,getDump,...}` (RPC)                          | request/response live capture + dumps                                    | JSON                                                                                                          | <100ms    | `src/gateway/server-methods/forensic.ts`                             |
 | `whatsapp.history.search` (RPC)                                                   | (currently broken — known issue)                                         | n/a                                                                                                           | n/a       | re-enable in `tinkerclaw-whatsapp`                                   |
 | sqlite3 read on `~/.openclaw/data/whatsapp-history.db`                            | WhatsApp message store                                                   | rows                                                                                                          | <500ms    | direct DB read                                                       |
+| `gateway.stuckSessions({thresholdMs?})` (RPC)                                     | live in-memory `diagnosticSessionStates` map, processing sessions only   | `{stuckCount, stuck[{sessionKey,sessionId,ageMs,queueDepth,lastToolCall}], totalSessions}`                    | <50ms     | `src/gateway/server-methods/gateway-probes.ts`, FORK 2026-05-11      |
+| `gateway.diagnosticSessionCount()` (RPC)                                          | size + state breakdown of the diagnostic session map                     | `{total, byState:{processing,idle,waiting}}`                                                                  | <50ms     | `src/gateway/server-methods/gateway-probes.ts`, FORK 2026-05-11      |
 
 ## Proposed probes (gaps)
 
@@ -57,7 +63,7 @@ Each row is a surface where investigation is expensive today.
 | `debug.session.config({provider})`        | effective resolved provider + model with override chain                   | catches the timeoutSeconds-dead-code regression on commit | **HIGH** |
 | `wa.lastOutbound({chat,n})`               | last N WhatsApp outbound messages, including dropped/queued               | catches "Jarvis's reply never delivered" silently         | **HIGH** |
 | `cron.lastRun({jobId})`                   | last run state, exit code, duration, output tail                          | replaces manual receipt-grep                              | medium   |
-| `cc-bridge.workerInfo({sessionKey})`      | alive?, current cli sessionId, last turn duration, idle status            | catches stuck workers                                     | medium   |
+| `cc-bridge.workerInfo({sessionKey})`      | alive?, current cli sessionId, last turn duration, idle status            | catches stuck workers (needs plugin API to expose pool)   | medium   |
 | `wa.lastInbound({chat,n})`                | last N inbound messages for one chat                                      | symmetric companion to wa.lastOutbound                    | medium   |
 | `agent.dispatch.lastN({n})`               | last N chat.send / agent invocations gateway-wide                         | catches dispatch storms                                   | low      |
 | `plugin.boot.status`                      | per-plugin boot result (load ok / failed / disabled / version)            | catches M5 native-deps failures synchronously             | medium   |
