@@ -228,10 +228,12 @@ async function main() {
   const GATEWAY_DOWN_PATTERNS = [
     /Gateway call failed/i,
     /gateway timeout after \d+ms/i,
+    /gateway closed \(\d{4}/i, // e.g. "gateway closed (1006 abnormal closure …)" — transient WS dropout
     /ECONNREFUSED/i,
     /connection refused/i,
     /Unable to connect to gateway/i,
     /websocket .*(failed|closed)/i,
+    /abnormal closure/i,
   ];
   // Stale-gateway detection: the gateway IS responding but is running an old
   // dist that doesn't have the method this verify expects. This is a transient
