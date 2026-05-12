@@ -110,6 +110,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "gateway.stuckSessions",
     "gateway.diagnosticSessionCount",
     "plugin.boot.status",
+    "gateway.flow.replay",
+    "gateway.observability.snapshot",
     "sessions.list",
     "sessions.get",
     "sessions.preview",

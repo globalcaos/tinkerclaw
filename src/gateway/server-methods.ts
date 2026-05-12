@@ -17,7 +17,9 @@ import { configHandlers } from "./server-methods/config.js";
 import { connectHandlers } from "./server-methods/connect.js";
 import { cronProbesHandlers } from "./server-methods/cron-probes.js";
 import { cronHandlers } from "./server-methods/cron.js";
+import { debugFlowReplayHandlers } from "./server-methods/debug-flow-replay.js";
 import { debugProbesHandlers } from "./server-methods/debug-probes.js";
+import { debugSimulateHandlers } from "./server-methods/debug-simulate.js";
 import { debugUiSnapshotHandlers } from "./server-methods/debug-ui-snapshot.js";
 import { deviceHandlers } from "./server-methods/devices.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
@@ -33,6 +35,7 @@ import { modelsHandlers } from "./server-methods/models.js";
 import { nativeHookRelayHandlers } from "./server-methods/native-hook-relay.js";
 import { nodePendingHandlers } from "./server-methods/nodes-pending.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { observabilitySnapshotHandlers } from "./server-methods/observability-snapshot.js";
 import { pluginHostHookHandlers } from "./server-methods/plugin-host-hooks.js";
 import { pluginProbesHandlers } from "./server-methods/plugin-probes.js";
 import { pushHandlers } from "./server-methods/push.js";
@@ -122,6 +125,9 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...waProbesHandlers,
   ...gatewayProbesHandlers,
   ...pluginProbesHandlers,
+  ...debugFlowReplayHandlers,
+  ...observabilitySnapshotHandlers,
+  ...debugSimulateHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).
