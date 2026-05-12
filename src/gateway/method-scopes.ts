@@ -112,6 +112,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "plugin.boot.status",
     "gateway.flow.replay",
     "gateway.observability.snapshot",
+    "gateway.slo.burnRate",
     "sessions.list",
     "sessions.get",
     "sessions.preview",

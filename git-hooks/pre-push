@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# FORK 2026-05-11 — pre-push gate for the public fork.
+# FORK 2026-05-11/12 — pre-push gate for the public fork.
 #
-# Two gates run in order; both must pass or the push is blocked:
+# Three gates run in order; all must pass or the push is blocked:
 #   1. PII leak grep (scripts/pii-pre-push.sh) — bypass: PII_GUARD=off
 #   2. Bible invariants (pnpm bible:invariants) — bypass: BIBLE_GUARD=off
+#   3. Recurring-pattern linter (scripts/lint-recurring-patterns.mjs)
+#      — bypass: PATTERN_LINT=off
 #
 # The invariants runner is tolerant of "gateway down" and "gateway stale"
 # (running on an older dist than HEAD). Those count as SKIP, not FAIL. A
@@ -45,5 +47,28 @@ else
     echo "" >&2
     echo "Bypass (for intentional WIP pushes to develop): BIBLE_GUARD=off git push" >&2
     exit 1
+  fi
+fi
+
+# Gate 3 — recurring-pattern linter (FORK 2026-05-12)
+# Catches code shapes that match historical bug-log.md classes
+# (ui-state-clear ×7, more to come). Fast (<2s); always-on; bypasses are
+# explicit when a developer intentionally adds a new instance with a
+# "preserve" comment.
+if [[ "${PATTERN_LINT:-}" == "off" ]]; then
+  echo "[pattern-lint] PATTERN_LINT=off — skipping (bypass acknowledged)" >&2
+else
+  if [[ -x "$ROOT_DIR/scripts/lint-recurring-patterns.mjs" ]]; then
+    if ! node "$ROOT_DIR/scripts/lint-recurring-patterns.mjs"; then
+      echo "" >&2
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+      echo "🛑 BLOCKED: recurring-pattern linter found a historical bug shape" >&2
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+      echo "" >&2
+      echo "See bug-log.md for the failure-class taxonomy. Bypass with" >&2
+      echo "    PATTERN_LINT=off git push" >&2
+      echo "only if the diff is intentional AND you've added a preserve comment." >&2
+      exit 1
+    fi
   fi
 fi
