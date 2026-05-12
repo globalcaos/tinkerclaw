@@ -6,7 +6,7 @@ last_verified: 2026-05-11
 last_verified_commit: HEAD
 verify:
   - name: bible folder exists with expected count of files
-    cmd: python3 -c 'import glob,os; assert len(glob.glob(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/*.md"))) >= 17'
+    cmd: python3 -c 'import glob,os; assert len(glob.glob(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/*.md"))) >= 18'
   - name: gateway is reachable
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","gateway.identity.get"],capture_output=True,text=True); assert "deviceId" in r.stdout, r.stdout[-500:]'
 ---
@@ -36,6 +36,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "what's the public-fork branch model / push authority / merge gate?" → `branch-policy.md`
    - "who owns this folder / which agent can safely change this file?" → `ownership.md`
    - "what design rule do I follow when adding new code?" → `design-principles.md`
+   - "what service-level objectives are we tracking and how do I read the burn?" → `slos.md`
    - "what's the intent / decision / don't-regress for §X.Y?" → `bible.md`
    - "how does this UI panel work / what's the visual convention?" → `tinker-ui.md`
    - "has this bug class been seen before?" → `bug-log.md`
@@ -67,6 +68,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 | `branch-policy.md`         | Public-fork branch model — develop vs main, push authority, README protection, PII pre-push hook (former bible §5.78, migrated 2026-05-11)                                                         | hand                             | ~100   |
 | `ownership.md`             | Folder-level ownership map — Architect vs Jarvis vs Upstream zones, concurrency rules, upstream-merge protocol (2026-05-12)                                                                        | hand                             | ~80    |
 | `design-principles.md`     | Codified design rules — 16 numbered principles spanning code organization, concurrency, observability, process. Every other bible file's "don't regress" clauses point back here (2026-05-12)      | hand                             | ~200   |
+| `slos.md`                  | Service-level objectives + burn-rate computation — three starter SLOs (cron-success-7d, cron-freshness, morning-briefing-latency) backed by `gateway.slo.burnRate` (2026-05-12)                    | hand                             | ~90    |
 
 ## Discipline
 

@@ -100,6 +100,7 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 ### M5. Plugin native-deps missing at boot
 
 - **diagnose_with:** `plugin.boot.status({status:"error"})` returns every plugin that failed to load with `error`, `failurePhase`, and `failedAt`. The 2026-05-11 example we hit: `tinkerclaw-round-table` and `tinkerclaw-total-recall` both with `Cannot find module '@sinclair/typebox'`. Probe replaces the journal grep that used to be the only path.
+- **manifest_via:** `debug.simulate.pluginLoadFail({pluginId:"__simulated-test", failurePhase:"load"})` (admin-scope) injects a fake plugin record with `status:"error"` directly into the in-memory registry; calling `plugin.boot.status --params '{"status":"error"}'` immediately after must include it. Cleanup with `debug.simulate.pluginLoadFail --params '{"action":"clear"}'`. Round-trip-tests the diagnose_with claim above.
 - **Origin:** `pnpm.onlyBuiltDependencies` in `package.json` is wiped on upstream merges. After a merge, `better-sqlite3`, `opusscript`, `@discordjs/opus` are no longer pre-built.
 - **Propagation:** plugin import fails with `Cannot find module '@sinclair/typebox'` or similar native-binding errors.
 - **Surface:** gateway boot warning, plugin disabled, features silently missing. Today's example: `tinkerclaw-round-table` and `tinkerclaw-total-recall` fail to load.

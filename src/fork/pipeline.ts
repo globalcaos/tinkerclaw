@@ -164,3 +164,112 @@ export function withTrace<I, O>(opts: {
       }
     };
 }
+
+// ----------------------------------------------------------------------------
+// Correlation IDs — design-principles.md #10 ("one ID threads through everything").
+// ----------------------------------------------------------------------------
+
+/**
+ * The shape every operation should carry: an explicit `correlationId` field.
+ * Existing fork operations use `runId` for chat turns and `sessionKey` for
+ * session-scoped events. `correlationId` is the unifying name for new code;
+ * legacy callers map their existing ID into this field.
+ */
+export type WithCorrelationId<I> = I & { correlationId: string };
+
+let mintCounter = 0;
+/**
+ * Mint a fresh correlation ID. Format: `t<base36-ts>-<base36-counter>`.
+ * The timestamp prefix is the only part that needs to be human-decodable;
+ * the counter is just for uniqueness when many IDs are minted in the same
+ * millisecond.
+ */
+export function mintCorrelationId(prefix = "t"): string {
+  const ts = Date.now().toString(36);
+  const seq = (mintCounter = (mintCounter + 1) % 1_000_000).toString(36);
+  return `${prefix}${ts}-${seq.padStart(4, "0")}`;
+}
+
+/**
+ * Ensure every input flowing through the pipeline has a correlationId.
+ * If the caller already supplied one, it's preserved; otherwise a fresh
+ * one is minted and attached. The wrapped function receives the input
+ * with the guaranteed field, so downstream code can rely on it.
+ *
+ * Combine with `withTrace` and `includeInput: (i) => ({correlationId: i.correlationId})`
+ * to thread the ID into every log line.
+ */
+export function withCorrelationId<I, O>(
+  prefix?: string,
+): AsyncWrapper<I, O> & {
+  attach: (input: I) => WithCorrelationId<I>;
+} {
+  const wrapper: AsyncWrapper<I, O> =
+    (next) =>
+    async (input: I): Promise<O> => {
+      const enriched = attach(input);
+      return next(enriched);
+    };
+  const attach = (input: I): WithCorrelationId<I> => {
+    const existing = (input as { correlationId?: string } | undefined)?.correlationId;
+    if (typeof existing === "string" && existing.length > 0) {
+      return input as WithCorrelationId<I>;
+    }
+    return {
+      ...(input as object),
+      correlationId: mintCorrelationId(prefix),
+    } as WithCorrelationId<I>;
+  };
+  return Object.assign(wrapper, { attach });
+}
+
+// ----------------------------------------------------------------------------
+// Completion tracking — design-principles.md #12 ("negative evidence is logged too").
+// ----------------------------------------------------------------------------
+
+/**
+ * Tracks in-flight operations and logs a `${label}.unfinished` event if a
+ * matching completion event doesn't fire within `timeoutMs`. The wrapper
+ * starts a timer on entry; the timer is cleared on success or failure (the
+ * inner `next()` resolves/rejects). If the timer fires first — typically
+ * because the inner call hung beyond the timeout window — the unfinished
+ * event is emitted with the correlationId for forensic replay later.
+ *
+ * NOT a timeout enforcer. This wrapper only OBSERVES; it does not abort.
+ * Combine with `withTimeout(...)` if you also want to bail out.
+ *
+ * Bible anchor: design-principles.md #12. Bug-log analogue: 7 entries
+ * of class `event-ordering` boil down to "lifecycle:end never fired and
+ * we didn't notice" — exactly this surface.
+ */
+export function withCompletionTracking<I, O>(opts: {
+  label: string;
+  timeoutMs: number;
+  logger?: StructuredLogger;
+  includeInput?: (input: I) => Record<string, unknown>;
+}): AsyncWrapper<I, O> {
+  const { label, timeoutMs, logger = DEFAULT_LOGGER, includeInput } = opts;
+  if (timeoutMs <= 0) throw new Error(`withCompletionTracking: timeoutMs must be > 0`);
+  return (next) =>
+    (input: I): Promise<O> => {
+      const fields = includeInput ? includeInput(input) : {};
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        const warn = logger.warn ?? logger.info;
+        warn(`${label}.unfinished`, { timeoutMs, ...fields });
+      }, timeoutMs);
+      return next(input).then(
+        (value) => {
+          settled = true;
+          clearTimeout(timer);
+          return value;
+        },
+        (err) => {
+          settled = true;
+          clearTimeout(timer);
+          throw err;
+        },
+      );
+    };
+}

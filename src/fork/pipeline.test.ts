@@ -13,6 +13,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   compose,
+  mintCorrelationId,
+  withCompletionTracking,
+  withCorrelationId,
   withRetry,
   withTimeout,
   withTrace,
@@ -185,6 +188,104 @@ describe("withTrace", () => {
     for (const evt of events) {
       expect(evt.runId).toBe("abc123");
     }
+  });
+});
+
+describe("mintCorrelationId", () => {
+  it("mints distinct IDs across rapid calls", () => {
+    const ids = new Set<string>();
+    for (let i = 0; i < 1000; i += 1) ids.add(mintCorrelationId());
+    expect(ids.size).toBe(1000);
+  });
+
+  it("honours the prefix argument", () => {
+    expect(mintCorrelationId("xyz-")).toMatch(/^xyz-/);
+  });
+});
+
+describe("withCorrelationId", () => {
+  it("mints a fresh ID when input lacks one", async () => {
+    let observed: { correlationId: string } | undefined;
+    const next: AsyncFn<object, void> = async (input) => {
+      observed = input as { correlationId: string };
+    };
+    const wrapped = withCorrelationId<object, void>()(next);
+    await wrapped({ foo: "bar" });
+    expect(observed?.correlationId).toMatch(/^t/);
+  });
+
+  it("preserves an existing correlationId", async () => {
+    let observed: { correlationId: string } | undefined;
+    const next: AsyncFn<object, void> = async (input) => {
+      observed = input as { correlationId: string };
+    };
+    const wrapped = withCorrelationId<object, void>()(next);
+    await wrapped({ correlationId: "existing-id" });
+    expect(observed?.correlationId).toBe("existing-id");
+  });
+
+  it("exposes attach() for callers that need the ID before invoking", async () => {
+    const wrapper = withCorrelationId<{ foo: string }, void>();
+    const attached = wrapper.attach({ foo: "bar" });
+    expect(attached.correlationId).toMatch(/^t/);
+    expect(attached.foo).toBe("bar");
+  });
+});
+
+describe("withCompletionTracking", () => {
+  it("does not warn when the inner call completes in time", async () => {
+    const events: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const logger: StructuredLogger = {
+      info: (event, fields) => events.push({ event, fields }),
+      warn: (event, fields) => events.push({ event, fields }),
+    };
+    const next: AsyncFn<{ runId: string }, string> = async () => "ok";
+    const wrapped = withCompletionTracking<{ runId: string }, string>({
+      label: "turn",
+      timeoutMs: 100,
+      logger,
+    })(next);
+    await wrapped({ runId: "abc" });
+    expect(events.find((e) => e.event === "turn.unfinished")).toBeUndefined();
+  });
+
+  it("warns when the inner call hangs past the timeout", async () => {
+    const events: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const logger: StructuredLogger = {
+      info: (event, fields) => events.push({ event, fields }),
+      warn: (event, fields) => events.push({ event, fields }),
+    };
+    // inner hangs for 100ms; tracker fires at 20ms.
+    const next: AsyncFn<{ runId: string }, string> = () =>
+      new Promise((r) => setTimeout(() => r("late"), 100));
+    const wrapped = withCompletionTracking<{ runId: string }, string>({
+      label: "turn",
+      timeoutMs: 20,
+      logger,
+      includeInput: (i) => ({ runId: i.runId }),
+    })(next);
+    const promise = wrapped({ runId: "abc" });
+    // Allow the tracker to fire
+    await new Promise((r) => setTimeout(r, 50));
+    expect(events.find((e) => e.event === "turn.unfinished")?.fields.runId).toBe("abc");
+    // Make sure we also unblock the original promise so vitest doesn't dangle
+    await promise;
+  });
+
+  it("does not abort the inner call — observation only", async () => {
+    const logger: StructuredLogger = { info: () => {}, warn: () => {} };
+    const next: AsyncFn<void, string> = () =>
+      new Promise((r) => setTimeout(() => r("eventually"), 50));
+    const wrapped = withCompletionTracking<void, string>({
+      label: "op",
+      timeoutMs: 10,
+      logger,
+    })(next);
+    await expect(wrapped()).resolves.toBe("eventually");
+  });
+
+  it("rejects timeoutMs <= 0 at construction", () => {
+    expect(() => withCompletionTracking({ label: "x", timeoutMs: 0 })).toThrow(/timeoutMs/);
   });
 });
 

@@ -42,6 +42,7 @@ import { pushHandlers } from "./server-methods/push.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
+import { sloBurnRateHandlers } from "./server-methods/slo-burn-rate.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
 import { toolsCatalogHandlers } from "./server-methods/tools-catalog.js";
@@ -128,6 +129,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...debugFlowReplayHandlers,
   ...observabilitySnapshotHandlers,
   ...debugSimulateHandlers,
+  ...sloBurnRateHandlers,
   // FORK 2026-04-20: provider-agnostic subagent-spawn RPC (see src/fork/subagents-rpc.ts).
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).
