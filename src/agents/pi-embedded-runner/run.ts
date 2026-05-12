@@ -1701,6 +1701,14 @@ export async function runEmbeddedPiAgent(
                 stage: "prompt",
               });
               logPromptFailoverDecision("surface_error");
+              // FORK 2026-05-12: persist session.status="failed" synchronously
+              // (failures.md M10's open follow-up). Best-effort; never blocks the throw.
+              await (
+                await import("../../fork/attempt-hooks.js")
+              ).markFailedOnSurfaceError({
+                sessionKey: params.sessionKey,
+                reason: promptFailoverReason ?? "surface_error",
+              });
             }
             throw promptError;
           }

@@ -190,6 +190,61 @@ export function getAmygdalaNudge(): string[] | undefined {
  * ENGRAM Phase 1.2: Inject a retrieval pack of relevant past events
  * into the system prompt. Uses FTS search + recency boost + MMR dedup.
  */
+/**
+ * FORK 2026-05-12 — synchronous session-status transition on surface_error
+ * (failures.md M10's open follow-up).
+ *
+ * The upstream embedded runner throws on `surface_error` without
+ * persisting `session.status = "failed"` to disk. The recovery path
+ * (`markRunningMainSessionsAsInterrupted` at gateway boot) catches it
+ * eventually, but the on-disk state stays stale until the next reboot.
+ * This hook is called from `run.ts` at the surface_error throw site
+ * (one-line touch — the merge guardian wiring check enforces the call
+ * survives upstream merges).
+ *
+ * Behaviour:
+ *   - Scans every agent's `sessions.json` store under `<state>/agents/`.
+ *   - Whichever store contains `sessionKey`, transition its entry from
+ *     `status:"running"` → `status:"failed"` with `abortedLastRun:true`,
+ *     `endedAt:Date.now()`.
+ *   - Best-effort: a failure here never throws back — we DO NOT want to
+ *     mask the original surface_error with a session-store I/O error.
+ *
+ * Round-trip-tested with `debug.simulate` (future: a `markFailed` mode).
+ */
+export async function markFailedOnSurfaceError(params: {
+  sessionKey: string | undefined;
+  reason: string;
+}): Promise<void> {
+  if (!params.sessionKey) return;
+  try {
+    const [{ resolveStateDir }, { resolveAgentSessionDirs }, { markSessionFailed }] =
+      await Promise.all([
+        import("../config/paths.js"),
+        import("../agents/session-dirs.js"),
+        import("../agents/main-session-restart-recovery.js"),
+      ]);
+    const stateDir = resolveStateDir();
+    const sessionDirs = await resolveAgentSessionDirs(stateDir);
+    const { default: pathMod } = await import("node:path");
+    // Try each agent's store path; mark in the first one that contains
+    // the sessionKey. markSessionFailed's internal guard (`status !== "running"`)
+    // safely no-ops on stores that don't have the entry as running.
+    for (const sessionsDir of sessionDirs) {
+      const storePath = pathMod.join(sessionsDir, "sessions.json");
+      await markSessionFailed({
+        storePath,
+        sessionKey: params.sessionKey,
+        reason: params.reason,
+      }).catch(() => {
+        // ignore per-store errors; we tried.
+      });
+    }
+  } catch {
+    // best-effort only — never block on the side effect
+  }
+}
+
 export async function injectRetrievalPack(
   sessionManager: SessionManager,
   systemPromptText: string,
