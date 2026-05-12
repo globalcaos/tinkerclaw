@@ -92,7 +92,7 @@ function buildResumeMessage(): string {
   );
 }
 
-async function markSessionFailed(params: {
+export async function markSessionFailed(params: {
   storePath: string;
   sessionKey: string;
   reason: string;

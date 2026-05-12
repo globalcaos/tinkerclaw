@@ -13,6 +13,7 @@ import {
   waitForCredsSaveQueueWithTimeout,
   type CredsQueueWaitResult,
 } from "./creds-persistence.js";
+import { readWhatsmeowDeviceIdentity } from "./identity-whatsmeow-db.js";
 import { resolveComparableIdentity, type WhatsAppSelfIdentity } from "./identity.js";
 import { resolveUserPath, type WebChannel } from "./text-runtime.js";
 export { hasWebCredsSync, resolveWebCredsBackupPath, resolveWebCredsPath };
@@ -410,22 +411,49 @@ export async function logoutWeb(params: {
   return true;
 }
 
+/**
+ * FORK 2026-05-12 — when both creds.json fields are absent (or that file
+ * doesn't exist), fall back to the whatsmeow SQLite store. The wm backend
+ * never writes a JSON file; its `whatsmeow_device` row carries both JID
+ * and LID. Closes failures.md M7's "open follow-up: populate self.lid
+ * from whatsmeow auth state."
+ */
+function mergeWithWhatsmeowFallback(
+  authDir: string,
+  fromJson: { jid: string | null; lid: string | null },
+): { jid: string | null; lid: string | null } {
+  if (fromJson.jid && fromJson.lid) {
+    return fromJson;
+  }
+  const fromWm = readWhatsmeowDeviceIdentity(authDir);
+  if (!fromWm) {
+    return fromJson;
+  }
+  return {
+    jid: fromJson.jid ?? fromWm.jid ?? null,
+    lid: fromJson.lid ?? fromWm.lid ?? null,
+  };
+}
+
 export function readWebSelfId(authDir: string = resolveDefaultWebAuthDir()) {
   // Read the cached WhatsApp Web identity (jid + E.164) from disk if present.
+  const resolvedAuthDir = resolveUserPath(authDir);
   try {
-    const credsPath = resolveWebCredsPath(resolveUserPath(authDir));
-    if (!fsSync.existsSync(credsPath)) {
-      return emptyWebSelfId();
-    }
-    const raw = fsSync.readFileSync(credsPath, "utf-8");
-    const parsed = JSON.parse(raw) as { me?: { id?: string; lid?: string } } | undefined;
-    const identity = resolveComparableIdentity(
-      {
+    const credsPath = resolveWebCredsPath(resolvedAuthDir);
+    let fromJson: { jid: string | null; lid: string | null } = { jid: null, lid: null };
+    if (fsSync.existsSync(credsPath)) {
+      const raw = fsSync.readFileSync(credsPath, "utf-8");
+      const parsed = JSON.parse(raw) as { me?: { id?: string; lid?: string } } | undefined;
+      fromJson = {
         jid: parsed?.me?.id ?? null,
         lid: parsed?.me?.lid ?? null,
-      },
-      authDir,
-    );
+      };
+    }
+    const merged = mergeWithWhatsmeowFallback(resolvedAuthDir, fromJson);
+    if (!merged.jid && !merged.lid) {
+      return emptyWebSelfId();
+    }
+    const identity = resolveComparableIdentity(merged, resolvedAuthDir);
     return {
       e164: identity.e164 ?? null,
       jid: identity.jid ?? null,
@@ -441,25 +469,22 @@ export async function readWebSelfIdentity(
   fallback?: { id?: string | null; lid?: string | null } | null,
 ): Promise<WhatsAppSelfIdentity> {
   const resolvedAuthDir = resolveUserPath(authDir);
+  let fromJson: { jid: string | null; lid: string | null } = { jid: null, lid: null };
   try {
     const raw = await fs.readFile(resolveWebCredsPath(resolvedAuthDir), "utf-8");
     const parsed = JSON.parse(raw) as { me?: { id?: string; lid?: string } } | undefined;
-    return resolveComparableIdentity(
-      {
-        jid: parsed?.me?.id ?? null,
-        lid: parsed?.me?.lid ?? null,
-      },
-      resolvedAuthDir,
-    );
+    fromJson = {
+      jid: parsed?.me?.id ?? null,
+      lid: parsed?.me?.lid ?? null,
+    };
   } catch {
-    return resolveComparableIdentity(
-      {
-        jid: fallback?.id ?? null,
-        lid: fallback?.lid ?? null,
-      },
-      resolvedAuthDir,
-    );
+    fromJson = {
+      jid: fallback?.id ?? null,
+      lid: fallback?.lid ?? null,
+    };
   }
+  const merged = mergeWithWhatsmeowFallback(resolvedAuthDir, fromJson);
+  return resolveComparableIdentity(merged, resolvedAuthDir);
 }
 
 export async function readWebSelfIdentityForDecision(
