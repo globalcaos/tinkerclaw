@@ -38,6 +38,13 @@ export const ChatSendParamsSchema = Type.Object(
     message: Type.String(),
     thinking: Type.Optional(Type.String()),
     deliver: Type.Optional(Type.Boolean()),
+    // When false, chat.send acks with a runId synchronously and returns
+    // WITHOUT dispatching to the agent — no transcript writes, no
+    // chat-broadcast deltas/final, no claude-cli spawn. Used by bible
+    // invariant probes (TINKER_UI_DESIGN_BIBLE/flows.md F1) so the
+    // "dispatch path alive" check doesn't pollute the user's webchat
+    // session. Default true preserves existing behavior.
+    dispatchAgent: Type.Optional(Type.Boolean()),
     originatingChannel: Type.Optional(Type.String()),
     originatingTo: Type.Optional(Type.String()),
     originatingAccountId: Type.Optional(Type.String()),

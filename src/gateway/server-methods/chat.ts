@@ -1824,6 +1824,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       message: string;
       thinking?: string;
       deliver?: boolean;
+      dispatchAgent?: boolean;
       originatingChannel?: string;
       originatingTo?: string;
       originatingAccountId?: string;
@@ -2064,6 +2065,13 @@ export const chatHandlers: GatewayRequestHandlers = {
         status: "started" as const,
       };
       respond(true, ackPayload, undefined, { runId: clientRunId });
+      // dispatchAgent:false short-circuits everything past the synchronous
+      // ack — no transcript write, no agent dispatch, no chat broadcasts.
+      // Lets bible invariant probes verify "dispatch path alive" without
+      // polluting the user's webchat session. See flows.md F1.
+      if (p.dispatchAgent === false) {
+        return;
+      }
       const persistedImagesPromise = persistChatSendImages({
         images: parsedImages,
         imageOrder,
