@@ -408,8 +408,12 @@ export async function attachWebInboxToSocket(
     //   (a) `self.lid` is populated and matches `remoteJid` — authoritative.
     //   (b) `remoteJid` is explicitly listed in `channels.whatsapp.noPrefixChats`
     //       AND `channels.whatsapp.allowFrom` — both lists declare this LID
-    //       is the owner's self-chat alias (config truth, used as fallback
-    //       because `self.lid` is currently null on whatsmeow auth state).
+    //       is the owner's self-chat alias (config truth, fallback kept for
+    //       legacy baileys-era accounts where the whatsmeow.db isn't present).
+    // FORK 2026-05-12: `self.lid` is now populated from the whatsmeow SQLite
+    // store (`whatsmeow_device.lid` column) via the auth-store.ts fallback in
+    // `mergeWithWhatsmeowFallback`. Path (a) is the primary check on any
+    // whatsmeow-backed account; (b) remains as the safety net.
     // If neither matches, do NOT rescue — `from` stays null, and the
     // standard `if (!from)` guard drops the message. That is the correct
     // outcome for an unknown LID DM.

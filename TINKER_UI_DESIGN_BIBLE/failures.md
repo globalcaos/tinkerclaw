@@ -125,7 +125,7 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 - **Propagation:** rescue branch sets `from=lidString` and prompts pass; but the wrong recipient is computed for the outbound.
 - **Surface:** unintended outbound to a non-owner chat.
 - **Resolution (2026-05-04):** rescue is gated on `self.lid===remoteJid` OR (`remoteJid ∈ noPrefixChats ∧ allowFrom`). Anything looser = bug.
-- **Open follow-up:** populate `self.lid` from whatsmeow auth state.
+- **Resolution (2026-05-12):** `self.lid` is now populated from the whatsmeow SQLite store. `auth-store.ts:readWebSelfIdentity` falls back to `identity-whatsmeow-db.ts:readWhatsmeowDeviceIdentity` when `creds.json` is absent or its `me.lid` is null (which is always the case on whatsmeow-backed accounts, since whatsmeow doesn't write a JSON creds file). The `whatsmeow_device.lid` column is read read-only via `better-sqlite3`. Closes the open follow-up — path (a) `self.lid === remoteJid` is now the primary signal on every whatsmeow account.
 
 ### M8. Briefing cron pass ≠ user-delivered pass
 
@@ -146,6 +146,7 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 
 - **diagnose_with:** `gateway.stuckSessions({thresholdMs:60000})` returns processing sessions older than 60s, sorted by age. `debug.session.state({sessionKey})` then returns the persisted `sessions.json` entry plus the live `activeRunIds` — if entry shows `status:running` but `activeRunIds=[]`, the session is stuck in M10. `gateway.observability.snapshot` includes the stuck-session example list as one section of the single-call dashboard.
 - **manifest_via:** `debug.simulate.stuckSession({ageMs:120000})` (admin-scope) injects a fake processing session aged 2 minutes; calling `gateway.stuckSessions` immediately after must include it in the returned list. Round-trip-tests the diagnose_with claim above. Cleanup with `debug.simulate.stuckSession --params '{"action":"clear"}'`.
+- **Resolution (2026-05-12):** synchronous session-status transition on surface_error is now wired. `src/agents/pi-embedded-runner/run.ts` calls `forkAttemptHooks.markFailedOnSurfaceError({sessionKey, reason})` at the `promptFailoverDecision.action === "surface_error"` throw site. The hook (in `src/fork/attempt-hooks.ts`) scans every agent's `sessions.json` and transitions the entry from `status:"running"` → `status:"failed"` with `abortedLastRun:true`. Best-effort — never blocks or masks the original throw. The boot-time `markRunningMainSessionsAsInterrupted` recovery is now belt-and-suspenders rather than load-bearing.
 - **Origin:** L1 lifecycle (lifecycles.md) — on surface_error or timeout, the session.status sometimes stays `running` in `sessions.json`.
 - **Propagation:** next message on the same session may behave oddly; recovery code catches it on next reboot via `markRunningMainSessionsAsInterrupted`.
 - **Surface:** symptom is bounded (recovery cleans it up) but cosmetic confusion.
