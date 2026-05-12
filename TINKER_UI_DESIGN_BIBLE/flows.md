@@ -2,13 +2,13 @@
 file: flows.md
 purpose: Sequence diagrams (Mermaid) for the top pipelines an AI must understand before editing
 audience: AI
-last_verified: 2026-05-11
+last_verified: 2026-05-12
 last_verified_commit: HEAD
 single_owner: yes — sequence-of-calls facts live here, not in bible.md
 see_also: lifecycles.md (state transitions per entity), failures.md (failure-mode propagation), topology.md (which components exist)
 verify:
   - name: F1 — chat.send returns a runId synchronously (the dispatch path is alive)
-    cmd: python3 -c 'import subprocess,json,time; r=subprocess.run(["openclaw","gateway","call","chat.send","--params",json.dumps({"sessionKey":"agent:main:main","message":"FLOWS-F1-VERIFY","deliver":False,"idempotencyKey":f"flows-f1-{int(time.time()*1000)}"})],capture_output=True,text=True,timeout=25); assert "runId" in r.stdout, r.stdout[-500:]'
+    cmd: python3 -c 'import subprocess,json,time; r=subprocess.run(["openclaw","gateway","call","chat.send","--params",json.dumps({"sessionKey":"agent:main:main","message":"FLOWS-F1-VERIFY","deliver":False,"dispatchAgent":False,"idempotencyKey":f"flows-f1-{int(time.time()*1000)}"})],capture_output=True,text=True,timeout=25); assert "runId" in r.stdout, r.stdout[-500:]'
   - name: F5 — briefing.resolve returns content (the /new path's resolver is alive)
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","briefing.resolve"],capture_output=True,text=True,timeout=25); j = json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); assert j.get("content") or j.get("path"), r.stdout[-500:]'
 ---
@@ -59,8 +59,9 @@ sequenceDiagram
 
 - Every `chat.send` run terminates with at least one `chat` broadcast where `state ∈ {final, error, aborted}`. Enforced by `server-chat.ts:emitChatFinal` (lifecycle path) + `chat.ts:2515` (backstop, FORK 2026-05-10, see bible §11.6e).
 - `runId` returned by `chat.send` is the same `runId` carried in every subsequent `chat` broadcast for that run.
+- `dispatchAgent:false` short-circuits after the synchronous ack — caller still receives `{runId, status:"started"}`, but no transcript write, no `dispatchInboundMessage`, no `chat` broadcasts. F1's invariant probe uses this so the bible merge gate does not surface "FLOWS-F1-VERIFY" + an agent reply in the user's Tinker UI session. `deliver` only governs OUTBOUND channel routing (WA etc.); the in-app `broadcast("chat", …)` fan-out is keyed by sessionKey and ignores `deliver`. Added `chat.ts:2068` (FORK 2026-05-12).
 
-**Last verified:** 2026-05-10 commit 78594ebd1a via the `FIX-VERIFY-Q1` test (`status="final"` received within 30s).
+**Last verified:** 2026-05-12 — F1 runs with `dispatchAgent:false` (zero broadcasts, zero claude-cli spawns).
 
 ---
 
