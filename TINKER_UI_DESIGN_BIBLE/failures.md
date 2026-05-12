@@ -143,7 +143,8 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 
 ### M10. Stuck session.status=running
 
-- **diagnose_with:** `gateway.stuckSessions({thresholdMs:60000})` returns processing sessions older than 60s, sorted by age. `debug.session.state({sessionKey})` then returns the persisted `sessions.json` entry plus the live `activeRunIds` — if entry shows `status:running` but `activeRunIds=[]`, the session is stuck in M10.
+- **diagnose_with:** `gateway.stuckSessions({thresholdMs:60000})` returns processing sessions older than 60s, sorted by age. `debug.session.state({sessionKey})` then returns the persisted `sessions.json` entry plus the live `activeRunIds` — if entry shows `status:running` but `activeRunIds=[]`, the session is stuck in M10. `gateway.observability.snapshot` includes the stuck-session example list as one section of the single-call dashboard.
+- **manifest_via:** `debug.simulate.stuckSession({ageMs:120000})` (admin-scope) injects a fake processing session aged 2 minutes; calling `gateway.stuckSessions` immediately after must include it in the returned list. Round-trip-tests the diagnose_with claim above. Cleanup with `debug.simulate.stuckSession --params '{"action":"clear"}'`.
 - **Origin:** L1 lifecycle (lifecycles.md) — on surface_error or timeout, the session.status sometimes stays `running` in `sessions.json`.
 - **Propagation:** next message on the same session may behave oddly; recovery code catches it on next reboot via `markRunningMainSessionsAsInterrupted`.
 - **Surface:** symptom is bounded (recovery cleans it up) but cosmetic confusion.

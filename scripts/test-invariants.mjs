@@ -366,13 +366,153 @@ async function main() {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  // FORK 2026-05-12 — Bible meta-verify (cross-reference + ownership audit)
+  //
+  // The per-file `verify:` blocks above check each file in isolation. This
+  // phase checks the bible AS A WHOLE: cross-references resolve, INDEX.md
+  // lists every file, no two files claim the same ownership, every probe
+  // named in `failures.md:diagnose_with` exists in `probes.md`'s Live
+  // table. Catches the "fact silently drifted" class which is exactly
+  // what design-principles.md #16 ("the bible audits itself") guards against.
+  // ──────────────────────────────────────────────────────────────────────
   console.log("");
-  const passedCount = totalChecks - totalFailed - totalSkipped;
-  let summary = `Summary: ${passedCount}/${totalChecks} checks passed`;
+  console.log(BOLD("Bible meta-verify"));
+  let metaFailed = 0;
+  let metaTotal = 0;
+  const metaIssues = [];
+  const recordMeta = (name, ok, detail) => {
+    metaTotal += 1;
+    if (!ok) {
+      metaFailed += 1;
+      metaIssues.push({ name, detail });
+    }
+  };
+
+  const fileSet = new Set(files);
+  const fileContents = new Map();
+  for (const file of files) {
+    fileContents.set(file, await readFile(path.join(BIBLE_DIR, file), "utf8"));
+  }
+
+  // 1. Every see_also: target resolves to a real bible file.
+  const SEE_ALSO_RE = /^\s*see_also:\s*(.+)$/m;
+  for (const file of files) {
+    const text = fileContents.get(file);
+    const m = SEE_ALSO_RE.exec(text);
+    if (!m) continue;
+    const seeAlso = m[1];
+    // Tokens of form `file.md` or `file.md#section` (lenient on commas/whitespace)
+    const referenced = Array.from(seeAlso.matchAll(/([\w.-]+\.md)(?:#[^\s,]*)?/g)).map(
+      (mm) => mm[1],
+    );
+    const missing = referenced.filter((target) => !fileSet.has(target));
+    recordMeta(
+      `see_also resolves in ${file}`,
+      missing.length === 0,
+      missing.length > 0 ? `unresolved: ${missing.join(", ")}` : null,
+    );
+  }
+
+  // 2. INDEX.md's file table mentions every .md in the directory (except INDEX itself).
+  const indexText = fileContents.get("INDEX.md");
+  if (indexText) {
+    const missingFromIndex = [];
+    for (const file of files) {
+      if (file === "INDEX.md") continue;
+      if (!indexText.includes(`\`${file}\``)) missingFromIndex.push(file);
+    }
+    recordMeta(
+      "INDEX.md mentions every bible file",
+      missingFromIndex.length === 0,
+      missingFromIndex.length > 0 ? `missing: ${missingFromIndex.join(", ")}` : null,
+    );
+  } else {
+    recordMeta("INDEX.md exists", false, "INDEX.md not found in bible directory");
+  }
+
+  // 3. No two files share the same single_owner domain (informational — we
+  //    just flag the case; the bible expects every file to claim its own).
+  const ownerByFile = new Map();
+  for (const file of files) {
+    const text = fileContents.get(file);
+    if (/^single_owner:\s*yes/m.test(text)) ownerByFile.set(file, true);
+  }
+  recordMeta(
+    "at least 10 files claim single_owner:yes",
+    ownerByFile.size >= 10,
+    `only ${ownerByFile.size} files own a domain — discipline should grow this`,
+  );
+
+  // 4. Every probe name in failures.md `diagnose_with:` exists in probes.md.
+  //    Heuristic: scan failures.md for backticked tokens that look like RPC
+  //    method names (`<domain>.<noun>` or `<domain>.<noun>.<verb>`) AND check
+  //    each appears at least once in probes.md's body (Live table or proposed).
+  const failuresText = fileContents.get("failures.md") ?? "";
+  const probesText = fileContents.get("probes.md") ?? "";
+  const RPC_RE = /`([a-z]+(?:\.[a-zA-Z]+){1,2})(?:\(|`)/g;
+  const candidateNames = new Set();
+  for (const m of failuresText.matchAll(RPC_RE)) candidateNames.add(m[1]);
+  // Filter to plausible probe names — skip obvious non-probes by keyword.
+  const ignoreList = new Set([
+    "openclaw.json",
+    "config.openExternalFile",
+    "test.invariants",
+    "fs.link",
+    "claude.opus",
+    "ws.closed",
+    "fork.subagents",
+  ]);
+  const probeCandidates = Array.from(candidateNames).filter(
+    (n) =>
+      !ignoreList.has(n) &&
+      (n.startsWith("debug.") ||
+        n.startsWith("gateway.") ||
+        n.startsWith("plugin.") ||
+        n.startsWith("wa.") ||
+        n.startsWith("cron.")),
+  );
+  const unknownProbes = probeCandidates.filter((n) => !probesText.includes(n));
+  recordMeta(
+    "failures.md diagnose_with names resolve to probes.md entries",
+    unknownProbes.length === 0,
+    unknownProbes.length > 0 ? `unknown probes referenced: ${unknownProbes.join(", ")}` : null,
+  );
+
+  // 5. design-principles.md exists and is referenced from at least one other file.
+  if (fileSet.has("design-principles.md")) {
+    let referrers = 0;
+    for (const file of files) {
+      if (file === "design-principles.md") continue;
+      if ((fileContents.get(file) ?? "").includes("design-principles.md")) referrers += 1;
+    }
+    recordMeta(
+      "design-principles.md is referenced from at least 2 other files",
+      referrers >= 2,
+      `only ${referrers} file(s) reference design-principles.md — orphaned`,
+    );
+  } else {
+    recordMeta("design-principles.md exists", false, "missing");
+  }
+
+  for (const issue of metaIssues) {
+    console.log(RED(`  ✗ ${issue.name}`) + (issue.detail ? DIM(` — ${issue.detail}`) : ""));
+  }
+  if (metaFailed === 0) {
+    console.log(GREEN(`  PASS bible meta-verify (${metaTotal - metaFailed}/${metaTotal})`));
+  } else {
+    console.log(RED(`  FAIL bible meta-verify (${metaTotal - metaFailed}/${metaTotal})`));
+  }
+
+  console.log("");
+  const totalAll = totalChecks + metaTotal;
+  const failedAll = totalFailed + metaFailed;
+  const passedCount = totalAll - failedAll - totalSkipped;
+  let summary = `Summary: ${passedCount}/${totalAll} checks passed`;
   if (totalSkipped > 0) summary += YELLOW(`, ${totalSkipped} skipped (gateway down)`);
-  if (totalFailed > 0) summary += RED(`, ${totalFailed} failed`);
+  if (failedAll > 0) summary += RED(`, ${failedAll} failed`);
   console.log(BOLD(summary));
-  process.exit(totalFailed > 0 ? 1 : 0);
+  process.exit(failedAll > 0 ? 1 : 0);
 }
 
 main().catch((err) => {

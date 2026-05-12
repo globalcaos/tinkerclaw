@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-05-11
 last_verified_commit: HEAD
 single_owner: yes — test scoping, naming, and bible-coherence rules live here
-see_also: probes.md (the bible:invariants suite is the merge gate, this is the layer below), failures.md (each test should map to a failure mode it would have caught), bug-log.md (each fixed bug is a regression-test candidate)
+see_also: probes.md (the bible:invariants suite is the merge gate, this is the layer below), failures.md (each test should map to a failure mode it would have caught), bug-log.md (each fixed bug is a regression-test candidate), design-principles.md (#13 round-trip-test the symmetry, #16 the bible audits itself)
 verify:
   - name: vitest config exists in tinkerclaw
     cmd: python3 -c 'import os,glob; assert any(os.path.exists(p) for p in glob.glob(os.path.expanduser("~/src/tinkerclaw/test/vitest/vitest*.config.ts")))'
