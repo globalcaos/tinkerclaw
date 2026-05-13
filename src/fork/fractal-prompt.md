@@ -88,7 +88,7 @@ A stale reference, outdated instruction, missing entry, better default?
 
 ### 5. RECIPE — Did you follow a recipe? Should you have? Should one be created or improved?
 
-Recipes are structured workflows in `extensions/tinkerclaw-prefrontal/recipes/` that encode the best way to handle recurring tasks. Reflection is where recipes evolve.
+Recipes are structured workflows in `extensions/tinkerclaw-prefrontal/kits/` (kit/1.0 format) that encode the best way to handle recurring tasks. Reflection is where recipes evolve.
 
 **If you followed a recipe this turn:**
 
