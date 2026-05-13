@@ -21,6 +21,9 @@
 import { describe, expect, it } from "vitest";
 import { decideTrigger, type TriggerInputs } from "./decide-trigger.js";
 
+// FORK 2026-05-13: use a clearly-fake test number (E.164 shape preserved so the
+// trigger logic that depends on it still exercises the same code path). Real
+// owner numbers do not belong in checked-in test fixtures (PII boundary).
 const owner_self_dm = "+34555111000@s.whatsapp.net";
 const sister_lid = "12345@lid";
 const group_jid = "ABCD@g.us";

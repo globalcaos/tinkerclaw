@@ -12,6 +12,8 @@ verify:
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/design-principles.md")).read(); headings = re.findall(r"^### \d+\. ", t, re.M); whys = re.findall(r"^\*\*Why\.\*\*", t, re.M); hows = re.findall(r"^\*\*How to apply\.\*\*", t, re.M); assert len(headings) == len(whys) == len(hows), f"{len(headings)} principles but {len(whys)} Whys and {len(hows)} How-to-apply blocks — every principle needs both"'
   - name: file references at least 10 principles (floor — encourages growth)
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/design-principles.md")).read(); assert len(re.findall(r"^### \d+\. ", t, re.M)) >= 10, "design-principles.md should codify at least 10 rules"'
+  - name: privacy-precedes-functionality principle is present (#17 — load-bearing since 2026-05-13)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/design-principles.md")).read(); assert "Privacy precedes functionality" in t, "design-principles.md #17 missing — see 2026-05-13 incident"'
 ---
 
 # Design principles — the fork-side rule set
@@ -123,3 +125,9 @@ The rules are short on purpose. The point is that you can load this file once at
 **Why.** Documentation that isn't tested rots. The verify discipline (`pnpm bible:invariants`) is the mechanism that keeps the bible trustworthy; without it, the bible would drift into folklore within months.
 
 **How to apply.** Every new bible file gets a frontmatter `verify:` block from day one. Every claim that names a file path, a method, or a value gets a verify that asserts the named thing exists. Bible meta-verify (cross-references, ownership claims, INDEX coverage) is part of the same runner. If you write a fact and you can't verify it, write the verify first or don't write the fact.
+
+### 17. Privacy precedes functionality
+
+**Why.** The 2026-05-13 audit found 16 PII hits had accumulated on `origin/develop` across earlier pushes — each push was individually clean within its own range, but the union across the develop branch was not. Privacy is not a co-equal axis with functionality; it dominates. A change that ships private data degrades trust in a way no later functional improvement can undo. The PII boundary (`pii-boundary.md`) is the contract; the leak-grep gate (`scripts/pii-pre-push.sh`) is the enforcement; both must run BEFORE main can advance and BEFORE the maintainer says "ship it." When sanitization is in tension with delivery speed, sanitization wins.
+
+**How to apply.** (a) Treat `PII_GUARD=off` bypass as an emergency-only escape hatch; every use requires written justification (commit message or comment). (b) The pre-push hook scans TWO scopes from 2026-05-13: the push-range (always was) AND the accumulated-drift range from `origin/main..HEAD` (new). Pushing develop tests against main; pushing main is the final gate. (c) When auditing manually (before a `develop → main` merge), the canonical command is `git log -p origin/main..origin/develop -- ':(exclude)scripts/pii-pre-push.sh' ':(exclude)TINKER_UI_DESIGN_BIBLE/pii-boundary.md' ':(exclude)CLAUDE.md' | grep -P '^\+[^+].*<regex from pii-pre-push.sh>'`. Zero hits required, no exceptions. (d) Educational files that document the regex (the bible's `pii-boundary.md`, this principle, the script itself) use `<FirstName>` / `<owner-e164>` placeholders so they don't trip their own grep. Other files use the actual placeholder-free prose — but with `the user` / `the operator` / `the owner` standing in for any first name.
