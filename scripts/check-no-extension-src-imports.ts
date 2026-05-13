@@ -7,8 +7,8 @@ const FORBIDDEN_REPO_SRC_IMPORT = /["'](?:\.\.\/)+(?:src\/)[^"']+["']/;
 // FORK: Extensions that legitimately import from src/ (fork-specific features).
 // These can't use plugin-sdk subpaths because they access fork-internal APIs.
 const FORK_EXTENSION_ALLOWLIST = new Set([
-  "auth-reload",
-  "budget-panel",
+  "tinkerclaw-auth-reload",
+  "tinkerclaw-budget-panel",
   "overseer",
   "tinkerclaw-tinker", // FORK: renamed from tinker; context-anatomy API + Tinker UI server uses fork-internal db
   "tinkerclaw-prefrontal", // FORK: imports from src/gateway/protocol/schema/ + runtime require of src/gateway/

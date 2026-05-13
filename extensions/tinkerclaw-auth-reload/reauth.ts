@@ -43,7 +43,9 @@ export type PKCESession = {
 const sessions = new Map<string, PKCESession>();
 
 function evictOldest(): void {
-  if (sessions.size < MAX_SESSIONS) {return;}
+  if (sessions.size < MAX_SESSIONS) {
+    return;
+  }
   let oldest: string | null = null;
   let oldestTime = Infinity;
   for (const [id, s] of sessions) {
@@ -54,7 +56,9 @@ function evictOldest(): void {
   }
   if (oldest) {
     const s = sessions.get(oldest);
-    if (s) {clearTimeout(s.timer);}
+    if (s) {
+      clearTimeout(s.timer);
+    }
     sessions.delete(oldest!);
   }
 }
@@ -76,7 +80,9 @@ export function deleteSession(sessionId: string): void {
 }
 
 export function clearAllSessions(): void {
-  for (const [, s] of sessions) {clearTimeout(s.timer);}
+  for (const [, s] of sessions) {
+    clearTimeout(s.timer);
+  }
   sessions.clear();
 }
 

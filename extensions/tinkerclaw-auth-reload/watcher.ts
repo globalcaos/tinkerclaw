@@ -25,7 +25,9 @@ export function getBroadcast(): GatewayBroadcastFn | null {
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function onFileChange(): void {
-  if (debounceTimer) {clearTimeout(debounceTimer);}
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     clearRuntimeAuthProfileStoreSnapshots();
