@@ -321,6 +321,15 @@ fix, pick from this list — extend it only if no tag fits.
 - **Commit:** `b11812feb`
 - **Rule:** Never pass `scope` in OAuth refresh requests unless intentionally downscoping. The refresh grant inherits all scopes from the original authorization.
 
+### FIXED [restart-recovery]: Architect re-prompt required after gateway restart (2026-05-13)
+
+- **Symptom:** After `openclaw-restart --full`, Jarvis's session resumed via the openclaw-sessionId fallback (FORK 2026-05-10) but he did not autonomously continue mid-task; the user had to type "keep going".
+- **Root cause:** cc-bridge resume only re-attaches the claude-cli session; no `[System] continue` is injected. The 2026-04-20 generic continue had been bypassed by the 2026-05-10 fallback. No persisted plan meant the agent had nothing concrete to resume from.
+- **Fix:** new `prefrontal.plan.*` RPCs + boot-time `runRestartContinue` that dispatches a plan-aware `[System] continue` via `chat.send {deliver:false, dispatchAgent:true}`. The grey `__SYS_PLAN_RESUME__` chip surfaces the action in TUI.
+- **Spec:** `docs/superpowers/specs/2026-05-12-prefrontal-plan-board-design.md` (commit `131f26d`).
+- **Plan:** `docs/superpowers/plans/2026-05-13-prefrontal-plan-board-implementation.md` (commit `f991621`).
+- **Commits:** Phase 1 `25552c1b40`, Phase 2 `9e444add28`, Phase 3 `9a36d25c59`+`a092050166`, Phase 4 `1b806a92af`, Phase 5 `340fd1ae23`, Phase 6 `8e665c925f`+`7febf58974`, Phase 7 `02f92f7f18`.
+
 ### FIXED [config-dead-code]: WhatsApp QR Pairing 515 Restart Dead Code (2026-03-20)
 
 - **Root cause:** Fork inlined `getStatusCode()` from upstream's `session-errors.ts` but missed the `err.error?.output?.statusCode` fallback added in upstream PR #27910. Baileys wraps errors as `{ error: { output: { statusCode: 515 } } }` — without the fallback, `login.errorStatus` was always `undefined` and the entire 515 restart path in `waitForWebLogin` was dead code. QR scan succeeded but the phone showed "cannot log in" because the restart socket was never created.
