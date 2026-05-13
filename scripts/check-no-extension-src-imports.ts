@@ -10,7 +10,8 @@ const FORK_EXTENSION_ALLOWLIST = new Set([
   "auth-reload",
   "budget-panel",
   "overseer",
-  "tinker",
+  "tinkerclaw-tinker", // FORK: renamed from tinker; context-anatomy API + Tinker UI server uses fork-internal db
+  "tinkerclaw-prefrontal", // FORK: imports from src/gateway/protocol/schema/ + runtime require of src/gateway/
   "whatsapp", // FORK: process-message-hooks + live-capture imports
   "tinkerclaw-whatsapp", // FORK: whatsapp history + backfill bridge uses fork-internal db/capture APIs
 ]);

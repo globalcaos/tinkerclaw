@@ -13,7 +13,7 @@
  * on startup and clears it after reading. Heartbeat sessions are filtered out at
  * every hook.
  *
- * Wired in by: OpenClaw plugin system via `plugins.entries.prefrontal` in openclaw.json
+ * Wired in by: OpenClaw plugin system via `plugins.entries.tinkerclaw-prefrontal` in openclaw.json
  */
 import os from "node:os";
 import { dirname, join } from "node:path";
@@ -82,7 +82,7 @@ import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js"
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
 import { TopologyStore } from "./topology.js";
 
-const PLUGIN_ID = "prefrontal";
+const PLUGIN_ID = "tinkerclaw-prefrontal";
 
 // Module-level singletons — shared across all register() calls.
 // The gateway loads this plugin multiple times (gateway + per-agent),
@@ -708,7 +708,7 @@ export default function register(api: OpenClawPluginApi) {
   // ── Kit dir constants (used by both plan-rpcs and kit-rpcs) ──
   const kitInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
   // Resolve ownKitsDir relative to this file's location so it works regardless of
-  // the gateway's working directory. From dist/extensions/prefrontal/ go three levels
+  // the gateway's working directory. From dist/extensions/tinkerclaw-prefrontal/ go three levels
   // up to the repo root, then into extensions/tinkerclaw-prefrontal/kits/.
   const ownKitsDir = join(
     dirname(fileURLToPath(import.meta.url)),

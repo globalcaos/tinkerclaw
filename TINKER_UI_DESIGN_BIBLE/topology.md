@@ -13,6 +13,8 @@ verify:
     cmd: journalctl --user -u openclaw-gateway.service --since '15 minutes ago' --no-pager 2>&1 | grep -q 'tinkerclaw-cc-bridge'
   - name: workspace symlinks present (skills NOT symlinked per design)
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
+  - name: every fork-owned plugin dir uses the tinkerclaw- prefix
+    cmd: bash -lc 'cd ~/src/tinkerclaw && violators=$(for d in extensions/*/; do d=${d%/}; if grep -q "FORK\|fork-owned\|@tinkerclaw" "$d/openclaw.plugin.json" "$d/index.ts" "$d/README.md" 2>/dev/null && [[ "$(basename $d)" != tinkerclaw-* ]]; then echo "$d"; fi; done); test -z "$violators" || (echo "fork plugins missing tinkerclaw- prefix: $violators"; exit 1)'
 ---
 
 # Topology — components, ports, plugins, channels, symlinks
@@ -47,7 +49,9 @@ All fork plugins use the `tinkerclaw-` prefix in their plugin id, directory name
 | `tinkerclaw-round-table`          | SYNAPSE (J6)                                                               | hooks                                                                            | FAILING to load (missing `@sinclair/typebox`) |
 | `tinkerclaw-total-recall`         | ENGRAM (J1)                                                                | hooks                                                                            | FAILING to load (missing `@sinclair/typebox`) |
 
-Plus core (non-tinkerclaw-prefixed): `auth-reload`, `browser`, `budget-panel`, `diagnostics-otel`, `hippocampus`, `tinker`.
+Plus core (non-tinkerclaw-prefixed): `auth-reload`, `browser`, `budget-panel`, `diagnostics-otel`.
+
+Note: `hippocampus` → `tinkerclaw-hippocampus` and `tinker` → `tinkerclaw-tinker` as of 2026-05-13 cleanup.
 
 **Open issue:** the `@sinclair/typebox` missing-module pattern is a recurring native-deps issue. See bible §11.x for the rule about `pnpm.onlyBuiltDependencies` getting wiped on upstream merges.
 

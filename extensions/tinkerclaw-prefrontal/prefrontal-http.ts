@@ -21,7 +21,9 @@ export function createPrefrontalHttpHandler(getTreeState: TreeStateGetter) {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const pathname = url.pathname;
 
-    if (!pathname.startsWith("/api/prefrontal/")) {return false;}
+    if (!pathname.startsWith("/api/prefrontal/")) {
+      return false;
+    }
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
