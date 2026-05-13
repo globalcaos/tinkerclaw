@@ -43,9 +43,35 @@ export async function runRestartContinue(deps: RestartContinueDeps): Promise<{ f
       "chat.send",
       buildContinueParams({ plan, sessionKey, systemKind: deps.systemKind ?? "plan-resume" }),
     );
+    // FORK 2026-05-13 (Task 3.3): inject a visible grey chip so the user sees plan-resume in TUI.
+    // chat.send has deliver:false so it's invisible; chat.inject pushes an assistant-labelled
+    // message that the TUI __SYS_PLAN_RESUME__: sentinel detection renders as a grey chip.
+    try {
+      await deps.gatewayCall("chat.inject", buildPlanResumeChipParams({ plan, sessionKey }));
+    } catch {
+      // Best-effort — don't block resume if inject fails.
+    }
     fired.push(sessionKey);
   }
   return { fired };
+}
+
+/** Sentinel prefix the TUI uses to render the grey plan-resume chip (Task 3.3). */
+export const SYS_PLAN_RESUME_PREFIX = "__SYS_PLAN_RESUME__:";
+
+/** Build the visible label injected into TUI when restart-continue fires. */
+export function buildPlanResumeChipLabel(plan: Plan): string {
+  const step = plan.steps[plan.currentStep];
+  return `Resuming step ${plan.currentStep}: ${step?.title ?? "(unknown)"}`;
+}
+
+/** Build the chat.inject payload (visible chip pushed to TUI). */
+function buildPlanResumeChipParams(opts: { plan: Plan; sessionKey: string }) {
+  return {
+    sessionKey: opts.sessionKey,
+    message: `${SYS_PLAN_RESUME_PREFIX}${buildPlanResumeChipLabel(opts.plan)}`,
+    label: "system",
+  };
 }
 
 function buildContinueParams(opts: { plan: Plan; sessionKey: string; systemKind: string }) {
