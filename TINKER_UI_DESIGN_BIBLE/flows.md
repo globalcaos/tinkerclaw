@@ -2,7 +2,7 @@
 file: flows.md
 purpose: Sequence diagrams (Mermaid) for the top pipelines an AI must understand before editing
 audience: AI
-last_verified: 2026-05-12
+last_verified: 2026-05-13
 last_verified_commit: HEAD
 single_owner: yes — sequence-of-calls facts live here, not in bible.md
 see_also: lifecycles.md (state transitions per entity), failures.md (failure-mode propagation), topology.md (which components exist)
@@ -11,6 +11,10 @@ verify:
     cmd: python3 -c 'import subprocess,json,time; r=subprocess.run(["openclaw","gateway","call","chat.send","--params",json.dumps({"sessionKey":"agent:main:main","message":"FLOWS-F1-VERIFY","deliver":False,"dispatchAgent":False,"idempotencyKey":f"flows-f1-{int(time.time()*1000)}"})],capture_output=True,text=True,timeout=25); assert "runId" in r.stdout, r.stdout[-500:]'
   - name: F5 — briefing.resolve returns content (the /new path's resolver is alive)
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","briefing.resolve"],capture_output=True,text=True,timeout=25); j = json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); assert j.get("content") or j.get("path"), r.stdout[-500:]'
+  - name: F-PLAN-RESUME — plan RPCs round-trip without firing a turn
+    cmd: python3 -c 'import subprocess,json,time; sk=f"test:plan:{int(time.time()*1000)}"; subprocess.run(["openclaw","gateway","call","prefrontal.plan.set","--params",json.dumps({"sessionKey":sk,"intent":"verify","runId":"v1","steps":[{"title":"a"},{"title":"b"}]})],check=True,timeout=15); r=subprocess.run(["openclaw","gateway","call","prefrontal.plan.get","--params",json.dumps({"sessionKey":sk})],capture_output=True,text=True,timeout=15); assert "verify" in r.stdout, r.stdout[-500:]; subprocess.run(["openclaw","gateway","call","prefrontal.plan.close","--params",json.dumps({"sessionKey":sk,"status":"aborted"})],check=True,timeout=15)'
+  - name: F-KIT-INSTALL — kit RPCs alive (search responds)
+    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","prefrontal.kit.search","--params",json.dumps({"query":"feature"})],capture_output=True,text=True,timeout=20); assert "results" in r.stdout, r.stdout[-500:]'
 ---
 
 # Flows — top pipelines
@@ -277,6 +281,105 @@ sequenceDiagram
 
 - The injected message is persisted to the session transcript BEFORE the broadcast, so a refresh shows it consistently.
 - Used today for: the restart-warning orange chip (F4), error envelopes from non-agent paths.
+
+---
+
+---
+
+## F-PLAN-RESUME. Gateway restart → plan-aware [System] continue
+
+**Trigger:** gateway process boots up (SIGUSR1 graceful, SIGTERM, or crash); there is at least one active plan in `state/prefrontal/plans/*.md`.
+**Entry:** `extensions/tinkerclaw-prefrontal/src/index.ts:register()` → `runRestartContinue` (30s debounce after boot)
+**Exit:** Jarvis receives a plan-aware `[System] continue` dispatch and picks up execution from the correct step; TUI shows a grey `__SYS_PLAN_RESUME__` chip.
+
+```mermaid
+sequenceDiagram
+  participant BOOT as gateway boot
+  participant PFR as prefrontal register()
+  participant PS as PlanStore
+  participant FS as plans/*.md
+  participant SEND as chat.send (loopback)
+  participant CINJ as chat.inject
+  participant CC as cc-bridge worker-pool
+  participant CLI as claude-cli (--resume)
+  participant TUI as Tinker UI
+
+  BOOT->>PFR: register() hook fires
+  Note over PFR: setTimeout 3s (let gateway stabilise)
+  PFR->>PS: runRestartContinue()
+  PS->>FS: glob state/prefrontal/plans/*.md
+  loop for each in_progress plan
+    PS->>PS: read frontmatter (sessionKey, currentStep, intent, kitRef?)
+    PS->>CINJ: chat.inject {sessionKey, message:"__SYS_PLAN_RESUME__:Resuming step N: <title>"}
+    CINJ-->>TUI: state="final" — grey chip renders
+    PS->>SEND: chat.send {sessionKey, deliver:false, dispatchAgent:true, idempotencyKey, message:"[System] Gateway restarted at HH:MM. You were working on plan: <intent>. Current step N: <title>. Continue from where you left off."}
+    SEND->>CC: turn for sessionKey
+    CC->>CC: getLatestResumeSessionIdByOpenclawSessionId (FORK 2026-05-10)
+    CC->>CLI: spawn --resume <cli sessionId>
+    CLI-->>CC: resumed with full prior context
+    CC-->>TUI: assistant message (continuation)
+  end
+  Note over PS: debounce 30s same sessionKey — no double dispatch on multiple restarts
+  Note over PS: skip plans with status:done or status:aborted
+```
+
+**Invariants:**
+
+- Debounce window: 30s per sessionKey. If the gateway bounces twice in <30s only one dispatch fires.
+- Plans with `status: done` or `status: aborted` are skipped.
+- The `__SYS_PLAN_RESUME__` sentinel is injected via `chat.inject` BEFORE `chat.send` so the chip appears before the agent resumes.
+- The dispatch uses `deliver: false, dispatchAgent: true` — INTERNAL_MESSAGE_CHANNEL routes to the agent, the webchat subscription sees only the chip (no duplicate user bubble). See flows.md F1 invariants.
+- The `systemKind: "plan-resume"` annotation is carried in the loopback call metadata for diagnostic filtering.
+- cc-bridge resume uses `getLatestResumeSessionIdByOpenclawSessionId` (FORK 2026-05-10) so sessionKey hash drift after the `[System] continue` message is tolerated.
+
+**See also:** lifecycles.md L-PLAN, L-STEP; tinker-ui.md §**SYS_PLAN_RESUME** chip family.
+
+---
+
+## F-KIT-INSTALL. Journey kit install (sandboxed)
+
+**Trigger:** caller invokes `prefrontal.kit.install { kitRef }`.
+**Entry:** `extensions/tinkerclaw-prefrontal/src/kit-rpcs.ts:handleKitInstall`
+**Exit:** files written to `~/.openclaw/workspace/kits/<owner>/<slug>/`; caller receives `{ ok, installedPath, preflightResults, nextSteps }`.
+
+```mermaid
+sequenceDiagram
+  participant CALLER as caller (Jarvis / TUI)
+  participant KR as kit-rpcs.ts
+  participant JK as journeykits.ai API
+  participant KS as KitStore (sandbox)
+  participant FS as ~/.openclaw/workspace/kits/
+
+  CALLER->>KR: prefrontal.kit.install {kitRef, allowRisky?}
+  KR->>JK: GET /api/kits/<owner>/<slug>/install?target=openclaw&ref=latest
+  JK-->>KR: {files[], preflightChecks[], risk[], nextSteps[]}
+  KR->>KR: inspect risk[] — Critical or High Risk?
+  alt risk Critical/High AND !allowRisky
+    KR-->>CALLER: {ok:false, reason:"Kit flagged as high risk. Pass allowRisky:true to override."}
+  else risk acceptable OR allowRisky:true
+    loop for each file in files[]
+      KR->>KS: resolveSandboxPath(file.path, installTarget)
+      alt path is absolute OR contains ".."
+        KS-->>KR: throw SandboxViolationError
+        KR-->>CALLER: {ok:false, reason:"Sandbox path violation"}
+      else path is safe
+        KS->>FS: write file contents
+      end
+    end
+    KR->>KR: stubbed preflightChecks (real exec sandbox: future work)
+    KR-->>CALLER: {ok:true, installedPath, preflightResults, nextSteps}
+  end
+```
+
+**Invariants:**
+
+- Every file path in the install payload passes through `resolveSandboxPath` — no bypass, no trusted-path exceptions.
+- Risk-gating is active: kits with `risk` containing `"Critical"` or `"High Risk"` require explicit `allowRisky: true`.
+- Preflight execution is **stubbed** — `preflightChecks` are returned as-is from the API response. Real execution in a sandbox is future work.
+- The install target is `~/.openclaw/workspace/kits/<owner>/<slug>/`. Source-tree kits (bundled at `extensions/tinkerclaw-prefrontal/kits/`) are never overwritten by install — they are separate.
+- `nextSteps` is passed through verbatim from the Journey API response for the caller to display.
+
+**See also:** lifecycles.md L-KIT-INSTALL; subagents-and-kits.md §Kits.
 
 ---
 

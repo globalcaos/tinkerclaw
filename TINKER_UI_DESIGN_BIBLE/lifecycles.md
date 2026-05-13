@@ -181,6 +181,83 @@ stateDiagram-v2
 
 ---
 
+---
+
+## L-PLAN — Plan lifecycle (plan-store managed)
+
+**Entity:** one plan document at `~/.openclaw/workspace/state/prefrontal/plans/<sessionKey-slug>.md`.
+
+```mermaid
+stateDiagram-v2
+  [*] --> in_progress: prefrontal.plan.set (status default)
+  in_progress --> done: prefrontal.plan.close(status:"done")
+  in_progress --> aborted: prefrontal.plan.close(status:"aborted")
+  done --> [*]: archived to plans/archive/<YYYY-MM-DD>/
+  aborted --> [*]: archived to plans/archive/<YYYY-MM-DD>/
+```
+
+**Invariants:**
+
+- `prefrontal.plan.set` always creates with `status: in_progress` unless an explicit `status` is passed.
+- `prefrontal.plan.close` transitions to `done` or `aborted` and moves the file to the archive directory.
+- The archive path is `~/.openclaw/workspace/state/prefrontal/plans/archive/<YYYY-MM-DD>/<sessionKey-slug>.md`.
+- `prefrontal.plan.get` returns `null` for plans that have been closed/archived.
+- A sessionKey can have at most one active (in_progress) plan at a time — calling `plan.set` again replaces the existing plan.
+
+**Probe:** `prefrontal.plan.get({ sessionKey })` — returns `{ plan }` with current frontmatter.
+
+---
+
+## L-STEP — Step lifecycle within a plan
+
+**Entity:** one step entry within a plan document (indexed 0-based by `currentStep`).
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending: plan.set seeds all steps as pending
+  pending --> in_progress: plan.step(stepIndex, status:"in_progress")
+  in_progress --> done: plan.step(stepIndex, status:"done")
+  in_progress --> error: plan.step(stepIndex, status:"error")
+  error --> in_progress: plan.step(stepIndex, status:"in_progress") — retry
+  done --> [*]
+  error --> [*]: plan closes with aborted
+```
+
+**Invariants:**
+
+- **At most one step may be `in_progress` at a time per plan.** Calling `plan.step` with `status: "in_progress"` for step N automatically demotes any previously `in_progress` step back to `pending`. Enforced by plan-store, not caller.
+- Setting a step to `done` does not automatically advance `currentStep` — the caller must explicitly promote the next step.
+- An `error` step can be retried by calling `plan.step` again with `status: "in_progress"`.
+- Steps cannot be removed or reordered after the plan is created — only status mutations are allowed.
+
+---
+
+## L-KIT-INSTALL — Kit install lifecycle
+
+**Entity:** one `prefrontal.kit.install` invocation.
+
+```mermaid
+stateDiagram-v2
+  [*] --> fetched: GET /api/kits/<owner>/<slug>/install
+  fetched --> risk_checked: inspect risk[] from API response
+  risk_checked --> refused: risk Critical/High AND !allowRisky
+  risk_checked --> sandbox_written: risk acceptable OR allowRisky:true
+  sandbox_written --> verified: all files pass resolveSandboxPath + written to FS
+  sandbox_written --> failed: any file fails sandbox check or write error
+  verified --> [*]: return {ok:true, installedPath, preflightResults, nextSteps}
+  refused --> [*]: return {ok:false, reason:"high risk"}
+  failed --> [*]: return {ok:false, reason: sandbox/write error message}
+```
+
+**Invariants:**
+
+- `fetched → risk_checked` is always synchronous — risk check happens before any file write.
+- `sandbox_written` is atomic per-file: if any file fails, the whole install returns `{ok:false}`. Files already written in a partial install are NOT rolled back (future work: transactional write).
+- Preflight execution is stubbed in the current implementation. `preflightResults` is returned verbatim from the API response; no actual script execution happens.
+- The `verified` state does NOT mean the installed kit has been run or tested — only that all files were written without sandbox violations.
+
+---
+
 ## Validation strategy
 
 Each state machine should be paired with a probe that returns the entity's current state. Today only L1 has a partial probe (`sessions.json` direct read); L2–L5 need probes (see `probes.md`).
