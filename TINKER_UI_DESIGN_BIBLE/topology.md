@@ -89,6 +89,16 @@ The PII boundary between these two repos is critical. See `pii-boundary.md`.
 | `ollama`               | local embedding model (mxbai-embed-large) for `memorySearch`   | `127.0.0.1:11434` (systemd)                                           |
 | `chrome-relay` profile | persistent Chrome at `CDP=127.0.0.1:18792`                     | user-managed, attached-only                                           |
 
+## External services (HTTPS)
+
+Services called outbound by the gateway or its plugins over HTTPS.
+
+| Service         | Protocol | Purpose                                     | Source file                                   | Base URL                     | Auth                                                       |
+| --------------- | -------- | ------------------------------------------- | --------------------------------------------- | ---------------------------- | ---------------------------------------------------------- |
+| journeykits.ai  | HTTPS    | kit registry — search/get/install/publish   | `extensions/prefrontal/kit-rpcs.ts`           | `https://www.journeykits.ai` | `integrations.journey.apiKey` required for publish/private |
+| Anthropic API   | HTTPS    | LLM inference (claude models via api key)   | `src/agents/auth-profiles/credential-file.ts` | `https://api.anthropic.com`  | `auth-profiles.json` api key                               |
+| claude.ai OAuth | HTTPS    | OAuth2 refresh for cli-gm / cli-sv profiles | `src/agents/auth-profiles/credential-file.ts` | `https://claude.ai`          | refresh_token in `.credentials-*.json`                     |
+
 ## File-system layout snapshot
 
 ```

@@ -1105,6 +1105,33 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 
 ### 5.65 Recipe Visual Indicators (2026-04-08)
 
+### 5.66 **SYS_PLAN_RESUME** chip family (2026-05-13)
+
+- **Status:** `DEPLOYED`
+- **What:** A grey system chip injected into the chat timeline when the gateway boots and resumes an in-progress plan. Signals to the user that Jarvis is autonomously picking up where it left off.
+- **Trigger:** `chat.inject` call from `prefrontal.runRestartContinue()` with sentinel string `__SYS_PLAN_RESUME__:<label>`.
+- **CSS class:** `.chip-sys-plan-resume`
+- **Visual style:** Grey background (similar to `.chip-sys` but distinct from the orange `__ERR_ENV__` restart chip). Renders under the orange restart chip in the same timeline position when both are present.
+- **Sentinel format:** `__SYS_PLAN_RESUME__:Resuming step N: <step title>`
+- **Rendering:** Parsed in `app.ts` alongside `__ERR_ENV__` detection. The label after the colon is displayed as the chip's body text.
+- **See also:** flows.md F-PLAN-RESUME; lifecycles.md L-PLAN.
+
+### 5.67 "Current Plan" section in prefrontal-tree.ts panel (2026-05-13)
+
+- **Status:** `DEPLOYED`
+- **What:** The Prefrontal right-panel (`tinker-ui/src/panels/prefrontal-tree.ts`) shows a "Current Plan" section when a plan is active for the current session.
+- **Layout:**
+  - **Header row:** plan `intent` (truncated to 60 chars) + total elapsed since plan creation
+  - **Kit-source row:** shown only when `kitRef` is set — displays the kit origin (e.g., `from globalcaos/feature`)
+  - **Per-step rows:** for each step in the plan:
+    - Step marker: `●` pending, `▶` in_progress, `✓` done, `✗` error
+    - Step title
+    - Journal note (if present) — shown in muted text below the title
+    - Per-step elapsed (only for done/in_progress steps)
+  - **Progress bar:** anchored below the step list showing `done / total` steps
+- **Data source:** `prefrontal.plan.get({ sessionKey })` polled at 3s interval while a plan is active
+- **Files:** `tinker-ui/src/panels/prefrontal-tree.ts` (renderPlanSection), `tinker-ui/src/styles/base.css` (`.plan-step-row`, `.chip-sys-plan-resume`)
+
 ## Generated FORK registry
 
 <!-- BEGIN GENERATED-FORK-REGISTRY -->
