@@ -26,6 +26,11 @@ export class PlanStore {
     return this.filePath(sessionKey);
   }
 
+  /** Public accessor for the root directory (used by restart-continue scanner). */
+  rootDirPublic(): string {
+    return this.opts.rootDir;
+  }
+
   async set(params: {
     sessionKey: string;
     intent: string;
