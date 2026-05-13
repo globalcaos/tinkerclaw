@@ -3702,6 +3702,21 @@ function renderEnvelope(env: Envelope): string {
   );
 }
 
+// FORK 2026-05-13 Task 3.3: Plan-resume grey chip ---------------------------
+// Injected by restart-continue.ts via chat.inject with label "system".
+// Sits below the orange __ERR_ENV__ restart chip to confirm plan auto-continue.
+const SYS_PLAN_RESUME_PREFIX = "__SYS_PLAN_RESUME__:";
+function extractPlanResumeChip(text: string): string | null {
+  if (typeof text !== "string") return null;
+  const idx = text.indexOf(SYS_PLAN_RESUME_PREFIX);
+  if (idx < 0) return null;
+  const label = text.slice(idx + SYS_PLAN_RESUME_PREFIX.length).trim();
+  return label.length > 0 ? label : "Resuming";
+}
+function renderPlanResumeChip(label: string): string {
+  return `<div class="chip-sys-plan-resume">↻ ${esc(label)}</div>`;
+}
+
 function renderSystemMsg(text: string, idx: number): string {
   const sid = `s${idx}`;
   const sysExp = expandedTools.has(sid);
@@ -3920,6 +3935,12 @@ function renderMsg(
         }
       }
     } else if (role === "assistant") {
+      // FORK 2026-05-13 Task 3.3: Plan-resume grey chip — check before envelope.
+      const planResumeLabel = extractPlanResumeChip(text);
+      if (planResumeLabel !== null) {
+        h += renderPlanResumeChip(planResumeLabel);
+        return h;
+      }
       // FORK 2026-04-17: ErrorEnvelope detection ahead of everything else.
       // Any assistant text prefixed with __ERR_ENV__:{json} gets rendered as a
       // rich envelope bubble (red or orange per Design Bible §11.12) instead
@@ -4063,6 +4084,12 @@ function renderMsg(
           }
         }
       } else if (role === "assistant") {
+        // FORK 2026-05-13 Task 3.3: Plan-resume grey chip (twin path).
+        const planResumeLabel2 = extractPlanResumeChip(text);
+        if (planResumeLabel2 !== null) {
+          h += renderPlanResumeChip(planResumeLabel2);
+          return h;
+        }
         // FORK 2026-04-17: same ErrorEnvelope detection as above.
         const envelope2 = extractEnvelope(text);
         if (envelope2) {

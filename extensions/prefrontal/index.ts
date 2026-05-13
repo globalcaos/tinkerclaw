@@ -746,11 +746,11 @@ export default function register(api: OpenClawPluginApi) {
             method: string,
             params: unknown,
           ): Promise<{ runId: string }> => {
-            if (method !== "chat.send") {
+            if (method !== "chat.send" && method !== "chat.inject") {
               throw new Error(`[prefrontal] gatewayCall: unsupported method ${method}`);
             }
             return callGateway<{ runId: string }>({
-              method: "chat.send",
+              method: method as "chat.send" | "chat.inject",
               params,
               scopes: ["operator.admin"],
               timeoutMs: 30_000,
