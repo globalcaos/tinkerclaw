@@ -66,12 +66,22 @@ export const EmailIntegrationSchema = z
   .strict()
   .optional();
 
+export const JourneyIntegrationSchema = z
+  .object({
+    apiKey: z.string().optional(),
+    /** Journey kits registry base URL (default: https://www.journeykits.ai) */
+    baseUrl: z.string().optional(),
+  })
+  .strict()
+  .optional();
+
 export const IntegrationsSchema = z
   .object({
     jira: JiraIntegrationSchema,
     confluence: ConfluenceIntegrationSchema,
     slack: SlackIntegrationSchema,
     email: EmailIntegrationSchema,
+    journey: JourneyIntegrationSchema,
   })
   .strict()
   .optional();
