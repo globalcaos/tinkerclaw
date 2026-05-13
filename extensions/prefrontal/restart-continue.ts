@@ -65,8 +65,9 @@ function buildContinueParams(opts: { plan: Plan; sessionKey: string; systemKind:
     dispatchAgent: true,
     idempotencyKey: `plan-resume-${opts.plan.runId}-${Date.now()}`,
     systemInputProvenance: {
-      systemKind: opts.systemKind,
-      systemSource: "prefrontal-restart-continue",
+      kind: "internal_system",
+      sourceSessionKey: opts.sessionKey,
+      sourceTool: opts.systemKind ?? "plan-resume",
     },
   };
 }
