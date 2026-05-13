@@ -40,16 +40,24 @@ const EXPLICIT_TRIGGERS = [
 ];
 
 export function shouldTriggerCorf(taskDescription: string, config: CorfTriggerConfig): boolean {
-  if (!config.enabled) {return false;}
-  if (!taskDescription || taskDescription.length < 10) {return false;}
+  if (!config.enabled) {
+    return false;
+  }
+  if (!taskDescription || taskDescription.length < 10) {
+    return false;
+  }
 
   const lower = taskDescription.toLowerCase();
 
   // Explicit user request always triggers
-  if (EXPLICIT_TRIGGERS.some((t) => lower.includes(t))) {return true;}
+  if (EXPLICIT_TRIGGERS.some((t) => lower.includes(t))) {
+    return true;
+  }
 
   // High-stakes keyword detection
-  if (HIGH_STAKES_KEYWORDS.some((kw) => lower.includes(kw))) {return true;}
+  if (HIGH_STAKES_KEYWORDS.some((kw) => lower.includes(kw))) {
+    return true;
+  }
 
   return false;
 }

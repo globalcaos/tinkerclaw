@@ -20,7 +20,9 @@ export function writeRecoveryState(
   originalPrompt: string,
 ): void {
   const dir = dirname(RECOVERY_PATH);
-  if (!existsSync(dir)) {mkdirSync(dir, { recursive: true });}
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
 
   const state: PrefrontalRecoveryState = {
     timestamp: new Date().toISOString(),
@@ -44,7 +46,9 @@ export function writeRecoveryState(
 }
 
 export function readRecoveryState(): PrefrontalRecoveryState | null {
-  if (!existsSync(RECOVERY_PATH)) {return null;}
+  if (!existsSync(RECOVERY_PATH)) {
+    return null;
+  }
   try {
     const raw = readFileSync(RECOVERY_PATH, "utf-8");
     return JSON.parse(raw) as PrefrontalRecoveryState;

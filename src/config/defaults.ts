@@ -445,7 +445,12 @@ export function applyForkAgentDefaults(cfg: OpenClawConfig): OpenClawConfig {
 
 export function applyForkPluginDefaults(cfg: OpenClawConfig): OpenClawConfig {
   // If plugins.allow is set, ensure fork plugins are in the list
-  const FORK_DEFAULT_PLUGINS = ["hippocampus", "budget-panel", "memory-core", "auth-reload"];
+  const FORK_DEFAULT_PLUGINS = [
+    "tinkerclaw-hippocampus",
+    "budget-panel",
+    "memory-core",
+    "auth-reload",
+  ];
   const allow = cfg.plugins?.allow;
 
   // Only modify if allow list is set (don't add allow list if not present; that would be too restrictive)
@@ -466,7 +471,7 @@ export function applyForkPluginDefaults(cfg: OpenClawConfig): OpenClawConfig {
   }
 
   // Ensure hippocampus and budget-panel are enabled by default in entries
-  const FORK_ENABLED_PLUGINS = ["hippocampus", "budget-panel"];
+  const FORK_ENABLED_PLUGINS = ["tinkerclaw-hippocampus", "budget-panel"];
   const entries = next.plugins?.entries ?? {};
   const nextEntries = { ...entries };
   let entriesMutated = false;

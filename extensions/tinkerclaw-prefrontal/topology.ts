@@ -96,7 +96,9 @@ export class TopologyStore {
 
   removeNode(event: PluginHookSubagentEndedEvent): PrefrontalNode | undefined {
     const node = this.nodes.get(event.targetSessionKey);
-    if (!node) {return undefined;}
+    if (!node) {
+      return undefined;
+    }
     this.nodes.delete(event.targetSessionKey);
     this.edges = this.edges.filter(
       (e) => e.source !== event.targetSessionKey && e.target !== event.targetSessionKey,
@@ -118,11 +120,21 @@ export class TopologyStore {
     const sessionMap = new Map(sessions.map((s) => [s.key, s]));
     for (const [key, node] of this.nodes) {
       const session = sessionMap.get(key);
-      if (!session) {continue;}
-      if (session.model) {node.model = session.model;}
-      if (session.modelProvider) {node.provider = session.modelProvider;}
-      if (session.totalTokens != null) {node.tokens = session.totalTokens;}
-      if (session.label) {node.label = session.label;}
+      if (!session) {
+        continue;
+      }
+      if (session.model) {
+        node.model = session.model;
+      }
+      if (session.modelProvider) {
+        node.provider = session.modelProvider;
+      }
+      if (session.totalTokens != null) {
+        node.tokens = session.totalTokens;
+      }
+      if (session.label) {
+        node.label = session.label;
+      }
       if (session.updatedAt) {
         const ts = new Date(session.updatedAt).getTime();
         if (ts > node.updatedAt) {
@@ -166,9 +178,13 @@ export class TopologyStore {
     this.edges = [];
     for (const n of snap.nodes) {
       // Skip heartbeat nodes that may have been persisted
-      if (TopologyStore.isHeartbeat(n.sessionKey)) {continue;}
+      if (TopologyStore.isHeartbeat(n.sessionKey)) {
+        continue;
+      }
       // Update stale labels from before rename
-      if (n.label === "Jarvis") {n.label = "Main";}
+      if (n.label === "Jarvis") {
+        n.label = "Main";
+      }
       this.nodes.set(n.sessionKey, n);
     }
     this.edges = snap.edges;
@@ -245,7 +261,9 @@ export class TopologyStore {
   /** Update main node phase (e.g. tool calls, compaction) */
   updatePhase(sessionKey: string, phase: string): void {
     const node = this.nodes.get(sessionKey);
-    if (!node) {return;}
+    if (!node) {
+      return;
+    }
     node.phase = phase;
     node.updatedAt = Date.now();
     this.changeCount++;
@@ -254,7 +272,9 @@ export class TopologyStore {
   /** Increment tool call count for a session */
   addToolCall(sessionKey: string, toolName: string): void {
     const node = this.nodes.get(sessionKey);
-    if (!node) {return;}
+    if (!node) {
+      return;
+    }
     node.toolCalls++;
     node.phase = `tool: ${toolName}`;
     node.updatedAt = Date.now();
@@ -263,7 +283,9 @@ export class TopologyStore {
   /** Mark tool call finished for a session */
   finishToolCall(sessionKey: string): void {
     const node = this.nodes.get(sessionKey);
-    if (!node) {return;}
+    if (!node) {
+      return;
+    }
     node.phase = node.toolCalls > 0 ? `${node.toolCalls} tools used` : "";
     node.updatedAt = Date.now();
   }
@@ -271,7 +293,9 @@ export class TopologyStore {
   /** Mark main session as completed (set to idle, keep visible) */
   endSession(sessionKey: string, success: boolean, durationMs?: number): void {
     const node = this.nodes.get(sessionKey);
-    if (!node) {return;}
+    if (!node) {
+      return;
+    }
     node.status = "idle";
     const dur = durationMs ? ` (${(durationMs / 1000).toFixed(1)}s)` : "";
     node.phase = success ? `done${dur}` : `error${dur}`;
@@ -282,15 +306,21 @@ export class TopologyStore {
   /** Update token count and usage for a session after LLM output */
   updateUsage(sessionKey: string, usage?: { inputTokens?: number; outputTokens?: number }): void {
     const node = this.nodes.get(sessionKey);
-    if (!node || !usage) {return;}
+    if (!node || !usage) {
+      return;
+    }
     node.tokens += (usage.inputTokens || 0) + (usage.outputTokens || 0);
     node.updatedAt = Date.now();
   }
 
   /** Check if a session key represents a heartbeat */
   static isHeartbeat(sessionKey?: string, trigger?: string): boolean {
-    if (trigger === "heartbeat") {return true;}
-    if (!sessionKey) {return false;}
+    if (trigger === "heartbeat") {
+      return true;
+    }
+    if (!sessionKey) {
+      return false;
+    }
     return sessionKey.includes("heartbeat");
   }
 }
