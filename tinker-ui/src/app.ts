@@ -6437,37 +6437,60 @@ function init() {
     const el = document.createElement("aside");
     el.id = "exec-panel";
     el.className = "exec-panel";
+    // FORK 2026-05-13 — exec-panel split into two tabs per user request: the
+    // Pulse tab holds graphs + KPIs (read sparingly, periodic glance), the
+    // Today tab holds calendar + tasks (the daily-driver flow). Active tab
+    // persists in `tinker.execTab`. CSS hides the inactive group via
+    // body-level classes on .exec-panel.
     el.innerHTML = `
-      <div class="exec-section exec-graphs">
-        <div class="exec-section-title">📊 Graphs</div>
-        <div class="exec-graphs-body">Metric panels appear here once you pin them. Inline ctrl-panel fence-block lands in Phase D.</div>
+      <div class="exec-tabs" role="tablist">
+        <button class="exec-tab" data-tab="pulse" role="tab">📈 Pulse</button>
+        <button class="exec-tab" data-tab="today" role="tab">📅 Today</button>
       </div>
-      <div class="exec-section exec-calendar">
-        <div class="exec-section-title">📅 Calendar (7d)</div>
-        <div class="exec-calendar-body">Calendar sync lands in Phase E.</div>
-      </div>
-      <div class="exec-section exec-tasks">
-        <div class="exec-section-title">
-          <span>✅ Tasks</span>
-          <span class="exec-progress-inline" id="exec-progress-inline"></span>
-          <span class="exec-busy-inline" id="exec-busy-inline" title="Today's scheduled load (events + task estimates / 8h workday)"></span>
+      <div class="exec-tab-body exec-tab-body-pulse">
+        <div class="exec-section exec-kpis">
+          <div class="exec-section-title">
+            <span>📊 KPIs</span>
+            <button class="exec-section-refresh" data-section="kpis" title="Re-poll every KPI now">↻</button>
+          </div>
+          <div class="exec-kpis-body" id="exec-kpis-body">Loading…</div>
         </div>
-        <div class="exec-filter-bar" id="exec-filter-bar"></div>
-        <div class="exec-progress-bar-wrap"><div class="exec-progress-bar" id="exec-progress-bar"></div></div>
-        <div id="exec-axis-targets" class="exec-axis-targets" aria-hidden="true"></div>
-        <div id="exec-tasks-body" class="exec-tasks-body">Loading…</div>
-        <div class="exec-task-add-bar" id="exec-task-add-bar">
-          <button class="exec-task-add-toggle" id="exec-task-add-toggle" title="Add a new task">+ Add task</button>
-          <form class="exec-task-add-form" id="exec-task-add-form" style="display:none">
-            <input type="text" id="exec-add-text" class="exec-add-text" placeholder="Task title…" autocomplete="off" maxlength="240">
-            <div class="exec-add-fields">
-              <select id="exec-add-axis" class="exec-add-axis" title="Axis"></select>
-              <input type="number" id="exec-add-est" class="exec-add-est" placeholder="min" min="5" max="480" step="5" value="30" title="Est minutes">
-              <input type="date" id="exec-add-due" class="exec-add-due" title="Due date (optional)">
-              <button type="button" class="exec-add-cancel" id="exec-add-cancel" title="Cancel">✕</button>
-              <button type="submit" class="exec-add-save" id="exec-add-save" title="Add task">➕</button>
-            </div>
-          </form>
+        <div class="exec-section exec-graphs">
+          <div class="exec-section-title">
+            <span>📈 Graphs</span>
+            <button class="exec-section-refresh" data-section="graphs" title="Re-poll every graph now">↻</button>
+          </div>
+          <div class="exec-graphs-body" id="exec-graphs-body">Loading…</div>
+        </div>
+      </div>
+      <div class="exec-tab-body exec-tab-body-today">
+        <div class="exec-section exec-calendar">
+          <div class="exec-section-title">📅 Calendar (7d)</div>
+          <div class="exec-calendar-body">Calendar sync lands in Phase E.</div>
+        </div>
+        <div class="exec-section exec-tasks">
+          <div class="exec-section-title">
+            <span>✅ Tasks</span>
+            <span class="exec-progress-inline" id="exec-progress-inline"></span>
+            <span class="exec-busy-inline" id="exec-busy-inline" title="Today's scheduled load (events + task estimates / 8h workday)"></span>
+          </div>
+          <div class="exec-filter-bar" id="exec-filter-bar"></div>
+          <div class="exec-progress-bar-wrap"><div class="exec-progress-bar" id="exec-progress-bar"></div></div>
+          <div id="exec-axis-targets" class="exec-axis-targets" aria-hidden="true"></div>
+          <div id="exec-tasks-body" class="exec-tasks-body">Loading…</div>
+          <div class="exec-task-add-bar" id="exec-task-add-bar">
+            <button class="exec-task-add-toggle" id="exec-task-add-toggle" title="Add a new task">+ Add task</button>
+            <form class="exec-task-add-form" id="exec-task-add-form" style="display:none">
+              <input type="text" id="exec-add-text" class="exec-add-text" placeholder="Task title…" autocomplete="off" maxlength="240">
+              <div class="exec-add-fields">
+                <select id="exec-add-axis" class="exec-add-axis" title="Axis"></select>
+                <input type="number" id="exec-add-est" class="exec-add-est" placeholder="min" min="5" max="480" step="5" value="30" title="Est minutes">
+                <input type="date" id="exec-add-due" class="exec-add-due" title="Due date (optional)">
+                <button type="button" class="exec-add-cancel" id="exec-add-cancel" title="Cancel">✕</button>
+                <button type="submit" class="exec-add-save" id="exec-add-save" title="Add task">➕</button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     `;
@@ -6476,6 +6499,7 @@ function init() {
     attachExecDragHandlers(el);
     renderExecFilterBar();
     attachExecTaskAddHandlers(el);
+    attachExecTabHandlers(el);
     // Global handlers: click-outside closes context menu; Escape closes too.
     document.addEventListener("click", (ev) => {
       if (execContextMenuEl && !execContextMenuEl.contains(ev.target as Node)) {
@@ -6486,6 +6510,445 @@ function init() {
       if (ev.key === "Escape") closeExecContextMenu();
     });
     return el;
+  }
+
+  // ───────────────────────────────────────────────── exec tabs (Pulse/Today)
+  // FORK 2026-05-13 — two-tab split: Pulse (graphs + KPIs) vs. Today
+  // (calendar + tasks). Per-tab visibility is via a body class on the
+  // .exec-panel (`.exec-tab-active-pulse` / `.exec-tab-active-today`); CSS
+  // hides the inactive tab's body. Switching the Pulse tab triggers a KPI
+  // load if no observations are in memory yet.
+  type ExecTab = "pulse" | "today";
+  let execActiveTab: ExecTab = (localStorage.getItem("tinker.execTab") as ExecTab) || "today";
+
+  function applyExecTab(panel: HTMLElement, tab: ExecTab): void {
+    execActiveTab = tab;
+    localStorage.setItem("tinker.execTab", tab);
+    panel.classList.toggle("exec-tab-active-pulse", tab === "pulse");
+    panel.classList.toggle("exec-tab-active-today", tab === "today");
+    panel.querySelectorAll<HTMLElement>(".exec-tab").forEach((btn) => {
+      btn.classList.toggle("exec-tab-on", btn.dataset.tab === tab);
+    });
+    if (tab === "pulse") {
+      void loadExecKpis();
+    }
+  }
+
+  function attachExecTabHandlers(panel: HTMLElement): void {
+    panel.querySelectorAll<HTMLElement>(".exec-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.tab as ExecTab | undefined;
+        if (tab) applyExecTab(panel, tab);
+      });
+    });
+    // Section-level refresh: re-poll every metric in that section, then re-render.
+    panel.querySelectorAll<HTMLButtonElement>(".exec-section-refresh").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const section = btn.dataset.section as "kpis" | "graphs" | undefined;
+        if (!section) return;
+        void refreshExecSection(section);
+      });
+    });
+    // Per-row refresh: delegated click on .exec-kpi-row-refresh inside either body.
+    const onRowRefresh = (ev: Event) => {
+      const target = ev.target as HTMLElement | null;
+      const btn = target?.closest<HTMLButtonElement>(".exec-kpi-row-refresh");
+      if (!btn) return;
+      ev.stopPropagation();
+      const id = btn.dataset.id;
+      if (!id) return;
+      void refreshExecMetric(id, btn);
+    };
+    panel.querySelector("#exec-kpis-body")?.addEventListener("click", onRowRefresh);
+    panel.querySelector("#exec-graphs-body")?.addEventListener("click", onRowRefresh);
+    applyExecTab(panel, execActiveTab);
+  }
+
+  // FORK 2026-05-13 — on-demand poll for a single metric. Calls the new
+  // control-panel.metrics.poll RPC so the backend hits the real upstream
+  // (GitHub API, npm registry, etc.) and writes a fresh observation; then
+  // re-fetches and re-renders only this row.
+  async function refreshExecMetric(metricId: string, btn: HTMLButtonElement): Promise<void> {
+    btn.classList.add("exec-kpi-row-refresh-spinning");
+    try {
+      await req("control-panel.metrics.poll", { id: metricId });
+    } catch (err) {
+      console.error("[exec-panel] metrics.poll failed", metricId, err);
+    } finally {
+      btn.classList.remove("exec-kpi-row-refresh-spinning");
+    }
+    await loadExecKpis({ force: true });
+  }
+
+  // Section-level refresh: re-poll every metric in either KPIs or Graphs.
+  // Fire-and-forget poll RPCs in parallel; reload once they all settle.
+  async function refreshExecSection(section: "kpis" | "graphs"): Promise<void> {
+    const targetSelector =
+      section === "kpis"
+        ? `#exec-kpis-body .exec-kpi-row[data-id]`
+        : `#exec-graphs-body .exec-kpi-row[data-id]`;
+    const rows = Array.from(ensureExecPanel().querySelectorAll<HTMLElement>(targetSelector));
+    const ids = rows.map((r) => r.dataset.id).filter((x): x is string => !!x);
+    await Promise.allSettled(ids.map((id) => req("control-panel.metrics.poll", { id })));
+    await loadExecKpis({ force: true });
+  }
+
+  // ───────────────────────────────────────────────────── KPI rendering
+  // Strategy: for every SNAPSHOT metric, fetch its recent observations.
+  //   - 0 points  → render a "pending first poll" line
+  //   - 1 point   → render a one-line text KPI (e.g. "⭐ Stars: 124")
+  //   - ≥2 points → render a sparkline + the latest value alongside
+  // The exec-panel's actual data is driven by the backend poller; this
+  // UI just visualizes whatever it finds.
+  type KpiMetric = {
+    id: string;
+    class: "LIVE" | "SNAPSHOT";
+    source: string;
+    cadence_seconds: number | null;
+    template: string;
+  };
+  type KpiObservation = { metric_id: string; ts: number; value: number };
+
+  let execKpiLastLoad = 0;
+  const KPI_LABELS: Record<string, { icon: string; label: string }> = {
+    "kpi.github.stars": { icon: "⭐", label: "GitHub stars" },
+    "kpi.github.forks": { icon: "🍴", label: "Forks" },
+    "kpi.github.open_issues": { icon: "🐞", label: "Open issues+PRs" },
+    "kpi.npm.downloads.weekly": { icon: "📦", label: "npm weekly" },
+    "kpi.npm.downloads.monthly": { icon: "📦", label: "npm monthly" },
+    "graph.website.visits": { icon: "🌐", label: "Website visits" },
+  };
+
+  function deriveKpiPresentation(id: string): { icon: string; label: string; target: string } {
+    // id pattern: kpi.<kind>.<target?> OR graph.<kind>.<target?>.
+    for (const prefix of Object.keys(KPI_LABELS)) {
+      if (id === prefix || id.startsWith(prefix + ".")) {
+        const target = id.length > prefix.length ? id.slice(prefix.length + 1) : "";
+        return { ...KPI_LABELS[prefix], target };
+      }
+    }
+    return { icon: "📊", label: id.replace(/^(kpi|graph)\./, ""), target: "" };
+  }
+
+  // FORK 2026-05-13 — Templates discriminate which section a metric renders in.
+  // "single-stat" | "streak" | "traffic-light" → KPIs section (compact one-liner)
+  // "sparkline"   | "bar-trend"                → Graphs section (chart block)
+  function isGraphTemplate(template: string): boolean {
+    return template === "sparkline" || template === "bar-trend";
+  }
+
+  // FORK 2026-05-13 — auto-retry chain. First attempt of a fresh load shows
+  // the green "Loading…" placeholder; subsequent retries keep it visible.
+  // Only after MAX_KPI_ATTEMPTS consecutive failures do we surface the red
+  // error block. The retry timer is cancellable so a user-initiated reload
+  // (force=true via a section ↻) starts a fresh chain immediately.
+  const MAX_KPI_ATTEMPTS = 6;
+  let execKpiRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function loadExecKpis(opts: { force?: boolean; attempt?: number } = {}): Promise<void> {
+    const panel = ensureExecPanel();
+    const kpisBody = panel.querySelector("#exec-kpis-body") as HTMLElement | null;
+    const graphsBody = panel.querySelector("#exec-graphs-body") as HTMLElement | null;
+    if (!kpisBody || !graphsBody) return;
+    const attempt = opts.attempt ?? 1;
+    // First attempt of a fresh load: cancel any pending retry and paint the
+    // loading state so the user sees immediate feedback.
+    if (attempt === 1) {
+      if (execKpiRetryTimer !== null) {
+        clearTimeout(execKpiRetryTimer);
+        execKpiRetryTimer = null;
+      }
+      const loadingHtml = `<div class="exec-kpi-loading">Loading metrics…</div>`;
+      kpisBody.innerHTML = loadingHtml;
+      graphsBody.innerHTML = loadingHtml;
+      kpisBody.dataset.populated = "";
+      graphsBody.dataset.populated = "";
+    }
+    // 60s throttle — only honored on first attempt of a fresh load. Retries
+    // and force-clicks bypass it.
+    const now = Date.now();
+    if (
+      attempt === 1 &&
+      !opts.force &&
+      now - execKpiLastLoad < 60_000 &&
+      kpisBody.dataset.populated === "1" &&
+      graphsBody.dataset.populated === "1"
+    ) {
+      return;
+    }
+    if (attempt === 1) execKpiLastLoad = now;
+    try {
+      const metricsRes = (await req("control-panel.list", {})) as { metrics: KpiMetric[] };
+      const visible = (metricsRes.metrics ?? []).filter(
+        (m) => (m.id.startsWith("kpi.") || m.id.startsWith("graph.")) && m.class === "SNAPSHOT",
+      );
+      const sinceTs = now - 1000 * 60 * 60 * 24 * 30; // 30 days
+      const obsLists = await Promise.all(
+        visible.map(async (m) => {
+          try {
+            const r = (await req("control-panel.query", {
+              id: m.id,
+              from_ts: sinceTs,
+              limit: 200,
+            })) as { observations: KpiObservation[] };
+            return { metric: m, observations: (r.observations ?? []).slice().reverse() };
+          } catch {
+            return { metric: m, observations: [] as KpiObservation[] };
+          }
+        }),
+      );
+      const kpiHtml = obsLists
+        .filter(({ metric }) => !isGraphTemplate(metric.template))
+        .map(({ metric, observations }) => renderKpiRow(metric, observations, "compact"))
+        .join("");
+      const graphHtml = obsLists
+        .filter(({ metric }) => isGraphTemplate(metric.template))
+        .map(({ metric, observations }) => renderKpiRow(metric, observations, "tall"))
+        .join("");
+      kpisBody.innerHTML = kpiHtml || `<div class="exec-kpi-empty">No KPIs configured yet.</div>`;
+      graphsBody.innerHTML =
+        graphHtml || `<div class="exec-kpi-empty">No graphs configured yet.</div>`;
+      kpisBody.dataset.populated = "1";
+      graphsBody.dataset.populated = "1";
+      // FORK 2026-05-13 — Tall sparklines get wheel-zoom + drag-pan handlers
+      // after each render. attachGraphInteractions is idempotent per element.
+      attachGraphInteractions(panel);
+    } catch (err) {
+      console.error(`[exec-panel] loadExecKpis attempt ${attempt} failed`, err);
+      // Auto-retry with backoff: 500, 1000, 2000, 3000, 4000 ms. ~16s total
+      // across MAX_KPI_ATTEMPTS attempts before we surface the red error.
+      if (attempt < MAX_KPI_ATTEMPTS) {
+        const delayMs = Math.min(500 * Math.pow(2, attempt - 1), 4000);
+        execKpiRetryTimer = setTimeout(() => {
+          execKpiRetryTimer = null;
+          void loadExecKpis({ force: true, attempt: attempt + 1 });
+        }, delayMs);
+        // The "Loading…" placeholder stays visible during retries.
+        return;
+      }
+      const errStr =
+        err instanceof Error ? err.message : typeof err === "string" ? err : JSON.stringify(err);
+      const msg = `<div class="exec-kpi-error">Failed to load metrics: ${escapeHtml(errStr)}</div>`;
+      kpisBody.innerHTML = msg;
+      graphsBody.innerHTML = msg;
+    }
+  }
+
+  // FORK 2026-05-13 — `mode` controls chart density. "compact" is the
+  // single-line KPIs row (tiny 80×18 inline sparkline if ≥2 samples).
+  // "tall" is the Graphs row — bigger 200×56 chart block with axis margin.
+  // Both modes always render a per-row ↻ button + the "last updated" age.
+  function renderKpiRow(
+    metric: KpiMetric,
+    observations: KpiObservation[],
+    mode: "compact" | "tall" = "compact",
+  ): string {
+    const pres = deriveKpiPresentation(metric.id);
+    const targetLabel = pres.target
+      ? `<span class="exec-kpi-target">${escapeHtml(pres.target)}</span>`
+      : "";
+    const tsAndRefresh = (latest: KpiObservation) => `
+        <span class="exec-kpi-ts" title="${new Date(latest.ts).toISOString()}">${formatKpiAge(Date.now() - latest.ts)} ago</span>
+        <button class="exec-kpi-row-refresh" data-id="${escapeHtml(metric.id)}" title="Re-poll now">↻</button>`;
+    if (observations.length === 0) {
+      return `
+        <div class="exec-kpi-row exec-kpi-pending" data-id="${escapeHtml(metric.id)}">
+          <span class="exec-kpi-icon">${pres.icon}</span>
+          <span class="exec-kpi-label">${escapeHtml(pres.label)}</span>
+          ${targetLabel}
+          <span class="exec-kpi-value">pending first poll…</span>
+          <button class="exec-kpi-row-refresh" data-id="${escapeHtml(metric.id)}" title="Poll now">↻</button>
+        </div>`;
+    }
+    if (observations.length === 1) {
+      const latest = observations[observations.length - 1];
+      return `
+        <div class="exec-kpi-row exec-kpi-single" data-id="${escapeHtml(metric.id)}">
+          <span class="exec-kpi-icon">${pres.icon}</span>
+          <span class="exec-kpi-label">${escapeHtml(pres.label)}</span>
+          ${targetLabel}
+          <span class="exec-kpi-value">${formatKpiNumber(latest.value)}</span>
+          ${tsAndRefresh(latest)}
+        </div>`;
+    }
+    const latest = observations[observations.length - 1];
+    const earliest = observations[0];
+    const delta = latest.value - earliest.value;
+    const deltaSign = delta > 0 ? "+" : delta < 0 ? "−" : "±";
+    const deltaAbs = Math.abs(delta);
+    const spanDays = Math.max(1, Math.round((latest.ts - earliest.ts) / 86_400_000));
+    const sparkline = renderKpiSparkline(observations, mode, metric.id);
+    if (mode === "tall") {
+      return `
+        <div class="exec-kpi-row exec-kpi-graph" data-id="${escapeHtml(metric.id)}">
+          <div class="exec-kpi-graph-header">
+            <span class="exec-kpi-icon">${pres.icon}</span>
+            <span class="exec-kpi-label">${escapeHtml(pres.label)}</span>
+            ${targetLabel}
+            <span class="exec-kpi-value">${formatKpiNumber(latest.value)}</span>
+            <span class="exec-kpi-delta" title="vs ${spanDays}d ago">${deltaSign}${formatKpiNumber(deltaAbs)} / ${spanDays}d</span>
+            ${tsAndRefresh(latest)}
+          </div>
+          <div class="exec-kpi-graph-body">${sparkline}</div>
+        </div>`;
+    }
+    return `
+      <div class="exec-kpi-row exec-kpi-series" data-id="${escapeHtml(metric.id)}">
+        <span class="exec-kpi-icon">${pres.icon}</span>
+        <span class="exec-kpi-label">${escapeHtml(pres.label)}</span>
+        ${targetLabel}
+        ${sparkline}
+        <span class="exec-kpi-value">${formatKpiNumber(latest.value)}</span>
+        <span class="exec-kpi-delta" title="vs ${spanDays}d ago">${deltaSign}${formatKpiNumber(deltaAbs)} / ${spanDays}d</span>
+        ${tsAndRefresh(latest)}
+      </div>`;
+  }
+
+  function renderKpiSparkline(
+    observations: KpiObservation[],
+    mode: "compact" | "tall" = "compact",
+    metricId?: string,
+  ): string {
+    const w = mode === "tall" ? 320 : 80;
+    const h = mode === "tall" ? 60 : 18;
+    const pad = mode === "tall" ? 4 : 1;
+    const xs = observations.map((o) => o.ts);
+    const ys = observations.map((o) => o.value);
+    const xMin = xs[0];
+    const xMax = xs[xs.length - 1];
+    const yMin = Math.min(...ys);
+    const yMax = Math.max(...ys);
+    const xSpan = Math.max(1, xMax - xMin);
+    const ySpan = Math.max(0.01, yMax - yMin);
+    const ptToXY = (o: KpiObservation): [number, number] => {
+      const x = pad + ((o.ts - xMin) / xSpan) * (w - 2 * pad);
+      const y = h - pad - ((o.value - yMin) / ySpan) * (h - 2 * pad);
+      // For a flat line, pin to mid-height so it doesn't degenerate.
+      return [x, ySpan < 0.5 ? h / 2 : y];
+    };
+    const points = observations.map(ptToXY);
+    const path = points
+      .map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`)
+      .join(" ");
+    // Tall mode adds a soft fill under the line for visual weight.
+    let fillPath = "";
+    if (mode === "tall" && points.length >= 2) {
+      const first = points[0];
+      const last = points[points.length - 1];
+      fillPath = `<path d="${path} L${last[0].toFixed(1)},${h - pad} L${first[0].toFixed(1)},${h - pad} Z" fill="currentColor" fill-opacity="0.12" stroke="none" vector-effect="non-scaling-stroke" />`;
+    }
+    // FORK 2026-05-13 — preserved view state per metric so zoom/pan survive
+    // a poll-driven re-render. Reads from execGraphView; falls back to the
+    // natural [0..w] viewBox when nothing is stored.
+    const stored = metricId ? execGraphView.get(metricId) : undefined;
+    const viewX = stored?.x ?? 0;
+    const viewW = stored?.w ?? w;
+    // `data-natural-w/h` so the wheel+drag handlers know the underlying
+    // canvas bounds and can clamp the viewBox against zoom-out / pan-off.
+    return `<svg class="exec-kpi-spark exec-kpi-spark-${mode}" viewBox="${viewX} 0 ${viewW} ${h}" width="${w}" height="${h}" preserveAspectRatio="none" aria-hidden="true"
+        data-metric-id="${metricId ?? ""}" data-natural-w="${w}" data-natural-h="${h}">
+        ${fillPath}
+        <path d="${path}" fill="none" stroke="currentColor" stroke-width="${mode === "tall" ? 1.6 : 1.2}" vector-effect="non-scaling-stroke" />
+      </svg>`;
+  }
+
+  // FORK 2026-05-13 — per-metric viewBox state for the Graphs section's
+  // tall sparklines. Mouse wheel zooms around the cursor; horizontal drag
+  // pans. State survives re-renders triggered by polling or refresh clicks
+  // so the user doesn't lose their position. Double-click to reset.
+  const execGraphView: Map<string, { x: number; w: number }> = new Map();
+
+  function attachGraphInteractions(panel: HTMLElement): void {
+    const svgs = panel.querySelectorAll<SVGSVGElement>(".exec-kpi-spark-tall");
+    svgs.forEach((svg) => {
+      // Idempotency: skip if we've already wired this element.
+      if (svg.dataset.interactive === "1") return;
+      svg.dataset.interactive = "1";
+      const metricId = svg.dataset.metricId || "";
+      const naturalW = Number(svg.dataset.naturalW || 320);
+      const naturalH = Number(svg.dataset.naturalH || 60);
+      const MIN_ZOOM_W = Math.max(10, naturalW * 0.05); // ≤ 20× zoom
+      const MAX_ZOOM_W = naturalW;
+      svg.style.cursor = "grab";
+
+      const writeView = (x: number, w: number) => {
+        const clampedW = Math.max(MIN_ZOOM_W, Math.min(MAX_ZOOM_W, w));
+        const clampedX = Math.max(0, Math.min(naturalW - clampedW, x));
+        svg.setAttribute("viewBox", `${clampedX} 0 ${clampedW} ${naturalH}`);
+        if (metricId) execGraphView.set(metricId, { x: clampedX, w: clampedW });
+      };
+
+      const getView = (): { x: number; w: number } => {
+        const vb = (svg.getAttribute("viewBox") || `0 0 ${naturalW} ${naturalH}`).split(/\s+/);
+        return { x: Number(vb[0]), w: Number(vb[2]) };
+      };
+
+      svg.addEventListener(
+        "wheel",
+        (ev) => {
+          ev.preventDefault();
+          const rect = svg.getBoundingClientRect();
+          const cursorFrac = (ev.clientX - rect.left) / Math.max(1, rect.width);
+          const view = getView();
+          // Negative deltaY = scroll up = zoom in.
+          const factor = ev.deltaY > 0 ? 1.2 : 1 / 1.2;
+          const newW = view.w * factor;
+          const cursorInData = view.x + cursorFrac * view.w;
+          const newX = cursorInData - cursorFrac * newW;
+          writeView(newX, newW);
+        },
+        { passive: false },
+      );
+
+      let dragStart: { clientX: number; viewX: number; viewW: number } | null = null;
+      svg.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        const view = getView();
+        dragStart = { clientX: ev.clientX, viewX: view.x, viewW: view.w };
+        svg.setPointerCapture(ev.pointerId);
+        svg.style.cursor = "grabbing";
+      });
+      svg.addEventListener("pointermove", (ev) => {
+        if (!dragStart) return;
+        const rect = svg.getBoundingClientRect();
+        const dxScreen = ev.clientX - dragStart.clientX;
+        const dxData = -(dxScreen / Math.max(1, rect.width)) * dragStart.viewW;
+        writeView(dragStart.viewX + dxData, dragStart.viewW);
+      });
+      const endDrag = (ev: PointerEvent) => {
+        if (!dragStart) return;
+        dragStart = null;
+        svg.releasePointerCapture?.(ev.pointerId);
+        svg.style.cursor = "grab";
+      };
+      svg.addEventListener("pointerup", endDrag);
+      svg.addEventListener("pointercancel", endDrag);
+
+      svg.addEventListener("dblclick", (ev) => {
+        ev.preventDefault();
+        if (metricId) execGraphView.delete(metricId);
+        svg.setAttribute("viewBox", `0 0 ${naturalW} ${naturalH}`);
+      });
+    });
+  }
+
+  function formatKpiNumber(n: number): string {
+    if (!Number.isFinite(n)) return "—";
+    const abs = Math.abs(n);
+    if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (abs >= 10_000) return `${(n / 1000).toFixed(1)}k`;
+    if (abs >= 1000) return n.toLocaleString();
+    return Number.isInteger(n) ? String(n) : n.toFixed(1);
+  }
+
+  function formatKpiAge(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    return `${Math.floor(h / 24)}d`;
   }
 
   function renderExecFilterBar() {

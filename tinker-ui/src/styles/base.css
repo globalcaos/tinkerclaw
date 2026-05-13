@@ -3479,6 +3479,262 @@ code.fs-link.fs-link-error {
   left: 360px;
 }
 
+/* FORK 2026-05-13 — two-tab exec-panel: Pulse (graphs/KPIs) vs. Today
+   (calendar+tasks). Tab strip pinned at the top; the inactive tab's body
+   is display:none so the active body owns the full vertical space. */
+.exec-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid #232328;
+  background: #16161a;
+}
+.exec-tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #a3a3ad;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.exec-tab:hover {
+  color: #eaeaee;
+  background: #1c1c22;
+}
+.exec-tab.exec-tab-on {
+  color: #eaeaee;
+  border-bottom-color: #4eb069;
+}
+.exec-tab-body {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.exec-panel.exec-tab-active-pulse .exec-tab-body-pulse {
+  display: flex;
+}
+.exec-panel.exec-tab-active-today .exec-tab-body-today {
+  display: flex;
+}
+
+/* KPI rows in the Pulse tab. Layout: icon · label · target · spark · value · delta.
+   Scales down gracefully at the 360px exec-panel width. */
+.exec-kpi-refresh {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  color: #a3a3ad;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.exec-kpi-refresh:hover {
+  background: #2a2a30;
+  color: #eaeaee;
+}
+.exec-graphs-body {
+  padding: 4px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.exec-kpi-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #eaeaee;
+}
+.exec-kpi-row:hover {
+  background: #1c1c22;
+}
+.exec-kpi-icon {
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+}
+.exec-kpi-label {
+  color: #a3a3ad;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.exec-kpi-target {
+  color: #6a6a73;
+  font-size: 10px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.exec-kpi-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #eaeaee;
+}
+.exec-kpi-delta {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: #6cb1e8;
+  margin-left: 6px;
+}
+.exec-kpi-ts {
+  font-size: 10px;
+  color: #6a6a73;
+  margin-left: 6px;
+}
+.exec-kpi-spark {
+  color: #4eb069;
+  vertical-align: middle;
+  margin: 0 6px;
+}
+.exec-kpi-row.exec-kpi-series {
+  grid-template-columns: 18px auto 1fr auto auto;
+}
+.exec-kpi-row.exec-kpi-single {
+  grid-template-columns: 18px auto 1fr auto auto;
+}
+.exec-kpi-row.exec-kpi-pending .exec-kpi-value {
+  color: #6a6a73;
+  font-style: italic;
+  font-weight: 400;
+}
+.exec-kpi-empty,
+.exec-kpi-error {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 11px;
+  font-style: italic;
+}
+.exec-kpi-empty { color: #6a6a73; }
+.exec-kpi-error { color: #ef5350; }
+/* FORK 2026-05-13 — green "Loading…" placeholder shown while the metrics
+   fetch is in flight (and during the auto-retry chain). Pulses gently so
+   the user can tell the UI is still working rather than frozen. */
+.exec-kpi-loading {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: #4eb069;
+  font-style: italic;
+  animation: exec-kpi-loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes exec-kpi-loading-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+/* FORK 2026-05-13 — Section-level + per-row refresh buttons. The section
+   button lives next to the section title; the row button sits next to the
+   row's timestamp. Same visual treatment; both spin while their RPC runs. */
+.exec-section-refresh {
+  background: transparent;
+  border: 1px solid #2a2a30;
+  color: #a3a3ad;
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  border-radius: 4px;
+  font-size: 14px;
+  margin-left: 8px;
+}
+.exec-section-refresh:hover {
+  background: #2a2a30;
+  color: #eaeaee;
+}
+.exec-kpi-row-refresh {
+  background: transparent;
+  border: none;
+  color: #6a6a73;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border-radius: 3px;
+  font-size: 12px;
+  margin-left: 4px;
+  padding: 0;
+}
+.exec-kpi-row-refresh:hover {
+  background: #2a2a30;
+  color: #eaeaee;
+}
+.exec-kpi-row-refresh-spinning {
+  animation: exec-spin 0.8s linear infinite;
+}
+@keyframes exec-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* FORK 2026-05-13 — KPIs body (one-line rows) and Graphs body (chart
+   blocks). Graphs section gets vertical padding between blocks. */
+.exec-kpis-body {
+  padding: 4px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Tall sparkline mode — full-width chart block for the Graphs section. */
+.exec-kpi-row.exec-kpi-graph {
+  display: block;
+  padding: 8px 6px 10px;
+}
+.exec-kpi-graph-header {
+  display: grid;
+  grid-template-columns: 18px auto 1fr auto auto auto auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.exec-kpi-graph-body {
+  width: 100%;
+}
+.exec-kpi-spark-tall {
+  width: 100% !important;
+  height: 60px !important;
+  margin: 0;
+  color: #4eb069;
+  display: block;
+  cursor: grab;
+  touch-action: none; /* allow horizontal drag without page scroll */
+  user-select: none;
+}
+.exec-kpi-spark-tall:active {
+  cursor: grabbing;
+}
+/* FORK 2026-05-13 — hover hint for pan/zoom affordance on the tall graphs.
+   Subtle so it doesn't compete with the chart itself. */
+.exec-kpi-row.exec-kpi-graph {
+  position: relative;
+}
+.exec-kpi-row.exec-kpi-graph::after {
+  content: "scroll · zoom  ·  drag · pan  ·  dbl-click · reset";
+  position: absolute;
+  bottom: 2px;
+  right: 8px;
+  font-size: 9px;
+  color: #4a4a52;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.exec-kpi-row.exec-kpi-graph:hover::after {
+  opacity: 0.7;
+}
+
 .exec-section {
   border-bottom: 1px solid #232328;
   flex-shrink: 0;
