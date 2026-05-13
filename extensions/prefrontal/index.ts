@@ -16,7 +16,8 @@
  * Wired in by: OpenClaw plugin system via `plugins.entries.prefrontal` in openclaw.json
  */
 import os from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type {
   PluginHookSubagentSpawnedEvent,
@@ -704,6 +705,21 @@ export default function register(api: OpenClawPluginApi) {
     respond(true, featureFlags);
   });
 
+  // ── Kit dir constants (used by both plan-rpcs and kit-rpcs) ──
+  const kitInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
+  // Resolve ownKitsDir relative to this file's location so it works regardless of
+  // the gateway's working directory. From dist/extensions/prefrontal/ go three levels
+  // up to the repo root, then into extensions/tinkerclaw-prefrontal/kits/.
+  const ownKitsDir = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+    "extensions",
+    "tinkerclaw-prefrontal",
+    "kits",
+  );
+
   // ── Plan store + RPCs (FORK 2026-05-13) ──
   const planRootDir = join(os.homedir(), ".openclaw", "workspace", "state", "prefrontal", "plans");
   const planStore = new PlanStore({
@@ -716,7 +732,7 @@ export default function register(api: OpenClawPluginApi) {
       }
     },
   });
-  const planRpcs = createPlanRpcs({ store: planStore });
+  const planRpcs = createPlanRpcs({ store: planStore, ownKitsDir, kitInstallSandbox });
   for (const [name, handler] of Object.entries(planRpcs)) {
     api.registerGatewayMethod(name, async ({ respond, params }) => {
       try {
@@ -731,8 +747,6 @@ export default function register(api: OpenClawPluginApi) {
   log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
 
   // ── Kit store + RPCs (FORK 2026-05-13, Phase 6) ──
-  const kitInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
-  const ownKitsDir = join(process.cwd(), "extensions/tinkerclaw-prefrontal/kits");
   const kitStore = new KitStore({ rootDir: kitInstallSandbox });
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const journeyCfg = (config as any)?.integrations?.journey ?? {};
