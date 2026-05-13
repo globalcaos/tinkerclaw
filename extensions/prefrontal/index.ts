@@ -68,6 +68,8 @@ import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./explor
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
+import { createKitRpcs } from "./kit-rpcs.js";
+import { KitStore } from "./kit-store.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
 import { createPlanRpcs } from "./plan-rpcs.js";
@@ -727,6 +729,40 @@ export default function register(api: OpenClawPluginApi) {
     });
   }
   log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
+
+  // ── Kit store + RPCs (FORK 2026-05-13, Phase 6) ──
+  const kitInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
+  const ownKitsDir = join(process.cwd(), "extensions/tinkerclaw-prefrontal/kits");
+  const kitStore = new KitStore({ rootDir: kitInstallSandbox });
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
+  const journeyCfg = (config as any)?.integrations?.journey ?? {};
+  const kitRpcs = createKitRpcs({
+    store: kitStore,
+    baseUrl:
+      typeof journeyCfg.baseUrl === "string" && journeyCfg.baseUrl.length > 0
+        ? journeyCfg.baseUrl
+        : "https://www.journeykits.ai",
+    apiKey:
+      typeof journeyCfg.apiKey === "string" && journeyCfg.apiKey.length > 0
+        ? journeyCfg.apiKey
+        : null,
+    kitInstallSandbox,
+    ownKitsDir,
+  });
+  for (const [name, handler] of Object.entries(kitRpcs)) {
+    api.registerGatewayMethod(name, async ({ respond, params }) => {
+      try {
+        const result = await handler(params);
+        respond(true, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        respond(false, undefined, { code: "INVALID_REQUEST", message });
+      }
+    });
+  }
+  log.info?.(
+    `[prefrontal] kit RPCs registered (baseUrl=${typeof journeyCfg.baseUrl === "string" ? journeyCfg.baseUrl : "default"}, apiKey=${journeyCfg.apiKey ? "set" : "absent"})`,
+  );
 
   // ── Restart auto-continue (Phase 3, FORK 2026-05-13) ──
   // 3s delay gives the HTTP server and cc-bridge plugin time to finish binding
