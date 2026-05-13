@@ -9,8 +9,8 @@ see_also: flows.md (sequence of calls), failures.md (transitions that don't fire
 verify:
   - name: L1 — agent:main:main session entry exists and has a recognised status
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.state","--params",json.dumps({"sessionKey":"agent:main:main"})],capture_output=True,text=True,timeout=25); j=json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); status = (j.get("entry") or {}).get("status"); assert status in {"idle","running","done","failed","aborted","timeout","interrupted",None}, f"unrecognised status {status!r}"'
-  - name: L4 — restart-recovery log line format unchanged
-    cmd: 'journalctl --user -u openclaw-gateway.service --since "24 hours ago" --no-pager 2>&1 | grep -E "main-session-restart-recovery|marked .* interrupted main session" >/dev/null'
+  - name: L4 — restart-recovery code path still emits the known log message
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/main-session-restart-recovery.ts")).read(); assert "marked interrupted main session failed" in t and "main-session-restart-recovery" in t, "restart-recovery log emission missing or renamed — refactor without a verify update is the regression class to catch"'
 ---
 
 # Lifecycles — state machines
