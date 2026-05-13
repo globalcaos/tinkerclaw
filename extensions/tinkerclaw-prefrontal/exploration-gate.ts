@@ -83,7 +83,9 @@ export function createExplorationGate(config: ExplorationGateConfig): Exploratio
   }
 
   function checkTool(toolName: string, ctx?: ExplorationGateCheckContext): ExplorationGateResult {
-    if (!config.enabled) {return { blocked: false };}
+    if (!config.enabled) {
+      return { blocked: false };
+    }
 
     // Exempt triggers (heartbeat, cron)
     if (ctx?.trigger && config.exemptTriggers.includes(ctx.trigger)) {
@@ -96,7 +98,9 @@ export function createExplorationGate(config: ExplorationGateConfig): Exploratio
     }
 
     // Read-only tools always pass
-    if (isReadOnly(toolName)) {return { blocked: false };}
+    if (isReadOnly(toolName)) {
+      return { blocked: false };
+    }
 
     // Mutating tools blocked until exploration threshold met
     if (isMutating(toolName) && turnReadOnlyCount < config.minReadOnlyTools) {

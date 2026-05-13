@@ -1,5 +1,5 @@
 {
-  "id": "hippocampus",
+  "id": "tinkerclaw-hippocampus",
   "name": "Hippocampus",
   "description": "Concept-index memory enhancement with importance scoring, deduplication, and episodic buffer",
   "version": "0.1.0",
