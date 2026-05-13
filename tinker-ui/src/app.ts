@@ -9517,8 +9517,8 @@ function init() {
     category: keyof typeof RECIPE_CATEGORIES;
   }
 
-  // Recipe file base path — recipes are .md files in the prefrontal extension
-  const RECIPE_BASE = "extensions/tinkerclaw-prefrontal/recipes";
+  // Kit file base path — kits are kit.md files in the prefrontal extension (kit/1.0)
+  const RECIPE_BASE = "extensions/tinkerclaw-prefrontal/kits";
 
   const RECIPE_CATALOG: Recipe[] = [
     // ── Coding ──
@@ -9736,7 +9736,7 @@ function init() {
       html += `<span class="recipe-cat-count">${recipes.length}</span>`;
       html += `</div><div class="recipe-cat-items">`;
       for (const r of recipes) {
-        const filePath = `${RECIPE_BASE}/${catKey}/${r.id}.md`;
+        const filePath = `${RECIPE_BASE}/${r.id}/kit.md`;
         html += `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to edit recipe">`;
         html += `<div class="recipe-card-header">`;
         html += `<span class="recipe-name">${altEsc(r.name)}</span>`;

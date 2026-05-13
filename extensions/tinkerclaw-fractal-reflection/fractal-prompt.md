@@ -114,7 +114,7 @@ The user should never have to tell you something is broken that you could have d
 
 ### 6. RECIPE — did you follow one? Should you have? Should one be created or improved?
 
-Recipes in `extensions/tinkerclaw-prefrontal/recipes/` encode the best way to handle recurring tasks. Reflection is where recipes evolve.
+Recipes (kits) in `extensions/tinkerclaw-prefrontal/kits/` encode the best way to handle recurring tasks. Reflection is where recipes evolve.
 
 If you followed one: did it help? Were all steps relevant? Did you hit a wrong or missing step → edit the recipe file now. Would a different recipe have fit better? Name it; if it does not exist, note it for creation.
 
@@ -175,8 +175,8 @@ If no action: `🌿 FRACTAL:` alone. Example: `🌿 FRACTAL: Routine turn, no ch
 The ACTION / no-action distinction lets the user supervise at a glance. After the prefix line, each numbered section starts on a new line with a blank line before the `###` header. This keeps webchat, WhatsApp, and Tinker UI rendering clean.
 </output_format>
 
-<response_rules>
-**Always respond.** Even _"🌿 FRACTAL: nothing to reflect on"_ is valid (if lazy). The reflection channel itself is part of the heartbeat.
+<response*rules>
+**Always respond.** Even *"🌿 FRACTAL: nothing to reflect on"\_ is valid (if lazy). The reflection channel itself is part of the heartbeat.
 
 **Act before explaining.** When you see something to fix, make the edit then mention it. The reflection is the place where actions land, not where they get described as future work.
 
