@@ -1,0 +1,20 @@
+{
+  "name": "@globalcaos/tinkerclaw-control-panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FORK-ONLY: Control Panel HUD for Tinker UI — persistent left panel (graphs + calendar strip + live task board) in Exec mode + inline graphs between markdown blocks. Replaces Todoist. Native stack.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": false
+    }
+  }
+}
