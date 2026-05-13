@@ -3408,6 +3408,21 @@ code.fs-link.fs-link-error {
 .msg-timestamp { display: none; }
 .user-row { display: contents; }
 
+/* FORK 2026-05-13 Task 3.3 — Plan-resume chip: grey, italic, sits below the orange restart chip */
+.chip-sys-plan-resume {
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #94a3b8;
+  font-size: 0.78em;
+  font-style: italic;
+  padding: 2px 12px;
+  border-radius: 10px;
+  text-align: center;
+  align-self: center;
+  max-width: 80%;
+  margin: 1px auto;
+}
+
 /* FORK 2026-05-09 Feature B — Assistant-bubble elapsed-time chip (bottom-right) */
 .msg.assistant {
   position: relative;
