@@ -67,4 +67,17 @@ describe("PlanStore", () => {
     expect(plan!.steps[0].note).toBe("did A");
     expect(plan!.currentStep).toBe(1);
   });
+
+  it("close archives the file under archive/<YYYY-MM-DD>/ and removes the live plan", async () => {
+    await store.set({
+      sessionKey: "agent:main:main",
+      intent: "x",
+      runId: "r1",
+      steps: [{ title: "A" }],
+    });
+    const result = await store.close({ sessionKey: "agent:main:main", status: "done" });
+    expect(result.archivedTo).toMatch(/archive\/\d{4}-\d{2}-\d{2}\/agent__main__main-r1\.md$/);
+    expect(await store.get("agent:main:main")).toBeNull();
+    expect(fs.existsSync(result.archivedTo)).toBe(true);
+  });
 });
