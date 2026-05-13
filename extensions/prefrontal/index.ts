@@ -728,6 +728,49 @@ export default function register(api: OpenClawPluginApi) {
   }
   log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
 
+  // ── Restart auto-continue (Phase 3, FORK 2026-05-13) ──
+  // 3s delay gives the HTTP server and cc-bridge plugin time to finish binding
+  // before we fire chat.send. Uses callGateway loopback (same pattern as
+  // subagent-orphan-recovery / main-session-restart-recovery).
+  // operator.admin scope is required because buildContinueParams injects
+  // systemInputProvenance; the loopback backend client preserves declared scopes
+  // (shouldSkipLocalBackendSelfPairing = true for direct-local GATEWAY_CLIENT).
+  if (api.registrationMode === "full") {
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const { runRestartContinue } = await import("./restart-continue.js");
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { callGateway } = await import("../../src/gateway/call.js");
+          const gatewayCall = async (
+            method: string,
+            params: unknown,
+          ): Promise<{ runId: string }> => {
+            if (method !== "chat.send") {
+              throw new Error(`[prefrontal] gatewayCall: unsupported method ${method}`);
+            }
+            return callGateway<{ runId: string }>({
+              method: "chat.send",
+              params,
+              scopes: ["operator.admin"],
+              timeoutMs: 30_000,
+            });
+          };
+          const result = await runRestartContinue({ store: planStore, gatewayCall });
+          if (result.fired.length > 0) {
+            log.info?.(
+              `[prefrontal] restart-continue fired for ${result.fired.length} plan(s): ${result.fired.join(", ")}`,
+            );
+          } else {
+            log.info?.(`[prefrontal] restart-continue: no in-progress plans to resume`);
+          }
+        } catch (err) {
+          log.warn?.(`[prefrontal] restart-continue failed: ${String(err)}`);
+        }
+      })();
+    }, 3000);
+  }
+
   log.info?.(
     `[prefrontal] Prefrontal plugin registered (poll: ${pollIntervalMs}ms, staleness: ${stalenessThresholdMs}ms, monitor: ${monitorIntervalMs}ms)`,
   );
