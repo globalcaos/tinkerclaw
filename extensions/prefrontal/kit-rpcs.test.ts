@@ -28,22 +28,20 @@ describe("kit-rpcs", () => {
     fs.rmSync(ownKitsDir, { recursive: true, force: true });
   });
 
-  it("prefrontal.kit.search returns parsed results", async () => {
+  it("prefrontal.kit.search returns parsed results (flat array shape)", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/search?q=feature", method: "GET" })
-      .reply(200, {
-        results: [
-          {
-            kitRef: "globalcaos/feature",
-            title: "Build Feature",
-            summary: "s",
-            tags: [],
-            owner: "globalcaos",
-            updatedAt: "2026-05-13T00:00:00Z",
-          },
-        ],
-      });
+      .reply(200, [
+        {
+          kitRef: "globalcaos/feature",
+          title: "Build Feature",
+          summary: "s",
+          tags: [],
+          owner: "globalcaos",
+          updatedAt: "2026-05-13T00:00:00Z",
+        },
+      ]);
 
     const rpcs = createKitRpcs({
       store,
@@ -55,6 +53,44 @@ describe("kit-rpcs", () => {
     const res = await rpcs["prefrontal.kit.search"]({ query: "feature" });
     expect(res.results).toHaveLength(1);
     expect(res.results[0].kitRef).toBe("globalcaos/feature");
+  });
+
+  it("prefrontal.kit.search dedupes by kitRef keeping highest releaseTag", async () => {
+    mock
+      .get("https://www.journeykits.ai")
+      .intercept({ path: "/api/kits/search?q=feature", method: "GET" })
+      .reply(200, [
+        {
+          kitRef: "globalcaos/feature",
+          title: "Build Feature v1",
+          releaseTag: "1.0.0",
+          owner: "globalcaos",
+        },
+        {
+          kitRef: "globalcaos/feature",
+          title: "Build Feature v3 (latest)",
+          releaseTag: "3.0.0",
+          owner: "globalcaos",
+        },
+        {
+          kitRef: "globalcaos/feature",
+          title: "Build Feature v2",
+          releaseTag: "2.0.0",
+          owner: "globalcaos",
+        },
+      ]);
+
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.kit.search"]({ query: "feature" });
+    expect(res.results).toHaveLength(1);
+    expect(res.results[0].releaseTag).toBe("3.0.0");
+    expect(res.results[0].title).toBe("Build Feature v3 (latest)");
   });
 
   it("prefrontal.kit.get returns the kit", async () => {
