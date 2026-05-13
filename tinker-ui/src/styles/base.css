@@ -3408,21 +3408,6 @@ code.fs-link.fs-link-error {
 .msg-timestamp { display: none; }
 .user-row { display: contents; }
 
-/* FORK 2026-05-13 Task 3.3 — Plan-resume chip: grey, italic, sits below the orange restart chip */
-.chip-sys-plan-resume {
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  color: #94a3b8;
-  font-size: 0.78em;
-  font-style: italic;
-  padding: 2px 12px;
-  border-radius: 10px;
-  text-align: center;
-  align-self: center;
-  max-width: 80%;
-  margin: 1px auto;
-}
-
 /* FORK 2026-05-09 Feature B — Assistant-bubble elapsed-time chip (bottom-right) */
 .msg.assistant {
   position: relative;
@@ -3438,4 +3423,1059 @@ code.fs-link.fs-link-error {
   pointer-events: none;
   line-height: 1;
   user-select: none;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   FORK 2026-05-11 — tinkerclaw-control-panel — Exec mode HUD (Phase C)
+   When `#app.exec-mode` is on, an overlay aside is rendered between the
+   sidebar (column 1) and the chat-area (column 2) using absolute
+   positioning anchored to the app grid. Spec: docs/SPEC.md §0a + §7.
+
+   Visual language (SPEC §13): Linear-flavored dark, CSS-variable color
+   tokens, density gradient top→bottom (glance/scan/read).
+   ────────────────────────────────────────────────────────────────────── */
+
+.exec-panel {
+  display: none;
+  position: absolute;
+  left: 48px;                /* after sidebar */
+  top: 82px;                 /* below topbar */
+  /* Match grid row 3 (timeline) height: rows are `82px 3fr 1fr`,
+     so row 3 = (100% - 82px) × (1 / 4). When `.bottom-collapsed`
+     flips rows to `82px 3fr 0fr`, the override below pulls
+     `bottom` to 0 with the same easing as the grid transition. */
+  bottom: calc((100% - 82px) * 0.25);
+  width: 360px;
+  background: #16161a;
+  color: #eaeaee;
+  border-right: 1px solid #2a2a30;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 60;
+  font:
+    13px/1.4 -apple-system,
+    "Inter",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  box-sizing: border-box;
+  transition: bottom 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+#app.bottom-collapsed .exec-panel {
+  bottom: 0;
+}
+
+#app.exec-mode .exec-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+#app.exec-mode .chat-area {
+  padding-left: 360px;
+  transition: padding-left 0.25s ease;
+}
+#app.exec-mode .chat-area::before {
+  left: 360px;
+}
+
+.exec-section {
+  border-bottom: 1px solid #232328;
+  flex-shrink: 0;
+}
+.exec-section.exec-tasks {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.exec-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #a3a3ad;
+  padding: 12px 12px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.exec-progress-inline {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #6a6a73;
+}
+
+.exec-graphs-body,
+.exec-calendar-body {
+  padding: 4px 12px 12px;
+  color: #6a6a73;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.exec-tasks-body {
+  padding: 4px 0 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.exec-group {
+  margin: 0 0 8px;
+}
+.exec-group-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a3a3ad;
+  padding: 6px 12px 4px;
+  border-left: 2px solid transparent;
+}
+.exec-group[data-axis="ventures"] .exec-group-header { border-left-color: #ff6b3d; }
+.exec-group[data-axis="online"]   .exec-group-header { border-left-color: #f5b800; }
+.exec-group[data-axis="family"]   .exec-group-header { border-left-color: #e8849e; }
+.exec-group[data-axis="me"]       .exec-group-header { border-left-color: #6cb1e8; }
+.exec-group[data-axis="serra"]    .exec-group-header { border-left-color: #8a8a92; }
+.exec-group[data-axis="meta"]     .exec-group-header { border-left-color: #6a6a73; }
+.exec-group-count {
+  color: #6a6a73;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+/* FORK 2026-05-11 — .exec-task is now a wrapper (header + optional drawer);
+   the grid layout moved to .exec-task-head below. Keep .exec-task as a
+   plain block so the head and drawer stack vertically with no overflow. */
+.exec-task {
+  display: block;
+  font-size: 13px;
+  cursor: default;
+  transition: background 0.15s ease;
+  overflow: hidden; /* hard guard against horizontal scroll on any child */
+  box-sizing: border-box;
+  max-width: 100%;
+}
+.exec-task:hover {
+  background: #1c1c22;
+}
+.exec-task-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.exec-task-text {
+  color: #eaeaee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;       /* lets ellipsis kick in inside a grid/flex parent */
+  max-width: 100%;
+  display: block;
+}
+.exec-task[data-status="resolved"] .exec-task-text {
+  text-decoration: line-through;
+  color: #6a6a73;
+  opacity: 0.7;
+}
+
+.exec-task-chips {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.exec-chip {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #6a6a73;
+  background: #232328;
+  letter-spacing: 0.02em;
+}
+.exec-chip-hands-me {
+  color: #6cb1e8;
+  background: #1a2630;
+}
+.exec-chip-hands-user {
+  color: #d4a627;
+  background: #2a2417;
+}
+.exec-chip-hands-either {
+  color: #a3a3ad;
+  background: #232328;
+}
+
+.exec-empty,
+.exec-error,
+.exec-loading {
+  padding: 20px 12px;
+  text-align: center;
+  font-style: italic;
+  font-size: 12px;
+}
+.exec-empty {
+  color: #6a6a73;
+}
+.exec-error {
+  color: #ef5350;
+}
+.exec-loading {
+  color: #4eb069;
+  animation: exec-loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes exec-loading-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   FORK 2026-05-11 — tinkerclaw-control-panel — task drag-and-drop
+   Native HTML5 DnD on .exec-task rows. Reorder within group OR drag onto
+   another axis (either an existing group or one of the axis-target chips
+   in #exec-axis-targets which appear only during a drag).
+   ────────────────────────────────────────────────────────────────────── */
+
+.exec-task[draggable="true"] {
+  cursor: grab;
+}
+.exec-task[draggable="true"]:active {
+  cursor: grabbing;
+}
+.exec-task-grip {
+  color: #4a4a52;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -2px;
+  line-height: 1;
+  user-select: none;
+  cursor: grab;
+  transition: color 0.15s ease;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.exec-task:hover .exec-task-grip {
+  color: #a3a3ad;
+}
+/* FORK 2026-05-11 — Removed the grid override that targeted .exec-task; the
+   grid now lives only on .exec-task-head (further down in this file). */
+.exec-task-dragging {
+  opacity: 0.35;
+  background: #232328 !important;
+}
+/* FORK 2026-05-12 — when an EXPANDED card is being dragged, hide its drawer
+   so the source row shrinks to head-height during the gesture. Without this,
+   the drawer (~300 px) keeps the user's cursor trapped inside the source
+   row and prevents them from reaching a real drop target — the reported
+   "drag visual works only from the description, but task never moves"
+   pattern. Drawer is restored automatically on dragend (class removed). */
+.exec-task-dragging .exec-task-drawer {
+  display: none;
+}
+
+.exec-drop-indicator {
+  height: 2px;
+  background: #ff6b3d;
+  margin: 1px 12px;
+  border-radius: 1px;
+  pointer-events: none;
+  box-shadow: 0 0 6px rgba(255, 107, 61, 0.6);
+}
+
+/* FORK 2026-05-12 — transient error pill anchored at the bottom of the
+   exec panel, used when a drop's tasks.update RPC fails. Renders for ~4s
+   then fades out. Without this, RPC failures only surfaced in DevTools
+   console — the user saw "task dropped but nothing happened" with no
+   indication that the server had actually rejected the move. */
+.exec-error-pill {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 16px;
+  background: #3a1818;
+  color: #ffb1a3;
+  border: 1px solid #ef5350;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  z-index: 50;
+}
+.exec-error-pill-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.exec-axis-targets {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #16161a;
+  border-bottom: 1px solid #232328;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.exec-axis-targets-visible {
+  display: flex;
+}
+.exec-axis-target {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: #1c1c22;
+  border: 1px dashed #3a3a45;
+  color: #a3a3ad;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.exec-axis-target.exec-axis-target-current {
+  opacity: 0.4;
+  border-style: solid;
+}
+.exec-axis-target.exec-axis-target-over {
+  background: rgba(255, 107, 61, 0.15);
+  border-color: #ff6b3d;
+  border-style: solid;
+  color: #eaeaee;
+  transform: scale(1.05);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   FORK 2026-05-11 — Phase D — filter chips, progress bar, expanded
+   drawer, context menu. SPEC §7.5–7.7, visual tokens per §13.
+   ────────────────────────────────────────────────────────────────────── */
+
+.exec-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 12px 6px;
+  border-bottom: 1px solid #232328;
+}
+.exec-filter-chip {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px solid #232328;
+  background: transparent;
+  color: #a3a3ad;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+  font-family: inherit;
+}
+.exec-filter-chip:hover {
+  background: #1c1c22;
+  color: #eaeaee;
+}
+.exec-filter-chip-active {
+  background: #1f1f26;
+  border-color: #3a3a45;
+  color: #eaeaee;
+}
+
+.exec-progress-bar-wrap {
+  height: 0;
+  background: #16161a;
+  overflow: hidden;
+  transition: height 0.18s ease;
+}
+.exec-progress-bar-visible {
+  height: 4px;
+}
+.exec-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ef5350 0%, #d4a627 50%, #4eb069 100%);
+  transition:
+    width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.2s ease;
+}
+.exec-progress-bar[data-tier="low"]  { filter: hue-rotate(0deg) saturate(1); }
+.exec-progress-bar[data-tier="mid"]  { filter: hue-rotate(0deg) saturate(0.9); }
+.exec-progress-bar[data-tier="high"] { filter: hue-rotate(0deg) saturate(1.05); }
+
+/* FORK 2026-05-11 — switched .exec-task-head from grid to flex so the text
+   column flex-shrinks (with ellipsis) when chips would otherwise consume
+   all width. min-width: 0 on the text is the canonical way to allow
+   ellipsis inside a flex container.
+   FORK 2026-05-12 — user-select:none + cursor:grab so HTML5 drag actually
+   initiates from anywhere on the collapsed row. Without user-select:none,
+   mousedown on the title text starts a text selection and the parent's
+   draggable="true" never wins the gesture (this was the reported "drag
+   doesn't work from the compacted card" bug). The drawer body keeps text
+   selectable — only the head row is locked. */
+.exec-task-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  cursor: grab;
+  overflow: hidden;
+  box-sizing: border-box;
+  max-width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.exec-task-head:active {
+  cursor: grabbing;
+}
+.exec-task-head .exec-task-grip,
+.exec-task-head .exec-task-icon,
+.exec-task-head .exec-task-chips,
+.exec-task-head .exec-task-menu {
+  flex: 0 0 auto;
+}
+.exec-task-head .exec-task-text {
+  flex: 1 1 auto;
+  min-width: 0;       /* required for ellipsis inside a flex parent */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exec-tasks-body,
+.exec-task-drawer {
+  overflow-x: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.exec-task-drawer * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.exec-task-drawer pre,
+.exec-task-drawer code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.exec-task-grip {
+  color: #4a4a52;
+  font-size: 10px;
+  user-select: none;
+  cursor: grab;
+}
+.exec-task-grip:active {
+  cursor: grabbing;
+}
+.exec-task-menu {
+  background: transparent;
+  border: none;
+  color: #4a4a52;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.exec-task:hover .exec-task-menu {
+  opacity: 0.7;
+}
+.exec-task-menu:hover {
+  opacity: 1 !important;
+  color: #eaeaee;
+}
+
+.exec-task-expanded {
+  background: #1c1c22;
+  border-radius: 4px;
+}
+.exec-task-drawer {
+  background: #1f1f26;
+  border-top: 1px solid #2a2a30;
+  padding: 10px 14px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #a3a3ad;
+}
+.exec-task-context {
+  color: #eaeaee;
+  margin-bottom: 8px;
+}
+.exec-task-context p {
+  margin: 0 0 6px;
+}
+.exec-task-context :is(ul, ol) {
+  margin: 4px 0 6px;
+  padding-left: 20px;
+}
+.exec-task-context code {
+  background: #16161a;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.exec-task-context-empty {
+  font-style: italic;
+  color: #6a6a73;
+}
+.exec-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.exec-task-meta-chip {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: #16161a;
+  border: 1px solid #232328;
+  color: #a3a3ad;
+  text-decoration: none;
+}
+.exec-task-meta-chip:hover {
+  border-color: #3a3a45;
+  color: #eaeaee;
+}
+.exec-task-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 4px;
+  margin-top: 8px;
+}
+.exec-task-action {
+  background: #16161a;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #a3a3ad;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.exec-task-action:hover {
+  background: #232328;
+  border-color: #3a3a45;
+  color: #eaeaee;
+}
+.exec-task-action-primary {
+  border-color: #2a4530;
+  color: #4eb069;
+}
+.exec-task-action-primary:hover {
+  background: #1a2620;
+  border-color: #3a6045;
+}
+.exec-task-action-warn:hover {
+  color: #ef5350;
+  border-color: #4a2828;
+}
+
+.exec-task-error {
+  outline: 1px solid #ef5350;
+  outline-offset: -1px;
+  transition: outline 0.2s ease;
+}
+
+/* ─── Right-click context menu ─── */
+
+.exec-context-menu {
+  position: fixed;
+  min-width: 220px;
+  background: #1f1f26;
+  border: 1px solid #2a2a30;
+  border-radius: 6px;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  z-index: 1000;
+  font: 12px/1.4 -apple-system, "Inter", system-ui, sans-serif;
+  color: #eaeaee;
+  user-select: none;
+}
+.exec-context-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.exec-context-item:hover {
+  background: #2a2a30;
+}
+.exec-context-item-warn {
+  color: #e57373;
+}
+.exec-context-item-warn:hover {
+  background: #3a1f22;
+  color: #ff8a80;
+}
+.exec-context-sep {
+  height: 1px;
+  background: #2a2a30;
+  margin: 4px 0;
+}
+.exec-context-submenu-anchor {
+  position: relative;
+}
+.exec-context-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  min-width: 200px;
+  background: #1f1f26;
+  border: 1px solid #2a2a30;
+  border-radius: 6px;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  margin-left: 2px;
+}
+.exec-context-submenu-anchor:hover > .exec-context-submenu {
+  display: block;
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────
+   FORK 2026-05-11 — Reschedule picker overlay (SPEC §7.8).
+   Two-row × 7-day grid showing event density per day (when calendar sync
+   is wired) + count of tasks already rescheduled to that day. Today is
+   highlighted; the task's current due date is bordered. ESC / backdrop
+   click cancels. Heat colors use the severity ramp from SPEC §13.2.
+   ────────────────────────────────────────────────────────────────────── */
+
+.exec-rsch-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: exec-rsch-fade-in 0.18s ease;
+}
+@keyframes exec-rsch-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.exec-rsch-dialog {
+  background: #111114;
+  border: 1px solid #2a2a30;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  padding: 18px 18px 14px;
+  width: min(620px, 92vw);
+  color: #eaeaee;
+  font: 13px/1.4 -apple-system, "Inter", system-ui, sans-serif;
+}
+
+.exec-rsch-header {
+  margin-bottom: 14px;
+}
+.exec-rsch-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #a3a3ad;
+  margin-bottom: 4px;
+}
+.exec-rsch-task-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: #eaeaee;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.exec-rsch-current-due {
+  font-size: 11px;
+  color: #6a6a73;
+}
+
+.exec-rsch-week-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6a6a73;
+  margin: 10px 0 4px;
+}
+
+.exec-rsch-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.exec-rsch-cell {
+  background: #16161a;
+  border: 1px solid #232328;
+  border-radius: 6px;
+  padding: 8px 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  color: inherit;
+  font: inherit;
+}
+.exec-rsch-cell:hover {
+  background: #1c1c22;
+  border-color: #3a3a45;
+}
+.exec-rsch-cell:active {
+  transform: scale(0.96);
+}
+.exec-rsch-today {
+  border-color: #6cb1e8;
+  box-shadow: inset 0 0 0 1px #6cb1e8;
+}
+.exec-rsch-current {
+  background: #1f1f26;
+  border-color: #ff6b3d;
+  box-shadow: inset 0 0 0 1px #ff6b3d;
+}
+
+.exec-rsch-day {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a3a3ad;
+}
+.exec-rsch-today .exec-rsch-day {
+  color: #6cb1e8;
+}
+
+.exec-rsch-bar-wrap {
+  width: 100%;
+  height: 22px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.exec-rsch-bar {
+  width: 60%;
+  border-radius: 2px;
+  transition: background 0.15s ease;
+}
+.exec-rsch-cell[data-heat="0"] .exec-rsch-bar { background: transparent; }
+.exec-rsch-cell[data-heat="1"] .exec-rsch-bar { background: #4eb069; }
+.exec-rsch-cell[data-heat="2"] .exec-rsch-bar { background: #d4a627; }
+.exec-rsch-cell[data-heat="3"] .exec-rsch-bar { background: #f59e0b; }
+.exec-rsch-cell[data-heat="4"] .exec-rsch-bar { background: #ef5350; }
+
+.exec-rsch-evt {
+  font-size: 10px;
+  color: #6a6a73;
+  font-variant-numeric: tabular-nums;
+}
+.exec-rsch-evt-free {
+  color: #4eb069;
+  opacity: 0.7;
+}
+.exec-rsch-tsk {
+  font-size: 9px;
+  color: #ff6b3d;
+  background: rgba(255, 107, 61, 0.12);
+  padding: 1px 5px;
+  border-radius: 8px;
+  margin-top: 2px;
+}
+
+.exec-rsch-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  gap: 10px;
+}
+.exec-rsch-clear,
+.exec-rsch-cancel {
+  background: transparent;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  color: #a3a3ad;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.exec-rsch-clear:hover {
+  color: #ef5350;
+  border-color: #ef5350;
+}
+.exec-rsch-cancel:hover {
+  color: #eaeaee;
+  border-color: #3a3a45;
+  background: #1c1c22;
+}
+
+/* Reschedule picker — busy % + breakdown additions
+   FORK 2026-05-11 — extends the §7.8 picker with combined busyness:
+   calendar event minutes + task est_minutes per day, normalised to an
+   8h workday. Overbooked days (>100%) get a red outline. */
+
+.exec-rsch-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: #eaeaee;
+  font-variant-numeric: tabular-nums;
+}
+.exec-rsch-pct-free {
+  color: #4eb069;
+  opacity: 0.7;
+  font-weight: 400;
+}
+.exec-rsch-pct-over {
+  color: #ef5350;
+}
+
+.exec-rsch-breakdown {
+  font-size: 9.5px;
+  color: #6a6a73;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.exec-rsch-breakdown-empty {
+  visibility: hidden;
+  height: 12px;
+}
+
+.exec-rsch-allday {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 9px;
+  color: #d4a627;
+  opacity: 0.85;
+}
+
+.exec-rsch-cell {
+  position: relative; /* allow the all-day badge to anchor top-right */
+}
+
+.exec-rsch-overbooked {
+  border-color: #ef5350 !important;
+  box-shadow: inset 0 0 0 1px #ef5350, 0 0 12px rgba(239, 83, 80, 0.18);
+}
+.exec-rsch-overbooked .exec-rsch-bar {
+  background: #ef5350 !important;
+}
+
+/* FORK 2026-05-11 — pencil edit affordances. Inline pencils replace the
+   stand-alone "Edit text" action button. Subtle by default (low opacity),
+   strong on hover. Pencil clicks must NOT propagate to row expand. */
+.exec-task-pencil {
+  background: transparent;
+  border: none;
+  color: #4a4a52;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  flex: 0 0 auto;
+}
+.exec-task:hover .exec-task-pencil,
+.exec-task-pencil-inline,
+.exec-task-pencil-context {
+  opacity: 0.55;
+}
+.exec-task-pencil:hover {
+  opacity: 1 !important;
+  color: #eaeaee;
+  background: #232328;
+}
+
+/* Full title block at the top of the drawer — wraps long titles, with
+   pencil at the end so the user can rename in place. */
+.exec-task-fulltitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0 8px;
+  border-bottom: 1px dashed #232328;
+  margin-bottom: 10px;
+}
+.exec-task-fulltitle-text {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #eaeaee;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: normal;
+}
+
+/* Description wrapper — pencil floats to the bottom-right of the rendered
+   markdown block. */
+.exec-task-context-wrap {
+  position: relative;
+}
+.exec-task-pencil-context {
+  position: absolute;
+  bottom: 0;
+  right: -2px;
+}
+
+/* FORK 2026-05-11 — Today's busy chip in the tasks section header. */
+.exec-busy-inline {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+  background: #232328;
+  color: #a3a3ad;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.exec-busy-inline[data-tier="free"] { color: #4eb069; }
+.exec-busy-inline[data-tier="low"]  { color: #4eb069; }
+.exec-busy-inline[data-tier="mid"]  { color: #d4a627; }
+.exec-busy-inline[data-tier="high"] { color: #f59e0b; }
+.exec-busy-inline[data-tier="over"] {
+  color: #ef5350;
+  background: rgba(239, 83, 80, 0.15);
+  animation: exec-busy-pulse 2.5s ease-in-out infinite;
+}
+@keyframes exec-busy-pulse {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+
+/* FORK 2026-05-11 — Inline "+ Add task" bar at the bottom of the tasks
+   section. Toggle button reveals an inline form (text + axis + est + due).
+   Compact + always-visible — the same affordance for daily task capture
+   that you'd otherwise get from the chat. */
+.exec-task-add-bar {
+  border-top: 1px solid #232328;
+  background: #131318;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+.exec-task-add-toggle {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed #2a2a30;
+  border-radius: 4px;
+  color: #6a6a73;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.exec-task-add-toggle:hover {
+  border-color: #ff6b3d;
+  color: #ff6b3d;
+  background: rgba(255, 107, 61, 0.05);
+}
+.exec-task-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.exec-add-text {
+  background: #16161a;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  color: #eaeaee;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+.exec-add-text:focus {
+  border-color: #ff6b3d;
+}
+.exec-add-text-error {
+  border-color: #ef5350 !important;
+  animation: exec-busy-pulse 0.4s 2;
+}
+.exec-add-fields {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.exec-add-axis,
+.exec-add-est,
+.exec-add-due {
+  background: #16161a;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  color: #eaeaee;
+  font-size: 10.5px;
+  padding: 4px 6px;
+  outline: none;
+}
+.exec-add-axis {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.exec-add-est {
+  width: 50px;
+  flex: 0 0 50px;
+}
+.exec-add-due {
+  width: 110px;
+  flex: 0 0 110px;
+  color: #a3a3ad;
+}
+.exec-add-axis:focus,
+.exec-add-est:focus,
+.exec-add-due:focus {
+  border-color: #ff6b3d;
+}
+.exec-add-cancel,
+.exec-add-save {
+  background: transparent;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  color: #a3a3ad;
+  cursor: pointer;
+  font-size: 12px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.exec-add-cancel:hover {
+  color: #ef5350;
+  border-color: #ef5350;
+}
+.exec-add-save {
+  border-color: #ff6b3d;
+  color: #ff6b3d;
+}
+.exec-add-save:hover {
+  background: #ff6b3d;
+  color: #16161a;
 }

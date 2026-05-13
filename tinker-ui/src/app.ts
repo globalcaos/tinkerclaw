@@ -4,6 +4,7 @@ import { mountContextTimeline } from "./panels/context-timeline.js";
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
   mountPrefrontalTree,
+  type PanelPlan,
   type PrefrontalDashboardState,
   type PrefrontalTreeController,
   type RecipeState,
@@ -677,10 +678,13 @@ const activeRuns = new Map<string, ActiveRunInfo>();
 //   from lifecycle + explicit trail RPC). The panel renders all of them with
 //   scroll; we only clamp to an absurd maximum to avoid unbounded memory on
 //   long-running sessions.
+// FORK 2026-05-13: added currentPlan — last `prefrontal-plan-state` WS event
+// (null when no active plan; set to null when plan.close fires).
 const PREFRONTAL_TRAIL_HARD_MAX = 500;
 let latestTreeFromExtension: TreeResponse | null = null;
 let latestTreeFromExtensionAt = 0;
 let currentRecipe: RecipeState | null = null;
+let currentPlan: PanelPlan | null = null; // FORK 2026-05-13
 const prefrontalTrail: TrailEvent[] = [];
 function pushTrail(evt: TrailEvent) {
   prefrontalTrail.push(evt);
@@ -874,6 +878,7 @@ function updatePrefrontalTree() {
     tree,
     recipe: currentRecipe,
     trail: prefrontalTrail,
+    plan: currentPlan, // FORK 2026-05-13
   } satisfies PrefrontalDashboardState);
 }
 
@@ -2064,6 +2069,19 @@ function onEvent(evt: unknown) {
         }
         updatePrefrontalTree();
       }
+    }
+
+    // FORK 2026-05-13: Plan-board state update. Emitted by the prefrontal
+    // extension's PlanStore.onMutation callback after every set/step/close.
+    // plan is null when a plan has been closed (archived).
+    if (p?.stream === "lifecycle" && p.data?.phase === "prefrontal-plan-state") {
+      const d = p.data as { sessionKey?: string; plan?: PanelPlan | null };
+      currentPlan = d.plan ?? null;
+      pfLog(
+        `plan-state sessionKey=${d.sessionKey ?? "-"} status=${currentPlan?.status ?? "null"} steps=${currentPlan?.steps?.length ?? 0}`,
+        currentPlan,
+      );
+      updatePrefrontalTree();
     }
 
     // FORK 2026-04-20: Jarvis publishes a discrete trail event via
@@ -3702,21 +3720,6 @@ function renderEnvelope(env: Envelope): string {
   );
 }
 
-// FORK 2026-05-13 Task 3.3: Plan-resume grey chip ---------------------------
-// Injected by restart-continue.ts via chat.inject with label "system".
-// Sits below the orange __ERR_ENV__ restart chip to confirm plan auto-continue.
-const SYS_PLAN_RESUME_PREFIX = "__SYS_PLAN_RESUME__:";
-function extractPlanResumeChip(text: string): string | null {
-  if (typeof text !== "string") return null;
-  const idx = text.indexOf(SYS_PLAN_RESUME_PREFIX);
-  if (idx < 0) return null;
-  const label = text.slice(idx + SYS_PLAN_RESUME_PREFIX.length).trim();
-  return label.length > 0 ? label : "Resuming";
-}
-function renderPlanResumeChip(label: string): string {
-  return `<div class="chip-sys-plan-resume">↻ ${esc(label)}</div>`;
-}
-
 function renderSystemMsg(text: string, idx: number): string {
   const sid = `s${idx}`;
   const sysExp = expandedTools.has(sid);
@@ -3935,12 +3938,6 @@ function renderMsg(
         }
       }
     } else if (role === "assistant") {
-      // FORK 2026-05-13 Task 3.3: Plan-resume grey chip — check before envelope.
-      const planResumeLabel = extractPlanResumeChip(text);
-      if (planResumeLabel !== null) {
-        h += renderPlanResumeChip(planResumeLabel);
-        return h;
-      }
       // FORK 2026-04-17: ErrorEnvelope detection ahead of everything else.
       // Any assistant text prefixed with __ERR_ENV__:{json} gets rendered as a
       // rich envelope bubble (red or orange per Design Bible §11.12) instead
@@ -4084,12 +4081,6 @@ function renderMsg(
           }
         }
       } else if (role === "assistant") {
-        // FORK 2026-05-13 Task 3.3: Plan-resume grey chip (twin path).
-        const planResumeLabel2 = extractPlanResumeChip(text);
-        if (planResumeLabel2 !== null) {
-          h += renderPlanResumeChip(planResumeLabel2);
-          return h;
-        }
         // FORK 2026-04-17: same ErrorEnvelope detection as above.
         const envelope2 = extractEnvelope(text);
         if (envelope2) {
@@ -6029,6 +6020,10 @@ function init() {
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
       <div class="toolbox">
+        <!-- FORK 2026-05-12: Exec mode promoted to the leftmost slot — it is
+             the primary "mode" toggle in the topbar (per SPEC §0a / §7.1),
+             so it sits before the per-feature toggles. -->
+        <span id="tb-exec" class="topbar-icon-btn" data-hint="Exec mode — Control Panel HUD">🎯</span>
         <!-- FORK 2026-04-18: Amygdala + Fractal injection toggles.
              Enabled = Jarvis replies with 💬 ANSWER + 🧠 AMYGDALA (gut-read)
              + 🌿 FRACTAL (post-reflection). Disable for speed. -->
@@ -6400,17 +6395,1224 @@ function init() {
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
+  // FORK 2026-05-12: persist collapsed state across hard refresh, mirroring
+  // the `tinker.execMode` pattern at line ~7460. Without this, the panel
+  // visibility silently reset to "visible" on every reload even though the
+  // topbar button is a toggle the user expects to remember its position.
   const tlBtn = $("tb-timeline")!;
+  if (localStorage.getItem("tinker.bottomCollapsed") === "1") {
+    app.classList.add("bottom-collapsed");
+    tlBtn.classList.remove("tb-active");
+  }
   tlBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("bottom-collapsed");
     tlBtn.classList.toggle("tb-active", !collapsed);
+    localStorage.setItem("tinker.bottomCollapsed", collapsed ? "1" : "0");
   });
 
   // ─── Models toggle (right panels expand/collapse) ───
+  // FORK 2026-05-12: persist collapsed state — same rationale as the timeline
+  // toggle directly above. See `tinker.execMode` for the canonical pattern.
   const mdBtn = $("tb-models")!;
+  if (localStorage.getItem("tinker.rightCollapsed") === "1") {
+    app.classList.add("right-collapsed");
+    mdBtn.classList.remove("tb-active");
+  }
   mdBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("right-collapsed");
     mdBtn.classList.toggle("tb-active", !collapsed);
+    localStorage.setItem("tinker.rightCollapsed", collapsed ? "1" : "0");
+  });
+
+  // ─── Exec mode toggle (Control Panel HUD: graphs + calendar + tasks) ───
+  // FORK 2026-05-11 (tinkerclaw-control-panel Phase C MVP). The HUD is
+  // rendered on demand into the page as a position:absolute aside; styles
+  // live in tinker-ui/src/styles/base.css under the `.exec-panel` rules.
+  const execBtn = $("tb-exec")!;
+  let execPanelEl: HTMLElement | null = null;
+  let execTasksTimer: ReturnType<typeof setInterval> | null = null;
+
+  function ensureExecPanel(): HTMLElement {
+    if (execPanelEl) return execPanelEl;
+    const el = document.createElement("aside");
+    el.id = "exec-panel";
+    el.className = "exec-panel";
+    el.innerHTML = `
+      <div class="exec-section exec-graphs">
+        <div class="exec-section-title">📊 Graphs</div>
+        <div class="exec-graphs-body">Metric panels appear here once you pin them. Inline ctrl-panel fence-block lands in Phase D.</div>
+      </div>
+      <div class="exec-section exec-calendar">
+        <div class="exec-section-title">📅 Calendar (7d)</div>
+        <div class="exec-calendar-body">Calendar sync lands in Phase E.</div>
+      </div>
+      <div class="exec-section exec-tasks">
+        <div class="exec-section-title">
+          <span>✅ Tasks</span>
+          <span class="exec-progress-inline" id="exec-progress-inline"></span>
+          <span class="exec-busy-inline" id="exec-busy-inline" title="Today's scheduled load (events + task estimates / 8h workday)"></span>
+        </div>
+        <div class="exec-filter-bar" id="exec-filter-bar"></div>
+        <div class="exec-progress-bar-wrap"><div class="exec-progress-bar" id="exec-progress-bar"></div></div>
+        <div id="exec-axis-targets" class="exec-axis-targets" aria-hidden="true"></div>
+        <div id="exec-tasks-body" class="exec-tasks-body">Loading…</div>
+        <div class="exec-task-add-bar" id="exec-task-add-bar">
+          <button class="exec-task-add-toggle" id="exec-task-add-toggle" title="Add a new task">+ Add task</button>
+          <form class="exec-task-add-form" id="exec-task-add-form" style="display:none">
+            <input type="text" id="exec-add-text" class="exec-add-text" placeholder="Task title…" autocomplete="off" maxlength="240">
+            <div class="exec-add-fields">
+              <select id="exec-add-axis" class="exec-add-axis" title="Axis"></select>
+              <input type="number" id="exec-add-est" class="exec-add-est" placeholder="min" min="5" max="480" step="5" value="30" title="Est minutes">
+              <input type="date" id="exec-add-due" class="exec-add-due" title="Due date (optional)">
+              <button type="button" class="exec-add-cancel" id="exec-add-cancel" title="Cancel">✕</button>
+              <button type="submit" class="exec-add-save" id="exec-add-save" title="Add task">➕</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+    app.appendChild(el);
+    execPanelEl = el;
+    attachExecDragHandlers(el);
+    renderExecFilterBar();
+    attachExecTaskAddHandlers(el);
+    // Global handlers: click-outside closes context menu; Escape closes too.
+    document.addEventListener("click", (ev) => {
+      if (execContextMenuEl && !execContextMenuEl.contains(ev.target as Node)) {
+        closeExecContextMenu();
+      }
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeExecContextMenu();
+    });
+    return el;
+  }
+
+  function renderExecFilterBar() {
+    const bar = document.getElementById("exec-filter-bar");
+    if (!bar) return;
+    // FORK 2026-05-12 (SPEC v3.3) — `snoozed` chip added: shows tasks the user
+    // has back-burnered indefinitely. Every other filter excludes back_burner
+    // so the pile only surfaces when explicitly requested.
+    const filters: Array<{ key: ExecFilter; label: string }> = [
+      { key: "unfinished", label: "Unfinished" },
+      { key: "all_today", label: "All today" },
+      { key: "resolved", label: "Resolved" },
+      { key: "deleted", label: "Deleted" },
+      { key: "snoozed", label: "💤 Snoozed" },
+      { key: "all", label: "All" },
+    ];
+    bar.innerHTML = filters
+      .map(
+        (f) =>
+          `<button class="exec-filter-chip${execFilter === f.key ? " exec-filter-chip-active" : ""}" data-filter="${f.key}">${f.label}</button>`,
+      )
+      .join("");
+    bar.querySelectorAll<HTMLElement>(".exec-filter-chip").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        execFilter = btn.dataset.filter as ExecFilter;
+        localStorage.setItem("tinker.execFilter", execFilter);
+        renderExecFilterBar();
+        void loadExecTasks();
+      });
+    });
+  }
+
+  function execFilterAccepts(t: ExecTask): boolean {
+    switch (execFilter) {
+      case "unfinished":
+        return t.status === "open" || t.status === "in_progress";
+      case "resolved":
+        return t.status === "resolved";
+      case "deleted":
+        // FORK 2026-05-13 — the chip merges the old 'Dismissed' and 'Dropped'
+        // bins into one. Legacy rows with status='dismissed' stay readable;
+        // every new delete now writes status='dropped'.
+        return t.status === "dismissed" || t.status === "dropped";
+      case "snoozed":
+        return t.status === "back_burner";
+      case "all":
+        // "All" means everything currently in play — snoozed tasks are not
+        // in play, they're the user's "don't show me but don't forget" pile.
+        return t.status !== "back_burner";
+      case "all_today":
+      default:
+        return t.status !== "dismissed" && t.status !== "dropped" && t.status !== "back_burner";
+    }
+  }
+
+  function escapeExecAttr(s: string): string {
+    return s.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  }
+
+  function formatExecAge(ms: number): string {
+    const m = Math.floor(ms / 60000);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    return `${d}d`;
+  }
+
+  type ExecTask = {
+    id: string;
+    text: string;
+    context_md: string | null;
+    status: "open" | "in_progress" | "resolved" | "dropped" | "dismissed" | "back_burner";
+    source: string;
+    source_ref: string | null;
+    priority_axis: string | null;
+    priority_rank: number;
+    est_minutes: number | null;
+    hands: "user" | "assistant" | "either" | null;
+    created_at: number;
+    due_date: string | null;
+    dismissal_kind: string | null;
+    dismissal_note: string | null;
+    metadata_json: string | null;
+  };
+
+  // Filter + expand state — persists between renders & sessions.
+  type ExecFilter = "unfinished" | "all_today" | "resolved" | "deleted" | "snoozed" | "all";
+  // FORK 2026-05-13 — `dismissed` filter renamed → `deleted`. Migrate any
+  // persisted value so the chip highlight matches after the rename.
+  const rawExecFilter = localStorage.getItem("tinker.execFilter");
+  let execFilter: ExecFilter =
+    (rawExecFilter === "dismissed" ? "deleted" : (rawExecFilter as ExecFilter)) || "unfinished";
+  let execExpandedId: string | null = null;
+  let execLastTasks: ExecTask[] = [];
+  let execContextMenuEl: HTMLElement | null = null;
+
+  const EXEC_AXIS_LABEL: Record<string, string> = {
+    ventures: "🚀 Ventures",
+    online: "💰 Online",
+    family: "👨‍👩‍👧 Family",
+    me: "🏃 Me",
+    serra: "🏭 SERRA",
+    meta: "⚙️ Meta",
+  };
+  // FORK 2026-05-11 (v3.1.1) — 'ventures' added as the FIRST axis at user's
+  // request: new income / business development. Distinct from 'online' (which
+  // tracks leading indicators of EXISTING online streams — GitHub stars,
+  // TinkerZone visits, YouTube subs). Ventures = new revenue experiments.
+  const EXEC_AXIS_ORDER = ["ventures", "online", "family", "me", "serra", "meta"];
+  const EXEC_STATUS_ICON: Record<string, string> = {
+    open: "⬜",
+    in_progress: "🟡",
+    resolved: "✅",
+    // FORK 2026-05-13 — single 🗑 for both deleted statuses (new 'dropped'
+    // writes + legacy 'dismissed' rows). See the Deleted filter chip.
+    dropped: "🗑",
+    dismissed: "🗑",
+    back_burner: "💤",
+  };
+
+  async function loadExecTasks(): Promise<void> {
+    const panel = ensureExecPanel();
+    const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
+    const progressEl = panel.querySelector("#exec-progress-inline") as HTMLElement;
+    const progressBar = panel.querySelector("#exec-progress-bar") as HTMLElement;
+    try {
+      const res = (await req("control-panel.tasks.list", {
+        // v3.3 — back_burner included in the fetch so the 💤 Snoozed chip has
+        // tasks to render; execFilterAccepts hides them from every other filter.
+        status: ["open", "in_progress", "resolved", "dismissed", "dropped", "back_burner"],
+        limit: 500,
+      })) as { tasks: ExecTask[]; count: number };
+      execLastTasks = res.tasks ?? [];
+      const visible = execLastTasks.filter(execFilterAccepts);
+      if (visible.length === 0) {
+        body.innerHTML = `<div class="exec-empty">Nothing matches the <b>${execFilter}</b> filter.</div>`;
+      } else {
+        const groups = new Map<string, ExecTask[]>();
+        for (const t of visible) {
+          const k = t.priority_axis ?? "meta";
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k)!.push(t);
+        }
+        for (const arr of groups.values()) {
+          arr.sort((a, b) => a.priority_rank - b.priority_rank);
+        }
+        const renderGroup = (axis: string, tasks: ExecTask[]): string => {
+          const label = EXEC_AXIS_LABEL[axis] ?? axis;
+          const parts: string[] = [];
+          parts.push(
+            `<div class="exec-group" data-axis="${axis}"><div class="exec-group-header">${label} <span class="exec-group-count">(${tasks.length})</span></div>`,
+          );
+          for (const t of tasks) parts.push(renderExecTaskRow(t, axis));
+          parts.push(`</div>`);
+          return parts.join("");
+        };
+        const html: string[] = [];
+        for (const axis of EXEC_AXIS_ORDER) {
+          const tasks = groups.get(axis);
+          if (tasks && tasks.length > 0) html.push(renderGroup(axis, tasks));
+        }
+        for (const [axis, tasks] of groups.entries()) {
+          if (!EXEC_AXIS_ORDER.includes(axis)) html.push(renderGroup(axis, tasks));
+        }
+        body.innerHTML = html.join("");
+        attachExecTaskHandlers(body);
+      }
+      try {
+        const prog = (await req("control-panel.tasks.progress", {})) as {
+          pass_id: string | null;
+          denominator: number;
+          numerator: number;
+        };
+        if (prog && prog.pass_id && prog.denominator > 0) {
+          const pct = Math.round((prog.numerator / prog.denominator) * 100);
+          progressEl.textContent = ` ${prog.numerator}/${prog.denominator} · ${pct}%`;
+          progressBar.style.width = `${pct}%`;
+          progressBar.dataset.tier = pct < 25 ? "low" : pct < 67 ? "mid" : "high";
+          progressBar.parentElement!.classList.add("exec-progress-bar-visible");
+        } else {
+          progressEl.textContent = "";
+          progressBar.style.width = "0%";
+          progressBar.parentElement!.classList.remove("exec-progress-bar-visible");
+        }
+      } catch {
+        progressEl.textContent = "";
+      }
+      // Today's busy % chip — independent fetch, doesn't block render
+      void loadExecBusyChip();
+    } catch (err) {
+      // FORK 2026-05-11 — distinguish transient "WS not connected yet" from
+      // real errors. The req() helper rejects with literal "disconnected"
+      // before the WS handshake completes; show a calm green loading state
+      // and schedule a fast retry instead of a red error.
+      const msg = String(err);
+      if (msg === "disconnected" || msg.includes("disconnected")) {
+        body.innerHTML = `<div class="exec-loading">⏳ Loading tasks — connecting to gateway…</div>`;
+        setTimeout(() => {
+          void loadExecTasks();
+        }, 1500);
+      } else {
+        body.innerHTML = `<div class="exec-error">Failed to load tasks: ${escapeHtml(msg)}</div>`;
+      }
+    }
+  }
+
+  // ─── Drag & drop: reorder tasks AND move them across axes ───
+  // FORK 2026-05-11 — native HTML5 DnD on `.exec-task` rows. On drop, we
+  // compute the new (axis, rank) from the cursor position and send one
+  // `control-panel.tasks.update` RPC. Rank uses midpoint arithmetic between
+  // neighbors so frequent drops don't require renumbering; ranks are clamped
+  // to a sane range and re-sequenced lazily on the next renderer pass.
+  type DragState = { id: string; axis: string; rank: number } | null;
+  let execDrag: DragState = null;
+  let execDropIndicator: HTMLElement | null = null;
+  let execDragRefreshSuppressed = false;
+
+  function attachExecDragHandlers(panel: HTMLElement) {
+    const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
+    const axisTargets = panel.querySelector("#exec-axis-targets") as HTMLElement;
+
+    body.addEventListener("dragstart", (e) => {
+      const t = (e.target as HTMLElement).closest(".exec-task") as HTMLElement | null;
+      if (!t) {
+        console.info("[exec-drag] dragstart fired but e.target has no .exec-task ancestor");
+        return;
+      }
+      execDrag = {
+        id: t.dataset.taskId!,
+        axis: t.dataset.axis!,
+        rank: parseFloat(t.dataset.rank ?? "50"),
+      };
+      console.info("[exec-drag] dragstart", {
+        id: execDrag.id,
+        axis: execDrag.axis,
+        rank: execDrag.rank,
+      });
+      t.classList.add("exec-task-dragging");
+      e.dataTransfer!.effectAllowed = "move";
+      e.dataTransfer!.setData("text/x-task-id", execDrag.id);
+      execDragRefreshSuppressed = true; // pause poll-refresh during drag
+      renderAxisTargets(axisTargets, execDrag.axis);
+    });
+
+    body.addEventListener("dragend", (e) => {
+      const t = (e.target as HTMLElement).closest(".exec-task") as HTMLElement | null;
+      if (t) t.classList.remove("exec-task-dragging");
+      hideAxisTargets(axisTargets);
+      clearDropIndicator();
+      execDrag = null;
+      execDragRefreshSuppressed = false;
+    });
+
+    body.addEventListener("dragover", (e) => {
+      if (!execDrag) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "move";
+      updateDropIndicator(e, body);
+    });
+
+    body.addEventListener("dragleave", (e) => {
+      if (!execDrag) return;
+      // Only clear if leaving the entire tasks body
+      if (e.target === body) clearDropIndicator();
+    });
+
+    body.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      if (!execDrag) {
+        console.info("[exec-drag] drop fired but execDrag is null — drag state lost");
+        return;
+      }
+      const target = computeBodyDrop(e, body);
+      console.info("[exec-drag] drop", { id: execDrag.id, currentRank: execDrag.rank, target });
+      clearDropIndicator();
+      hideAxisTargets(axisTargets);
+      if (!target) {
+        console.info(
+          "[exec-drag] drop bailed — no computed target (indicator was outside any .exec-group)",
+        );
+        execDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
+      }
+      const movedId = execDrag.id;
+      await applyTaskMove(movedId, target.axis, target.rank);
+      execDrag = null;
+      execDragRefreshSuppressed = false;
+      await loadExecTasks();
+    });
+
+    // Axis-targets row (visible only during a drag — catches drops to
+    // axes that have no rendered tasks yet)
+    axisTargets.addEventListener("dragover", (e) => {
+      if (!execDrag) return;
+      const chip = (e.target as HTMLElement).closest(".exec-axis-target") as HTMLElement | null;
+      if (!chip) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "move";
+      axisTargets
+        .querySelectorAll(".exec-axis-target")
+        .forEach((c) => c.classList.remove("exec-axis-target-over"));
+      chip.classList.add("exec-axis-target-over");
+    });
+
+    axisTargets.addEventListener("dragleave", () => {
+      axisTargets
+        .querySelectorAll(".exec-axis-target")
+        .forEach((c) => c.classList.remove("exec-axis-target-over"));
+    });
+
+    axisTargets.addEventListener("drop", async (e) => {
+      if (!execDrag) return;
+      const chip = (e.target as HTMLElement).closest(".exec-axis-target") as HTMLElement | null;
+      if (!chip) return;
+      e.preventDefault();
+      const axis = chip.dataset.axis!;
+      hideAxisTargets(axisTargets);
+      clearDropIndicator();
+      // Drop on axis chip → bottom of that axis group
+      await applyTaskMove(execDrag.id, axis, /*newRank*/ 9999);
+      execDrag = null;
+      execDragRefreshSuppressed = false;
+      await loadExecTasks();
+    });
+  }
+
+  function renderAxisTargets(host: HTMLElement, currentAxis: string) {
+    const chips = EXEC_AXIS_ORDER.map(
+      (a) =>
+        `<span class="exec-axis-target${a === currentAxis ? " exec-axis-target-current" : ""}" data-axis="${a}">${EXEC_AXIS_LABEL[a] ?? a}</span>`,
+    ).join("");
+    host.innerHTML = chips;
+    host.classList.add("exec-axis-targets-visible");
+  }
+  function hideAxisTargets(host: HTMLElement) {
+    host.classList.remove("exec-axis-targets-visible");
+  }
+
+  function ensureDropIndicator(body: HTMLElement): HTMLElement {
+    if (execDropIndicator && execDropIndicator.isConnected) return execDropIndicator;
+    const ind = document.createElement("div");
+    ind.className = "exec-drop-indicator";
+    body.appendChild(ind);
+    execDropIndicator = ind;
+    return ind;
+  }
+  function clearDropIndicator() {
+    if (execDropIndicator?.parentElement) {
+      execDropIndicator.parentElement.removeChild(execDropIndicator);
+    }
+    execDropIndicator = null;
+  }
+
+  function updateDropIndicator(e: DragEvent, body: HTMLElement) {
+    const targetTask = (e.target as HTMLElement).closest(".exec-task") as HTMLElement | null;
+    const ind = ensureDropIndicator(body);
+    if (targetTask) {
+      const rect = targetTask.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (e.clientY < midY) {
+        targetTask.parentElement!.insertBefore(ind, targetTask);
+      } else {
+        targetTask.parentElement!.insertBefore(ind, targetTask.nextSibling);
+      }
+      return;
+    }
+    const groupHeader = (e.target as HTMLElement).closest(
+      ".exec-group-header",
+    ) as HTMLElement | null;
+    if (groupHeader) {
+      // Drop at top of group
+      groupHeader.parentElement!.insertBefore(ind, groupHeader.nextSibling);
+      return;
+    }
+    const group = (e.target as HTMLElement).closest(".exec-group") as HTMLElement | null;
+    if (group) {
+      // Drop at bottom of group
+      group.appendChild(ind);
+    }
+  }
+
+  function computeBodyDrop(
+    e: DragEvent,
+    _body: HTMLElement,
+  ): { axis: string; rank: number } | null {
+    const ind = execDropIndicator;
+    if (!ind || !ind.parentElement) return null;
+    const group = ind.parentElement.closest(".exec-group") as HTMLElement | null;
+    if (!group) return null;
+    const axis = group.dataset.axis ?? "meta";
+    // FORK 2026-05-12 — skip the dragging task itself when looking for
+    // prev/next siblings. The dragging row stays in the DOM (faded via
+    // .exec-task-dragging) until dragend, so a "drop just above myself"
+    // gesture would otherwise see `next = me` and compute newRank as the
+    // midpoint of (taskAbove, myCurrentRank) — which is mathematically a
+    // move but produces zero visible reordering because nothing else lives
+    // between the two. Skipping it makes the rank land between my actual
+    // outer neighbours, so the row actually shifts position on re-render.
+    let prev = ind.previousElementSibling as HTMLElement | null;
+    while (prev && prev.classList.contains("exec-task-dragging")) {
+      prev = prev.previousElementSibling as HTMLElement | null;
+    }
+    let next = ind.nextElementSibling as HTMLElement | null;
+    while (next && next.classList.contains("exec-task-dragging")) {
+      next = next.nextElementSibling as HTMLElement | null;
+    }
+    const prevRank =
+      prev && prev.classList.contains("exec-task") ? parseFloat(prev.dataset.rank ?? "0") : -10;
+    const nextRank =
+      next && next.classList.contains("exec-task")
+        ? parseFloat(next.dataset.rank ?? "100")
+        : prevRank + 20;
+    return { axis, rank: (prevRank + nextRank) / 2 };
+  }
+
+  function renderExecTaskRow(t: ExecTask, axis: string): string {
+    const icon = EXEC_STATUS_ICON[t.status] ?? "•";
+    const est = t.est_minutes ? `${t.est_minutes}m` : "";
+    const isExpanded = execExpandedId === t.id;
+    // FORK 2026-05-12 (SPEC v3.2 §7.5/7.6) — collapsed row intentionally
+    // omits the due_date chip. Glance-density: current filter chip already
+    // communicates the temporal bucket; per-row dates would create visual
+    // noise across 8–12 items. Due date surfaces in the expanded drawer.
+    return `<div class="exec-task${isExpanded ? " exec-task-expanded" : ""}" draggable="true"
+              data-task-id="${escapeExecAttr(t.id)}"
+              data-status="${t.status}"
+              data-axis="${axis}"
+              data-rank="${t.priority_rank}">
+        <div class="exec-task-head">
+          <span class="exec-task-grip" title="Drag to reorder or move axis">⋮⋮</span>
+          <span class="exec-task-icon">${icon}</span>
+          <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>
+          <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
+          <span class="exec-task-chips">
+            ${est ? `<span class="exec-chip exec-chip-est" title="Estimated ${est}">${est}</span>` : ""}
+            <button class="exec-task-menu" data-action="menu" title="More actions">⋯</button>
+          </span>
+        </div>
+        ${isExpanded ? renderExecDrawer(t) : ""}
+      </div>`;
+  }
+
+  function renderExecDrawer(t: ExecTask): string {
+    // FORK 2026-05-11 — drawer shows full task title (wrapped) above the
+    // context, plus an inline pencil button at the end of BOTH title and
+    // context for in-place edits. The free-standing "Edit text" action
+    // button is removed; pencils replace it.
+    const fullTitleBlock = `
+      <div class="exec-task-fulltitle">
+        <span class="exec-task-fulltitle-text">${escapeHtml(t.text)}</span>
+        <button class="exec-task-pencil exec-task-pencil-inline" data-action="edit-title" title="Edit title">✏️</button>
+      </div>`;
+    const ctxBody = t.context_md
+      ? (() => {
+          try {
+            return mdParser.render(t.context_md);
+          } catch {
+            return `<p>${escapeHtml(t.context_md)}</p>`;
+          }
+        })()
+      : `<p class="exec-task-context-empty">No context yet.</p>`;
+    let meta = "";
+    try {
+      const m = t.metadata_json ? JSON.parse(t.metadata_json) : null;
+      if (m) {
+        const bits: string[] = [];
+        if (m.todoist_id)
+          bits.push(
+            `<span class="exec-task-meta-chip">📋 Todoist ${escapeHtml(String(m.todoist_id))}</span>`,
+          );
+        if (m.todoist_url)
+          bits.push(
+            `<a class="exec-task-meta-chip" href="${escapeExecAttr(String(m.todoist_url))}" target="_blank" rel="noreferrer">↗ open</a>`,
+          );
+        if (Array.isArray(m.todoist_labels))
+          for (const l of m.todoist_labels.slice(0, 8))
+            bits.push(`<span class="exec-task-meta-chip">#${escapeHtml(String(l))}</span>`);
+        if (Array.isArray(m.gmail_thread_ids))
+          bits.push(
+            `<span class="exec-task-meta-chip">📧 ${m.gmail_thread_ids.length} thread${m.gmail_thread_ids.length === 1 ? "" : "s"}</span>`,
+          );
+        if (bits.length > 0) meta = `<div class="exec-task-meta">${bits.join("")}</div>`;
+      }
+    } catch {
+      /* ignore malformed metadata */
+    }
+    return `<div class="exec-task-drawer">
+        ${fullTitleBlock}
+        <div class="exec-task-context-wrap">
+          <div class="exec-task-context">${ctxBody}</div>
+          <button class="exec-task-pencil exec-task-pencil-context" data-action="edit-context" title="Edit description">✏️</button>
+        </div>
+        ${meta}
+        <div class="exec-task-actions">
+          <button class="exec-task-action exec-task-action-primary" data-action="resolve">${t.status === "resolved" ? "↺ Re-open" : "✓ Resolve"}</button>
+          <button class="exec-task-action" data-action="in_progress">🟡 Start</button>
+          <button class="exec-task-action" data-action="reschedule">📅 Reschedule…</button>
+          ${
+            t.status === "back_burner"
+              ? `<button class="exec-task-action exec-task-action-primary" data-action="bring-back">↩ Bring back</button>`
+              : `<button class="exec-task-action" data-action="snooze-indef">💤 Snooze indefinitely</button>`
+          }
+          <button class="exec-task-action exec-task-action-warn" data-action="delete">🗑 Delete</button>
+          <button class="exec-task-action" data-action="open-in-chat">💬 Open in chat</button>
+        </div>
+      </div>`;
+  }
+
+  // FORK 2026-05-11 — Inline "+ Add task" form at the bottom of the tasks
+  // section. Toggle button reveals an inline form (text + axis + est_min +
+  // due_date). Submit calls control-panel.tasks.add and refreshes. ESC or
+  // Cancel button closes.
+  function attachExecTaskAddHandlers(panel: HTMLElement): void {
+    const toggle = panel.querySelector("#exec-task-add-toggle") as HTMLButtonElement | null;
+    const form = panel.querySelector("#exec-task-add-form") as HTMLFormElement | null;
+    const text = panel.querySelector("#exec-add-text") as HTMLInputElement | null;
+    const axis = panel.querySelector("#exec-add-axis") as HTMLSelectElement | null;
+    const est = panel.querySelector("#exec-add-est") as HTMLInputElement | null;
+    const due = panel.querySelector("#exec-add-due") as HTMLInputElement | null;
+    const cancel = panel.querySelector("#exec-add-cancel") as HTMLButtonElement | null;
+    if (!toggle || !form || !text || !axis || !est || !due || !cancel) return;
+
+    // Populate axis dropdown
+    axis.innerHTML = EXEC_AXIS_ORDER.map(
+      (a) => `<option value="${a}">${EXEC_AXIS_LABEL[a] ?? a}</option>`,
+    ).join("");
+    // Remember the last-used axis between adds (default: ventures — most-active axis post-Todoist-import)
+    const lastAxis = localStorage.getItem("tinker.execAddAxis") || "ventures";
+    axis.value = lastAxis;
+
+    const openForm = () => {
+      form.style.display = "";
+      toggle.style.display = "none";
+      text.focus();
+    };
+    const closeForm = () => {
+      form.style.display = "none";
+      toggle.style.display = "";
+      text.value = "";
+      est.value = "30";
+      due.value = "";
+    };
+
+    toggle.addEventListener("click", openForm);
+    cancel.addEventListener("click", closeForm);
+    text.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeForm();
+      }
+    });
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const payload: Record<string, unknown> = {
+        text: text.value.trim(),
+        priority_axis: axis.value,
+      };
+      if (!payload.text) {
+        text.focus();
+        return;
+      }
+      const estVal = parseInt(est.value, 10);
+      if (Number.isFinite(estVal) && estVal > 0) payload.est_minutes = estVal;
+      if (due.value) payload.due_date = due.value;
+      localStorage.setItem("tinker.execAddAxis", axis.value);
+      try {
+        await req("control-panel.tasks.add", payload);
+        closeForm();
+        void loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] tasks.add failed", err);
+        text.classList.add("exec-add-text-error");
+        setTimeout(() => text.classList.remove("exec-add-text-error"), 1500);
+      }
+    });
+  }
+
+  // FORK 2026-05-11 — Today's busy %: sum of timed calendar event minutes
+  // + sum of task est_minutes for tasks due today (or with no due date),
+  // divided by 480-min workday. Computed inside loadExecTasks once per
+  // refresh, shown as a chip in the tasks section header.
+  async function loadExecBusyChip(): Promise<void> {
+    const chip = document.getElementById("exec-busy-inline");
+    if (!chip) return;
+    const todayIso = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
+    let calMinutes = 0;
+    try {
+      const res = (await req("control-panel.calendar.list", { from: todayIso, to: todayIso })) as {
+        events: Array<{ all_day: number; start_ts: number; end_ts: number | null }>;
+      };
+      for (const ev of res.events ?? []) {
+        if (!ev.all_day && ev.end_ts) {
+          calMinutes += Math.max(0, (ev.end_ts - ev.start_ts) / 60000);
+        }
+      }
+    } catch {
+      /* graceful empty */
+    }
+    let taskMinutes = 0;
+    for (const t of execLastTasks) {
+      // v3.3 — back_burner excluded from today's scheduled-load calculation:
+      // snoozed tasks are intentionally hidden from working memory.
+      if (
+        t.status === "resolved" ||
+        t.status === "dropped" ||
+        t.status === "dismissed" ||
+        t.status === "back_burner"
+      )
+        continue;
+      const dayKey = t.due_date ? t.due_date.slice(0, 10) : todayIso;
+      if (dayKey !== todayIso) continue;
+      taskMinutes += typeof t.est_minutes === "number" ? t.est_minutes : 30;
+    }
+    const total = calMinutes + taskMinutes;
+    const pct = Math.round((total / EXEC_WORKDAY_MINUTES) * 100);
+    const tier =
+      pct === 0 ? "free" : pct > 100 ? "over" : pct >= 80 ? "high" : pct >= 50 ? "mid" : "low";
+    chip.textContent = pct === 0 ? "📊 free" : `📊 ${pct}%`;
+    chip.dataset.tier = tier;
+    chip.title = `Today: ${Math.round(taskMinutes)}m tasks + ${Math.round(calMinutes)}m events = ${Math.round(total)}m / 480m (${pct}%)`;
+  }
+
+  // FORK 2026-05-11 — Reschedule picker overlay (SPEC §7.8). A 2-row × 7-day
+  // grid showing event density (from control-panel.calendar.density), count
+  // of tasks already rescheduled to each day, and the current task's due
+  // date highlighted. Click a day → tasks.reschedule + close. ESC or
+  // backdrop click → cancel.
+  let execReschedulePickerEl: HTMLElement | null = null;
+
+  type CalEvent = {
+    source: string;
+    event_id: string;
+    date: string;
+    start_ts: number;
+    end_ts: number | null;
+    all_day: number;
+    title: string;
+    location: string | null;
+  };
+
+  function closeExecReschedulePicker(): void {
+    if (execReschedulePickerEl) {
+      execReschedulePickerEl.remove();
+      execReschedulePickerEl = null;
+    }
+  }
+
+  // 8-hour workday baseline for busyness %; calibrated for the user's day shape.
+  const EXEC_WORKDAY_MINUTES = 480;
+
+  function formatHHMM(ts: number): string {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+
+  async function openExecReschedulePicker(taskId: string): Promise<void> {
+    const t = execLastTasks.find((x) => x.id === taskId);
+    if (!t) return;
+    closeExecReschedulePicker();
+
+    // Build 14 ISO dates starting today (local-time aware).
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const days: Array<{ date: string; dayName: string; dayNum: number; isToday: boolean }> = [];
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      days.push({
+        date: iso,
+        dayName: dayNames[d.getDay()],
+        dayNum: d.getDate(),
+        isToday: i === 0,
+      });
+    }
+    const fromIso = days[0].date;
+    const toIso = days[days.length - 1].date;
+    const todayIso = days[0].date;
+
+    // Fetch calendar event list (with titles) — derive density client-side.
+    const eventsByDay = new Map<string, CalEvent[]>();
+    try {
+      const res = (await req("control-panel.calendar.list", { from: fromIso, to: toIso })) as {
+        events: CalEvent[];
+      };
+      for (const ev of res.events ?? []) {
+        const k = ev.date.slice(0, 10);
+        if (!eventsByDay.has(k)) eventsByDay.set(k, []);
+        eventsByDay.get(k)!.push(ev);
+      }
+    } catch {
+      /* calendar may not be synced yet — graceful empty */
+    }
+
+    // Bucket OTHER tasks (excluding the one being moved) by their effective
+    // day. Tasks without a due_date count toward TODAY. The combined task
+    // minutes drive the busyness % alongside calendar minutes.
+    type DayTasks = { count: number; minutes: number; samples: typeof execLastTasks };
+    const tasksByDay = new Map<string, DayTasks>();
+    for (const task of execLastTasks) {
+      if (task.id === taskId) continue;
+      // v3.3 — back_burner excluded from the reschedule-picker per-day counts;
+      // snoozed tasks don't represent commitments on any day.
+      if (
+        task.status === "dismissed" ||
+        task.status === "dropped" ||
+        task.status === "resolved" ||
+        task.status === "back_burner"
+      )
+        continue;
+      const dayKey = task.due_date ? task.due_date.slice(0, 10) : todayIso;
+      if (!days.some((d) => d.date === dayKey)) continue;
+      const minutes = typeof task.est_minutes === "number" ? task.est_minutes : 30;
+      const entry = tasksByDay.get(dayKey) ?? { count: 0, minutes: 0, samples: [] };
+      entry.count++;
+      entry.minutes += minutes;
+      if (entry.samples.length < 6) entry.samples.push(task);
+      tasksByDay.set(dayKey, entry);
+    }
+
+    const currentDue = t.due_date ? t.due_date.slice(0, 10) : null;
+
+    const buildCell = (d: {
+      date: string;
+      dayName: string;
+      dayNum: number;
+      isToday: boolean;
+    }): string => {
+      const events = eventsByDay.get(d.date) ?? [];
+      const timedEvents = events.filter((ev) => !ev.all_day && ev.end_ts);
+      const allDayEvents = events.filter((ev) => !!ev.all_day);
+      const calMinutes = timedEvents.reduce(
+        (sum, ev) => sum + Math.max(0, (ev.end_ts! - ev.start_ts) / 60000),
+        0,
+      );
+      const taskBucket = tasksByDay.get(d.date) ?? { count: 0, minutes: 0, samples: [] };
+      const totalMinutes = calMinutes + taskBucket.minutes;
+      const busyPct = Math.round((totalMinutes / EXEC_WORKDAY_MINUTES) * 100);
+      const overbooked = busyPct > 100;
+
+      // Heat tier from busy %, plus a special "overbooked" tier
+      let heat: number;
+      if (busyPct === 0 && allDayEvents.length === 0) heat = 0;
+      else if (overbooked) heat = 4;
+      else if (busyPct >= 80) heat = 3;
+      else if (busyPct >= 50) heat = 2;
+      else heat = 1;
+
+      const barHeight = Math.min(
+        22,
+        Math.max(
+          busyPct === 0 && allDayEvents.length === 0 ? 0 : 3,
+          Math.round((Math.min(busyPct, 100) / 100) * 22),
+        ),
+      );
+
+      const pctLabel =
+        busyPct === 0 && allDayEvents.length === 0
+          ? `<div class="exec-rsch-pct exec-rsch-pct-free">free</div>`
+          : overbooked
+            ? `<div class="exec-rsch-pct exec-rsch-pct-over">${busyPct}%</div>`
+            : `<div class="exec-rsch-pct">${busyPct}%</div>`;
+
+      const breakdownParts: string[] = [];
+      if (events.length > 0) breakdownParts.push(`${events.length}e`);
+      if (taskBucket.count > 0) breakdownParts.push(`${taskBucket.count}t`);
+      const breakdown =
+        breakdownParts.length > 0
+          ? `<div class="exec-rsch-breakdown">${breakdownParts.join(" · ")}</div>`
+          : `<div class="exec-rsch-breakdown exec-rsch-breakdown-empty"> </div>`;
+
+      // Hover tooltip — native title with newlines.
+      const tipLines: string[] = [`${d.date} — ${busyPct}% busy`];
+      if (allDayEvents.length > 0) {
+        tipLines.push("");
+        tipLines.push("📅 ALL-DAY:");
+        for (const ev of allDayEvents) tipLines.push(`  • ${ev.title}`);
+      }
+      if (timedEvents.length > 0) {
+        tipLines.push("");
+        tipLines.push(`📅 EVENTS (${Math.round(calMinutes)}min):`);
+        for (const ev of timedEvents.slice(0, 8))
+          tipLines.push(`  • ${formatHHMM(ev.start_ts)} ${ev.title}`);
+      }
+      if (taskBucket.samples.length > 0) {
+        tipLines.push("");
+        tipLines.push(`📋 TASKS (${Math.round(taskBucket.minutes)}min):`);
+        for (const task of taskBucket.samples)
+          tipLines.push(`  • ${task.est_minutes ?? "?"}m  ${task.text.slice(0, 50)}`);
+        if (taskBucket.count > taskBucket.samples.length)
+          tipLines.push(`  + ${taskBucket.count - taskBucket.samples.length} more`);
+      }
+      const tip = tipLines.join("\n");
+
+      const isCurrent = currentDue === d.date;
+      const classes = [
+        "exec-rsch-cell",
+        d.isToday ? "exec-rsch-today" : "",
+        isCurrent ? "exec-rsch-current" : "",
+        overbooked ? "exec-rsch-overbooked" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `<button class="${classes}" data-date="${d.date}" data-heat="${heat}" title="${escapeExecAttr(tip)}">
+        <div class="exec-rsch-day">${d.dayName} ${d.dayNum}</div>
+        <div class="exec-rsch-bar-wrap"><div class="exec-rsch-bar" style="height: ${barHeight}px"></div></div>
+        ${pctLabel}
+        ${breakdown}
+        ${allDayEvents.length > 0 ? `<div class="exec-rsch-allday" title="${escapeExecAttr(allDayEvents.map((e) => e.title).join(" · "))}">${allDayEvents.length === 1 ? "📌" : "📌×" + allDayEvents.length}</div>` : ""}
+      </button>`;
+    };
+
+    const week1Html = days.slice(0, 7).map(buildCell).join("");
+    const week2Html = days.slice(7, 14).map(buildCell).join("");
+
+    const overlay = document.createElement("div");
+    overlay.className = "exec-rsch-backdrop";
+    overlay.innerHTML = `
+      <div class="exec-rsch-dialog" role="dialog" aria-label="Reschedule task">
+        <div class="exec-rsch-header">
+          <div class="exec-rsch-title">📅 Reschedule</div>
+          <div class="exec-rsch-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</div>
+          ${currentDue ? `<div class="exec-rsch-current-due">Currently due ${escapeHtml(currentDue)}</div>` : `<div class="exec-rsch-current-due">No due date set</div>`}
+        </div>
+        <div class="exec-rsch-week-label">This week</div>
+        <div class="exec-rsch-row">${week1Html}</div>
+        <div class="exec-rsch-week-label">Next week</div>
+        <div class="exec-rsch-row">${week2Html}</div>
+        <div class="exec-rsch-footer">
+          ${currentDue ? `<button class="exec-rsch-clear" data-action="clear">Clear due date</button>` : `<span></span>`}
+          <button class="exec-rsch-cancel" data-action="cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    execReschedulePickerEl = overlay;
+
+    const finish = async (newDate: string | null): Promise<void> => {
+      closeExecReschedulePicker();
+      try {
+        if (newDate === null) {
+          // Clear due_date — use tasks.update with explicit null
+          await req("control-panel.tasks.update", { id: taskId, due_date: null });
+        } else {
+          await req("control-panel.tasks.reschedule", { id: taskId, due_date: newDate });
+        }
+        void loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] reschedule failed", err);
+      }
+    };
+
+    overlay.querySelectorAll<HTMLElement>(".exec-rsch-cell").forEach((cell) => {
+      cell.addEventListener("click", () => {
+        void finish(cell.dataset.date ?? null);
+      });
+    });
+    overlay.querySelector('[data-action="clear"]')?.addEventListener("click", () => {
+      void finish(null);
+    });
+    overlay.querySelector('[data-action="cancel"]')?.addEventListener("click", () => {
+      closeExecReschedulePicker();
+    });
+    overlay.addEventListener("click", (ev) => {
+      if (ev.target === overlay) closeExecReschedulePicker();
+    });
+    const escHandler = (ev: KeyboardEvent): void => {
+      if (ev.key === "Escape") {
+        closeExecReschedulePicker();
+        document.removeEventListener("keydown", escHandler);
+      }
+    };
+    document.addEventListener("keydown", escHandler);
+  }
+
+  function attachExecTaskHandlers(scope: HTMLElement) {
+    scope.querySelectorAll<HTMLElement>(".exec-task").forEach((row) => {
+      const id = row.dataset.taskId!;
+      const head = row.querySelector(".exec-task-head") as HTMLElement;
+      head.addEventListener("click", (ev) => {
+        const t = ev.target as HTMLElement;
+        if (
+          t.closest(".exec-task-menu") ||
+          t.closest(".exec-task-grip") ||
+          t.closest(".exec-task-pencil")
+        ) {
+          return;
+        }
+        execExpandedId = execExpandedId === id ? null : id;
+        void loadExecTasks();
+      });
+      row.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        openExecContextMenu(id, ev.clientX, ev.clientY);
+      });
+      const menuBtn = row.querySelector('[data-action="menu"]');
+      menuBtn?.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+        openExecContextMenu(id, rect.right - 4, rect.bottom + 4);
+      });
+      row.querySelectorAll<HTMLElement>(".exec-task-action").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void handleExecTaskAction(id, btn.dataset.action!);
+        });
+      });
+      // FORK 2026-05-11 — pencil buttons (collapsed title, expanded full
+      // title, expanded context). They fire dedicated edit-title /
+      // edit-context actions and must NOT toggle the row's expand state.
+      row.querySelectorAll<HTMLElement>(".exec-task-pencil").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void handleExecTaskAction(id, btn.dataset.action!);
+        });
+      });
+    });
+  }
+
+  function openExecContextMenu(taskId: string, x: number, y: number) {
+    closeExecContextMenu();
+    const t = execLastTasks.find((task) => task.id === taskId);
+    if (!t) return;
+    const menu = document.createElement("div");
+    menu.className = "exec-context-menu";
+    execContextMenuEl = menu;
+    menu.innerHTML = `
+      <button data-action="resolve" class="exec-context-item">${t.status === "resolved" ? "↺ Re-open" : "✓ Mark resolved"}</button>
+      <button data-action="in_progress" class="exec-context-item">🟡 Mark in-progress</button>
+      <div class="exec-context-sep"></div>
+      <div class="exec-context-submenu-anchor">
+        <button class="exec-context-item">↪ Reassign axis ›</button>
+        <div class="exec-context-submenu">
+          ${EXEC_AXIS_ORDER.map((axis) => `<button data-action="reassign-${axis}" class="exec-context-item">${EXEC_AXIS_LABEL[axis]}</button>`).join("")}
+        </div>
+      </div>
+      <button data-action="reschedule" class="exec-context-item">📅 Reschedule…</button>
+      ${
+        t.status === "back_burner"
+          ? `<button data-action="bring-back" class="exec-context-item">↩ Bring back</button>`
+          : `<button data-action="snooze-indef" class="exec-context-item">💤 Snooze indefinitely</button>`
+      }
+      <div class="exec-context-sep"></div>
+      <button data-action="delete" class="exec-context-item exec-context-item-warn">🗑 Delete</button>
+      <div class="exec-context-sep"></div>
+      <button data-action="edit-title" class="exec-context-item">✏️ Edit title</button>
+      <button data-action="edit-context" class="exec-context-item">✏️ Edit description</button>
+      <button data-action="open-in-chat" class="exec-context-item">💬 Open in chat</button>
+    `;
+    menu.style.left = `${Math.min(x, window.innerWidth - 240)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - 360)}px`;
+    document.body.appendChild(menu);
+    requestAnimationFrame(() => {
+      const r = menu.getBoundingClientRect();
+      if (r.right > window.innerWidth - 8) menu.style.left = `${window.innerWidth - r.width - 8}px`;
+      if (r.bottom > window.innerHeight - 8)
+        menu.style.top = `${window.innerHeight - r.height - 8}px`;
+    });
+    menu.querySelectorAll<HTMLElement>(".exec-context-item").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const action = btn.dataset.action;
+        if (!action) return;
+        void handleExecTaskAction(taskId, action);
+        closeExecContextMenu();
+      });
+    });
+  }
+
+  function closeExecContextMenu() {
+    if (execContextMenuEl) {
+      execContextMenuEl.remove();
+      execContextMenuEl = null;
+    }
+  }
+
+  async function handleExecTaskAction(taskId: string, action: string): Promise<void> {
+    try {
+      if (action === "menu") return;
+      const t = execLastTasks.find((x) => x.id === taskId);
+      if (action === "resolve") {
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          status: t?.status === "resolved" ? "open" : "resolved",
+        });
+      } else if (action === "in_progress") {
+        await req("control-panel.tasks.update", { id: taskId, status: "in_progress" });
+      } else if (action === "delete") {
+        // FORK 2026-05-13 — collapsed the old "drop / dismiss-*" pair into a
+        // single Delete affordance. Backing status is still 'dropped'; legacy
+        // 'dismissed' rows from before the merge remain readable in views.
+        await req("control-panel.tasks.update", { id: taskId, status: "dropped" });
+      } else if (action === "snooze-indef") {
+        // v3.3 — indefinite snooze. Status flip is the entire mechanism; the
+        // task stays in its axis, keeps its rank, just disappears from every
+        // filter except 💤 Snoozed. Bring back via the same RPC with 'open'.
+        await req("control-panel.tasks.update", { id: taskId, status: "back_burner" });
+      } else if (action === "bring-back") {
+        await req("control-panel.tasks.update", { id: taskId, status: "open" });
+      } else if (action.startsWith("reassign-")) {
+        const axis = action.slice("reassign-".length);
+        await req("control-panel.tasks.update", { id: taskId, priority_axis: axis });
+      } else if (action === "reschedule") {
+        // FORK 2026-05-11 — replaced the YYYY-MM-DD prompt with the 14-day
+        // calendar picker overlay specified in SPEC §7.8. The picker shows
+        // event density per day (from control-panel.calendar.density), the
+        // count of tasks already rescheduled to each day, and highlights
+        // today. The overlay handles the reschedule RPC + refresh itself.
+        await openExecReschedulePicker(taskId);
+        return;
+      } else if (action === "edit-title") {
+        if (!t) return;
+        const next = window.prompt("Edit task title:", t.text);
+        if (next && next.trim() && next !== t.text) {
+          await req("control-panel.tasks.update", { id: taskId, text: next.trim() });
+        } else {
+          return;
+        }
+      } else if (action === "edit-context") {
+        if (!t) return;
+        const next = window.prompt("Edit description (markdown supported):", t.context_md ?? "");
+        if (next === null) return; // user cancelled
+        const trimmed = next.trim();
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          context_md: trimmed.length > 0 ? trimmed : null,
+        });
+      } else if (action === "open-in-chat") {
+        if (!t) return;
+        const textarea = document.getElementById("chat-textarea") as HTMLTextAreaElement | null;
+        if (textarea) {
+          textarea.value = `Let's work on: ${t.text}`;
+          textarea.focus();
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        return;
+      } else {
+        return;
+      }
+      void loadExecTasks();
+    } catch (err) {
+      const row = document.querySelector(`.exec-task[data-task-id="${CSS.escape(taskId)}"]`);
+      if (row) {
+        row.classList.add("exec-task-error");
+        setTimeout(() => row.classList.remove("exec-task-error"), 1500);
+      }
+      console.error("[exec-panel] task action failed", action, taskId, err);
+    }
+  }
+
+  async function applyTaskMove(taskId: string, axis: string, rank: number) {
+    const clamped = Math.round(Math.max(0, Math.min(1000, rank)));
+    console.info("[exec-drag] applyTaskMove →", { taskId, axis, rank: clamped });
+    try {
+      await req("control-panel.tasks.update", {
+        id: taskId,
+        priority_axis: axis,
+        priority_rank: clamped,
+      });
+      console.info("[exec-drag] applyTaskMove OK");
+    } catch (err) {
+      // FORK 2026-05-12 — RPC failure used to silently console.error, which
+      // produced the reported "I drop the task and nothing happens" UX. Now
+      // we also flash a transient error pill on the exec panel so the user
+      // sees that the drop landed but the server rejected it.
+      console.error("[exec-panel] tasks.update failed:", err);
+      flashExecError(`Move failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  function flashExecError(message: string): void {
+    const panel = document.getElementById("exec-panel");
+    if (!panel) return;
+    let pill = panel.querySelector<HTMLElement>(".exec-error-pill");
+    if (!pill) {
+      pill = document.createElement("div");
+      pill.className = "exec-error-pill";
+      panel.appendChild(pill);
+    }
+    pill.textContent = message;
+    pill.classList.add("exec-error-pill-visible");
+    window.setTimeout(() => {
+      pill?.classList.remove("exec-error-pill-visible");
+    }, 4000);
+  }
+
+  function startExecPolling() {
+    if (execTasksTimer) return;
+    execTasksTimer = setInterval(() => {
+      if (execDragRefreshSuppressed) return;
+      void loadExecTasks();
+    }, 10_000);
+  }
+  function stopExecPolling() {
+    if (execTasksTimer) {
+      clearInterval(execTasksTimer);
+      execTasksTimer = null;
+    }
+  }
+
+  const execPersisted = localStorage.getItem("tinker.execMode") === "exec";
+  if (execPersisted) {
+    app.classList.add("exec-mode");
+    execBtn.classList.add("tb-active");
+    void loadExecTasks();
+    startExecPolling();
+  }
+
+  execBtn.addEventListener("click", () => {
+    const isExec = app.classList.toggle("exec-mode");
+    execBtn.classList.toggle("tb-active", isExec);
+    localStorage.setItem("tinker.execMode", isExec ? "exec" : "dev");
+    if (isExec) {
+      void loadExecTasks();
+      startExecPolling();
+    } else {
+      stopExecPolling();
+    }
   });
 
   // ─── Sidebar tab switching ───
