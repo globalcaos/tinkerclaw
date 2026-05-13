@@ -55,7 +55,17 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       const j: any = await fetchJson(
         `/api/kits/search?q=${encodeURIComponent(p.query)}${p.limit ? `&limit=${p.limit}` : ""}`,
       );
-      return { results: j.results ?? [] };
+      // Journey API returns a flat array; guard against wrapped {results:[...]} shape too
+      const arr: any[] = Array.isArray(j) ? j : (j.results ?? []);
+      // Dedupe by kitRef — keep the entry with the highest releaseTag (semver string compare)
+      const seen = new Map<string, any>();
+      for (const r of arr) {
+        const k = r.kitRef;
+        if (!k) continue;
+        const cur = seen.get(k);
+        if (!cur || (r.releaseTag ?? "") > (cur.releaseTag ?? "")) seen.set(k, r);
+      }
+      return { results: [...seen.values()] };
     },
 
     "prefrontal.kit.get": async (raw: unknown) => {
