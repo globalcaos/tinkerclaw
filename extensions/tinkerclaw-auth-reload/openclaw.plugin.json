@@ -1,5 +1,5 @@
 {
-  "id": "auth-reload",
+  "id": "tinkerclaw-auth-reload",
   "name": "Auth Reload",
   "description": "File watcher for auth-profiles.json and in-UI OAuth re-authentication",
   "version": "0.1.0",
