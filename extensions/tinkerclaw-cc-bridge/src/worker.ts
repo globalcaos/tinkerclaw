@@ -217,6 +217,22 @@ function buildChatNarrationBlock(): string {
 // (Narration content moved to prompts/narration-contract.md — see
 // loadPromptFile call above. Inline content removed 2026-04-28.)
 
+// FORK 2026-05-13: plan-tools guidance. Phases 1-3 shipped the
+// `prefrontal.plan.{set,step,get,close}` RPCs + restart auto-continue, but
+// Jarvis had no system-prompt instruction telling him to use them. This block
+// teaches the decision rule: any request with 3+ steps → call
+// `prefrontal.plan.set` first, mark progress, close when done. Without this
+// Jarvis defaults to TodoWrite (disabled) or inline narration, and the plan
+// board stays empty on complex turns.
+function buildPlanToolsBlock(): string {
+  return loadPromptFile({
+    plugin: "tinkerclaw-cc-bridge",
+    subdir: "prompts",
+    file: "plan-tools.md",
+    envVar: "TINKERCLAW_PLAN_TOOLS_PROMPT",
+  });
+}
+
 function buildAppendedPromptRules(): string {
   const blocks: string[] = [];
   for (const entry of PROMPT_FILES) {
@@ -336,6 +352,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const subagentHelpBody = buildSubagentHelperBlock();
     const toolChoiceBody = buildToolChoiceBlock();
     const narrationBody = buildChatNarrationBlock();
+    const planToolsBody = buildPlanToolsBlock();
     // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
     // OpenClaw's pi-embedded-runner appends its full tool catalog + OpenClaw
     // CLI quick-reference + heartbeat section + Runtime metadata to the
@@ -377,7 +394,13 @@ export class ClaudeCodeWorker extends EventEmitter {
     // behaviour. Hoisting it makes the grandma-proof bar one of the first
     // rules the model considers, so each tool call gets a real pre-call
     // sentence.
-    const combinedSystemPrompt = [personaOnly, narrationBody, subagentHelpBody, toolChoiceBody]
+    const combinedSystemPrompt = [
+      personaOnly,
+      narrationBody,
+      subagentHelpBody,
+      toolChoiceBody,
+      planToolsBody,
+    ]
       .filter(Boolean)
       .join("");
     if (combinedSystemPrompt.length > 0) {
