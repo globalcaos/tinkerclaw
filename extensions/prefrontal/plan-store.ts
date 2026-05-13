@@ -121,18 +121,28 @@ export class PlanStore {
   }
 
   /**
-   * Close a plan (done | aborted) and optionally archive it.
-   * Task 1.4 will extend with archive write; the method signature is stable.
+   * Close a plan (done | aborted), archive it under archive/<YYYY-MM-DD>/, and remove the live file.
    */
-  async close(params: { sessionKey: string; status: "done" | "aborted" }): Promise<Plan | null> {
+  async close(params: { sessionKey: string; status: "done" | "aborted" }): Promise<{
+    ok: true;
+    archivedTo: string;
+  }> {
+    const fp = this.filePath(params.sessionKey);
     const plan = await this.get(params.sessionKey);
-    if (!plan) return null;
-
+    if (!plan) throw new Error(`no plan for sessionKey ${params.sessionKey}`);
     plan.status = params.status;
     plan.updated = new Date().toISOString();
-    await this.writeLocked(params.sessionKey, plan);
-    this.opts.onMutation?.(params.sessionKey, plan);
-    return plan;
+    const date = plan.updated.slice(0, 10);
+    const archiveDir = path.join(
+      this.opts.archiveDir ?? path.join(this.opts.rootDir, "archive"),
+      date,
+    );
+    await fs.mkdir(archiveDir, { recursive: true });
+    const archivedTo = path.join(archiveDir, `${SLUG(params.sessionKey)}-${plan.runId}.md`);
+    await fs.writeFile(archivedTo, renderPlanMd(plan), "utf-8");
+    await fs.unlink(fp).catch(() => {});
+    this.opts.onMutation?.(params.sessionKey, null);
+    return { ok: true, archivedTo };
   }
 
   private async writeLocked(sessionKey: string, plan: Plan): Promise<void> {
