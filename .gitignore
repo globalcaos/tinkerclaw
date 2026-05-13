@@ -161,6 +161,7 @@ SESSION.md
 .openclaw/
 bank/
 data/
+state/
 db/
 crm_data/
 sessions/

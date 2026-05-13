@@ -15,6 +15,7 @@
  *
  * Wired in by: OpenClaw plugin system via `plugins.entries.prefrontal` in openclaw.json
  */
+import os from "node:os";
 import { join } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type {
@@ -69,6 +70,8 @@ import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
+import { createPlanRpcs } from "./plan-rpcs.js";
+import { PlanStore } from "./plan-store.js";
 import { createPrefrontalHttpHandler } from "./prefrontal-http.js";
 import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
 import type { SubagentRunInfo } from "./prefrontal-monitor.js";
@@ -698,6 +701,32 @@ export default function register(api: OpenClawPluginApi) {
   api.registerGatewayMethod("prefrontal.flags", async ({ respond }) => {
     respond(true, featureFlags);
   });
+
+  // ── Plan store + RPCs (FORK 2026-05-13) ──
+  const planRootDir = join(os.homedir(), ".openclaw", "workspace", "state", "prefrontal", "plans");
+  const planStore = new PlanStore({
+    rootDir: planRootDir,
+    onMutation: (sessionKey, plan) => {
+      try {
+        (api as any).broadcast?.("prefrontal-plan-state", { sessionKey, plan });
+      } catch (err) {
+        log.warn?.(`[prefrontal] broadcast prefrontal-plan-state failed: ${String(err)}`);
+      }
+    },
+  });
+  const planRpcs = createPlanRpcs({ store: planStore });
+  for (const [name, handler] of Object.entries(planRpcs)) {
+    api.registerGatewayMethod(name, async ({ respond, params }) => {
+      try {
+        const result = await handler(params);
+        respond(true, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        respond(false, undefined, { code: "INVALID_REQUEST", message });
+      }
+    });
+  }
+  log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
 
   log.info?.(
     `[prefrontal] Prefrontal plugin registered (poll: ${pollIntervalMs}ms, staleness: ${stalenessThresholdMs}ms, monitor: ${monitorIntervalMs}ms)`,
