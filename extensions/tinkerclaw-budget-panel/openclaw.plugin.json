@@ -1,5 +1,5 @@
 {
-  "id": "budget-panel",
+  "id": "tinkerclaw-budget-panel",
   "name": "Multi-Provider Budget Panel",
   "description": "Unified budget tracking for Claude, Manus, and Gemini",
   "version": "0.1.0",
