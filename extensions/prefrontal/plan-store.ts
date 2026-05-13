@@ -54,7 +54,9 @@ export class PlanStore {
 
   /**
    * Advance or update a step's status/note/artifact.
-   * Task 1.3 will add a full step() method; this is the extension point.
+   * Invariant: at most ONE step per plan is in_progress at a time.
+   * Setting a new step to in_progress demotes the previous in_progress step back to pending.
+   * When a step flips to done, currentStep advances to the next still-pending index.
    */
   async step(params: {
     sessionKey: string;
@@ -69,23 +71,35 @@ export class PlanStore {
     const step = plan.steps[params.stepIndex];
     if (!step) throw new Error(`plan-store: step ${params.stepIndex} out of range`);
 
-    step.status = params.status;
-    if (params.note !== undefined) step.note = params.note;
-    if (params.artifact !== undefined) step.artifact = params.artifact;
-    if (params.status === "in_progress" && !step.startedAt) {
-      step.startedAt = new Date().toISOString();
-    }
-    if (params.status === "done" || params.status === "error") {
-      step.completedAt = new Date().toISOString();
-    }
+    const now = new Date().toISOString();
 
-    // Advance currentStep to next pending step
-    if (params.status === "done") {
+    if (params.status === "in_progress") {
+      // Demote previous in_progress step back to pending
+      if (plan.currentStep !== params.stepIndex) {
+        const prev = plan.steps[plan.currentStep];
+        if (prev && prev.status === "in_progress") {
+          prev.status = "pending";
+        }
+      }
+      step.startedAt = step.startedAt ?? now;
+      step.status = "in_progress";
+      plan.currentStep = params.stepIndex;
+    } else if (params.status === "done") {
+      step.completedAt = now;
+      step.status = "done";
       const next = plan.steps.findIndex((s, i) => i > params.stepIndex && s.status === "pending");
       plan.currentStep = next === -1 ? params.stepIndex : next;
+    } else {
+      if (params.status === "error") {
+        step.completedAt = now;
+      }
+      step.status = params.status;
     }
 
-    plan.updated = new Date().toISOString();
+    if (params.note !== undefined) step.note = params.note;
+    if (params.artifact !== undefined) step.artifact = params.artifact;
+    plan.updated = now;
+
     await this.writeLocked(params.sessionKey, plan);
     this.opts.onMutation?.(params.sessionKey, plan);
     return plan;
@@ -175,8 +189,13 @@ function renderStep(s: PlanStep, i: number): string {
         : s.status === "error"
           ? "[!]"
           : "[ ]";
+  const meta: string[] = [];
+  if (s.startedAt) meta.push(`startedAt:${s.startedAt}`);
+  if (s.completedAt) meta.push(`completedAt:${s.completedAt}`);
+  if (s.artifact) meta.push(`artifact:${s.artifact}`);
+  const metaLine = meta.length ? `\n  <!-- ${meta.join(" ")} -->` : "";
   const note = s.note ? `\n  ${s.note.replace(/\n/g, "\n  ")}` : "";
-  return `- ${marker} **${i}. ${s.title}**${note}`;
+  return `- ${marker} **${i}. ${s.title}**${metaLine}${note}`;
 }
 
 export function parsePlanMd(text: string): Plan {
@@ -188,13 +207,50 @@ export function parsePlanMd(text: string): Plan {
     if (kv) fm[kv[1]] = stripQuotes(kv[2].trim());
   }
   const steps: PlanStep[] = [];
+  let lastStep: PlanStep | null = null;
+  const noteBuf: string[] = [];
+  const flushNote = () => {
+    if (lastStep && noteBuf.length) {
+      lastStep.note = noteBuf.join("\n").trim() || undefined;
+      noteBuf.length = 0;
+    }
+  };
   for (const line of m[2].split("\n")) {
     const sm = /^- \[([ x▶!])\] \*\*(\d+)\. (.+?)\*\*(.*)$/.exec(line);
-    if (!sm) continue;
-    const status: PlanStep["status"] =
-      sm[1] === "x" ? "done" : sm[1] === "▶" ? "in_progress" : sm[1] === "!" ? "error" : "pending";
-    steps.push({ title: sm[3], status });
+    if (sm) {
+      flushNote();
+      const status: PlanStep["status"] =
+        sm[1] === "x"
+          ? "done"
+          : sm[1] === "▶"
+            ? "in_progress"
+            : sm[1] === "!"
+              ? "error"
+              : "pending";
+      lastStep = { title: sm[3], status };
+      steps.push(lastStep);
+      continue;
+    }
+    // HTML-comment metadata line: <!-- startedAt:... completedAt:... artifact:... -->
+    const mm = /^\s+<!--\s+(.+?)\s+-->$/.exec(line);
+    if (mm && lastStep) {
+      for (const kv of mm[1].split(" ")) {
+        const idx = kv.indexOf(":");
+        if (idx < 0) continue;
+        const k = kv.slice(0, idx);
+        const v = kv.slice(idx + 1);
+        if (k === "startedAt") lastStep.startedAt = v;
+        else if (k === "completedAt") lastStep.completedAt = v;
+        else if (k === "artifact") lastStep.artifact = v;
+      }
+      continue;
+    }
+    // Continuation note line (indented ≥2 spaces, non-empty)
+    if (lastStep && line.trim().length > 0 && /^\s{2,}/.test(line)) {
+      noteBuf.push(line.trimStart());
+    }
   }
+  flushNote();
   if (!steps.length) throw new Error("plan: no steps parsed");
   return {
     sessionKey: fm.sessionKey,

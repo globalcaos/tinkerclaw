@@ -32,4 +32,39 @@ describe("PlanStore", () => {
     expect(plan!.status).toBe("in_progress");
     expect(plan!.currentStep).toBe(0);
   });
+
+  it("setting step 2 to in_progress demotes the previous current step to pending", async () => {
+    await store.set({
+      sessionKey: "agent:main:main",
+      intent: "x",
+      runId: "r1",
+      steps: [{ title: "A" }, { title: "B" }, { title: "C" }],
+    });
+    await store.step({ sessionKey: "agent:main:main", stepIndex: 0, status: "in_progress" });
+    await store.step({ sessionKey: "agent:main:main", stepIndex: 2, status: "in_progress" });
+    const plan = await store.get("agent:main:main");
+    expect(plan!.currentStep).toBe(2);
+    expect(plan!.steps[0].status).toBe("pending");
+    expect(plan!.steps[2].status).toBe("in_progress");
+  });
+
+  it("status:done sets completedAt and advances currentStep to next pending", async () => {
+    await store.set({
+      sessionKey: "agent:main:main",
+      intent: "x",
+      runId: "r1",
+      steps: [{ title: "A" }, { title: "B" }],
+    });
+    await store.step({ sessionKey: "agent:main:main", stepIndex: 0, status: "in_progress" });
+    await store.step({
+      sessionKey: "agent:main:main",
+      stepIndex: 0,
+      status: "done",
+      note: "did A",
+    });
+    const plan = await store.get("agent:main:main");
+    expect(plan!.steps[0].status).toBe("done");
+    expect(plan!.steps[0].note).toBe("did A");
+    expect(plan!.currentStep).toBe(1);
+  });
 });
