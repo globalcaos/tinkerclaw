@@ -1,21 +1,48 @@
 // tinker-ui/src/panels/prefrontal-tree.ts
 // FORK: Orchestration dashboard for Prefrontal right-panel.
 //
-// Redesigned 2026-04-20. Three stacked blocks:
-//   1. Recipe header    -- current recipe id + step M/N + step name + parallelism
-//   2. Tree block       -- main run + subagent children (label, model, elapsed,
-//                          status icon, progress shimmer)
-//   3. Action trail     -- rolling last ~12 events (dispatch/complete/transition)
+// Redesigned 2026-04-20. Four stacked blocks:
+//   0. Current Plan    -- FORK 2026-05-13 — plan-board section (Phase 2)
+//   1. Recipe header   -- current recipe id + step M/N + step name + parallelism
+//   2. Tree block      -- main run + subagent children (label, model, elapsed,
+//                         status icon, progress shimmer)
+//   3. Action trail    -- rolling last ~12 events (dispatch/complete/transition)
 //
 // Data sources (fed in from app.ts):
 //   currentData    -- the tree (was only source before)
 //   recipeState    -- from WS phase="prefrontal-recipe-state" events
 //   trail          -- synthesized from lifecycle events + trail-event WS events
+//   plan           -- from WS phase="prefrontal-plan-state" events (Phase 2)
 //
-// All three pieces render together every time update() is called; partial
+// All blocks render together every time update() is called; partial
 // updates are cheap because the DOM is just rebuilt (<~50 nodes total).
 
 import { getProviderColor, getProviderBorderColor, getProviderLogoSvg } from "./provider-logos.js";
+
+// FORK 2026-05-13 — Current Plan types (Phase 2 plan-board).
+export type PlanStepStatus = "pending" | "in_progress" | "done" | "error";
+
+export interface PanelPlanStep {
+  title: string;
+  status: PlanStepStatus;
+  note?: string;
+  artifact?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface PanelPlan {
+  sessionKey: string;
+  runId: string;
+  intent: string;
+  recipe?: string;
+  kitRef?: string;
+  started: string;
+  updated: string;
+  status: "in_progress" | "done" | "aborted";
+  currentStep: number;
+  steps: PanelPlanStep[];
+}
 
 export interface TreeNode {
   runId: string;
@@ -67,6 +94,7 @@ export interface PrefrontalDashboardState {
   tree: TreeResponse;
   recipe: RecipeState | null;
   trail: TrailEvent[];
+  plan: PanelPlan | null; // FORK 2026-05-13 — current plan (null when none active)
 }
 
 export interface PrefrontalTreeController {
@@ -140,6 +168,85 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     render();
   }
 
+  // FORK 2026-05-13 — elapsed time between two ISO-8601 strings.
+  function elapsedIso(a: string, b: string): string {
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    return fmtDuration(Math.max(0, Math.round(ms / 1000)));
+  }
+
+  // FORK 2026-05-13 — Current Plan section (Phase 2 plan-board).
+  // Returns an HTMLElement (or null when there is no active plan).
+  function renderPlanSection(plan: PanelPlan | null): HTMLElement | null {
+    if (!plan || plan.status !== "in_progress") return null;
+
+    const now = new Date().toISOString();
+    const section = el("div", "pf-plan");
+
+    // Header: "▼ Current Plan — «intent»" with total elapsed on the right.
+    const header = el("div", "pf-plan-header");
+    const totalEl = el("span", "pf-plan-total");
+    totalEl.textContent = elapsedIso(plan.started, now);
+    header.appendChild(totalEl);
+    const headerText = document.createTextNode(`▼ Current Plan — "${plan.intent}"`);
+    header.insertBefore(headerText, totalEl);
+    section.appendChild(header);
+
+    // Kit row (optional).
+    if (plan.kitRef) {
+      const kitRow = el("div", "pf-plan-kit");
+      kitRow.textContent = `kit: ${plan.kitRef}`;
+      section.appendChild(kitRow);
+    }
+
+    // Step rows.
+    plan.steps.forEach((s, i) => {
+      const stepEl = el("div", `pf-step pf-step-${s.status}`);
+
+      const marker =
+        s.status === "done"
+          ? "✓"
+          : s.status === "in_progress"
+            ? "▶"
+            : s.status === "error"
+              ? "✗"
+              : "○";
+
+      // Time: completed steps show duration; in-progress shows running time.
+      if (s.completedAt && s.startedAt) {
+        const timeEl = el("span", "pf-step-time");
+        timeEl.textContent = elapsedIso(s.startedAt, s.completedAt);
+        stepEl.appendChild(timeEl);
+      } else if (s.startedAt && s.status === "in_progress") {
+        const timeEl = el("span", "pf-step-time");
+        timeEl.textContent = elapsedIso(s.startedAt, now);
+        stepEl.appendChild(timeEl);
+      }
+
+      const titleEl = document.createTextNode(`${marker} `);
+      stepEl.insertBefore(titleEl, stepEl.firstChild);
+      const bold = document.createElement("strong");
+      bold.textContent = `${i}. ${s.title}`;
+      stepEl.insertBefore(bold, stepEl.firstChild?.nextSibling ?? null);
+
+      if (s.note) {
+        const note = s.note.length > 80 ? `${s.note.slice(0, 79)}…` : s.note;
+        const noteEl = el("span", "pf-step-note");
+        noteEl.textContent = ` · ${note}`;
+        // Insert note before the time element (which is already appended).
+        const timeEl = stepEl.querySelector(".pf-step-time");
+        if (timeEl) {
+          stepEl.insertBefore(noteEl, timeEl);
+        } else {
+          stepEl.appendChild(noteEl);
+        }
+      }
+
+      section.appendChild(stepEl);
+    });
+
+    return section;
+  }
+
   function render(): void {
     container.style.display = "block";
     container.innerHTML = "";
@@ -162,6 +269,13 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const tree = currentState?.tree ?? { active: false, root: null };
     const recipe = currentState?.recipe ?? null;
     const trail = currentState?.trail ?? [];
+    const plan = currentState?.plan ?? null;
+
+    // ─── Current Plan (FORK 2026-05-13) ─────────────────────
+    const planSection = renderPlanSection(plan);
+    if (planSection) {
+      card.appendChild(planSection);
+    }
 
     // ─── Recipe header ──────────────────────────────────────
     card.appendChild(renderRecipeHeader(recipe));
