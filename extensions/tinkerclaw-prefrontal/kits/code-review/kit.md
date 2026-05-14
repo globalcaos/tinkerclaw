@@ -9,6 +9,17 @@ license: "MIT"
 tags: ["coding", "review", "check this", "look at this PR", "code review", "PR"]
 tools: ["read", "grep", "glob", "exec"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0, 1]
+    - [2]
+    - [3]
+  notes: |
+    Read Changes (0) and Understand Context (1) are both read-only and act on
+    independent slices of the codebase — diff vs surrounding callers — so they
+    fan out safely. Assess (2) synthesises both and is a barrier. Report (3)
+    formats the verdict and runs alone. Step index: 0=Read Changes,
+    1=Understand Context, 2=Assess, 3=Report.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

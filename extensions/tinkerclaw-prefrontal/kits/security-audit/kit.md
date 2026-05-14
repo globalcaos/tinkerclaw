@@ -9,6 +9,18 @@ license: "MIT"
 tags: ["operations", "audit", "security", "vulnerabilities", "hardening", "security review", "CVE"]
 tools: ["read", "grep", "glob", "exec"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0, 1, 2]
+    - [3]
+    - [4]
+  notes: |
+    Inventory (0), Scan (1), and Analyze (2) are all read-only and act on
+    independent data: attack-surface glob/grep, pnpm audit + secret grep, and
+    severity categorization. They fan safely — no shared write target.
+    Report (3) synthesises all three and is a serial barrier. Remediate (4)
+    applies fixes post-approval; it must not run before Report is reviewed.
+    Step index: 0=Inventory, 1=Scan, 2=Analyze, 3=Report, 4=Remediate.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

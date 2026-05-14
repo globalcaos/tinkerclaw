@@ -9,6 +9,19 @@ license: "MIT"
 tags: ["operations", "restart", "gateway", "reload", "bounce", "restart gateway"]
 tools: ["exec", "read"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    FULLY SERIAL — operational safety. Each step takes <10s; spawn overhead
+    (~2-5s) would dominate any fan-out gain. Pre-check (0) must confirm no
+    active LLM sessions before stopping. Graceful Stop (1) must succeed before
+    Start & Verify (2) can meaningfully run. Post-check (3) requires a live
+    gateway from step 2. Step index: 0=Pre-check, 1=Graceful Stop,
+    2=Start & Verify, 3=Post-check.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"
