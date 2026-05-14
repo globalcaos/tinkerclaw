@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import Ajv from "ajv";
 import { fetch as undiciFetch } from "undici";
 import { parse as parseYaml } from "yaml";
@@ -31,6 +33,147 @@ function check<T>(v: Validator, p: unknown, name: string): T {
     );
   return p as T;
 }
+
+// ─── Canonical kit frontmatter shape ───────────────────────────────────────
+
+interface KitFrontmatter {
+  schema?: string;
+  slug?: string;
+  title?: string;
+  summary?: string;
+  tags?: unknown[];
+  category?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Derive a canonical category from kit frontmatter.
+ * Rules (in priority order):
+ *  1. Explicit `category` field wins if present.
+ *  2. First tag that exactly matches one of the 6 canonical categories.
+ *  3. Pattern-match any tag against known keywords.
+ *  4. Fall back to "operations".
+ */
+export function inferCategory(fm: KitFrontmatter): string {
+  // 1. Explicit category field wins if present
+  if (typeof fm.category === "string" && fm.category) return fm.category;
+
+  const canonical = ["coding", "writing", "communication", "analysis", "operations", "security"];
+  const tags = (fm.tags ?? []).map((t) => String(t).toLowerCase());
+
+  // 2. First tag that matches one of the 6 canonical categories
+  for (const t of tags) if (canonical.includes(t)) return t;
+
+  // 3. Pattern-match tags
+  if (tags.some((t) => /(code-review|coding|refactor|tdd|debug|codebase)/.test(t))) return "coding";
+  if (tags.some((t) => /(research|analysis|investigation)/.test(t))) return "analysis";
+  if (tags.some((t) => /(security|audit|secure)/.test(t))) return "security";
+  if (
+    tags.some((t) => /(gateway|cron|monitoring|orchestration|deploy|ops|devops|watchdog)/.test(t))
+  )
+    return "operations";
+  if (tags.some((t) => /(write|writing|paper|manuscript|edit|summariz)/.test(t))) return "writing";
+  if (tags.some((t) => /(slack|email|discord|telegram|calendar|whatsapp)/.test(t)))
+    return "communication";
+
+  return "operations";
+}
+
+/** Parsed result from a single kit.md file. */
+export interface KitParsed {
+  slug: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  category: string;
+}
+
+/**
+ * Parse a kit.md file and return the normalized frontmatter fields.
+ * Falls back gracefully: missing fields get sensible defaults derived from path.
+ */
+export async function parseKitMd(filePath: string): Promise<KitParsed> {
+  const slugFromPath = path.basename(path.dirname(filePath));
+  let slug = slugFromPath;
+  let title = slugFromPath;
+  let summary = "";
+  let tags: string[] = [];
+  let category = "operations";
+
+  try {
+    const text = await fs.readFile(filePath, "utf-8");
+    const fm = /^---\n([\s\S]+?)\n---/.exec(text);
+    if (fm) {
+      const parsed = parseYaml(fm[1]) as KitFrontmatter | null;
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.slug === "string" && parsed.slug) slug = parsed.slug;
+        if (typeof parsed.title === "string" && parsed.title) title = parsed.title;
+        else title = slug;
+        if (typeof parsed.summary === "string") summary = parsed.summary;
+        if (Array.isArray(parsed.tags))
+          tags = (parsed.tags as unknown[]).filter((t) => typeof t === "string") as string[];
+        category = inferCategory(parsed);
+      }
+    }
+  } catch {
+    // frontmatter parse failure — return slug/empty defaults
+  }
+
+  return { slug, title, summary, tags, category };
+}
+
+// ─── Own-kits walker ────────────────────────────────────────────────────────
+
+interface OwnKitEntry {
+  owner: string;
+  slug: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  category: string;
+  path: string;
+  source: "ours";
+}
+
+/**
+ * Walk `ownKitsDir/<slug>/kit.md` and return parsed entries.
+ * Layout: `kits/<slug>/kit.md` (one level deep — slug is the immediate child dir).
+ */
+async function listOwnKits(ownKitsDir: string): Promise<OwnKitEntry[]> {
+  const out: OwnKitEntry[] = [];
+  let slugDirs: string[];
+  try {
+    slugDirs = await fs.readdir(ownKitsDir);
+  } catch {
+    return out;
+  }
+  await Promise.all(
+    slugDirs.map(async (dirName) => {
+      const kitMdPath = path.join(ownKitsDir, dirName, "kit.md");
+      try {
+        await fs.access(kitMdPath);
+      } catch {
+        return; // not a kit directory
+      }
+      const parsed = await parseKitMd(kitMdPath);
+      out.push({
+        owner: "globalcaos",
+        slug: parsed.slug || dirName,
+        title: parsed.title,
+        summary: parsed.summary,
+        tags: parsed.tags,
+        category: parsed.category,
+        path: kitMdPath,
+        source: "ours",
+      });
+    }),
+  );
+  // Sort for deterministic ordering
+  out.sort((a, b) => a.slug.localeCompare(b.slug));
+  return out;
+}
+
+// ─── RPC deps + factory ─────────────────────────────────────────────────────
 
 export interface KitRpcsDeps {
   store: KitStore;
@@ -115,42 +258,45 @@ export function createKitRpcs(deps: KitRpcsDeps) {
 
     "prefrontal.kit.list": async (raw: unknown) => {
       const p = check<PrefrontalKitListParams>(vList, raw, "prefrontal.kit.list");
-      const entries = await deps.store.list({ owner: p.owner });
-      const fsP = await import("node:fs/promises");
-      const kits = await Promise.all(
-        entries.map(async (e) => {
-          let title = e.slug;
-          let summary = "";
-          let tags: string[] = [];
-          try {
-            const kitMdText = await fsP.readFile(e.path, "utf-8");
-            const fm = /^---\n([\s\S]+?)\n---/.exec(kitMdText);
-            if (fm) {
-              const parsed = parseYaml(fm[1]) as Record<string, unknown> | null;
-              if (parsed && typeof parsed === "object") {
-                if (typeof parsed.title === "string") title = parsed.title;
-                if (typeof parsed.summary === "string") summary = parsed.summary;
-                if (Array.isArray(parsed.tags))
-                  tags = (parsed.tags as unknown[]).filter(
-                    (t) => typeof t === "string",
-                  ) as string[];
-              }
-            }
-          } catch {
-            // frontmatter parse failure — fall back to slug/empty
-          }
+
+      // ── Downloaded kits (existing path) ──────────────────────────────────
+      const downloadedEntries = await deps.store.list({ owner: p.owner });
+      const downloadedKits = await Promise.all(
+        downloadedEntries.map(async (e) => {
+          const parsed = await parseKitMd(e.path);
           return {
             kitRef: `${e.owner}/${e.slug}`,
             owner: e.owner,
             slug: e.slug,
-            title,
-            summary,
-            tags,
+            title: parsed.title || e.slug,
+            summary: parsed.summary,
+            tags: parsed.tags,
+            category: parsed.category,
             source: "downloaded" as const,
             path: e.path,
           };
         }),
       );
+
+      // ── Source-tree (own) kits — skip if owner filter set (not ours) ──────
+      let ownKits: ReturnType<typeof listOwnKits> extends Promise<infer T> ? T : never = [];
+      if (!p.owner || p.owner === "globalcaos") {
+        ownKits = await listOwnKits(deps.ownKitsDir);
+      }
+      const ownKitsMapped = ownKits.map((e) => ({
+        kitRef: `${e.owner}/${e.slug}`,
+        owner: e.owner,
+        slug: e.slug,
+        title: e.title,
+        summary: e.summary,
+        tags: e.tags,
+        category: e.category,
+        source: "ours" as const,
+        path: e.path,
+      }));
+
+      // ── Merge: our kits first, then downloaded ────────────────────────────
+      const kits = [...ownKitsMapped, ...downloadedKits];
       return { kits };
     },
 
@@ -160,10 +306,9 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         throw new Error(
           "prefrontal.kit.publish: missing apiKey (set integrations.journey.apiKey in openclaw.json)",
         );
-      const fsP = await import("node:fs/promises");
       const pathP = await import("node:path");
       const kitMdPath = pathP.join(deps.ownKitsDir, p.slug, "kit.md");
-      const body = await fsP.readFile(kitMdPath, "utf-8");
+      const body = await fs.readFile(kitMdPath, "utf-8");
       const res = await undiciFetch(`${deps.baseUrl}/api/kits/publish`, {
         method: "POST",
         headers: {

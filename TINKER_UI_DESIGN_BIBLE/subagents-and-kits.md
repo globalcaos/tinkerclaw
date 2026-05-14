@@ -2,7 +2,7 @@
 file: subagents-and-kits.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-05-13
+last_verified: 2026-05-14
 last_verified_commit: HEAD
 single_owner: yes — subagent + kit orchestration + plan persistence facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream)
@@ -13,6 +13,41 @@ verify:
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-recipe-state.mjs
   - name: kits library has ≥10 kit.md files with schema:"kit/1.0"
     cmd: bash -lc 'count=$(grep -l "^schema: \"kit/1.0\"" ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits/*/kit.md 2>/dev/null | wc -l); test "$count" -ge 10 || (echo "only $count kits found"; exit 1)'
+  - name: every kit.md parses cleanly via yaml.parse + carries schema/slug/title/summary
+    cmd: bash -lc 'cd ~/src/tinkerclaw && node -e "
+      const fs = require(\"fs\");
+      const path = require(\"path\");
+      const yaml = require(\"yaml\");
+      const dirs = [
+        \"extensions/tinkerclaw-prefrontal/kits\",
+        require(\"os\").homedir() + \"/.openclaw/workspace/kits\",
+      ];
+      let bad = [];
+      for (const root of dirs) {
+        if (!fs.existsSync(root)) continue;
+        for (const a of fs.readdirSync(root, { withFileTypes: true })) {
+          if (!a.isDirectory()) continue;
+          const tryFile = path.join(root, a.name, \"kit.md\");
+          const ownerSubs = fs.existsSync(tryFile) ? [tryFile] :
+            fs.readdirSync(path.join(root, a.name), { withFileTypes: true })
+              .filter((s) => s.isDirectory())
+              .map((s) => path.join(root, a.name, s.name, \"kit.md\"));
+          for (const f of ownerSubs) {
+            if (!fs.existsSync(f)) continue;
+            const text = fs.readFileSync(f, \"utf8\");
+            const m = /^---\\n([\\s\\S]+?)\\n---/.exec(text);
+            if (!m) { bad.push(f + \" (no frontmatter)\"); continue; }
+            try {
+              const fm = yaml.parse(m[1]);
+              for (const k of [\"schema\", \"slug\", \"title\", \"summary\"]) {
+                if (!fm[k]) bad.push(f + \" (missing \" + k + \")\");
+              }
+            } catch (e) { bad.push(f + \" (parse err: \" + e.message + \")\"); }
+          }
+        }
+      }
+      if (bad.length) { console.log(bad.join(\"\\n\")); process.exit(1); }
+    "'
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
@@ -77,6 +112,34 @@ Every file path written by kit-install goes through `resolveSandboxPath`:
 - `..` traversal sequences are refused
 - Only relative paths within the install target dir are accepted
 - Kits with `risk: ["Critical"]` or `risk: ["High Risk"]` require `allowRisky: true` in the install call
+
+## Canonical kit translation contract
+
+There is exactly ONE kit data shape in this codebase. It is the kit.md frontmatter
+as defined by the kit/1.0 spec (https://www.journeykits.ai/api/docs/kit-md). The
+RPC `prefrontal.kit.list` parses every kit.md (both ours and downloaded) via
+`yaml.parse` and returns a normalized array:
+
+| Field      | Source                                                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------------------------- |
+| `kitRef`   | `<owner>/<slug>` derived from path                                                                         |
+| `owner`    | `globalcaos` for ours; remote owner for downloaded                                                         |
+| `slug`     | frontmatter `slug` field, falls back to dir name                                                           |
+| `title`    | frontmatter `title`                                                                                        |
+| `summary`  | frontmatter `summary` (block scalars folded by `yaml.parse`)                                               |
+| `tags`     | frontmatter `tags`                                                                                         |
+| `category` | derived: explicit `category` field → tag match → pattern fallback (parser-internal `inferCategory`)        |
+| `source`   | `"ours"` for `extensions/tinkerclaw-prefrontal/kits/*` / `"downloaded"` for `~/.openclaw/workspace/kits/*` |
+| `path`     | absolute path to kit.md                                                                                    |
+
+**There is no `RECIPE_CATALOG` or any hand-coded kit list in the UI.** Adding a
+kit means dropping a kit.md on disk — the gateway picks it up and the UI shows
+it on next render. Deleting a kit means deleting the file.
+
+**Adding a new field to kit/1.0:** add it to `KitFrontmatter` type in
+`kit-rpcs.ts`, surface it in the RPC response, consume it in the UI. Update the
+table above. The merge gate (verify block in this file's frontmatter) catches
+kit.md parse failures.
 
 ### Kit catalog
 
