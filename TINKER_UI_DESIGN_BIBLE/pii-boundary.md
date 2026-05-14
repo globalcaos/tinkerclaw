@@ -11,7 +11,7 @@ verify:
   - name: bible files do not match the PII leak grep (excludes this self-referential file)
     cmd: |
       cd ~/src/tinkerclaw && for f in TINKER_UI_DESIGN_BIBLE/INDEX.md TINKER_UI_DESIGN_BIBLE/flows.md TINKER_UI_DESIGN_BIBLE/lifecycles.md TINKER_UI_DESIGN_BIBLE/topology.md TINKER_UI_DESIGN_BIBLE/config-shape.md TINKER_UI_DESIGN_BIBLE/failures.md TINKER_UI_DESIGN_BIBLE/probes.md TINKER_UI_DESIGN_BIBLE/tool-loop.md TINKER_UI_DESIGN_BIBLE/auth-routing.md TINKER_UI_DESIGN_BIBLE/crons.md TINKER_UI_DESIGN_BIBLE/memory-layout.md TINKER_UI_DESIGN_BIBLE/subagents-and-kits.md; do
-        if grep -P 'the user(?! Serra)|Xavi[er]?\b|Ortodó|Barcelona|/home/<user>|talleres serra|hikrobot|glpat-|oserra@' "$f" >/dev/null 2>&1; then
+        if grep -P 'Oscar(?! Serra)|Xavi[er]?\b|Ortodó|Barcelona|/home/globalcaos|talleres serra|hikrobot|glpat-|oserra@' "$f" >/dev/null 2>&1; then
           echo "LEAK in $f"
           exit 1
         fi

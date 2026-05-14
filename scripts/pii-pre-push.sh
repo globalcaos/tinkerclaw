@@ -27,8 +27,11 @@
 #   - "globalcaos" (the GitHub handle, already public on URL/badges/org)
 #
 # Private tokens (do match — block push):
-#   - First-name narrative use: "<FirstName> said …", "<FirstName> wants …", etc.
-#     Detected by the lookahead "the user(?! Serra)" so "Oscar Serra" passes.
+#   - First-name narrative use: "Oscar said …", "Oscar wants …", etc.
+#     Detected by "Oscar(?! Serra)" — the full-name byline "Oscar Serra" passes
+#     but bare first-name narrative use does not.
+#     NOTE: generic role nouns ("the user", "the architect", "the operator") are
+#     the SANITIZED forms prescribed by pii-boundary.md — they do NOT match.
 #   - Family/contact first names
 #   - Location strings
 #   - Host paths
@@ -73,10 +76,13 @@ declare -a exclude_paths=(
   ":(exclude)CLAUDE.md"
 )
 
-# Pattern: full name "Oscar Serra" is allowed (Perl lookahead). The other
-# tokens are simple. ugrep is not used because not all dev hosts have it.
+# Pattern: full name "Oscar Serra" is allowed (Perl lookahead so "Oscar Serra"
+# passes but bare "Oscar" narrative use is a leak). Generic role nouns such as
+# "the user", "the operator", "the architect" are the SANITIZED forms prescribed
+# by pii-boundary.md and MUST NOT be matched — they are not leaks.
+# ugrep is not used because not all dev hosts have it.
 # Use grep -P (PCRE) which supports lookbehind/lookahead.
-PII_RE='the user(?! Serra)|Xavi[er]?\b|Ortodó|Barcelona|/home/<user>|talleres serra|hikrobot|glpat-|oserra@'
+PII_RE='Oscar(?! Serra)|Xavi[er]?\b|Ortodó|Barcelona|/home/globalcaos|talleres serra|hikrobot|glpat-|oserra@'
 
 hit_count=0
 hit_buffer=""
