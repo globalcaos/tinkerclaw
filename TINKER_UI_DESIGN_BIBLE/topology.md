@@ -9,18 +9,15 @@ see_also: flows.md (how they talk), config-shape.md (what configures them)
 verify:
   - name: gateway listening on 18789
     cmd: ss -ltn 2>/dev/null | grep -q ':18789' || netstat -ltn 2>/dev/null | grep -q ':18789'
-  - name: cc-bridge plugin loaded
+  - name: cc-bridge plugin discoverable + manifest valid
     cmd: |
-      raw=$(openclaw gateway call plugin.boot.status 2>&1); json=$(echo "$raw" | awk '/^\{/{found=1} found{print}');
-      if [[ -z "$json" ]]; then echo "$raw" | grep -q "Gateway call failed\|gateway timeout\|ECONNREFUSED" && { echo "Gateway call failed: cc-bridge check skipped (gateway down)"; exit 1; }; echo "Gateway call failed: no JSON in response"; exit 1; fi;
-      echo "$json" | python3 -c "
-      import sys, json
-      d = json.load(sys.stdin)
-      cc = [p for p in d.get('plugins', []) if p['id'] == 'tinkerclaw-cc-bridge']
-      if not cc: sys.stderr.write('tinkerclaw-cc-bridge not found in plugin.boot.status\n'); sys.exit(1)
-      if cc[0]['status'] != 'loaded': sys.stderr.write(f'tinkerclaw-cc-bridge status={cc[0][\"status\"]} expected loaded\n'); sys.exit(1)
-      print('tinkerclaw-cc-bridge status=loaded')
-      "
+      manifest=~/src/tinkerclaw/dist-runtime/extensions/tinkerclaw-cc-bridge/openclaw.plugin.json
+      stub=~/src/tinkerclaw/dist-runtime/extensions/tinkerclaw-cc-bridge/index.js
+      [ -f "$manifest" ] || { echo "missing $manifest"; exit 1; }
+      [ -f "$stub" ] || { echo "missing $stub"; exit 1; }
+      grep -q '"id":\s*"tinkerclaw-cc-bridge"' "$manifest" || { echo "manifest id mismatch"; exit 1; }
+      python3 -c "import json,sys; m=json.load(open('$manifest')); a=m.get('activation',{}); ps=a.get('onProviders',[]); sys.exit(0 if 'claude-code' in ps else 1)" || { echo "manifest missing activation.onProviders containing 'claude-code' — cc-bridge is lazy-loaded; this gates activation"; exit 1; }
+      echo "tinkerclaw-cc-bridge manifest + stub discoverable, lazy-activation wired to claude-code"
   - name: workspace symlinks present (skills NOT symlinked per design)
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
   - name: every fork-owned plugin dir uses the tinkerclaw- prefix
