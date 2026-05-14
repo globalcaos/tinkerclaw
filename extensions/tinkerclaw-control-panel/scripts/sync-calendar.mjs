@@ -13,9 +13,11 @@
  *   node scripts/sync-calendar.mjs 2026-05-11 2026-05-25
  */
 import { execSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 import Database from "better-sqlite3";
 
-const DB = "/home/user/.openclaw/data/control-panel/store.db";
+const DB = path.join(os.homedir(), ".openclaw/data/control-panel/store.db");
 
 function isoToday() {
   const d = new Date();
