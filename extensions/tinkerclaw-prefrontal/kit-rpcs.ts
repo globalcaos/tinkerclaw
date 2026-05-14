@@ -115,15 +115,45 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     "prefrontal.kit.list": async (raw: unknown) => {
       const p = check<PrefrontalKitListParams>(vList, raw, "prefrontal.kit.list");
       const entries = await deps.store.list({ owner: p.owner });
-      return {
-        kits: entries.map((e) => ({
-          kitRef: `${e.owner}/${e.slug}`,
-          owner: e.owner,
-          slug: e.slug,
-          source: "downloaded" as const,
-          path: e.path,
-        })),
-      };
+      const fsP = await import("node:fs/promises");
+      const kits = await Promise.all(
+        entries.map(async (e) => {
+          let title = e.slug;
+          let summary = "";
+          let tags: string[] = [];
+          try {
+            const kitMdText = await fsP.readFile(e.path, "utf-8");
+            const fm = /^---\n([\s\S]+?)\n---/.exec(kitMdText);
+            if (fm) {
+              const block = fm[1];
+              const tM = /^title:\s*(.+)$/m.exec(block);
+              if (tM) title = tM[1].trim().replace(/^['"]|['"]$/g, "");
+              const sM = /^summary:\s*(.+)$/m.exec(block);
+              if (sM) summary = sM[1].trim().replace(/^['"]|['"]$/g, "");
+              // Multi-line summary (folded block scalar starting next line)
+              if (!summary) {
+                const sBlock = /^summary:\s*>\-?\n((?:[ \t]+.+\n?)+)/m.exec(block);
+                if (sBlock) summary = sBlock[1].replace(/^[ \t]+/gm, "").trim();
+              }
+              const tagsM = block.match(/^  - (.+)$/gm);
+              if (tagsM) tags = tagsM.map((l) => l.replace(/^\s+-\s+/, "").trim());
+            }
+          } catch {
+            // frontmatter parse failure — fall back to slug/empty
+          }
+          return {
+            kitRef: `${e.owner}/${e.slug}`,
+            owner: e.owner,
+            slug: e.slug,
+            title,
+            summary,
+            tags,
+            source: "downloaded" as const,
+            path: e.path,
+          };
+        }),
+      );
+      return { kits };
     },
 
     "prefrontal.kit.publish": async (raw: unknown) => {
