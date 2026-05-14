@@ -10,6 +10,19 @@ tags:
   ["communication", "report for jarvis", "structured report", "incident report", "jarvis report"]
 tools: ["exec", "read", "grep", "glob"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    Gather (0) is modelled as one step but the caller should fan sub-scouts on
+    independent sources: git log, gateway logs, config diffs, memory files.
+    Each sub-scout writes its findings to a short note; Analyze (1) merges them.
+    Analyze (1) is a serial barrier requiring all gathered notes. Structure (2)
+    formats the report and runs alone. Deliver (3) presents the final output.
+    Step index: 0=Gather, 1=Analyze, 2=Structure, 3=Deliver.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

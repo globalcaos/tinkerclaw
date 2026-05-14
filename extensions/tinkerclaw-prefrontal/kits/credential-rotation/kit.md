@@ -9,6 +9,19 @@ license: "MIT"
 tags: ["security", "rotate", "credentials", "keys", "tokens", "secrets", "rotate keys", "new token"]
 tools: ["exec", "read", "grep", "edit"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+  notes: |
+    FULLY SERIAL — safety contract. NEVER parallelize any step here.
+    Generate (1) must precede Deploy (2); Deploy must precede Verify (3);
+    Verify MUST precede Revoke (4). Revoking before verify = permanent
+    service outage. Step index: 0=Inventory, 1=Generate New Credentials,
+    2=Deploy New Credentials, 3=Verify, 4=Revoke Old Credentials.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

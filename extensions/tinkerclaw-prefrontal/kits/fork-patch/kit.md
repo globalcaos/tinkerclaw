@@ -9,6 +9,20 @@ license: "MIT"
 tags: ["coding", "patch", "fork fix", "wiring", "apply patch", "fork-specific"]
 tools: ["read", "grep", "glob", "exec", "edit"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    TIGHT DATA-DEPENDENCY CHAIN — fully serial. Identify (0) establishes the
+    exact file and line to patch. Write Patch (1) applies the minimal change —
+    needs 0. Add to Apply-Fork-Wiring (2) writes the idempotent patch function —
+    needs 1 to know the diff. Verify with Guardian (3) runs the re-apply
+    function and the guardian check — needs 2 to exist. Step index:
+    0=Identify, 1=Write Patch, 2=Add to Apply-Fork-Wiring, 3=Verify with
+    Guardian.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

@@ -18,6 +18,21 @@ tags:
   ]
 tools: ["exec", "read", "grep", "glob", "edit"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+  notes: |
+    Contain (0) MUST run first and alone — threat must be isolated before any
+    evidence-gathering (restarting services destroys in-memory evidence).
+    Assess (1) can spawn sub-scouts for independent angles (logs, git history,
+    file timestamps) but is modelled as one step group; fan the sub-queries
+    inside the step. Remediate (2), Communicate (3), and Postmortem (4) are
+    each serial barriers — each depends on the prior step's output. Step index:
+    0=Contain, 1=Assess, 2=Remediate, 3=Communicate, 4=Postmortem.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

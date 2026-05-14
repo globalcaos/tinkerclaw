@@ -10,6 +10,19 @@ tags:
   ["communication", "daily", "status", "standup", "what happened", "daily report", "status update"]
 tools: ["exec", "read", "grep"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    Gather (0) is a single step in the kit body, but the runner should
+    decompose it into sub-scouts: git log, gateway logs, tasks/memory —
+    each an independent source. The kit-runner models this as one step
+    group [0]; Jarvis should fan sub-queries inside that step.
+    Summarize (1), Format (2), and Deliver (3) are each serial barriers.
+    Step index: 0=Gather, 1=Summarize, 2=Format, 3=Deliver.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

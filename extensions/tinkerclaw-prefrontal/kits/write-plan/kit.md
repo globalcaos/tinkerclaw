@@ -9,6 +9,21 @@ license: "MIT"
 tags: ["writing", "plan", "roadmap", "design doc", "RFC", "proposal", "implementation plan"]
 tools: ["read", "grep", "glob", "write"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+  notes: |
+    Scope (0) defines boundaries — must complete before any research begins.
+    Research (1) is read-only and can fan per affected area internally (e.g.
+    one scout per integration point), but is modelled as one step group.
+    Structure (2) synthesises the research into a dependency-mapped task
+    breakdown — serial barrier. Draft (3) writes the plan document — single
+    write step. Review (4) validates completeness and feasibility — serial read.
+    Step index: 0=Scope, 1=Research, 2=Structure, 3=Draft, 4=Review.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

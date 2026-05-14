@@ -20,6 +20,19 @@ tags:
   ]
 tools: ["read", "grep", "glob", "exec"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    Scope (0) is a serial barrier — defines the question and boundaries.
+    Gather (1) can fan sub-agents on independent sub-questions (grep keyword A,
+    glob file pattern B, read module C) but is modelled as one step; the caller
+    decomposes sub-queries internally. Analyze (2) synthesises all gathered
+    evidence and is a serial barrier. Report (3) delivers the findings and runs
+    alone. Step index: 0=Scope, 1=Gather, 2=Analyze, 3=Report.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

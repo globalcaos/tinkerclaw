@@ -9,6 +9,19 @@ license: "MIT"
 tags: ["operations", "deploy", "release", "ship", "push to prod", "go live"]
 tools: ["exec", "read", "grep"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+  notes: |
+    FULLY SERIAL — safety contract. Pre-flight (0) must pass before Build (1);
+    Build must succeed before Deploy (2); Deploy must complete before Verify (3);
+    Verify must confirm health before Rollback Plan (4) is documented.
+    Never run Deploy before tests pass; never skip Verify. Step index:
+    0=Pre-flight, 1=Build, 2=Deploy, 3=Verify, 4=Rollback Plan.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

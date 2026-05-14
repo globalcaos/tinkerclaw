@@ -9,6 +9,18 @@ license: "MIT"
 tags: ["coding", "bug", "error", "crash", "broken", "not working", "fails", "exception", "fix"]
 tools: ["read", "grep", "glob", "exec", "edit"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    DATA-DEPENDENCY CHAIN — fully serial. Reproduce (0) must complete before
+    Diagnose (1) can form valid hypotheses. Fix (2) needs the root cause from
+    Diagnose. Verify (3) must run after the Fix. Parallelising any pair produces
+    incorrect diagnoses or untested fixes. Step index: 0=Reproduce,
+    1=Diagnose, 2=Fix, 3=Verify.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

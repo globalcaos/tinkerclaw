@@ -9,6 +9,21 @@ license: "MIT"
 tags: ["coding", "merge", "upstream", "sync", "rebase", "pull upstream"]
 tools: ["read", "grep", "glob", "exec", "edit"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+  notes: |
+    Pre-check (0) and Merge (1) are strictly serial — must have a clean working
+    tree before merging. Resolve Conflicts (2) is modelled as one step; TIER1
+    files CAN fan internally (one subagent per file, each writing a disjoint
+    file), but non-TIER1 conflicts must serialize on review — the caller decides.
+    Verify Wiring (3) runs merge-guardian and must complete before building.
+    Build & Test (4) is a final barrier. Step index: 0=Pre-check, 1=Merge,
+    2=Resolve Conflicts, 3=Verify Wiring, 4=Build & Test.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

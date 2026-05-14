@@ -9,6 +9,20 @@ license: "MIT"
 tags: ["coding", "add", "create", "build", "implement", "new feature", "make it"]
 tools: ["read", "grep", "glob", "exec", "edit", "write"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0, 2]
+    - [1]
+    - [3]
+    - [4]
+  notes: |
+    Explore (0) and Write Tests (2) are both read-only / write-to-new-files and
+    can fan: Explore reads existing patterns while tests are written against the
+    expected interface. Design (1) is a barrier — it needs Explore's findings to
+    produce a valid plan, and tests cannot be finalised before Design. Implement
+    (3) is a single write barrier (one file list, sequential edits). Verify (4)
+    runs the build + test suite as a final barrier. Step index: 0=Explore,
+    1=Design, 2=Write Tests, 3=Implement, 4=Verify.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

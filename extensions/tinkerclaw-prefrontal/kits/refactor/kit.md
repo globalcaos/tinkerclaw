@@ -9,6 +9,20 @@ license: "MIT"
 tags: ["coding", "refactor", "clean up", "restructure", "reorganize", "simplify"]
 tools: ["read", "grep", "exec", "edit"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+  notes: |
+    DATA-DEPENDENCY CHAIN — fully serial. Understand (0) maps all callers and
+    existing structure. Baseline Tests (1) requires understanding of what
+    behavior to preserve. Refactor (2) applies changes in small increments —
+    each needs passing tests from step 1 as a guard. Verify (3) runs the full
+    suite after all changes. No fan-out: each step feeds the next, and
+    interleaved writes would race on the same files. Step index: 0=Understand,
+    1=Baseline Tests, 2=Refactor, 3=Verify.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"
