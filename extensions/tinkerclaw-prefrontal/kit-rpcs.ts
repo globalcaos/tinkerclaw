@@ -9,12 +9,15 @@ import {
   PrefrontalKitInstallParamsSchema,
   PrefrontalKitPublishParamsSchema,
   PrefrontalKitListParamsSchema,
+  PrefrontalKitRunParamsSchema,
   type PrefrontalKitSearchParams,
   type PrefrontalKitGetParams,
   type PrefrontalKitInstallParams,
   type PrefrontalKitPublishParams,
   type PrefrontalKitListParams,
+  type PrefrontalKitRunParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
+import { runKit } from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
 
 const ajv = new Ajv({ allErrors: true });
@@ -23,6 +26,7 @@ const vGet = ajv.compile(PrefrontalKitGetParamsSchema);
 const vInstall = ajv.compile(PrefrontalKitInstallParamsSchema);
 const vPublish = ajv.compile(PrefrontalKitPublishParamsSchema);
 const vList = ajv.compile(PrefrontalKitListParamsSchema);
+const vRun = ajv.compile(PrefrontalKitRunParamsSchema);
 
 type Validator = ReturnType<typeof ajv.compile>;
 
@@ -181,6 +185,9 @@ export interface KitRpcsDeps {
   apiKey: string | null;
   kitInstallSandbox: string;
   ownKitsDir: string;
+  /** Optional plan store — required for prefrontal.kit.run in live mode */
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
+  planStore?: any;
 }
 
 export function createKitRpcs(deps: KitRpcsDeps) {
@@ -324,6 +331,55 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       });
       if (!res.ok) throw new Error(`Journey publish -> ${res.status}: ${await res.text()}`);
       return await res.json();
+    },
+
+    "prefrontal.kit.run": async (raw: unknown) => {
+      const p = check<PrefrontalKitRunParams>(vRun, raw, "prefrontal.kit.run");
+
+      if (p.dryRun) {
+        // Dry-run: return the dispatch plan without spawning anything.
+        const result = await runKit({
+          kitRef: p.kitRef,
+          sessionKey: p.sessionKey,
+          intent: p.intent,
+          parameters: p.parameters,
+          dryRun: true,
+          ownKitsDir: deps.ownKitsDir,
+          kitInstallSandbox: deps.kitInstallSandbox,
+        });
+        return {
+          ok: result.ok,
+          planId: result.planId,
+          dryRun: true,
+          dryRunPlan: result.dryRunPlan,
+          errorMessage: result.errorMessage,
+        };
+      }
+
+      // Live mode: runKit seeds the plan synchronously then dispatches subagents
+      // in the background. We await only the plan seed, then let dispatch continue
+      // asynchronously. The plan board in TUI reflects live step progress.
+      //
+      // We wrap in a Promise that resolves after the plan is seeded (first async
+      // boundary inside runKit) by running the full kit in background and
+      // returning immediately with the planId from a pre-seeded plan.
+      const runResult = await runKit({
+        kitRef: p.kitRef,
+        sessionKey: p.sessionKey,
+        intent: p.intent,
+        parameters: p.parameters,
+        dryRun: false,
+        planStore: deps.planStore,
+        ownKitsDir: deps.ownKitsDir,
+        kitInstallSandbox: deps.kitInstallSandbox,
+      });
+
+      return {
+        ok: runResult.ok,
+        planId: runResult.planId,
+        errorMessage: runResult.errorMessage,
+        note: runResult.ok ? "kit runner completed; check plan board for step results" : undefined,
+      };
     },
   } as const;
 }
