@@ -333,6 +333,109 @@ const plugin = {
           return true;
         }
 
+        // ── FORK 2026-05-14: Kit content read endpoint ──
+        // GET /tinker/api/kit-content?path=<relative-or-absolute>
+        // Returns { path: string, content: string, isDownloaded: boolean }
+        if (pathname === `${PREFIX}/api/kit-content` && req.method === "GET") {
+          const jsonHeaders = { "Content-Type": "application/json" };
+          const HOME = process.env.HOME ?? "/home/user";
+          const TINKERCLAW_ROOT = path.resolve(HOME, "src/tinkerclaw");
+          const WORKSPACE_KITS = path.resolve(HOME, ".openclaw/workspace/kits");
+          const rawPath = url.searchParams.get("path") ?? "";
+          if (!rawPath) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "path param required" }));
+            return true;
+          }
+          const resolved = path.isAbsolute(rawPath)
+            ? rawPath
+            : path.resolve(TINKERCLAW_ROOT, rawPath);
+          const inTinkerclaw = resolved.startsWith(TINKERCLAW_ROOT + path.sep);
+          const inWorkspaceKits = resolved.startsWith(WORKSPACE_KITS + path.sep);
+          if (!inTinkerclaw && !inWorkspaceKits) {
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Path outside allowed kit directories" }));
+            return true;
+          }
+          try {
+            const stat = fs.statSync(resolved);
+            if (!stat.isFile()) throw new Error("not a file");
+            if (stat.size > 512 * 1024) {
+              res.statusCode = 413;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "File too large" }));
+              return true;
+            }
+            const content = fs.readFileSync(resolved, "utf-8");
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache");
+            res.end(JSON.stringify({ path: resolved, content, isDownloaded: inWorkspaceKits }));
+          } catch (err: any) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: err.message ?? "File not found" }));
+          }
+          return true;
+        }
+
+        // ── FORK 2026-05-14: Kit file save endpoint ──
+        // POST /tinker/api/save-file { path: string, content: string }
+        // Returns { ok: true } or { error: string }
+        if (pathname === `${PREFIX}/api/save-file` && req.method === "POST") {
+          const HOME = process.env.HOME ?? "/home/user";
+          const TINKERCLAW_ROOT = path.resolve(HOME, "src/tinkerclaw");
+          const WORKSPACE_KITS = path.resolve(HOME, ".openclaw/workspace/kits");
+          const chunks: Buffer[] = [];
+          for await (const chunk of req) chunks.push(chunk as Buffer);
+          let body: { path?: unknown; content?: unknown };
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString());
+          } catch {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Invalid JSON" }));
+            return true;
+          }
+          if (typeof body.path !== "string" || typeof body.content !== "string") {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "path and content required" }));
+            return true;
+          }
+          const resolved = path.isAbsolute(body.path)
+            ? body.path
+            : path.resolve(TINKERCLAW_ROOT, body.path);
+          const inTinkerclaw = resolved.startsWith(TINKERCLAW_ROOT + path.sep);
+          const inWorkspaceKits = resolved.startsWith(WORKSPACE_KITS + path.sep);
+          if (!inTinkerclaw && !inWorkspaceKits) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Path outside allowed kit directories" }));
+            return true;
+          }
+          // Atomic write: write to .tmp then rename
+          const tmpPath = resolved + ".tmp";
+          try {
+            fs.mkdirSync(path.dirname(resolved), { recursive: true });
+            fs.writeFileSync(tmpPath, body.content, "utf-8");
+            fs.renameSync(tmpPath, resolved);
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true }));
+          } catch (err: any) {
+            try {
+              fs.unlinkSync(tmpPath);
+            } catch {}
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: err.message ?? "Write failed" }));
+          }
+          return true;
+        }
+
         // API: read local file contents
         if (pathname.startsWith(`${PREFIX}/api/`)) {
           const rawPath = url.searchParams.get("path") ?? "";
