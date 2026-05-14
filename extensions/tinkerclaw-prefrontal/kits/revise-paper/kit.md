@@ -19,6 +19,25 @@ tags:
   ]
 tools: ["read", "grep", "glob", "exec", "edit", "write"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+    - [5]
+  notes: |
+    Full Read (0) is a serial barrier — must understand the whole paper before
+    any structural decisions. Structural Audit (1) writes a revision plan and
+    is a barrier — blocking Prose and Additions. Evidence Check (2) is
+    read-only and could fan per-claim in a multi-scout mode, but is modelled
+    as a single step; the caller can internally spawn per-section scouts.
+    Prose Tightening (3), Fresh Additions (4), and Final Pass (5) are
+    sequential edit passes that share the same output file — fan-out would
+    cause write conflicts. Fully serial. Step index: 0=Full Read,
+    1=Structural Audit, 2=Evidence Check, 3=Prose Tightening,
+    4=Fresh Additions, 5=Final Pass.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

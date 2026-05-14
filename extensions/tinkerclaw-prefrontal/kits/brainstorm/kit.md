@@ -9,6 +9,19 @@ license: "MIT"
 tags: ["writing", "brainstorm", "ideas", "explore options", "what if", "ideate", "possibilities"]
 tools: ["read", "grep", "glob"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2, 3]
+  notes: |
+    Frame (0) must complete first to bound the problem. Diverge (1) generates
+    options; in multi-scout mode each option branch can fan out here but the
+    step is modelled as one serial group because scouts share the frame output.
+    Converge (2) and Evaluate (3) are both analytical but act on the same option
+    list — they can fan in parallel (different axes of judgment) before the
+    caller merges. The step index mapping is 0=Frame, 1=Diverge, 2=Converge,
+    3=Evaluate (0-indexed body heading sequence).
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

@@ -10,6 +10,17 @@ tags:
   ["analysis", "dependencies", "outdated", "upgrade", "supply chain", "dep audit", "package audit"]
 tools: ["read", "grep", "glob", "exec"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0, 1]
+    - [2]
+    - [3]
+  notes: |
+    Inventory (0) and Audit (1) are both read-only operations on independent
+    data sources — package manifest vs pnpm audit output — and fan safely.
+    Risk Assessment (2) synthesises both and is a serial barrier. Plan (3)
+    formats the upgrade plan and runs alone. Step index: 0=Inventory,
+    1=Audit, 2=Risk Assessment, 3=Plan.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"

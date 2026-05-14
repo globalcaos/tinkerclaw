@@ -9,6 +9,22 @@ license: "MIT"
 tags: ["writing", "paper", "article", "write-up", "document", "spec", "publication"]
 tools: ["read", "grep", "glob", "exec", "edit", "write"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+    - [2]
+    - [3]
+    - [4]
+  notes: |
+    Outline (0) is a serial barrier — all section structure must be agreed
+    before research begins. Research (1) can fan per-section internally (each
+    section's evidence gathering is independent), but is modelled as one step
+    group; the caller spawns sub-scouts per section. Draft (2) is a single write
+    step — sections must be integrated into one coherent file, so writing in
+    parallel risks structural collision. Review (3) reads the draft and produces
+    a revision list — serial. Polish (4) applies review findings — serial write.
+    Step index: 0=Outline, 1=Research, 2=Draft, 3=Review, 4=Polish.
 model:
   provider: "anthropic"
   name: "claude-opus-4-7"
