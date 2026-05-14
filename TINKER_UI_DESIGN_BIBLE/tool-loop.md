@@ -2,10 +2,10 @@
 file: tool-loop.md
 purpose: Why cc-bridge's tool loop differs from pi-agent-core's; consequences and the heartbeat-stream proposal
 audience: AI
-last_verified: 2026-05-11
+last_verified: 2026-05-14
 last_verified_commit: HEAD
 single_owner: yes — this is the one place to learn why fork tool-loop ≠ upstream
-see_also: flows.md (F1 cc-bridge spawn flow), failures.md (M1 idle-watchdog SIGTERM), config-shape.md (timeoutSeconds)
+see_also: flows.md (F1 cc-bridge spawn flow), failures.md (M1 idle-watchdog SIGTERM), config-shape.md (timeoutSeconds), panels.md (thinking indicator + prefrontal panel)
 verify:
   - name: cc-bridge stream.ts still suppresses tool_use blocks from assistant.message.content
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
@@ -13,6 +13,8 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
   - name: cc-bridge heartbeat is wired in stream.ts (FORK 2026-05-11)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK 2026-05-11" in t and "heartbeat" in t.lower() and "HEARTBEAT_INTERVAL_MS" in t, "the cc-bridge heartbeat that resets pi-agent-core idle watchdog is missing or undocumented"'
+  - name: tinker-ui stale-run watchdog compares against lastEventAt, not startedAt (FORK 2026-05-14)
+    cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "lastEventAt" in t and "now - info.lastEventAt" in t, "the stale-run watchdog must compare against info.lastEventAt — comparing against startedAt re-introduces the 2026-05-14 bug where heavy cc-bridge tool turns silently lost their thinking indicator at the 5-min mark"; assert "bumpActiveRunActivity" in t, "the bump-lastEventAt-on-WS-event helper must exist; without it lastEventAt never advances and the watchdog still fires at startedAt+5min"; assert re.search(r"if\s*\(\s*now\s*-\s*info\.startedAt\s*>\s*STALE_RUN_WATCHDOG_MS\s*\)", t) is None, "watchdog still compares against startedAt — the FORK 2026-05-14 fix has regressed"'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -102,10 +104,33 @@ Empty delta is a no-op for accumulated content (string concat with `""` preserve
 - Never emit a `tool_use`-shaped event from the heartbeat path — that would re-execute the tool through OpenClaw's exec tool, exactly what the suppression above is preventing.
 - The 25s interval is chosen well under the 120s default and the 600s overlay. Lowering it further is fine; raising it past 60s reintroduces the risk that the overlay-as-load-bearing assumption silently returns.
 
+## The UI-side watchdog (FORK 2026-05-14)
+
+`tinker-ui/src/app.ts` runs a 1Hz tick that force-clears stale entries from `activeRuns`, which drives the thinking indicator + the prefrontal panel's "▶ Doing" line. The original watchdog (5-min ceiling) compared against `info.startedAt` — total elapsed since the run began. Tuned to anthropic/openai/google cadences where 5 min is plenty.
+
+For cc-bridge it lied. A heavy 7+ min tool turn (read several Outlook threads, run a few Bash probes, scan files, draft answer) routinely exceeds 5 min total elapsed while never sitting silent more than 25 s (heartbeat). The old watchdog fired at the 5-min mark mid-turn, the indicator vanished, the user assumed Jarvis had crashed, retyped, the new `chat.send` aborted the still-running prior turn via the in-flight-cancel path, and the cycle repeated. Exact incident: runId `43202545` on 2026-05-14, 473 s elapsed, killed because the user's panic-retype landed during the 3-min window after the watchdog cleared the indicator.
+
+Fix: track `lastEventAt` per `ActiveRunInfo`, bumped on every matching `agent`/`chat` WS event via `bumpActiveRunActivity(payload)` in `tinker-ui/src/app.ts`. Watchdog now compares against `lastEventAt`, not `startedAt`. Same threshold (5 min) but it now means "5 minutes of WS silence", not "5 minutes since start". The cc-bridge heartbeat (every 25 s) ensures real runs never trip it; a genuinely-dead run (gateway crashed, WS dropped, lifecycle:end lost) still gets cleared after 5 min of true silence.
+
+```mermaid
+sequenceDiagram
+  participant CCB as cc-bridge stream.ts
+  participant WS as gateway WS
+  participant UI as tinker-ui activeRuns
+  participant WD as stale-run watchdog (1 Hz)
+
+  CCB->>WS: stream events (tool, text_delta, heartbeat ≤25 s)
+  WS->>UI: agent/chat event → bumpActiveRunActivity(p)
+  Note over UI: info.lastEventAt = Date.now()
+  WD->>UI: every 1 s, check (now - info.lastEventAt) > 5 min
+  Note over WD: only clears on TRUE silence, never on long turns
+```
+
 ## Don't regress
 
 - **NEVER add tool_use blocks back to `assistant.message.content` for cc-bridge.** This re-introduces the red-error-bubble cascade.
 - **NEVER assume cc-bridge timeouts are just like other providers.** They are not. cc-bridge needs longer timeouts because its event stream is sparse during tool work.
+- **NEVER change the tinker-ui stale-run watchdog to compare against `startedAt`.** See "The UI-side watchdog" section above and the 2026-05-14 incident. The bible verify in this file's frontmatter enforces this — bypassing it is the same class of bug as bypassing the cc-bridge heartbeat (regression to a known-bad shape).
 - The cc-bridge sessionKey hash is djb2 over `${systemPrompt}${openclawSessionId}` (`extensions/tinkerclaw-cc-bridge/src/stream.ts:104:deriveSessionKey`). It drifts when systemPrompt changes (e.g., after [System] continue is prepended on resume). The worker-pool's `getLatestResumeSessionIdByOpenclawSessionId` fallback handles this drift; do not remove it.
 
 ## Verify (proposed)

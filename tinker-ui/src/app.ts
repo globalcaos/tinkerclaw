@@ -662,6 +662,16 @@ type ActiveRunInfo = {
   provider: string;
   authProfileId?: string;
   startedAt: number;
+  // FORK 2026-05-14: timestamp of the most recent WS event for this run.
+  // Bumped on every `agent`/`chat` event whose runId or sessionKey matches.
+  // The stale-run watchdog compares against THIS, not startedAt — otherwise
+  // long cc-bridge tool chains (which routinely exceed 5min total elapsed
+  // but never sit silent >25s thanks to the heartbeat) get force-cleared
+  // mid-turn and the thinking indicator vanishes while the server is still
+  // working. See tool-loop.md (cc-bridge tool-loop divergence) for why
+  // total-elapsed timeouts tuned to anthropic provider cadence are wrong
+  // for cc-bridge.
+  lastEventAt: number;
   sessionKey?: string;
   phase: ActiveRunPhase;
   currentTool?: string;
@@ -752,6 +762,13 @@ function restoreActiveRuns() {
     }
     const entries: [string, ActiveRunInfo][] = JSON.parse(raw);
     for (const [id, info] of entries) {
+      // FORK 2026-05-14: backfill lastEventAt for entries written by older
+      // builds (the field was added after this storage key shipped). Treat
+      // restore time as "last event" so the watchdog gives the run a fresh
+      // window to confirm itself via a real lifecycle event.
+      if (typeof info.lastEventAt !== "number") {
+        info.lastEventAt = info.startedAt ?? Date.now();
+      }
       activeRuns.set(id, info);
       unconfirmedRuns.add(id);
     }
@@ -958,7 +975,7 @@ function buildPrefrontalTree(): TreeResponse {
       label: info.authProfileId ?? info.model,
       status: statusLabel,
       progress: 0,
-      lastEventAge: Math.floor((Date.now() - info.startedAt) / 1000),
+      lastEventAge: Math.floor((Date.now() - info.lastEventAt) / 1000),
       children: [],
     };
   }
@@ -1381,12 +1398,42 @@ function mergeSentenceContinuations(msgs: unknown[]): void {
   }
 }
 
+// FORK 2026-05-14: bump lastEventAt for any activeRun touched by this WS
+// event so the stale-run watchdog (STALE_RUN_WATCHDOG_MS in startThinkingTick)
+// fires only on genuine silence, not on long cc-bridge tool chains where the
+// chat layout looks idle but the server is still working. Match by runId
+// first (canonical), fall back to sessionKey for events that omit runId
+// (lifecycle round events, some tool events). Runs from other clients /
+// other sessions are left untouched. See tool-loop.md for why total-elapsed
+// timeouts tuned to anthropic cadence are wrong for cc-bridge.
+function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown }): void {
+  if (!payload) return;
+  const now = Date.now();
+  const runId = typeof payload.runId === "string" ? payload.runId : null;
+  if (runId) {
+    const info = activeRuns.get(runId);
+    if (info) {
+      info.lastEventAt = now;
+      return;
+    }
+  }
+  const evtKey = typeof payload.sessionKey === "string" ? payload.sessionKey : null;
+  if (evtKey) {
+    for (const info of activeRuns.values()) {
+      if (info.sessionKey && sessionKeyMatches(info.sessionKey, evtKey)) {
+        info.lastEventAt = now;
+      }
+    }
+  }
+}
+
 function onEvent(evt: unknown) {
   if (evt.event === "chat") {
     const p = evt.payload;
     if (p.sessionKey !== sessionKey && !sessionKeyMatches(p.sessionKey)) {
       return;
     }
+    bumpActiveRunActivity(p);
     if (p.state === "delta") {
       if (!streamRunId) {
         streamProvider = "";
@@ -1688,6 +1735,7 @@ function onEvent(evt: unknown) {
 
   if (evt.event === "agent") {
     const p = evt.payload;
+    bumpActiveRunActivity(p ?? {});
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages.
     // FORK (2026-04-21): use sessionKeyMatches so a server-canonicalized key
@@ -2194,6 +2242,7 @@ function onEvent(evt: unknown) {
           provider: startProvider,
           authProfileId: p.data.authProfileId,
           startedAt: Date.now(),
+          lastEventAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
           phase: "thinking",
         });
@@ -4283,10 +4332,18 @@ function renderThinkingIndicator(): string {
   return "";
 }
 
-/** FORK: Max age (ms) before a stale activeRun is force-cleared by the watchdog.
- * If the lifecycle "end" event was missed, this ensures the thinking indicator
- * doesn't persist forever. 5 minutes is generous — real runs rarely exceed this,
- * and even if they do the next lifecycle event will re-register the run. */
+/** FORK: Max age (ms) of SILENCE before a stale activeRun is force-cleared by
+ * the watchdog. The comparison is against `info.lastEventAt`, which every
+ * `agent`/`chat` WS event for this run bumps via bumpActiveRunActivity. So:
+ *  - Long cc-bridge tool turns (heartbeat every 25s, plus tool start/result
+ *    events every few seconds) NEVER hit this threshold while the server is
+ *    alive — the thinking indicator stays visible for the full turn.
+ *  - A genuinely dead run (gateway crashed, WS dropped, lifecycle:end lost)
+ *    is silent and gets cleared after 5 minutes of no events.
+ * Do NOT compare against `startedAt` — that re-introduces the 2026-05-14 bug
+ * where heavy 7+ min tool turns silently lost their indicator at the 5-min
+ * mark, the user assumed Jarvis had crashed, retyped, and the new chat.send
+ * SIGTERMed the still-running prior turn. See tool-loop.md. */
 const STALE_RUN_WATCHDOG_MS = 5 * 60 * 1000;
 
 function startThinkingTick() {
@@ -4306,15 +4363,19 @@ function startThinkingTick() {
       thinkingTickInterval = null;
       return;
     }
-    // FORK: Watchdog — force-clear runs older than STALE_RUN_WATCHDOG_MS.
-    // Catches any case where the lifecycle "end" event was missed (dropped frame,
-    // JS error, session key mismatch, server-side bug, etc.).
+    // FORK: Watchdog — force-clear runs that have gone SILENT for longer than
+    // STALE_RUN_WATCHDOG_MS. Compare against info.lastEventAt (bumped on every
+    // matching `agent`/`chat` WS event via bumpActiveRunActivity), NOT
+    // info.startedAt — see the constant's docstring above and tool-loop.md
+    // for the 2026-05-14 incident this guards against.
     const now = Date.now();
     let stalePruned = false;
     for (const [runId, info] of activeRuns) {
-      if (now - info.startedAt > STALE_RUN_WATCHDOG_MS) {
+      const silentMs = now - info.lastEventAt;
+      if (silentMs > STALE_RUN_WATCHDOG_MS) {
+        const totalMs = now - info.startedAt;
         console.warn(
-          `[thinking-watchdog] force-clearing stale run ${runId} (age=${Math.round((now - info.startedAt) / 1000)}s model=${info.model})`,
+          `[thinking-watchdog] force-clearing run ${runId} (silent=${Math.round(silentMs / 1000)}s total=${Math.round(totalMs / 1000)}s model=${info.model})`,
         );
         activeRuns.delete(runId);
         pendingRunDeletes.delete(runId);
