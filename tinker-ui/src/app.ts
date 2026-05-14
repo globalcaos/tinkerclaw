@@ -1399,13 +1399,13 @@ function mergeSentenceContinuations(msgs: unknown[]): void {
 }
 
 // FORK 2026-05-14: bump lastEventAt for any activeRun touched by this WS
-// event so the stale-run watchdog (STALE_RUN_WATCHDOG_MS in startThinkingTick)
-// fires only on genuine silence, not on long cc-bridge tool chains where the
-// chat layout looks idle but the server is still working. Match by runId
-// first (canonical), fall back to sessionKey for events that omit runId
-// (lifecycle round events, some tool events). Runs from other clients /
-// other sessions are left untouched. See tool-loop.md for why total-elapsed
-// timeouts tuned to anthropic cadence are wrong for cc-bridge.
+// event. This was originally added to feed a UI-side stale-run watchdog
+// (since deleted — see startThinkingTick docstring). It's STILL useful for
+// driving the prefrontal panel's "lastEventAge" display (how long since
+// any event on this run, useful for spotting genuine hangs without
+// force-clearing anything). Match by runId first (canonical), fall back
+// to sessionKey for events that omit runId (lifecycle round events, some
+// tool events). Runs from other clients / other sessions are left untouched.
 function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown }): void {
   if (!payload) return;
   const now = Date.now();
@@ -4332,65 +4332,32 @@ function renderThinkingIndicator(): string {
   return "";
 }
 
-/** FORK: Max age (ms) of SILENCE before a stale activeRun is force-cleared by
- * the watchdog. The comparison is against `info.lastEventAt`, which every
- * `agent`/`chat` WS event for this run bumps via bumpActiveRunActivity. So:
- *  - Long cc-bridge tool turns (heartbeat every 25s, plus tool start/result
- *    events every few seconds) NEVER hit this threshold while the server is
- *    alive — the thinking indicator stays visible for the full turn.
- *  - A genuinely dead run (gateway crashed, WS dropped, lifecycle:end lost)
- *    is silent and gets cleared after 5 minutes of no events.
- * Do NOT compare against `startedAt` — that re-introduces the 2026-05-14 bug
- * where heavy 7+ min tool turns silently lost their indicator at the 5-min
- * mark, the user assumed Jarvis had crashed, retyped, and the new chat.send
- * SIGTERMed the still-running prior turn. See tool-loop.md. */
-const STALE_RUN_WATCHDOG_MS = 5 * 60 * 1000;
-
 function startThinkingTick() {
+  // FORK 2026-05-14: this tick used to host a "stale-run watchdog" that
+  // force-cleared activeRuns at startedAt + 5min (later: lastEventAt + 5min).
+  // Both shapes were wrong. The watchdog was compensating for a presumed
+  // unreliability in lifecycle:end emission — but Claude Code itself doesn't
+  // need one, and neither do we once lifecycle:end is hardened in attempt.ts
+  // (try/finally on every run-termination branch). A UI-side timer that
+  // disagrees with the server's authoritative lifecycle is a code smell:
+  // either the server is wrong (fix the server) or the UI is lying about
+  // server state (don't ship a UI that lies).
+  //
+  // What this tick still does: update the displayed elapsed seconds on each
+  // active thinking-indicator row, and call updatePrefrontalTree() so the
+  // panel's age and status reflect the latest WS events. It does NOT touch
+  // activeRuns — entries are added by lifecycle:start and removed by
+  // lifecycle:end / chat.final / chat.error. Period.
   if (thinkingTickInterval) {
     return;
   }
   thinkingTickInterval = setInterval(() => {
     if (activeRuns.size === 0) {
-      // FORK: Also clear sending as safety net — if activeRuns is empty but sending
-      // is true (e.g. after stale run cleanup), the "sending..." indicator persists.
-      if (sending) {
-        sending = false;
-        updateChat();
-        updateBtn();
-      }
+      // No active runs left. Stop the tick. (sending is cleared by the
+      // lifecycle:end / chat.final / chat.error handler that emptied
+      // activeRuns; no longer cleared here.)
       clearInterval(thinkingTickInterval!);
       thinkingTickInterval = null;
-      return;
-    }
-    // FORK: Watchdog — force-clear runs that have gone SILENT for longer than
-    // STALE_RUN_WATCHDOG_MS. Compare against info.lastEventAt (bumped on every
-    // matching `agent`/`chat` WS event via bumpActiveRunActivity), NOT
-    // info.startedAt — see the constant's docstring above and tool-loop.md
-    // for the 2026-05-14 incident this guards against.
-    const now = Date.now();
-    let stalePruned = false;
-    for (const [runId, info] of activeRuns) {
-      const silentMs = now - info.lastEventAt;
-      if (silentMs > STALE_RUN_WATCHDOG_MS) {
-        const totalMs = now - info.startedAt;
-        console.warn(
-          `[thinking-watchdog] force-clearing run ${runId} (silent=${Math.round(silentMs / 1000)}s total=${Math.round(totalMs / 1000)}s model=${info.model})`,
-        );
-        activeRuns.delete(runId);
-        pendingRunDeletes.delete(runId);
-        stalePruned = true;
-      }
-    }
-    if (stalePruned) {
-      saveActiveRuns();
-      if (activeRuns.size === 0) {
-        sending = false;
-      }
-      updateBudgetPanel();
-      updatePrefrontalTree();
-      updateChat();
-      updateBtn();
       return;
     }
     document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
