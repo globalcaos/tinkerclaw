@@ -762,6 +762,8 @@ export default function register(api: OpenClawPluginApi) {
         : null,
     kitInstallSandbox,
     ownKitsDir,
+    // FORK 2026-05-14: pass the plan store so prefrontal.kit.run can seed/update plan rows
+    planStore,
   });
   for (const [name, handler] of Object.entries(kitRpcs)) {
     api.registerGatewayMethod(name, async ({ respond, params }) => {

@@ -59,8 +59,20 @@ export const PrefrontalKitListParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const PrefrontalKitRunParamsSchema = Type.Object(
+  {
+    kitRef: Type.String({ pattern: "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$" }),
+    sessionKey: Type.String({ minLength: 1, maxLength: 200 }),
+    intent: Type.String({ minLength: 1, maxLength: 500 }),
+    parameters: Type.Optional(Type.Record(Type.String(), Type.String(), { maxProperties: 50 })),
+    dryRun: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
 export type PrefrontalKitSearchParams = Static<typeof PrefrontalKitSearchParamsSchema>;
 export type PrefrontalKitGetParams = Static<typeof PrefrontalKitGetParamsSchema>;
 export type PrefrontalKitInstallParams = Static<typeof PrefrontalKitInstallParamsSchema>;
 export type PrefrontalKitPublishParams = Static<typeof PrefrontalKitPublishParamsSchema>;
 export type PrefrontalKitListParams = Static<typeof PrefrontalKitListParamsSchema>;
+export type PrefrontalKitRunParams = Static<typeof PrefrontalKitRunParamsSchema>;
