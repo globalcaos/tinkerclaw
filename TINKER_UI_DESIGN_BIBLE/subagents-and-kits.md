@@ -15,6 +15,39 @@ verify:
     cmd: bash -lc 'count=$(grep -l "^schema: \"kit/1.0\"" ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits/*/kit.md 2>/dev/null | wc -l); test "$count" -ge 10 || (echo "only $count kits found"; exit 1)'
   - name: every kit.md parses cleanly via yaml + carries slug/title/summary
     cmd: python3 -c 'import os,re,yaml,sys; r1=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits"); r2=os.path.expanduser("~/.openclaw/workspace/kits"); bad=[]; [bad.append(f+" (parse/field err)") if not all(yaml.safe_load(re.search(r"^---\n(.+?)\n---",open(f).read(),re.DOTALL).group(1)).get(k) for k in ["slug","title","summary"]) else None for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]; sys.exit(1) if bad else print("ok "+str(len([f for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]))+" kits")'
+  - name: every parallelism.groups in our kits is a valid step-index covering
+    cmd: bash -lc 'cd ~/src/tinkerclaw && python3 -c "
+import os, glob, sys
+try:
+    import yaml
+except Exception:
+    sys.exit(0)  # yaml not in cwd path; skip silently
+bad=[]
+for fp in glob.glob(\"extensions/tinkerclaw-prefrontal/kits/*/kit.md\"):
+    text=open(fp).read()
+    m=text.find(\"---\\n\")
+    if m<0: continue
+    e=text.find(\"\\n---\\n\", m+4)
+    if e<0: continue
+    try: fm=yaml.safe_load(text[m+4:e]) or {}
+    except Exception as ex: bad.append(f\"{fp}: yaml parse error {ex}\"); continue
+    par=fm.get(\"parallelism\")
+    if par is None: continue
+    groups=par.get(\"groups\") if isinstance(par,dict) else None
+    if not isinstance(groups,list): bad.append(f\"{fp}: parallelism.groups missing or not a list\"); continue
+    # count steps in body
+    body=text[e+5:]
+    step_count=sum(1 for ln in body.split(\"\\n\") if ln.startswith(\"### \") and ln[4:5].isdigit())
+    seen=set()
+    for g in groups:
+        if not isinstance(g,list): bad.append(f\"{fp}: group not a list\"); continue
+        for idx in g:
+            if not isinstance(idx,int) or idx<0 or idx>=step_count:
+                bad.append(f\"{fp}: invalid step index {idx} (count={step_count})\")
+            elif idx in seen: bad.append(f\"{fp}: step {idx} appears in multiple groups\")
+            else: seen.add(idx)
+if bad: print(\"\\n\".join(bad)); sys.exit(1)
+"'
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
@@ -241,6 +274,77 @@ From bible / memory:
 - HTTP API: gateway-internal, served by the Prefrontal plugin.
 
 The infrastructure is COMPLETE (2026-04-01). Plan/kit RPCs added 2026-05-13 (Phases 1–7 of the plan-board implementation).
+
+## Kit parallelism
+
+The `parallelism:` frontmatter block declares which step-groups can fan out:
+
+```yaml
+parallelism:
+  groups:
+    - [0, 1, 2]
+    - [3]
+    - [4, 5]
+  notes: |
+    Explore steps (0-2) are read-only and parallelizable; the design
+    step (3) needs the prior reads. Write steps (4-5) can fan out per
+    file/module.
+```
+
+Semantics: each inner array is a parallel group; groups execute sequentially. The
+`prefrontal.kit.run` RPC consumes this block — for each group, it dispatches one
+subagent per step via `scripts/openclaw-spawn-subagent.mjs` and waits for ALL of
+them before advancing to the next group. The plan-row for each step is the per-step
+write barrier (status:`in_progress` → status:`done`).
+
+**Step indices are 0-based**, matching the `### N. Title` heading sequence
+(heading "1." → index 0, "2." → index 1, etc.).
+
+Absent `parallelism:` block → fully sequential execution (one step per group).
+
+### prefrontal.kit.run RPC
+
+```
+prefrontal.kit.run { kitRef, sessionKey, intent, parameters?, dryRun? }
+→ { ok, planId, dryRunPlan?, errorMessage? }
+```
+
+- `kitRef`: `"<owner>/<slug>"` e.g. `"globalcaos/code-review"`
+- `sessionKey`: plan session key (used as the plan row identifier)
+- `intent`: user-visible label for the plan
+- `parameters`: optional `Record<string, string>` for `{{key}}` substitution in step body text
+- `dryRun: true`: returns the dispatch plan (groups + step tasks) without spawning anything
+
+Live mode returns `planId` immediately; dispatch runs in the background. Watch the
+TUI plan board for live step progress.
+
+### Implementation files
+
+| File                                             | Role                                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `extensions/tinkerclaw-prefrontal/kit-runner.ts` | Core runner — loads kit, resolves groups, fans out via spawn helper, polls plan-store for step completion |
+| `extensions/tinkerclaw-prefrontal/kit-rpcs.ts`   | `prefrontal.kit.run` RPC wired here, delegates to kit-runner                                              |
+| `src/gateway/protocol/schema/prefrontal-kit.ts`  | `PrefrontalKitRunParamsSchema` added (kitRef, sessionKey, intent, parameters, dryRun)                     |
+| `scripts/openclaw-spawn-subagent.mjs`            | CLI helper invoked per-step for gateway subagent dispatch                                                 |
+
+### Parallelism decision rules (heuristics)
+
+- **Read-only / exploratory** (Read/Grep/Glob/WebFetch) → fan out freely
+- **Analytical / synthesising** → single-step barrier
+- **Write / mutating** (Edit/Write/destructive Bash) → serialize (shared file = collision risk)
+- **Verify** (test/build) → barrier after the writes it verifies
+- **Safety-ordered** (credential-rotation, deploy, incident contain) → fully serial regardless
+
+### Anti-patterns
+
+- Never fan steps that write the same output file (merge conflict)
+- Never parallelize safety gates (revoke-before-verify, deploy-before-test)
+- Never fan steps with strict data dependencies (reproduce→diagnose→fix→verify)
+- Do not fan steps faster than ~30s expected duration (spawn overhead dominates)
+
+Reference playbook: `docs/superpowers/specs/2026-05-13-kits-parallelism-playbook.md`
+(in the jarvis-icu repo) for the per-kit recommendations and per-pattern speedup
+estimates.
 
 ## Don't regress
 
