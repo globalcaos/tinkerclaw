@@ -13,41 +13,8 @@ verify:
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-recipe-state.mjs
   - name: kits library has ≥10 kit.md files with schema:"kit/1.0"
     cmd: bash -lc 'count=$(grep -l "^schema: \"kit/1.0\"" ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits/*/kit.md 2>/dev/null | wc -l); test "$count" -ge 10 || (echo "only $count kits found"; exit 1)'
-  - name: every kit.md parses cleanly via yaml.parse + carries schema/slug/title/summary
-    cmd: bash -lc 'cd ~/src/tinkerclaw && node -e "
-      const fs = require(\"fs\");
-      const path = require(\"path\");
-      const yaml = require(\"yaml\");
-      const dirs = [
-        \"extensions/tinkerclaw-prefrontal/kits\",
-        require(\"os\").homedir() + \"/.openclaw/workspace/kits\",
-      ];
-      let bad = [];
-      for (const root of dirs) {
-        if (!fs.existsSync(root)) continue;
-        for (const a of fs.readdirSync(root, { withFileTypes: true })) {
-          if (!a.isDirectory()) continue;
-          const tryFile = path.join(root, a.name, \"kit.md\");
-          const ownerSubs = fs.existsSync(tryFile) ? [tryFile] :
-            fs.readdirSync(path.join(root, a.name), { withFileTypes: true })
-              .filter((s) => s.isDirectory())
-              .map((s) => path.join(root, a.name, s.name, \"kit.md\"));
-          for (const f of ownerSubs) {
-            if (!fs.existsSync(f)) continue;
-            const text = fs.readFileSync(f, \"utf8\");
-            const m = /^---\\n([\\s\\S]+?)\\n---/.exec(text);
-            if (!m) { bad.push(f + \" (no frontmatter)\"); continue; }
-            try {
-              const fm = yaml.parse(m[1]);
-              for (const k of [\"schema\", \"slug\", \"title\", \"summary\"]) {
-                if (!fm[k]) bad.push(f + \" (missing \" + k + \")\");
-              }
-            } catch (e) { bad.push(f + \" (parse err: \" + e.message + \")\"); }
-          }
-        }
-      }
-      if (bad.length) { console.log(bad.join(\"\\n\")); process.exit(1); }
-    "'
+  - name: every kit.md parses cleanly via yaml + carries slug/title/summary
+    cmd: python3 -c 'import os,re,yaml,sys; r1=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits"); r2=os.path.expanduser("~/.openclaw/workspace/kits"); bad=[]; [bad.append(f+" (parse/field err)") if not all(yaml.safe_load(re.search(r"^---\n(.+?)\n---",open(f).read(),re.DOTALL).group(1)).get(k) for k in ["slug","title","summary"]) else None for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]; sys.exit(1) if bad else print("ok "+str(len([f for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]))+" kits")'
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
