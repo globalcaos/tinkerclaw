@@ -7370,10 +7370,36 @@ function init() {
     const icon = EXEC_STATUS_ICON[t.status] ?? "•";
     const est = t.est_minutes ? `${t.est_minutes}m` : "";
     const isExpanded = execExpandedId === t.id;
-    // FORK 2026-05-12 (SPEC v3.2 §7.5/7.6) — collapsed row intentionally
-    // omits the due_date chip. Glance-density: current filter chip already
-    // communicates the temporal bucket; per-row dates would create visual
-    // noise across 8–12 items. Due date surfaces in the expanded drawer.
+    // FORK 2026-05-14 — collapsed row now surfaces a 📅 due-date chip when
+    // due_date is set (user feedback: the rescheduled date should be visible
+    // on the card without expanding). Past-due dates get an overdue tint.
+    const dueChip = (() => {
+      if (!t.due_date) return "";
+      const datePart = t.due_date.slice(0, 10);
+      const [yy, mm, dd] = datePart.split("-").map(Number);
+      const months = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      const now = new Date();
+      const label =
+        yy === now.getFullYear()
+          ? `${months[mm - 1]} ${dd}`
+          : `${months[mm - 1]} ${dd} '${String(yy).slice(-2)}`;
+      const todayPart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const isOverdue = datePart < todayPart;
+      return `<span class="exec-chip exec-chip-due${isOverdue ? " exec-chip-due-overdue" : ""}" title="Due ${escapeHtml(datePart)}">📅 ${label}</span>`;
+    })();
     return `<div class="exec-task${isExpanded ? " exec-task-expanded" : ""}" draggable="true"
               data-task-id="${escapeExecAttr(t.id)}"
               data-status="${t.status}"
@@ -7385,6 +7411,7 @@ function init() {
           <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>
           <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
           <span class="exec-task-chips">
+            ${dueChip}
             ${est ? `<span class="exec-chip exec-chip-est" title="Estimated ${est}">${est}</span>` : ""}
             <button class="exec-task-menu" data-action="menu" title="More actions">⋯</button>
           </span>
@@ -7634,6 +7661,7 @@ function init() {
       dayNum: number;
       isToday: boolean;
       isPast: boolean;
+      isWeekend: boolean;
     };
     const weeks: DayCell[][] = [];
     for (let w = 0; w < TOTAL_WEEKS; w++) {
@@ -7648,6 +7676,7 @@ function init() {
           dayNum: d.getDate(),
           isToday: d.getTime() === today.getTime(),
           isPast: d.getTime() < today.getTime(),
+          isWeekend: i >= 5, // Sat (5) and Sun (6) — Mon-first row layout
         });
       }
       weeks.push(row);
@@ -7657,9 +7686,17 @@ function init() {
     const toIso = weeks[weeks.length - 1][6].date;
 
     // Fetch calendar event list (with titles) — derive density client-side.
+    // FORK 2026-05-14 — refresh:true forces a fresh `gog calendar events`
+    // sync on every popup open so what shows here matches Google right now,
+    // not whatever the 30-min cron last wrote. Sync failures are non-fatal
+    // and we still render cached rows.
     const eventsByDay = new Map<string, CalEvent[]>();
     try {
-      const res = (await req("control-panel.calendar.list", { from: fromIso, to: toIso })) as {
+      const res = (await req("control-panel.calendar.list", {
+        from: fromIso,
+        to: toIso,
+        refresh: true,
+      })) as {
         events: CalEvent[];
       };
       for (const ev of res.events ?? []) {
@@ -7702,7 +7739,14 @@ function init() {
 
     const buildCell = (d: DayCell): string => {
       if (d.isPast) {
-        return `<div class="exec-rsch-cell exec-rsch-past" aria-disabled="true">
+        const pastClasses = [
+          "exec-rsch-cell",
+          "exec-rsch-past",
+          d.isWeekend ? "exec-rsch-weekend" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return `<div class="${pastClasses}" aria-disabled="true">
           <div class="exec-rsch-day">${d.dayName} ${d.dayNum}</div>
         </div>`;
       }
@@ -7778,6 +7822,7 @@ function init() {
         d.isToday ? "exec-rsch-today" : "",
         isCurrent ? "exec-rsch-current" : "",
         overbooked ? "exec-rsch-overbooked" : "",
+        d.isWeekend ? "exec-rsch-weekend" : "",
       ]
         .filter(Boolean)
         .join(" ");
@@ -7822,7 +7867,11 @@ function init() {
       );
     });
 
-    const dowHeader = dayNamesMon.map((n) => `<div class="exec-rsch-dow">${n}</div>`).join("");
+    const dowHeader = dayNamesMon
+      .map(
+        (n, i) => `<div class="exec-rsch-dow${i >= 5 ? " exec-rsch-dow-weekend" : ""}">${n}</div>`,
+      )
+      .join("");
 
     const overlay = document.createElement("div");
     overlay.className = "exec-rsch-backdrop";
@@ -7833,8 +7882,8 @@ function init() {
           <div class="exec-rsch-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</div>
           ${currentDue ? `<div class="exec-rsch-current-due">Currently due ${escapeHtml(currentDue)}</div>` : `<div class="exec-rsch-current-due">No due date set</div>`}
           <div class="exec-rsch-jump">
-            <label for="exec-rsch-date-input">Jump to:</label>
-            <input id="exec-rsch-date-input" type="date" min="${todayIso}" max="${toIso}" />
+            <label for="exec-rsch-date-input">Exact date:</label>
+            <input id="exec-rsch-date-input" type="date" min="${todayIso}" max="${toIso}" ${currentDue && currentDue >= todayIso ? `value="${currentDue}"` : ""} />
           </div>
         </div>
         <div class="exec-rsch-dow-row">${dowHeader}</div>
@@ -10321,6 +10370,11 @@ function init() {
       grouped.set(cat, list);
     }
 
+    // Helper: title-case a slug (e.g. "gateway-restart" → "Gateway Restart")
+    function slugToTitle(slug: string): string {
+      return slug.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
     // Helper: render a single recipe card HTML string.
     function recipeCardHtml(
       filePath: string,
@@ -10331,15 +10385,25 @@ function init() {
       children?: Array<{ name: string; trigger: string }>,
       isExternal?: boolean,
     ): string {
-      let h = `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to open kit.md">`;
+      // Derive display values — fall back to slug/placeholder so every card has
+      // the same visual mass regardless of how sparse the kit.md frontmatter is.
+      const slugFromPath = filePath.split("/").slice(-2, -1)[0] ?? trigger;
+      const displayName = name?.trim() || slugToTitle(slugFromPath);
+      const displayTrigger = trigger?.trim() || slugFromPath;
+      const hasSummary = !!summary?.trim();
+      let h = `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to view kit details">`;
       h += `<div class="recipe-card-header">`;
-      h += `<span class="recipe-name">${altEsc(name)}</span>`;
+      h += `<span class="recipe-name">${altEsc(displayName)}</span>`;
       if (isExternal) {
         h += `<span class="recipe-kit-external" title="Downloaded kit">↗</span>`;
       }
-      h += `<span class="recipe-trigger">${altEsc(trigger)}</span>`;
+      h += `<span class="recipe-trigger">${altEsc(displayTrigger)}</span>`;
       h += `</div>`;
-      if (summary) h += `<div class="recipe-summary">${altEsc(summary)}</div>`;
+      if (hasSummary) {
+        h += `<div class="recipe-summary">${altEsc(summary.trim())}</div>`;
+      } else {
+        h += `<div class="recipe-summary-placeholder">(no summary in kit.md)</div>`;
+      }
       if (steps.length) {
         h += `<div class="recipe-steps">`;
         steps.forEach((s, i) => {
@@ -10460,20 +10524,226 @@ function init() {
       }
     });
 
-    // Click to open recipe file in native OS markdown editor
+    // ── Kit detail modal ──
+    // Opens on recipe card click instead of xdg-open.
+    // Uses the /api/kit-content endpoint (Vite dev plugin) or /tinker/api/kit-content (prod).
+
+    let activeKitModal: HTMLElement | null = null;
+
+    function closeKitModal(): void {
+      activeKitModal?.remove();
+      activeKitModal = null;
+    }
+
+    /** Strip YAML frontmatter from kit.md content and return body only. */
+    function kitBodyOnly(raw: string): string {
+      const m = /^---\n[\s\S]+?\n---\n?/.exec(raw);
+      return m ? raw.slice(m[0].length).trimStart() : raw;
+    }
+
+    /** Extract a single-line frontmatter field. */
+    function fmField(raw: string, key: string): string {
+      const m = new RegExp(`^${key}:\\s*(.+)$`, "m").exec(raw);
+      if (!m) return "";
+      return m[1].trim().replace(/^['"]|['"]$/g, "");
+    }
+
+    /** Extract multi-line folded block scalar frontmatter field (summary: >-). */
+    function fmSummary(raw: string): string {
+      // Try single-line first
+      const single = fmField(raw, "summary");
+      if (single && !single.startsWith(">")) return single;
+      // Try folded block scalar
+      const fmBlock = /^---\n([\s\S]+?)\n---/.exec(raw);
+      if (!fmBlock) return "";
+      const block = fmBlock[1];
+      const blockM = /^summary:\s*>\-?\n((?:[ \t]+.+\n?)+)/m.exec(block);
+      if (blockM)
+        return blockM[1]
+          .replace(/^[ \t]+/gm, "")
+          .replace(/\n/g, " ")
+          .trim();
+      return "";
+    }
+
+    async function openKitModal(filePath: string): Promise<void> {
+      closeKitModal();
+
+      const backdrop = document.createElement("div");
+      backdrop.className = "kit-modal-backdrop";
+      backdrop.innerHTML = `
+        <div class="kit-modal-dialog" role="dialog" aria-label="Kit details">
+          <div class="kit-modal-header">
+            <div class="kit-modal-title-block">
+              <div class="kit-modal-title">Loading…</div>
+              <div class="kit-modal-summary"></div>
+            </div>
+            <button class="kit-modal-close" title="Close (Esc)">✕</button>
+          </div>
+          <div class="kit-modal-tabs">
+            <button class="kit-modal-tab active" data-tab="view">View</button>
+            <button class="kit-modal-tab" data-tab="edit">Edit</button>
+          </div>
+          <div class="kit-modal-body">
+            <div class="kit-modal-view"><em style="color:#6b5a48">Loading…</em></div>
+            <div class="kit-modal-raw">
+              <textarea class="kit-modal-textarea" spellcheck="false"></textarea>
+            </div>
+          </div>
+          <div class="kit-modal-footer">
+            <span class="kit-modal-error"></span>
+            <button class="kit-modal-btn" data-action="cancel">Cancel</button>
+            <button class="kit-modal-btn primary" data-action="save">Save</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(backdrop);
+      activeKitModal = backdrop;
+
+      const dlg = backdrop.querySelector<HTMLElement>(".kit-modal-dialog")!;
+      const titleEl = dlg.querySelector<HTMLElement>(".kit-modal-title")!;
+      const summaryEl = dlg.querySelector<HTMLElement>(".kit-modal-summary")!;
+      const viewEl = dlg.querySelector<HTMLElement>(".kit-modal-view")!;
+      const rawEl = dlg.querySelector<HTMLElement>(".kit-modal-raw")!;
+      const textarea = dlg.querySelector<HTMLTextAreaElement>(".kit-modal-textarea")!;
+      const errorEl = dlg.querySelector<HTMLElement>(".kit-modal-error")!;
+      const saveBtn = dlg.querySelector<HTMLButtonElement>('[data-action="save"]')!;
+
+      let currentTab = "view";
+      let isDownloaded = false;
+      let originalContent = "";
+      let resolvedPath = filePath;
+
+      // Fetch kit content
+      const apiUrl = `/api/kit-content?path=${encodeURIComponent(filePath)}`;
+      try {
+        const resp = await fetch(apiUrl);
+        if (!resp.ok) {
+          const err = (await resp.json().catch(() => ({ error: resp.statusText }))) as {
+            error?: string;
+          };
+          throw new Error(err.error ?? resp.statusText);
+        }
+        const data = (await resp.json()) as {
+          path: string;
+          content: string;
+          isDownloaded: boolean;
+        };
+        resolvedPath = data.path;
+        isDownloaded = data.isDownloaded;
+        originalContent = data.content;
+        textarea.value = data.content;
+
+        // Parse frontmatter for display
+        const title =
+          fmField(data.content, "title") ||
+          (() => {
+            const slug = filePath.split("/").slice(-2, -1)[0] ?? "";
+            return slugToTitle(slug);
+          })();
+        const summary = fmSummary(data.content);
+
+        titleEl.textContent = title;
+        summaryEl.textContent = summary || "";
+        summaryEl.style.fontStyle = summary ? "" : "italic";
+        summaryEl.style.color = summary ? "" : "#6b5a48";
+        if (!summary) summaryEl.textContent = "(no summary in kit.md)";
+
+        // Render body via markdown-it
+        const body = kitBodyOnly(data.content);
+        viewEl.innerHTML = mdParser.render(body);
+
+        // Warn chip for downloaded kits — shown only in edit tab
+        if (isDownloaded) {
+          const chip = document.createElement("div");
+          chip.className = "kit-modal-warn-chip";
+          chip.textContent =
+            "⚠ Editing a downloaded kit. Changes are local and will be overwritten if you reinstall.";
+          rawEl.prepend(chip);
+        }
+      } catch (err) {
+        titleEl.textContent = "Error loading kit";
+        viewEl.innerHTML = `<em style="color:#ef4444">${altEsc(String(err))}</em>`;
+        saveBtn.disabled = true;
+      }
+
+      // Tab switching
+      dlg.querySelectorAll<HTMLElement>(".kit-modal-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          currentTab = tab.dataset.tab!;
+          dlg.querySelectorAll(".kit-modal-tab").forEach((t) => t.classList.remove("active"));
+          tab.classList.add("active");
+          if (currentTab === "view") {
+            viewEl.style.display = "";
+            rawEl.classList.remove("visible");
+            saveBtn.textContent = "Save";
+          } else {
+            viewEl.style.display = "none";
+            rawEl.classList.add("visible");
+            saveBtn.textContent = "Save";
+          }
+        });
+      });
+
+      // Save
+      saveBtn.addEventListener("click", async () => {
+        errorEl.textContent = "";
+        const content = textarea.value;
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+        try {
+          const resp = await fetch("/api/save-file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: resolvedPath, content }),
+          });
+          const result = (await resp.json()) as { ok?: boolean; error?: string };
+          if (!resp.ok || result.ok !== true) {
+            throw new Error(result.error ?? `HTTP ${resp.status}`);
+          }
+          originalContent = content;
+          // Re-parse title/summary in case they changed and refresh card display
+          const newTitle = fmField(content, "title") || titleEl.textContent;
+          const newSummary = fmSummary(content);
+          titleEl.textContent = newTitle ?? "";
+          summaryEl.textContent = newSummary || "(no summary in kit.md)";
+          // Re-render view pane
+          viewEl.innerHTML = mdParser.render(kitBodyOnly(content));
+          closeKitModal();
+        } catch (err) {
+          errorEl.textContent = `Save failed: ${String(err)}`;
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save";
+        }
+      });
+
+      // Cancel / close
+      const cancelHandler = (): void => closeKitModal();
+      dlg.querySelector('[data-action="cancel"]')?.addEventListener("click", cancelHandler);
+      dlg.querySelector(".kit-modal-close")?.addEventListener("click", cancelHandler);
+
+      // Click outside dialog → close
+      backdrop.addEventListener("click", (ev) => {
+        if (ev.target === backdrop) closeKitModal();
+      });
+
+      // ESC to close
+      const escHandler = (ev: KeyboardEvent): void => {
+        if (ev.key === "Escape") {
+          closeKitModal();
+          document.removeEventListener("keydown", escHandler);
+        }
+      };
+      document.addEventListener("keydown", escHandler);
+    }
+
+    // Click on a recipe card → open kit modal
     body.addEventListener("click", (e) => {
       const card = (e.target as HTMLElement).closest("[data-recipe-file]") as HTMLElement | null;
       if (!card) return;
       const file = card.dataset.recipeFile;
       if (!file) return;
-      // POST to Vite dev server open-file endpoint (calls xdg-open server-side)
-      fetch("/api/open-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: file }),
-      }).catch(() => {
-        /* silent — editor may not open in prod mode */
-      });
+      void openKitModal(file);
     });
   }
 

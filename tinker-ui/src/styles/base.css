@@ -3254,6 +3254,8 @@ code.fs-link.fs-link-error {
   border: 1px solid rgba(193,154,107,0.1);
   transition: border-color 0.2s, background 0.2s, transform 0.1s;
   cursor: pointer;
+  min-height: 64px;
+  box-sizing: border-box;
 }
 .recipe-card:hover {
   border-color: rgba(193,154,107,0.4);
@@ -3265,6 +3267,13 @@ code.fs-link.fs-link-error {
   color: #9a8e7a;
   line-height: 1.4;
   margin-bottom: 6px;
+}
+.recipe-summary-placeholder {
+  font-size: 11px;
+  color: #6b5a48;
+  line-height: 1.4;
+  margin-bottom: 6px;
+  font-style: italic;
 }
 .recipe-card-header {
   display: flex;
@@ -3409,6 +3418,224 @@ code.fs-link.fs-link-error {
   margin-left: 3px;
   opacity: 0.7;
   user-select: none;
+}
+
+/* ─── Kit Detail Modal (FORK 2026-05-14) ─── */
+.kit-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 6000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: kit-modal-fade 0.15s ease;
+}
+@keyframes kit-modal-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.kit-modal-dialog {
+  background: #1a1612;
+  border: 1px solid rgba(193,154,107,0.25);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.75);
+  width: min(740px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  color: #e8e0d4;
+  font: 13px/1.5 -apple-system, "Inter", system-ui, sans-serif;
+  overflow: hidden;
+}
+.kit-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid rgba(193,154,107,0.12);
+  flex-shrink: 0;
+}
+.kit-modal-title-block {
+  min-width: 0;
+  flex: 1;
+}
+.kit-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f0e8dc;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kit-modal-summary {
+  font-size: 11px;
+  color: #9a8e7a;
+  line-height: 1.4;
+}
+.kit-modal-close {
+  background: none;
+  border: none;
+  color: #6b5a48;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.kit-modal-close:hover { color: #c19a6b; }
+.kit-modal-tabs {
+  display: flex;
+  gap: 0;
+  padding: 8px 18px 0;
+  border-bottom: 1px solid rgba(193,154,107,0.12);
+  flex-shrink: 0;
+}
+.kit-modal-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #7a6e5e;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+.kit-modal-tab:hover { color: #c4b8a8; }
+.kit-modal-tab.active {
+  color: #c19a6b;
+  border-bottom-color: #c19a6b;
+}
+.kit-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  min-height: 0;
+}
+.kit-modal-view {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #d8d0c4;
+}
+.kit-modal-view h1,
+.kit-modal-view h2,
+.kit-modal-view h3 {
+  color: #c19a6b;
+  margin: 1em 0 0.4em;
+  font-weight: 600;
+}
+.kit-modal-view h1 { font-size: 14px; }
+.kit-modal-view h2 { font-size: 13px; }
+.kit-modal-view h3 { font-size: 12.5px; }
+.kit-modal-view p { margin: 0 0 0.6em; }
+.kit-modal-view pre {
+  background: #2a2318;
+  border: 1px solid rgba(193,154,107,0.1);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+.kit-modal-view code {
+  background: rgba(193,154,107,0.08);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11.5px;
+}
+.kit-modal-view pre code {
+  background: none;
+  padding: 0;
+}
+.kit-modal-view ul,
+.kit-modal-view ol {
+  padding-left: 1.4em;
+  margin: 0 0 0.6em;
+}
+.kit-modal-view li { margin-bottom: 0.2em; }
+.kit-modal-view blockquote {
+  border-left: 3px solid rgba(193,154,107,0.3);
+  padding-left: 10px;
+  color: #9a8e7a;
+  margin: 0 0 0.6em;
+}
+.kit-modal-raw {
+  display: none;
+}
+.kit-modal-raw.visible {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kit-modal-warn-chip {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: #f59e0b;
+  line-height: 1.4;
+}
+.kit-modal-textarea {
+  flex: 1;
+  background: #0e0c09;
+  border: 1px solid rgba(193,154,107,0.2);
+  border-radius: 5px;
+  color: #d8d0c4;
+  font: 12px/1.5 "SF Mono", "Fira Code", "Consolas", monospace;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 320px;
+  outline: none;
+  box-sizing: border-box;
+  width: 100%;
+}
+.kit-modal-textarea:focus { border-color: rgba(193,154,107,0.5); }
+.kit-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid rgba(193,154,107,0.12);
+  flex-shrink: 0;
+}
+.kit-modal-error {
+  flex: 1;
+  font-size: 11px;
+  color: #ef4444;
+}
+.kit-modal-btn {
+  background: rgba(193,154,107,0.1);
+  border: 1px solid rgba(193,154,107,0.25);
+  border-radius: 5px;
+  color: #c19a6b;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.kit-modal-btn:hover {
+  background: rgba(193,154,107,0.18);
+  border-color: rgba(193,154,107,0.45);
+}
+.kit-modal-btn.primary {
+  background: rgba(193,154,107,0.2);
+  border-color: rgba(193,154,107,0.5);
+  color: #e8d8c0;
+}
+.kit-modal-btn.primary:hover {
+  background: rgba(193,154,107,0.3);
+}
+.kit-modal-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ─── Prefrontal Panel ─── */
@@ -4677,6 +4904,30 @@ code.fs-link.fs-link-error {
 .exec-rsch-past .exec-rsch-day {
   text-decoration: line-through;
   color: #4a4a52;
+}
+
+/* Weekend cells (Sat / Sun) are visually de-emphasised — usually empty
+   but stuff can still happen, so they remain clickable. */
+.exec-rsch-weekend {
+  background: #0e0e12;
+}
+.exec-rsch-weekend .exec-rsch-day {
+  color: #6a6a73;
+  font-weight: 500;
+}
+.exec-rsch-dow-weekend {
+  color: #4a4a52;
+}
+
+/* Collapsed task-row due-date chip (📅) — surfaces the rescheduled date
+   without expanding the drawer. Past-due rows get a warning tint. */
+.exec-chip-due {
+  color: #6cb1e8;
+  background: #18222d;
+}
+.exec-chip-due-overdue {
+  color: #ef5350;
+  background: #2a1818;
 }
 
 /* FORK 2026-05-11 — pencil edit affordances. Inline pencils replace the
