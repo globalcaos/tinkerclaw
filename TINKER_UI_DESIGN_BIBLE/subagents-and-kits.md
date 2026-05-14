@@ -15,39 +15,46 @@ verify:
     cmd: bash -lc 'count=$(grep -l "^schema: \"kit/1.0\"" ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits/*/kit.md 2>/dev/null | wc -l); test "$count" -ge 10 || (echo "only $count kits found"; exit 1)'
   - name: every kit.md parses cleanly via yaml + carries slug/title/summary
     cmd: python3 -c 'import os,re,yaml,sys; r1=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits"); r2=os.path.expanduser("~/.openclaw/workspace/kits"); bad=[]; [bad.append(f+" (parse/field err)") if not all(yaml.safe_load(re.search(r"^---\n(.+?)\n---",open(f).read(),re.DOTALL).group(1)).get(k) for k in ["slug","title","summary"]) else None for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]; sys.exit(1) if bad else print("ok "+str(len([f for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]))+" kits")'
-  - name: every parallelism.groups in our kits is a valid step-index covering
-    cmd: bash -lc 'cd ~/src/tinkerclaw && python3 -c "
-import os, glob, sys
-try:
-    import yaml
-except Exception:
-    sys.exit(0)  # yaml not in cwd path; skip silently
-bad=[]
-for fp in glob.glob(\"extensions/tinkerclaw-prefrontal/kits/*/kit.md\"):
-    text=open(fp).read()
-    m=text.find(\"---\\n\")
-    if m<0: continue
-    e=text.find(\"\\n---\\n\", m+4)
-    if e<0: continue
-    try: fm=yaml.safe_load(text[m+4:e]) or {}
-    except Exception as ex: bad.append(f\"{fp}: yaml parse error {ex}\"); continue
-    par=fm.get(\"parallelism\")
-    if par is None: continue
-    groups=par.get(\"groups\") if isinstance(par,dict) else None
-    if not isinstance(groups,list): bad.append(f\"{fp}: parallelism.groups missing or not a list\"); continue
-    # count steps in body
-    body=text[e+5:]
-    step_count=sum(1 for ln in body.split(\"\\n\") if ln.startswith(\"### \") and ln[4:5].isdigit())
-    seen=set()
-    for g in groups:
-        if not isinstance(g,list): bad.append(f\"{fp}: group not a list\"); continue
-        for idx in g:
-            if not isinstance(idx,int) or idx<0 or idx>=step_count:
-                bad.append(f\"{fp}: invalid step index {idx} (count={step_count})\")
-            elif idx in seen: bad.append(f\"{fp}: step {idx} appears in multiple groups\")
-            else: seen.add(idx)
-if bad: print(\"\\n\".join(bad)); sys.exit(1)
-"'
+  - name: every parallelism.groups in our kits is a valid step-index covering exit=2
+    cmd: |
+      cd ~/src/tinkerclaw && python3 << 'PYEOF'
+      import os, glob, sys
+      try:
+          import yaml
+      except Exception:
+          sys.exit(0)  # yaml not available; skip silently
+      bad = []
+      for fp in glob.glob("extensions/tinkerclaw-prefrontal/kits/*/kit.md"):
+          text = open(fp).read()
+          m = text.find("---\n")
+          if m < 0: continue
+          e = text.find("\n---\n", m + 4)
+          if e < 0: continue
+          try:
+              fm = yaml.safe_load(text[m + 4:e]) or {}
+          except Exception as ex:
+              bad.append(f"{fp}: yaml parse error {ex}"); continue
+          par = fm.get("parallelism")
+          if par is None: continue
+          groups = par.get("groups") if isinstance(par, dict) else None
+          if not isinstance(groups, list):
+              bad.append(f"{fp}: parallelism.groups missing or not a list"); continue
+          body = text[e + 5:]
+          step_count = sum(1 for ln in body.split("\n") if ln.startswith("### ") and ln[4:5].isdigit())
+          seen = set()
+          for g in groups:
+              if not isinstance(g, list):
+                  bad.append(f"{fp}: group not a list"); continue
+              for idx in g:
+                  if not isinstance(idx, int) or idx < 0 or idx >= step_count:
+                      bad.append(f"{fp}: invalid step index {idx} (count={step_count})")
+                  elif idx in seen:
+                      bad.append(f"{fp}: step {idx} appears in multiple groups")
+                  else:
+                      seen.add(idx)
+      if bad:
+          print("\n".join(bad)); sys.exit(1)
+      PYEOF
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
