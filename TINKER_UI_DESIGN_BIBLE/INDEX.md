@@ -39,6 +39,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "what service-level objectives are we tracking and how do I read the burn?" → `slos.md`
    - "what's the intent / decision / don't-regress for §X.Y?" → `bible.md`
    - "how does this UI panel work / what's the visual convention?" → `tinker-ui.md`
+   - "which panel is visible when / how do tabs and Dev↔Exec interact / what hides what?" → `panels.md`
    - "has this bug class been seen before?" → `bug-log.md`
 3. **Trust the frontmatter `last_verified` + `last_verified_commit` anchors.** Anything older than the most recent file in `git log src/` referenced by the section should be re-verified before relying on it.
 4. **Do NOT re-narrate facts that live in another file.** Cross-reference them with `see also:` annotations. Single owner per fact.
