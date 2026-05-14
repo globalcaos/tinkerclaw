@@ -1,7 +1,7 @@
 # tinkerclaw-control-panel — Plugin Spec
 
 **Status:** Spec v3.1 — implementation pending
-**Author:** Jarvis (Opus 4.7) for Oscar
+**Author:** Jarvis (Opus 4.7) for the user
 **Last revised:** 2026-05-12 (v3.3 — `back_burner` status: indefinite snooze that hides tasks from every filter except the new `💤 Snoozed` chip while keeping them in their axis; `task_axis` + `task_est_preset` taxonomy tables replace the prior hardcoded `EXEC_AXIS_ORDER` JS constant and free-numeric `est_minutes` input — user can add/edit/delete/reorder categories and estimation presets via the new `control-panel.axes.*` and `control-panel.est-presets.*` gateway RPCs. Settings overlay UI for inline taxonomy management is scheduled (RPCs ship first so Jarvis can mutate via tool call in the meantime).)
 **Previous:** 2026-05-12 (v3.2 — reschedule overlay scrolls vertically past the initial 2-week window, soft-cap 12 weeks ahead; `due_date` hidden from collapsed task row, surfaced as a colored `📅 Due …` header at the top of the expanded card with a `[change]` shortcut to the reschedule picker)
 **Previous:** 2026-05-11 (v3.1 — task board refinement: dismiss-vs-drop, expandable context, all/unfinished filter + progress indicator anchored to the briefing pass, reschedule to another day, and a 7-day calendar strip between graphs and tasks)
@@ -1127,13 +1127,13 @@ Together these convert the panel from "a list of stuff" into a working environme
 
 ## 14. Replacing Todoist (NEW v3.1)
 
-The Control Panel's task subsystem is designed to replace **Todoist** as Oscar's primary task store. Three honest gaps relative to Todoist that need plans before the migration is clean — all addressable.
+The Control Panel's task subsystem is designed to replace **Todoist** as the user's primary task store. Three honest gaps relative to Todoist that need plans before the migration is clean — all addressable.
 
 ### 14.1 Gap A — Mobile / away-from-Tinker capture
 
 Tinker UI is a desktop web app. Today Todoist gets used from phone (add a task while walking, Siri shortcut, share sheet, widget).
 
-The Control Panel's mobile-capture path is **already mostly built**: WhatsApp / Jarvis chat is the ingress. Oscar can DM Jarvis "add 'pick up dry cleaning' under family" and the MCP tool `control_panel_tasks_add` fires — same goes for voice calls (existing voice-call plugin), iMessage (existing bluebubbles channel), email (existing himalaya skill).
+The Control Panel's mobile-capture path is **already mostly built**: WhatsApp / Jarvis chat is the ingress. The user can DM Jarvis "add 'pick up dry cleaning' under family" and the MCP tool `control_panel_tasks_add` fires — same goes for voice calls (existing voice-call plugin), iMessage (existing bluebubbles channel), email (existing himalaya skill).
 
 To make it seamless:
 
@@ -1189,7 +1189,7 @@ Oscar already has the `apple-reminders` (`remindctl`) and `things-mac` skills in
 | **Apple Reminders** | Bidirectional sync via `remindctl` polling. Tasks added via Siri / Reminders.app appear in Control Panel; Control Panel tasks tagged `surface_in_reminders` mirror to a "Tinker" reminders list for cross-device visibility. | Post v3.1, after Control Panel is proven |
 | **Things 3**        | Read-only mirror via the `things` URL scheme. Tasks display in Things 3's Today view. Not bidirectional (Things 3 doesn't expose a clean inbound API).                                                                       | Post v3.1, optional                      |
 
-These are NOT in scope for the initial Control Panel build. They become attractive once the core is proven and Oscar wants cross-device task visibility on iOS / Mac.
+These are NOT in scope for the initial Control Panel build. They become attractive once the core is proven and the user wants cross-device task visibility on iOS / Mac.
 
 ---
 
