@@ -14,6 +14,8 @@ verify:
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/design-principles.md")).read(); assert len(re.findall(r"^### \d+\. ", t, re.M)) >= 10, "design-principles.md should codify at least 10 rules"'
   - name: privacy-precedes-functionality principle is present (#17 — load-bearing since 2026-05-13)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/design-principles.md")).read(); assert "Privacy precedes functionality" in t, "design-principles.md #17 missing — see 2026-05-13 incident"'
+  - name: principle #5's claim that @sinclair/typebox is a dep stays true at runtime (FORK 2026-05-14 — upstream chunk merge dropped this dep once)
+    cmd: bash -lc 'cd ~/src/tinkerclaw && node -e "require.resolve(\"@sinclair/typebox\")" 2>/dev/null || (echo "@sinclair/typebox does not resolve — principle #5 references it as a dep but package.json/install state contradicts; restore deps + pnpm.overrides entries and pnpm install"; exit 1)'
 ---
 
 # Design principles — the fork-side rule set
