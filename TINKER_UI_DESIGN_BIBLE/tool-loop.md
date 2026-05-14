@@ -13,8 +13,10 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
   - name: cc-bridge heartbeat is wired in stream.ts (FORK 2026-05-11)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK 2026-05-11" in t and "heartbeat" in t.lower() and "HEARTBEAT_INTERVAL_MS" in t, "the cc-bridge heartbeat that resets pi-agent-core idle watchdog is missing or undocumented"'
-  - name: tinker-ui stale-run watchdog compares against lastEventAt, not startedAt (FORK 2026-05-14)
-    cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "lastEventAt" in t and "now - info.lastEventAt" in t, "the stale-run watchdog must compare against info.lastEventAt — comparing against startedAt re-introduces the 2026-05-14 bug where heavy cc-bridge tool turns silently lost their thinking indicator at the 5-min mark"; assert "bumpActiveRunActivity" in t, "the bump-lastEventAt-on-WS-event helper must exist; without it lastEventAt never advances and the watchdog still fires at startedAt+5min"; assert re.search(r"if\s*\(\s*now\s*-\s*info\.startedAt\s*>\s*STALE_RUN_WATCHDOG_MS\s*\)", t) is None, "watchdog still compares against startedAt — the FORK 2026-05-14 fix has regressed"'
+  - name: tinker-ui has no stale-run watchdog (FORK 2026-05-14 — deleted; trust lifecycle:end instead)
+    cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "STALE_RUN_WATCHDOG_MS" not in t, "STALE_RUN_WATCHDOG_MS reappeared in app.ts — the UI-side stale-run watchdog was deleted on 2026-05-14 and must stay deleted; the cure for a stuck thinking indicator is to harden lifecycle:end emission in attempt.ts, not to add a UI-side timer that lies"; assert re.search(r"activeRuns\.delete\(\s*runId\s*\)[^}]*stalePruned", t) is None, "a force-clear of activeRuns from a timer reappeared — the watchdog pattern is back"; assert "bumpActiveRunActivity" in t, "bumpActiveRunActivity is still useful for keeping lastEventAt fresh (drives lastEventAge in the prefrontal panel); do not delete"'
+  - name: lifecycle:end / lifecycle:error are emitted by handleAgentEnd (FORK 2026-05-14 — the UI trusts these to clear the thinking indicator since the watchdog was deleted)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-subscribe.handlers.lifecycle.ts")).read(); assert "handleAgentEnd" in t and "phase: \"end\"" in t and "phase: \"error\"" in t and "emitAgentEvent" in t, "handleAgentEnd no longer emits a lifecycle:end (or :error) event via emitAgentEvent — the UI trusts these emissions to clear the thinking indicator. Restore the emission or expect stuck thinking indicators that can only be cleared by browser refresh."'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -104,33 +106,49 @@ Empty delta is a no-op for accumulated content (string concat with `""` preserve
 - Never emit a `tool_use`-shaped event from the heartbeat path — that would re-execute the tool through OpenClaw's exec tool, exactly what the suppression above is preventing.
 - The 25s interval is chosen well under the 120s default and the 600s overlay. Lowering it further is fine; raising it past 60s reintroduces the risk that the overlay-as-load-bearing assumption silently returns.
 
-## The UI-side watchdog (FORK 2026-05-14)
+## The UI-side stale-run watchdog (DELETED 2026-05-14)
 
-`tinker-ui/src/app.ts` runs a 1Hz tick that force-clears stale entries from `activeRuns`, which drives the thinking indicator + the prefrontal panel's "▶ Doing" line. The original watchdog (5-min ceiling) compared against `info.startedAt` — total elapsed since the run began. Tuned to anthropic/openai/google cadences where 5 min is plenty.
+`tinker-ui/src/app.ts` used to host a 1 Hz tick that force-cleared entries from `activeRuns` whenever a run's elapsed time crossed a 5-minute threshold — first against `startedAt` (total elapsed), then briefly against `lastEventAt` (silence elapsed). Both shapes were the wrong fix for the wrong problem.
 
-For cc-bridge it lied. A heavy 7+ min tool turn (read several Outlook threads, run a few Bash probes, scan files, draft answer) routinely exceeds 5 min total elapsed while never sitting silent more than 25 s (heartbeat). The old watchdog fired at the 5-min mark mid-turn, the indicator vanished, the user assumed Jarvis had crashed, retyped, the new `chat.send` aborted the still-running prior turn via the in-flight-cancel path, and the cycle repeated. Exact incident: runId `43202545` on 2026-05-14, 473 s elapsed, killed because the user's panic-retype landed during the 3-min window after the watchdog cleared the indicator.
+The right model: the UI is a **reflection** of the server's authoritative lifecycle. lifecycle:start adds a run to `activeRuns`; lifecycle:end (or :error, or `chat.final`, or `chat.error`) removes it. The UI does not have an independent opinion. Claude Code itself doesn't have a UI-side stale-run watchdog — its UX is "trust the event stream" — and the result is that you can see what the model is doing at every step without the UI ever lying about whether a run is active.
 
-Fix: track `lastEventAt` per `ActiveRunInfo`, bumped on every matching `agent`/`chat` WS event via `bumpActiveRunActivity(payload)` in `tinker-ui/src/app.ts`. Watchdog now compares against `lastEventAt`, not `startedAt`. Same threshold (5 min) but it now means "5 minutes of WS silence", not "5 minutes since start". The cc-bridge heartbeat (every 25 s) ensures real runs never trip it; a genuinely-dead run (gateway crashed, WS dropped, lifecycle:end lost) still gets cleared after 5 min of true silence.
+The previous watchdog was compensating for a presumed unreliability in lifecycle:end emission. But the cure for "lifecycle:end was missed" is to **fix the server-side emission**, not to add a UI-side timer that lies in the opposite direction. A UI timer that disagrees with the server's truth is a code smell: it either over-fires (clears the indicator while the run is alive — the 2026-05-14 incident; runId `43202545`, 473 s tool turn, killed mid-flight because the user retyped after the indicator vanished) or under-fires (never catches a genuinely dead run because the silence threshold is too long).
+
+The lifecycle audit lives in `src/agents/pi-embedded-subscribe.handlers.lifecycle.ts`:
+
+- `handleAgentStart` emits `stream: "lifecycle"` `phase: "start"`.
+- `handleAgentEnd` emits `phase: "end"` on clean termination, `phase: "error"` on error termination. The bible verify in this file's frontmatter asserts both `phase` values + the `emitAgentEvent` call are present.
+- The outer attempt loop in `src/agents/pi-embedded-runner/run/attempt.ts` already wraps everything in `try ... finally` (line 3383 at the time of this writing); a future hardening can hang a synthetic lifecycle:end on that finally if a real-world missed-emission case is ever observed.
+
+What was kept in `app.ts`:
+
+- `ActiveRunInfo.lastEventAt` and `bumpActiveRunActivity()` — still useful for the prefrontal panel's `lastEventAge` display (shows how long since any event on a run, surfaces hangs without force-clearing).
+- The 1 Hz tick — but now its only job is to update the elapsed-seconds counter on each indicator row, and call `updatePrefrontalTree()` so panel state advances. Nothing is force-cleared.
 
 ```mermaid
 sequenceDiagram
   participant CCB as cc-bridge stream.ts
+  participant SRV as gateway / handleAgentEnd
   participant WS as gateway WS
   participant UI as tinker-ui activeRuns
-  participant WD as stale-run watchdog (1 Hz)
 
-  CCB->>WS: stream events (tool, text_delta, heartbeat ≤25 s)
-  WS->>UI: agent/chat event → bumpActiveRunActivity(p)
-  Note over UI: info.lastEventAt = Date.now()
-  WD->>UI: every 1 s, check (now - info.lastEventAt) > 5 min
-  Note over WD: only clears on TRUE silence, never on long turns
+  Note over CCB,SRV: turn begins
+  SRV->>WS: stream:"lifecycle" phase:"start"
+  WS->>UI: activeRuns.set(runId, ...)
+  loop entire turn — no UI-side timer
+    CCB->>WS: tool / text_delta / heartbeat
+    WS->>UI: bumpActiveRunActivity (updates lastEventAt for panel display)
+  end
+  SRV->>WS: stream:"lifecycle" phase:"end" (or :"error")
+  WS->>UI: activeRuns.delete(runId)
+  Note over UI: indicator clears, panel goes idle
 ```
 
 ## Don't regress
 
 - **NEVER add tool_use blocks back to `assistant.message.content` for cc-bridge.** This re-introduces the red-error-bubble cascade.
 - **NEVER assume cc-bridge timeouts are just like other providers.** They are not. cc-bridge needs longer timeouts because its event stream is sparse during tool work.
-- **NEVER change the tinker-ui stale-run watchdog to compare against `startedAt`.** See "The UI-side watchdog" section above and the 2026-05-14 incident. The bible verify in this file's frontmatter enforces this — bypassing it is the same class of bug as bypassing the cc-bridge heartbeat (regression to a known-bad shape).
+- **NEVER reintroduce a UI-side stale-run watchdog.** The bible verify enforces this — `STALE_RUN_WATCHDOG_MS` must not reappear in `app.ts`, and no force-clear of `activeRuns` from a timer is allowed. If you observe a stuck thinking indicator, the bug is in lifecycle:end emission, not in the UI; fix it server-side in `handleAgentEnd` / `attempt.ts` and add a verify that catches the missed-emission case.
 - The cc-bridge sessionKey hash is djb2 over `${systemPrompt}${openclawSessionId}` (`extensions/tinkerclaw-cc-bridge/src/stream.ts:104:deriveSessionKey`). It drifts when systemPrompt changes (e.g., after [System] continue is prepended on resume). The worker-pool's `getLatestResumeSessionIdByOpenclawSessionId` fallback handles this drift; do not remove it.
 
 ## Verify (proposed)
