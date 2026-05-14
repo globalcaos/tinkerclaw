@@ -41,10 +41,11 @@ The Tinker UI is a single-page HTML app. The DOM has a small set of named region
 └──┴─────────────────────────────────────────────────────────────────┘
 ```
 
-Plus two **overlays** that can sit ON TOP of the layout:
+Plus three **overlays** that can sit ON TOP of the layout:
 
 - **alt-view** — full-pane replacement for the chat-mode layout. Mounted at the same place as `chat-area` + `right-panels` + `ctx-timeline` + `bottom-right`, but covers them. Activated by any left-nav tab other than `chat`.
 - **exec-panel** — persistent left-edge HUD (FORK 2026-05-12 control-panel plugin). Three sections: graphs / 7-day calendar strip / live task board. Mounted directly under `app`, NOT inside `.right-panels`. Controlled by the **Dev↔Exec** toggle in the topbar — orthogonal to tab nav.
+- **kit-modal** — ephemeral dialog overlay (FORK 2026-05-14). Appears on recipe card click in the `recipes` alt-view. Two tabs: View (markdown-it rendered body, strips frontmatter) + Edit (raw textarea). Save writes via `POST /api/save-file` (dev) or `POST /tinker/api/save-file` (prod), sandboxed to `extensions/tinkerclaw-prefrontal/kits/` and `~/.openclaw/workspace/kits/`. z-index 6000. CSS class `.kit-modal-backdrop` / `.kit-modal-dialog`.
 
 ## Two orthogonal state axes
 
