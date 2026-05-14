@@ -10,7 +10,17 @@ verify:
   - name: gateway listening on 18789
     cmd: ss -ltn 2>/dev/null | grep -q ':18789' || netstat -ltn 2>/dev/null | grep -q ':18789'
   - name: cc-bridge plugin loaded
-    cmd: journalctl --user -u openclaw-gateway.service --since '15 minutes ago' --no-pager 2>&1 | grep -q 'tinkerclaw-cc-bridge'
+    cmd: |
+      raw=$(openclaw gateway call plugin.boot.status 2>&1); json=$(echo "$raw" | awk '/^\{/{found=1} found{print}');
+      if [[ -z "$json" ]]; then echo "$raw" | grep -q "Gateway call failed\|gateway timeout\|ECONNREFUSED" && { echo "Gateway call failed: cc-bridge check skipped (gateway down)"; exit 1; }; echo "Gateway call failed: no JSON in response"; exit 1; fi;
+      echo "$json" | python3 -c "
+      import sys, json
+      d = json.load(sys.stdin)
+      cc = [p for p in d.get('plugins', []) if p['id'] == 'tinkerclaw-cc-bridge']
+      if not cc: sys.stderr.write('tinkerclaw-cc-bridge not found in plugin.boot.status\n'); sys.exit(1)
+      if cc[0]['status'] != 'loaded': sys.stderr.write(f'tinkerclaw-cc-bridge status={cc[0][\"status\"]} expected loaded\n'); sys.exit(1)
+      print('tinkerclaw-cc-bridge status=loaded')
+      "
   - name: workspace symlinks present (skills NOT symlinked per design)
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
   - name: every fork-owned plugin dir uses the tinkerclaw- prefix
