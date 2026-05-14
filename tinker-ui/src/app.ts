@@ -7022,7 +7022,6 @@ function init() {
       { key: "unfinished", label: "Unfinished" },
       { key: "all_today", label: "All today" },
       { key: "resolved", label: "Resolved" },
-      { key: "deleted", label: "Deleted" },
       { key: "snoozed", label: "💤 Snoozed" },
       { key: "all", label: "All" },
     ];
@@ -7048,11 +7047,6 @@ function init() {
         return t.status === "open" || t.status === "in_progress";
       case "resolved":
         return t.status === "resolved";
-      case "deleted":
-        // FORK 2026-05-13 — the chip merges the old 'Dismissed' and 'Dropped'
-        // bins into one. Legacy rows with status='dismissed' stay readable;
-        // every new delete now writes status='dropped'.
-        return t.status === "dismissed" || t.status === "dropped";
       case "snoozed":
         return t.status === "back_burner";
       case "all":
@@ -7078,6 +7072,27 @@ function init() {
 
   function escapeExecAttr(s: string): string {
     return s.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  }
+
+  // FORK 2026-05-14 — merge a metadata patch onto a task's current metadata
+  // object. Used by the snooze-until-tomorrow + bring-back paths so the
+  // tasks.update call doesn't wipe Todoist/Gmail/labels metadata. Passing
+  // `null` (or undefined) for a key removes it from the merged object.
+  function mergeTaskMetadata(t: ExecTask, patch: Record<string, unknown>): Record<string, unknown> {
+    let cur: Record<string, unknown> = {};
+    if (t.metadata_json) {
+      try {
+        const parsed = JSON.parse(t.metadata_json);
+        if (parsed && typeof parsed === "object") cur = parsed as Record<string, unknown>;
+      } catch {
+        cur = {};
+      }
+    }
+    const next: Record<string, unknown> = { ...cur, ...patch };
+    for (const k of Object.keys(next)) {
+      if (next[k] == null) delete next[k];
+    }
+    return next;
   }
 
   function formatExecAge(ms: number): string {
@@ -7108,12 +7123,24 @@ function init() {
   };
 
   // Filter + expand state — persists between renders & sessions.
-  type ExecFilter = "unfinished" | "all_today" | "resolved" | "deleted" | "snoozed" | "all";
+  type ExecFilter = "unfinished" | "all_today" | "resolved" | "snoozed" | "all";
   // FORK 2026-05-13 — `dismissed` filter renamed → `deleted`. Migrate any
   // persisted value so the chip highlight matches after the rename.
   const rawExecFilter = localStorage.getItem("tinker.execFilter");
+  // FORK 2026-05-14 — the "Deleted" chip was removed (delete is now a hard
+  // remove). Any persisted "deleted" or legacy "dismissed" value falls back
+  // to the default "unfinished" chip.
+  const validExecFilters: ReadonlySet<string> = new Set([
+    "unfinished",
+    "all_today",
+    "resolved",
+    "snoozed",
+    "all",
+  ]);
   let execFilter: ExecFilter =
-    (rawExecFilter === "dismissed" ? "deleted" : (rawExecFilter as ExecFilter)) || "unfinished";
+    rawExecFilter && validExecFilters.has(rawExecFilter)
+      ? (rawExecFilter as ExecFilter)
+      : "unfinished";
   let execExpandedId: string | null = null;
   let execLastTasks: ExecTask[] = [];
   let execContextMenuEl: HTMLElement | null = null;
@@ -7155,6 +7182,32 @@ function init() {
         limit: 500,
       })) as { tasks: ExecTask[]; count: number };
       execLastTasks = res.tasks ?? [];
+
+      // FORK 2026-05-14 — auto-wake back_burner tasks whose snoozed_until
+      // metadata has been reached. Mutate in-place so this render shows
+      // them as open immediately; fire-and-forget the tasks.update call to
+      // persist. Bulk: typically 0–1 per render, never blocking.
+      const wakeNow = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })();
+      for (const t of execLastTasks) {
+        if (t.status !== "back_burner" || !t.metadata_json) continue;
+        let meta: Record<string, unknown>;
+        try {
+          const parsed = JSON.parse(t.metadata_json);
+          meta = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+        } catch {
+          continue;
+        }
+        const until = meta.snoozed_until;
+        if (typeof until !== "string" || until > wakeNow) continue;
+        delete meta.snoozed_until;
+        t.status = "open";
+        t.metadata_json = Object.keys(meta).length === 0 ? null : JSON.stringify(meta);
+        void req("control-panel.tasks.update", { id: t.id, status: "open", metadata: meta });
+      }
+
       const visible = execLastTasks.filter(execFilterAccepts);
       if (visible.length === 0) {
         body.innerHTML = `<div class="exec-empty">Nothing matches the <b>${execFilter}</b> filter.</div>`;
@@ -7553,7 +7606,7 @@ function init() {
               : `<button class="exec-task-action" data-action="snooze-tomorrow">💤 Snooze until tomorrow</button>`
           }
           <button class="exec-task-action exec-task-action-warn" data-action="delete">🗑 Delete</button>
-          <button class="exec-task-action" data-action="open-in-chat">💬 Open in chat</button>
+          <button class="exec-task-action" data-action="refer-in-chat">💬 Refer in chat</button>
         </div>
       </div>`;
   }
@@ -8092,7 +8145,7 @@ function init() {
       <div class="exec-context-sep"></div>
       <button data-action="edit-title" class="exec-context-item">✏️ Edit title</button>
       <button data-action="edit-context" class="exec-context-item">✏️ Edit description</button>
-      <button data-action="open-in-chat" class="exec-context-item">💬 Open in chat</button>
+      <button data-action="refer-in-chat" class="exec-context-item">💬 Refer in chat</button>
     `;
     menu.style.left = `${Math.min(x, window.innerWidth - 240)}px`;
     menu.style.top = `${Math.min(y, window.innerHeight - 360)}px`;
@@ -8133,17 +8186,37 @@ function init() {
       } else if (action === "in_progress") {
         await req("control-panel.tasks.update", { id: taskId, status: "in_progress" });
       } else if (action === "delete") {
-        // FORK 2026-05-13 — collapsed the old "drop / dismiss-*" pair into a
-        // single Delete affordance. Backing status is still 'dropped'; legacy
-        // 'dismissed' rows from before the merge remain readable in views.
-        await req("control-panel.tasks.update", { id: taskId, status: "dropped" });
-      } else if (action === "snooze-indef") {
-        // v3.3 — indefinite snooze. Status flip is the entire mechanism; the
-        // task stays in its axis, keeps its rank, just disappears from every
-        // filter except 💤 Snoozed. Bring back via the same RPC with 'open'.
-        await req("control-panel.tasks.update", { id: taskId, status: "back_burner" });
+        // FORK 2026-05-14 — delete is now a HARD remove via tasks.remove.
+        // The "Deleted" filter chip and the soft-delete bucket were dropped
+        // per user request: "When I delete an entry, I want it gone."
+        await req("control-panel.tasks.remove", { id: taskId });
+      } else if (action === "snooze-tomorrow") {
+        // FORK 2026-05-14 — defer-to-tomorrow snooze. Status flips to
+        // back_burner (hides from every filter except 💤 Snoozed AND from
+        // All today). metadata.snoozed_until stores tomorrow's ISO date;
+        // loadExecTasks scans on every render and auto-wakes the task to
+        // status="open" when today's date catches up. No due_date is set,
+        // so no chip appears — the snooze is invisible to the user.
+        const t = execLastTasks.find((x) => x.id === taskId);
+        if (!t) return;
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        const tomorrowIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const meta = mergeTaskMetadata(t, { snoozed_until: tomorrowIso });
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          status: "back_burner",
+          due_date: null,
+          metadata: meta,
+        });
       } else if (action === "bring-back") {
-        await req("control-panel.tasks.update", { id: taskId, status: "open" });
+        const t = execLastTasks.find((x) => x.id === taskId);
+        const meta = t ? mergeTaskMetadata(t, { snoozed_until: null }) : undefined;
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          status: "open",
+          ...(meta !== undefined ? { metadata: meta } : {}),
+        });
       } else if (action.startsWith("reassign-")) {
         const axis = action.slice("reassign-".length);
         await req("control-panel.tasks.update", { id: taskId, priority_axis: axis });
@@ -8172,11 +8245,11 @@ function init() {
           id: taskId,
           context_md: trimmed.length > 0 ? trimmed : null,
         });
-      } else if (action === "open-in-chat") {
+      } else if (action === "refer-in-chat") {
         if (!t) return;
         const textarea = document.getElementById("chat-textarea") as HTMLTextAreaElement | null;
         if (textarea) {
-          textarea.value = `Let's work on: ${t.text}`;
+          textarea.value = `Re: ${t.text}`;
           textarea.focus();
           textarea.dispatchEvent(new Event("input", { bubbles: true }));
         }
@@ -10170,275 +10243,45 @@ function init() {
     communication: { label: "Communication", color: "#10b981", icon: "\uD83D\uDCAC" },
   } as const;
 
-  interface RecipeChild {
-    name: string;
-    trigger: string;
-  }
+  // FORK 2026-05-14 — RECIPE_CATALOG deleted. Kit data comes exclusively from
+  // prefrontal.kit.list (which parses kit.md on disk for both source-tree and
+  // downloaded kits). See TINKER_UI_DESIGN_BIBLE/subagents-and-kits.md for the
+  // canonical translation contract.
 
-  interface Recipe {
-    name: string;
-    id: string;
-    summary: string;
-    trigger: string;
-    steps: string[];
-    children?: RecipeChild[];
-    category: keyof typeof RECIPE_CATEGORIES;
-  }
-
-  // Kit file base path — kits are kit.md files in the prefrontal extension (kit/1.0)
-  const RECIPE_BASE = "extensions/tinkerclaw-prefrontal/kits";
-
-  const RECIPE_CATALOG: Recipe[] = [
-    // ── Coding ──
-    {
-      category: "coding",
-      id: "debug",
-      name: "Debug & Fix",
-      summary:
-        "Reproduce the failure, trace root cause through code, apply minimal fix, verify with tests",
-      trigger: "bug, error, crash, broken",
-      steps: ["reproduce", "diagnose", "fix", "verify"],
-      children: [
-        { name: "Memory Leak Debug", trigger: "memory leak, heap, OOM" },
-        { name: "API Error Debug", trigger: "API error, 500, timeout" },
-        { name: "UI Regression Debug", trigger: "UI regression, layout, render" },
-      ],
-    },
-    {
-      category: "coding",
-      id: "feature",
-      name: "Build Feature",
-      summary:
-        "Explore existing patterns, design the approach, write failing tests first, implement minimal code, verify",
-      trigger: "feature, implement, add",
-      steps: ["explore", "design", "test", "implement", "verify"],
-    },
-    {
-      category: "coding",
-      id: "refactor",
-      name: "Refactor",
-      summary:
-        "Understand current structure, ensure tests pass as baseline, restructure without behavior change, verify tests still pass",
-      trigger: "refactor, clean, simplify",
-      steps: ["understand", "baseline-tests", "refactor", "verify"],
-    },
-    {
-      category: "coding",
-      id: "code-review",
-      name: "Code Review",
-      summary:
-        "Read the diff, understand surrounding context, assess correctness and security, report findings",
-      trigger: "review, PR, diff",
-      steps: ["read-changes", "context", "assess", "report"],
-    },
-    {
-      category: "coding",
-      id: "upstream-merge",
-      name: "Upstream Merge",
-      summary:
-        "Fetch upstream, merge with intelligent conflict resolution, re-wire fork hooks, build, test, push",
-      trigger: "merge, upstream, sync",
-      steps: ["fetch", "merge", "resolve-conflicts", "wire", "build", "test", "push"],
-    },
-    {
-      category: "coding",
-      id: "fork-patch",
-      name: "Fork Patch",
-      summary:
-        "Identify upstream target file, accept their version, re-apply fork hooks via wiring script, build, verify",
-      trigger: "fork, patch, re-wire",
-      steps: ["identify-target", "accept-upstream", "re-wire-hooks", "build", "verify"],
-    },
-    // ── Writing & Research ──
-    {
-      category: "writing",
-      id: "write-paper",
-      name: "Write Paper",
-      summary:
-        "Review literature, build outline from thesis, draft sections, create figures, peer review, revise",
-      trigger: "paper, article, publication",
-      steps: ["literature-review", "outline", "draft", "figures", "review", "revise"],
-    },
-    {
-      category: "writing",
-      id: "brainstorm",
-      name: "Brainstorm",
-      summary:
-        "Explore project context, clarify user intent, propose 2-3 approaches with tradeoffs, present design for approval",
-      trigger: "brainstorm, ideate, explore",
-      steps: [
-        "explore-context",
-        "clarify-intent",
-        "propose-approaches",
-        "present-design",
-        "write-spec",
-      ],
-      children: [
-        { name: "Feature Brainstorm", trigger: "feature idea, new capability" },
-        { name: "Architecture Brainstorm", trigger: "architecture, system design" },
-      ],
-    },
-    {
-      category: "writing",
-      id: "write-plan",
-      name: "Write Plan",
-      summary:
-        "Read the spec, map file structure, decompose into bite-sized tasks with tests, write implementation steps",
-      trigger: "plan, spec, implementation",
-      steps: ["read-spec", "map-files", "define-tasks", "write-tests", "implementation-steps"],
-    },
-    // ── Operations ──
-    {
-      category: "operations",
-      id: "gateway-restart",
-      name: "Gateway Restart",
-      summary:
-        "Check for active LLM sessions, save state, SIGUSR1 graceful restart, verify health endpoint and WhatsApp",
-      trigger: "restart, gateway, reload",
-      steps: ["check-active-sessions", "save-state", "restart", "verify-health", "verify-whatsapp"],
-    },
-    {
-      category: "operations",
-      id: "security-audit",
-      name: "Security Audit",
-      summary:
-        "Scan for API keys and tokens, check git history for leaks, scan PII, verify gitignore, produce report",
-      trigger: "audit, secrets, scan",
-      steps: ["scan-secrets", "check-git-history", "scan-PII", "check-gitignore", "report"],
-    },
-    {
-      category: "operations",
-      id: "deploy",
-      name: "Deploy",
-      summary:
-        "Build from clean state, run full test suite, backup current state, deploy, smoke test, monitor for errors",
-      trigger: "deploy, release, ship",
-      steps: ["build", "test", "backup", "deploy", "smoke-test", "monitor"],
-    },
-    // ── Analysis ──
-    {
-      category: "analysis",
-      id: "investigate",
-      name: "Investigate",
-      summary:
-        "Define the question, gather evidence from multiple sources in parallel, synthesize findings, present report",
-      trigger: "investigate, dig, explore",
-      steps: ["scope", "gather", "analyze", "report"],
-    },
-    {
-      category: "analysis",
-      id: "performance-audit",
-      name: "Performance Audit",
-      summary:
-        "Profile the system, identify bottlenecks with measurements, optimize hot paths, verify improvement",
-      trigger: "performance, slow, profile",
-      steps: ["profile", "identify-bottlenecks", "measure", "optimize", "verify"],
-    },
-    {
-      category: "analysis",
-      id: "dependency-analysis",
-      name: "Dependency Analysis",
-      summary:
-        "Inventory all dependencies, check versions against latest, assess risk of outdated packages, plan updates",
-      trigger: "dependencies, outdated, risk",
-      steps: ["inventory", "check-versions", "assess-risk", "update-plan"],
-    },
-    // ── Security ──
-    {
-      category: "security",
-      id: "incident-response",
-      name: "Incident Response",
-      summary:
-        "Detect the breach scope, contain the damage, investigate root cause, remediate, write postmortem",
-      trigger: "incident, breach, compromise",
-      steps: ["detect", "contain", "investigate", "remediate", "postmortem"],
-    },
-    {
-      category: "security",
-      id: "credential-rotation",
-      name: "Credential Rotation",
-      summary:
-        "Inventory all credentials, generate new ones, update all configs atomically, verify access, revoke old",
-      trigger: "rotate, credentials, keys",
-      steps: ["inventory", "generate-new", "update-configs", "verify", "revoke-old"],
-    },
-    // ── Communication ──
-    {
-      category: "communication",
-      id: "daily-report",
-      name: "Daily Report",
-      summary:
-        "Gather status across all systems, analyze what changed and why, format as structured report, deliver",
-      trigger: "daily, status, standup",
-      steps: ["gather-status", "analyze-changes", "format", "deliver"],
-    },
-    {
-      category: "communication",
-      id: "jarvis-report",
-      name: "Jarvis Report",
-      summary:
-        "Summarize incident, analyze root cause, list all changes with rationale, suggest next actions",
-      trigger: "report, incident, summary",
-      steps: ["incident-summary", "root-cause", "changes", "rationale", "suggested-actions"],
-    },
-  ];
-
-  // FORK 2026-05-14 — Recipes tab lists built-in kits AND downloaded kits in a
-  // single unified category grouping. No "Downloaded kits" section. No owner attribution.
+  // FORK 2026-05-14 — Recipes tab is kit.md-only. Single data shape from
+  // prefrontal.kit.list. No RECIPE_CATALOG. No two-path render logic.
   async function renderRecipesTab(body: Element, sub: Element) {
-    // ── Fetch downloaded kits (non-blocking — degrade gracefully) ──
-    type DownloadedKit = {
+    // ── Normalized kit type — single shape for ours + downloaded ──
+    type NormalizedKit = {
       kitRef: string;
       owner: string;
       slug: string;
       title: string;
       summary: string;
       tags: string[];
+      category: string;
+      source: "ours" | "downloaded";
       path: string;
     };
-    let downloadedKits: DownloadedKit[] = [];
-    let downloadedErr = false;
+
+    // ── Fetch all kits from prefrontal.kit.list (non-blocking) ──
+    let allKits: NormalizedKit[] = [];
+    let listErr = false;
     try {
-      const res = await req<{ kits: DownloadedKit[] }>("prefrontal.kit.list", {});
-      downloadedKits = res.kits ?? [];
+      const res = await req<{ kits: NormalizedKit[] }>("prefrontal.kit.list", {});
+      allKits = res.kits ?? [];
     } catch {
-      downloadedErr = true;
+      listErr = true;
     }
 
-    sub.textContent = `${RECIPE_CATALOG.length} built-in · ${downloadedKits.length} downloaded`;
+    sub.textContent = `${allKits.length} kits`;
 
-    // ── Category inference for downloaded kits ──
-    function inferCategoryFromTags(tags: string[]): string {
-      const lc = (tags ?? []).map((t) => t.toLowerCase());
-      const has = (...words: string[]) => words.some((w) => lc.some((t) => t.includes(w)));
-      if (has("code-review", "coding", "refactor", "tdd", "debug", "codebase")) return "coding";
-      if (has("research", "analysis", "investigation")) return "analysis";
-      if (has("security", "audit", "secure")) return "security";
-      if (
-        has("gateway", "cron", "monitoring", "orchestration", "deploy", "ops", "devops", "watchdog")
-      )
-        return "operations";
-      if (has("write", "writing", "paper", "manuscript", "edit", "summariz")) return "writing";
-      if (has("slack", "email", "discord", "telegram", "calendar", "whatsapp"))
-        return "communication";
-      return "operations"; // catch-all
-    }
-
-    // ── Build unified grouped map: built-in kits first, then downloaded ──
-    type UnifiedKit =
-      | { kind: "builtin"; recipe: Recipe }
-      | { kind: "downloaded"; kit: DownloadedKit };
-
-    const grouped = new Map<string, UnifiedKit[]>();
-    for (const r of RECIPE_CATALOG) {
-      const list = grouped.get(r.category) ?? [];
-      list.push({ kind: "builtin", recipe: r });
-      grouped.set(r.category, list);
-    }
-    for (const k of downloadedKits) {
-      const cat = inferCategoryFromTags(k.tags);
+    // ── Build grouped map by category ──
+    const grouped = new Map<string, NormalizedKit[]>();
+    for (const k of allKits) {
+      const cat = k.category || "operations";
       const list = grouped.get(cat) ?? [];
-      list.push({ kind: "downloaded", kit: k });
+      list.push(k);
       grouped.set(cat, list);
     }
 
@@ -10447,44 +10290,24 @@ function init() {
       return slug.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     }
 
-    // Helper: render a single recipe card HTML string.
-    function recipeCardHtml(
-      filePath: string,
-      name: string,
-      trigger: string,
-      summary: string,
-      steps: string[],
-      children?: Array<{ name: string; trigger: string }>,
-      isExternal?: boolean,
-    ): string {
-      // Derive display values — fall back to slug/placeholder so every card has
-      // the same visual mass regardless of how sparse the kit.md frontmatter is.
-      const slugFromPath = filePath.split("/").slice(-2, -1)[0] ?? trigger;
-      const displayName = name?.trim() || slugToTitle(slugFromPath);
-      const displayTrigger = trigger?.trim() || slugFromPath;
-      const hasSummary = !!summary?.trim();
-      let h = `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to view kit details">`;
+    // Helper: render a single kit card HTML string.
+    function recipeCardHtml(kit: NormalizedKit): string {
+      const displayName = kit.title?.trim() || slugToTitle(kit.slug);
+      const displayTrigger = kit.slug;
+      const hasSummary = !!kit.summary?.trim();
+      const isDownloaded = kit.source === "downloaded";
+      let h = `<div class="recipe-card" data-recipe-file="${altEsc(kit.path)}" title="Click to view kit details">`;
       h += `<div class="recipe-card-header">`;
       h += `<span class="recipe-name">${altEsc(displayName)}</span>`;
-      if (isExternal) {
+      if (isDownloaded) {
         h += `<span class="recipe-kit-external" title="Downloaded kit">↗</span>`;
       }
       h += `<span class="recipe-trigger">${altEsc(displayTrigger)}</span>`;
       h += `</div>`;
       if (hasSummary) {
-        h += `<div class="recipe-summary">${altEsc(summary.trim())}</div>`;
+        h += `<div class="recipe-summary">${altEsc(kit.summary.trim())}</div>`;
       } else {
         h += `<div class="recipe-summary-placeholder">(no summary in kit.md)</div>`;
-      }
-      if (children?.length) {
-        h += `<div class="recipe-children">`;
-        for (const c of children) {
-          h += `<div class="recipe-child">`;
-          h += `<span class="recipe-child-name">${altEsc(c.name)}</span>`;
-          h += `<span class="recipe-child-trigger">${altEsc(c.trigger)}</span>`;
-          h += `</div>`;
-        }
-        h += `</div>`;
       }
       h += `</div>`;
       return h;
@@ -10496,33 +10319,21 @@ function init() {
 
       let html = '<div class="recipes-view">';
 
-      if (downloadedErr) {
-        html += `<div class="recipe-no-results" style="color:#f59e0b;margin-bottom:6px">prefrontal.kit.list unavailable — downloaded kits not shown</div>`;
+      if (listErr) {
+        html += `<div class="recipe-no-results" style="color:#f59e0b;margin-bottom:6px">prefrontal.kit.list unavailable — kits not shown</div>`;
       }
 
       let totalVisible = 0;
       for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
         const allInCat = grouped.get(catKey) ?? [];
-        const items = allInCat.filter((u) => {
+        const items = allInCat.filter((k) => {
           if (!ql) return true;
-          if (u.kind === "builtin") {
-            const r = u.recipe;
-            return (
-              r.name.toLowerCase().includes(ql) ||
-              r.id.toLowerCase().includes(ql) ||
-              (r.trigger ?? "").toLowerCase().includes(ql) ||
-              (r.summary ?? "").toLowerCase().includes(ql) ||
-              r.steps.some((s) => s.toLowerCase().includes(ql))
-            );
-          } else {
-            const k = u.kit;
-            return (
-              k.title.toLowerCase().includes(ql) ||
-              k.slug.toLowerCase().includes(ql) ||
-              k.summary.toLowerCase().includes(ql) ||
-              k.tags.some((t) => t.toLowerCase().includes(ql))
-            );
-          }
+          return (
+            k.title.toLowerCase().includes(ql) ||
+            k.slug.toLowerCase().includes(ql) ||
+            k.summary.toLowerCase().includes(ql) ||
+            k.tags.some((t) => t.toLowerCase().includes(ql))
+          );
         });
         if (!items.length) continue;
         totalVisible += items.length;
@@ -10532,22 +10343,8 @@ function init() {
         html += `<span class="recipe-cat-label">${cat.label}</span>`;
         html += `<span class="recipe-cat-count">${items.length}</span>`;
         html += `</div><div class="recipe-cat-items">`;
-        for (const u of items) {
-          if (u.kind === "builtin") {
-            const r = u.recipe;
-            html += recipeCardHtml(
-              `${RECIPE_BASE}/${r.id}/kit.md`,
-              r.name,
-              r.trigger,
-              r.summary,
-              r.steps,
-              r.children,
-              false,
-            );
-          } else {
-            const k = u.kit;
-            html += recipeCardHtml(k.path, k.title, k.slug, k.summary, [], undefined, true);
-          }
+        for (const kit of items) {
+          html += recipeCardHtml(kit);
         }
         html += `</div></div>`;
       }
