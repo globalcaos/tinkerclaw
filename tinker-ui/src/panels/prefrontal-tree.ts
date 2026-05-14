@@ -131,6 +131,41 @@ function fmtDuration(seconds: number): string {
   return s > 0 ? `${m}m${s}s` : `${m}m`;
 }
 
+// FORK 2026-05-14: map the raw root.status string from the prefrontal tree
+// into a human-readable activity label for the implicit 2-step plan panel.
+// The raw status is one of:
+//   "thinking" | "reflecting" | "responding" | "tool: <Name>" | "final" | "completed"
+// Generic "Doing" was boring after a few seconds — the user reads this panel
+// to know what the agent is *actually* doing right now without expanding the
+// chat tool rows. See panels.md (implicit 2-step plan must be content-rich).
+const TOOL_LABELS: Record<string, string> = {
+  Bash: "🔧 Running shell",
+  Read: "📖 Reading files",
+  Edit: "✏ Editing files",
+  Write: "📝 Writing files",
+  Grep: "🔍 Searching code",
+  Glob: "🔍 Searching files",
+  WebFetch: "🌐 Fetching web page",
+  WebSearch: "🔎 Searching the web",
+  Skill: "🧰 Invoking a skill",
+  ToolSearch: "🧭 Looking up a tool",
+};
+function humanizeRootStatus(status: string | undefined | null): string {
+  const s = (status ?? "").trim();
+  if (!s) return "Acting";
+  const low = s.toLowerCase();
+  if (low === "thinking") return "🧠 Thinking";
+  if (low === "reflecting") return "🌿 Reflecting";
+  if (low === "responding") return "💬 Writing reply";
+  if (low === "final" || low === "completed") return "Done";
+  if (low.startsWith("tool:")) {
+    const name = s.slice(s.indexOf(":") + 1).trim();
+    return TOOL_LABELS[name] ?? `🔧 ${name}`;
+  }
+  // Unknown status — surface it raw so we can see what to map next.
+  return s;
+}
+
 // FORK 2026-04-20: expanded-state persistence so expanding a subagent or
 // a trail group survives across rerenders (the whole panel DOM rebuilds on
 // every event).
@@ -251,16 +286,26 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     }
 
     // ── Priority 2: synthetic 2-step plan from live tree ─────────────────────
+    // FORK 2026-05-14: replaced the abstract "Thinking" / "Doing" labels with
+    // content-rich activity strings derived from root.status. Generic words
+    // get boring after some time — see panels.md (implicit 2-step plan must
+    // be content-rich, not placeholder text). Three pieces of info per the
+    // UX contract: WHO (model in header), HOW MANY (subagent badge when
+    // children.length > 0), WHAT (humanizeRootStatus on the active step).
     if (tree.active && tree.root) {
       const root = tree.root;
       const section = el("div", "pf-plan pf-plan-synthetic");
 
-      // Header: "▼ Current Plan — «model»" with lastEventAge as elapsed.
+      // Header: "▼ Current Plan — «model»" plus optional parallel badge.
       const header = el("div", "pf-plan-header");
       const ageEl = el("span", "pf-plan-total");
       ageEl.textContent = fmtDuration(Math.max(0, root.lastEventAge));
       header.appendChild(ageEl);
-      const headerText = document.createTextNode(`▼ Current Plan — "${root.model}"`);
+      const childCount = root.children?.length ?? 0;
+      const parallelTag =
+        childCount > 0 ? ` • ${childCount} worker${childCount === 1 ? "" : "s"}` : "";
+      const modelLabel = root.model ?? "model";
+      const headerText = document.createTextNode(`▼ Current Plan — ${modelLabel}${parallelTag}`);
       header.insertBefore(headerText, ageEl);
       section.appendChild(header);
 
@@ -275,7 +320,6 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
         statusLow.startsWith("tool:") ||
         statusLow === "responding" ||
         statusLow === "reflecting";
-      // "reflecting" is ambiguous — treat it as doing because a tool/text has fired.
 
       const thinkingStatus = isDoingPhase ? "done" : "in_progress";
       const doingStatus = isFinal ? "done" : isDoingPhase ? "in_progress" : "pending";
@@ -283,24 +327,27 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       const thinkingMarker = thinkingStatus === "done" ? "✓" : "▶";
       const doingMarker = doingStatus === "done" ? "✓" : doingStatus === "in_progress" ? "▶" : "○";
 
+      // First step: "Thinking" while we're pre-tool, then collapsed to ✓ once
+      // a tool or text delta fires. The label stays "Thinking" because it's
+      // intrinsically about *establishing context*; the content-rich half is
+      // the second step below.
       const thinkingEl = el("div", `pf-step pf-step-${thinkingStatus}`);
-      const thinkingBold = document.createElement("strong");
-      thinkingBold.textContent = "Thinking";
-      thinkingEl.appendChild(document.createTextNode(`${thinkingMarker} `));
-      thinkingEl.appendChild(thinkingBold);
+      thinkingEl.appendChild(document.createTextNode(`${thinkingMarker} Thinking`));
       section.appendChild(thinkingEl);
 
+      // Second step: the WHAT. Label is derived from root.status via
+      // humanizeRootStatus — e.g. "🔧 Running Bash" when claude-cli is mid
+      // tool call, "💬 Writing reply" when streaming text, "🌿 Reflecting"
+      // for the Fractal section. When pending (still in Thinking), show a
+      // neutral "Acting — waiting on context" rather than "Doing".
       const doingEl = el("div", `pf-step pf-step-${doingStatus}`);
-      const doingBold = document.createElement("strong");
-      doingBold.textContent = "Doing";
-      doingEl.appendChild(document.createTextNode(`${doingMarker} `));
-      doingEl.appendChild(doingBold);
-      // Show current status as a note on the doing step when active
-      if (doingStatus === "in_progress" && root.status) {
-        const noteEl = el("span", "pf-step-note");
-        noteEl.textContent = ` · ${root.status}`;
-        doingEl.appendChild(noteEl);
-      }
+      const doingLabel =
+        doingStatus === "pending"
+          ? "Acting — waiting on context"
+          : isFinal
+            ? "Done"
+            : humanizeRootStatus(root.status);
+      doingEl.appendChild(document.createTextNode(`${doingMarker} ${doingLabel}`));
       section.appendChild(doingEl);
 
       return section;
