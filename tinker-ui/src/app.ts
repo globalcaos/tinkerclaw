@@ -8076,6 +8076,8 @@ function init() {
     } else {
       stopExecPolling();
     }
+    // Re-evaluate exec-panel visibility: only visible when tab=chat AND exec-mode.
+    applyExecPanelVisibility();
   });
 
   // ─── Sidebar tab switching ───
@@ -8086,6 +8088,18 @@ function init() {
   const rightPanels = document.querySelector(".right-panels") as HTMLElement;
   const bottomRight = $("bottom-right-panel")!;
   let activeTab = "chat";
+
+  // FORK 2026-05-14 — panels.md contract: exec-panel implies tab=chat.
+  // Called from both the Dev/Exec toggle and switchTab so the two axes stay
+  // consistent. Uses inline style override so the CSS `#app.exec-mode .exec-panel
+  // { display: flex }` rule is suppressed when tab≠chat.
+  function applyExecPanelVisibility(): void {
+    const execPanel = document.querySelector(".exec-panel") as HTMLElement | null;
+    if (!execPanel) return;
+    const isExecMode = app.classList.contains("exec-mode");
+    const isChatTab = activeTab === "chat";
+    execPanel.style.display = isExecMode && isChatTab ? "" : "none";
+  }
 
   type AltTab =
     | "overview"
@@ -8133,6 +8147,8 @@ function init() {
       ctxTimeline.style.display = "";
       rightPanels.style.display = "";
       bottomRight.style.display = "";
+      // FORK 2026-05-14 — panels.md: exec-panel visible only when tab=chat + exec-mode.
+      applyExecPanelVisibility();
       return;
     }
     // Show alt-view, hide chat panels
@@ -8141,6 +8157,8 @@ function init() {
     ctxTimeline.style.display = "none";
     rightPanels.style.display = "none";
     bottomRight.style.display = "none";
+    // FORK 2026-05-14 — panels.md: exec-panel hides when tab≠chat.
+    applyExecPanelVisibility();
     altView.classList.add("alt-active");
     renderAltView(tab as AltTab);
   }
@@ -8385,7 +8403,7 @@ function init() {
           await renderLogsTab(body, sub);
           break;
         case "recipes":
-          renderRecipesTab(body, sub);
+          await renderRecipesTab(body, sub);
           break;
       }
     } catch (e) {
@@ -10178,7 +10196,21 @@ function init() {
     },
   ];
 
-  function renderRecipesTab(body: Element, sub: Element) {
+  // FORK 2026-05-14 — Recipes tab lists BOTH built-in source kits AND
+  // downloaded kits via prefrontal.kit.list. Includes full-text search.
+  async function renderRecipesTab(body: Element, sub: Element) {
+    // ── Fetch downloaded kits (non-blocking — degrade gracefully) ──
+    type DownloadedKit = { kitRef: string; owner: string; slug: string; path: string };
+    let downloadedKits: DownloadedKit[] = [];
+    let downloadedErr = false;
+    try {
+      const res = await req<{ kits: DownloadedKit[] }>("prefrontal.kit.list", {});
+      downloadedKits = res.kits ?? [];
+    } catch {
+      downloadedErr = true;
+    }
+
+    // ── Build grouped map for built-in kits ──
     const grouped = new Map<string, Recipe[]>();
     for (const r of RECIPE_CATALOG) {
       const list = grouped.get(r.category) ?? [];
@@ -10186,64 +10218,167 @@ function init() {
       grouped.set(r.category, list);
     }
 
-    let html = '<div class="recipes-view">';
-    for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
-      const recipes = grouped.get(catKey) ?? [];
-      if (!recipes.length) {
-        continue;
+    sub.textContent = `${RECIPE_CATALOG.length} built-in · ${downloadedKits.length} downloaded`;
+
+    // Helper: render a single recipe card HTML string.
+    function recipeCardHtml(
+      filePath: string,
+      name: string,
+      trigger: string,
+      summary: string,
+      steps: string[],
+      children?: Array<{ name: string; trigger: string }>,
+      sourceBadge?: string,
+    ): string {
+      let h = `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to open kit.md">`;
+      h += `<div class="recipe-card-header">`;
+      h += `<span class="recipe-name">${altEsc(name)}</span>`;
+      if (sourceBadge) {
+        h += `<span class="recipe-source-badge">${altEsc(sourceBadge)}</span>`;
       }
-      html += `<div class="recipe-category" style="--cat-color:${cat.color}">`;
-      html += `<div class="recipe-cat-header">`;
-      html += `<span class="recipe-cat-icon">${cat.icon}</span>`;
-      html += `<span class="recipe-cat-label">${cat.label}</span>`;
-      html += `<span class="recipe-cat-count">${recipes.length}</span>`;
-      html += `</div><div class="recipe-cat-items">`;
-      for (const r of recipes) {
-        const filePath = `${RECIPE_BASE}/${r.id}/kit.md`;
-        html += `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to edit recipe">`;
-        html += `<div class="recipe-card-header">`;
-        html += `<span class="recipe-name">${altEsc(r.name)}</span>`;
-        html += `<span class="recipe-trigger">${altEsc(r.trigger)}</span>`;
-        html += `</div>`;
-        html += `<div class="recipe-summary">${altEsc(r.summary)}</div>`;
-        html += `<div class="recipe-steps">`;
-        r.steps.forEach((s, i) => {
-          if (i > 0) {
-            html += `<span class="recipe-step-arrow">\u2192</span>`;
-          }
-          html += `<span class="recipe-step">${altEsc(s)}</span>`;
+      h += `<span class="recipe-trigger">${altEsc(trigger)}</span>`;
+      h += `</div>`;
+      if (summary) h += `<div class="recipe-summary">${altEsc(summary)}</div>`;
+      if (steps.length) {
+        h += `<div class="recipe-steps">`;
+        steps.forEach((s, i) => {
+          if (i > 0) h += `<span class="recipe-step-arrow">→</span>`;
+          h += `<span class="recipe-step">${altEsc(s)}</span>`;
         });
-        html += `</div>`;
-        if (r.children?.length) {
-          html += `<div class="recipe-children">`;
-          for (const c of r.children) {
-            html += `<div class="recipe-child">`;
-            html += `<span class="recipe-child-name">${altEsc(c.name)}</span>`;
-            html += `<span class="recipe-child-trigger">${altEsc(c.trigger)}</span>`;
-            html += `</div>`;
+        h += `</div>`;
+      }
+      if (children?.length) {
+        h += `<div class="recipe-children">`;
+        for (const c of children) {
+          h += `<div class="recipe-child">`;
+          h += `<span class="recipe-child-name">${altEsc(c.name)}</span>`;
+          h += `<span class="recipe-child-trigger">${altEsc(c.trigger)}</span>`;
+          h += `</div>`;
+        }
+        h += `</div>`;
+      }
+      h += `</div>`;
+      return h;
+    }
+
+    // ── Render function — called on load and on search input ──
+    function applyFilter(q: string) {
+      const ql = q.toLowerCase().trim();
+
+      let html = '<div class="recipes-view">';
+
+      // ── Section 1: Our source kits ──
+      html += `<div class="recipe-section-header">Our kits <span class="recipe-section-path">(${altEsc(RECIPE_BASE)})</span></div>`;
+      let ourCount = 0;
+      for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
+        const recipes = (grouped.get(catKey) ?? []).filter((r) => {
+          if (!ql) return true;
+          return (
+            r.name.toLowerCase().includes(ql) ||
+            r.id.toLowerCase().includes(ql) ||
+            (r.trigger ?? "").toLowerCase().includes(ql) ||
+            (r.summary ?? "").toLowerCase().includes(ql) ||
+            r.steps.some((s) => s.toLowerCase().includes(ql))
+          );
+        });
+        if (!recipes.length) continue;
+        ourCount += recipes.length;
+        html += `<div class="recipe-category" style="--cat-color:${cat.color}">`;
+        html += `<div class="recipe-cat-header">`;
+        html += `<span class="recipe-cat-icon">${cat.icon}</span>`;
+        html += `<span class="recipe-cat-label">${cat.label}</span>`;
+        html += `<span class="recipe-cat-count">${recipes.length}</span>`;
+        html += `</div><div class="recipe-cat-items">`;
+        for (const r of recipes) {
+          html += recipeCardHtml(
+            `${RECIPE_BASE}/${r.id}/kit.md`,
+            r.name,
+            r.trigger,
+            r.summary,
+            r.steps,
+            r.children,
+          );
+        }
+        html += `</div></div>`;
+      }
+      if (ourCount === 0 && ql) {
+        html += `<div class="recipe-no-results">No built-in kits match "${altEsc(ql)}"</div>`;
+      }
+
+      // ── Section 2: Downloaded kits ──
+      html += `<div class="recipe-section-header" style="margin-top:1.2rem">Downloaded kits <span class="recipe-section-path">(~/.openclaw/workspace/kits/)</span></div>`;
+      if (downloadedErr) {
+        html += `<div class="recipe-no-results" style="color:#f59e0b">prefrontal.kit.list unavailable — gateway may not be running</div>`;
+      } else if (downloadedKits.length === 0) {
+        html += `<div class="recipe-no-results">No downloaded kits yet. Use the <code>journey:install-kit</code> skill to install from the Journey registry.</div>`;
+      } else {
+        const filtered = downloadedKits.filter((k) => {
+          if (!ql) return true;
+          return (
+            k.slug.toLowerCase().includes(ql) ||
+            k.owner.toLowerCase().includes(ql) ||
+            k.kitRef.toLowerCase().includes(ql)
+          );
+        });
+        if (filtered.length === 0 && ql) {
+          html += `<div class="recipe-no-results">No downloaded kits match "${altEsc(ql)}"</div>`;
+        } else {
+          html += `<div class="recipe-cat-items">`;
+          for (const k of filtered) {
+            html += recipeCardHtml(
+              k.path,
+              k.slug,
+              k.kitRef,
+              `Downloaded kit by ${altEsc(k.owner)}`,
+              [],
+              undefined,
+              k.owner,
+            );
           }
           html += `</div>`;
         }
-        html += `</div>`;
       }
-      html += `</div></div>`;
-    }
-    html += `</div>`;
 
-    sub.textContent = `${RECIPE_CATALOG.length} recipes`;
-    body.innerHTML = html;
+      html += `</div>`;
+
+      // Preserve search input across filter updates
+      const existingSearch = body.querySelector(".recipe-search-input") as HTMLInputElement | null;
+      if (!existingSearch) {
+        const searchRow = `<div class="recipe-search-row"><input class="recipe-search-input" type="search" placeholder="Search kits by name, slug, tags…" value="${altEsc(q)}" autocomplete="off" spellcheck="false"></div>`;
+        body.innerHTML = searchRow + html;
+      } else {
+        const viewEl = body.querySelector(".recipes-view");
+        if (viewEl) {
+          viewEl.outerHTML = html;
+        } else {
+          const searchRowEl = body.querySelector(".recipe-search-row");
+          if (searchRowEl) {
+            const tmp = document.createElement("div");
+            tmp.innerHTML = html;
+            searchRowEl.after(tmp.firstElementChild!);
+          }
+        }
+      }
+    }
+
+    // Initial render
+    applyFilter("");
+
+    // Wire search input (delegated from body — survives innerHTML replacement)
+    body.addEventListener("input", (e) => {
+      const inp = e.target as HTMLElement;
+      if (inp.classList.contains("recipe-search-input")) {
+        applyFilter((inp as HTMLInputElement).value);
+      }
+    });
 
     // Click to open recipe file in native OS markdown editor
     body.addEventListener("click", (e) => {
       const card = (e.target as HTMLElement).closest("[data-recipe-file]") as HTMLElement | null;
-      if (!card) {
-        return;
-      }
+      if (!card) return;
       const file = card.dataset.recipeFile;
-      if (!file) {
-        return;
-      }
-      // POST to Vite dev server's open-file endpoint (calls xdg-open server-side)
+      if (!file) return;
+      // POST to Vite dev server open-file endpoint (calls xdg-open server-side)
       fetch("/api/open-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
