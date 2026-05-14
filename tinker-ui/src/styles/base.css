@@ -3403,14 +3403,12 @@ code.fs-link.fs-link-error {
   font-style: italic;
   padding: 6px 2px;
 }
-.recipe-source-badge {
+.recipe-kit-external {
   font-size: 10px;
-  color: #c19a6b;
-  background: rgba(193,154,107,0.1);
-  border: 1px solid rgba(193,154,107,0.22);
-  border-radius: 4px;
-  padding: 1px 5px;
-  margin-left: 4px;
+  color: #7a6e5e;
+  margin-left: 3px;
+  opacity: 0.7;
+  user-select: none;
 }
 
 /* ─── Prefrontal Panel ─── */
@@ -4593,6 +4591,92 @@ code.fs-link.fs-link-error {
 }
 .exec-rsch-overbooked .exec-rsch-bar {
   background: #ef5350 !important;
+}
+
+/* FORK 2026-05-14 — Year-long scrollable Mon→Sun picker:
+   - jump-to-date input in header
+   - sticky Mon..Sun header row above the scroll viewport
+   - 52 weeks in a scrollable container (current week auto-scrolled to top)
+   - past days crossed out and unclickable
+   - month section labels at month boundaries
+*/
+
+.exec-rsch-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #6a6a73;
+}
+.exec-rsch-jump input[type="date"] {
+  background: #0c0c10;
+  border: 1px solid #2a2a30;
+  border-radius: 4px;
+  color: #eaeaee;
+  padding: 3px 6px;
+  font: inherit;
+  color-scheme: dark;
+}
+.exec-rsch-jump input[type="date"]:focus {
+  outline: none;
+  border-color: #6cb1e8;
+}
+
+.exec-rsch-dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin: 12px 0 6px;
+}
+.exec-rsch-dow {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6a6a73;
+}
+
+.exec-rsch-scroll {
+  position: relative;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a30 transparent;
+}
+.exec-rsch-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.exec-rsch-scroll::-webkit-scrollbar-thumb {
+  background: #2a2a30;
+  border-radius: 3px;
+}
+
+.exec-rsch-month-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6a6a73;
+  margin: 10px 0 4px;
+}
+.exec-rsch-scroll .exec-rsch-row {
+  margin-bottom: 4px;
+}
+
+.exec-rsch-past,
+.exec-rsch-past:hover {
+  background: #0c0c10;
+  border-color: #1a1a20;
+  cursor: default;
+  opacity: 0.5;
+  transform: none;
+}
+.exec-rsch-past .exec-rsch-day {
+  text-decoration: line-through;
+  color: #4a4a52;
 }
 
 /* FORK 2026-05-11 — pencil edit affordances. Inline pencils replace the

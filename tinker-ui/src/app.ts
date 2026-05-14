@@ -7578,11 +7578,13 @@ function init() {
     chip.title = `Today: ${Math.round(taskMinutes)}m tasks + ${Math.round(calMinutes)}m events = ${Math.round(total)}m / 480m (${pct}%)`;
   }
 
-  // FORK 2026-05-11 — Reschedule picker overlay (SPEC §7.8). A 2-row × 7-day
-  // grid showing event density (from control-panel.calendar.density), count
-  // of tasks already rescheduled to each day, and the current task's due
-  // date highlighted. Click a day → tasks.reschedule + close. ESC or
-  // backdrop click → cancel.
+  // FORK 2026-05-11 — Reschedule picker overlay (SPEC §7.8). Mon→Sun rows
+  // showing event density, task counts, and the current task's due date.
+  // FORK 2026-05-14 — The picker now renders 52 weeks (~1 year) in a
+  // scrollable list starting from the Monday of the current week. Past
+  // days in the first row are crossed out and unclickable. A native date
+  // input in the header lets the user type any date numerically.
+  // Click a day → tasks.reschedule + close. ESC or backdrop click → cancel.
   let execReschedulePickerEl: HTMLElement | null = null;
 
   type CalEvent = {
@@ -7616,25 +7618,43 @@ function init() {
     if (!t) return;
     closeExecReschedulePicker();
 
-    // Build 14 ISO dates starting today (local-time aware).
+    // 52 Mon→Sun weeks starting from the Monday of the current week.
+    const TOTAL_WEEKS = 52;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const days: Array<{ date: string; dayName: string; dayNum: number; isToday: boolean }> = [];
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    for (let i = 0; i < 14; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      days.push({
-        date: iso,
-        dayName: dayNames[d.getDay()],
-        dayNum: d.getDate(),
-        isToday: i === 0,
-      });
+    const todayDow = today.getDay(); // 0 Sun … 6 Sat
+    const mondayOffset = todayDow === 0 ? -6 : 1 - todayDow;
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() + mondayOffset);
+
+    const dayNamesMon = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    type DayCell = {
+      date: string;
+      dayName: string;
+      dayNum: number;
+      isToday: boolean;
+      isPast: boolean;
+    };
+    const weeks: DayCell[][] = [];
+    for (let w = 0; w < TOTAL_WEEKS; w++) {
+      const row: DayCell[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart);
+        d.setDate(weekStart.getDate() + w * 7 + i);
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        row.push({
+          date: iso,
+          dayName: dayNamesMon[i],
+          dayNum: d.getDate(),
+          isToday: d.getTime() === today.getTime(),
+          isPast: d.getTime() < today.getTime(),
+        });
+      }
+      weeks.push(row);
     }
-    const fromIso = days[0].date;
-    const toIso = days[days.length - 1].date;
-    const todayIso = days[0].date;
+    const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const fromIso = weeks[0][0].date;
+    const toIso = weeks[weeks.length - 1][6].date;
 
     // Fetch calendar event list (with titles) — derive density client-side.
     const eventsByDay = new Map<string, CalEvent[]>();
@@ -7656,6 +7676,7 @@ function init() {
     // minutes drive the busyness % alongside calendar minutes.
     type DayTasks = { count: number; minutes: number; samples: typeof execLastTasks };
     const tasksByDay = new Map<string, DayTasks>();
+    const validDateSet = new Set(weeks.flatMap((row) => row.map((c) => c.date)));
     for (const task of execLastTasks) {
       if (task.id === taskId) continue;
       // v3.3 — back_burner excluded from the reschedule-picker per-day counts;
@@ -7668,7 +7689,7 @@ function init() {
       )
         continue;
       const dayKey = task.due_date ? task.due_date.slice(0, 10) : todayIso;
-      if (!days.some((d) => d.date === dayKey)) continue;
+      if (!validDateSet.has(dayKey)) continue;
       const minutes = typeof task.est_minutes === "number" ? task.est_minutes : 30;
       const entry = tasksByDay.get(dayKey) ?? { count: 0, minutes: 0, samples: [] };
       entry.count++;
@@ -7679,12 +7700,12 @@ function init() {
 
     const currentDue = t.due_date ? t.due_date.slice(0, 10) : null;
 
-    const buildCell = (d: {
-      date: string;
-      dayName: string;
-      dayNum: number;
-      isToday: boolean;
-    }): string => {
+    const buildCell = (d: DayCell): string => {
+      if (d.isPast) {
+        return `<div class="exec-rsch-cell exec-rsch-past" aria-disabled="true">
+          <div class="exec-rsch-day">${d.dayName} ${d.dayNum}</div>
+        </div>`;
+      }
       const events = eventsByDay.get(d.date) ?? [];
       const timedEvents = events.filter((ev) => !ev.all_day && ev.end_ts);
       const allDayEvents = events.filter((ev) => !!ev.all_day);
@@ -7769,8 +7790,39 @@ function init() {
       </button>`;
     };
 
-    const week1Html = days.slice(0, 7).map(buildCell).join("");
-    const week2Html = days.slice(7, 14).map(buildCell).join("");
+    const monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const weekBlocks: string[] = [];
+    let lastMonthKey = "";
+    weeks.forEach((row, weekIdx) => {
+      const monday = new Date(`${row[0].date}T00:00:00`);
+      const monthKey = `${monday.getFullYear()}-${monday.getMonth()}`;
+      if (monthKey !== lastMonthKey) {
+        weekBlocks.push(
+          `<div class="exec-rsch-month-label">${monthNames[monday.getMonth()]} ${monday.getFullYear()}</div>`,
+        );
+        lastMonthKey = monthKey;
+      }
+      const rowHtml = row.map(buildCell).join("");
+      const isCurrentWeek = row.some((c) => c.isToday);
+      weekBlocks.push(
+        `<div class="exec-rsch-row${isCurrentWeek ? " exec-rsch-row-current" : ""}" data-week-idx="${weekIdx}">${rowHtml}</div>`,
+      );
+    });
+
+    const dowHeader = dayNamesMon.map((n) => `<div class="exec-rsch-dow">${n}</div>`).join("");
 
     const overlay = document.createElement("div");
     overlay.className = "exec-rsch-backdrop";
@@ -7780,11 +7832,13 @@ function init() {
           <div class="exec-rsch-title">📅 Reschedule</div>
           <div class="exec-rsch-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</div>
           ${currentDue ? `<div class="exec-rsch-current-due">Currently due ${escapeHtml(currentDue)}</div>` : `<div class="exec-rsch-current-due">No due date set</div>`}
+          <div class="exec-rsch-jump">
+            <label for="exec-rsch-date-input">Jump to:</label>
+            <input id="exec-rsch-date-input" type="date" min="${todayIso}" max="${toIso}" />
+          </div>
         </div>
-        <div class="exec-rsch-week-label">This week</div>
-        <div class="exec-rsch-row">${week1Html}</div>
-        <div class="exec-rsch-week-label">Next week</div>
-        <div class="exec-rsch-row">${week2Html}</div>
+        <div class="exec-rsch-dow-row">${dowHeader}</div>
+        <div class="exec-rsch-scroll">${weekBlocks.join("")}</div>
         <div class="exec-rsch-footer">
           ${currentDue ? `<button class="exec-rsch-clear" data-action="clear">Clear due date</button>` : `<span></span>`}
           <button class="exec-rsch-cancel" data-action="cancel">Cancel</button>
@@ -7793,6 +7847,12 @@ function init() {
     `;
     document.body.appendChild(overlay);
     execReschedulePickerEl = overlay;
+
+    const scrollEl = overlay.querySelector<HTMLElement>(".exec-rsch-scroll");
+    const currentWeekEl = overlay.querySelector<HTMLElement>(".exec-rsch-row-current");
+    if (scrollEl && currentWeekEl) {
+      scrollEl.scrollTop = Math.max(0, currentWeekEl.offsetTop - 24);
+    }
 
     const finish = async (newDate: string | null): Promise<void> => {
       closeExecReschedulePicker();
@@ -7811,9 +7871,15 @@ function init() {
     };
 
     overlay.querySelectorAll<HTMLElement>(".exec-rsch-cell").forEach((cell) => {
+      if (cell.tagName !== "BUTTON" || !cell.dataset.date) return;
       cell.addEventListener("click", () => {
         void finish(cell.dataset.date ?? null);
       });
+    });
+    const dateInput = overlay.querySelector<HTMLInputElement>("#exec-rsch-date-input");
+    dateInput?.addEventListener("change", () => {
+      const v = dateInput.value;
+      if (v && v >= todayIso && v <= toIso) void finish(v);
     });
     overlay.querySelector('[data-action="clear"]')?.addEventListener("click", () => {
       void finish(null);
@@ -10196,11 +10262,19 @@ function init() {
     },
   ];
 
-  // FORK 2026-05-14 — Recipes tab lists BOTH built-in source kits AND
-  // downloaded kits via prefrontal.kit.list. Includes full-text search.
+  // FORK 2026-05-14 — Recipes tab lists built-in kits AND downloaded kits in a
+  // single unified category grouping. No "Downloaded kits" section. No owner attribution.
   async function renderRecipesTab(body: Element, sub: Element) {
     // ── Fetch downloaded kits (non-blocking — degrade gracefully) ──
-    type DownloadedKit = { kitRef: string; owner: string; slug: string; path: string };
+    type DownloadedKit = {
+      kitRef: string;
+      owner: string;
+      slug: string;
+      title: string;
+      summary: string;
+      tags: string[];
+      path: string;
+    };
     let downloadedKits: DownloadedKit[] = [];
     let downloadedErr = false;
     try {
@@ -10210,15 +10284,42 @@ function init() {
       downloadedErr = true;
     }
 
-    // ── Build grouped map for built-in kits ──
-    const grouped = new Map<string, Recipe[]>();
-    for (const r of RECIPE_CATALOG) {
-      const list = grouped.get(r.category) ?? [];
-      list.push(r);
-      grouped.set(r.category, list);
+    sub.textContent = `${RECIPE_CATALOG.length} built-in · ${downloadedKits.length} downloaded`;
+
+    // ── Category inference for downloaded kits ──
+    function inferCategoryFromTags(tags: string[]): string {
+      const lc = (tags ?? []).map((t) => t.toLowerCase());
+      const has = (...words: string[]) => words.some((w) => lc.some((t) => t.includes(w)));
+      if (has("code-review", "coding", "refactor", "tdd", "debug", "codebase")) return "coding";
+      if (has("research", "analysis", "investigation")) return "analysis";
+      if (has("security", "audit", "secure")) return "security";
+      if (
+        has("gateway", "cron", "monitoring", "orchestration", "deploy", "ops", "devops", "watchdog")
+      )
+        return "operations";
+      if (has("write", "writing", "paper", "manuscript", "edit", "summariz")) return "writing";
+      if (has("slack", "email", "discord", "telegram", "calendar", "whatsapp"))
+        return "communication";
+      return "operations"; // catch-all
     }
 
-    sub.textContent = `${RECIPE_CATALOG.length} built-in · ${downloadedKits.length} downloaded`;
+    // ── Build unified grouped map: built-in kits first, then downloaded ──
+    type UnifiedKit =
+      | { kind: "builtin"; recipe: Recipe }
+      | { kind: "downloaded"; kit: DownloadedKit };
+
+    const grouped = new Map<string, UnifiedKit[]>();
+    for (const r of RECIPE_CATALOG) {
+      const list = grouped.get(r.category) ?? [];
+      list.push({ kind: "builtin", recipe: r });
+      grouped.set(r.category, list);
+    }
+    for (const k of downloadedKits) {
+      const cat = inferCategoryFromTags(k.tags);
+      const list = grouped.get(cat) ?? [];
+      list.push({ kind: "downloaded", kit: k });
+      grouped.set(cat, list);
+    }
 
     // Helper: render a single recipe card HTML string.
     function recipeCardHtml(
@@ -10228,13 +10329,13 @@ function init() {
       summary: string,
       steps: string[],
       children?: Array<{ name: string; trigger: string }>,
-      sourceBadge?: string,
+      isExternal?: boolean,
     ): string {
       let h = `<div class="recipe-card" data-recipe-file="${altEsc(filePath)}" title="Click to open kit.md">`;
       h += `<div class="recipe-card-header">`;
       h += `<span class="recipe-name">${altEsc(name)}</span>`;
-      if (sourceBadge) {
-        h += `<span class="recipe-source-badge">${altEsc(sourceBadge)}</span>`;
+      if (isExternal) {
+        h += `<span class="recipe-kit-external" title="Downloaded kit">↗</span>`;
       }
       h += `<span class="recipe-trigger">${altEsc(trigger)}</span>`;
       h += `</div>`;
@@ -10267,76 +10368,63 @@ function init() {
 
       let html = '<div class="recipes-view">';
 
-      // ── Section 1: Our source kits ──
-      html += `<div class="recipe-section-header">Our kits <span class="recipe-section-path">(${altEsc(RECIPE_BASE)})</span></div>`;
-      let ourCount = 0;
+      if (downloadedErr) {
+        html += `<div class="recipe-no-results" style="color:#f59e0b;margin-bottom:6px">prefrontal.kit.list unavailable — downloaded kits not shown</div>`;
+      }
+
+      let totalVisible = 0;
       for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
-        const recipes = (grouped.get(catKey) ?? []).filter((r) => {
+        const allInCat = grouped.get(catKey) ?? [];
+        const items = allInCat.filter((u) => {
           if (!ql) return true;
-          return (
-            r.name.toLowerCase().includes(ql) ||
-            r.id.toLowerCase().includes(ql) ||
-            (r.trigger ?? "").toLowerCase().includes(ql) ||
-            (r.summary ?? "").toLowerCase().includes(ql) ||
-            r.steps.some((s) => s.toLowerCase().includes(ql))
-          );
+          if (u.kind === "builtin") {
+            const r = u.recipe;
+            return (
+              r.name.toLowerCase().includes(ql) ||
+              r.id.toLowerCase().includes(ql) ||
+              (r.trigger ?? "").toLowerCase().includes(ql) ||
+              (r.summary ?? "").toLowerCase().includes(ql) ||
+              r.steps.some((s) => s.toLowerCase().includes(ql))
+            );
+          } else {
+            const k = u.kit;
+            return (
+              k.title.toLowerCase().includes(ql) ||
+              k.slug.toLowerCase().includes(ql) ||
+              k.summary.toLowerCase().includes(ql) ||
+              k.tags.some((t) => t.toLowerCase().includes(ql))
+            );
+          }
         });
-        if (!recipes.length) continue;
-        ourCount += recipes.length;
+        if (!items.length) continue;
+        totalVisible += items.length;
         html += `<div class="recipe-category" style="--cat-color:${cat.color}">`;
         html += `<div class="recipe-cat-header">`;
         html += `<span class="recipe-cat-icon">${cat.icon}</span>`;
         html += `<span class="recipe-cat-label">${cat.label}</span>`;
-        html += `<span class="recipe-cat-count">${recipes.length}</span>`;
+        html += `<span class="recipe-cat-count">${items.length}</span>`;
         html += `</div><div class="recipe-cat-items">`;
-        for (const r of recipes) {
-          html += recipeCardHtml(
-            `${RECIPE_BASE}/${r.id}/kit.md`,
-            r.name,
-            r.trigger,
-            r.summary,
-            r.steps,
-            r.children,
-          );
+        for (const u of items) {
+          if (u.kind === "builtin") {
+            const r = u.recipe;
+            html += recipeCardHtml(
+              `${RECIPE_BASE}/${r.id}/kit.md`,
+              r.name,
+              r.trigger,
+              r.summary,
+              r.steps,
+              r.children,
+              false,
+            );
+          } else {
+            const k = u.kit;
+            html += recipeCardHtml(k.path, k.title, k.slug, k.summary, [], undefined, true);
+          }
         }
         html += `</div></div>`;
       }
-      if (ourCount === 0 && ql) {
-        html += `<div class="recipe-no-results">No built-in kits match "${altEsc(ql)}"</div>`;
-      }
-
-      // ── Section 2: Downloaded kits ──
-      html += `<div class="recipe-section-header" style="margin-top:1.2rem">Downloaded kits <span class="recipe-section-path">(~/.openclaw/workspace/kits/)</span></div>`;
-      if (downloadedErr) {
-        html += `<div class="recipe-no-results" style="color:#f59e0b">prefrontal.kit.list unavailable — gateway may not be running</div>`;
-      } else if (downloadedKits.length === 0) {
-        html += `<div class="recipe-no-results">No downloaded kits yet. Use the <code>journey:install-kit</code> skill to install from the Journey registry.</div>`;
-      } else {
-        const filtered = downloadedKits.filter((k) => {
-          if (!ql) return true;
-          return (
-            k.slug.toLowerCase().includes(ql) ||
-            k.owner.toLowerCase().includes(ql) ||
-            k.kitRef.toLowerCase().includes(ql)
-          );
-        });
-        if (filtered.length === 0 && ql) {
-          html += `<div class="recipe-no-results">No downloaded kits match "${altEsc(ql)}"</div>`;
-        } else {
-          html += `<div class="recipe-cat-items">`;
-          for (const k of filtered) {
-            html += recipeCardHtml(
-              k.path,
-              k.slug,
-              k.kitRef,
-              `Downloaded kit by ${altEsc(k.owner)}`,
-              [],
-              undefined,
-              k.owner,
-            );
-          }
-          html += `</div>`;
-        }
+      if (totalVisible === 0 && ql) {
+        html += `<div class="recipe-no-results">No kits match "${altEsc(ql)}"</div>`;
       }
 
       html += `</div>`;
