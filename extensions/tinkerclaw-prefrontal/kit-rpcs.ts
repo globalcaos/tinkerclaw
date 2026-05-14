@@ -1,5 +1,6 @@
 import Ajv from "ajv";
 import { fetch as undiciFetch } from "undici";
+import { parse as parseYaml } from "yaml";
 import {
   PrefrontalKitSearchParamsSchema,
   PrefrontalKitGetParamsSchema,
@@ -125,18 +126,15 @@ export function createKitRpcs(deps: KitRpcsDeps) {
             const kitMdText = await fsP.readFile(e.path, "utf-8");
             const fm = /^---\n([\s\S]+?)\n---/.exec(kitMdText);
             if (fm) {
-              const block = fm[1];
-              const tM = /^title:\s*(.+)$/m.exec(block);
-              if (tM) title = tM[1].trim().replace(/^['"]|['"]$/g, "");
-              const sM = /^summary:\s*(.+)$/m.exec(block);
-              if (sM) summary = sM[1].trim().replace(/^['"]|['"]$/g, "");
-              // Multi-line summary (folded block scalar starting next line)
-              if (!summary) {
-                const sBlock = /^summary:\s*>\-?\n((?:[ \t]+.+\n?)+)/m.exec(block);
-                if (sBlock) summary = sBlock[1].replace(/^[ \t]+/gm, "").trim();
+              const parsed = parseYaml(fm[1]) as Record<string, unknown> | null;
+              if (parsed && typeof parsed === "object") {
+                if (typeof parsed.title === "string") title = parsed.title;
+                if (typeof parsed.summary === "string") summary = parsed.summary;
+                if (Array.isArray(parsed.tags))
+                  tags = (parsed.tags as unknown[]).filter(
+                    (t) => typeof t === "string",
+                  ) as string[];
               }
-              const tagsM = block.match(/^  - (.+)$/gm);
-              if (tagsM) tags = tagsM.map((l) => l.replace(/^\s+-\s+/, "").trim());
             }
           } catch {
             // frontmatter parse failure — fall back to slug/empty

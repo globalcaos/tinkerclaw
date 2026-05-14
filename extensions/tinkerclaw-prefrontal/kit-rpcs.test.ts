@@ -199,6 +199,30 @@ describe("kit-rpcs", () => {
     expect(res.kits.find((k) => k.kitRef === "globalcaos/feature")).toBeTruthy();
   });
 
+  it("parses YAML block scalar summary correctly", async () => {
+    await store.writeKitFiles({
+      owner: "test",
+      slug: "block-scalar",
+      files: [
+        {
+          path: "kit.md",
+          content:
+            "---\nschema: kit/1.0\nslug: block-scalar\ntitle: Block Scalar\nsummary: >-\n  Line one of summary\n  continues here.\nversion: 1.0.0\n---\n# body\n",
+        },
+      ],
+    });
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.kit.list"]({});
+    const kit = res.kits.find((k) => k.slug === "block-scalar");
+    expect(kit?.summary).toBe("Line one of summary continues here.");
+  });
+
   it("prefrontal.kit.publish requires apiKey", async () => {
     const rpcs = createKitRpcs({
       store,

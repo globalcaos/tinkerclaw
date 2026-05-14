@@ -6999,8 +6999,19 @@ function init() {
         // in play, they're the user's "don't show me but don't forget" pile.
         return t.status !== "back_burner";
       case "all_today":
-      default:
-        return t.status !== "dismissed" && t.status !== "dropped" && t.status !== "back_burner";
+      default: {
+        // FORK 2026-05-14 — "All today" means tasks for today's plate:
+        // overdue, due today, or undated. A task rescheduled to a future
+        // date must drop out of this list, otherwise the chip is identical
+        // to "All" minus snoozed.
+        if (t.status === "dismissed" || t.status === "dropped" || t.status === "back_burner") {
+          return false;
+        }
+        if (!t.due_date) return true;
+        const now = new Date();
+        const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        return t.due_date.slice(0, 10) <= todayIso;
+      }
     }
   }
 
@@ -7478,7 +7489,7 @@ function init() {
           ${
             t.status === "back_burner"
               ? `<button class="exec-task-action exec-task-action-primary" data-action="bring-back">↩ Bring back</button>`
-              : `<button class="exec-task-action" data-action="snooze-indef">💤 Snooze indefinitely</button>`
+              : `<button class="exec-task-action" data-action="snooze-tomorrow">💤 Snooze until tomorrow</button>`
           }
           <button class="exec-task-action exec-task-action-warn" data-action="delete">🗑 Delete</button>
           <button class="exec-task-action" data-action="open-in-chat">💬 Open in chat</button>
@@ -8013,7 +8024,7 @@ function init() {
       ${
         t.status === "back_burner"
           ? `<button data-action="bring-back" class="exec-context-item">↩ Bring back</button>`
-          : `<button data-action="snooze-indef" class="exec-context-item">💤 Snooze indefinitely</button>`
+          : `<button data-action="snooze-tomorrow" class="exec-context-item">💤 Snooze until tomorrow</button>`
       }
       <div class="exec-context-sep"></div>
       <button data-action="delete" class="exec-context-item exec-context-item-warn">🗑 Delete</button>
@@ -10403,14 +10414,6 @@ function init() {
         h += `<div class="recipe-summary">${altEsc(summary.trim())}</div>`;
       } else {
         h += `<div class="recipe-summary-placeholder">(no summary in kit.md)</div>`;
-      }
-      if (steps.length) {
-        h += `<div class="recipe-steps">`;
-        steps.forEach((s, i) => {
-          if (i > 0) h += `<span class="recipe-step-arrow">→</span>`;
-          h += `<span class="recipe-step">${altEsc(s)}</span>`;
-        });
-        h += `</div>`;
       }
       if (children?.length) {
         h += `<div class="recipe-children">`;
