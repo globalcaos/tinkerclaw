@@ -3357,6 +3357,62 @@ code.fs-link.fs-link-error {
   font-style: italic;
 }
 
+/* ─── Recipes tab: search + source sections (FORK 2026-05-14) ─── */
+.recipe-search-row {
+  padding: 12px 16px 4px;
+  position: sticky;
+  top: 0;
+  background: var(--surface, #1a1a1f);
+  z-index: 2;
+  border-bottom: 1px solid rgba(193,154,107,0.12);
+}
+.recipe-search-input {
+  width: 100%;
+  background: #2a2318;
+  border: 1px solid rgba(193,154,107,0.25);
+  border-radius: 5px;
+  color: #e8e0d4;
+  font-size: 12px;
+  padding: 5px 10px;
+  outline: none;
+  box-sizing: border-box;
+}
+.recipe-search-input::placeholder { color: #6b5a48; }
+.recipe-search-input:focus { border-color: rgba(193,154,107,0.5); }
+.recipe-section-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #c19a6b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 0 2px;
+  border-bottom: 1px solid rgba(193,154,107,0.12);
+  margin-bottom: 6px;
+}
+.recipe-section-path {
+  font-size: 10px;
+  font-weight: 400;
+  color: #7a6e5e;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+.recipe-no-results {
+  font-size: 11px;
+  color: #7a6e5e;
+  font-style: italic;
+  padding: 6px 2px;
+}
+.recipe-source-badge {
+  font-size: 10px;
+  color: #c19a6b;
+  background: rgba(193,154,107,0.1);
+  border: 1px solid rgba(193,154,107,0.22);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+}
+
 /* ─── Prefrontal Panel ─── */
 .pf-tree-panel {
   background: url("./wood-panel.jpg") repeat;
@@ -4734,4 +4790,22 @@ code.fs-link.fs-link-error {
 .exec-add-save:hover {
   background: #ff6b3d;
   color: #16161a;
+}
+
+/* ─── Prefrontal plan-board — synthetic + idle variants (FORK 2026-05-14) ─── */
+/* The full .pf-plan family is defined in prefrontal-tree.ts embedded styles.
+   These extra classes are here so they can be overridden from base.css without
+   touching the TS file. */
+.pf-plan-synthetic {
+  border-style: dashed;
+  border-color: #4a4a4a;
+  opacity: 0.92;
+}
+.pf-plan-synthetic .pf-plan-header {
+  font-style: italic;
+}
+.pf-plan-idle {
+  color: #666;
+  font-size: 0.9em;
+  padding: 6px 8px;
 }
