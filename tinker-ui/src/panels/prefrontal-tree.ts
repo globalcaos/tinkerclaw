@@ -174,77 +174,142 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     return fmtDuration(Math.max(0, Math.round(ms / 1000)));
   }
 
-  // FORK 2026-05-13 — Current Plan section (Phase 2 plan-board).
-  // Returns an HTMLElement (or null when there is no active plan).
-  function renderPlanSection(plan: PanelPlan | null): HTMLElement | null {
-    if (!plan || plan.status !== "in_progress") return null;
-
+  // FORK 2026-05-14 — Current Plan section (panels.md "always active" contract).
+  // Returns an HTMLElement always — never null.
+  // Priority: (1) explicit plan in_progress, (2) synthetic 2-step from live tree,
+  // (3) idle line. No blank state ever.
+  function renderPlanSection(plan: PanelPlan | null, tree: TreeResponse): HTMLElement {
     const now = new Date().toISOString();
-    const section = el("div", "pf-plan");
 
-    // Header: "▼ Current Plan — «intent»" with total elapsed on the right.
-    const header = el("div", "pf-plan-header");
-    const totalEl = el("span", "pf-plan-total");
-    totalEl.textContent = elapsedIso(plan.started, now);
-    header.appendChild(totalEl);
-    const headerText = document.createTextNode(`▼ Current Plan — "${plan.intent}"`);
-    header.insertBefore(headerText, totalEl);
-    section.appendChild(header);
+    // ── Priority 1: explicit plan ────────────────────────────────────────────
+    if (plan && plan.status === "in_progress") {
+      const section = el("div", "pf-plan");
 
-    // Kit row (optional).
-    if (plan.kitRef) {
-      const kitRow = el("div", "pf-plan-kit");
-      kitRow.textContent = `kit: ${plan.kitRef}`;
-      section.appendChild(kitRow);
+      // Header: "▼ Current Plan — «intent»" with total elapsed on the right.
+      const header = el("div", "pf-plan-header");
+      const totalEl = el("span", "pf-plan-total");
+      totalEl.textContent = elapsedIso(plan.started, now);
+      header.appendChild(totalEl);
+      const headerText = document.createTextNode(`▼ Current Plan — "${plan.intent}"`);
+      header.insertBefore(headerText, totalEl);
+      section.appendChild(header);
+
+      // Kit row (optional).
+      if (plan.kitRef) {
+        const kitRow = el("div", "pf-plan-kit");
+        kitRow.textContent = `kit: ${plan.kitRef}`;
+        section.appendChild(kitRow);
+      }
+
+      // Step rows.
+      plan.steps.forEach((s, i) => {
+        const stepEl = el("div", `pf-step pf-step-${s.status}`);
+
+        const marker =
+          s.status === "done"
+            ? "✓"
+            : s.status === "in_progress"
+              ? "▶"
+              : s.status === "error"
+                ? "✗"
+                : "○";
+
+        // Time: completed steps show duration; in-progress shows running time.
+        if (s.completedAt && s.startedAt) {
+          const timeEl = el("span", "pf-step-time");
+          timeEl.textContent = elapsedIso(s.startedAt, s.completedAt);
+          stepEl.appendChild(timeEl);
+        } else if (s.startedAt && s.status === "in_progress") {
+          const timeEl = el("span", "pf-step-time");
+          timeEl.textContent = elapsedIso(s.startedAt, now);
+          stepEl.appendChild(timeEl);
+        }
+
+        const titleEl = document.createTextNode(`${marker} `);
+        stepEl.insertBefore(titleEl, stepEl.firstChild);
+        const bold = document.createElement("strong");
+        bold.textContent = `${i}. ${s.title}`;
+        stepEl.insertBefore(bold, stepEl.firstChild?.nextSibling ?? null);
+
+        if (s.note) {
+          const note = s.note.length > 80 ? `${s.note.slice(0, 79)}…` : s.note;
+          const noteEl = el("span", "pf-step-note");
+          noteEl.textContent = ` · ${note}`;
+          // Insert note before the time element (which is already appended).
+          const timeEl = stepEl.querySelector(".pf-step-time");
+          if (timeEl) {
+            stepEl.insertBefore(noteEl, timeEl);
+          } else {
+            stepEl.appendChild(noteEl);
+          }
+        }
+
+        section.appendChild(stepEl);
+      });
+
+      return section;
     }
 
-    // Step rows.
-    plan.steps.forEach((s, i) => {
-      const stepEl = el("div", `pf-step pf-step-${s.status}`);
+    // ── Priority 2: synthetic 2-step plan from live tree ─────────────────────
+    if (tree.active && tree.root) {
+      const root = tree.root;
+      const section = el("div", "pf-plan pf-plan-synthetic");
 
-      const marker =
-        s.status === "done"
-          ? "✓"
-          : s.status === "in_progress"
-            ? "▶"
-            : s.status === "error"
-              ? "✗"
-              : "○";
+      // Header: "▼ Current Plan — «model»" with lastEventAge as elapsed.
+      const header = el("div", "pf-plan-header");
+      const ageEl = el("span", "pf-plan-total");
+      ageEl.textContent = fmtDuration(Math.max(0, root.lastEventAge));
+      header.appendChild(ageEl);
+      const headerText = document.createTextNode(`▼ Current Plan — "${root.model}"`);
+      header.insertBefore(headerText, ageEl);
+      section.appendChild(header);
 
-      // Time: completed steps show duration; in-progress shows running time.
-      if (s.completedAt && s.startedAt) {
-        const timeEl = el("span", "pf-step-time");
-        timeEl.textContent = elapsedIso(s.startedAt, s.completedAt);
-        stepEl.appendChild(timeEl);
-      } else if (s.startedAt && s.status === "in_progress") {
-        const timeEl = el("span", "pf-step-time");
-        timeEl.textContent = elapsedIso(s.startedAt, now);
-        stepEl.appendChild(timeEl);
-      }
+      // Determine phase from root status string.
+      // "thinking" / "reflecting" → thinking step in_progress, doing step pending.
+      // Any tool call or text delta ("tool: *", "responding", "final", "completed") → thinking done, doing in_progress or done.
+      const statusLow = (root.status ?? "").toLowerCase();
+      const isFinal =
+        root.status === "completed" || root.status === "final" || statusLow.includes("final");
+      const isDoingPhase =
+        isFinal ||
+        statusLow.startsWith("tool:") ||
+        statusLow === "responding" ||
+        statusLow === "reflecting";
+      // "reflecting" is ambiguous — treat it as doing because a tool/text has fired.
 
-      const titleEl = document.createTextNode(`${marker} `);
-      stepEl.insertBefore(titleEl, stepEl.firstChild);
-      const bold = document.createElement("strong");
-      bold.textContent = `${i}. ${s.title}`;
-      stepEl.insertBefore(bold, stepEl.firstChild?.nextSibling ?? null);
+      const thinkingStatus = isDoingPhase ? "done" : "in_progress";
+      const doingStatus = isFinal ? "done" : isDoingPhase ? "in_progress" : "pending";
 
-      if (s.note) {
-        const note = s.note.length > 80 ? `${s.note.slice(0, 79)}…` : s.note;
+      const thinkingMarker = thinkingStatus === "done" ? "✓" : "▶";
+      const doingMarker = doingStatus === "done" ? "✓" : doingStatus === "in_progress" ? "▶" : "○";
+
+      const thinkingEl = el("div", `pf-step pf-step-${thinkingStatus}`);
+      const thinkingBold = document.createElement("strong");
+      thinkingBold.textContent = "Thinking";
+      thinkingEl.appendChild(document.createTextNode(`${thinkingMarker} `));
+      thinkingEl.appendChild(thinkingBold);
+      section.appendChild(thinkingEl);
+
+      const doingEl = el("div", `pf-step pf-step-${doingStatus}`);
+      const doingBold = document.createElement("strong");
+      doingBold.textContent = "Doing";
+      doingEl.appendChild(document.createTextNode(`${doingMarker} `));
+      doingEl.appendChild(doingBold);
+      // Show current status as a note on the doing step when active
+      if (doingStatus === "in_progress" && root.status) {
         const noteEl = el("span", "pf-step-note");
-        noteEl.textContent = ` · ${note}`;
-        // Insert note before the time element (which is already appended).
-        const timeEl = stepEl.querySelector(".pf-step-time");
-        if (timeEl) {
-          stepEl.insertBefore(noteEl, timeEl);
-        } else {
-          stepEl.appendChild(noteEl);
-        }
+        noteEl.textContent = ` · ${root.status}`;
+        doingEl.appendChild(noteEl);
       }
+      section.appendChild(doingEl);
 
-      section.appendChild(stepEl);
-    });
+      return section;
+    }
 
-    return section;
+    // ── Priority 3: idle ─────────────────────────────────────────────────────
+    const idleLine = el("div", "pf-plan-idle");
+    idleLine.textContent = "○ Idle — waiting for the next turn";
+    return idleLine;
   }
 
   function render(): void {
@@ -271,14 +336,13 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const trail = currentState?.trail ?? [];
     const plan = currentState?.plan ?? null;
 
-    // ─── Current Plan (FORK 2026-05-13) ─────────────────────
-    const planSection = renderPlanSection(plan);
-    if (planSection) {
-      card.appendChild(planSection);
-    }
+    // ─── Current Plan (FORK 2026-05-14 — always renders per panels.md) ──────
+    card.appendChild(renderPlanSection(plan, tree));
 
-    // ─── Recipe header ──────────────────────────────────────
-    card.appendChild(renderRecipeHeader(recipe));
+    // ─── Recipe header (only when a recipe is active) ────────────────────────
+    if (recipe) {
+      card.appendChild(renderRecipeHeader(recipe));
+    }
 
     // ─── Tree block (recursive) ─────────────────────────────
     if (!tree.active || !tree.root) {
@@ -387,15 +451,10 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     });
   }
 
-  function renderRecipeHeader(recipe: RecipeState | null): HTMLElement {
+  // FORK 2026-05-14: caller now gates recipe rendering — only called when recipe
+  // is non-null. The "no active recipe" idle text has been removed per panels.md.
+  function renderRecipeHeader(recipe: RecipeState): HTMLElement {
     const bar = el("div", "pf-recipe-bar");
-
-    if (!recipe) {
-      const idle = el("span", "pf-recipe-idle");
-      idle.textContent = "no active recipe";
-      bar.appendChild(idle);
-      return bar;
-    }
 
     const icon = el("span", "pf-recipe-icon");
     icon.textContent = "🕸";
@@ -860,6 +919,80 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       }
       .pf-progress-fill { height: 100%; border-radius: 2px; transition: width 0.25s; }
       .pf-pct { font-size: 0.6rem; min-width: 28px; text-align: right; }
+
+      /* ─── Plan board (FORK 2026-05-13/14) ─── */
+      .pf-plan {
+        display: flex; flex-direction: column; gap: 0.28rem;
+        padding: 0.4rem 0.5rem;
+        background: rgba(0,0,0,0.18);
+        border: 1px solid rgba(193, 154, 107, 0.3);
+        border-radius: 7px;
+        font-size: 0.72rem;
+      }
+      .pf-plan-synthetic {
+        border-style: dashed;
+        border-color: #4a4a4a;
+        opacity: 0.92;
+      }
+      .pf-plan-synthetic .pf-plan-header {
+        font-style: italic;
+      }
+      .pf-plan-idle {
+        color: #666;
+        font-size: 0.9em;
+        padding: 6px 8px;
+      }
+      .pf-plan-header {
+        display: flex; align-items: center; justify-content: space-between;
+        color: #e8cc93;
+        font-size: 0.72rem;
+        font-weight: 700;
+        gap: 0.4rem;
+      }
+      .pf-plan-total {
+        color: #b8a593;
+        font-family: ui-monospace, "Courier New", monospace;
+        font-size: 0.65rem;
+        min-width: 3ch; text-align: right;
+        flex-shrink: 0;
+      }
+      .pf-plan-kit {
+        color: #d4a574;
+        font-size: 0.65rem; font-style: italic;
+        padding-left: 0.2rem;
+      }
+      .pf-step {
+        display: flex; align-items: baseline; gap: 0.3rem;
+        padding: 0.18rem 0.3rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+      }
+      .pf-step-done {
+        color: #7ed77a; opacity: 0.8;
+      }
+      .pf-step-in_progress {
+        color: #e8d4b0;
+        background: rgba(0,0,0,0.15);
+      }
+      .pf-step-pending {
+        color: #a89080;
+      }
+      .pf-step-error {
+        color: #ff8a82;
+      }
+      .pf-step-time {
+        color: #b8a593;
+        font-family: ui-monospace, "Courier New", monospace;
+        font-size: 0.64rem;
+        margin-left: auto;
+        flex-shrink: 0;
+        min-width: 3ch; text-align: right;
+      }
+      .pf-step-note {
+        color: #c9b8a0;
+        font-style: italic;
+        font-size: 0.67rem;
+      }
 
       /* ─── Trail ─── */
       .pf-trail {
