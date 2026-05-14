@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { MockAgent, setGlobalDispatcher, getGlobalDispatcher, type Dispatcher } from "undici";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createKitRpcs } from "./kit-rpcs.js";
+import { createKitRpcs, inferCategory, parseKitMd } from "./kit-rpcs.js";
 import { KitStore } from "./kit-store.js";
 
 describe("kit-rpcs", () => {
@@ -264,5 +264,163 @@ describe("kit-rpcs", () => {
     const res = await rpcs["prefrontal.kit.publish"]({ slug: "feature", visibility: "public" });
     expect(res.ok).toBe(true);
     expect(res.url).toContain("globalcaos/feature");
+  });
+
+  // ─── inferCategory tests ────────────────────────────────────────────────
+
+  it("inferCategory: explicit category field wins over tags", () => {
+    expect(inferCategory({ category: "security", tags: ["coding", "refactor"] })).toBe("security");
+  });
+
+  it("inferCategory: first tag that exactly matches canonical wins", () => {
+    expect(inferCategory({ tags: ["coding", "debug"] })).toBe("coding");
+    expect(inferCategory({ tags: ["writing", "paper"] })).toBe("writing");
+    expect(inferCategory({ tags: ["communication", "slack"] })).toBe("communication");
+    expect(inferCategory({ tags: ["analysis", "research"] })).toBe("analysis");
+    expect(inferCategory({ tags: ["operations", "cron"] })).toBe("operations");
+    expect(inferCategory({ tags: ["security", "audit"] })).toBe("security");
+  });
+
+  it("inferCategory: pattern-match fallback for coding keywords", () => {
+    expect(inferCategory({ tags: ["code-review", "tdd"] })).toBe("coding");
+    expect(inferCategory({ tags: ["refactor"] })).toBe("coding");
+  });
+
+  it("inferCategory: pattern-match fallback for analysis keywords", () => {
+    expect(inferCategory({ tags: ["research", "findings"] })).toBe("analysis");
+  });
+
+  it("inferCategory: pattern-match fallback for operations keywords", () => {
+    expect(inferCategory({ tags: ["watchdog", "monitoring"] })).toBe("operations");
+    expect(inferCategory({ tags: ["gateway", "cron"] })).toBe("operations");
+  });
+
+  it("inferCategory: falls back to operations when no match", () => {
+    expect(inferCategory({ tags: ["unknown-tag", "xyz"] })).toBe("operations");
+    expect(inferCategory({})).toBe("operations");
+  });
+
+  // ─── parseKitMd tests ───────────────────────────────────────────────────
+
+  it("parseKitMd: parses slug, title, summary, tags, category from frontmatter", async () => {
+    const kitPath = path.join(ownKitsDir, "my-kit", "kit.md");
+    fs.mkdirSync(path.dirname(kitPath), { recursive: true });
+    fs.writeFileSync(
+      kitPath,
+      '---\nschema: "kit/1.0"\nslug: "my-kit"\ntitle: "My Kit"\nsummary: "Does something"\ntags: ["coding", "debug"]\n---\n# body\n',
+      "utf-8",
+    );
+    const parsed = await parseKitMd(kitPath);
+    expect(parsed.slug).toBe("my-kit");
+    expect(parsed.title).toBe("My Kit");
+    expect(parsed.summary).toBe("Does something");
+    expect(parsed.tags).toContain("coding");
+    expect(parsed.category).toBe("coding");
+  });
+
+  it("parseKitMd: derives category via inferCategory (first canonical tag)", async () => {
+    const kitPath = path.join(ownKitsDir, "comms-kit", "kit.md");
+    fs.mkdirSync(path.dirname(kitPath), { recursive: true });
+    fs.writeFileSync(
+      kitPath,
+      '---\nschema: "kit/1.0"\nslug: "comms-kit"\ntitle: "Comms"\nsummary: ""\ntags: ["communication", "email"]\n---\n',
+      "utf-8",
+    );
+    const parsed = await parseKitMd(kitPath);
+    expect(parsed.category).toBe("communication");
+  });
+
+  it("parseKitMd: falls back gracefully when kit.md has no frontmatter", async () => {
+    const kitPath = path.join(ownKitsDir, "bare-kit", "kit.md");
+    fs.mkdirSync(path.dirname(kitPath), { recursive: true });
+    fs.writeFileSync(kitPath, "# Just a body\n", "utf-8");
+    const parsed = await parseKitMd(kitPath);
+    expect(parsed.slug).toBe("bare-kit"); // falls back to dirname
+    expect(parsed.category).toBe("operations"); // catch-all
+  });
+
+  // ─── kit.list: source=ours + combined list ──────────────────────────────
+
+  it("prefrontal.kit.list includes source-tree kits with source:'ours'", async () => {
+    fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ownKitsDir, "debug", "kit.md"),
+      '---\nschema: "kit/1.0"\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "Systematic debug"\ntags: ["coding"]\n---\n',
+      "utf-8",
+    );
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.kit.list"]({});
+    const kit = res.kits.find((k) => k.slug === "debug");
+    expect(kit).toBeTruthy();
+    expect(kit?.source).toBe("ours");
+    expect(kit?.owner).toBe("globalcaos");
+    expect(kit?.category).toBe("coding");
+  });
+
+  it("prefrontal.kit.list combines ours + downloaded, ours appear first", async () => {
+    // Set up one own kit
+    fs.mkdirSync(path.join(ownKitsDir, "own-kit"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ownKitsDir, "own-kit", "kit.md"),
+      '---\nschema: "kit/1.0"\nslug: "own-kit"\ntitle: "Own Kit"\nsummary: ""\ntags: ["coding"]\n---\n',
+      "utf-8",
+    );
+    // Set up one downloaded kit
+    await store.writeKitFiles({
+      owner: "someone",
+      slug: "dl-kit",
+      files: [
+        {
+          path: "kit.md",
+          content:
+            '---\nschema: "kit/1.0"\nslug: "dl-kit"\ntitle: "DL Kit"\nsummary: ""\ntags: ["analysis"]\n---\n',
+        },
+      ],
+    });
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.kit.list"]({});
+    const ownIdx = res.kits.findIndex((k) => k.slug === "own-kit");
+    const dlIdx = res.kits.findIndex((k) => k.slug === "dl-kit");
+    expect(ownIdx).toBeGreaterThanOrEqual(0);
+    expect(dlIdx).toBeGreaterThanOrEqual(0);
+    expect(ownIdx).toBeLessThan(dlIdx); // ours before downloaded
+    expect(res.kits[ownIdx].source).toBe("ours");
+    expect(res.kits[dlIdx].source).toBe("downloaded");
+  });
+
+  it("prefrontal.kit.list kit items include category field", async () => {
+    await store.writeKitFiles({
+      owner: "globalcaos",
+      slug: "feature",
+      files: [
+        {
+          path: "kit.md",
+          content:
+            '---\nschema: "kit/1.0"\nslug: "feature"\ntitle: "Feature"\nsummary: ""\ntags: ["coding"]\n---\n',
+        },
+      ],
+    });
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.kit.list"]({});
+    const kit = res.kits.find((k) => k.slug === "feature");
+    expect(kit?.category).toBe("coding");
   });
 });
