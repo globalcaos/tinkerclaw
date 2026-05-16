@@ -69,6 +69,7 @@ import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./explor
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
+import { seedPlanFromPrompt } from "./kit-matcher.js";
 import { createKitRpcs } from "./kit-rpcs.js";
 import { KitStore } from "./kit-store.js";
 import { createPermissionHooks } from "./permission-hooks.js";
@@ -745,6 +746,53 @@ export default function register(api: OpenClawPluginApi) {
     });
   }
   log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
+
+  // ── Kit-matcher: auto-seed a plan at turn start (FORK 2026-05-16) ──
+  // The "smart router" matching half. Fires on every real user turn to the
+  // main session, scores the prompt against the local kit catalog, and
+  // (when matched) seeds a merged plan so restart-continue can resume it and
+  // the prefrontal panel shows real steps. No match → WARN recipe-gap signal
+  // + the implicit 2-step panel takes over. Registered as a second
+  // before_prompt_build hook (separate concern from the anti-goldplating
+  // one at priority 40) — runs at lower priority so prompt-context plugins
+  // settle first; it mutates plan-store, not the prompt.
+  api.on(
+    "before_prompt_build",
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
+    async (event: any, ctx: any) => {
+      try {
+        const sessionKey: string = ctx?.sessionKey ?? "";
+        const trigger: string = ctx?.trigger ?? "";
+        // Only the user's primary chat turn. Skip subagents, heartbeats,
+        // cron, and any non-main session — those must not seed the main
+        // plan (and kit-runner's own subagents would recurse).
+        if (
+          !sessionKey ||
+          sessionKey.includes(":subagent:") ||
+          !sessionKey.endsWith(":main") ||
+          trigger === "heartbeat" ||
+          trigger === "cron"
+        ) {
+          return {};
+        }
+        const prompt: string = typeof event?.prompt === "string" ? event.prompt : "";
+        if (!prompt.trim()) return {};
+        await seedPlanFromPrompt({
+          prompt,
+          sessionKey,
+          runId: ctx?.runId ?? "",
+          ownKitsDir,
+          planStore,
+          log,
+        });
+      } catch (err) {
+        log.warn?.(`[kit-matcher] before_prompt_build failed: ${String(err)}`);
+      }
+      // Never mutate the prompt — plan-store side-effect only.
+      return {};
+    },
+    { priority: 20 },
+  );
 
   // ── Kit store + RPCs (FORK 2026-05-13, Phase 6) ──
   const kitStore = new KitStore({ rootDir: kitInstallSandbox });
