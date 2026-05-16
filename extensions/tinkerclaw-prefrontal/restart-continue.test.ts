@@ -117,6 +117,28 @@ describe("restart-continue", () => {
     expect(call.params.message).toContain("Step 0: Reproduce");
   });
 
+  // FORK 2026-05-16: hand smoke tests of prefrontal.plan.set leave plan
+  // files with sessionKey `test:plan:<ts>` (intent "verify", steps a/b) in
+  // the live plans dir. They were never closed, so restart-continue resumed
+  // one on EVERY gateway restart, dispatching a [System] continue for
+  // nonexistent work. Only `agent:` session keys are resumable.
+  it("skips non-agent sessionKeys (leftover test/smoke fixtures)", async () => {
+    await store.set({
+      sessionKey: "test:plan:1778755051690",
+      intent: "verify",
+      runId: "v1",
+      steps: [{ title: "a" }, { title: "b" }],
+    });
+    await runRestartContinue({
+      store,
+      gatewayCall: async (m, p) => {
+        chatSendCalls.push({ method: m, params: p as any });
+        return { runId: "ack" };
+      },
+    });
+    expect(sends()).toHaveLength(0);
+  });
+
   it("debounces same sessionKey within 30s window", async () => {
     await store.set({
       sessionKey: "agent:main:main",
