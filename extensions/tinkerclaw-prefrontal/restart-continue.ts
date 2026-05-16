@@ -32,8 +32,15 @@ export async function runRestartContinue(deps: RestartContinueDeps): Promise<{ f
     const sessionKey = entry.slice(0, -3).replace(/__/g, ":");
     const plan = await deps.store.get(sessionKey);
     if (!plan || plan.status !== "in_progress") continue;
-    // Only dispatch if a step is actually in_progress (plan status stays "in_progress" until close())
-    if (!plan.steps.some((s) => s.status === "in_progress")) continue;
+    // Resume any in_progress plan that still has unfinished work. The old
+    // guard required a step to be literally `in_progress`, which skipped
+    // freshly-seeded plans (kit-matcher seeds all steps `pending`,
+    // currentStep:0) — exactly the seed→first-action window where a restart
+    // is most likely to lose the turn. Resume if ANY step is not done; skip
+    // only when every step is done (plan complete but not yet closed).
+    // FORK 2026-05-16: this is the "working recovery system against restart"
+    // closure — see subagents-and-kits.md "Recovery contract".
+    if (plan.steps.length > 0 && plan.steps.every((s) => s.status === "done")) continue;
 
     const last = lastFireAt.get(sessionKey) ?? 0;
     if (now - last < (deps.debounceMs ?? 30_000)) continue;
