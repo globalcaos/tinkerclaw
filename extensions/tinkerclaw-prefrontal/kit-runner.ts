@@ -87,7 +87,7 @@ interface ParsedKit {
   parallelism: KitParallelism | null;
 }
 
-function parseKitStepsAndParallelism(text: string): ParsedKit {
+export function parseKitStepsAndParallelism(text: string): ParsedKit {
   // Strip frontmatter, collect parallelism block and step sections.
   const fmMatch = /^---\n([\s\S]+?)\n---\n/.exec(text);
   let parallelism: KitParallelism | null = null;

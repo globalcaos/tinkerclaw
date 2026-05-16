@@ -2,11 +2,13 @@
 file: subagents-and-kits.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-05-14
+last_verified: 2026-05-16
 last_verified_commit: HEAD
 single_owner: yes — subagent + kit orchestration + plan persistence facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream)
 verify:
+  - name: kit-matcher exists and auto-seeds a plan at turn start (FORK 2026-05-16 — the smart-router matching half)
+    cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-matcher.ts")).read(); assert "export async function seedPlanFromPrompt" in m and "NO-MATCH" in m and "recipe-gap" in m, "kit-matcher.ts missing seedPlanFromPrompt or the no-match recipe-gap WARN — the smart-router matching half regressed"; idx=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts")).read(); assert "seedPlanFromPrompt" in idx and "before_prompt_build" in idx, "index.ts no longer wires seedPlanFromPrompt into a before_prompt_build hook — turn-start auto-seed is dead, restart-continue has nothing to resume for normal turns"'
   - name: spawn helper script is executable
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
   - name: recipe-state helper script is executable
@@ -227,6 +229,22 @@ When `plan.set` is called with `kitRef: "globalcaos/feature"`:
 4. Subsequent `plan.step` mutations track execution of those steps
 
 Without `kitRef`, steps are provided inline in the `plan.set` call.
+
+### The kit-matcher — auto-seed at turn start (FORK 2026-05-16)
+
+`extensions/tinkerclaw-prefrontal/kit-matcher.ts` is the **matching half** of the smart router; `kit-runner.ts` is the execution half. Before 2026-05-16 nothing called the execution half from a normal conversational turn — Jarvis had to remember to invoke `prefrontal.kit.run`, and he didn't (the 2026-05-14 plan-not-set incident: a 7-minute turn with no plan, so restart-continue had nothing to resume). Per the "force rules in code" preference, matching now fires automatically.
+
+Flow:
+
+1. Registered as a second `before_prompt_build` hook in `index.ts` (priority 20, separate concern from the anti-goldplating hook at 40). The hook event carries `{ prompt, messages }`; ctx carries `{ sessionKey, trigger, runId }`.
+2. Gate: only `sessionKey` ending `:main` (not `:subagent:`), and `trigger` not `heartbeat`/`cron`. Every other user turn is scored — there is **no complexity heuristic**; "no match" frequency is itself the signal (see below).
+3. `loadKitIndex(ownKitsDir)` scans the local catalog's frontmatter (slug/title/summary/tags), cached by the kits-dir mtime. No Journey network call on the hot path.
+4. `matchKits` scores each kit: exact phrase tag in prompt = 5, single-word tag hit = 3, title word = 2, summary word = 1. Threshold 3, top 3 kits.
+5. `buildMergedPlan` concatenates matched kits' steps (parsed via the exported `parseKitStepsAndParallelism`), deduped by normalized title, highest-scored kit's phrasing wins. This is the user's "merge into one plan" decision (2026-05-14).
+6. `planStore.set` seeds the plan — UNLESS an `in_progress` plan already exists (explicit/prior-turn plans win; never clobbered).
+7. No match → a `WARN [kit-matcher] NO-MATCH … prompt="…" (catalog=N kits)` line. **This is the recipe-gap signal**: if it fires often for a class of prompts, the catalog is too thin, or the work has drifted into new territory, or we need on-the-fly kit authoring. Mining this WARN is how the catalog grows. The implicit 2-step panel (content-rich, see `tinker-ui.md` / `prefrontal-tree.ts` `humanizeRootStatus`) is the acceptable recovery UX for genuinely trivial no-match turns.
+
+Recovery contract: because the matcher seeds a plan for substantially every non-trivial turn, **restart-continue almost always has an `in_progress` plan to resume** — that is the "working recovery system against restart." Trivial no-match turns are short enough that a restart just means the user re-asks; no plan-replay machinery is needed (deliberately not built — minimal blast radius).
 
 ## Prefrontal observability — the kit-state CLI
 
