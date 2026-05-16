@@ -57,6 +57,15 @@ fix, pick from this list — extend it only if no tag fits.
 - `event-ordering` repeats 7 times — async race conditions around stream lifecycle / button-state / session-resume.
 - `auth-token` repeats 5 times — OAuth machinery is the largest single class of fragility.
 
+### FIXED [merge-wipe+type-gap]: Full build red — CompactionEntry.tokensAfter not in upstream type (2026-05-16)
+
+- **Symptom:** `pnpm build` (and the pre-push hook chain) failed at `build:plugin-sdk:dts` with `src/gateway/session-utils.fs.ts(152): error TS2339: Property 'tokensAfter' does not exist on type 'CompactionEntry<unknown>'`. The gateway runtime was unaffected, so it went unnoticed until the full build was exercised.
+- **Root cause:** Commit `962b1622fd` (2026-04-29, compaction-visibility / Bible §5.80) made compaction a visible event — `session-utils.fs.ts` reads `entry.summary` / `entry.tokensBefore` / `entry.tokensAfter` off the JSONL `type:"compaction"` entry to render the UI banner's "before → after tok" diff. The fork's compaction writer (`src/agents/pi-embedded-runner/compaction-hooks.ts:274`) genuinely persists `tokensAfter`, but upstream `@mariozechner/pi-coding-agent`'s `CompactionEntry<T>` (`core/session-manager.d.ts:36`) only declares `summary` + `tokensBefore` — not `tokensAfter`. esbuild/tsdown skips typecheck (runtime fine); only the strict `tsgo` dts build caught the gap. Only `tokensAfter` errored because `summary`/`tokensBefore` ARE in the upstream type.
+- **Fix:** Declaration-merge `interface CompactionEntry<T = unknown> { tokensAfter?: number }` into `src/types/pi-coding-agent.d.ts` — the fork's existing augmentation home for that module (same pattern as the `Skill.source` augmentation already there; the dts tsconfig includes `src/types/**/*.d.ts`). Optional because pre-962b1622fd JSONL entries lack the field and the read site already guards with `typeof === "number" && Number.isFinite(...)`.
+- **Files:** `src/types/pi-coding-agent.d.ts`
+- **Prevention:** the compiler + the `build:plugin-sdk:dts` step in the pre-push gate IS the regression guard — a redundant grep-verify would be gold-plating. If the augmentation is ever removed the same TS2339 returns and blocks the build/push.
+- **Rule:** After an upstream merge, fork code that reads fork-written-but-upstream-unmodeled fields off shared types belongs in `src/types/*.d.ts` declaration merges, not silent `as` casts. Runtime-green ≠ build-green: esbuild doesn't typecheck; always exercise the full `pnpm build` (or trust the pre-push dts step) before calling a type-touching change done.
+
 ### FIXED [cache-staleness]: Usage Bars Showing Stale Data from Disabled OAuth Endpoint (2026-04-03)
 
 - **Symptom:** Anthropic 5h/7d usage bars showed stale or zeroed data regardless of actual usage. The bars hadn't updated since January 2026.
