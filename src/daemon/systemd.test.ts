@@ -20,6 +20,7 @@ import {
   installSystemdService,
   isNonFatalSystemdInstallProbeError,
   isSystemdServiceEnabled,
+  isSystemdServiceLoaded,
   isSystemdUnitActive,
   isSystemdUserServiceAvailable,
   parseSystemdShow,
@@ -428,6 +429,71 @@ describe("isSystemdUnitActive", () => {
     await expect(
       isSystemdUnitActive({ HOME: TEST_MANAGED_HOME }, GATEWAY_SERVICE, "system"),
     ).resolves.toBe(false);
+  });
+});
+
+describe("isSystemdServiceLoaded", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    execFileMock.mockReset();
+  });
+
+  it("returns true when the unit is enabled (no is-active probe needed)", async () => {
+    vi.spyOn(fs, "access").mockResolvedValue(undefined);
+    execFileMock.mockImplementationOnce((_cmd, args, _opts, cb) => {
+      assertUserSystemctlArgs(args, "is-enabled", GATEWAY_SERVICE);
+      cb(null, "enabled", "");
+    });
+
+    const result = await isSystemdServiceLoaded({ env: { HOME: TEST_MANAGED_HOME } });
+
+    expect(result).toBe(true);
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns true for a disabled-but-active unit (regression: restart must not no-op)", async () => {
+    vi.spyOn(fs, "access").mockResolvedValue(undefined);
+    execFileMock
+      .mockImplementationOnce((_cmd, args, _opts, cb) => {
+        assertUserSystemctlArgs(args, "is-enabled", GATEWAY_SERVICE);
+        cb(createExecFileError("disabled", { code: 1 }), "disabled", "");
+      })
+      .mockImplementationOnce((_cmd, args, _opts, cb) => {
+        assertUserSystemctlArgs(args, "is-active", "--quiet", GATEWAY_SERVICE);
+        cb(null, "", "");
+      });
+
+    const result = await isSystemdServiceLoaded({ env: { HOME: TEST_MANAGED_HOME } });
+
+    expect(result).toBe(true);
+  });
+
+  it("returns false when the unit is both disabled and inactive", async () => {
+    vi.spyOn(fs, "access").mockResolvedValue(undefined);
+    execFileMock
+      .mockImplementationOnce((_cmd, args, _opts, cb) => {
+        assertUserSystemctlArgs(args, "is-enabled", GATEWAY_SERVICE);
+        cb(createExecFileError("disabled", { code: 1 }), "disabled", "");
+      })
+      .mockImplementationOnce((_cmd, args, _opts, cb) => {
+        assertUserSystemctlArgs(args, "is-active", "--quiet", GATEWAY_SERVICE);
+        cb(createExecFileError("inactive", { code: 3 }), "", "");
+      });
+
+    const result = await isSystemdServiceLoaded({ env: { HOME: TEST_MANAGED_HOME } });
+
+    expect(result).toBe(false);
+  });
+
+  it("returns false without probing systemctl when the unit file is missing", async () => {
+    const err = new Error("missing unit") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    vi.spyOn(fs, "access").mockRejectedValue(err);
+
+    const result = await isSystemdServiceLoaded({ env: { HOME: TEST_MANAGED_HOME } });
+
+    expect(result).toBe(false);
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 });
 
