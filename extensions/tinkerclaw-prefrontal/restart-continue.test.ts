@@ -29,6 +29,11 @@ describe("restart-continue", () => {
 
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  // restart-continue makes TWO gatewayCalls per resume: the chat.send
+  // [System] continue, plus a chat.inject visible chip (FORK 2026-05-13
+  // Task 3.3). The dispatch-count assertions care only about chat.send.
+  const sends = () => chatSendCalls.filter((c) => c.method === "chat.send");
+
   it("dispatches a [System] continue for an in-progress plan", async () => {
     await store.set({
       sessionKey: "agent:main:main",
@@ -52,8 +57,8 @@ describe("restart-continue", () => {
       systemKind: "plan-resume",
     });
 
-    expect(chatSendCalls).toHaveLength(1);
-    const call = chatSendCalls[0];
+    expect(sends()).toHaveLength(1);
+    const call = sends()[0];
     expect(call.method).toBe("chat.send");
     expect(call.params.sessionKey).toBe("agent:main:main");
     expect(call.params.message).toContain("[System] Gateway restarted");
@@ -78,7 +83,38 @@ describe("restart-continue", () => {
         return { runId: "x" };
       },
     });
-    expect(chatSendCalls).toHaveLength(0);
+    expect(sends()).toHaveLength(0);
+  });
+
+  // FORK 2026-05-16: kit-matcher seeds a plan with ALL steps `pending`
+  // (status:"in_progress", currentStep:0) at turn start. The old guard
+  // required a step to be literally `in_progress`, so a restart in the
+  // seed→first-action window lost the turn — exactly the recovery gap the
+  // user flagged. Regression guard: a freshly-seeded all-pending plan must
+  // still be resumed.
+  it("resumes a freshly-seeded plan with all steps pending (kit-matcher recovery)", async () => {
+    await store.set({
+      sessionKey: "agent:main:main",
+      intent: "Debug & Fix",
+      runId: "kitmatch-1",
+      kitRef: "debug",
+      steps: [{ title: "Reproduce" }, { title: "Diagnose" }, { title: "Fix" }, { title: "Verify" }],
+    });
+    // No store.step() call — every step is still `pending`, exactly as the
+    // kit-matcher leaves it before Jarvis's first action.
+    await runRestartContinue({
+      store,
+      gatewayCall: async (m, p) => {
+        chatSendCalls.push({ method: m, params: p as any });
+        return { runId: "ack" };
+      },
+      systemKind: "plan-resume",
+    });
+    expect(sends()).toHaveLength(1);
+    const call = sends()[0];
+    expect(call.params.message).toContain("[System] Gateway restarted");
+    expect(call.params.message).toContain("Debug & Fix");
+    expect(call.params.message).toContain("Step 0: Reproduce");
   });
 
   it("debounces same sessionKey within 30s window", async () => {
@@ -100,6 +136,6 @@ describe("restart-continue", () => {
       });
     await call();
     await call(); // second call within debounce
-    expect(chatSendCalls).toHaveLength(1);
+    expect(sends()).toHaveLength(1);
   });
 });
