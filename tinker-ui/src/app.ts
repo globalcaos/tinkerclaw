@@ -434,7 +434,13 @@ function saveCurrentTabState() {
     return;
   }
   const s = tabStates.get(activeTabId) ?? freshTabState();
-  s.messages = messages;
+  // FORK 2026-05-16: snapshot the array, don't alias it. Previously
+  // `s.messages = messages` stored the SAME array reference the live globals
+  // use; a background tab's stream events (which push/splice the live
+  // `messages`) then mutated the saved state of OTHER tabs, so switching tabs
+  // showed corrupted/empty history. A shallow copy per save isolates each
+  // tab's transcript (message objects are treated as immutable once pushed).
+  s.messages = (messages as unknown[]).slice();
   s.streamMsgIdx = streamMsgIdx;
   s.streamRunId = streamRunId;
   s.lastDeltaLen = lastDeltaLen;
@@ -452,7 +458,10 @@ function saveCurrentTabState() {
 /** Load a tab's TabState into the globals. */
 function loadTabState(tabId: string) {
   const s = tabStates.get(tabId) ?? freshTabState();
-  messages = s.messages;
+  // FORK 2026-05-16: hand the globals a fresh array so the stored snapshot
+  // stays frozen while this tab streams. Pairs with the slice-on-save above —
+  // together they guarantee no two tabs ever share a messages array.
+  messages = (s.messages as unknown[]).slice();
   streamMsgIdx = s.streamMsgIdx;
   streamRunId = s.streamRunId;
   lastDeltaLen = s.lastDeltaLen;
@@ -479,6 +488,60 @@ function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): 
     return true;
   }
   return evtKey.endsWith(":" + ref) || ref.endsWith(":" + evtKey);
+}
+
+// ─── FORK 2026-05-16: single source of truth for "is this run / session busy" ───
+// Before this, FOUR panels each computed "busy" differently (chat indicator
+// filtered activeRuns by the viewed sessionKey; the `sending` pill was a
+// tab-global boolean; the sessions panel scanned per-session; prefrontal used
+// the gateway extension tree unfiltered). During any long turn they disagreed
+// — chat stuck on "sending", prefrontal "idle", sessions "thinking". Every
+// consumer now routes through these helpers so the answer is consistent and
+// the session/all toggle is always honored.
+
+/** True if this run belongs to the tab the user is currently viewing — either
+ *  its sessionKey matches the viewed key (short or canonical form) or it is a
+ *  subagent descendant of the viewed session. */
+function runBelongsToViewedSession(info: ActiveRunInfo): boolean {
+  const sk = info.sessionKey ?? "";
+  if (!sk) {
+    return false;
+  }
+  if (sessionKeyMatches(sk)) {
+    return true;
+  }
+  return (
+    sk.includes(":subagent:") &&
+    !!sessionKey &&
+    sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
+  );
+}
+
+/** activeRuns entries in scope of the session/all toggle: when "session", only
+ *  runs for the viewed tab's session; when "all", every run. The ONE place the
+ *  budgetScope filter is applied — model count, prefrontal tree, and the
+ *  thinking indicator all consume this so they can never disagree. */
+function scopedActiveRuns(): Array<[string, ActiveRunInfo]> {
+  const out: Array<[string, ActiveRunInfo]> = [];
+  for (const entry of activeRuns) {
+    if (budgetScope === "session" && !runBelongsToViewedSession(entry[1])) {
+      continue;
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/** Is the tab the user is viewing busy right now? Independent of other tabs'
+ *  runs — the multi-tab "sending forever" bug was the global `activeRuns.size`
+ *  check staying non-zero because a DIFFERENT tab still had a run. */
+function viewedSessionBusy(): boolean {
+  for (const [, info] of activeRuns) {
+    if (runBelongsToViewedSession(info)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 let tabs: Tab[] = [];
@@ -805,11 +868,10 @@ function scheduleUnconfirmedPrune() {
       }
       if (changed) {
         saveActiveRuns();
-        // FORK: Also reset sending and update UI — without this, the thinking
-        // indicator stays visible after pruning stale runs on reconnect.
-        if (activeRuns.size === 0) {
-          sending = false;
-        }
+        // FORK 2026-05-16: sending tracks the VIEWED tab, not the global map.
+        // (Was `if (activeRuns.size === 0)` which stayed true whenever any
+        // OTHER tab still had a run — the multi-tab "sending forever" bug.)
+        sending = viewedSessionBusy();
         updateBudgetPanel();
         updatePrefrontalTree();
         updateChat();
@@ -833,9 +895,7 @@ function scheduleUnconfirmedPrune() {
       }
       if (changed) {
         saveActiveRuns();
-        if (activeRuns.size === 0) {
-          sending = false;
-        }
+        sending = viewedSessionBusy(); // FORK 2026-05-16: per-viewed-tab, not global map size
         updateBudgetPanel();
         updatePrefrontalTree();
         updateChat();
@@ -850,12 +910,8 @@ restoreActiveRuns();
 
 function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const info of activeRuns.values()) {
+  for (const [, info] of scopedActiveRuns()) {
     if (forModel && info.model !== forModel) {
-      continue;
-    }
-    // FORK: Filter by scope toggle — "session" only counts runs for the active session
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
       continue;
     }
     const key = info.authProfileId || info.model;
@@ -901,8 +957,15 @@ function updatePrefrontalTree() {
 
 function buildPrefrontalTree(): TreeResponse {
   PF_DEBUG_STATE.renderCount++;
-  // Prefer the extension's tree if recent.
+  // Prefer the extension's tree if recent — but ONLY in "all" scope. The
+  // extension tree is the gateway's GLOBAL orchestration view; it carries no
+  // per-session filter, so returning it under "session" scope was the exact
+  // bug where prefrontal ignored the session/all toggle and disagreed with
+  // every other panel (FORK 2026-05-16). Under "session" scope we always
+  // build from the scoped activeRuns fallback below so the toggle is
+  // authoritative.
   if (
+    budgetScope === "all" &&
     latestTreeFromExtension &&
     Date.now() - latestTreeFromExtensionAt < PREFRONTAL_EXT_TREE_TTL_MS &&
     latestTreeFromExtension.active
@@ -920,14 +983,11 @@ function buildPrefrontalTree(): TreeResponse {
     );
   }
 
-  // Collect active runs (respecting session scope)
-  const runs: Array<{ runId: string; info: ActiveRunInfo }> = [];
-  for (const [runId, info] of activeRuns) {
-    if (budgetScope === "session" && info.sessionKey && !sessionKeyMatches(info.sessionKey)) {
-      continue;
-    }
-    runs.push({ runId, info });
-  }
+  // Collect active runs (respecting the session/all toggle via the one
+  // shared scope helper — same set the model count + indicator use).
+  const runs: Array<{ runId: string; info: ActiveRunInfo }> = scopedActiveRuns().map(
+    ([runId, info]) => ({ runId, info }),
+  );
 
   if (runs.length === 0) {
     return { active: false, root: null };
@@ -1684,29 +1744,29 @@ function onEvent(evt: unknown) {
       // was missed (dropped frame, JS error, session key mismatch), activeRuns would
       // keep a stale entry forever. Schedule a safety-net cleanup so the thinking
       // indicator clears even when the lifecycle event never arrives.
+      // FORK 2026-05-16: chat.final/aborted is AUTHORITATIVE — the assistant's
+      // answer is in. Remove the run IMMEDIATELY rather than the old 5s
+      // delayed-maybe. This is the direct fix for "Jarvis already answered but
+      // the run never closed": we no longer wait for a lifecycle:end that may
+      // never arrive (the exact case the user hit — turn hung in `processing`
+      // for 10 min after the reply was delivered). The watchdog was deleted
+      // 2026-05-14 precisely so the UI would trust lifecycle/final events; this
+      // makes `final` actually close the run instead of leaking it.
       if (p.state === "final" || p.state === "aborted") {
         const finalRunId = p.runId;
-        if (activeRuns.has(finalRunId) && !pendingRunDeletes.has(finalRunId)) {
-          const safetyTimeout = setTimeout(() => {
-            pendingRunDeletes.delete(finalRunId);
-            if (activeRuns.has(finalRunId)) {
-              activeRuns.delete(finalRunId);
-              saveActiveRuns();
-              if (activeRuns.size === 0) {
-                sending = false;
-              }
-              updateBudgetPanel();
-              updatePrefrontalTree();
-              updateChat();
-              updateBtn();
-            }
-          }, 5000);
-          pendingRunDeletes.set(finalRunId, safetyTimeout);
+        const pend = pendingRunDeletes.get(finalRunId);
+        if (pend) {
+          clearTimeout(pend);
+          pendingRunDeletes.delete(finalRunId);
+        }
+        if (activeRuns.has(finalRunId)) {
+          activeRuns.delete(finalRunId);
+          saveActiveRuns();
         }
       }
-      if (activeRuns.size === 0 && pendingRunDeletes.size === 0) {
-        sending = false;
-      }
+      // sending reflects the VIEWED tab only — never the global map size, so a
+      // different tab's live run can't pin this tab on "sending" forever.
+      sending = viewedSessionBusy();
       updateChat();
       updateBtn();
       if (p.state !== "error") {
@@ -2378,10 +2438,10 @@ function onEvent(evt: unknown) {
           pendingRunDeletes.delete(endRunId);
           activeRuns.delete(endRunId);
           saveActiveRuns();
-          // Clear sending once all runs are done
-          if (activeRuns.size === 0) {
-            sending = false;
-            // FORK: Hide recipe banner when all runs complete
+          // FORK 2026-05-16: sending tracks the viewed tab, not the global map.
+          sending = viewedSessionBusy();
+          if (!sending) {
+            // Hide recipe banner when the viewed session is idle
             activeRecipeStep = null;
             document.getElementById("recipe-banner")?.classList.add("hidden");
           }
@@ -2825,13 +2885,21 @@ function retryProvider(provider: string) {
 
 async function abort() {
   await req("chat.abort", { sessionKey }).catch(() => {});
-  sending = false;
   messages = messages.filter((m: unknown) => !m._temporary);
   streamMsgIdx = -1;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   streamRunId = null;
-  activeRuns.clear();
+  // FORK 2026-05-16: chat.abort only aborts THIS session server-side, so only
+  // drop THIS session's runs locally. The old `activeRuns.clear()` nuked every
+  // other tab's live run from the indicator too (multi-tab regression).
+  for (const [runId, info] of [...activeRuns]) {
+    if (runBelongsToViewedSession(info)) {
+      activeRuns.delete(runId);
+    }
+  }
+  saveActiveRuns();
+  sending = viewedSessionBusy();
   updateChat();
   updateBtn();
 }
@@ -4276,26 +4344,21 @@ let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
 
 function renderThinkingIndicator(): string {
   if (activeRuns.size > 0) {
-    // FORK 2026-04-20: include runs that BELONG to the current session OR
-    // descend from it (subagent children). The previous filter dropped any
-    // `agent:main:subagent:xxx` run because it didn't match the main session
-    // key -- so while main idled between ack-turns the indicator flickered
-    // off even though subagents were still thinking. Include any subagent
-    // descendant so the user sees continuous activity until the whole tree
-    // settles.
+    // FORK 2026-05-16: the run-belongs-to-viewed-session test is now the ONE
+    // shared predicate (runBelongsToViewedSession) so the indicator can never
+    // disagree with the prefrontal panel / model count about which runs are
+    // "this tab's". Subagent-descendant inclusion is baked into the helper.
     const mainRows: string[] = [];
     const subagentRows: string[] = [];
     for (const [runId, info] of activeRuns) {
-      const sk = info.sessionKey ?? "";
-      const isMainMatch = sk && sessionKeyMatches(sk);
-      const isSubagentDescendant =
-        sk.includes(":subagent:") &&
-        // descend from the current main session (agent:main:main is parent of agent:main:subagent:xxx)
-        sessionKey &&
-        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:");
-      if (!isMainMatch && !isSubagentDescendant) {
+      if (!runBelongsToViewedSession(info)) {
         continue;
       }
+      const sk = info.sessionKey ?? "";
+      const isSubagentDescendant =
+        sk.includes(":subagent:") &&
+        !!sessionKey &&
+        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:");
       const color = PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
@@ -4322,7 +4385,13 @@ function renderThinkingIndicator(): string {
       return `<div class="thinking-indicator">${rows}</div>`;
     }
   }
-  if (sending) {
+  // The "sending..." pending pill is ONLY the brief window between chat.send
+  // and the first lifecycle event for THIS tab. If the viewed session already
+  // has a live run we rendered it above; if it doesn't and `sending` is still
+  // true that's the genuine pre-first-event gap. It must NOT stay up because a
+  // DIFFERENT tab still has a run (that was the multi-tab "sending forever"
+  // bug — fixed by clearing `sending` via viewedSessionBusy() at turn end).
+  if (sending && !viewedSessionBusy()) {
     return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#D97757;--thinking-glow:#D9775740;--thinking-glow-bg:#D9775720;--thinking-glow-bg2:#D9775730">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">sending...</span>
