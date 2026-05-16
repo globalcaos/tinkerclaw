@@ -760,4 +760,13 @@ export class ClaudeCodeWorker extends EventEmitter {
   isAlive(): boolean {
     return this.running && this.proc !== null;
   }
+
+  /**
+   * True while a turn is in flight or queued. The worker pool uses this to
+   * never evict a worker mid-turn (people-profiles turns can run for many
+   * minutes — see bible lifecycles.md L2).
+   */
+  isBusy(): boolean {
+    return this.currentTurn !== null || this.turnQueue.length > 0 || this.draining;
+  }
 }

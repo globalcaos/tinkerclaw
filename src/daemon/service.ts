@@ -35,7 +35,7 @@ import type {
 } from "./service-types.js";
 import {
   installSystemdService,
-  isSystemdServiceEnabled,
+  isSystemdServiceLoaded,
   readSystemdServiceExecStart,
   readSystemdServiceRuntime,
   restartSystemdService,
@@ -193,7 +193,7 @@ const GATEWAY_SERVICE_REGISTRY: Record<SupportedGatewayServicePlatform, GatewayS
     uninstall: uninstallSystemdService,
     stop: stopSystemdService,
     restart: restartSystemdService,
-    isLoaded: isSystemdServiceEnabled,
+    isLoaded: isSystemdServiceLoaded,
     readCommand: readSystemdServiceExecStart,
     readRuntime: readSystemdServiceRuntime,
   },

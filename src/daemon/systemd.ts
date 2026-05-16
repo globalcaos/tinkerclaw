@@ -763,6 +763,32 @@ export async function isSystemdServiceEnabled(args: GatewayServiceEnvArgs): Prom
   throw new Error(`systemctl is-enabled unavailable: ${detail || "unknown error"}`.trim());
 }
 
+/**
+ * "Loaded" for daemon lifecycle = there is a manageable instance to act on:
+ * the unit is enabled (will/should be managed) OR currently active (running
+ * right now). Wiring `GatewayService.isLoaded` to `isSystemdServiceEnabled`
+ * alone treated a *disabled-but-running* gateway as not-loaded, so
+ * `openclaw gateway restart` printed the "service disabled" hints and
+ * silently no-op'd instead of restarting the live process. A missing managed
+ * unit file still short-circuits to false WITHOUT probing systemctl.
+ */
+export async function isSystemdServiceLoaded(args: GatewayServiceEnvArgs): Promise<boolean> {
+  const env = args.env ?? process.env;
+  try {
+    await fs.access(resolveSystemdUnitPath(env));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+  if (await isSystemdServiceEnabled(args)) {
+    return true;
+  }
+  const unitName = `${resolveSystemdServiceName(env)}.service`;
+  return isSystemdUnitActive(env as GatewayServiceEnv, unitName);
+}
+
 export async function readSystemdServiceRuntime(
   env: GatewayServiceEnv = process.env as GatewayServiceEnv,
 ): Promise<GatewayServiceRuntime> {

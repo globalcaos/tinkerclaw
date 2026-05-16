@@ -2,7 +2,7 @@
 file: lifecycles.md
 purpose: State machines for entities that have non-trivial lifecycles
 audience: AI
-last_verified: 2026-05-11
+last_verified: 2026-05-16
 last_verified_commit: HEAD
 single_owner: yes — state-transition facts live here, not in bible.md or flows.md
 see_also: flows.md (sequence of calls), failures.md (transitions that don't fire), probes.md (`debug.session.state` proposed)
@@ -11,6 +11,8 @@ verify:
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.state","--params",json.dumps({"sessionKey":"agent:main:main"})],capture_output=True,text=True,timeout=25); j=json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); status = (j.get("entry") or {}).get("status"); assert status in {"idle","running","done","failed","aborted","timeout","interrupted",None}, f"unrecognised status {status!r}"'
   - name: L4 — restart-recovery code path still emits the known log message
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/main-session-restart-recovery.ts")).read(); assert "marked interrupted main session failed" in t and "main-session-restart-recovery" in t, "restart-recovery log emission missing or renamed — refactor without a verify update is the regression class to catch"'
+  - name: L2 — cc-bridge worker pool stays bounded (idle reap + LRU cap)
+    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker-pool.ts")).read(); assert "idleTtlMs" in t and "maxWorkers" in t and "private sweep(" in t and "isBusy()" in t, "cc-bridge SessionWorkerPool eviction removed — unbounded persistent-claude-proc leak regression class (people-profiles per-profile sessionKey, 53 procs/7+ days, 2026-05-16)"'
 ---
 
 # Lifecycles — state machines
@@ -59,14 +61,21 @@ stateDiagram-v2
   uncreated --> spawning: pool.getOrCreate (no live worker)
   spawning --> streaming: first stream-json line received
   streaming --> streaming: tool_use / tool_result / text delta events
-  streaming --> exited_ok: claude-cli exits code=0 (turn complete)
-  streaming --> exited_signal: SIGTERM (idle watchdog or shutdown)
+  streaming --> warm_idle: `result` line — turn RESOLVES, process STAYS ALIVE
+  warm_idle --> streaming: next turn for same sessionKey (same warm process, NO respawn)
+  warm_idle --> exited_signal: SIGTERM — pool sweep eviction (idle>TTL / over LRU cap) or shutdown
+  streaming --> exited_signal: SIGTERM (turn AbortSignal = idle watchdog, or shutdown)
   streaming --> exited_crash: code != 0, signal=null
-  exited_ok --> uncreated: pool retains sessionId for future --resume
-  exited_signal --> uncreated: same
+  exited_signal --> uncreated: pool retains sessionId for future --resume
   exited_crash --> uncreated: same
   uncreated --> spawning: next turn for same sessionKey, --resume <stored sessionId>
 ```
+
+> NOTE (corrected 2026-05-16): the claude subprocess is **persistent**
+> (`claude --input-format stream-json`). A completed turn does NOT exit the
+> process — it stays warm for the next turn on the same sessionKey. The
+> earlier diagram's `exited_ok: claude-cli exits code=0 (turn complete)`
+> edge was wrong and is why the unbounded-sessionKey leak went unmodelled.
 
 **Resume lookup priority** (worker-pool.ts, FORK 2026-05-10):
 
@@ -75,9 +84,11 @@ stateDiagram-v2
 
 **Invariants:**
 
+- The claude process is **persistent**: a completed turn keeps it warm; only SIGTERM (abort / pool eviction / shutdown) or a crash ends it.
 - A worker that has SIGTERMed retains its `sessionId` in session-map.json so the NEXT turn resumes the same claude-cli conversation.
 - Worker pool is gateway-wide singleton; `killAll()` runs on `exit`/`SIGTERM`/`SIGINT`.
 - A turn's `signal: AbortSignal` parameter, when aborted, calls `worker.kill("SIGTERM")` — this is how the LLM idle watchdog terminates a stuck worker.
+- **The pool is BOUNDED (FORK 2026-05-16, `worker-pool.ts`).** `SessionWorkerPool` sweeps on every `getOrCreate`: a non-busy worker idle past `idleTtlMs` (default 15 min) is SIGTERMed, and the pool is hard-capped at `maxWorkers` (default 32, LRU eviction of the least-recently-used non-busy worker). A worker mid-turn (`isBusy()`) and the sessionKey being requested are never evicted; evicted workers keep their `sessionId` in session-map.json so a later turn `--resume`s the same thread. Without this, a caller minting a unique sessionKey per work item (people-profiles cron — one key per profile) leaks one persistent ep_poll-blocked `claude` proc per item indefinitely (observed: 53 procs, oldest 7+ days, 2026-05-16). Enforced by the L2 `verify:` invariant above.
 
 **Probe:** `cc-bridge.workerInfo({sessionKey})` (proposed) — alive?, current cli sessionId, last turn duration.
 
