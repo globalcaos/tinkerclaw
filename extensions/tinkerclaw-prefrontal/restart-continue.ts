@@ -30,6 +30,13 @@ export async function runRestartContinue(deps: RestartContinueDeps): Promise<{ f
     if (!entry.endsWith(".md")) continue;
     if (entry.includes(".broken-")) continue;
     const sessionKey = entry.slice(0, -3).replace(/__/g, ":");
+    // FORK 2026-05-16: only real agent sessions are resumable. Hand smoke
+    // tests of prefrontal.plan.set leave fixtures with sessionKey
+    // `test:plan:<ts>` (intent "verify", steps a/b) in the LIVE plans dir;
+    // they were never closed, so this scanner "resumed" one on EVERY
+    // gateway restart — dispatching a bogus [System] continue for work
+    // that never existed. Never resume a non-agent session key.
+    if (!sessionKey.startsWith("agent:")) continue;
     const plan = await deps.store.get(sessionKey);
     if (!plan || plan.status !== "in_progress") continue;
     // Resume any in_progress plan that still has unfinished work. The old
