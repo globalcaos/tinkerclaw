@@ -144,6 +144,28 @@ stateDiagram-v2
 
 The single function authoritative for ALL these transitions is `switchTab(tab)` in `tinker-ui/src/app.ts`. Any other place that toggles visibility on chat-area / alt-view / exec-panel is a bug.
 
+## The session-activity single source of truth (FORK 2026-05-16)
+
+This section is the worked instance of `design-principles.md` #18 ("one canonical derivation per concept"). It is the meta-code: read it before you touch anything that asks "is this session busy / which runs count / does the session-scope toggle apply". Do not re-derive any of this inline — extend the helper instead.
+
+**The concept.** "Is the session the user is looking at active, and which active runs belong to it (under the current session/all toggle)?" Before 2026-05-16 this was computed four divergent ways and they silently disagreed on every long turn (chat stuck on `sending...`, prefrontal `idle`, sessions/models `thinking`). The fix collapsed them to three named helpers in `tinker-ui/src/app.ts`, deliberately co-located with the state they read (`activeRuns`, `sessionKey`, `budgetScope`) rather than extracted to a module — colocation is intentional (#18); moving them re-fragments the concept.
+
+| Helper                            | Answers                                                                                | Every consumer that must route through it                                            |
+| --------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `runBelongsToViewedSession(info)` | "is this run the viewed tab's?" (canonical/short key match + subagent descendants)     | chat thinking-indicator, `abort()`                                                   |
+| `scopedActiveRuns()`              | "the runs in scope of the session/all toggle" — the ONE place `budgetScope` is applied | model count (`getAuthKeyCounts`), prefrontal tree (`buildPrefrontalTree`), indicator |
+| `viewedSessionBusy()`             | "is the VIEWED tab busy" — independent of other tabs                                   | every `sending = …` turn-end site                                                    |
+
+**Load-bearing rules (do not regress — the frontmatter verify enforces all three):**
+
+1. There are exactly THREE helpers and exactly one place each filter lives. A fourth "is busy" computation anywhere is the bug class returning. New panels consume a helper; they never scan `activeRuns` with their own predicate.
+2. `sending` reflects the **viewed tab only** (`viewedSessionBusy()`), never `activeRuns.size === 0`. The global-size check is what made `sending` stick forever when a _different_ tab still had a run.
+3. The prefrontal extension-tree shortcut in `buildPrefrontalTree` is gated on `budgetScope === "all"`. The gateway extension tree is the GLOBAL orchestration view with no per-session filter; returning it under `"session"` scope is exactly how prefrontal silently ignored the toggle. Under `"session"` scope, prefrontal always builds from `scopedActiveRuns()`.
+4. `chat.final` / `chat.aborted` is **authoritative** — it removes the finished run immediately, not via a delayed timer. This is what closes a turn whose `lifecycle:end` never arrives ("Jarvis already answered but the run hung in `processing`"); it pairs with the 2026-05-14 watchdog deletion (`tool-loop.md`) which made the UI trust lifecycle/final events instead of a UI-side timer.
+5. Per-tab `TabState.messages` is sliced on save AND load — never aliased. Two tabs sharing one array is what made history "disappear" on switch.
+
+If you are adding a panel or a status readout that needs "busy/active/which runs": call a helper. If none fits, widen a helper and document the widening here — do not add a fifth derivation. That is the whole point of #18.
+
 ## Verify (the merge gate)
 
 The frontmatter's `verify:` block already enforces three of these:
