@@ -2,11 +2,13 @@
 file: panels.md
 purpose: Spatial layout + visibility contract for every Tinker UI panel. Defines which panels live where, which can coexist, and what happens when the user switches modes/tabs. The contract is enforceable — bugs like "Control Panel stays visible when I click Sessions" are caught by the verify blocks in this frontmatter.
 audience: AI
-last_verified: 2026-05-14
+last_verified: 2026-05-16
 last_verified_commit: HEAD
 single_owner: yes — panel-layout facts live here, not in tinker-ui.md. tinker-ui.md owns the visual language (chip styles, fonts, colors); this file owns the SPATIAL contract.
 see_also: tinker-ui.md (visual language, chip families, per-component design), flows.md (event flows that drive panel updates), topology.md (which process renders the UI)
 verify:
+  - name: single source of truth for "session busy" (FORK 2026-05-16 — chat/sending/sessions/prefrontal must not disagree)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function runBelongsToViewedSession" in t and "function scopedActiveRuns" in t and "function viewedSessionBusy" in t, "the shared busy/scope helpers were removed — the four panels will silently re-diverge (chat stuck on sending, prefrontal idle, sessions thinking)"; assert re.search(r"budgetScope ===\s*.all.\s*&&\s*latestTreeFromExtension", t, re.S), "buildPrefrontalTree no longer gates the extension-tree shortcut on budgetScope===all — the session/all toggle is being ignored by prefrontal again"; assert "if (sending && !viewedSessionBusy())" in t, "the sending pill no longer checks viewedSessionBusy — it will stick on sending forever whenever another tab has a run"'
   - name: every left-nav tab in app.ts is listed in this panel doc's tab matrix
     cmd: bash -lc 'cd ~/src/tinkerclaw && tabs_in_code=$(grep -oP "<button class=\"nav-btn[^\"]*\" data-tab=\"\K[a-z-]+" tinker-ui/src/app.ts | sort -u); tabs_in_doc=$(grep -oP "^\| +\`\K[a-z-]+" TINKER_UI_DESIGN_BIBLE/panels.md | sort -u); missing=$(comm -23 <(echo "$tabs_in_code") <(echo "$tabs_in_doc")); test -z "$missing" || (echo "tabs in code but not documented: $missing"; exit 1)'
   - name: exec-panel hide branch exists in switchTab
