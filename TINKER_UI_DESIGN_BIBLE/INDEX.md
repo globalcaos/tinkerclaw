@@ -40,6 +40,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "what's the intent / decision / don't-regress for §X.Y?" → `bible.md`
    - "how does this UI panel work / what's the visual convention?" → `tinker-ui.md`
    - "which panel is visible when / how do tabs and Dev↔Exec interact / what hides what?" → `panels.md`
+   - "how do we know a turn/task is done / why does the thinking indicator do that / which signal wins when they disagree?" → `done-signals.md`
    - "has this bug class been seen before?" → `bug-log.md`
 3. **Trust the frontmatter `last_verified` + `last_verified_commit` anchors.** Anything older than the most recent file in `git log src/` referenced by the section should be re-verified before relying on it.
 4. **Do NOT re-narrate facts that live in another file.** Cross-reference them with `see also:` annotations. Single owner per fact.
@@ -70,6 +71,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 | `ownership.md`          | Folder-level ownership map — Architect vs Jarvis vs Upstream zones, concurrency rules, upstream-merge protocol (2026-05-12)                                                                        | hand                             | ~80    |
 | `design-principles.md`  | Codified design rules — 16 numbered principles spanning code organization, concurrency, observability, process. Every other bible file's "don't regress" clauses point back here (2026-05-12)      | hand                             | ~200   |
 | `slos.md`               | Service-level objectives + burn-rate computation — three starter SLOs (cron-success-7d, cron-freshness, morning-briefing-latency) backed by `gateway.slo.burnRate` (2026-05-12)                    | hand                             | ~90    |
+| `done-signals.md`       | Cross-signal precedence methodology for "is the turn/task done?" — master map of every input to the thinking indicator, authority tiers, fixed analysis procedure (2026-05-17)                     | hand + auto-validatable          | ~190   |
 
 ## Discipline
 
