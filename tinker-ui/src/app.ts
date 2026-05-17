@@ -544,6 +544,42 @@ function viewedSessionBusy(): boolean {
   return false;
 }
 
+// FORK 2026-05-17: the ONE place `budgetScope` is mutated (bible panels.md
+// §147 #18 — one canonical scope concept). Both scope switches — Models
+// (#budget-scope-toggle) and Prefrontal (#prefrontal-scope-toggle) — are
+// views of this single state. Before this the prefrontal switch had NO
+// click handler (dead control) and the Models handler never re-rendered
+// prefrontal, so the panel ignored the toggle and went stale. The setter
+// syncs BOTH switches' chrome and re-renders BOTH panels so they can never
+// disagree and neither toggle is dead.
+const SCOPE_TOGGLE_IDS = ["budget-scope-toggle", "prefrontal-scope-toggle"];
+function syncScopeToggleChrome(): void {
+  for (const id of SCOPE_TOGGLE_IDS) {
+    const toggle = document.getElementById(id);
+    if (!toggle) {
+      continue;
+    }
+    toggle
+      .querySelector(".ct-switch-track")
+      ?.classList.toggle("ct-switch-track--on", budgetScope === "all");
+    toggle.querySelectorAll(".ct-switch-label").forEach((b) => {
+      b.classList.toggle(
+        "ct-switch-label--active",
+        (b as HTMLElement).dataset.scope === budgetScope,
+      );
+    });
+  }
+}
+function setBudgetScope(next: "session" | "all"): void {
+  if (next !== "session" && next !== "all") {
+    return;
+  }
+  budgetScope = next;
+  syncScopeToggleChrome();
+  updateBudgetPanel();
+  updatePrefrontalTree();
+}
+
 let tabs: Tab[] = [];
 // FORK (2026-04-21): initialize from localStorage so a hard refresh preserves
 // focus on whichever tab was active pre-reload. Previously defaulted to "" and
@@ -993,58 +1029,85 @@ function buildPrefrontalTree(): TreeResponse {
     return { active: false, root: null };
   }
 
-  // Build tree: first run = root, rest = children (subagents)
-  const children: TreeNode[] = [];
-  let root: TreeNode | null = null;
-
-  for (const { runId, info } of runs) {
-    const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
-    const statusLabel = info.currentTool ? `tool: ${info.currentTool}` : info.phase;
-    const node: TreeNode = {
-      runId,
-      model: info.model,
-      provider: info.provider,
-      label: info.authProfileId ?? info.model,
-      status: statusLabel,
-      progress: 0,
-      lastEventAge: elapsed,
-      children: [],
-    };
-    // FORK 2026-04-20: the previous check was `info.sessionKey.includes(":main:")`
-    // which *also* matched subagent keys like `agent:main:subagent:xxx` -- every
-    // subagent got promoted to root and the last one won. Distinguish by the
-    // `:subagent:` segment (or any non-main suffix) instead.
-    const isSubagent =
-      typeof info.sessionKey === "string" &&
-      (info.sessionKey.includes(":subagent:") || info.sessionKey.includes(":acp:"));
-    if (isSubagent) {
-      children.push(node);
-    } else {
-      root = node;
+  // FORK 2026-05-17 (bible panels.md §115/§147): group runs by their owning
+  // session so "all" scope cleanly shows WHICH session is doing WHAT.
+  // Subagents nest under their session. A single session (always the case
+  // under "session" scope) renders exactly as before — that session's run as
+  // root with its subagents as children, zero regression. Multiple top-level
+  // sessions (only possible under "all") render as a per-session forest under
+  // a synthetic "All sessions" root, instead of one arbitrary session
+  // silently winning the single root slot and the rest vanishing.
+  const owningSessionKey = (sk: string): string => {
+    const m = sk.match(/^(.*?)(?::subagent:|:acp:)/);
+    return m ? m[1] : sk;
+  };
+  const shortSessionLabel = (sk: string): string => {
+    const parts = sk.split(":");
+    const ci = parts.indexOf("cron");
+    if (ci >= 0) {
+      return `cron · ${parts[ci + 1] ?? "job"}`;
     }
+    return parts[parts.length - 1] || sk;
+  };
+  const isSubagentKey = (sk: unknown): boolean =>
+    typeof sk === "string" && (sk.includes(":subagent:") || sk.includes(":acp:"));
+  const toNode = (runId: string, info: ActiveRunInfo, label?: string): TreeNode => ({
+    runId,
+    model: info.model,
+    provider: info.provider,
+    label: label ?? info.authProfileId ?? info.model,
+    status: info.currentTool ? `tool: ${info.currentTool}` : info.phase,
+    progress: 0,
+    lastEventAge: Math.floor((Date.now() - info.startedAt) / 1000),
+    children: [],
+  });
+
+  const bySession = new Map<string, Array<{ runId: string; info: ActiveRunInfo }>>();
+  for (const { runId, info } of runs) {
+    const sk = typeof info.sessionKey === "string" ? info.sessionKey : runId;
+    const owner = owningSessionKey(sk);
+    let group = bySession.get(owner);
+    if (!group) {
+      group = [];
+      bySession.set(owner, group);
+    }
+    group.push({ runId, info });
   }
 
-  // If no main session found, use the first run as root
-  if (!root && runs.length > 0) {
-    const { runId, info } = runs[0];
-    const statusLabel = info.currentTool ? `tool: ${info.currentTool}` : info.phase;
-    root = {
-      runId,
-      model: info.model,
-      provider: info.provider,
-      label: info.authProfileId ?? info.model,
-      status: statusLabel,
+  const multiSession = bySession.size > 1;
+  const sessionNodes: TreeNode[] = [];
+  for (const [owner, group] of bySession) {
+    const mainRun = group.find((g) => !isSubagentKey(g.info.sessionKey)) ?? group[0];
+    const sessNode = toNode(
+      mainRun.runId,
+      mainRun.info,
+      multiSession ? shortSessionLabel(owner) : undefined,
+    );
+    sessNode.children = group.filter((g) => g !== mainRun).map((g) => toNode(g.runId, g.info));
+    sessionNodes.push(sessNode);
+  }
+
+  if (sessionNodes.length === 0) {
+    return { active: false, root: null };
+  }
+  if (sessionNodes.length === 1) {
+    return { active: true, root: sessionNodes[0] };
+  }
+  // Multiple sessions active (only reachable under "all" scope): per-session
+  // forest so the user sees which session is doing what.
+  return {
+    active: true,
+    root: {
+      runId: "all-sessions",
+      model: "all",
+      provider: sessionNodes[0].provider,
+      label: `All sessions (${sessionNodes.length})`,
+      status: "orchestrating",
       progress: 0,
-      lastEventAge: Math.floor((Date.now() - info.lastEventAt) / 1000),
-      children: [],
-    };
-  }
-
-  if (root) {
-    root.children = children;
-    return { active: true, root };
-  }
-  return { active: false, root: null };
+      lastEventAge: 0,
+      children: sessionNodes,
+    },
+  };
 }
 
 // ─── Recipe Progress (Prefrontal v3.0) ───
@@ -5148,6 +5211,11 @@ function switchToTab(tabId: string) {
 
   renderTabs();
   saveTabs();
+  // FORK 2026-05-17: the viewed session changed — prefrontal filters by the
+  // viewed sessionKey under "session" scope, but it only re-rendered on WS
+  // events, so it showed the prior session's activity ("thinking no matter
+  // which session I select"). Re-render now. See bible panels.md §147.
+  updatePrefrontalTree();
 }
 
 function createTab(): Tab {
@@ -6322,32 +6390,27 @@ function init() {
     }
     startOAuthReauthFlow(profileId);
   });
-  // FORK: Session/All scope toggle for Models panel
-  $("budget-scope-toggle")?.addEventListener("click", (e) => {
-    const el = e.target as HTMLElement;
-    // Click on label or track toggles scope
-    const label = el.closest("[data-scope]") as HTMLElement | null;
-    const track = el.closest("[data-scope-track]") as HTMLElement | null;
-    if (!label && !track) {
-      return;
-    }
-    if (label) {
-      budgetScope = label.dataset.scope as "session" | "all";
-    } else {
-      // Toggle when clicking the track
-      budgetScope = budgetScope === "session" ? "all" : "session";
-    }
-    const toggle = $("budget-scope-toggle")!;
-    const trackEl = toggle.querySelector(".ct-switch-track")!;
-    trackEl.classList.toggle("ct-switch-track--on", budgetScope === "all");
-    toggle.querySelectorAll(".ct-switch-label").forEach((b) => {
-      b.classList.toggle(
-        "ct-switch-label--active",
-        (b as HTMLElement).dataset.scope === budgetScope,
-      );
+  // FORK 2026-05-17: BOTH scope switches (Models #budget-scope-toggle AND
+  // Prefrontal #prefrontal-scope-toggle) drive the one budgetScope via
+  // setBudgetScope. Previously only the Models switch had a handler — the
+  // prefrontal one was a dead control — and that handler never re-rendered
+  // prefrontal. See bible panels.md §147.
+  for (const scopeToggleId of SCOPE_TOGGLE_IDS) {
+    $(scopeToggleId)?.addEventListener("click", (e) => {
+      const el = e.target as HTMLElement;
+      const label = el.closest("[data-scope]") as HTMLElement | null;
+      const track = el.closest("[data-scope-track]") as HTMLElement | null;
+      if (!label && !track) {
+        return;
+      }
+      const next: "session" | "all" = label
+        ? (label.dataset.scope as "session" | "all")
+        : budgetScope === "session"
+          ? "all"
+          : "session";
+      setBudgetScope(next);
     });
-    updateBudgetPanel();
-  });
+  }
 
   // ─── Amygdala + Fractal injection toggles (FORK 2026-04-18) ───
   const amyBtn = $("tb-amygdala")!;
@@ -8537,6 +8600,9 @@ function init() {
         sessionKey = key;
         loadChat();
         switchTab("chat");
+        // FORK 2026-05-17: re-filter prefrontal for the newly-viewed session
+        // (bible panels.md §147 — it only re-rendered on WS events before).
+        updatePrefrontalTree();
       }
       return;
     }

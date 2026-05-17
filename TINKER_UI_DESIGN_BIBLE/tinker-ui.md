@@ -507,7 +507,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Error lookup chain:** `providerErrors.get(keyId)` → `providerErrors.get(modelId)` (NO bare provider fallback)
 - **Health poll:** 60s interval checks `provider.health`, auto-clears error badges (provider-level, per-profile `provider:*`, and per-model `provider/*` keys)
 - **Provider icons:** Inline SVGs (14px) for anthropic, google, openai, ollama, meta, mistral, deepseek
-- **Triggers prefrontal sync:** `updateBudgetPanel()` calls the prefrontal panel updater at the end (`updateOverseerPanel` was renamed to `updatePrefrontalTree`/`updatePrefrontalPanel` in the 2026-04-01 rename; historical references here reflect the pre-rename function name).
+- **Scope changes:** the Session/All switch goes through `setBudgetScope()` (the single `budgetScope` mutator — see panels.md §147), which re-renders BOTH the Models panel (`updateBudgetPanel()`) and the Prefrontal panel (`updatePrefrontalTree()`). `updateBudgetPanel()` itself renders the Models panel only and does NOT call the prefrontal updater — the pre-2026-05-17 note claiming it did was stale, and that gap is exactly why scope changes never reached prefrontal.
 - **Files:** `app.ts` (`updateBudgetPanel()`, `renderAuthKeyRows()`, `renderModelRow()`, `renderAuthKeyRow()`, `modelPerfRank()`), `base.css`
 
 ### 5.22 Token Usage Tracker (Inline Bars)
