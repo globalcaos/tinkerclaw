@@ -3,13 +3,17 @@ import { getPrimaryIdentityId, getReplyContext, getSenderIdentity } from "../../
 import type { WebInboundMsg } from "../types.js";
 import { prefetchChatProfile } from "./chat-profile-prefetch.js";
 import { prefetchChatRhythm } from "./chat-rhythm-prefetch.js";
+import { prefetchContactCard } from "./contact-card-prefetch.js";
+import { LANGUAGE_POLICY_BLOCK } from "./language-policy.js";
 import {
   formatInboundEnvelope,
   resolveMessagePrefix,
   type EnvelopeFormatOptions,
 } from "./message-line.runtime.js";
 import { prefetchSenderProfile } from "./people-prefetch.js";
+import { buildReplyModeBlock, deriveReplyMode } from "./reply-mode.js";
 import { prefetchRecentThread } from "./thread-prefetch.js";
+import { UNKNOWN_CONTACT_PROTOCOL_BLOCK } from "./unknown-contact-protocol.js";
 
 // FORK 2026-05-04: people-profiles preamble. Two parts now:
 //   (a) Sender's pre-resolved profile (name, role, manual context, rolling
@@ -72,20 +76,25 @@ export function formatReplyContext(msg: WebInboundMsg) {
  * Build the agent-facing prelude for an inbound WhatsApp message.
  *
  * Composition (top to bottom):
- *   1. `[chat-profile]` (groups only) — purpose, stakes, audience, guardrails,
- *      format preferences. When missing, a bootstrap hint pointing Jarvis at
- *      the file path so he can author it lazily as he learns the chat.
- *   2. `[chat-rhythm]` — concrete length stats (median, P90) over the last
- *      ~20 non-bot messages, with the "match this rhythm; propose long
- *      answers, don't dump them" directive.
- *   3. `[people-profiles]` static hint — how to look up names referenced in the body.
- *   4. `[sender-profile slug=…]…[/sender-profile]` — pre-resolved profile of the sender (when known).
- *   5. `[recent-thread last=N]…[/recent-thread]` — last ~6 messages of this chat, oldest-first.
- *   6. `[thread-escalation]` hint — exact `whatsapp_history` tool call to read further back.
+ *   1. `[reply-mode]` — outbound-draft vs outbound-auto-reply vs owner-management.
+ *      Tells Jarvis WHO will read his reply BEFORE he writes a word; prevents
+ *      meta-questions leaking into messages addressed to third parties.
+ *   2. `[contact-card]` — chat partner's saved name, phone, slug. Always emitted
+ *      (DMs and groups), so Jarvis knows who he's talking to from the first line.
+ *   3. `[unknown-contact-protocol]` (conditional) — only when contact-card has
+ *      neither a saved name nor a slug. Instructs the identification protocol.
+ *   4. `[language-policy]` — reply in the inbound message's language.
+ *   5. `[chat-profile]` (groups only) — purpose, stakes, audience, guardrails.
+ *   6. `[chat-rhythm]` — concrete length stats (median, P90) and rhythm.
+ *   7. `[people-profiles]` static hint — how to look up OTHER names referenced.
+ *   8. `[sender-profile slug=…]` — pre-resolved profile when sender has a slug.
+ *   9. `[recent-thread]` — last ~6 messages of this chat, oldest-first.
+ *  10. `[thread-escalation]` — exact `whatsapp_history` tool call to read further.
  *
- * Profile-and-rhythm at the TOP because they frame everything below: same
- * recent thread reads differently when the chat is "paid practice — careful"
- * vs "tech peer — long-form welcome".
+ * Reply-mode and contact-card move to the TOP because they answer the two
+ * questions every reply implicitly needs: "who am I writing to?" and "who
+ * will read this?". Without them the LLM defaulted to owner-context even on
+ * outbound auto-replies, producing meta-leaks to third parties.
  *
  * Each block is appended only when its prefetch yields content. Trailing blank
  * lines separate blocks. The function never throws — prefetch failures
@@ -99,6 +108,41 @@ export function formatReplyContext(msg: WebInboundMsg) {
 export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
   const { msg } = params;
   const chatJid = msg.chatId || msg.from;
+
+  const contactCard = (() => {
+    try {
+      return prefetchContactCard({
+        chatJid,
+        chatType: msg.chatType,
+        senderJid: msg.senderJid,
+        senderE164: msg.senderE164,
+        senderName: msg.senderName,
+        pushName: msg.pushName,
+        groupSubject: msg.groupSubject,
+        groupParticipantCount: msg.groupParticipants?.length,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  const contactCardBlock = contactCard ? `${contactCard.block}\n\n` : "";
+
+  const replyMode = deriveReplyMode(msg);
+  const replyModeBlock = `${buildReplyModeBlock({
+    mode: replyMode,
+    recipientName: contactCard?.displayName ?? null,
+    recipientPhone: msg.senderE164 ?? null,
+  })}\n\n`;
+
+  const showUnknownProtocol =
+    msg.chatType === "direct" &&
+    replyMode !== "owner-management" &&
+    contactCard !== null &&
+    !contactCard.knownInPhonebook &&
+    !contactCard.slug;
+  const unknownContactBlock = showUnknownProtocol ? `${UNKNOWN_CONTACT_PROTOCOL_BLOCK}\n\n` : "";
+
+  const languagePolicyBlock = `${LANGUAGE_POLICY_BLOCK}\n\n`;
 
   const chatProfile = (() => {
     try {
@@ -156,6 +200,7 @@ export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
   const escalationBlock = `${buildThreadEscalationHint({ chatJid, oldestUnixSec })}\n\n`;
 
   return (
+    `${replyModeBlock}${contactCardBlock}${unknownContactBlock}${languagePolicyBlock}` +
     `${chatProfileBlock}${chatRhythmBlock}` +
     `${PEOPLE_PROFILE_HINT}\n\n${senderProfileBlock}${threadBlock}${escalationBlock}`
   );
