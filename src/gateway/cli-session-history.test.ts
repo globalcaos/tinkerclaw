@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveCcBridgeCliSessionIdForOpenclawSession } from "./cc-bridge-session-map.js";
 import {
   augmentChatHistoryWithCliSessionImports,
   mergeImportedChatHistoryMessages,
@@ -296,6 +297,169 @@ describe("cli session history", () => {
         __openclaw: { cliSessionId: sessionId },
       });
     });
+  });
+
+  // FORK 2026-05-21: regression for the chat.history sessionFile-pointer
+  // freeze. cc-bridge writes the live claude-cli sessionId per worker key to
+  // `~/.openclaw/cc-bridge/session-map.json`; sessions.json's
+  // cliSessionBindings stays empty because cc-bridge does not feed back into
+  // session-store. Without the session-map fallback, every hard-refresh of
+  // every cc-bridge-served tab shows whatever stale sessionFile sessions.json
+  // last pointed at.
+  it("falls back to cc-bridge session-map by openclawSessionId when bindings + legacy fields are absent", async () => {
+    await withClaudeProjectsDir(async ({ homeDir, sessionId }) => {
+      const openclawSessionId = "openclaw-cc-bridge-session";
+      const mapDir = path.join(homeDir, ".openclaw", "cc-bridge");
+      await fs.mkdir(mapDir, { recursive: true });
+      const mapPath = path.join(mapDir, "session-map.json");
+      await fs.writeFile(
+        mapPath,
+        JSON.stringify(
+          {
+            "cc-sp-stale": {
+              sessionId: "stale-cli-session",
+              updatedAt: 1000,
+              openclawSessionId,
+            },
+            "cc-sp-fresh": {
+              sessionId,
+              updatedAt: 2000,
+              openclawSessionId,
+            },
+            "cc-sp-other": {
+              sessionId: "unrelated-cli-session",
+              updatedAt: 9999,
+              openclawSessionId: "other-openclaw-session",
+            },
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const messages = augmentChatHistoryWithCliSessionImports({
+        entry: {
+          sessionId: openclawSessionId,
+          updatedAt: Date.now(),
+        },
+        provider: "claude-code",
+        localMessages: [],
+        homeDir,
+      });
+      expect(messages).toHaveLength(3);
+      expect(messages[0]).toMatchObject({
+        role: "user",
+        __openclaw: { cliSessionId: sessionId },
+      });
+    });
+  });
+
+  it("imports for the claude-code provider even when local messages already exist", async () => {
+    await withClaudeProjectsDir(async ({ homeDir, sessionId }) => {
+      const openclawSessionId = "openclaw-cc-bridge-with-local";
+      const mapDir = path.join(homeDir, ".openclaw", "cc-bridge");
+      await fs.mkdir(mapDir, { recursive: true });
+      await fs.writeFile(
+        path.join(mapDir, "session-map.json"),
+        JSON.stringify({
+          "cc-sp-fresh": {
+            sessionId,
+            updatedAt: 5000,
+            openclawSessionId,
+          },
+        }),
+        "utf-8",
+      );
+
+      const staleLocal = [
+        {
+          role: "user",
+          content: "[Thu 2026-05-21 15:52 GMT] stale pre-restart prompt",
+          timestamp: Date.parse("2026-05-21T13:52:00.000Z"),
+        },
+      ];
+      const messages = augmentChatHistoryWithCliSessionImports({
+        entry: {
+          sessionId: openclawSessionId,
+          updatedAt: Date.now(),
+        },
+        provider: "claude-code",
+        localMessages: staleLocal,
+        homeDir,
+      });
+      // Live claude-cli transcript merged in alongside the stale local
+      // message — proves the provider gate no longer blocks "claude-code".
+      expect(messages.length).toBeGreaterThan(staleLocal.length);
+      expect(
+        messages.some(
+          (m) =>
+            (m as { __openclaw?: { cliSessionId?: string } }).__openclaw?.cliSessionId ===
+            sessionId,
+        ),
+      ).toBe(true);
+    });
+  });
+});
+
+describe("resolveCcBridgeCliSessionIdForOpenclawSession", () => {
+  it("returns undefined when openclawSessionId is empty", () => {
+    expect(
+      resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: undefined }),
+    ).toBeUndefined();
+    expect(
+      resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "" }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when no map file exists", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cc-map-missing-"));
+    try {
+      expect(
+        resolveCcBridgeCliSessionIdForOpenclawSession({
+          openclawSessionId: "anything",
+          homeDir: tmp,
+        }),
+      ).toBeUndefined();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("picks the most-recently-updated matching entry", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cc-map-pick-"));
+    try {
+      const mapDir = path.join(tmp, ".openclaw", "cc-bridge");
+      await fs.mkdir(mapDir, { recursive: true });
+      await fs.writeFile(
+        path.join(mapDir, "session-map.json"),
+        JSON.stringify({
+          "cc-sp-a": { sessionId: "older", updatedAt: 100, openclawSessionId: "want" },
+          "cc-sp-b": { sessionId: "newer", updatedAt: 999, openclawSessionId: "want" },
+          "cc-sp-c": { sessionId: "irrelevant", updatedAt: 9999, openclawSessionId: "other" },
+        }),
+        "utf-8",
+      );
+      expect(
+        resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "want", homeDir: tmp }),
+      ).toBe("newer");
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("survives a corrupt map file by returning undefined", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cc-map-corrupt-"));
+    try {
+      const mapDir = path.join(tmp, ".openclaw", "cc-bridge");
+      await fs.mkdir(mapDir, { recursive: true });
+      await fs.writeFile(path.join(mapDir, "session-map.json"), "{not valid json", "utf-8");
+      expect(
+        resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "want", homeDir: tmp }),
+      ).toBeUndefined();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   });
 });
 
