@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # FORK 2026-05-11/12 — pre-push gate for the public fork.
 #
-# Three gates run in order; all must pass or the push is blocked:
+# Four gates run in order; all must pass or the push is blocked:
 #   1. PII leak grep (scripts/pii-pre-push.sh) — bypass: PII_GUARD=off
 #   2. Bible invariants (pnpm bible:invariants) — bypass: BIBLE_GUARD=off
 #   3. Recurring-pattern linter (scripts/lint-recurring-patterns.mjs)
 #      — bypass: PATTERN_LINT=off
+#   4. plugin-sdk export integrity — bypass: SDK_EXPORTS_GUARD=off
+#      (src→entrypoints manifest drift + manifest→package.json drift;
+#      catches the 2026-05-21 cc-bridge-can't-load-because-export-missing
+#      class that bricked the gateway on restart)
 #
 # The invariants runner is tolerant of "gateway down" and "gateway stale"
 # (running on an older dist than HEAD). Those count as SKIP, not FAIL. A
@@ -70,5 +74,45 @@ else
       echo "only if the diff is intentional AND you've added a preserve comment." >&2
       exit 1
     fi
+  fi
+fi
+
+# Gate 4 — plugin-sdk export integrity (FORK 2026-05-21)
+# Catches the failure-class that bricked the cc-bridge plugin on 2026-05-21:
+# a src/plugin-sdk/*.ts file existed without a matching entry in
+# scripts/lib/plugin-sdk-entrypoints.json + package.json#exports, so the
+# gateway exploded on plugin-load with "Cannot find module '.../dist/...'".
+#
+# Two sub-checks:
+#   a) src→manifest drift — every "@openclaw/openclaw/plugin-sdk/<name>"
+#      import in src/extensions/scripts/test must be listed in either the
+#      entrypoints manifest or the private-local-only list.
+#   b) manifest→package.json drift — package.json#exports must contain one
+#      ./plugin-sdk/<name> entry per entrypoint.
+if [[ "${SDK_EXPORTS_GUARD:-}" == "off" ]]; then
+  echo "[sdk-exports] SDK_EXPORTS_GUARD=off — skipping (bypass acknowledged)" >&2
+else
+  SDK_EXPORTS_FAILED=0
+  if ! (cd "$ROOT_DIR" && node scripts/check-plugin-sdk-subpath-exports.mjs); then
+    SDK_EXPORTS_FAILED=1
+  fi
+  if ! (cd "$ROOT_DIR" && node scripts/sync-plugin-sdk-exports.mjs --check); then
+    SDK_EXPORTS_FAILED=1
+  fi
+  if [[ "$SDK_EXPORTS_FAILED" -ne 0 ]]; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🛑 BLOCKED: plugin-sdk exports out of sync" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "A src/plugin-sdk import has no matching entrypoint, or the" >&2
+    echo "entrypoints manifest doesn't match package.json#exports. The" >&2
+    echo "gateway will fail to load the dependent plugin on next restart." >&2
+    echo "" >&2
+    echo "Fix:  pnpm plugin-sdk:sync-exports  (and add the missing entry to" >&2
+    echo "      scripts/lib/plugin-sdk-entrypoints.json if needed)." >&2
+    echo "" >&2
+    echo "Bypass (only if you know what you're doing): SDK_EXPORTS_GUARD=off git push" >&2
+    exit 1
   fi
 fi
