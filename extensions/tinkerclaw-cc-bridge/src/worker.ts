@@ -233,6 +233,28 @@ function buildPlanToolsBlock(): string {
   });
 }
 
+// FORK 2026-05-21: ethical-rules foundation layer. The persona block (SOUL.md /
+// jarvis-default.md) defines voice + posture; the narration / subagent-helper /
+// tool-choice / plan-tools blocks define mechanics. Neither layer guards against
+// the assistant doing something stupid under pressure — flattery, leaking
+// private data, sending half-baked outbound, impersonating the user. This block
+// ships ten Asimov-style priority-ordered rules that act as safeguards across
+// every channel, every turn. Resolution order (per loadPromptFile defaults):
+//   1. env var TINKERCLAW_ETHICAL_RULES_PROMPT
+//   2. ~/.openclaw/workspace/memory/knowledge/jarvis-ethical-rules.md (user)
+//   3. extensions/tinkerclaw-cc-bridge/prompts/ethical-rules-default.md (bundled)
+// Inserted into combinedSystemPrompt immediately after the persona block so the
+// rules read as foundational, before voice/narration/tooling mechanics.
+function buildEthicalRulesBlock(): string {
+  return loadPromptFile({
+    plugin: "tinkerclaw-cc-bridge",
+    subdir: "prompts",
+    file: "ethical-rules-default.md",
+    envVar: "TINKERCLAW_ETHICAL_RULES_PROMPT",
+    workspaceFile: "memory/knowledge/jarvis-ethical-rules.md",
+  });
+}
+
 function buildAppendedPromptRules(): string {
   const blocks: string[] = [];
   for (const entry of PROMPT_FILES) {
@@ -353,6 +375,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const toolChoiceBody = buildToolChoiceBlock();
     const narrationBody = buildChatNarrationBlock();
     const planToolsBody = buildPlanToolsBlock();
+    const ethicalRulesBody = buildEthicalRulesBlock();
     // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
     // OpenClaw's pi-embedded-runner appends its full tool catalog + OpenClaw
     // CLI quick-reference + heartbeat section + Runtime metadata to the
@@ -394,8 +417,16 @@ export class ClaudeCodeWorker extends EventEmitter {
     // behaviour. Hoisting it makes the grandma-proof bar one of the first
     // rules the model considers, so each tool call gets a real pre-call
     // sentence.
+    // FORK 2026-05-21: ethical-rules block goes immediately after the persona
+    // and BEFORE narration / subagent / tool-choice / plan-tools. Reasons: (1)
+    // the persona answers "who I am" and the ethical-rules answer "what I will
+    // and won't do" — those belong adjacent in the system prompt so the model
+    // reads them as one foundational layer before mechanics. (2) Asimov-style
+    // priority means later blocks must defer to earlier ones; putting ethical
+    // rules ahead of narration etc. makes that ordering match document order.
     const combinedSystemPrompt = [
       personaOnly,
+      ethicalRulesBody,
       narrationBody,
       subagentHelpBody,
       toolChoiceBody,
