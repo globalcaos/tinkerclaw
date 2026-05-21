@@ -9,6 +9,7 @@ import type { OpenClawPluginApi } from "../api.js";
 import type { ControlPanelResolvedConfig } from "./paths.js";
 import { pollMetricNow } from "./pollers/index.js";
 import { addAxis, deleteAxis, listAxes, reorderAxes, updateAxis } from "./store/axes.js";
+import { syncGoogleCalendarRange } from "./store/calendar-sync.js";
 import { getCalendarDensity, listCalendarEvents } from "./store/calendar.js";
 import {
   addEstPreset,
@@ -365,13 +366,25 @@ export function registerControlPanelMethods(params: {
   // ───────────────────────────────────────────────────── calendar
   api.registerGatewayMethod(
     "control-panel.calendar.list",
-    ok(({ params: p, respond }) => {
+    ok(async ({ params: p, respond }) => {
       if (typeof p?.from !== "string" || typeof p?.to !== "string") {
         respond(false, undefined, {
           code: "invalid_argument",
           message: "calendar.list requires `from` and `to` (ISO date strings)",
         });
         return;
+      }
+      // FORK 2026-05-14 — when refresh:true, the caller wants a fresh pull
+      // from Google before reading the cache (used by the reschedule
+      // picker). Failure is logged but non-fatal: we still serve whatever
+      // is cached.
+      let syncInfo: { ok: boolean; synced: number; skipped: number; error?: string } | undefined;
+      if (p.refresh === true) {
+        syncInfo = await syncGoogleCalendarRange(cfg, { from: p.from, to: p.to });
+        if (!syncInfo.ok) {
+          // eslint-disable-next-line no-console
+          console.warn(`[control-panel] calendar refresh failed: ${syncInfo.error}`);
+        }
       }
       const rows = listCalendarEvents(cfg, {
         from: p.from,
@@ -381,7 +394,7 @@ export function registerControlPanelMethods(params: {
             ? (p.source as "google.primary" | "outlook.serra" | "manual")
             : undefined,
       });
-      respond(true, { events: rows });
+      respond(true, { events: rows, sync: syncInfo });
     }),
     { scope: READ_SCOPE },
   );
