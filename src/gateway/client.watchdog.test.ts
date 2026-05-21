@@ -1,5 +1,5 @@
 import { createServer as createHttpsServer } from "node:https";
-import { createServer } from "node:net";
+import { type AddressInfo } from "node:net";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { rawDataToString } from "../infra/ws.js";
@@ -10,15 +10,26 @@ import {
   MIN_CONNECT_CHALLENGE_TIMEOUT_MS,
 } from "./handshake-timeouts.js";
 
-// Find a free localhost port for ad-hoc WS servers.
-async function getFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const port = (server.address() as { port: number }).port;
-      server.close((err) => (err ? reject(err) : resolve(port)));
+// Bind an ad-hoc WS server on an OS-assigned port and return both the server
+// and its actual port. Binding directly on port 0 (instead of probing a free
+// port with a throwaway server, closing it, then rebinding) eliminates the
+// TOCTOU window where a concurrent test process could claim the port between
+// the probe close and the real bind — the source of cross-process flakiness
+// under parallel runs.
+async function listenWsServer(): Promise<{ wss: WebSocketServer; port: number }> {
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  const port = await new Promise<number>((resolve, reject) => {
+    wss.once("error", reject);
+    wss.once("listening", () => {
+      const address = wss.address() as AddressInfo | string | null;
+      if (!address || typeof address === "string") {
+        reject(new Error("ws server address unavailable"));
+        return;
+      }
+      resolve(address.port);
     });
   });
+  return { wss, port };
 }
 
 function createOpenGatewayClient(requestTimeoutMs: number): {
@@ -97,8 +108,9 @@ describe("GatewayClient", () => {
   });
 
   test("closes on missing ticks", async () => {
-    const port = await getFreePort();
-    wss = new WebSocketServer({ port, host: "127.0.0.1" });
+    const listened = await listenWsServer();
+    wss = listened.wss;
+    const port = listened.port;
 
     wss.on("connection", (socket) => {
       socket.once("message", (data) => {
