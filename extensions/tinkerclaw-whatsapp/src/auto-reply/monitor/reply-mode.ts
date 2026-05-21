@@ -29,15 +29,51 @@ import type { WebInboundMessage } from "../../inbound/types.js";
 
 export type ReplyMode = "outbound-draft" | "outbound-auto-reply" | "owner-management";
 
+function digitsOnly(s: string): string {
+  return s.replace(/[^0-9]/g, "");
+}
+
+/**
+ * Owner self-chat is a DM where the chat partner equals the owner's own
+ * WhatsApp identity (e.g. owner messaging their own number, or a personal
+ * note-to-self thread).
+ *
+ * Exact-equality on JID strings is too brittle — the inbound layer uses
+ * `+34…@s.whatsapp.net` here and `34…@s.whatsapp.net` there, and selfLid
+ * vs selfJid can disagree on representation. We compare by stripped E.164
+ * digits (9-digit suffix match) so any of the representations the inbound
+ * pipeline might emit resolves the same way.
+ */
 function detectOwnerSelfChat(msg: WebInboundMessage): boolean {
-  const sj = msg.senderJid;
-  if (sj && msg.selfJid && sj === msg.selfJid) {
+  if (msg.selfLid && msg.chatId === msg.selfLid) {
+    return true;
+  }
+  if (msg.chatType !== "direct") {
+    return false;
+  }
+  // Fast path: exact JID equality (kept for symmetry with prior behavior).
+  if (msg.senderJid && msg.selfJid && msg.senderJid === msg.selfJid) {
     if (msg.chatId === msg.senderJid || msg.from === msg.senderJid) {
       return true;
     }
   }
-  if (msg.selfLid && msg.chatId === msg.selfLid) {
-    return true;
+  const ownerDigits = digitsOnly(msg.selfE164 ?? msg.selfJid ?? "");
+  if (ownerDigits.length < 9) {
+    return false;
+  }
+  const ownerSuffix = ownerDigits.slice(-9);
+  const partnerCandidates: Array<string | undefined> = [
+    msg.senderE164,
+    msg.senderJid,
+    msg.chatId,
+    msg.from,
+  ];
+  for (const cand of partnerCandidates) {
+    if (!cand) continue;
+    const d = digitsOnly(cand);
+    if (d.length >= 9 && (d === ownerDigits || d.endsWith(ownerSuffix))) {
+      return true;
+    }
   }
   return false;
 }
