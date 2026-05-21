@@ -6,6 +6,11 @@ const GATEWAY_CLIENT_CONSTRUCTOR_PATTERN = /new\s+GatewayClient\s*\(/;
 
 const ALLOWED_GATEWAY_CLIENT_CALLSITES = new Set([
   "src/acp/server.ts",
+  // FORK 2026-05-16: reviewed upstream v2026.3.28 consumer (merge 5d37d4bb36).
+  // DiscordExecApprovalHandler opens a dedicated BACKEND client scoped to
+  // "operator.approvals" to relay exec-approval prompts to Discord — a
+  // legitimate long-lived consumer, parallel to operator-approvals-client.ts.
+  "src/discord/monitor/exec-approvals.ts",
   "src/gateway/call.ts",
   "src/gateway/gateway-cli-backend.live-helpers.ts",
   "src/gateway/operator-approvals-client.ts",
