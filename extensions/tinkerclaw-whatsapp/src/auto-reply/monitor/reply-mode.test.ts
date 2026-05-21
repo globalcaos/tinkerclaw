@@ -50,6 +50,29 @@ describe("deriveReplyMode", () => {
     });
     expect(deriveReplyMode(msg)).toBe("owner-management");
   });
+
+  it("returns owner-management when senderE164 digits match selfE164 even with different JID representations", () => {
+    const msg = makeMsg({
+      chatId: "1000000001@s.whatsapp.net",
+      from: "1000000001@s.whatsapp.net",
+      senderJid: "1000000001@s.whatsapp.net",
+      senderE164: "+1000000001",
+      selfE164: "1000000001",
+      fromMe: true,
+    });
+    expect(deriveReplyMode(msg)).toBe("owner-management");
+  });
+
+  it("returns owner-management when last-9 digits of partner suffix-match selfE164", () => {
+    const msg = makeMsg({
+      chatId: "0001000000001@s.whatsapp.net",
+      from: "0001000000001@s.whatsapp.net",
+      senderJid: "0001000000001@s.whatsapp.net",
+      senderE164: "+1000000001",
+      selfE164: "+1000000001",
+    });
+    expect(deriveReplyMode(msg)).toBe("owner-management");
+  });
 });
 
 describe("buildReplyModeBlock", () => {
