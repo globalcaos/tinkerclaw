@@ -1064,6 +1064,10 @@
       "types": "./dist/plugin-sdk/provider-catalog-shared.d.ts",
       "default": "./dist/plugin-sdk/provider-catalog-shared.js"
     },
+    "./plugin-sdk/provider-config-overlay": {
+      "types": "./dist/plugin-sdk/provider-config-overlay.d.ts",
+      "default": "./dist/plugin-sdk/provider-config-overlay.js"
+    },
     "./plugin-sdk/provider-entry": {
       "types": "./dist/plugin-sdk/provider-entry.d.ts",
       "default": "./dist/plugin-sdk/provider-entry.js"

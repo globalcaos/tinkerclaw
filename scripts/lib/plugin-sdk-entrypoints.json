@@ -249,6 +249,7 @@
   "plugin-entry",
   "provider-catalog-runtime",
   "provider-catalog-shared",
+  "provider-config-overlay",
   "provider-entry",
   "provider-env-vars",
   "provider-http",
