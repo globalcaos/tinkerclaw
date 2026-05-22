@@ -7356,8 +7356,9 @@ function init() {
 
   // FORK 2026-05-22 (Task 10) — disclosure click wiring. Click anywhere on a
   // group/sub-group header (other than the + Add sub-group button) flips the
-  // collapsed state and persists it in localStorage. The + button is
-  // markup-only here; Task 12 wires the inline form. Cheap re-render via
+  // collapsed state and persists it in localStorage. Task 12 wires the +
+  // button: intercept clicks on .exec-group-add-sub BEFORE the disclosure
+  // toggle runs and open an inline sub-group form. Cheap re-render via
   // loadExecTasks() keeps the rest of the panel state synced.
   function attachExecGroupCollapseHandlers(scope: HTMLElement): void {
     scope
@@ -7365,7 +7366,16 @@ function init() {
       .forEach((h) => {
         h.addEventListener("click", (ev) => {
           const target = ev.target as HTMLElement;
-          if (target.closest(".exec-group-add-sub")) return; // markup-only in Task 10
+          // FORK 2026-05-22 (Task 12) — + Add sub-group button: open the
+          // inline form anchored under this header and bail before the
+          // collapse logic.
+          const addSub = target.closest(".exec-group-add-sub") as HTMLButtonElement | null;
+          if (addSub) {
+            ev.stopPropagation();
+            const parentId = addSub.dataset.parentId;
+            if (parentId) openInlineSubgroupForm(addSub, parentId);
+            return;
+          }
           const id = h.dataset.axisId;
           if (!id) return;
           const key = `tinker.execGroupCollapsed.${id}`;
@@ -7985,6 +7995,63 @@ function init() {
         console.error("[exec] axes.add (group) failed", err);
         label.classList.add("exec-add-text-error");
         setTimeout(() => label.classList.remove("exec-add-text-error"), 1500);
+      }
+    });
+  }
+
+  // FORK 2026-05-22 (Task 12) — per-group + button inline form for adding a
+  // sub-group under a specific top-level parent. Stacks at most one form at
+  // a time; Esc/× close; success → close + refresh via loadExecTasks(); error
+  // → red flash. The slug-id is namespaced under the parent so collisions
+  // across different parents are impossible.
+  function openInlineSubgroupForm(anchor: HTMLElement, parentId: string): void {
+    // Avoid stacking multiple forms.
+    document.querySelectorAll(".exec-add-subgroup-form").forEach((f) => f.remove());
+
+    const form = document.createElement("form");
+    form.className = "exec-add-subgroup-form";
+    form.innerHTML =
+      `<input type="text" placeholder="Sub-group label" maxlength="32" required />` +
+      `<button type="submit">Add</button>` +
+      `<button type="button" data-cancel="1">×</button>`;
+    // Insert immediately after the group header containing the anchor.
+    const groupHeader = anchor.closest(".exec-group-header") as HTMLElement | null;
+    if (!groupHeader) return;
+    groupHeader.insertAdjacentElement("afterend", form);
+    const input = form.querySelector("input") as HTMLInputElement;
+    input.focus();
+
+    const close = () => form.remove();
+    (form.querySelector("button[data-cancel]") as HTMLButtonElement).addEventListener(
+      "click",
+      close,
+    );
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        close();
+      }
+    });
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const text = input.value.trim();
+      if (!text) {
+        input.focus();
+        return;
+      }
+      const id = `${parentId}-${text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")}`.slice(0, 64);
+      try {
+        await req("control-panel.axes.add", { id, label: text, parent_id: parentId });
+        close();
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] axes.add (subgroup) failed", err);
+        input.classList.add("exec-add-text-error");
+        setTimeout(() => input.classList.remove("exec-add-text-error"), 1500);
       }
     });
   }
