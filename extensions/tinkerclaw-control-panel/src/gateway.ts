@@ -445,12 +445,36 @@ export function registerControlPanelMethods(params: {
         });
         return;
       }
-      const row = addAxis(cfg, {
-        id: p.id.trim(),
-        label: p.label.trim(),
-        position: typeof p.position === "number" ? p.position : undefined,
-      });
-      respond(true, { axis: row });
+      // v3.5 — optional parent_id. Null/undefined = top-level; non-empty
+      // string = sub-group under an existing top-level axis. Depth cap is
+      // enforced by addAxis (throws "nesting beyond two levels").
+      let parentId: string | null | undefined;
+      if (p.parent_id !== undefined && p.parent_id !== null) {
+        if (typeof p.parent_id !== "string" || !p.parent_id.trim()) {
+          respond(false, undefined, {
+            code: "invalid_argument",
+            message: "axes.add `parent_id` must be a non-empty string when provided",
+          });
+          return;
+        }
+        parentId = p.parent_id.trim();
+      } else if (p.parent_id === null) {
+        parentId = null;
+      }
+      try {
+        const row = addAxis(cfg, {
+          id: p.id.trim(),
+          label: p.label.trim(),
+          position: typeof p.position === "number" ? p.position : undefined,
+          parent_id: parentId,
+        });
+        respond(true, { axis: row });
+      } catch (err) {
+        respond(false, undefined, {
+          code: "axis_add_failed",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
     }),
     { scope: WRITE_SCOPE },
   );
@@ -465,12 +489,36 @@ export function registerControlPanelMethods(params: {
         });
         return;
       }
-      const row = updateAxis(cfg, {
-        id: p.id,
-        label: typeof p.label === "string" ? p.label : undefined,
-        position: typeof p.position === "number" ? p.position : undefined,
-      });
-      respond(true, { axis: row });
+      // v3.5 — optional parent_id. Same shape as axes.add: undefined leaves
+      // it unchanged, explicit null clears the parent (promote to top-level),
+      // string sets a new parent. Depth cap enforced by updateAxis.
+      let parentId: string | null | undefined;
+      if (p.parent_id !== undefined && p.parent_id !== null) {
+        if (typeof p.parent_id !== "string" || !p.parent_id.trim()) {
+          respond(false, undefined, {
+            code: "invalid_argument",
+            message: "axes.update `parent_id` must be a non-empty string when provided",
+          });
+          return;
+        }
+        parentId = p.parent_id.trim();
+      } else if (p.parent_id === null) {
+        parentId = null;
+      }
+      try {
+        const row = updateAxis(cfg, {
+          id: p.id,
+          label: typeof p.label === "string" ? p.label : undefined,
+          position: typeof p.position === "number" ? p.position : undefined,
+          parent_id: parentId,
+        });
+        respond(true, { axis: row });
+      } catch (err) {
+        respond(false, undefined, {
+          code: "axis_update_failed",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
     }),
     { scope: WRITE_SCOPE },
   );
