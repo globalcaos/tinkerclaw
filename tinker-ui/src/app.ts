@@ -6636,7 +6636,6 @@ function init() {
           </div>
           <div class="exec-filter-bar" id="exec-filter-bar"></div>
           <div class="exec-progress-bar-wrap"><div class="exec-progress-bar" id="exec-progress-bar"></div></div>
-          <div id="exec-axis-targets" class="exec-axis-targets" aria-hidden="true"></div>
           <div class="exec-add-group-wrap">
             <button id="exec-add-group-toggle" class="exec-add-group-toggle">+ Add group</button>
             <form id="exec-add-group-form" class="exec-add-group-form" style="display:none">
@@ -6664,7 +6663,6 @@ function init() {
     `;
     app.appendChild(el);
     execPanelEl = el;
-    attachExecDragHandlers(el);
     attachExecPointerDragHandlers(el);
     renderExecFilterBar();
     attachExecTaskAddHandlers(el);
@@ -7539,22 +7537,15 @@ function init() {
   }
 
   // ─── Drag & drop: reorder tasks AND move them across axes ───
-  // FORK 2026-05-11 — native HTML5 DnD on `.exec-task` rows. On drop, we
-  // compute the new (axis, rank) from the cursor position and send one
-  // `control-panel.tasks.update` RPC. Rank uses midpoint arithmetic between
-  // neighbors so frequent drops don't require renumbering; ranks are clamped
-  // to a sane range and re-sequenced lazily on the next renderer pass.
-  type DragState = { id: string; axis: string; rank: number } | null;
-  let execDrag: DragState = null;
-  let execDropIndicator: HTMLElement | null = null;
+  // FORK 2026-05-22 — pointer-event DnD on `.exec-task` rows (Task 13 of
+  // Today card redesign; superseded the prior HTML5-DnD path removed in
+  // Task 17). On pointerup, we compute the new (axis, rank) from the cursor
+  // position and send one `control-panel.tasks.update` RPC. Rank uses
+  // midpoint arithmetic between neighbors so frequent drops don't require
+  // renumbering; ranks are clamped to a sane range and re-sequenced lazily
+  // on the next renderer pass.
   let execDragRefreshSuppressed = false;
 
-  // FORK 2026-05-22 — pointer-event DnD scaffolding (Task 13 of Today card
-  // redesign). Replaces the HTML5 DnD path above; coexists during the 4-task
-  // landing window (Tasks 13-16) before the old code is removed in Task 17.
-  // DnD is non-functional from this commit until Task 15 (pointerup commit).
-  // The PointerDrag state + constants live at the same scope as `execDrag`
-  // above so Tasks 14-16 can reference them from same-scope helpers.
   type PointerDrag = {
     id: string;
     axisAtStart: string;
@@ -7800,205 +7791,6 @@ function init() {
         abortPointerDrag();
       }
     });
-  }
-
-  function attachExecDragHandlers(panel: HTMLElement) {
-    const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
-    const axisTargets = panel.querySelector("#exec-axis-targets") as HTMLElement;
-
-    body.addEventListener("dragstart", (e) => {
-      const t = (e.target as HTMLElement).closest(".exec-task") as HTMLElement | null;
-      if (!t) {
-        console.info("[exec-drag] dragstart fired but e.target has no .exec-task ancestor");
-        return;
-      }
-      execDrag = {
-        id: t.dataset.taskId!,
-        axis: t.dataset.axis!,
-        rank: parseFloat(t.dataset.rank ?? "50"),
-      };
-      console.info("[exec-drag] dragstart", {
-        id: execDrag.id,
-        axis: execDrag.axis,
-        rank: execDrag.rank,
-      });
-      t.classList.add("exec-task-dragging");
-      e.dataTransfer!.effectAllowed = "move";
-      e.dataTransfer!.setData("text/x-task-id", execDrag.id);
-      execDragRefreshSuppressed = true; // pause poll-refresh during drag
-      renderAxisTargets(axisTargets, execDrag.axis);
-    });
-
-    body.addEventListener("dragend", (e) => {
-      const t = (e.target as HTMLElement).closest(".exec-task") as HTMLElement | null;
-      if (t) t.classList.remove("exec-task-dragging");
-      hideAxisTargets(axisTargets);
-      clearDropIndicator();
-      execDrag = null;
-      execDragRefreshSuppressed = false;
-    });
-
-    body.addEventListener("dragover", (e) => {
-      if (!execDrag) return;
-      e.preventDefault();
-      e.dataTransfer!.dropEffect = "move";
-      updateDropIndicator(e, body);
-    });
-
-    body.addEventListener("dragleave", (e) => {
-      if (!execDrag) return;
-      // Only clear if leaving the entire tasks body
-      if (e.target === body) clearDropIndicator();
-    });
-
-    body.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      if (!execDrag) {
-        console.info("[exec-drag] drop fired but execDrag is null — drag state lost");
-        return;
-      }
-      const target = computeBodyDrop(e, body);
-      console.info("[exec-drag] drop", { id: execDrag.id, currentRank: execDrag.rank, target });
-      clearDropIndicator();
-      hideAxisTargets(axisTargets);
-      if (!target) {
-        console.info(
-          "[exec-drag] drop bailed — no computed target (indicator was outside any .exec-group)",
-        );
-        execDrag = null;
-        execDragRefreshSuppressed = false;
-        return;
-      }
-      const movedId = execDrag.id;
-      await applyTaskMove(movedId, target.axis, target.rank);
-      execDrag = null;
-      execDragRefreshSuppressed = false;
-      await loadExecTasks();
-    });
-
-    // Axis-targets row (visible only during a drag — catches drops to
-    // axes that have no rendered tasks yet)
-    axisTargets.addEventListener("dragover", (e) => {
-      if (!execDrag) return;
-      const chip = (e.target as HTMLElement).closest(".exec-axis-target") as HTMLElement | null;
-      if (!chip) return;
-      e.preventDefault();
-      e.dataTransfer!.dropEffect = "move";
-      axisTargets
-        .querySelectorAll(".exec-axis-target")
-        .forEach((c) => c.classList.remove("exec-axis-target-over"));
-      chip.classList.add("exec-axis-target-over");
-    });
-
-    axisTargets.addEventListener("dragleave", () => {
-      axisTargets
-        .querySelectorAll(".exec-axis-target")
-        .forEach((c) => c.classList.remove("exec-axis-target-over"));
-    });
-
-    axisTargets.addEventListener("drop", async (e) => {
-      if (!execDrag) return;
-      const chip = (e.target as HTMLElement).closest(".exec-axis-target") as HTMLElement | null;
-      if (!chip) return;
-      e.preventDefault();
-      const axis = chip.dataset.axis!;
-      hideAxisTargets(axisTargets);
-      clearDropIndicator();
-      // Drop on axis chip → bottom of that axis group
-      await applyTaskMove(execDrag.id, axis, /*newRank*/ 9999);
-      execDrag = null;
-      execDragRefreshSuppressed = false;
-      await loadExecTasks();
-    });
-  }
-
-  function renderAxisTargets(host: HTMLElement, currentAxis: string) {
-    const chips = EXEC_AXIS_ORDER.map(
-      (a) =>
-        `<span class="exec-axis-target${a === currentAxis ? " exec-axis-target-current" : ""}" data-axis="${a}">${EXEC_AXIS_LABEL[a] ?? a}</span>`,
-    ).join("");
-    host.innerHTML = chips;
-    host.classList.add("exec-axis-targets-visible");
-  }
-  function hideAxisTargets(host: HTMLElement) {
-    host.classList.remove("exec-axis-targets-visible");
-  }
-
-  function ensureDropIndicator(body: HTMLElement): HTMLElement {
-    if (execDropIndicator && execDropIndicator.isConnected) return execDropIndicator;
-    const ind = document.createElement("div");
-    ind.className = "exec-drop-indicator";
-    body.appendChild(ind);
-    execDropIndicator = ind;
-    return ind;
-  }
-  function clearDropIndicator() {
-    if (execDropIndicator?.parentElement) {
-      execDropIndicator.parentElement.removeChild(execDropIndicator);
-    }
-    execDropIndicator = null;
-  }
-
-  function updateDropIndicator(e: DragEvent, body: HTMLElement) {
-    const targetTask = (e.target as HTMLElement).closest(".exec-task") as HTMLElement | null;
-    const ind = ensureDropIndicator(body);
-    if (targetTask) {
-      const rect = targetTask.getBoundingClientRect();
-      const midY = rect.top + rect.height / 2;
-      if (e.clientY < midY) {
-        targetTask.parentElement!.insertBefore(ind, targetTask);
-      } else {
-        targetTask.parentElement!.insertBefore(ind, targetTask.nextSibling);
-      }
-      return;
-    }
-    const groupHeader = (e.target as HTMLElement).closest(
-      ".exec-group-header",
-    ) as HTMLElement | null;
-    if (groupHeader) {
-      // Drop at top of group
-      groupHeader.parentElement!.insertBefore(ind, groupHeader.nextSibling);
-      return;
-    }
-    const group = (e.target as HTMLElement).closest(".exec-group") as HTMLElement | null;
-    if (group) {
-      // Drop at bottom of group
-      group.appendChild(ind);
-    }
-  }
-
-  function computeBodyDrop(
-    e: DragEvent,
-    _body: HTMLElement,
-  ): { axis: string; rank: number } | null {
-    const ind = execDropIndicator;
-    if (!ind || !ind.parentElement) return null;
-    const group = ind.parentElement.closest(".exec-group") as HTMLElement | null;
-    if (!group) return null;
-    const axis = group.dataset.axis ?? "meta";
-    // FORK 2026-05-12 — skip the dragging task itself when looking for
-    // prev/next siblings. The dragging row stays in the DOM (faded via
-    // .exec-task-dragging) until dragend, so a "drop just above myself"
-    // gesture would otherwise see `next = me` and compute newRank as the
-    // midpoint of (taskAbove, myCurrentRank) — which is mathematically a
-    // move but produces zero visible reordering because nothing else lives
-    // between the two. Skipping it makes the rank land between my actual
-    // outer neighbours, so the row actually shifts position on re-render.
-    let prev = ind.previousElementSibling as HTMLElement | null;
-    while (prev && prev.classList.contains("exec-task-dragging")) {
-      prev = prev.previousElementSibling as HTMLElement | null;
-    }
-    let next = ind.nextElementSibling as HTMLElement | null;
-    while (next && next.classList.contains("exec-task-dragging")) {
-      next = next.nextElementSibling as HTMLElement | null;
-    }
-    const prevRank =
-      prev && prev.classList.contains("exec-task") ? parseFloat(prev.dataset.rank ?? "0") : -10;
-    const nextRank =
-      next && next.classList.contains("exec-task")
-        ? parseFloat(next.dataset.rank ?? "100")
-        : prevRank + 20;
-    return { axis, rank: (prevRank + nextRank) / 2 };
   }
 
   function renderExecTaskRow(t: ExecTask, axis: string): string {

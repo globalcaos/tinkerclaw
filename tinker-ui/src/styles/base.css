@@ -4220,18 +4220,13 @@ code.fs-link.fs-link-error {
 }
 
 /* ──────────────────────────────────────────────────────────────────────
-   FORK 2026-05-11 — tinkerclaw-control-panel — task drag-and-drop
-   Native HTML5 DnD on .exec-task rows. Reorder within group OR drag onto
-   another axis (either an existing group or one of the axis-target chips
-   in #exec-axis-targets which appear only during a drag).
+   FORK 2026-05-22 — tinkerclaw-control-panel — task drag-and-drop
+   Pointer-event DnD on .exec-task rows (Task 13 of Today card redesign;
+   superseded the prior native HTML5 DnD path removed in Task 17). Drag
+   styles live with the pointer-event DnD rules further down (.exec-drag-ghost,
+   .exec-task-source, .exec-drop-indicator).
    ────────────────────────────────────────────────────────────────────── */
 
-.exec-task[draggable="true"] {
-  cursor: grab;
-}
-.exec-task[draggable="true"]:active {
-  cursor: grabbing;
-}
 .exec-task-grip {
   color: #4a4a52;
   font-size: 11px;
@@ -4264,15 +4259,6 @@ code.fs-link.fs-link-error {
   display: none;
 }
 
-.exec-drop-indicator {
-  height: 2px;
-  background: #ff6b3d;
-  margin: 1px 12px;
-  border-radius: 1px;
-  pointer-events: none;
-  box-shadow: 0 0 6px rgba(255, 107, 61, 0.6);
-}
-
 /* FORK 2026-05-12 — transient error pill anchored at the bottom of the
    exec panel, used when a drop's tasks.update RPC fails. Renders for ~4s
    then fades out. Without this, RPC failures only surfaced in DevTools
@@ -4300,43 +4286,6 @@ code.fs-link.fs-link-error {
 .exec-error-pill-visible {
   opacity: 1;
   transform: translateY(0);
-}
-
-.exec-axis-targets {
-  display: none;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 8px 12px;
-  background: #16161a;
-  border-bottom: 1px solid #232328;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-.exec-axis-targets-visible {
-  display: flex;
-}
-.exec-axis-target {
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  background: #1c1c22;
-  border: 1px dashed #3a3a45;
-  color: #a3a3ad;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  user-select: none;
-}
-.exec-axis-target.exec-axis-target-current {
-  opacity: 0.4;
-  border-style: solid;
-}
-.exec-axis-target.exec-axis-target-over {
-  background: rgba(255, 107, 61, 0.15);
-  border-color: #ff6b3d;
-  border-style: solid;
-  color: #eaeaee;
-  transform: scale(1.05);
 }
 
 /* ──────────────────────────────────────────────────────────────────────
