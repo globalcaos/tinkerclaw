@@ -7613,6 +7613,69 @@ function init() {
       };
       execDragRefreshSuppressed = true;
     });
+
+    // FORK 2026-05-22 — Task 14: pointermove tracks the ghost to the cursor
+    // and computes drop-indicator placement via elementFromPoint. The ghost is
+    // temporarily hidden during the lookup so it doesn't shadow itself.
+    // Drop-target priority: nearest .exec-task (before/after by midpoint) →
+    // .exec-subgroup-header (after) → .exec-group-header (after) →
+    // .exec-subgroup (append) → .exec-group (append).
+    function onPointerMove(ev: PointerEvent): void {
+      const drag = execPointerDrag;
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+
+      if (!drag.passedThreshold) {
+        const dx = ev.clientX - drag.startClientX;
+        const dy = ev.clientY - drag.startClientY;
+        if (dx * dx + dy * dy < DRAG_START_THRESHOLD_PX * DRAG_START_THRESHOLD_PX) return;
+        drag.passedThreshold = true;
+        drag.source.classList.add("exec-task-source");
+        drag.ghost.style.opacity = "0.85";
+      }
+
+      // Ghost follows the cursor (anchor near top-left of the row).
+      drag.ghost.style.left = `${ev.clientX - 24}px`;
+      drag.ghost.style.top = `${ev.clientY - 12}px`;
+
+      // Find drop target via elementFromPoint, ignoring the ghost.
+      drag.ghost.style.visibility = "hidden";
+      const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      drag.ghost.style.visibility = "";
+      if (!under) return;
+
+      const targetTask = under.closest(".exec-task:not(.exec-task-source)") as HTMLElement | null;
+      if (targetTask) {
+        const tr = targetTask.getBoundingClientRect();
+        if (ev.clientY < tr.top + tr.height / 2) {
+          targetTask.parentElement!.insertBefore(drag.indicator, targetTask);
+        } else {
+          targetTask.parentElement!.insertBefore(drag.indicator, targetTask.nextSibling);
+        }
+        return;
+      }
+      const subHeader = under.closest(".exec-subgroup-header") as HTMLElement | null;
+      if (subHeader) {
+        subHeader.parentElement!.insertBefore(drag.indicator, subHeader.nextSibling);
+        return;
+      }
+      const groupHeader = under.closest(".exec-group-header") as HTMLElement | null;
+      if (groupHeader) {
+        groupHeader.parentElement!.insertBefore(drag.indicator, groupHeader.nextSibling);
+        return;
+      }
+      const subgroup = under.closest(".exec-subgroup") as HTMLElement | null;
+      if (subgroup) {
+        subgroup.appendChild(drag.indicator);
+        return;
+      }
+      const group = under.closest(".exec-group") as HTMLElement | null;
+      if (group) {
+        group.appendChild(drag.indicator);
+        return;
+      }
+    }
+
+    document.addEventListener("pointermove", onPointerMove);
   }
 
   function attachExecDragHandlers(panel: HTMLElement) {
