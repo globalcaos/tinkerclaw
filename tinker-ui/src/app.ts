@@ -7624,6 +7624,16 @@ function init() {
       const isOverdue = datePart < todayPart;
       return `<span class="exec-chip exec-chip-due${isOverdue ? " exec-chip-due-overdue" : ""}" title="Due ${escapeHtml(datePart)}">📅 ${label}</span>`;
     })();
+    // FORK 2026-05-22: collapsed head now carries an 18px checkbox between
+    // the grip and the status icon. Click toggles status open↔resolved via
+    // the toggle-resolve action (handled by handleExecTaskAction). This
+    // replaces the drawer's "Resolve" button per the Today card redesign.
+    const isResolved = t.status === "resolved";
+    const checkbox = `<button
+              class="exec-task-check${isResolved ? " exec-task-check-checked" : ""}"
+              data-action="toggle-resolve"
+              title="${isResolved ? "Mark open" : "Mark resolved"}"
+              aria-label="${isResolved ? "Mark open" : "Mark resolved"}">${isResolved ? "✓" : ""}</button>`;
     return `<div class="exec-task${isExpanded ? " exec-task-expanded" : ""}" draggable="true"
               data-task-id="${escapeExecAttr(t.id)}"
               data-status="${t.status}"
@@ -7631,6 +7641,7 @@ function init() {
               data-rank="${t.priority_rank}">
         <div class="exec-task-head">
           <span class="exec-task-grip" title="Drag to reorder or move axis">⋮⋮</span>
+          ${checkbox}
           <span class="exec-task-icon">${icon}</span>
           <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>
           <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
@@ -7688,8 +7699,6 @@ function init() {
         </div>
         ${meta}
         <div class="exec-task-actions">
-          <button class="exec-task-action exec-task-action-primary" data-action="resolve">${t.status === "resolved" ? "↺ Re-open" : "✓ Resolve"}</button>
-          <button class="exec-task-action" data-action="in_progress">🟡 Start</button>
           <button class="exec-task-action" data-action="reschedule">📅 Reschedule…</button>
           ${
             t.status === "back_burner"
@@ -8173,7 +8182,8 @@ function init() {
         if (
           t.closest(".exec-task-menu") ||
           t.closest(".exec-task-grip") ||
-          t.closest(".exec-task-pencil")
+          t.closest(".exec-task-pencil") ||
+          t.closest(".exec-task-check")
         ) {
           return;
         }
@@ -8205,6 +8215,15 @@ function init() {
           void handleExecTaskAction(id, btn.dataset.action!);
         });
       });
+      // FORK 2026-05-22 — collapsed-head checkbox. Stops propagation so the
+      // head's expand-toggle listener doesn't also fire, then routes through
+      // handleExecTaskAction with the toggle-resolve action.
+      row.querySelectorAll<HTMLElement>(".exec-task-check").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void handleExecTaskAction(id, btn.dataset.action!);
+        });
+      });
     });
   }
 
@@ -8217,7 +8236,6 @@ function init() {
     execContextMenuEl = menu;
     menu.innerHTML = `
       <button data-action="resolve" class="exec-context-item">${t.status === "resolved" ? "↺ Re-open" : "✓ Mark resolved"}</button>
-      <button data-action="in_progress" class="exec-context-item">🟡 Mark in-progress</button>
       <div class="exec-context-sep"></div>
       <div class="exec-context-submenu-anchor">
         <button class="exec-context-item">↪ Reassign axis ›</button>
@@ -8274,8 +8292,14 @@ function init() {
           id: taskId,
           status: t?.status === "resolved" ? "open" : "resolved",
         });
-      } else if (action === "in_progress") {
-        await req("control-panel.tasks.update", { id: taskId, status: "in_progress" });
+      } else if (action === "toggle-resolve") {
+        // FORK 2026-05-22: Today-card checkbox on collapsed head. Distinct
+        // from menu's "resolve" (which is also a toggle today, but kept as a
+        // separate action so the menu wording can diverge if needed).
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          status: t?.status === "resolved" ? "open" : "resolved",
+        });
       } else if (action === "delete") {
         // FORK 2026-05-14 — delete is now a HARD remove via tasks.remove.
         // The "Deleted" filter chip and the soft-delete bucket were dropped
