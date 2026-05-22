@@ -6665,6 +6665,7 @@ function init() {
     app.appendChild(el);
     execPanelEl = el;
     attachExecDragHandlers(el);
+    attachExecPointerDragHandlers(el);
     renderExecFilterBar();
     attachExecTaskAddHandlers(el);
     attachExecAddGroupHandlers(el);
@@ -7548,6 +7549,72 @@ function init() {
   let execDropIndicator: HTMLElement | null = null;
   let execDragRefreshSuppressed = false;
 
+  // FORK 2026-05-22 — pointer-event DnD scaffolding (Task 13 of Today card
+  // redesign). Replaces the HTML5 DnD path above; coexists during the 4-task
+  // landing window (Tasks 13-16) before the old code is removed in Task 17.
+  // DnD is non-functional from this commit until Task 15 (pointerup commit).
+  // The PointerDrag state + constants live at the same scope as `execDrag`
+  // above so Tasks 14-16 can reference them from same-scope helpers.
+  type PointerDrag = {
+    id: string;
+    axisAtStart: string;
+    startClientX: number;
+    startClientY: number;
+    pointerId: number;
+    ghost: HTMLElement;
+    source: HTMLElement;
+    indicator: HTMLElement;
+    passedThreshold: boolean;
+  };
+
+  let execPointerDrag: PointerDrag | null = null;
+
+  const DRAG_START_THRESHOLD_PX = 4;
+  const AUTOSCROLL_EDGE_PX = 60;
+  const AUTOSCROLL_MAX_SPEED_PX_PER_FRAME = 18;
+
+  function attachExecPointerDragHandlers(panel: HTMLElement): void {
+    const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
+
+    body.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const grip = (ev.target as HTMLElement).closest(".exec-task-grip") as HTMLElement | null;
+      if (!grip) return;
+      const task = grip.closest(".exec-task") as HTMLElement | null;
+      if (!task) return;
+
+      ev.preventDefault();
+      task.setPointerCapture(ev.pointerId);
+
+      const ghost = task.cloneNode(true) as HTMLElement;
+      ghost.classList.add("exec-drag-ghost");
+      ghost.style.position = "fixed";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "10000";
+      ghost.style.left = `${task.getBoundingClientRect().left}px`;
+      ghost.style.top = `${task.getBoundingClientRect().top}px`;
+      ghost.style.width = `${task.getBoundingClientRect().width}px`;
+      ghost.style.opacity = "0";
+      document.body.appendChild(ghost);
+
+      const indicator = document.createElement("div");
+      indicator.className = "exec-drop-indicator";
+
+      execPointerDrag = {
+        id: task.dataset.taskId!,
+        axisAtStart: task.dataset.axis!,
+        startClientX: ev.clientX,
+        startClientY: ev.clientY,
+        pointerId: ev.pointerId,
+        ghost,
+        source: task,
+        indicator,
+        passedThreshold: false,
+      };
+      execDragRefreshSuppressed = true;
+    });
+  }
+
   function attachExecDragHandlers(panel: HTMLElement) {
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
     const axisTargets = panel.querySelector("#exec-axis-targets") as HTMLElement;
@@ -7791,7 +7858,7 @@ function init() {
               data-action="toggle-resolve"
               title="${isResolved ? "Mark open" : "Mark resolved"}"
               aria-label="${isResolved ? "Mark open" : "Mark resolved"}">${isResolved ? "✓" : ""}</button>`;
-    return `<div class="exec-task${isExpanded ? " exec-task-expanded" : ""}" draggable="true"
+    return `<div class="exec-task${isExpanded ? " exec-task-expanded" : ""}"
               data-task-id="${escapeExecAttr(t.id)}"
               data-status="${t.status}"
               data-axis="${axis}"
