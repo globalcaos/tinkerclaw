@@ -5185,6 +5185,56 @@ code.fs-link.fs-link-error {
   color: #16161a;
 }
 
+/* FORK 2026-05-22: inline + Add group form at the top of the tasks section. */
+.exec-add-group-wrap {
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--border-faint, #2a2a2a);
+}
+.exec-add-group-toggle {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.exec-add-group-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.exec-add-group-form {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.exec-add-group-form input {
+  flex: 1;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.exec-add-group-submit,
+.exec-add-group-cancel {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.exec-add-group-cancel {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+}
+
 /* ─── Prefrontal plan-board — synthetic + idle variants (FORK 2026-05-14) ─── */
 /* The full .pf-plan family is defined in prefrontal-tree.ts embedded styles.
    These extra classes are here so they can be overridden from base.css without

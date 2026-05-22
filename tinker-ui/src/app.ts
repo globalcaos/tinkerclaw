@@ -6637,6 +6637,14 @@ function init() {
           <div class="exec-filter-bar" id="exec-filter-bar"></div>
           <div class="exec-progress-bar-wrap"><div class="exec-progress-bar" id="exec-progress-bar"></div></div>
           <div id="exec-axis-targets" class="exec-axis-targets" aria-hidden="true"></div>
+          <div class="exec-add-group-wrap">
+            <button id="exec-add-group-toggle" class="exec-add-group-toggle">+ Add group</button>
+            <form id="exec-add-group-form" class="exec-add-group-form" style="display:none">
+              <input id="exec-add-group-label" type="text" placeholder="Group label (max 32 chars)" maxlength="32" required />
+              <button type="submit" class="exec-add-group-submit">Add</button>
+              <button type="button" id="exec-add-group-cancel" class="exec-add-group-cancel">Cancel</button>
+            </form>
+          </div>
           <div id="exec-tasks-body" class="exec-tasks-body">Loading…</div>
           <div class="exec-task-add-bar" id="exec-task-add-bar">
             <button class="exec-task-add-toggle" id="exec-task-add-toggle" title="Add a new task">+ Add task</button>
@@ -6659,6 +6667,7 @@ function init() {
     attachExecDragHandlers(el);
     renderExecFilterBar();
     attachExecTaskAddHandlers(el);
+    attachExecAddGroupHandlers(el);
     attachExecTabHandlers(el);
     // Global handlers: click-outside closes context menu; Escape closes too.
     document.addEventListener("click", (ev) => {
@@ -7916,6 +7925,66 @@ function init() {
         console.error("[exec] tasks.add failed", err);
         text.classList.add("exec-add-text-error");
         setTimeout(() => text.classList.remove("exec-add-text-error"), 1500);
+      }
+    });
+  }
+
+  // FORK 2026-05-22 (Task 11) — inline "+ Add group" form at the top of the
+  // tasks section. Toggles a one-line input that derives a slug-id from the
+  // label and creates a top-level axis (parent_id implicitly null). Duplicate
+  // ids surface via the same error-flash pattern as attachExecTaskAddHandlers.
+  function attachExecAddGroupHandlers(panel: HTMLElement): void {
+    const toggle = panel.querySelector("#exec-add-group-toggle") as HTMLButtonElement | null;
+    const form = panel.querySelector("#exec-add-group-form") as HTMLFormElement | null;
+    const label = panel.querySelector("#exec-add-group-label") as HTMLInputElement | null;
+    const cancel = panel.querySelector("#exec-add-group-cancel") as HTMLButtonElement | null;
+    if (!toggle || !form || !label || !cancel) return;
+
+    const open = () => {
+      form.style.display = "";
+      toggle.style.display = "none";
+      label.focus();
+    };
+    const close = () => {
+      form.style.display = "none";
+      toggle.style.display = "";
+      label.value = "";
+    };
+
+    toggle.addEventListener("click", open);
+    cancel.addEventListener("click", close);
+    label.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        close();
+      }
+    });
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const text = label.value.trim();
+      if (!text) {
+        label.focus();
+        return;
+      }
+      // Derive a slug-id from the label.
+      const id = text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32);
+      if (!id) {
+        label.focus();
+        return;
+      }
+      try {
+        await req("control-panel.axes.add", { id, label: text });
+        close();
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] axes.add (group) failed", err);
+        label.classList.add("exec-add-text-error");
+        setTimeout(() => label.classList.remove("exec-add-text-error"), 1500);
       }
     });
   }
