@@ -7668,17 +7668,9 @@ function init() {
       const m = t.metadata_json ? JSON.parse(t.metadata_json) : null;
       if (m) {
         const bits: string[] = [];
-        if (m.todoist_id)
-          bits.push(
-            `<span class="exec-task-meta-chip">📋 Todoist ${escapeHtml(String(m.todoist_id))}</span>`,
-          );
-        if (m.todoist_url)
-          bits.push(
-            `<a class="exec-task-meta-chip" href="${escapeExecAttr(String(m.todoist_url))}" target="_blank" rel="noreferrer">↗ open</a>`,
-          );
-        if (Array.isArray(m.todoist_labels))
-          for (const l of m.todoist_labels.slice(0, 8))
-            bits.push(`<span class="exec-task-meta-chip">#${escapeHtml(String(l))}</span>`);
+        // FORK 2026-05-22: Todoist deprecated (memory: 2026-05-11). All
+        // todoist_* chips removed from render; the metadata strip migration
+        // also clears these from metadata_json on next gateway boot.
         if (Array.isArray(m.gmail_thread_ids))
           bits.push(
             `<span class="exec-task-meta-chip">📧 ${m.gmail_thread_ids.length} thread${m.gmail_thread_ids.length === 1 ? "" : "s"}</span>`,
