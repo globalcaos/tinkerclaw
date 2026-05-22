@@ -5315,3 +5315,23 @@ code.fs-link.fs-link-error {
   border-color: var(--accent);
   color: var(--bg);
 }
+
+/* FORK 2026-05-22: pointer-event DnD floating ghost + source-row dim. */
+.exec-drag-ghost {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  opacity: 0.85;
+  transition: opacity 0.08s ease;
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+.exec-task-source {
+  opacity: 0.35;
+}
+.exec-drop-indicator {
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  margin: 0 6px;
+  pointer-events: none;
+}
