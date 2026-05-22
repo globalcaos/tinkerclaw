@@ -41,6 +41,12 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   // status. Same in-place rewrite pattern as the axis migration above.
   migrateWidenStatusCheck(db);
 
+  // v3.5 migration — old DBs have task_axis without the parent_id column that
+  // backs the group → sub-group hierarchy in the Today card redesign. Plain
+  // ALTER TABLE ADD COLUMN (SQLite supports it for NULL-default columns with
+  // a FK target); idempotent via PRAGMA table_info check.
+  addAxisParentIdColumn(db);
+
   // v3.3 — seed task_axis + task_est_preset with the prior hardcoded defaults
   // if the tables are empty. Idempotent — only inserts on truly empty tables,
   // so user edits survive subsequent boots.
@@ -165,6 +171,22 @@ function migrateWidenStatusCheck(db: Database.Database): void {
     db.exec("ROLLBACK");
     throw err;
   }
+}
+
+// v3.5 — add task_axis.parent_id (NULL-default TEXT FK → task_axis.id ON
+// DELETE CASCADE) + the supporting partial-free index. Exported so the
+// vitest covering the runtime migration path can hit it directly; same
+// shape as the v3.1.1 / v3.3 migrations above except SQLite's plain
+// ALTER TABLE works here because the new column is nullable + has no
+// CHECK constraint. Idempotent via PRAGMA table_info — re-running on an
+// already-migrated DB is a no-op.
+export function addAxisParentIdColumn(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(task_axis)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "parent_id")) return; // idempotent
+  db.exec(
+    "ALTER TABLE task_axis ADD COLUMN parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE",
+  );
+  db.exec("CREATE INDEX IF NOT EXISTS task_axis_parent ON task_axis(parent_id)");
 }
 
 // v3.3 — first-boot seed for task_axis + task_est_preset. Both tables CREATE
