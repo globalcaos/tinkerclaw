@@ -4411,6 +4411,12 @@ code.fs-link.fs-link-error {
   background: #1c1c22;
   border-radius: 4px;
 }
+/* FORK 2026-05-22: when expanded, hide the collapsed-head title — the
+   drawer's full-title block is the sole title surface. Eliminates the
+   duplicate-title redundancy in the UI. */
+.exec-task-expanded .exec-task-text {
+  display: none;
+}
 .exec-task-drawer {
   background: #1f1f26;
   border-top: 1px solid #2a2a30;
