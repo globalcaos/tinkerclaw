@@ -8777,14 +8777,12 @@ function init() {
 
   async function applyTaskMove(taskId: string, axis: string, rank: number) {
     const clamped = Math.round(Math.max(0, Math.min(1000, rank)));
-    console.info("[exec-drag] applyTaskMove →", { taskId, axis, rank: clamped });
     try {
       await req("control-panel.tasks.update", {
         id: taskId,
         priority_axis: axis,
         priority_rank: clamped,
       });
-      console.info("[exec-drag] applyTaskMove OK");
     } catch (err) {
       // FORK 2026-05-12 — RPC failure used to silently console.error, which
       // produced the reported "I drop the task and nothing happens" UX. Now
