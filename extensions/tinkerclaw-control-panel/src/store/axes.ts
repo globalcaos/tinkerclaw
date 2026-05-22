@@ -12,6 +12,10 @@ export type TaskAxisRow = {
   id: string;
   label: string;
   position: number;
+  // v3.5 — null when this is a top-level group. Non-null IDs reference a
+  // parent task_axis row that is itself top-level (enforced by
+  // validateParentDepth — sub-groups cannot have sub-groups).
+  parent_id: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -20,12 +24,16 @@ export type AxisAddInput = {
   id: string;
   label: string;
   position?: number;
+  // v3.5 — omit / null = top-level. String = id of a top-level parent axis.
+  parent_id?: string | null;
 };
 
 export type AxisUpdateInput = {
   id: string;
   label?: string;
   position?: number;
+  // v3.5 — null clears the parent (promote to top-level). String = new parent.
+  parent_id?: string | null;
 };
 
 const now = (): number => Date.now();
@@ -34,7 +42,7 @@ export function listAxes(cfg: ControlPanelResolvedConfig): TaskAxisRow[] {
   const db = getDb(cfg);
   return db
     .prepare(
-      "SELECT id, label, position, created_at, updated_at FROM task_axis ORDER BY position ASC, id ASC",
+      "SELECT id, label, position, parent_id, created_at, updated_at FROM task_axis ORDER BY position ASC, id ASC",
     )
     .all() as TaskAxisRow[];
 }
@@ -42,9 +50,27 @@ export function listAxes(cfg: ControlPanelResolvedConfig): TaskAxisRow[] {
 export function getAxisById(cfg: ControlPanelResolvedConfig, id: string): TaskAxisRow | null {
   const db = getDb(cfg);
   const row = db
-    .prepare("SELECT id, label, position, created_at, updated_at FROM task_axis WHERE id = ?")
+    .prepare(
+      "SELECT id, label, position, parent_id, created_at, updated_at FROM task_axis WHERE id = ?",
+    )
     .get(id) as TaskAxisRow | undefined;
   return row ?? null;
+}
+
+/**
+ * v3.5 — returns true iff `parentId` references an existing top-level axis
+ * (parent_id IS NULL). Used to enforce the two-level depth cap: a sub-group
+ * cannot itself be a parent of another sub-group.
+ *
+ * Returns false when the parent does not exist OR is already a child.
+ */
+export function validateParentDepth(cfg: ControlPanelResolvedConfig, parentId: string): boolean {
+  const db = getDb(cfg);
+  const row = db.prepare("SELECT parent_id FROM task_axis WHERE id = ?").get(parentId) as
+    | { parent_id: string | null }
+    | undefined;
+  if (!row) return false; // parent does not exist
+  return row.parent_id === null;
 }
 
 export function addAxis(cfg: ControlPanelResolvedConfig, input: AxisAddInput): TaskAxisRow {
@@ -54,19 +80,33 @@ export function addAxis(cfg: ControlPanelResolvedConfig, input: AxisAddInput): T
   const existing = getAxisById(cfg, input.id);
   if (existing) throw new Error(`[control-panel] addAxis: axis ${input.id} already exists`);
 
-  // If position omitted, append after current max (so new axes land at the bottom).
+  // v3.5 — nesting cap. parent_id must reference a top-level axis; rejecting
+  // here keeps the hierarchy strictly two-level (group → sub-group).
+  if (input.parent_id != null) {
+    if (!validateParentDepth(cfg, input.parent_id)) {
+      throw new Error(
+        `[control-panel] addAxis: nesting beyond two levels is not supported (parent ${input.parent_id} is itself a sub-group, or does not exist)`,
+      );
+    }
+  }
+
+  // If position omitted, append after current max within the same parent scope
+  // (so new axes land at the bottom of their group). Top-level axes share the
+  // NULL-parent scope, addressed via COALESCE(parent_id, '').
   let position = input.position;
   if (position === undefined) {
-    const maxRow = db.prepare("SELECT COALESCE(MAX(position), 0) as m FROM task_axis").get() as {
-      m: number;
-    };
+    const maxRow = db
+      .prepare(
+        "SELECT COALESCE(MAX(position), 0) as m FROM task_axis WHERE COALESCE(parent_id, '') = ?",
+      )
+      .get(input.parent_id ?? "") as { m: number };
     position = (maxRow.m ?? 0) + 10;
   }
 
   const ts = now();
   db.prepare(
-    "INSERT INTO task_axis (id, label, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(input.id, input.label, position, ts, ts);
+    "INSERT INTO task_axis (id, label, position, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(input.id, input.label, position, input.parent_id ?? null, ts, ts);
   return getAxisById(cfg, input.id)!;
 }
 
@@ -74,6 +114,20 @@ export function updateAxis(cfg: ControlPanelResolvedConfig, input: AxisUpdateInp
   const db = getDb(cfg);
   const existing = getAxisById(cfg, input.id);
   if (!existing) throw new Error(`[control-panel] updateAxis: no axis with id ${input.id}`);
+
+  // v3.5 — same two-level cap as addAxis. Skip the check when caller is
+  // clearing the parent (parent_id === null). Also guard against self-parenting.
+  if (input.parent_id !== undefined && input.parent_id !== null) {
+    if (input.parent_id === input.id) {
+      throw new Error(`[control-panel] updateAxis: axis ${input.id} cannot be its own parent`);
+    }
+    if (!validateParentDepth(cfg, input.parent_id)) {
+      throw new Error(
+        `[control-panel] updateAxis: nesting beyond two levels is not supported (parent ${input.parent_id} is itself a sub-group, or does not exist)`,
+      );
+    }
+  }
+
   const fields: string[] = [];
   const params: Record<string, unknown> = { id: input.id, now: now() };
   if (input.label !== undefined) {
@@ -83,6 +137,10 @@ export function updateAxis(cfg: ControlPanelResolvedConfig, input: AxisUpdateInp
   if (input.position !== undefined) {
     fields.push("position = @position");
     params.position = input.position;
+  }
+  if (input.parent_id !== undefined) {
+    fields.push("parent_id = @parent_id");
+    params.parent_id = input.parent_id;
   }
   if (fields.length === 0) return existing;
   fields.push("updated_at = @now");
