@@ -103,8 +103,9 @@ CREATE INDEX IF NOT EXISTS task_recurring ON task(recurrence_parent_id) WHERE re
 CREATE INDEX IF NOT EXISTS task_back_burner ON task(priority_axis, priority_rank) WHERE status = 'back_burner';
 
 ------------------------------------------------------------------------------
--- TASK TAXONOMIES (v3.3)
--- task_axis     : user-managed categories (replaces hardcoded EXEC_AXIS_ORDER)
+-- TASK TAXONOMIES (v3.3 + v3.5 hierarchy)
+-- task_axis     : user-managed categories (replaces hardcoded EXEC_AXIS_ORDER);
+--                 v3.5 adds parent_id for two-level group → sub-group nesting.
 -- task_est_preset : user-managed estimation presets (replaces free numeric input)
 -- Both seeded with the prior hardcoded defaults on first migration; see
 -- seedTaxonomyDefaults() in db.ts.
@@ -114,10 +115,12 @@ CREATE TABLE IF NOT EXISTS task_axis (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 100,
+  parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS task_axis_position ON task_axis(position);
+CREATE INDEX IF NOT EXISTS task_axis_parent ON task_axis(parent_id);
 
 CREATE TABLE IF NOT EXISTS task_est_preset (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
