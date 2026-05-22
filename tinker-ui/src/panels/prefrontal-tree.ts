@@ -383,16 +383,26 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const trail = currentState?.trail ?? [];
     const plan = currentState?.plan ?? null;
 
+    // FORK 2026-05-23: when the tree has no active LLM calls, the job is
+    // done and the panel should return to its default ("blank") state.
+    // The plan section stays because it's the persistent task tracker.
+    // Recipe header + action trail are in-flight indicators — they
+    // accumulate during a job and were sticking around after completion,
+    // making the panel verbose-looking when nothing was actually running.
+    // The recipe/trail state stays in memory (so a quickly-fired follow-up
+    // job picks up where it left off), but is not rendered while idle.
+    const treeIdle = !tree.active || !tree.root;
+
     // ─── Current Plan (FORK 2026-05-14 — always renders per panels.md) ──────
     card.appendChild(renderPlanSection(plan, tree));
 
-    // ─── Recipe header (only when a recipe is active) ────────────────────────
-    if (recipe) {
+    // ─── Recipe header (only when a recipe is active AND tree is busy) ──────
+    if (recipe && !treeIdle) {
       card.appendChild(renderRecipeHeader(recipe));
     }
 
     // ─── Tree block (recursive) ─────────────────────────────
-    if (!tree.active || !tree.root) {
+    if (treeIdle) {
       const empty = el("div", "pf-empty");
       empty.textContent = "No active LLM calls";
       card.appendChild(empty);
@@ -405,10 +415,13 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     // ─── Action trail ────────────────────────────────────────
     // Show ALL trail entries that don't belong to a subagent's own trail
     // (those are inlined under the subagent row). Anything with no child
-    // node match lives here at the root.
-    const rootOwnedTrail = filterRootTrail(trail, tree);
-    if (rootOwnedTrail.length > 0) {
-      card.appendChild(renderTrail(rootOwnedTrail, "root"));
+    // node match lives here at the root. Suppressed entirely when the
+    // tree is idle (per the FORK 2026-05-23 idle-blank rule above).
+    if (!treeIdle) {
+      const rootOwnedTrail = filterRootTrail(trail, tree);
+      if (rootOwnedTrail.length > 0) {
+        card.appendChild(renderTrail(rootOwnedTrail, "root"));
+      }
     }
 
     container.appendChild(card);
