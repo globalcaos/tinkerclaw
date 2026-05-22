@@ -1,4 +1,4 @@
--- FORK: tinkerclaw-control-panel — full SQLite schema (v3.1).
+-- FORK: tinkerclaw-control-panel — full SQLite schema (v3.5 — task_axis hierarchy).
 -- Schema migrations run forward-only from migrations.ts; this file is the
 -- canonical state after all migrations are applied. The migration runner
 -- compares user_version against the migrations table.
@@ -89,6 +89,36 @@ CREATE INDEX IF NOT EXISTS task_due_date ON task(due_date) WHERE due_date IS NOT
 CREATE INDEX IF NOT EXISTS task_briefing_pass ON task(briefing_pass_id);
 CREATE INDEX IF NOT EXISTS task_dismissed ON task(status, dismissal_kind) WHERE status = 'dismissed';
 CREATE INDEX IF NOT EXISTS task_recurring ON task(recurrence_parent_id) WHERE recurrence_parent_id IS NOT NULL;
+
+------------------------------------------------------------------------------
+-- TASK TAXONOMIES (v3.3 + v3.5 hierarchy)
+-- task_axis     : user-managed categories (replaces hardcoded EXEC_AXIS_ORDER);
+--                 v3.5 adds parent_id for two-level group → sub-group nesting.
+-- task_est_preset : user-managed estimation presets (replaces free numeric input)
+-- Both seeded with the prior hardcoded defaults on first migration; see
+-- seedTaxonomyDefaults() in db.ts.
+------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS task_axis (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 100,
+  parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_axis_position ON task_axis(position);
+CREATE INDEX IF NOT EXISTS task_axis_parent ON task_axis(parent_id);
+
+CREATE TABLE IF NOT EXISTS task_est_preset (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  minutes INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 100,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_est_preset_position ON task_est_preset(position);
 
 CREATE TABLE IF NOT EXISTS task_event (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
