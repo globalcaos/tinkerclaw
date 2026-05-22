@@ -120,7 +120,11 @@ CREATE TABLE IF NOT EXISTS task_axis (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS task_axis_position ON task_axis(position);
-CREATE INDEX IF NOT EXISTS task_axis_parent ON task_axis(parent_id);
+-- task_axis_parent index is created by the addAxisParentIdColumn migration
+-- (db.ts), NOT here. Reason: getDb() runs this schema.exec() BEFORE the
+-- migration; on existing v3.3 DBs the column does not exist yet, so a
+-- CREATE INDEX here would throw "no such column: parent_id" and crash
+-- gateway boot. The migration creates the column AND the index in lockstep.
 
 CREATE TABLE IF NOT EXISTS task_est_preset (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
