@@ -4436,6 +4436,15 @@ code.fs-link.fs-link-error {
 .exec-task-expanded .exec-task-text {
   display: none;
 }
+/* FORK 2026-05-22: the head's pencil (data-action="edit-title") is
+   redundant with the drawer's full-title pencil (.exec-task-pencil-inline,
+   same data-action) once the card is expanded — they both edit the title.
+   Hide the head one when expanded so only the drawer's inline pencil
+   remains visible. Sibling to the .exec-task-text hide above. The drawer's
+   inline + context pencils are unaffected (they live outside .exec-task-head). */
+.exec-task-expanded .exec-task-head .exec-task-pencil {
+  display: none;
+}
 .exec-task-drawer {
   background: #1f1f26;
   border-top: 1px solid #2a2a30;
