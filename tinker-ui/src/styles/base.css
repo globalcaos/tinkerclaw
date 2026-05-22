@@ -4349,12 +4349,13 @@ code.fs-link.fs-link-error {
    column flex-shrinks (with ellipsis) when chips would otherwise consume
    all width. min-width: 0 on the text is the canonical way to allow
    ellipsis inside a flex container.
-   FORK 2026-05-12 — user-select:none + cursor:grab so HTML5 drag actually
-   initiates from anywhere on the collapsed row. Without user-select:none,
-   mousedown on the title text starts a text selection and the parent's
-   draggable="true" never wins the gesture (this was the reported "drag
-   doesn't work from the compacted card" bug). The drawer body keeps text
-   selectable — only the head row is locked. */
+   FORK 2026-05-22 (Task 18) — user-select:none + cursor:grab keep the
+   collapsed row drag-affordant for the pointer-event DnD (Tasks 13-17).
+   Without user-select:none, mousedown on the title text starts a text
+   selection and pointermove drag gets pre-empted. The drawer body keeps
+   text selectable — only the head row is locked. (Historical: this
+   originally guarded the HTML5 draggable="true" path, which was retired
+   in Task 17.) */
 .exec-task-head {
   display: flex;
   align-items: center;

@@ -7252,30 +7252,6 @@ function init() {
   let execLastTasks: ExecTask[] = [];
   let execContextMenuEl: HTMLElement | null = null;
 
-  const EXEC_AXIS_LABEL: Record<string, string> = {
-    ventures: "🚀 Ventures",
-    online: "💰 Online",
-    family: "👨‍👩‍👧 Family",
-    me: "🏃 Me",
-    serra: "🏭 SERRA",
-    meta: "⚙️ Meta",
-  };
-  // FORK 2026-05-11 (v3.1.1) — 'ventures' added as the FIRST axis at user's
-  // request: new income / business development. Distinct from 'online' (which
-  // tracks leading indicators of EXISTING online streams — GitHub stars,
-  // TinkerZone visits, YouTube subs). Ventures = new revenue experiments.
-  const EXEC_AXIS_ORDER = ["ventures", "online", "family", "me", "serra", "meta"];
-  const EXEC_STATUS_ICON: Record<string, string> = {
-    open: "⬜",
-    in_progress: "🟡",
-    resolved: "✅",
-    // FORK 2026-05-13 — single 🗑 for both deleted statuses (new 'dropped'
-    // writes + legacy 'dismissed' rows). See the Deleted filter chip.
-    dropped: "🗑",
-    dismissed: "🗑",
-    back_burner: "💤",
-  };
-
   // FORK 2026-05-22 (Task 10) — axis tree types + helpers. The flat axes list
   // returned by control-panel.axes.list (v3.5) is built into a 2-level tree
   // (top-level groups + sub-groups); sub-groups cannot nest further (enforced
@@ -7287,6 +7263,26 @@ function init() {
     parent_id: string | null;
   };
   type AxisNode = AxisRow & { children: AxisNode[] };
+
+  // FORK 2026-05-22 (Task 18) — `EXEC_AXIS_ORDER` + `EXEC_AXIS_LABEL` deleted.
+  // Axes now come exclusively from `control-panel.axes.list` (Task 10), cached
+  // in `execAxesList` below. Writer: `loadExecTasks` (refreshed every load).
+  // Readers: the + Add task dropdown (via `repopulateExecAddAxisOptions`,
+  // called from loadExecTasks after each refresh) and `openExecContextMenu`
+  // (Reassign-axis submenu). The fresh-DB / RPC-failure fallback inlines the
+  // 5-axis defaults as a literal array inside loadExecTasks — search there
+  // for FRESH_DB_FALLBACK.
+  let execAxesList: AxisRow[] = [];
+  const EXEC_STATUS_ICON: Record<string, string> = {
+    open: "⬜",
+    in_progress: "🟡",
+    resolved: "✅",
+    // FORK 2026-05-13 — single 🗑 for both deleted statuses (new 'dropped'
+    // writes + legacy 'dismissed' rows). See the Deleted filter chip.
+    dropped: "🗑",
+    dismissed: "🗑",
+    back_burner: "💤",
+  };
 
   function buildAxisTree(flat: AxisRow[]): AxisNode[] {
     const byId = new Map<string, AxisNode>();
@@ -7451,17 +7447,29 @@ function init() {
         } catch {
           axesFlat = [];
         }
-        // Fallback: if axes table is empty (fresh DB or RPC failure), synthesize
-        // a flat list from the hardcoded EXEC_AXIS_ORDER so the panel still
-        // groups sensibly. parent_id is null for every fallback axis.
+        // FRESH_DB_FALLBACK — if axes table is empty (fresh DB or RPC failure),
+        // synthesize a flat list of 5 default top-level groups so the panel
+        // still renders sensibly. parent_id is null for every fallback axis.
+        // Task 18 (2026-05-22) inlined this literal after deleting the
+        // EXEC_AXIS_ORDER / EXEC_AXIS_LABEL constants — the labels match the
+        // seeds in extensions/tinkerclaw-control-panel/src/store/db.ts which
+        // is what gets written on first-boot in the normal path.
         if (axesFlat.length === 0) {
-          axesFlat = EXEC_AXIS_ORDER.map((id, i) => ({
-            id,
-            label: EXEC_AXIS_LABEL[id] ?? id,
-            position: i,
-            parent_id: null,
-          }));
+          axesFlat = [
+            { id: "ventures", label: "🚀 Ventures", position: 0, parent_id: null },
+            { id: "online", label: "💰 Online", position: 1, parent_id: null },
+            { id: "family", label: "👨‍👩‍👧 Family", position: 2, parent_id: null },
+            { id: "me", label: "🏃 Me", position: 3, parent_id: null },
+            { id: "serra", label: "🏭 SERRA", position: 4, parent_id: null },
+            { id: "meta", label: "⚙️ Meta", position: 5, parent_id: null },
+          ];
         }
+        // Cache the resolved list for non-render readers (the + Add task
+        // dropdown + the right-click Reassign-axis submenu) and refresh the
+        // add-form's dropdown so freshly-added groups appear without a panel
+        // rebuild.
+        execAxesList = axesFlat;
+        repopulateExecAddAxisOptions();
         const tree = buildAxisTree(axesFlat);
         // Collect every id reachable through the tree so we can detect
         // orphan tasks (priority_axis set but not in the tree).
@@ -7914,6 +7922,45 @@ function init() {
       </div>`;
   }
 
+  // FORK 2026-05-22 (Task 18) — repopulate the + Add task form's axis
+  // dropdown from `execAxesList` (set by loadExecTasks). Sub-groups are
+  // rendered as their parent's children with a "— " indent prefix so the
+  // hierarchy is legible inside a flat <select>. The dropdown is rebuilt
+  // every loadExecTasks() call so newly-added groups appear without
+  // tearing down the whole panel. We preserve the current selection across
+  // a rebuild when possible; otherwise fall back to last-used / first.
+  function repopulateExecAddAxisOptions(): void {
+    const sel = document.getElementById("exec-add-axis") as HTMLSelectElement | null;
+    if (!sel) return;
+    const prevValue = sel.value;
+    // Build tree-ordered flat options: each top-level group, followed by its
+    // sub-groups (indented). Sub-groups whose parent is missing fall through
+    // as roots so we don't drop them on the floor.
+    const byId = new Map<string, AxisRow>();
+    for (const a of execAxesList) byId.set(a.id, a);
+    const roots = execAxesList
+      .filter((a) => !a.parent_id || !byId.has(a.parent_id))
+      .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+    const childrenOf = (pid: string) =>
+      execAxesList
+        .filter((a) => a.parent_id === pid)
+        .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+    const opts: string[] = [];
+    for (const r of roots) {
+      opts.push(`<option value="${escapeExecAttr(r.id)}">${escapeHtml(r.label)}</option>`);
+      for (const c of childrenOf(r.id)) {
+        opts.push(`<option value="${escapeExecAttr(c.id)}">— ${escapeHtml(c.label)}</option>`);
+      }
+    }
+    sel.innerHTML = opts.join("");
+    // Restore previous selection if still valid; else last-used; else first.
+    const wantedValues = new Set(execAxesList.map((a) => a.id));
+    const lastAxis = localStorage.getItem("tinker.execAddAxis") || "ventures";
+    if (prevValue && wantedValues.has(prevValue)) sel.value = prevValue;
+    else if (wantedValues.has(lastAxis)) sel.value = lastAxis;
+    else if (sel.options.length > 0) sel.selectedIndex = 0;
+  }
+
   // FORK 2026-05-11 — Inline "+ Add task" form at the bottom of the tasks
   // section. Toggle button reveals an inline form (text + axis + est_min +
   // due_date). Submit calls control-panel.tasks.add and refreshes. ESC or
@@ -7928,13 +7975,12 @@ function init() {
     const cancel = panel.querySelector("#exec-add-cancel") as HTMLButtonElement | null;
     if (!toggle || !form || !text || !axis || !est || !due || !cancel) return;
 
-    // Populate axis dropdown
-    axis.innerHTML = EXEC_AXIS_ORDER.map(
-      (a) => `<option value="${a}">${EXEC_AXIS_LABEL[a] ?? a}</option>`,
-    ).join("");
-    // Remember the last-used axis between adds (default: ventures — most-active axis post-Todoist-import)
-    const lastAxis = localStorage.getItem("tinker.execAddAxis") || "ventures";
-    axis.value = lastAxis;
+    // Initial dropdown population. execAxesList is empty until the first
+    // loadExecTasks() resolves; once it does, the cache is filled and
+    // repopulateExecAddAxisOptions() runs again with real data. This
+    // call ensures the <select> isn't visually empty between panel
+    // construction and the first axes RPC reply.
+    repopulateExecAddAxisOptions();
 
     const openForm = () => {
       form.style.display = "";
@@ -8560,7 +8606,33 @@ function init() {
       <div class="exec-context-submenu-anchor">
         <button class="exec-context-item">↪ Reassign axis ›</button>
         <div class="exec-context-submenu">
-          ${EXEC_AXIS_ORDER.map((axis) => `<button data-action="reassign-${axis}" class="exec-context-item">${EXEC_AXIS_LABEL[axis]}</button>`).join("")}
+          ${(() => {
+            // FORK 2026-05-22 (Task 18) — Reassign submenu reads from the
+            // execAxesList cache (Task 10) instead of the deleted
+            // EXEC_AXIS_ORDER/EXEC_AXIS_LABEL constants. Sub-groups are
+            // rendered indented with a "— " prefix so the hierarchy is
+            // visible inside a flat vertical menu.
+            const byId = new Map<string, AxisRow>();
+            for (const a of execAxesList) byId.set(a.id, a);
+            const roots = execAxesList
+              .filter((a) => !a.parent_id || !byId.has(a.parent_id))
+              .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+            const items: string[] = [];
+            for (const r of roots) {
+              items.push(
+                `<button data-action="reassign-${escapeExecAttr(r.id)}" class="exec-context-item">${escapeHtml(r.label)}</button>`,
+              );
+              const kids = execAxesList
+                .filter((a) => a.parent_id === r.id)
+                .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+              for (const c of kids) {
+                items.push(
+                  `<button data-action="reassign-${escapeExecAttr(c.id)}" class="exec-context-item">— ${escapeHtml(c.label)}</button>`,
+                );
+              }
+            }
+            return items.join("");
+          })()}
         </div>
       </div>
       <button data-action="reschedule" class="exec-context-item">📅 Reschedule…</button>
