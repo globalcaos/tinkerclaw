@@ -1,8 +1,10 @@
 # tinkerclaw-control-panel — Plugin Spec
 
-**Status:** Spec v3.1 — implementation pending
+**Status:** Spec v3.5 — task_axis hierarchy + Todoist removal + pointer-event DnD + drawer simplification
 **Author:** Jarvis (Opus 4.7) for the user
-**Last revised:** 2026-05-12 (v3.3 — `back_burner` status: indefinite snooze that hides tasks from every filter except the new `💤 Snoozed` chip while keeping them in their axis; `task_axis` + `task_est_preset` taxonomy tables replace the prior hardcoded `EXEC_AXIS_ORDER` JS constant and free-numeric `est_minutes` input — user can add/edit/delete/reorder categories and estimation presets via the new `control-panel.axes.*` and `control-panel.est-presets.*` gateway RPCs. Settings overlay UI for inline taxonomy management is scheduled (RPCs ship first so Jarvis can mutate via tool call in the meantime).)
+**Last revised:** 2026-05-22 (v3.5 — `task_axis` gains a `parent_id` column for two-level hierarchy (group → sub-group, enforced at the application layer via `validateParentDepth`); Todoist deprecated end-to-end (one-shot `stripTodoistMetadata` migration + `import-from-todoist.mjs` deleted + drawer meta chips removed); HTML5 drag-and-drop replaced with a pointer-event-based DnD (grip-only handle, touch+mouse+pen, floating ghost element, edge auto-scroll, drop indicator, no axis-targets overlay); drawer simplified — Resolve/Start buttons removed in favour of a checkbox on the collapsed-head left edge that toggles `open ↔ resolved`, `in_progress` reserved for system-set state; collapsed-head title hidden while the drawer is expanded (drawer's full-title becomes the sole title surface); `+ Add group` inline form at the top of the tasks section creates top-level axes, per-group `+` button creates sub-groups under that parent. Implementation shipped across `7d6f3c75bf`..`839b7cc5ab`.)
+**Previous:** 2026-05-13 (v3.4 — dismiss-vs-drop UI affordance collapsed into a single 🗑 Delete button per "not useful for me" feedback; backend `dismissal_kind`/`dismissal_note` columns + `task_dismissed` index + `control-panel.tasks.dismiss` RPC kept as dead code for reversibility; SPEC §2.2/§5.4/§6.2/§8 still describe the prior dismiss-vs-drop split — drift, update on next touch. Never landed in this file before v3.5.)
+**Previous:** 2026-05-12 (v3.3 — `back_burner` status: indefinite snooze that hides tasks from every filter except the new `💤 Snoozed` chip while keeping them in their axis; `task_axis` + `task_est_preset` taxonomy tables replace the prior hardcoded `EXEC_AXIS_ORDER` JS constant and free-numeric `est_minutes` input — user can add/edit/delete/reorder categories and estimation presets via the new `control-panel.axes.*` and `control-panel.est-presets.*` gateway RPCs. Settings overlay UI for inline taxonomy management is scheduled (RPCs ship first so Jarvis can mutate via tool call in the meantime).)
 **Previous:** 2026-05-12 (v3.2 — reschedule overlay scrolls vertically past the initial 2-week window, soft-cap 12 weeks ahead; `due_date` hidden from collapsed task row, surfaced as a colored `📅 Due …` header at the top of the expanded card with a `[change]` shortcut to the reschedule picker)
 **Previous:** 2026-05-11 (v3.1 — task board refinement: dismiss-vs-drop, expandable context, all/unfinished filter + progress indicator anchored to the briefing pass, reschedule to another day, and a 7-day calendar strip between graphs and tasks)
 
@@ -313,6 +315,18 @@ Examples:
 
 If the signal evaluates true, the task auto-resolves with `source = 'auto'`, `kind = 'auto_resolved'`. The user sees the task fade out in the Exec panel within ~1 s with a brief "✨ auto-resolved by <signal>" tooltip.
 
+#### v3.5 update — `task_axis` hierarchy
+
+`task_axis` gains `parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE`, with a partial index `task_axis_parent ON task_axis(parent_id) WHERE parent_id IS NOT NULL`. Hierarchy is capped at **two levels** (group → sub-group, no grandchildren) and the cap is enforced at the application layer via `validateParentDepth` in `src/store/axes.ts` — schema does not enforce depth because SQLite has no native recursion constraint and the application path is the single writer. The `parent_id` migration ships as `0abb0c7e6f` (idempotent `ALTER TABLE` for existing DBs) + `e60c1f45c9` (boot-order fix: the partial index is created in the migration, not the inline schema, so it runs after the column add on first-boot of a fresh DB). The five pre-existing axes (`online`, `family`, `me`, `serra`, `meta`) become top-level groups with `parent_id = NULL`; sub-groups are user-created from the UI.
+
+#### v3.5 update — Todoist removal
+
+Todoist is deprecated as a source-of-truth and as a capture endpoint. A one-shot `stripTodoistMetadata` migration (`49b0164ddb`, idempotent) strips every `todoist_*` key from each `task.metadata_json` blob on plugin boot; the `import-from-todoist.mjs` script under `extensions/tinkerclaw-control-panel/scripts/` is deleted (`4e208b811c`); and the drawer no longer renders any Todoist meta chips (`13eb379d70`). The schema is unchanged — Todoist metadata always lived inside `metadata_json` rather than as dedicated columns, so removal is content-only. The full migration path lives in §14.4 (now retroactively chosen: start-fresh, see the 2026-05-11 memory `Control Panel replaces Todoist`).
+
+#### v3.5 update — `task.status` semantics refined
+
+`resolved` is now toggled via a **checkbox on the left edge of the collapsed card head** (see §7.5), not via a drawer button. `in_progress` is **no longer user-settable from the UI** — it is reserved for system-set state (e.g. when an LLM agent is actively working a task via `control-panel.tasks.update {status: 'in_progress'}` from a tool call). The drawer's "Resolve" and "Start" buttons are gone; the right-click menu's "Mark in-progress" item is gone. "Mark resolved" remains in the menu as a one-way shortcut (different shape from the checkbox toggle: menu = mark resolved, checkbox = bidirectional `open ↔ resolved`). Older callers that wrote `in_progress` from the UI path will need to be re-pointed; the gateway RPC contract is unchanged.
+
 ### 2.3 Calendar event cache (NEW in v3.1)
 
 Caches calendar events from external sources for fast date-range queries (used by the strip + the reschedule picker). Synced by `src/calendar/sync.ts` every 30 min for the next 14 days.
@@ -397,6 +411,17 @@ The morning briefing emits a structured task manifest at the end of its run. The
 | Task in DB, not in manifest, status `open`, source `briefing` | Mark as `dropped` with `source_note = 'manifest_omission'` (unless the manifest sets `prune_missing: false`, in which case leave alone — the briefing may have just missed it) |
 | Task in DB, not in manifest, source ≠ `briefing`              | Untouched (manual/conversation tasks survive briefings)                                                                                                                        |
 | Task in DB, status `open`, `due_date > today`                 | Untouched (rescheduled — out of today's view but still owned)                                                                                                                  |
+
+#### v3.5 update — axes RPCs accept `parent_id`
+
+`control-panel.axes.add` and `control-panel.axes.update` now accept an optional `parent_id: string` argument (`71fb3b1077`). When `parent_id` is provided, the store call routes through `validateParentDepth(cfg, parent_id)`; if the candidate parent is itself a sub-group, or does not exist, the store throws and the gateway returns a structured error:
+
+| RPC           | Error code on depth violation | Message (verbatim from `src/store/axes.ts`)                                                                                    |
+| ------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `axes.add`    | `code: "axis_add_failed"`     | `[control-panel] addAxis: nesting beyond two levels is not supported (parent <X> is itself a sub-group, or does not exist)`    |
+| `axes.update` | `code: "axis_update_failed"`  | `[control-panel] updateAxis: nesting beyond two levels is not supported (parent <X> is itself a sub-group, or does not exist)` |
+
+Top-level axes (`parent_id` omitted or `null`) always validate. The depth cap is the only structural constraint — siblings under the same parent are otherwise unrestricted in count or ordering (rank is per-parent).
 
 ### 4.3 Calendar RPCs (NEW in v3.1)
 
@@ -559,6 +584,34 @@ Data comes from `control-panel.calendar.density` for the heat + `control-panel.t
 | Hands chip           | `me` / `user` / `either` — right-aligned, color-coded                                                                  |
 | `⋯` menu             | Opens the right-click context menu (also fires on right-click anywhere in the row)                                     |
 | **Click row** (v3.1) | **Expands inline** — see §7.6                                                                                          |
+
+#### v3.5 update — collapsed head, checkbox, hierarchy + buttons
+
+**Checkbox on the left edge of the collapsed head** (`d08cd06ca9`): an 18px round checkbox sits between the drag grip and the status/axis icon. Clicking it toggles `open ↔ resolved` via `control-panel.tasks.update`. This replaces the Resolve/Start drawer buttons and the right-click menu's "Mark in-progress" item. The checkbox is the only bidirectional surface for the resolved↔open transition; the menu's "Mark resolved" survives as a one-way shortcut.
+
+**Drawer button set (v3.5)** — when a row is expanded, the drawer's action row now shows: **Reschedule…**, **Snooze / Bring-back**, **🗑 Delete**, **Refer in chat**. **No Resolve, no Start.** Resolution lives on the head checkbox; `in_progress` is system-set only (§2.2 v3.5).
+
+**Title hidden while expanded** (`d1a0a8c340`): when `.exec-task-expanded` is present on the row, the collapsed-head's `.exec-task-text` is `display: none`. The drawer's full-title element is the sole title surface in the expanded state — preventing the duplicated-title look when the drawer carries a richer multi-line title. Collapsing the row restores `.exec-task-text` to its default `display`.
+
+**Hierarchy render** (`a4cec8e517`): the tasks list reads `task_axis` as a tree (`parent_id IS NULL` rows are top-level groups, rows with `parent_id` are sub-groups) and renders nested headers (group → sub-group → task rows). The `EXEC_AXIS_ORDER` / `EXEC_AXIS_LABEL` hardcoded constants are gone (`839b7cc5ab`); ordering and labels are read from the live tree.
+
+**`+ Add group` inline form** (`a102c80509`): a small `+ Add group` button sits at the top of the tasks section. Click → inline form (name + emoji icon picker) → submit calls `axes.add` with `parent_id = null` → row appears in the tree on the next push.
+
+**Per-group `+` button** (`371fe91e6e`): each top-level group's header carries a `+` button in its count-chip area. Click → inline form scoped to that parent → submit calls `axes.add` with `parent_id = <that group's id>` → sub-group appears nested under the parent. Sub-group headers do **not** carry a `+` button (two-level cap; UI mirrors the application-layer guard in §4.2 v3.5).
+
+**Pointer-event DnD** (`157dc41e60` → `f1a5d0dc37`, obsolete HTML5 path removed in `9e3513a13b`): drag-and-drop is now pointer-event driven (touch + mouse + pen via the `PointerEvents` API), not HTML5 `draggable=true`.
+
+| Element          | Detail                                                                                                                                                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Handle           | **Grip-only** — only `.exec-task-grip` initiates a drag. Click anywhere else on the head expands the row; click on the checkbox toggles resolve. Prevents accidental drags from a body-tap.                                                                         |
+| Ghost element    | A cloned, semi-transparent `.exec-task-ghost` element follows the pointer (transform-translate, `pointer-events: none`, z-index above everything in the panel). The source row is left in place with a "lifted" style until commit.                                 |
+| Drop indicator   | A 2px accent-color line drawn at the computed insertion point (above or below the hovered row, or at the top/bottom of a group's body). Math: pointer.y relative to each candidate row's midpoint.                                                                  |
+| Drop targets     | Drops land directly on **group or sub-group headers and their bodies**. There is **no separate axis-targets overlay** (the prior HTML5 path used a full-panel target overlay; that's removed in `9e3513a13b`).                                                      |
+| Commit           | On `pointerup` over a valid target, `control-panel.tasks.update` is called with the new `priority_axis` (= target group/sub-group id) and a `priority_rank` computed as the midpoint between the bracketing rows' ranks (or a clamp to top/bottom).                 |
+| Edge auto-scroll | When the pointer is within ~40px of the tasks-section's top or bottom edge, the section scrolls at a velocity proportional to edge proximity (clamped). Runs on a `requestAnimationFrame` loop attached at `pointerdown`, torn down at `pointerup`/`pointercancel`. |
+| Cancellation     | Esc, `pointercancel`, and `window.blur` all cancel the drag cleanly — ghost element removed, drop indicator hidden, auto-scroll loop torn down, source row's "lifted" style cleared, no RPC fires.                                                                  |
+
+The grip is always visible (no hover-reveal) to keep the affordance discoverable on touch.
 
 ### 7.6 Expandable inline task context (NEW v3.1)
 
