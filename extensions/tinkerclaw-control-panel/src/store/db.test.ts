@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addAxisParentIdColumn, closeDb, getDb } from "./db.js";
+import { addAxisParentIdColumn, closeDb, getDb, stripTodoistMetadata } from "./db.js";
 
 describe("addAxisParentIdColumn migration", () => {
   let db: Database.Database;
@@ -119,5 +119,75 @@ describe("getDb() boot path on a pre-v3.5 DB", () => {
     const db = getDb(cfg);
     const indexes = db.prepare("PRAGMA index_list(task_axis)").all() as Array<{ name: string }>;
     expect(indexes.map((i) => i.name)).toContain("task_axis_parent");
+  });
+});
+
+/**
+ * FORK 2026-05-22: Todoist deprecation cleanup. `stripTodoistMetadata`
+ * walks task.metadata_json and removes every `todoist_*` key. If the strip
+ * empties the JSON object, the column is set to NULL. Idempotent.
+ */
+describe("stripTodoistMetadata migration", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE task (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        metadata_json TEXT
+      );
+    `);
+    db.prepare("INSERT INTO task (id, text, metadata_json) VALUES (?, ?, ?)").run(
+      "t1",
+      "with todoist",
+      JSON.stringify({ todoist_id: "abc123", gmail_thread_ids: ["g1"], note: "keep me" }),
+    );
+    db.prepare("INSERT INTO task (id, text, metadata_json) VALUES (?, ?, ?)").run(
+      "t2",
+      "no metadata",
+      null,
+    );
+    db.prepare("INSERT INTO task (id, text, metadata_json) VALUES (?, ?, ?)").run(
+      "t3",
+      "all todoist",
+      JSON.stringify({ todoist_url: "https://...", todoist_labels: ["x"] }),
+    );
+  });
+
+  afterEach(() => db.close());
+
+  it("strips todoist_* keys from metadata_json while preserving siblings", () => {
+    stripTodoistMetadata(db);
+    const row = db.prepare("SELECT metadata_json FROM task WHERE id = 't1'").get() as {
+      metadata_json: string;
+    };
+    const t1 = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    expect(t1).toEqual({ gmail_thread_ids: ["g1"], note: "keep me" });
+  });
+
+  it("sets metadata_json to NULL when nothing remains after strip", () => {
+    stripTodoistMetadata(db);
+    const t3 = db.prepare("SELECT metadata_json FROM task WHERE id = 't3'").get() as {
+      metadata_json: string | null;
+    };
+    expect(t3.metadata_json).toBeNull();
+  });
+
+  it("leaves rows with null metadata_json alone", () => {
+    stripTodoistMetadata(db);
+    const t2 = db.prepare("SELECT metadata_json FROM task WHERE id = 't2'").get() as {
+      metadata_json: string | null;
+    };
+    expect(t2.metadata_json).toBeNull();
+  });
+
+  it("is idempotent — running twice produces the same result", () => {
+    stripTodoistMetadata(db);
+    const before = db.prepare("SELECT id, metadata_json FROM task ORDER BY id").all();
+    stripTodoistMetadata(db);
+    const after = db.prepare("SELECT id, metadata_json FROM task ORDER BY id").all();
+    expect(after).toEqual(before);
   });
 });

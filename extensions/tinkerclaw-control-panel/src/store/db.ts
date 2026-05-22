@@ -47,6 +47,11 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   // a FK target); idempotent via PRAGMA table_info check.
   addAxisParentIdColumn(db);
 
+  // FORK 2026-05-22: Todoist deprecation cleanup. Walk task.metadata_json and
+  // remove every `todoist_*` key. Idempotent one-shot — subsequent boots find
+  // nothing to strip and are no-ops.
+  stripTodoistMetadata(db);
+
   // v3.3 — seed task_axis + task_est_preset with the prior hardcoded defaults
   // if the tables are empty. Idempotent — only inserts on truly empty tables,
   // so user edits survive subsequent boots.
@@ -187,6 +192,40 @@ export function addAxisParentIdColumn(db: Database.Database): void {
     "ALTER TABLE task_axis ADD COLUMN parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE",
   );
   db.exec("CREATE INDEX IF NOT EXISTS task_axis_parent ON task_axis(parent_id)");
+}
+
+/**
+ * FORK 2026-05-22: Todoist deprecation cleanup. Strips `todoist_*` keys from
+ * every task.metadata_json. Idempotent: re-runs are no-ops.
+ *
+ * If a row's metadata_json becomes the empty object after the strip, we set
+ * the column back to NULL so empty `{}` doesn't accumulate. Malformed JSON
+ * rows are left alone — better an opaque blob the user can hand-fix than a
+ * boot-time crash on parse failure.
+ */
+export function stripTodoistMetadata(db: Database.Database): void {
+  const rows = db
+    .prepare("SELECT id, metadata_json FROM task WHERE metadata_json IS NOT NULL")
+    .all() as Array<{ id: string; metadata_json: string }>;
+  const update = db.prepare("UPDATE task SET metadata_json = ? WHERE id = ?");
+  for (const row of rows) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    } catch {
+      continue; // malformed JSON — leave alone
+    }
+    let changed = false;
+    for (const key of Object.keys(parsed)) {
+      if (key.startsWith("todoist_")) {
+        delete parsed[key];
+        changed = true;
+      }
+    }
+    if (!changed) continue;
+    const remaining = Object.keys(parsed).length;
+    update.run(remaining === 0 ? null : JSON.stringify(parsed), row.id);
+  }
 }
 
 // v3.3 — first-boot seed for task_axis + task_est_preset. Both tables CREATE
