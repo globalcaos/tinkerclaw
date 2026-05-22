@@ -5235,6 +5235,41 @@ code.fs-link.fs-link-error {
   border: 1px solid var(--border);
 }
 
+/* FORK 2026-05-22: inline sub-group add form, appears under a group header. */
+.exec-add-subgroup-form {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: 16px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+  padding: 2px 6px;
+}
+.exec-add-subgroup-form input {
+  flex: 1;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.exec-add-subgroup-form button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.exec-add-subgroup-form button[data-cancel] {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+}
+
 /* ─── Prefrontal plan-board — synthetic + idle variants (FORK 2026-05-14) ─── */
 /* The full .pf-plan family is defined in prefrontal-tree.ts embedded styles.
    These extra classes are here so they can be overridden from base.css without
