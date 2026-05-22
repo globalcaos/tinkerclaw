@@ -7273,8 +7273,13 @@ function init() {
   // 5-axis defaults as a literal array inside loadExecTasks — search there
   // for FRESH_DB_FALLBACK.
   let execAxesList: AxisRow[] = [];
+  // FORK 2026-05-22 — `open` was "⬜" until the head-checkbox shipped (commit
+  // d08cd06ca9); the checkbox now owns the open/resolved signal so the white
+  // square was dead weight on every open card. Dropped to "". Other icons
+  // remain — they flag non-default states (in_progress, back_burner,
+  // dropped/dismissed) that the checkbox does NOT communicate.
   const EXEC_STATUS_ICON: Record<string, string> = {
-    open: "⬜",
+    open: "",
     in_progress: "🟡",
     resolved: "✅",
     // FORK 2026-05-13 — single 🗑 for both deleted statuses (new 'dropped'
@@ -7802,7 +7807,10 @@ function init() {
   }
 
   function renderExecTaskRow(t: ExecTask, axis: string): string {
-    const icon = EXEC_STATUS_ICON[t.status] ?? "•";
+    // FORK 2026-05-22: fallback character is "" (not "•") so unknown statuses
+    // also render no icon — `open` is the empty default and any future status
+    // we forget to register shouldn't grow a stray bullet on every card.
+    const icon = EXEC_STATUS_ICON[t.status] ?? "";
     const est = t.est_minutes ? `${t.est_minutes}m` : "";
     const isExpanded = execExpandedId === t.id;
     // FORK 2026-05-14 — collapsed row now surfaces a 📅 due-date chip when
@@ -7853,7 +7861,7 @@ function init() {
         <div class="exec-task-head">
           <span class="exec-task-grip" title="Drag to reorder or move axis">⋮⋮</span>
           ${checkbox}
-          <span class="exec-task-icon">${icon}</span>
+          ${icon ? `<span class="exec-task-icon">${icon}</span>` : ""}
           <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>
           <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
           <span class="exec-task-chips">
