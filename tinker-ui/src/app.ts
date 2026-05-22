@@ -7637,6 +7637,26 @@ function init() {
       drag.ghost.style.left = `${ev.clientX - 24}px`;
       drag.ghost.style.top = `${ev.clientY - 12}px`;
 
+      // FORK 2026-05-22 — Task 16: edge auto-scroll. Runs every move tick so
+      // a long list scrolls smoothly while the user hovers near an edge. The
+      // indicator-positioning branches below each early-return, so placing
+      // this BEFORE them guarantees auto-scroll fires regardless of which
+      // drop-target branch the cursor lands in. Pointermove is already
+      // browser-throttled to ~60fps, so no manual throttle needed.
+      const bodyRect = body.getBoundingClientRect();
+      const fromTop = ev.clientY - bodyRect.top;
+      const fromBottom = bodyRect.bottom - ev.clientY;
+      if (fromTop < AUTOSCROLL_EDGE_PX) {
+        const speed =
+          ((AUTOSCROLL_EDGE_PX - fromTop) / AUTOSCROLL_EDGE_PX) * AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
+        body.scrollTop -= speed;
+      } else if (fromBottom < AUTOSCROLL_EDGE_PX) {
+        const speed =
+          ((AUTOSCROLL_EDGE_PX - fromBottom) / AUTOSCROLL_EDGE_PX) *
+          AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
+        body.scrollTop += speed;
+      }
+
       // Find drop target via elementFromPoint, ignoring the ghost.
       drag.ghost.style.visibility = "hidden";
       const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
@@ -7754,6 +7774,32 @@ function init() {
     }
 
     document.addEventListener("pointerup", onPointerUp);
+
+    // FORK 2026-05-22 — Task 16: synchronous cleanup for cancellation paths.
+    // pointercancel (OS/browser yanking the gesture), window blur (alt-tab),
+    // and Escape all route through abortPointerDrag. Must NOT do async work
+    // — safe to call from the keydown handler. The Esc guard is mandatory
+    // because the page has multiple other Escape handlers (context menu,
+    // add-task inline forms, etc.) that must keep functioning when no drag
+    // is active.
+    function abortPointerDrag(): void {
+      const drag = execPointerDrag;
+      if (!drag) return;
+      drag.ghost.remove();
+      drag.source.classList.remove("exec-task-source");
+      drag.indicator.remove();
+      execPointerDrag = null;
+      execDragRefreshSuppressed = false;
+    }
+
+    document.addEventListener("pointercancel", abortPointerDrag);
+    window.addEventListener("blur", abortPointerDrag);
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && execPointerDrag) {
+        ev.preventDefault();
+        abortPointerDrag();
+      }
+    });
   }
 
   function attachExecDragHandlers(panel: HTMLElement) {
