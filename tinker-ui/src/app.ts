@@ -7676,6 +7676,84 @@ function init() {
     }
 
     document.addEventListener("pointermove", onPointerMove);
+
+    // FORK 2026-05-22 — Task 15: pointerup commits the drop. Visual teardown
+    // (ghost, source class, indicator) is synchronous and unconditional once
+    // we have an active drag. `execPointerDrag = null` and the refresh-suppress
+    // flag are cleared BEFORE the await so a slow RPC can't leave state
+    // inconsistent if another pointerdown fires during the wait. No-op gestures
+    // (release into the same axis adjacent to the source row) bail without RPC.
+    async function onPointerUp(ev: PointerEvent): Promise<void> {
+      const drag = execPointerDrag;
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+
+      // Always clean the floating + source visuals.
+      drag.ghost.remove();
+      drag.source.classList.remove("exec-task-source");
+
+      // If we never crossed the drag threshold, this was a click on the grip — bail.
+      if (!drag.passedThreshold) {
+        drag.indicator.remove();
+        execPointerDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
+      }
+
+      // Indicator must live inside a .exec-group or .exec-subgroup.
+      const indParent = drag.indicator.parentElement;
+      drag.indicator.remove();
+      execPointerDrag = null;
+      execDragRefreshSuppressed = false;
+      if (!indParent) return;
+
+      const subgroupHost = indParent.closest(".exec-subgroup") as HTMLElement | null;
+      const groupHost = subgroupHost ?? (indParent.closest(".exec-group") as HTMLElement | null);
+      if (!groupHost) return;
+      const axis = (subgroupHost ?? groupHost).dataset.axis!;
+
+      // Compute new rank via midpoint arithmetic between neighbors, skipping
+      // the source row itself and any non-.exec-task siblings (sub-group
+      // containers, empty-state divs, headers, etc.).
+      let prev: HTMLElement | null = drag.indicator.previousElementSibling as HTMLElement | null;
+      while (
+        prev &&
+        (prev.classList?.contains("exec-task-source") || !prev.classList?.contains("exec-task"))
+      ) {
+        prev = prev.previousElementSibling as HTMLElement | null;
+      }
+      let next: HTMLElement | null = drag.indicator.nextElementSibling as HTMLElement | null;
+      while (
+        next &&
+        (next.classList?.contains("exec-task-source") || !next.classList?.contains("exec-task"))
+      ) {
+        next = next.nextElementSibling as HTMLElement | null;
+      }
+      const prevRank = prev ? parseFloat(prev.dataset.rank ?? "0") : -10;
+      const nextRank = next ? parseFloat(next.dataset.rank ?? "100") : prevRank + 20;
+      const newRank = (prevRank + nextRank) / 2;
+
+      // No-op gestures (would not actually move the row): bail without RPC.
+      if (axis === drag.axisAtStart && prev?.dataset?.taskId === drag.id) {
+        return;
+      }
+      if (axis === drag.axisAtStart && next?.dataset?.taskId === drag.id) {
+        return;
+      }
+
+      try {
+        await req("control-panel.tasks.update", {
+          id: drag.id,
+          priority_axis: axis,
+          priority_rank: newRank,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec-drag] tasks.update failed", err);
+      }
+      await loadExecTasks();
+    }
+
+    document.addEventListener("pointerup", onPointerUp);
   }
 
   function attachExecDragHandlers(panel: HTMLElement) {
