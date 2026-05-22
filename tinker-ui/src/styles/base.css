@@ -4066,6 +4066,75 @@ code.fs-link.fs-link-error {
   margin-left: 4px;
 }
 
+/* FORK 2026-05-22 (Task 10) — disclosure-toggle + collapsed-state. Header
+   gets pointer cursor + flex layout so the disclosure caret, label, count
+   chip, and + button line up cleanly. Collapsed groups hide their children
+   via the body-element selector below — the markup is still in DOM but
+   visually empty. */
+.exec-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.exec-group-label {
+  flex: 1;
+}
+.exec-group-disclosure {
+  font-size: 9px;
+  color: #6a6a73;
+  width: 10px;
+  display: inline-block;
+  text-align: center;
+}
+
+/* FORK 2026-05-22 (Task 10) — sub-group rendering under a top-level group.
+   Indented 16px, slightly muted header, own count chip + + button on parent. */
+.exec-subgroup {
+  margin-left: 16px;
+  margin-bottom: 4px;
+}
+.exec-subgroup-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #8a8a92;
+  padding: 3px 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.exec-subgroup-label {
+  flex: 1;
+  font-weight: 500;
+}
+.exec-group-empty {
+  font-size: 10px;
+  color: #6a6a73;
+  font-style: italic;
+  padding: 4px 12px;
+}
+.exec-group-add-sub {
+  background: transparent;
+  border: 1px solid #2a2a2a;
+  color: #8a8a92;
+  font-size: 12px;
+  font-weight: 600;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 4px;
+  line-height: 1;
+}
+.exec-group-add-sub:hover {
+  background: #ff6b3d;
+  color: #1a1a1a;
+  border-color: #ff6b3d;
+}
+
 /* FORK 2026-05-11 — .exec-task is now a wrapper (header + optional drawer);
    the grid layout moved to .exec-task-head below. Keep .exec-task as a
    plain block so the head and drawer stack vertically with no overflow. */
