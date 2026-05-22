@@ -7268,6 +7268,106 @@ function init() {
     back_burner: "💤",
   };
 
+  // FORK 2026-05-22 (Task 10) — axis tree types + helpers. The flat axes list
+  // returned by control-panel.axes.list (v3.5) is built into a 2-level tree
+  // (top-level groups + sub-groups); sub-groups cannot nest further (enforced
+  // server-side by validateParentDepth).
+  type AxisRow = {
+    id: string;
+    label: string;
+    position: number;
+    parent_id: string | null;
+  };
+  type AxisNode = AxisRow & { children: AxisNode[] };
+
+  function buildAxisTree(flat: AxisRow[]): AxisNode[] {
+    const byId = new Map<string, AxisNode>();
+    for (const a of flat) byId.set(a.id, { ...a, children: [] });
+    const roots: AxisNode[] = [];
+    for (const node of byId.values()) {
+      if (node.parent_id && byId.has(node.parent_id)) {
+        byId.get(node.parent_id)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+    const sortByPos = (a: AxisNode, b: AxisNode) =>
+      a.position - b.position || a.id.localeCompare(b.id);
+    roots.sort(sortByPos);
+    for (const r of roots) r.children.sort(sortByPos);
+    return roots;
+  }
+
+  function renderExecGroups(tree: AxisNode[], tasksByAxis: Map<string, ExecTask[]>): string {
+    return tree
+      .map((group) => {
+        const ownTasks = tasksByAxis.get(group.id) ?? [];
+        const groupOpenCount =
+          ownTasks.length +
+          group.children.reduce((acc, sub) => acc + (tasksByAxis.get(sub.id)?.length ?? 0), 0);
+        const groupCollapsed =
+          localStorage.getItem(`tinker.execGroupCollapsed.${group.id}`) === "1";
+        const groupTasks = ownTasks.map((t) => renderExecTaskRow(t, group.id)).join("");
+        const subgroupsHtml = group.children
+          .map((sub) => {
+            const subList = tasksByAxis.get(sub.id) ?? [];
+            const subCount = subList.length;
+            const subCollapsed =
+              localStorage.getItem(`tinker.execGroupCollapsed.${sub.id}`) === "1";
+            const subTasks = subList.map((t) => renderExecTaskRow(t, sub.id)).join("");
+            return (
+              `<div class="exec-subgroup${subCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(sub.id)}">` +
+              `<div class="exec-subgroup-header" data-axis-id="${escapeExecAttr(sub.id)}">` +
+              `<span class="exec-group-disclosure">${subCollapsed ? "▶" : "▼"}</span>` +
+              `<span class="exec-subgroup-label">${escapeHtml(sub.label)}</span>` +
+              `<span class="exec-group-count">${subCount} open</span>` +
+              `</div>` +
+              (subCollapsed
+                ? ""
+                : subTasks || `<div class="exec-group-empty">(empty — drag tasks here)</div>`) +
+              `</div>`
+            );
+          })
+          .join("");
+        return (
+          `<div class="exec-group${groupCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(group.id)}">` +
+          `<div class="exec-group-header" data-axis-id="${escapeExecAttr(group.id)}">` +
+          `<span class="exec-group-disclosure">${groupCollapsed ? "▶" : "▼"}</span>` +
+          `<span class="exec-group-label">${escapeHtml(group.label)}</span>` +
+          `<span class="exec-group-count">${groupOpenCount} open` +
+          `<button class="exec-group-add-sub" data-action="add-subgroup" data-parent-id="${escapeExecAttr(group.id)}" title="Add sub-group under ${escapeExecAttr(group.label)}">+</button>` +
+          `</span>` +
+          `</div>` +
+          (groupCollapsed ? "" : groupTasks + subgroupsHtml) +
+          `</div>`
+        );
+      })
+      .join("");
+  }
+
+  // FORK 2026-05-22 (Task 10) — disclosure click wiring. Click anywhere on a
+  // group/sub-group header (other than the + Add sub-group button) flips the
+  // collapsed state and persists it in localStorage. The + button is
+  // markup-only here; Task 12 wires the inline form. Cheap re-render via
+  // loadExecTasks() keeps the rest of the panel state synced.
+  function attachExecGroupCollapseHandlers(scope: HTMLElement): void {
+    scope
+      .querySelectorAll<HTMLElement>(".exec-group-header, .exec-subgroup-header")
+      .forEach((h) => {
+        h.addEventListener("click", (ev) => {
+          const target = ev.target as HTMLElement;
+          if (target.closest(".exec-group-add-sub")) return; // markup-only in Task 10
+          const id = h.dataset.axisId;
+          if (!id) return;
+          const key = `tinker.execGroupCollapsed.${id}`;
+          const cur = localStorage.getItem(key) === "1";
+          if (cur) localStorage.removeItem(key);
+          else localStorage.setItem(key, "1");
+          void loadExecTasks();
+        });
+      });
+  }
+
   async function loadExecTasks(): Promise<void> {
     const panel = ensureExecPanel();
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
@@ -7311,35 +7411,73 @@ function init() {
       if (visible.length === 0) {
         body.innerHTML = `<div class="exec-empty">Nothing matches the <b>${execFilter}</b> filter.</div>`;
       } else {
-        const groups = new Map<string, ExecTask[]>();
+        // FORK 2026-05-22 (Task 10) — group → sub-group hierarchy from the
+        // task_axis tree. Axes come from control-panel.axes.list now (v3.5
+        // added parent_id). Empty sub-groups still render (drag target).
+        // Tasks pointing at an unknown axis fall into the implicit Unsorted
+        // bucket at the bottom (preserves the prior fallback behavior of
+        // rendering rogue-axis tasks instead of dropping them).
+        const tasksByAxis = new Map<string, ExecTask[]>();
         for (const t of visible) {
           const k = t.priority_axis ?? "meta";
-          if (!groups.has(k)) groups.set(k, []);
-          groups.get(k)!.push(t);
+          if (!tasksByAxis.has(k)) tasksByAxis.set(k, []);
+          tasksByAxis.get(k)!.push(t);
         }
-        for (const arr of groups.values()) {
+        for (const arr of tasksByAxis.values()) {
           arr.sort((a, b) => a.priority_rank - b.priority_rank);
         }
-        const renderGroup = (axis: string, tasks: ExecTask[]): string => {
-          const label = EXEC_AXIS_LABEL[axis] ?? axis;
-          const parts: string[] = [];
-          parts.push(
-            `<div class="exec-group" data-axis="${axis}"><div class="exec-group-header">${label} <span class="exec-group-count">(${tasks.length})</span></div>`,
-          );
-          for (const t of tasks) parts.push(renderExecTaskRow(t, axis));
-          parts.push(`</div>`);
-          return parts.join("");
-        };
-        const html: string[] = [];
-        for (const axis of EXEC_AXIS_ORDER) {
-          const tasks = groups.get(axis);
-          if (tasks && tasks.length > 0) html.push(renderGroup(axis, tasks));
+        let axesFlat: AxisRow[] = [];
+        try {
+          const axesRes = (await req("control-panel.axes.list", {})) as { axes: AxisRow[] };
+          axesFlat = axesRes.axes ?? [];
+        } catch {
+          axesFlat = [];
         }
-        for (const [axis, tasks] of groups.entries()) {
-          if (!EXEC_AXIS_ORDER.includes(axis)) html.push(renderGroup(axis, tasks));
+        // Fallback: if axes table is empty (fresh DB or RPC failure), synthesize
+        // a flat list from the hardcoded EXEC_AXIS_ORDER so the panel still
+        // groups sensibly. parent_id is null for every fallback axis.
+        if (axesFlat.length === 0) {
+          axesFlat = EXEC_AXIS_ORDER.map((id, i) => ({
+            id,
+            label: EXEC_AXIS_LABEL[id] ?? id,
+            position: i,
+            parent_id: null,
+          }));
+        }
+        const tree = buildAxisTree(axesFlat);
+        // Collect every id reachable through the tree so we can detect
+        // orphan tasks (priority_axis set but not in the tree).
+        const knownIds = new Set<string>();
+        for (const r of tree) {
+          knownIds.add(r.id);
+          for (const c of r.children) knownIds.add(c.id);
+        }
+        const html: string[] = [];
+        html.push(renderExecGroups(tree, tasksByAxis));
+        // Orphan / unsorted bucket — any axis id with tasks that isn't in the
+        // tree (e.g. tasks whose sub-axis was deleted). Render only when
+        // non-empty; matches the prior "unknown-axis fallback" semantics.
+        const orphanTasks: ExecTask[] = [];
+        for (const [axis, tasks] of tasksByAxis.entries()) {
+          if (!knownIds.has(axis)) orphanTasks.push(...tasks);
+        }
+        if (orphanTasks.length > 0) {
+          orphanTasks.sort((a, b) => a.priority_rank - b.priority_rank);
+          const orphanCollapsed =
+            localStorage.getItem("tinker.execGroupCollapsed.__unsorted__") === "1";
+          const rows = orphanTasks.map((t) => renderExecTaskRow(t, "meta")).join("");
+          html.push(
+            `<div class="exec-group${orphanCollapsed ? " exec-group-collapsed" : ""}" data-axis="__unsorted__">` +
+              `<div class="exec-group-header" data-axis-id="__unsorted__">` +
+              `<span class="exec-group-disclosure">${orphanCollapsed ? "▶" : "▼"}</span>` +
+              `<span class="exec-group-label">Unsorted</span>` +
+              `<span class="exec-group-count">${orphanTasks.length} open</span>` +
+              `</div>${orphanCollapsed ? "" : rows}</div>`,
+          );
         }
         body.innerHTML = html.join("");
         attachExecTaskHandlers(body);
+        attachExecGroupCollapseHandlers(body);
       }
       try {
         const prog = (await req("control-panel.tasks.progress", {})) as {
