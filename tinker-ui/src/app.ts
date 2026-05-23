@@ -7439,6 +7439,13 @@ function init() {
       .querySelectorAll<HTMLElement>(".exec-group-header, .exec-subgroup-header")
       .forEach((h) => {
         h.addEventListener("click", (ev) => {
+          // FORK 2026-05-23 — suppress the synthetic click the browser fires
+          // on the header row after a completed group drag. Same setPointer-
+          // Capture-bypass issue as task DnD; without this guard a drag-to-
+          // reorder would flip the dragged group's collapse state at landing.
+          if (Date.now() - execLastDragEndAt < EXEC_POST_DRAG_CLICK_SUPPRESS_MS) {
+            return;
+          }
           const target = ev.target as HTMLElement;
           // FORK 2026-05-23 (F3) — clicks on the ⋮⋮ drag grip must never
           // toggle the disclosure. The drag handler captures the pointer on
@@ -8093,6 +8100,15 @@ function init() {
   // renumbering; ranks are clamped to a sane range and re-sequenced lazily
   // on the next renderer pass.
   let execDragRefreshSuppressed = false;
+  // FORK 2026-05-23 — when a drag completes, the browser sometimes still
+  // fires a synthetic `click` on the source row despite `preventDefault()`
+  // in pointerdown (setPointerCapture changes the suppression heuristics).
+  // That click hits the row's expand-toggle handler at line ~9506 and
+  // expands the dragged task at its new home, which is not what the user
+  // wants. Stamp the time at pointerup-commit; the click handler ignores
+  // clicks within EXEC_POST_DRAG_CLICK_SUPPRESS_MS of it.
+  let execLastDragEndAt = 0;
+  const EXEC_POST_DRAG_CLICK_SUPPRESS_MS = 300;
 
   type PointerDrag = {
     id: string;
@@ -8221,12 +8237,31 @@ function init() {
 
       const targetTask = under.closest(".exec-task:not(.exec-task-source)") as HTMLElement | null;
       if (targetTask) {
-        const tr = targetTask.getBoundingClientRect();
-        if (ev.clientY < tr.top + tr.height / 2) {
+        // FORK 2026-05-23 — was `targetTask.getBoundingClientRect()` (full
+        // task including the drawer when expanded). With an expanded card
+        // ~200px tall, the midpoint landed deep inside the drawer, so the
+        // user's hover inside the head was tested against a midpoint far
+        // below — indicator placement didn't match user intent. Use the
+        // HEAD's bounding rect instead: consistent ~32px target regardless
+        // of expand state, so the midpoint sits at the visual center of
+        // the row's interactive surface.
+        const head = targetTask.querySelector(":scope > .exec-task-head") as HTMLElement | null;
+        const refRect = head ? head.getBoundingClientRect() : targetTask.getBoundingClientRect();
+        if (ev.clientY < refRect.top + refRect.height / 2) {
           targetTask.parentElement!.insertBefore(drag.indicator, targetTask);
         } else {
           targetTask.parentElement!.insertBefore(drag.indicator, targetTask.nextSibling);
         }
+        return;
+      }
+      // FORK 2026-05-23 — if the user is briefly hovering over the source
+      // row (the faded original), do NOT move the indicator. Falling through
+      // to the subgroup/group selectors below was making the indicator jump
+      // to the bottom of the group every time the cursor crossed the source
+      // row, which is exactly the "destination doesn't go where I want"
+      // symptom the user reported. Leave the indicator at its last valid
+      // position until the user hovers over a real drop target.
+      if (under.closest(".exec-task-source")) {
         return;
       }
       const subHeader = under.closest(".exec-subgroup-header") as HTMLElement | null;
@@ -8239,13 +8274,20 @@ function init() {
         groupHeader.parentElement!.insertBefore(drag.indicator, groupHeader.nextSibling);
         return;
       }
+      // FORK 2026-05-23 — only fall back to "append to bottom of (sub)group"
+      // when that container is genuinely EMPTY (no task children). The
+      // prior "always append to bottom" behaviour kicked in whenever the
+      // cursor was over padding/spacing between rows, causing unintended
+      // bottom-jumps. With the source-row early-return above and this
+      // empty-container guard, the indicator only moves on intentional
+      // hover over an actionable target.
       const subgroup = under.closest(".exec-subgroup") as HTMLElement | null;
-      if (subgroup) {
+      if (subgroup && !subgroup.querySelector(":scope > .exec-task:not(.exec-task-source)")) {
         subgroup.appendChild(drag.indicator);
         return;
       }
       const group = under.closest(".exec-group") as HTMLElement | null;
-      if (group) {
+      if (group && !group.querySelector(":scope > .exec-task:not(.exec-task-source)")) {
         group.appendChild(drag.indicator);
         return;
       }
@@ -8285,6 +8327,19 @@ function init() {
         }
         return;
       }
+
+      // FORK 2026-05-23 — stamp the post-drag click-suppression window
+      // synchronously, BEFORE the async commit path yields. The browser
+      // fires a synthetic `click` on the source row immediately after this
+      // handler returns (setPointerCapture + DOM mutations during the drag
+      // bypass preventDefault's usual click suppression), and that click
+      // hits the row's expand-toggle handler — causing the dragged task to
+      // expand at its new home, which is not what the user wants. The
+      // click handler at attachExecTaskHandlers checks this stamp and
+      // ignores clicks within EXEC_POST_DRAG_CLICK_SUPPRESS_MS. Only set
+      // in the drag branch (passedThreshold === true) so that non-drag
+      // rapid clicks aren't blocked.
+      execLastDragEndAt = Date.now();
 
       // Indicator must live inside a .exec-group or .exec-subgroup.
       const indParent = drag.indicator.parentElement;
@@ -8625,87 +8680,109 @@ function init() {
         return;
       }
 
+      // FORK 2026-05-23 — same post-drag click-suppression stamp as the
+      // task DnD: blocks the synthetic click from triggering the group's
+      // collapse-toggle handler at attachExecGroupCollapseHandlers.
+      execLastDragEndAt = Date.now();
+
       const indParent = drag.indicator.parentElement;
       drag.indicator.remove();
       execGroupDrag = null;
       execDragRefreshSuppressed = false;
       if (!indParent) return;
 
-      // Resolve the new parent + position from the indicator's siblings.
-      // Two structural shapes:
-      //   (a) Indicator sitting between two top-level groups OR between two
-      //       sub-groups: prev/next are the same-level peers.
-      //   (b) Indicator appended as the last child of a top-level group's
-      //       wrapper (sub-group reparent into that group): prev is either
-      //       an empty-state div or a sub-group; next is null.
+      // Resolve the new parent from the indicator's wrapper context.
       const indicatorParentClass = indParent.className;
       let targetParentId: string | null;
+      let containerEl: HTMLElement;
       if (drag.isTopLevel) {
-        // Reorder among top-level groups. parent_id remains null.
+        // Top-level peers live as direct children of #exec-tasks-body.
         targetParentId = null;
+        containerEl = body;
       } else {
-        // Sub-group: parent_id derives from the wrapper context.
         if (indParent.classList.contains("exec-group")) {
           // Appended into a top-level group → that group is the new parent.
           targetParentId = (indParent.dataset.axis as string) ?? null;
+          containerEl = indParent;
         } else {
-          // Indicator sits as a sibling of an .exec-subgroup → its parent is
-          // also the parent of the .exec-subgroup peers (the top-level group).
           const enclosingTop = indParent.closest(".exec-group") as HTMLElement | null;
           targetParentId = (enclosingTop?.dataset.axis as string) ?? null;
+          containerEl = enclosingTop ?? indParent;
         }
         if (!targetParentId) return;
       }
 
-      // Walk same-level neighbors, skipping the source wrapper.
-      const peerClass = drag.isTopLevel ? "exec-group" : "exec-subgroup";
-      let prev: HTMLElement | null = drag.indicator.previousElementSibling as HTMLElement | null;
-      while (
-        prev &&
-        (prev === drag.source ||
-          !prev.classList?.contains(peerClass) ||
-          prev.classList?.contains("exec-group-source"))
-      ) {
-        prev = prev.previousElementSibling as HTMLElement | null;
+      // FORK 2026-05-23 — was a single axes.update with a midpoint position
+      // (prevPos + nextPos) / 2. task_axis.position is INTEGER in
+      // store.sql (see schema.sql), so the same rank-collision bug that
+      // plagued task DnD (commit 76df31f68d) hits group DnD as soon as a
+      // few midpoints round to the same integer. Symptom matches the user
+      // report: "changing the order of the groups does not seem to work
+      // all the time. the destination location does not get to the right
+      // place." Fix: mirror the task renumber-on-drop pattern. Walk the
+      // destination container in DOM order, treating the indicator as the
+      // dragged group's new slot (skipping the source wrapper), and send
+      // parallel axes.update RPCs renumbering every same-level peer at
+      // position (i + 1) * 100. Spacing 100 leaves headroom; renumbering
+      // every drop means collisions never accumulate.
+      const peerSelector = drag.isTopLevel ? ".exec-group" : ".exec-subgroup";
+      const peerNodes = Array.from(
+        containerEl.querySelectorAll<HTMLElement>(
+          `:scope > ${peerSelector}, :scope > .exec-drop-indicator`,
+        ),
+      );
+      const orderedPeers: HTMLElement[] = [];
+      let insertedSource = false;
+      for (const node of peerNodes) {
+        if (node.classList.contains("exec-drop-indicator")) {
+          if (!insertedSource) {
+            orderedPeers.push(drag.source);
+            insertedSource = true;
+          }
+          continue;
+        }
+        if (node === drag.source) continue; // skip; will be reinserted at indicator slot
+        if (node.classList.contains("exec-group-source")) continue;
+        orderedPeers.push(node);
       }
-      let next: HTMLElement | null = drag.indicator.nextElementSibling as HTMLElement | null;
-      while (
-        next &&
-        (next === drag.source ||
-          !next.classList?.contains(peerClass) ||
-          next.classList?.contains("exec-group-source"))
-      ) {
-        next = next.nextElementSibling as HTMLElement | null;
+      if (!insertedSource) {
+        orderedPeers.push(drag.source);
       }
-      const prevPos = prev ? parseFloat(prev.dataset.axisPosition ?? "0") : -10;
-      const nextPos = next ? parseFloat(next.dataset.axisPosition ?? "1000") : prevPos + 20;
-      const newPosition = (prevPos + nextPos) / 2;
 
-      // No-op detection: same parent AND adjacent to source on either side.
+      // No-op detection: same parent AND the new order matches the current
+      // order at this same level. Avoid the parallel RPC batch + refresh
+      // round-trip when nothing actually changed.
       const sameParent = (drag.parentAtStart ?? null) === (targetParentId ?? null);
-      if (sameParent && (prev === drag.source || next === drag.source)) {
-        return;
-      }
-      // No-op when indicator placed exactly where the source already lives.
       if (sameParent) {
-        const srcPrev = drag.source.previousElementSibling as HTMLElement | null;
-        const srcNext = drag.source.nextElementSibling as HTMLElement | null;
-        if (srcPrev === prev && srcNext === next) return;
-      }
-
-      const params: { id: string; position: number; parent_id?: string | null } = {
-        id: drag.id,
-        position: newPosition,
-      };
-      if (!drag.isTopLevel) {
-        params.parent_id = targetParentId;
+        const currentOrder = Array.from(
+          containerEl.querySelectorAll<HTMLElement>(`:scope > ${peerSelector}`),
+        );
+        const sameOrder =
+          currentOrder.length === orderedPeers.length &&
+          currentOrder.every((el, i) => el === orderedPeers[i]);
+        if (sameOrder) return;
       }
 
       try {
-        await req("control-panel.axes.update", params);
+        await Promise.all(
+          orderedPeers.map((peer, i) => {
+            const peerId = peer.dataset.axis!;
+            const params: { id: string; position: number; parent_id?: string | null } = {
+              id: peerId,
+              position: (i + 1) * 100,
+            };
+            // Source axis carries the parent_id change (if any). Other
+            // peers in this container already have the correct parent_id;
+            // omit to leave it unchanged.
+            if (peer === drag.source) {
+              params.parent_id = targetParentId;
+            }
+            return req("control-panel.axes.update", params);
+          }),
+        );
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error("[exec-group-drag] axes.update failed", err, indicatorParentClass);
+        console.error("[exec-group-drag] axes.update batch failed", err, indicatorParentClass);
         flashExecError(`Reorder failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       await loadExecTasks();
@@ -9466,6 +9543,18 @@ function init() {
       const id = row.dataset.taskId!;
       const head = row.querySelector(".exec-task-head") as HTMLElement;
       head.addEventListener("click", (ev) => {
+        // FORK 2026-05-23 — suppress the synthetic click the browser fires
+        // on the source row after a completed drag. setPointerCapture +
+        // ghost-DOM mutations during the drag bypass preventDefault's usual
+        // suppression, so a drag-to-new-group always landed with the dragged
+        // task expanded ("it expands upon landing"). pointerup stamps
+        // execLastDragEndAt; ignore clicks within the suppression window.
+        // Non-drag clicks (no setPointerCapture path) are unaffected because
+        // pointerup-click branch toggles expand inline before the synthetic
+        // click fires, so this guard short-circuits the duplicate.
+        if (Date.now() - execLastDragEndAt < EXEC_POST_DRAG_CLICK_SUPPRESS_MS) {
+          return;
+        }
         const t = ev.target as HTMLElement;
         if (
           t.closest(".exec-task-menu") ||

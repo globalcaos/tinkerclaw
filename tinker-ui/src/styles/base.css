@@ -4760,14 +4760,24 @@ code.fs-link.fs-link-error {
    inside the card stays legible. Boxshadow adds a subtle outline so the
    lift is unambiguous even on dense lists. */
 .exec-task-expanded {
-  /* FORK 2026-05-23 — was #2a2a32 (gray); switched to a warm brown to
-     match the wood-panel topbar (#6b5545) and the workspace's overall
-     palette. #3a2e26 sits a few notches darker than the topbar for
-     contrast against the page background while still reading as a
-     subtle lift, not a stark color block. */
-  background: #3a2e26;
+  /* FORK 2026-05-23 — darkened from #3a2e26 to #221a14 ("dark brown"
+     per user request 2026-05-23). The previous warm-brown read too light
+     against the page background; this shade puts the expanded card
+     visibly deeper than the collapsed rows while staying on the wood-
+     panel palette. Drawer + head share the same bg so the entire
+     expanded surface reads as one block. */
+  background: #221a14;
   border-radius: 4px;
-  box-shadow: 0 0 0 1px #4a3a30;
+  box-shadow: 0 0 0 1px #382a20;
+}
+/* FORK 2026-05-23 — explicit head bg so the title row sits on the same
+   dark-brown surface as the drawer (user: "title background also").
+   Without this, .exec-task-head inherited the row's base bg and showed
+   as a lighter band above the drawer. */
+.exec-task-expanded .exec-task-head {
+  background: #221a14;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
 }
 /* FORK 2026-05-22: when expanded, hide the collapsed-head title — the
    drawer's full-title block is the sole title surface. Eliminates the
@@ -4791,8 +4801,12 @@ code.fs-link.fs-link-error {
    expanded (was hidden because the drawer had a duplicate pencil; that
    duplicate is gone). Removed the prior 2026-05-22 hide-on-expand rule. */
 .exec-task-drawer {
-  background: #1f1f26;
-  border-top: 1px solid #2a2a30;
+  /* FORK 2026-05-23 — was #1f1f26 (cool gray). Switched to a brown that
+     reads as a hairline darker than the expanded-task head (#221a14) so
+     the drawer/head boundary stays visible without breaking the unified
+     dark-brown surface the user requested. */
+  background: #1c1610;
+  border-top: 1px solid #2a1f17;
   padding: 10px 14px 12px;
   font-size: 12.5px;
   line-height: 1.5;
