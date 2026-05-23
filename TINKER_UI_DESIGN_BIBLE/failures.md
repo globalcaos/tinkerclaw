@@ -152,6 +152,39 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 - **Surface:** symptom is bounded (recovery cleans it up) but cosmetic confusion.
 - **Resolution:** open follow-up — pi-agent-core should transition status synchronously on surface_error. For now, restart picks it up.
 
+### M11. INTEGER rank collisions via midpoint arithmetic (control-panel)
+
+- **diagnose_with:** `sqlite3 ~/.openclaw/data/control-panel.db "SELECT priority_axis, priority_rank, COUNT(*) FROM task WHERE status NOT IN ('dropped','dismissed','resolved') GROUP BY priority_axis, priority_rank HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC LIMIT 20"` — every row with `COUNT(*) > 1` is a rank-collision cluster. Pre-fix live evidence: 21 tasks at rank=30 + 17 at rank=40 in axis `ventures`.
+- **Origin:** `task.priority_rank` is `INTEGER` in the schema. The pre-2026-05-23 Today-card DnD commit used midpoint arithmetic `(prevRank + nextRank) / 2` to compute the dropped task's new rank. Midpoint of two ints often produces a float that truncates back to an existing rank when stored, so over a few reorders adjacent tasks share the same integer rank.
+- **Propagation:** sort key becomes undefined for tied ranks — SQLite picks an order, the UI renders something, the user's drag "doesn't land where they dropped it." Looks intermittent because only the cluster-internal tasks misbehave.
+- **Surface:** user-visible regression — "I cannot move tasks properly within the same group" (the user, 2026-05-23). Looks like a DnD bug; is actually a rank-collision bug.
+- **Resolution (2026-05-23, commit `76df31f68d`):** client renumbers ALL tasks in the destination axis with spacing 100 on every drop (parallel `tasks.update` RPCs). Strategy: "fresh ranks on every move" instead of "midpoint forever." Schema stays INTEGER. A one-shot `/tmp/renumber-ranks.py` cleaned the 60 currently-open tasks across 7 axes before the commit landed; the on-drop renumber prevents recurrence.
+- **Don't regress:** if anyone reintroduces midpoint arithmetic on INTEGER ranks, the bug returns within ~5 reorders. The other safe direction is to migrate `priority_rank` to `REAL` — at which point midpoints stop colliding.
+- **Detection probe:** the GROUP BY HAVING query above. Should always return 0 rows on a healthy DB.
+- **Bug history:** see `bug-log.md` 2026-05-23 entry.
+
+### M12. Schema-migration ordering bug (CREATE INDEX before ALTER TABLE)
+
+- **diagnose_with:** `journalctl --user -u openclaw-gateway.service --since today --no-pager | grep -E 'SqliteError: no such column'`. Cross-check `openclaw gateway call plugin.boot.status --params '{"status":"error"}'` — a plugin with `failurePhase:"register"` and a SqliteError in its error trace is M12.
+- **Origin:** `schema.ts` / `schema.sql` ran `db.exec(...)` at boot that included `CREATE INDEX ... ON <table>(<new_column>)` referencing a column added by a later migration. On any existing DB (where `<new_column>` doesn't exist yet because the migration hasn't run), `CREATE INDEX` throws `SqliteError: no such column`.
+- **Propagation:** plugin registration crashes mid-schema. The loader silently re-registers several times after the initial failure — but those re-registrations land AFTER the HTTP server starts listening, so the RPC routing table never picks them up. Every `<plugin>.*` RPC call returns `unknown method`.
+- **Surface:** the entire plugin disappears from the running gateway with no obvious symptom in the user-visible UI (just "RPC unknown" toasts when something tries to call it). The 2026-05-22 instance: `control-panel.*` calls all returned `unknown method` after a v3.5 boot on a v3.3 DB.
+- **Resolution (2026-05-22, commit `e60c1f45c9`):** drop the offending `CREATE INDEX` from `schema.{sql,ts}` entirely; create it inside the migration that adds its column (`addAxisParentIdColumn` in `db.ts`, idempotent with `IF NOT EXISTS`). Fresh DBs: `CREATE TABLE` with the column → migration ALTER is no-op → migration CREATE INDEX runs. Existing DBs: `CREATE TABLE IF NOT EXISTS` no-op → ALTER adds column → CREATE INDEX builds successfully.
+- **Prevention:** new regression test `db.test.ts` ("getDb() boot path on a pre-v3.5 DB") seeds a tmpdir with the older table shape (no `parent_id`), then calls `getDb()` which runs schema.exec + migrations in real boot order. Two assertions: must not throw; `parent_id` added + rows preserved + index present.
+- **Rule:** indexes that depend on newly-added columns ALWAYS live in the migration that adds the column, never in `schema.{sql,ts}`. Schema files describe the **final state**; migrations describe the **transition**. Mixing them produces an unrecoverable boot crash on any DB that wasn't created in the post-migration era.
+- **Bug history:** see `bug-log.md` 2026-05-22 entry.
+
+### M13. Plugin-SDK export drift (new subpath ships without manifest entry)
+
+- **diagnose_with:** `journalctl --user -u openclaw-gateway.service --since today --no-pager | grep -E "Cannot find module .*root-alias.cjs"`. Each match names the missing subpath. Cross-check via `openclaw gateway call plugin.boot.status --params '{"status":"error"}'` — a plugin with `failurePhase:"load"` and an `ERR_MODULE_NOT_FOUND` is M13.
+- **Origin:** a new `src/plugin-sdk/<name>.ts` is added in the fork (for a plugin to import as `openclaw/plugin-sdk/<name>`), but its entry is missing from BOTH `scripts/lib/plugin-sdk-entrypoints.json` (the tsdown subpath manifest) AND the `./plugin-sdk/<name>` entry in `package.json#exports`. Result: tsdown never builds `dist/plugin-sdk/<name>.js`. In production `NODE_ENV=production` (systemd), `root-alias.cjs` prefers `dist/` over source, so the resolver synthesises a path to a file that doesn't exist and Node throws `ERR_MODULE_NOT_FOUND` on every plugin reload.
+- **Propagation:** the importing plugin fails to load. If that plugin is cc-bridge, BOTH the Tinker UI and WhatsApp DM go silent because the LLM worker route is no longer registered. The orphan worker pool from a pre-crash gateway can keep pre-restart workers alive but unreachable.
+- **Surface:** Jarvis stops responding on every channel simultaneously after a gateway restart. Looks like a worker-pool crash; is actually a plugin-load crash with no audible signal in the chat UI itself (no error chip — the path never gets that far).
+- **Resolution (2026-05-21, commit `e065bc94f5`):** add the entry to `scripts/lib/plugin-sdk-entrypoints.json`, regenerate `package.json#exports` via `pnpm plugin-sdk:sync-exports`, rebuild, restart. The 2026-05-21 instance: `src/plugin-sdk/provider-config-overlay.ts` had existed since 2026-05-10 (`566bf478a6`) but its manifest entry was missing; cc-bridge had been importing it from source the entire time, and a cold module cache on a gateway restart finally surfaced the gap.
+- **Prevention (commit `0b5c17f614`):** pre-push **Gate 4** (`pnpm lint:plugins:plugin-sdk-subpaths-exported` + `pnpm plugin-sdk:check-exports`) catches BOTH the src→manifest drift and the manifest→`package.json#exports` drift. Bypass for intentional WIP: `SDK_EXPORTS_GUARD=off git push`.
+- **Don't regress:** never add a new `src/plugin-sdk/*.ts` file without also adding its entry to the manifest AND regenerating `package.json#exports` in the same commit. Gate 4 will block the push otherwise.
+- **Bug history:** see `bug-log.md` 2026-05-21 entry.
+
 ## Verify commands (proposed)
 
 ```yaml
