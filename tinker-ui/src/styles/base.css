@@ -4336,6 +4336,71 @@ code.fs-link.fs-link-error {
   background: #2a1818;
 }
 
+/* FORK 2026-05-23 (F3) — drawer meta-line: 📅 due + ⏱ est chips sit on
+   their own row directly under the full-title and above the context body.
+   Mirrors the chip styles in the head's .exec-task-chips. */
+.exec-task-metaline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 2px 0;
+}
+
+/* FORK 2026-05-23 (F3) — editable chips in the drawer get a subtle hover
+   affordance so it's discoverable they're clickable. The "empty" variant
+   (no due / no est yet) shows muted/dashed styling to look like a tap
+   target rather than a chip carrying real data. */
+.exec-chip-editable {
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.exec-chip-editable:hover {
+  filter: brightness(1.2);
+}
+.exec-chip-empty {
+  color: #6a6a73;
+  background: #1a1a20;
+  border: 1px dashed #2a2a30;
+  font-style: italic;
+}
+.exec-chip-empty:hover {
+  color: #a3a3ad;
+  border-color: #3a3a45;
+  background: #232328;
+  filter: none;
+}
+
+/* FORK 2026-05-23 (F3) — inline edit input for due/est chips in the drawer
+   meta-line. Sized to match a chip; the date picker overlays natively. */
+.exec-task-chip-edit {
+  background: #16161a;
+  color: #eaeaee;
+  border: 1px solid #3a3a45;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  outline: none;
+  height: 22px;
+  box-sizing: border-box;
+}
+.exec-task-chip-edit:focus {
+  border-color: var(--accent);
+}
+.exec-task-chip-edit-num {
+  width: 68px;
+}
+
+/* FORK 2026-05-23 (F3) — when the row is expanded, hide the head's due+est
+   chips so they don't duplicate the drawer's meta-line. The menu (⋯)
+   button stays — that's still the more-actions trigger. */
+.exec-task-expanded .exec-task-head .exec-chip-due,
+.exec-task-expanded .exec-task-head .exec-chip-est {
+  display: none;
+}
+
 /* FORK 2026-05-11 — .exec-task is now a wrapper (header + optional drawer);
    the grid layout moved to .exec-task-head below. Keep .exec-task as a
    plain block so the head and drawer stack vertically with no overflow. */
