@@ -7366,7 +7366,8 @@ function init() {
               `<div class="exec-subgroup${subCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(sub.id)}">` +
               `<div class="exec-subgroup-header" data-axis-id="${escapeExecAttr(sub.id)}">` +
               `<span class="exec-group-disclosure">${subCollapsed ? "▶" : "▼"}</span>` +
-              `<span class="exec-subgroup-label">${escapeHtml(sub.label)}</span>` +
+              `<span class="exec-subgroup-label" data-axis-label="${escapeExecAttr(sub.label)}">${escapeHtml(sub.label)}</span>` +
+              `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(sub.id)}" title="Rename sub-group">✏️</button>` +
               `<span class="exec-group-count">${subCount} open</span>` +
               `</div>` +
               (subCollapsed
@@ -7380,7 +7381,8 @@ function init() {
           `<div class="exec-group${groupCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(group.id)}">` +
           `<div class="exec-group-header" data-axis-id="${escapeExecAttr(group.id)}">` +
           `<span class="exec-group-disclosure">${groupCollapsed ? "▶" : "▼"}</span>` +
-          `<span class="exec-group-label">${escapeHtml(group.label)}</span>` +
+          `<span class="exec-group-label" data-axis-label="${escapeExecAttr(group.label)}">${escapeHtml(group.label)}</span>` +
+          `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(group.id)}" title="Rename group">✏️</button>` +
           `<span class="exec-group-count">${groupOpenCount} open` +
           `<button class="exec-group-add-sub" data-action="add-subgroup" data-parent-id="${escapeExecAttr(group.id)}" title="Add sub-group under ${escapeExecAttr(group.label)}">+</button>` +
           `</span>` +
@@ -7414,6 +7416,16 @@ function init() {
             if (parentId) openInlineSubgroupForm(addSub, parentId);
             return;
           }
+          // FORK 2026-05-23 (F1) — ✏️ pencil opens the inline rename input.
+          // Must intercept BEFORE the collapse-toggle path so a pencil click
+          // doesn't also flip the disclosure.
+          const pencil = target.closest(".exec-group-pencil") as HTMLButtonElement | null;
+          if (pencil) {
+            ev.stopPropagation();
+            const axisId = pencil.dataset.axisId;
+            if (axisId) openInlineAxisLabelEdit(h, axisId);
+            return;
+          }
           const id = h.dataset.axisId;
           if (!id) return;
           const key = `tinker.execGroupCollapsed.${id}`;
@@ -7422,7 +7434,102 @@ function init() {
           else localStorage.setItem(key, "1");
           void loadExecTasks();
         });
+        // FORK 2026-05-23 (F1) — dblclick on the label opens the inline
+        // rename input. Stop propagation so the second click of the dblclick
+        // doesn't also fire the collapse-toggle on the same header.
+        h.addEventListener("dblclick", (ev) => {
+          const target = ev.target as HTMLElement;
+          const label = target.closest(
+            ".exec-group-label, .exec-subgroup-label",
+          ) as HTMLElement | null;
+          if (!label) return;
+          ev.stopPropagation();
+          ev.preventDefault();
+          const axisId = h.dataset.axisId;
+          if (axisId) openInlineAxisLabelEdit(h, axisId);
+        });
       });
+  }
+
+  // FORK 2026-05-23 (F1) — inline rename for a top-level group or sub-group.
+  // Replaces the `.exec-group-label` / `.exec-subgroup-label` span with an
+  // <input> pre-filled with the current label. Enter or blur saves via
+  // `control-panel.axes.update {id, label}`; Esc cancels. Empty trimmed value
+  // on save is treated as cancel (server would reject anyway). Triggered by
+  // either the ✏️ pencil button or a dblclick on the label span; both paths
+  // route through here. The header's parent collapse-handler is short-circuited
+  // by stopPropagation in the caller, so the disclosure does NOT toggle.
+  function openInlineAxisLabelEdit(headerEl: HTMLElement, axisId: string): void {
+    const labelEl = headerEl.querySelector(
+      ".exec-group-label, .exec-subgroup-label",
+    ) as HTMLElement | null;
+    if (!labelEl) return;
+    // Avoid stacking — if we're already editing this header, bail.
+    if (headerEl.querySelector(".exec-group-label-edit")) return;
+    const current = labelEl.dataset.axisLabel ?? labelEl.textContent ?? "";
+    const wasSubgroup = labelEl.classList.contains("exec-subgroup-label");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "exec-group-label-edit";
+    input.maxLength = 32;
+    input.value = current;
+    input.dataset.axisId = axisId;
+    if (wasSubgroup) input.dataset.subgroup = "1";
+    labelEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let resolved = false;
+    const restore = () => {
+      if (resolved) return;
+      resolved = true;
+      const span = document.createElement("span");
+      span.className = wasSubgroup ? "exec-subgroup-label" : "exec-group-label";
+      span.dataset.axisLabel = current;
+      span.textContent = current;
+      input.replaceWith(span);
+    };
+    const save = async () => {
+      if (resolved) return;
+      const next = input.value.trim();
+      if (!next || next === current) {
+        restore();
+        return;
+      }
+      resolved = true;
+      try {
+        await req("control-panel.axes.update", { id: axisId, label: next });
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] axes.update (rename) failed", err);
+        resolved = false;
+        input.classList.add("exec-add-text-error");
+        setTimeout(() => input.classList.remove("exec-add-text-error"), 1500);
+        input.focus();
+      }
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        void save();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener("blur", () => {
+      // Blur saves (mirrors Enter). If the input is empty, the save path
+      // calls restore() so the user can never accidentally erase a label.
+      void save();
+    });
+    // The replaced <input> sits inside the header which has its own click
+    // handler; stop clicks/mousedowns inside the input from bubbling up to
+    // the collapse-toggle and dblclick handlers above.
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+    input.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    input.addEventListener("dblclick", (ev) => ev.stopPropagation());
   }
 
   async function loadExecTasks(): Promise<void> {
