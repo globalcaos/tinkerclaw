@@ -1269,8 +1269,26 @@ export function buildGatewaySessionRow(params: {
   const id = parsed?.id;
   const origin = entry?.origin;
   const originLabel = origin?.label;
+  // FORK 2026-05-23 — filter out known WS-client identification strings that
+  // were leaking into session displayName via origin.label. The Tinker UI
+  // WS-client connects with `client.displayName = "Tinker UI"` (see
+  // tinker-ui/src/app.ts:1211) to identify itself for pairing + security
+  // audit. That string was inheriting into every chat-originated session's
+  // origin.label and surfacing in the right-panel sessions list as a
+  // useless label like "Tinker UI" on every freshly-cleared main tab and
+  // every orphaned tinker:* session whose tab has since been closed.
+  // The filter applies to BOTH entry.displayName and origin.label so it
+  // catches old persisted rows + new query-time resolutions; meaningful
+  // origin labels (e.g. "jarvis-inject", group titles) pass through.
+  const GENERIC_WS_CLIENT_LABELS = new Set(["Tinker UI", "webchat-ui", "openclaw-cli"]);
+  const cleanedEntryDisplayName =
+    entry?.displayName && !GENERIC_WS_CLIENT_LABELS.has(entry.displayName)
+      ? entry.displayName
+      : undefined;
+  const cleanedOriginLabel =
+    originLabel && !GENERIC_WS_CLIENT_LABELS.has(originLabel) ? originLabel : undefined;
   const displayName =
-    entry?.displayName ??
+    cleanedEntryDisplayName ??
     (channel
       ? buildGroupDisplayName({
           provider: channel,
@@ -1282,7 +1300,7 @@ export function buildGatewaySessionRow(params: {
         })
       : undefined) ??
     entry?.label ??
-    originLabel;
+    cleanedOriginLabel;
   const deliveryFields = normalizeSessionDeliveryFields(entry);
   const parsedAgent = parseAgentSessionKey(key);
   const sessionAgentId = normalizeAgentId(parsedAgent?.agentId ?? resolveDefaultAgentId(cfg));
