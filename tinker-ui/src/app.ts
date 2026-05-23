@@ -7321,9 +7321,18 @@ function init() {
   const EXEC_STATUS_ICON: Record<string, string> = {
     open: "",
     in_progress: "🟡",
-    resolved: "✅",
+    // FORK 2026-05-23 — dropped "✅" (was redundant with the head
+    // checkbox which already turns accent-green with a ✓ when
+    // status='resolved'; doubled up green checkmarks on every resolved
+    // task). Same logic as the 2026-05-22 drop of "⬜" for open: the
+    // checkbox owns the open/resolved signal. Other statuses keep
+    // their icons — they flag states the checkbox can't communicate.
+    resolved: "",
     // FORK 2026-05-13 — single 🗑 for both deleted statuses (new 'dropped'
-    // writes + legacy 'dismissed' rows). See the Deleted filter chip.
+    // writes + legacy 'dismissed' rows). Dropped/dismissed tasks are
+    // unconditionally filtered out of every view as of 2a34dae51c, so
+    // these icons are effectively never rendered now — kept for
+    // historical/audit code paths that may query the row directly.
     dropped: "🗑",
     dismissed: "🗑",
     back_burner: "💤",
@@ -8713,23 +8722,19 @@ function init() {
   }
 
   function renderExecDrawer(t: ExecTask): string {
-    // FORK 2026-05-23 (F3) — drawer order reworked:
-    //   1. full title row (wraps long text, with inline pencil to rename)
-    //   2. meta-line: 📅 due + ⏱ est chips (or placeholders if unset). Click
-    //      a chip → inline-edit (date input / number input). The head's
-    //      duplicate chips are hidden via .exec-task-expanded CSS so they
-    //      don't show twice.
-    //   3. context body (rendered markdown or "No context yet." stub) with
-    //      its existing edit pencil.
-    //   4. metadata-strip chips (📧 N threads, etc.)
-    //   5. action buttons row.
-    // Originally (2026-05-11) the order was 1-3-4-5 with no meta-line; due
-    // and est were only visible on the collapsed head.
-    const fullTitleBlock = `
-      <div class="exec-task-fulltitle">
-        <span class="exec-task-fulltitle-text">${escapeHtml(t.text)}</span>
-        <button class="exec-task-pencil exec-task-pencil-inline" data-action="edit-title" title="Edit title">✏️</button>
-      </div>`;
+    // FORK 2026-05-23 — drawer no longer renders a duplicate full-title
+    // block. The collapsed head's `.exec-task-text` now wraps in place
+    // when the card is expanded (see base.css `.exec-task-expanded
+    // .exec-task-text`), so the title stays at its collapsed-row Y
+    // coordinate instead of jumping to a line below in a separate
+    // drawer block. The head's edit-title pencil remains visible when
+    // expanded for in-place rename.
+    //
+    // Drawer order (unchanged otherwise):
+    //   1. meta-line: 📅 due + ⏱ est chips with inline-edit on click.
+    //   2. context body (rendered markdown) with edit pencil.
+    //   3. metadata-strip chips (📧 N threads, etc.).
+    //   4. action buttons row.
     const dueChip = t.due_date ? renderExecDueChip(t, true) : renderExecDuePlaceholder();
     const estChip = t.est_minutes ? renderExecEstChip(t, true) : renderExecEstPlaceholder();
     const metaLine = `<div class="exec-task-metaline">${dueChip}${estChip}</div>`;
@@ -8760,7 +8765,6 @@ function init() {
       /* ignore malformed metadata */
     }
     return `<div class="exec-task-drawer">
-        ${fullTitleBlock}
         ${metaLine}
         <div class="exec-task-context-wrap">
           <div class="exec-task-context">${ctxBody}</div>
