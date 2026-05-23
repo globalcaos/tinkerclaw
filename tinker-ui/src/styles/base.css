@@ -4189,6 +4189,47 @@ code.fs-link.fs-link-error {
   border-color: #ef5350;
 }
 
+/* FORK 2026-05-23 (F3) — drag grip on group + sub-group headers. Mirrors
+   the task grip visually but lives on the header row at the very left.
+   Pointer-event DnD on this element reorders or reparents the entire
+   group; the rest of the header (label, count chip, +, ✏️, 🗑) keep
+   their existing behaviors. */
+.exec-group-grip {
+  color: #4a4a52;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -2px;
+  line-height: 1;
+  user-select: none;
+  cursor: grab;
+  transition: color 0.15s ease;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.exec-group-header:hover .exec-group-grip,
+.exec-subgroup-header:hover .exec-group-grip {
+  color: #a3a3ad;
+}
+.exec-group-grip:active {
+  cursor: grabbing;
+  color: var(--accent);
+}
+
+/* Source wrapper dim during an active group drag — parallels
+   .exec-task-source for task DnD. The whole .exec-group / .exec-subgroup
+   block fades so the user sees where the dragged element came from. */
+.exec-group-source {
+  opacity: 0.35;
+}
+
+/* Group-drag ghost — same fixed-position floating clone style as the task
+   DnD ghost. The `.exec-group-drag-ghost` modifier exists for future
+   per-class tuning without re-overriding the base ghost rules. */
+.exec-group-drag-ghost {
+  /* inherits .exec-drag-ghost shadow/border/bg above */
+}
+
 /* FORK 2026-05-23 (F1) — pencil affordance on group/sub-group headers for
    the rename action. Mirrors .exec-task-pencil: invisible by default,
    appears on header hover. Click → openInlineAxisLabelEdit. dblclick on the

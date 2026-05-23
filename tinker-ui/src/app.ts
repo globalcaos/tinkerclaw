@@ -6702,6 +6702,7 @@ function init() {
     app.appendChild(el);
     execPanelEl = el;
     attachExecPointerDragHandlers(el);
+    attachExecGroupPointerDragHandlers(el);
     renderExecFilterBar();
     attachExecTaskAddHandlers(el);
     attachExecAddGroupHandlers(el);
@@ -7363,8 +7364,9 @@ function init() {
               localStorage.getItem(`tinker.execGroupCollapsed.${sub.id}`) === "1";
             const subTasks = subList.map((t) => renderExecTaskRow(t, sub.id)).join("");
             return (
-              `<div class="exec-subgroup${subCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(sub.id)}">` +
+              `<div class="exec-subgroup${subCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(sub.id)}" data-axis-parent="${escapeExecAttr(group.id)}" data-axis-position="${sub.position}">` +
               `<div class="exec-subgroup-header" data-axis-id="${escapeExecAttr(sub.id)}">` +
+              `<span class="exec-group-grip" title="Drag to reorder or move under another group">⋮⋮</span>` +
               `<span class="exec-group-disclosure">${subCollapsed ? "▶" : "▼"}</span>` +
               `<span class="exec-subgroup-label" data-axis-label="${escapeExecAttr(sub.label)}">${escapeHtml(sub.label)}</span>` +
               `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(sub.id)}" title="Rename sub-group">✏️</button>` +
@@ -7382,8 +7384,9 @@ function init() {
           })
           .join("");
         return (
-          `<div class="exec-group${groupCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(group.id)}">` +
+          `<div class="exec-group${groupCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(group.id)}" data-axis-position="${group.position}">` +
           `<div class="exec-group-header" data-axis-id="${escapeExecAttr(group.id)}">` +
+          `<span class="exec-group-grip" title="Drag to reorder">⋮⋮</span>` +
           `<span class="exec-group-disclosure">${groupCollapsed ? "▶" : "▼"}</span>` +
           `<span class="exec-group-label" data-axis-label="${escapeExecAttr(group.label)}">${escapeHtml(group.label)}</span>` +
           `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(group.id)}" title="Rename group">✏️</button>` +
@@ -7417,6 +7420,14 @@ function init() {
       .forEach((h) => {
         h.addEventListener("click", (ev) => {
           const target = ev.target as HTMLElement;
+          // FORK 2026-05-23 (F3) — clicks on the ⋮⋮ drag grip must never
+          // toggle the disclosure. The drag handler captures the pointer on
+          // pointerdown and below-threshold gestures still emit a synthetic
+          // click — short-circuit it here.
+          if (target.closest(".exec-group-grip")) {
+            ev.stopPropagation();
+            return;
+          }
           // FORK 2026-05-22 (Task 12) — + Add sub-group button: open the
           // inline form anchored under this header and bail before the
           // collapse logic.
@@ -7982,6 +7993,289 @@ function init() {
     window.addEventListener("blur", abortPointerDrag);
     document.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape" && execPointerDrag) {
+        ev.preventDefault();
+        abortPointerDrag();
+      }
+    });
+  }
+
+  // ─── Drag & drop: reorder/reparent groups (categories) ───
+  // FORK 2026-05-23 (F3) — pointer-event DnD on `.exec-group-grip` /
+  // `.exec-subgroup-grip` (both share the `.exec-group-grip` class). Mirrors
+  // the task-row DnD but writes `control-panel.axes.update {id, position,
+  // parent_id?}` instead. Drop-target rules:
+  //   • Source = top-level group: only reorder among top-level groups
+  //     (drop on another top-level group's header). Drops over a sub-group
+  //     header / sub-group content / a top-level group's tail-content area
+  //     get normalized to "reorder against that top-level group" so the user
+  //     can't accidentally nest a group three levels deep.
+  //   • Source = sub-group: drop on another sub-group header → reorder
+  //     within that sub-group's parent (reparent if the parent changed);
+  //     drop on a top-level group header or that group's content area →
+  //     reparent into that group at the end.
+  // Two-level depth cap is also enforced server-side; the client guard above
+  // is purely UX (no useless "rejected" round-trip).
+  type GroupPointerDrag = {
+    id: string;
+    isTopLevel: boolean;
+    parentAtStart: string | null;
+    startClientX: number;
+    startClientY: number;
+    pointerId: number;
+    ghost: HTMLElement;
+    source: HTMLElement; // the .exec-group or .exec-subgroup wrapper
+    indicator: HTMLElement;
+    passedThreshold: boolean;
+  };
+
+  let execGroupDrag: GroupPointerDrag | null = null;
+
+  function attachExecGroupPointerDragHandlers(panel: HTMLElement): void {
+    const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
+
+    body.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const grip = (ev.target as HTMLElement).closest(".exec-group-grip") as HTMLElement | null;
+      if (!grip) return;
+      // Only start a group-drag if we're inside a group/subgroup header. The
+      // task grip uses a different class (.exec-task-grip), so there's no
+      // overlap with the task DnD.
+      const subWrap = grip.closest(".exec-subgroup") as HTMLElement | null;
+      const topWrap = grip.closest(".exec-group") as HTMLElement | null;
+      const source = subWrap ?? topWrap;
+      if (!source) return;
+      const isTopLevel = !subWrap;
+      const id = source.dataset.axis;
+      if (!id) return;
+      const parentAtStart = subWrap ? (subWrap.dataset.axisParent ?? null) : null;
+
+      ev.preventDefault();
+      source.setPointerCapture?.(ev.pointerId);
+
+      const headerSel = isTopLevel ? ".exec-group-header" : ".exec-subgroup-header";
+      const headerEl = source.querySelector(headerSel) as HTMLElement | null;
+      const cloneSrc = headerEl ?? source;
+      const ghost = cloneSrc.cloneNode(true) as HTMLElement;
+      ghost.classList.add("exec-drag-ghost", "exec-group-drag-ghost");
+      const rect = cloneSrc.getBoundingClientRect();
+      ghost.style.position = "fixed";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "10000";
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.top = `${rect.top}px`;
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.opacity = "0";
+      document.body.appendChild(ghost);
+
+      const indicator = document.createElement("div");
+      indicator.className = "exec-drop-indicator exec-group-drop-indicator";
+
+      execGroupDrag = {
+        id,
+        isTopLevel,
+        parentAtStart,
+        startClientX: ev.clientX,
+        startClientY: ev.clientY,
+        pointerId: ev.pointerId,
+        ghost,
+        source,
+        indicator,
+        passedThreshold: false,
+      };
+      execDragRefreshSuppressed = true;
+    });
+
+    function onPointerMove(ev: PointerEvent): void {
+      const drag = execGroupDrag;
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+
+      if (!drag.passedThreshold) {
+        const dx = ev.clientX - drag.startClientX;
+        const dy = ev.clientY - drag.startClientY;
+        if (dx * dx + dy * dy < DRAG_START_THRESHOLD_PX * DRAG_START_THRESHOLD_PX) return;
+        drag.passedThreshold = true;
+        drag.source.classList.add("exec-group-source");
+        drag.ghost.style.opacity = "0.85";
+      }
+
+      drag.ghost.style.left = `${ev.clientX - 24}px`;
+      drag.ghost.style.top = `${ev.clientY - 12}px`;
+
+      // Edge auto-scroll mirrors the task DnD.
+      const bodyRect = body.getBoundingClientRect();
+      const fromTop = ev.clientY - bodyRect.top;
+      const fromBottom = bodyRect.bottom - ev.clientY;
+      if (fromTop < AUTOSCROLL_EDGE_PX) {
+        const speed =
+          ((AUTOSCROLL_EDGE_PX - fromTop) / AUTOSCROLL_EDGE_PX) * AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
+        body.scrollTop -= speed;
+      } else if (fromBottom < AUTOSCROLL_EDGE_PX) {
+        const speed =
+          ((AUTOSCROLL_EDGE_PX - fromBottom) / AUTOSCROLL_EDGE_PX) *
+          AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
+        body.scrollTop += speed;
+      }
+
+      drag.ghost.style.visibility = "hidden";
+      const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      drag.ghost.style.visibility = "";
+      if (!under) return;
+
+      // Locate the candidate wrapper under the cursor.
+      const overSub = under.closest(".exec-subgroup:not(.exec-group-source)") as HTMLElement | null;
+      const overTop = under.closest(".exec-group:not(.exec-group-source)") as HTMLElement | null;
+
+      if (drag.isTopLevel) {
+        // Top-level source: indicator only ever lands between top-level
+        // groups, never inside one. If the cursor is over a sub-group or
+        // top-level content area, we use the enclosing top-level group as
+        // the reorder anchor.
+        const anchor = overTop;
+        if (!anchor) {
+          drag.indicator.remove();
+          return;
+        }
+        const ar = anchor.getBoundingClientRect();
+        const before = ev.clientY < ar.top + ar.height / 2;
+        anchor.parentElement!.insertBefore(drag.indicator, before ? anchor : anchor.nextSibling);
+        return;
+      }
+
+      // Source is a sub-group.
+      if (overSub) {
+        const sr = overSub.getBoundingClientRect();
+        const before = ev.clientY < sr.top + sr.height / 2;
+        overSub.parentElement!.insertBefore(drag.indicator, before ? overSub : overSub.nextSibling);
+        return;
+      }
+      if (overTop) {
+        // Drop area inside a top-level group but not on a sub-group → append
+        // as a sub-group at the end of that group. We park the indicator at
+        // the very end of the group's wrapper, after any existing subgroups.
+        overTop.appendChild(drag.indicator);
+        return;
+      }
+      drag.indicator.remove();
+    }
+
+    document.addEventListener("pointermove", onPointerMove);
+
+    async function onPointerUp(ev: PointerEvent): Promise<void> {
+      const drag = execGroupDrag;
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+
+      drag.ghost.remove();
+      drag.source.classList.remove("exec-group-source");
+
+      if (!drag.passedThreshold) {
+        drag.indicator.remove();
+        execGroupDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
+      }
+
+      const indParent = drag.indicator.parentElement;
+      drag.indicator.remove();
+      execGroupDrag = null;
+      execDragRefreshSuppressed = false;
+      if (!indParent) return;
+
+      // Resolve the new parent + position from the indicator's siblings.
+      // Two structural shapes:
+      //   (a) Indicator sitting between two top-level groups OR between two
+      //       sub-groups: prev/next are the same-level peers.
+      //   (b) Indicator appended as the last child of a top-level group's
+      //       wrapper (sub-group reparent into that group): prev is either
+      //       an empty-state div or a sub-group; next is null.
+      const indicatorParentClass = indParent.className;
+      let targetParentId: string | null;
+      if (drag.isTopLevel) {
+        // Reorder among top-level groups. parent_id remains null.
+        targetParentId = null;
+      } else {
+        // Sub-group: parent_id derives from the wrapper context.
+        if (indParent.classList.contains("exec-group")) {
+          // Appended into a top-level group → that group is the new parent.
+          targetParentId = (indParent.dataset.axis as string) ?? null;
+        } else {
+          // Indicator sits as a sibling of an .exec-subgroup → its parent is
+          // also the parent of the .exec-subgroup peers (the top-level group).
+          const enclosingTop = indParent.closest(".exec-group") as HTMLElement | null;
+          targetParentId = (enclosingTop?.dataset.axis as string) ?? null;
+        }
+        if (!targetParentId) return;
+      }
+
+      // Walk same-level neighbors, skipping the source wrapper.
+      const peerClass = drag.isTopLevel ? "exec-group" : "exec-subgroup";
+      let prev: HTMLElement | null = drag.indicator.previousElementSibling as HTMLElement | null;
+      while (
+        prev &&
+        (prev === drag.source ||
+          !prev.classList?.contains(peerClass) ||
+          prev.classList?.contains("exec-group-source"))
+      ) {
+        prev = prev.previousElementSibling as HTMLElement | null;
+      }
+      let next: HTMLElement | null = drag.indicator.nextElementSibling as HTMLElement | null;
+      while (
+        next &&
+        (next === drag.source ||
+          !next.classList?.contains(peerClass) ||
+          next.classList?.contains("exec-group-source"))
+      ) {
+        next = next.nextElementSibling as HTMLElement | null;
+      }
+      const prevPos = prev ? parseFloat(prev.dataset.axisPosition ?? "0") : -10;
+      const nextPos = next ? parseFloat(next.dataset.axisPosition ?? "1000") : prevPos + 20;
+      const newPosition = (prevPos + nextPos) / 2;
+
+      // No-op detection: same parent AND adjacent to source on either side.
+      const sameParent = (drag.parentAtStart ?? null) === (targetParentId ?? null);
+      if (sameParent && (prev === drag.source || next === drag.source)) {
+        return;
+      }
+      // No-op when indicator placed exactly where the source already lives.
+      if (sameParent) {
+        const srcPrev = drag.source.previousElementSibling as HTMLElement | null;
+        const srcNext = drag.source.nextElementSibling as HTMLElement | null;
+        if (srcPrev === prev && srcNext === next) return;
+      }
+
+      const params: { id: string; position: number; parent_id?: string | null } = {
+        id: drag.id,
+        position: newPosition,
+      };
+      if (!drag.isTopLevel) {
+        params.parent_id = targetParentId;
+      }
+
+      try {
+        await req("control-panel.axes.update", params);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec-group-drag] axes.update failed", err, indicatorParentClass);
+        flashExecError(`Reorder failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await loadExecTasks();
+    }
+
+    document.addEventListener("pointerup", onPointerUp);
+
+    function abortPointerDrag(): void {
+      const drag = execGroupDrag;
+      if (!drag) return;
+      drag.ghost.remove();
+      drag.source.classList.remove("exec-group-source");
+      drag.indicator.remove();
+      execGroupDrag = null;
+      execDragRefreshSuppressed = false;
+    }
+
+    document.addEventListener("pointercancel", abortPointerDrag);
+    window.addEventListener("blur", abortPointerDrag);
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && execGroupDrag) {
         ev.preventDefault();
         abortPointerDrag();
       }
