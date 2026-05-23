@@ -4308,6 +4308,34 @@ code.fs-link.fs-link-error {
   background: #2a1818;
 }
 
+/* FORK 2026-05-23 (F2) — inline <textarea> for editing a task description.
+   Replaces the .exec-task-context rendered markdown body. Auto-resizes as
+   the user types; Ctrl/Cmd+Enter saves; Esc cancels; blur saves unless
+   trimmed-empty with a non-empty prior (defensive). */
+.exec-task-context-edit {
+  width: 100%;
+  background: #16161a;
+  color: #eaeaee;
+  border: 1px solid #3a3a45;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+.exec-task-context-edit:focus {
+  border-color: var(--accent);
+}
+.exec-task-context-edit.exec-add-text-error {
+  border-color: #ef5350;
+  background: #2a1818;
+}
+
 /* FORK 2026-05-11 — .exec-task is now a wrapper (header + optional drawer);
    the grid layout moved to .exec-task-head below. Keep .exec-task as a
    plain block so the head and drawer stack vertically with no overflow. */
