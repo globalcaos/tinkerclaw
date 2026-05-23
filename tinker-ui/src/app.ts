@@ -8327,15 +8327,64 @@ function init() {
         return;
       }
 
+      // FORK 2026-05-23 — was a single tasks.update with the midpoint rank.
+      // priority_rank is an INTEGER column in store.sql, and midpoint
+      // arithmetic compresses toward existing rank values over multiple
+      // drops; eventually adjacent tasks share the same integer rank,
+      // sort order becomes undefined, and the user reports "tasks don't
+      // go where I want." Live data had 21 tasks at rank=30 and 17 at
+      // rank=40 in `ventures` before this fix. The schema migration to
+      // REAL would be invasive; instead, renumber the destination axis
+      // with clean spacing (100) after every drop. The dragged task is
+      // inserted at the indicator's DOM position; all tasks in the axis
+      // get new ranks 100, 200, 300, ... in their new visual order.
+      //
+      // Implementation: walk the indicator's enclosing axis container
+      // in DOM order, treating the indicator as the dragged task's new
+      // position, skipping the source row (which still carries the
+      // .exec-task-source class). Send parallel tasks.update RPCs for
+      // every task in the axis with the fresh rank assignment.
+      const axisHost = subgroupHost ?? groupHost;
+      void newRank; // kept for diff legibility; not used in renumber path
+      const orderedIds: string[] = [];
+      let insertedSource = false;
+      for (const node of axisHost.querySelectorAll<HTMLElement>(
+        ".exec-task, .exec-drop-indicator",
+      )) {
+        // The renumber must only cover this axis — skip task rows that
+        // belong to a nested sub-group (their own axis container handles
+        // its own ordering).
+        const ownGroup =
+          (node.closest(".exec-subgroup") as HTMLElement | null) ??
+          (node.closest(".exec-group") as HTMLElement | null);
+        if (ownGroup !== axisHost) continue;
+        if (node.classList.contains("exec-drop-indicator")) {
+          if (!insertedSource) {
+            orderedIds.push(drag.id);
+            insertedSource = true;
+          }
+          continue;
+        }
+        if (node.classList.contains("exec-task-source")) continue;
+        const id = node.dataset.taskId;
+        if (id) orderedIds.push(id);
+      }
+      if (!insertedSource) {
+        orderedIds.push(drag.id);
+      }
       try {
-        await req("control-panel.tasks.update", {
-          id: drag.id,
-          priority_axis: axis,
-          priority_rank: newRank,
-        });
+        await Promise.all(
+          orderedIds.map((id, i) =>
+            req("control-panel.tasks.update", {
+              id,
+              priority_axis: axis,
+              priority_rank: (i + 1) * 100,
+            }),
+          ),
+        );
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error("[exec-drag] tasks.update failed", err);
+        console.error("[exec-drag] tasks.update batch failed", err);
       }
       await loadExecTasks();
     }
