@@ -7188,6 +7188,13 @@ function init() {
   }
 
   function execFilterAccepts(t: ExecTask): boolean {
+    // FORK 2026-05-23 (F1) — deleted (dropped/dismissed) tasks are invisible
+    // under every filter, unconditionally. The 'Deleted' filter chip and the
+    // soft-delete bucket were removed; legacy rows that still carry these
+    // statuses must never reach the render path. `tasks.remove` is the new
+    // hard-delete path; this guard keeps any straggling rows from showing
+    // up under 'All' or anywhere else.
+    if (t.status === "dropped" || t.status === "dismissed") return false;
     switch (execFilter) {
       case "unfinished":
         return t.status === "open" || t.status === "in_progress";
@@ -7198,16 +7205,15 @@ function init() {
       case "all":
         // "All" means everything currently in play — snoozed tasks are not
         // in play, they're the user's "don't show me but don't forget" pile.
+        // Deleted tasks are filtered out by the top-of-function guard above.
         return t.status !== "back_burner";
       case "all_today":
       default: {
         // FORK 2026-05-14 — "All today" means tasks for today's plate:
         // overdue, due today, or undated. A task rescheduled to a future
         // date must drop out of this list, otherwise the chip is identical
-        // to "All" minus snoozed.
-        if (t.status === "dismissed" || t.status === "dropped" || t.status === "back_burner") {
-          return false;
-        }
+        // to "All" minus snoozed. (Deleted filtered out above.)
+        if (t.status === "back_burner") return false;
         if (!t.due_date) return true;
         const now = new Date();
         const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -7895,7 +7901,11 @@ function init() {
       const res = (await req("control-panel.tasks.list", {
         // v3.3 — back_burner included in the fetch so the 💤 Snoozed chip has
         // tasks to render; execFilterAccepts hides them from every other filter.
-        status: ["open", "in_progress", "resolved", "dismissed", "dropped", "back_burner"],
+        // FORK 2026-05-23 (F1) — dropped/dismissed removed from the fetch; the
+        // 'Deleted' filter chip and soft-delete bucket were dropped, and
+        // execFilterAccepts now rejects those statuses unconditionally. Not
+        // fetching them avoids paying for rows the UI will never display.
+        status: ["open", "in_progress", "resolved", "back_burner"],
         limit: 500,
       })) as { tasks: ExecTask[]; count: number };
       execLastTasks = res.tasks ?? [];
