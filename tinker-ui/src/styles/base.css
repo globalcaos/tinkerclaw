@@ -4760,9 +4760,14 @@ code.fs-link.fs-link-error {
    inside the card stays legible. Boxshadow adds a subtle outline so the
    lift is unambiguous even on dense lists. */
 .exec-task-expanded {
-  background: #2a2a32;
+  /* FORK 2026-05-23 — was #2a2a32 (gray); switched to a warm brown to
+     match the wood-panel topbar (#6b5545) and the workspace's overall
+     palette. #3a2e26 sits a few notches darker than the topbar for
+     contrast against the page background while still reading as a
+     subtle lift, not a stark color block. */
+  background: #3a2e26;
   border-radius: 4px;
-  box-shadow: 0 0 0 1px #3a3a45;
+  box-shadow: 0 0 0 1px #4a3a30;
 }
 /* FORK 2026-05-22: when expanded, hide the collapsed-head title — the
    drawer's full-title block is the sole title surface. Eliminates the

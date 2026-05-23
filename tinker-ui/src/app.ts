@@ -8117,9 +8117,26 @@ function init() {
 
     body.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
-      const grip = (ev.target as HTMLElement).closest(".exec-task-grip") as HTMLElement | null;
-      if (!grip) return;
-      const task = grip.closest(".exec-task") as HTMLElement | null;
+      // FORK 2026-05-23 — the grip was made visually invisible in 7b91d26a6a
+      // so users couldn't find the 6px hit target to start a drag; the row's
+      // cursor:grab promised drag-anywhere but the pointerdown trigger was
+      // still grip-only. Switch to: pointerdown anywhere on `.exec-task-head`
+      // initiates the drag UNLESS it lands on an interactive child (the
+      // checkbox, pencil, menu button, chip, or any nested button/input).
+      // The DRAG_START_THRESHOLD_PX gate later ensures a plain click without
+      // mouse movement still fires the expand-toggle normally; only actual
+      // dragging gestures (>= 4px move) become DnD operations.
+      const target = ev.target as HTMLElement;
+      if (
+        target.closest(
+          "button, input, textarea, select, .exec-task-check, .exec-task-pencil, .exec-task-menu, .exec-chip, .exec-task-drawer",
+        )
+      ) {
+        return;
+      }
+      const head = target.closest(".exec-task-head") as HTMLElement | null;
+      if (!head) return;
+      const task = head.closest(".exec-task") as HTMLElement | null;
       if (!task) return;
 
       ev.preventDefault();
@@ -8377,13 +8394,29 @@ function init() {
 
     body.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
-      const grip = (ev.target as HTMLElement).closest(".exec-group-grip") as HTMLElement | null;
-      if (!grip) return;
-      // Only start a group-drag if we're inside a group/subgroup header. The
-      // task grip uses a different class (.exec-task-grip), so there's no
-      // overlap with the task DnD.
-      const subWrap = grip.closest(".exec-subgroup") as HTMLElement | null;
-      const topWrap = grip.closest(".exec-group") as HTMLElement | null;
+      // FORK 2026-05-23 — the grip element was made invisible in 7b91d26a6a;
+      // users had no findable hit target to start a category drag. Switch
+      // to: pointerdown anywhere on `.exec-group-header` or
+      // `.exec-subgroup-header` initiates the drag UNLESS it lands on an
+      // interactive child (the disclosure caret, label-edit pencil, +Add
+      // task / +Add subgroup buttons, count chip, delete button, label
+      // text in edit mode, etc.). Plain clicks still fire collapse-toggle
+      // via the existing handler — DnD only takes over once the
+      // DRAG_START_THRESHOLD_PX move-threshold is crossed.
+      const target = ev.target as HTMLElement;
+      if (
+        target.closest(
+          "button, input, textarea, select, .exec-group-pencil, .exec-group-add-task, .exec-group-add-sub, .exec-group-delete, .exec-group-disclosure",
+        )
+      ) {
+        return;
+      }
+      const header =
+        (target.closest(".exec-group-header") as HTMLElement | null) ||
+        (target.closest(".exec-subgroup-header") as HTMLElement | null);
+      if (!header) return;
+      const subWrap = header.closest(".exec-subgroup") as HTMLElement | null;
+      const topWrap = header.closest(".exec-group") as HTMLElement | null;
       const source = subWrap ?? topWrap;
       if (!source) return;
       const isTopLevel = !subWrap;
