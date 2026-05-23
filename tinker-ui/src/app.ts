@@ -7665,6 +7665,101 @@ function init() {
     input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
   }
 
+  // FORK 2026-05-23 (F2) — inline edit for a task description (context_md).
+  // Replaces the rendered markdown body inside .exec-task-context-wrap with
+  // a <textarea> pre-filled with the raw markdown. Ctrl/Cmd+Enter saves via
+  // `control-panel.tasks.update {id, context_md}`; Esc cancels; blur saves
+  // UNLESS the trimmed value is empty AND the prior context_md was non-empty
+  // (defensive guard against accidental wipe). Replaces the prior
+  // window.prompt popup.
+  function openInlineTaskContextEdit(taskRow: HTMLElement, taskId: string): void {
+    const wrap = taskRow.querySelector(".exec-task-context-wrap") as HTMLElement | null;
+    if (!wrap) return;
+    if (wrap.querySelector(".exec-task-context-edit")) return;
+    const ctxEl = wrap.querySelector(".exec-task-context") as HTMLElement | null;
+    if (!ctxEl) return;
+    const t = execLastTasks.find((x) => x.id === taskId);
+    const current = t?.context_md ?? "";
+    const priorHeight = Math.max(80, ctxEl.offsetHeight);
+    const textarea = document.createElement("textarea");
+    textarea.className = "exec-task-context-edit";
+    textarea.value = current;
+    textarea.dataset.taskId = taskId;
+    textarea.style.height = `${priorHeight}px`;
+    // Hide the pencil while editing — restored by the next render on save.
+    const pencil = wrap.querySelector(".exec-task-pencil-context") as HTMLElement | null;
+    if (pencil) pencil.style.display = "none";
+    ctxEl.replaceWith(textarea);
+    textarea.focus();
+    // Place cursor at the end of the existing value for a natural append.
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
+    // Auto-resize on input so the textarea grows with content.
+    const autoResize = () => {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.max(80, textarea.scrollHeight)}px`;
+    };
+    textarea.addEventListener("input", autoResize);
+
+    let resolved = false;
+    const restore = () => {
+      if (resolved) return;
+      resolved = true;
+      // Trigger a re-render so the markdown body comes back intact. Cheaper
+      // than reconstructing the rendered HTML inline.
+      void loadExecTasks();
+    };
+    const save = async (force: boolean) => {
+      if (resolved) return;
+      const next = textarea.value;
+      const trimmed = next.trim();
+      // Defensive blur-guard: empty-on-blur with non-empty prior = treat as
+      // cancel. Ctrl+Enter (force=true) bypasses this. Esc restore()s directly.
+      if (!force && trimmed.length === 0 && current.trim().length > 0) {
+        restore();
+        return;
+      }
+      if (next === current) {
+        restore();
+        return;
+      }
+      resolved = true;
+      try {
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          context_md: trimmed.length > 0 ? trimmed : null,
+        });
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] tasks.update (context) failed", err);
+        resolved = false;
+        textarea.classList.add("exec-add-text-error");
+        setTimeout(() => textarea.classList.remove("exec-add-text-error"), 1500);
+        textarea.focus();
+      }
+    };
+
+    textarea.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault();
+        void save(true);
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    textarea.addEventListener("blur", () => {
+      void save(false);
+    });
+    // Same propagation guards as the title input — the row's click/dblclick
+    // and the panel's pointerdown DnD trigger must not pick up textarea events.
+    textarea.addEventListener("click", (ev) => ev.stopPropagation());
+    textarea.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    textarea.addEventListener("dblclick", (ev) => ev.stopPropagation());
+    textarea.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+  }
+
   async function loadExecTasks(): Promise<void> {
     const panel = ensureExecPanel();
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
@@ -9334,14 +9429,21 @@ function init() {
         if (row) openInlineTaskTitleEdit(row, taskId);
         return;
       } else if (action === "edit-context") {
+        // FORK 2026-05-23 (F2) — inline edit replaces the prior window.prompt
+        // popup. Helper swaps the rendered markdown for a <textarea>;
+        // Ctrl/Cmd+Enter saves, Esc cancels, blur saves with empty-wipe guard.
+        // Expand the row first if collapsed so the drawer's context-wrap
+        // exists in the DOM as the swap target.
         if (!t) return;
-        const next = window.prompt("Edit description (markdown supported):", t.context_md ?? "");
-        if (next === null) return; // user cancelled
-        const trimmed = next.trim();
-        await req("control-panel.tasks.update", {
-          id: taskId,
-          context_md: trimmed.length > 0 ? trimmed : null,
-        });
+        if (execExpandedId !== taskId) {
+          execExpandedId = taskId;
+          await loadExecTasks();
+        }
+        const row = document.querySelector(
+          `.exec-task[data-task-id="${CSS.escape(taskId)}"]`,
+        ) as HTMLElement | null;
+        if (row) openInlineTaskContextEdit(row, taskId);
+        return;
       } else if (action === "refer-in-chat") {
         if (!t) return;
         const textarea = document.getElementById("chat-textarea") as HTMLTextAreaElement | null;
