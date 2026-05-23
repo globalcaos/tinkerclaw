@@ -7760,6 +7760,132 @@ function init() {
     textarea.addEventListener("pointerdown", (ev) => ev.stopPropagation());
   }
 
+  // FORK 2026-05-23 (F3) — inline edit for the due_date chip in the drawer
+  // meta-line. Replaces the chip span with <input type="date">. Enter or
+  // change saves via tasks.update; empty value clears the due date; Esc
+  // cancels. Width matches the chip; the native datepicker overlays on top.
+  function openInlineTaskDueEdit(chipEl: HTMLElement, taskId: string): void {
+    const t = execLastTasks.find((x) => x.id === taskId);
+    if (!t) return;
+    // Already editing this chip → bail.
+    if (chipEl.tagName === "INPUT") return;
+    const current = t.due_date ? t.due_date.slice(0, 10) : "";
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "exec-task-chip-edit";
+    input.value = current;
+    input.dataset.taskId = taskId;
+    chipEl.replaceWith(input);
+    input.focus();
+
+    let resolved = false;
+    const restore = () => {
+      if (resolved) return;
+      resolved = true;
+      void loadExecTasks();
+    };
+    const save = async () => {
+      if (resolved) return;
+      const next = input.value.trim();
+      if (next === current) {
+        restore();
+        return;
+      }
+      resolved = true;
+      try {
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          due_date: next.length > 0 ? next : null,
+        });
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] tasks.update (due_date) failed", err);
+        resolved = false;
+        input.focus();
+      }
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        void save();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener("change", () => void save());
+    input.addEventListener("blur", () => void save());
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+    input.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+  }
+
+  // FORK 2026-05-23 (F3) — inline edit for the est_minutes chip in the
+  // drawer meta-line. Replaces the chip with <input type="number">.
+  function openInlineTaskEstEdit(chipEl: HTMLElement, taskId: string): void {
+    const t = execLastTasks.find((x) => x.id === taskId);
+    if (!t) return;
+    if (chipEl.tagName === "INPUT") return;
+    const current = t.est_minutes != null ? String(t.est_minutes) : "";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.step = "5";
+    input.className = "exec-task-chip-edit exec-task-chip-edit-num";
+    input.value = current;
+    input.dataset.taskId = taskId;
+    chipEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let resolved = false;
+    const restore = () => {
+      if (resolved) return;
+      resolved = true;
+      void loadExecTasks();
+    };
+    const save = async () => {
+      if (resolved) return;
+      const raw = input.value.trim();
+      if (raw === current) {
+        restore();
+        return;
+      }
+      const parsed = raw === "" ? null : Number.parseInt(raw, 10);
+      if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+        restore();
+        return;
+      }
+      resolved = true;
+      try {
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          est_minutes: parsed,
+        });
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] tasks.update (est_minutes) failed", err);
+        resolved = false;
+        input.focus();
+      }
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        void save();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener("blur", () => void save());
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+    input.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+  }
+
   async function loadExecTasks(): Promise<void> {
     const panel = ensureExecPanel();
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
@@ -8462,43 +8588,72 @@ function init() {
     });
   }
 
+  // FORK 2026-05-23 (F3) — extracted due-chip renderer so the collapsed head
+  // and the expanded drawer's meta-line can share the same chip markup. The
+  // `editable` flag adds a data-action="edit-due" + role/tabindex hint so the
+  // drawer-side chip routes through openInlineTaskDueEdit.
+  function renderExecDueChip(t: ExecTask, editable: boolean): string {
+    if (!t.due_date) return "";
+    const datePart = t.due_date.slice(0, 10);
+    const [yy, mm, dd] = datePart.split("-").map(Number);
+    const months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    const now = new Date();
+    const label =
+      yy === now.getFullYear()
+        ? `${months[mm - 1]} ${dd}`
+        : `${months[mm - 1]} ${dd} '${String(yy).slice(-2)}`;
+    const todayPart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const isOverdue = datePart < todayPart;
+    const editableAttrs = editable ? ` data-action="edit-due" role="button" tabindex="0"` : "";
+    return `<span class="exec-chip exec-chip-due${isOverdue ? " exec-chip-due-overdue" : ""}${editable ? " exec-chip-editable" : ""}"${editableAttrs} title="Due ${escapeHtml(datePart)}${editable ? " (click to edit)" : ""}">📅 ${label}</span>`;
+  }
+
+  // FORK 2026-05-23 (F3) — placeholder due chip ("Set due date") for the
+  // drawer meta-line when t.due_date is null. Clicking opens the inline date
+  // input so the user can add a due date without going through the
+  // reschedule overlay. Only rendered in the drawer (editable=true path).
+  function renderExecDuePlaceholder(): string {
+    return `<span class="exec-chip exec-chip-due exec-chip-editable exec-chip-empty" data-action="edit-due" role="button" tabindex="0" title="Click to set a due date">📅 Set due</span>`;
+  }
+
+  // FORK 2026-05-23 (F3) — est chip renderer + placeholder, same pattern.
+  function renderExecEstChip(t: ExecTask, editable: boolean): string {
+    if (!t.est_minutes) return "";
+    const est = `${t.est_minutes}m`;
+    const editableAttrs = editable ? ` data-action="edit-est" role="button" tabindex="0"` : "";
+    return `<span class="exec-chip exec-chip-est${editable ? " exec-chip-editable" : ""}"${editableAttrs} title="Estimated ${est}${editable ? " (click to edit)" : ""}">${est}</span>`;
+  }
+  function renderExecEstPlaceholder(): string {
+    return `<span class="exec-chip exec-chip-est exec-chip-editable exec-chip-empty" data-action="edit-est" role="button" tabindex="0" title="Click to set an estimate (minutes)">⏱ Set est</span>`;
+  }
+
   function renderExecTaskRow(t: ExecTask, axis: string): string {
     // FORK 2026-05-22: fallback character is "" (not "•") so unknown statuses
     // also render no icon — `open` is the empty default and any future status
     // we forget to register shouldn't grow a stray bullet on every card.
     const icon = EXEC_STATUS_ICON[t.status] ?? "";
-    const est = t.est_minutes ? `${t.est_minutes}m` : "";
     const isExpanded = execExpandedId === t.id;
-    // FORK 2026-05-14 — collapsed row now surfaces a 📅 due-date chip when
-    // due_date is set (user feedback: the rescheduled date should be visible
-    // on the card without expanding). Past-due dates get an overdue tint.
-    const dueChip = (() => {
-      if (!t.due_date) return "";
-      const datePart = t.due_date.slice(0, 10);
-      const [yy, mm, dd] = datePart.split("-").map(Number);
-      const months = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      const now = new Date();
-      const label =
-        yy === now.getFullYear()
-          ? `${months[mm - 1]} ${dd}`
-          : `${months[mm - 1]} ${dd} '${String(yy).slice(-2)}`;
-      const todayPart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      const isOverdue = datePart < todayPart;
-      return `<span class="exec-chip exec-chip-due${isOverdue ? " exec-chip-due-overdue" : ""}" title="Due ${escapeHtml(datePart)}">📅 ${label}</span>`;
-    })();
+    // FORK 2026-05-14 — collapsed row surfaces 📅 due chip + est chip. The
+    // shared renderExecDueChip/renderExecEstChip helpers above keep the head
+    // and drawer chips visually identical. F3 (2026-05-23): when the row is
+    // expanded, CSS hides these head chips to avoid duplication with the
+    // drawer's meta-line; the markup stays in the DOM so collapsed-state
+    // toggling doesn't churn the surrounding flexbox.
+    const dueChip = renderExecDueChip(t, false);
+    const estChip = renderExecEstChip(t, false);
     // FORK 2026-05-22: collapsed head now carries an 18px checkbox between
     // the grip and the status icon. Click toggles status open↔resolved via
     // the toggle-resolve action (handled by handleExecTaskAction). This
@@ -8522,7 +8677,7 @@ function init() {
           <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
           <span class="exec-task-chips">
             ${dueChip}
-            ${est ? `<span class="exec-chip exec-chip-est" title="Estimated ${est}">${est}</span>` : ""}
+            ${estChip}
             <button class="exec-task-menu" data-action="menu" title="More actions">⋯</button>
           </span>
         </div>
@@ -8531,15 +8686,26 @@ function init() {
   }
 
   function renderExecDrawer(t: ExecTask): string {
-    // FORK 2026-05-11 — drawer shows full task title (wrapped) above the
-    // context, plus an inline pencil button at the end of BOTH title and
-    // context for in-place edits. The free-standing "Edit text" action
-    // button is removed; pencils replace it.
+    // FORK 2026-05-23 (F3) — drawer order reworked:
+    //   1. full title row (wraps long text, with inline pencil to rename)
+    //   2. meta-line: 📅 due + ⏱ est chips (or placeholders if unset). Click
+    //      a chip → inline-edit (date input / number input). The head's
+    //      duplicate chips are hidden via .exec-task-expanded CSS so they
+    //      don't show twice.
+    //   3. context body (rendered markdown or "No context yet." stub) with
+    //      its existing edit pencil.
+    //   4. metadata-strip chips (📧 N threads, etc.)
+    //   5. action buttons row.
+    // Originally (2026-05-11) the order was 1-3-4-5 with no meta-line; due
+    // and est were only visible on the collapsed head.
     const fullTitleBlock = `
       <div class="exec-task-fulltitle">
         <span class="exec-task-fulltitle-text">${escapeHtml(t.text)}</span>
         <button class="exec-task-pencil exec-task-pencil-inline" data-action="edit-title" title="Edit title">✏️</button>
       </div>`;
+    const dueChip = t.due_date ? renderExecDueChip(t, true) : renderExecDuePlaceholder();
+    const estChip = t.est_minutes ? renderExecEstChip(t, true) : renderExecEstPlaceholder();
+    const metaLine = `<div class="exec-task-metaline">${dueChip}${estChip}</div>`;
     const ctxBody = t.context_md
       ? (() => {
           try {
@@ -8568,6 +8734,7 @@ function init() {
     }
     return `<div class="exec-task-drawer">
         ${fullTitleBlock}
+        ${metaLine}
         <div class="exec-task-context-wrap">
           <div class="exec-task-context">${ctxBody}</div>
           <button class="exec-task-pencil exec-task-pencil-context" data-action="edit-context" title="Edit description">✏️</button>
@@ -9267,6 +9434,18 @@ function init() {
             openInlineTaskTitleEdit(row, id);
           });
         });
+      // FORK 2026-05-23 (F3) — drawer meta-line chips. Click → inline edit
+      // (date input or number input). stopPropagation so the row's head
+      // click handler (collapse-toggle) doesn't fire and the panel's
+      // pointerdown DnD trigger doesn't pick them up.
+      row.querySelectorAll<HTMLElement>(".exec-chip-editable").forEach((chip) => {
+        chip.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const action = chip.dataset.action;
+          if (action === "edit-due") openInlineTaskDueEdit(chip, id);
+          else if (action === "edit-est") openInlineTaskEstEdit(chip, id);
+        });
+      });
     });
   }
 
