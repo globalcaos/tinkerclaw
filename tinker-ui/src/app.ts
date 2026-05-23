@@ -6110,13 +6110,23 @@ function updateSessionsPanel() {
 
 function renderSessionRow(s: unknown, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
-  const isTinkerSession = /:tinker:/.test(s.key) || (s.key && s.key.startsWith("tinker:"));
-  const tinkerTab = isTinkerSession ? tabs.find((t) => t.sessionKey === s.key) : null;
-  const isMainSession = s.key.endsWith(":main");
-  const mainTab = isMainSession ? tabs.find((t) => t.id === "tab-main") : null;
-  const label = isMainSession
-    ? mainTab?.title || "🏠 Main"
-    : tinkerTab?.title || s.label || s.displayName || shortLabel;
+  // FORK 2026-05-23: prefer the client-side tab.title for any session bound
+  // to a known tab. Fixes two coupled bugs:
+  //   1. /clear rotates tab-main's sessionKey from agent:main:main →
+  //      tinker:<ts>; the old `isMainSession = s.key.endsWith(":main")`
+  //      check returned false post-rotate, so the renderer fell through
+  //      to `s.label || s.displayName` — and `s.displayName` defaults to
+  //      the WS-client connect handshake's "Tinker UI" string (app.ts:1211),
+  //      so the user saw the rotated main session labeled "Tinker UI".
+  //   2. The persisted tab title in localStorage (Gemini-generated like
+  //      "🔧 Fix auth bug", or "🏠 Main" for tab-main per loadTabs() force-
+  //      restore) was being shadowed by the stale server-side label after
+  //      gateway restart. The tab.title is the persisted source of truth.
+  // Resolution order: tab.title (any matching tab, includes "🏠 Main" for
+  // tab-main and Gemini titles for tinker:* tabs) → s.label (gateway-stored
+  // label, if any) → s.displayName (WS-client fallback) → shortLabel.
+  const tab = tabs.find((t) => t.sessionKey === s.key);
+  const label = tab?.title || s.label || s.displayName || shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
