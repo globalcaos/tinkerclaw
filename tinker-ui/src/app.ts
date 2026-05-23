@@ -6141,7 +6141,15 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   // Resolution order: tab.title (any matching tab) → s.label (server-stored
   // meaningful label) → s.displayName (server-stored meaningful displayName,
   // never a WS-client identifier) → shortLabel.
-  const tab = tabs.find((t) => t.sessionKey === s.key);
+  //
+  // FORK 2026-05-23 (continuation): use sessionKeyMatches for the tab
+  // lookup — the gateway stores keys as agent:main:tinker:<ts> (full path)
+  // while tab.sessionKey is tinker:<ts> (unprefixed; that's what the
+  // /clear-rotate site mints). Exact `===` was failing for tab-main
+  // post-/clear, dropping the row through to shortLabel ("npgj631q"
+  // instead of "🏠 Main"). sessionKeyMatches handles the prefix variance
+  // (defined at app.ts:482 — checks suffix-match in either direction).
+  const tab = tabs.find((t) => sessionKeyMatches(s.key, t.sessionKey));
   const label =
     tab?.title ||
     meaningfulSessionLabel(s.label) ||

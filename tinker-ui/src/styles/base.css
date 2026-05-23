@@ -228,7 +228,15 @@ body {
   font-size: 11px;
 }
 
-/* Top bar */
+/* Top bar
+   FORK 2026-05-23 — was a single-row flex container with toolbox + tab-bar
+   competing for horizontal space; with many tabs open the panel below
+   shrank because the tab-bar's flex:1 was clipping itself instead of
+   yielding. Restructured to wrap: toolbox + status sit in row 1, the
+   tab-bar gets a dedicated full-width row 2 below them. The tab strip
+   now has the full width to work with, and the Chrome-style shrink-
+   then-scroll behavior on `.tab` (flex-shrink:1, min-width) keeps the
+   panel below at its full size. */
 .topbar {
   grid-column: 2/3;
   grid-row: 1;
@@ -237,8 +245,9 @@ body {
   background-color: #6b5545;
   border-bottom: 1px solid var(--border);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 0 12px 0 110px;
+  padding: 4px 12px 0 110px;
   gap: 8px;
   font-size: 12px;
   position: relative;
@@ -265,7 +274,24 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 auto;
+  /* FORK 2026-05-23 — was `margin: 0 auto` which pushed the toolbox to
+     center via available space, contributing to the single-row layout
+     squeeze. With the topbar now flex-wrap, the toolbox sits naturally
+     on row 1 alongside the status. order:1 keeps it ahead of the
+     tab-bar (which is order:3) regardless of DOM order. */
+  order: 1;
+  margin-left: auto;
+}
+/* FORK 2026-05-23 — pin status to row 1 alongside the toolbox. */
+.topbar #gw-status {
+  order: 2;
+}
+/* FORK 2026-05-23 — tab-bar gets its own full-width row below the
+   toolbox/status row. flex-basis:100% forces the wrap; order:3 keeps
+   it visually below the row-1 items. */
+.topbar .tab-bar {
+  order: 3;
+  flex: 1 1 100%;
 }
 .topbar-icon-btn {
   cursor: pointer;
@@ -3065,7 +3091,15 @@ code.fs-link.fs-link-error {
     background 0.12s,
     color 0.12s;
   user-select: none;
-  flex-shrink: 0;
+  /* FORK 2026-05-23 — Chrome-style tab shrink. Was `flex-shrink: 0` which
+     made tabs overflow the bar instead of shrinking. Now tabs share
+     available space (flex-shrink: 1), can grow to a comfortable max
+     (flex-basis: 180px) and shrink to a minimum readable width
+     (min-width: 64px — enough for an icon + 2-3 chars before ellipsis).
+     When the bar runs out of room at min-width, the existing
+     .tab-bar.has-overflow scroll-arrow mechanism kicks in. */
+  flex: 0 1 180px;
+  min-width: 64px;
   position: relative;
   margin-bottom: -1px;
 }
@@ -3151,7 +3185,13 @@ code.fs-link.fs-link-error {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 140px;
+  /* FORK 2026-05-23 — was `max-width: 140px` which capped tabs to a fixed
+     width regardless of available space. Now the tab title fills its
+     shrinking parent: flex:1 takes the slack, min-width:0 lets it
+     ellipsise all the way down to the icon when the tab itself shrinks
+     to min-width. */
+  flex: 1;
+  min-width: 0;
 }
 .tab-unattached .tab-title {
   font-style: italic;
