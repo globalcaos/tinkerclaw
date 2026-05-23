@@ -7580,6 +7580,91 @@ function init() {
     input.addEventListener("dblclick", (ev) => ev.stopPropagation());
   }
 
+  // FORK 2026-05-23 (F1) — inline rename for a task title. Replaces the
+  // .exec-task-text (collapsed head) or .exec-task-fulltitle-text (drawer)
+  // span with an <input>. Enter or blur saves via
+  // `control-panel.tasks.update {id, text}`; Esc cancels; empty trim is
+  // treated as cancel. Mirrors openInlineAxisLabelEdit so the pattern is
+  // consistent for the user. Replaces the prior window.prompt popup.
+  function openInlineTaskTitleEdit(taskRow: HTMLElement, taskId: string): void {
+    // Prefer the drawer's full-title span (visible when expanded); fall back
+    // to the collapsed head's compact title. The collapsed-head version is
+    // hidden by CSS when expanded, so picking the drawer one is correct.
+    const labelEl =
+      (taskRow.querySelector(".exec-task-fulltitle-text") as HTMLElement | null) ||
+      (taskRow.querySelector(".exec-task-text") as HTMLElement | null);
+    if (!labelEl) return;
+    // Avoid stacking — if we're already editing this row, bail.
+    if (taskRow.querySelector(".exec-task-title-edit")) return;
+    const t = execLastTasks.find((x) => x.id === taskId);
+    const current = t ? t.text : (labelEl.textContent ?? "");
+    const wasFulltitle = labelEl.classList.contains("exec-task-fulltitle-text");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "exec-task-title-edit";
+    input.value = current;
+    input.dataset.taskId = taskId;
+    if (wasFulltitle) input.dataset.fulltitle = "1";
+    labelEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let resolved = false;
+    const restore = () => {
+      if (resolved) return;
+      resolved = true;
+      const span = document.createElement("span");
+      if (wasFulltitle) {
+        span.className = "exec-task-fulltitle-text";
+        span.textContent = current;
+      } else {
+        span.className = "exec-task-text";
+        span.title = current;
+        span.textContent = current;
+      }
+      input.replaceWith(span);
+    };
+    const save = async () => {
+      if (resolved) return;
+      const next = input.value.trim();
+      if (!next || next === current) {
+        restore();
+        return;
+      }
+      resolved = true;
+      try {
+        await req("control-panel.tasks.update", { id: taskId, text: next });
+        await loadExecTasks();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[exec] tasks.update (rename) failed", err);
+        resolved = false;
+        input.classList.add("exec-add-text-error");
+        setTimeout(() => input.classList.remove("exec-add-text-error"), 1500);
+        input.focus();
+      }
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        void save();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener("blur", () => {
+      void save();
+    });
+    // The row has click/dblclick/pointerdown handlers; stop everything inside
+    // the input so the row doesn't expand/collapse and DnD doesn't pick it up.
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+    input.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    input.addEventListener("dblclick", (ev) => ev.stopPropagation());
+    input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+  }
+
   async function loadExecTasks(): Promise<void> {
     const panel = ensureExecPanel();
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
@@ -9074,6 +9159,19 @@ function init() {
           void handleExecTaskAction(id, btn.dataset.action!);
         });
       });
+      // FORK 2026-05-23 (F1) — dblclick on the title span (either collapsed
+      // head or drawer full-title) opens the inline rename input. Mirrors the
+      // category-rename pattern. stopPropagation prevents the second click of
+      // the dblclick from also toggling the row's expand state.
+      row
+        .querySelectorAll<HTMLElement>(".exec-task-text, .exec-task-fulltitle-text")
+        .forEach((label) => {
+          label.addEventListener("dblclick", (ev) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+            openInlineTaskTitleEdit(row, id);
+          });
+        });
     });
   }
 
@@ -9220,13 +9318,21 @@ function init() {
         await openExecReschedulePicker(taskId);
         return;
       } else if (action === "edit-title") {
+        // FORK 2026-05-23 (F1) — inline edit replaces the prior window.prompt
+        // popup. Helper swaps the title span for an <input>; Enter/blur save,
+        // Esc cancels. The expand-state must include this row so the drawer's
+        // .exec-task-fulltitle-text is visible; if the row was collapsed,
+        // expand it first, re-render, then open the editor on the new node.
         if (!t) return;
-        const next = window.prompt("Edit task title:", t.text);
-        if (next && next.trim() && next !== t.text) {
-          await req("control-panel.tasks.update", { id: taskId, text: next.trim() });
-        } else {
-          return;
+        if (execExpandedId !== taskId) {
+          execExpandedId = taskId;
+          await loadExecTasks();
         }
+        const row = document.querySelector(
+          `.exec-task[data-task-id="${CSS.escape(taskId)}"]`,
+        ) as HTMLElement | null;
+        if (row) openInlineTaskTitleEdit(row, taskId);
+        return;
       } else if (action === "edit-context") {
         if (!t) return;
         const next = window.prompt("Edit description (markdown supported):", t.context_md ?? "");

@@ -4283,6 +4283,31 @@ code.fs-link.fs-link-error {
   background: #2a1818;
 }
 
+/* FORK 2026-05-23 (F1) — inline <input> for renaming a task title. Used in
+   the drawer (replacing .exec-task-fulltitle-text). Matches the surrounding
+   typography so the swap is visually minimal. */
+.exec-task-title-edit {
+  flex: 1 1 auto;
+  background: #16161a;
+  color: #eaeaee;
+  border: 1px solid #3a3a45;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  outline: none;
+  min-width: 0;
+}
+.exec-task-title-edit:focus {
+  border-color: var(--accent);
+}
+.exec-task-title-edit.exec-add-text-error {
+  border-color: #ef5350;
+  background: #2a1818;
+}
+
 /* FORK 2026-05-11 — .exec-task is now a wrapper (header + optional drawer);
    the grid layout moved to .exec-task-head below. Keep .exec-task as a
    plain block so the head and drawer stack vertically with no overflow. */
