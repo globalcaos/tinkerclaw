@@ -4166,6 +4166,29 @@ code.fs-link.fs-link-error {
   border-color: #ff6b3d;
 }
 
+/* FORK 2026-05-23 (F2) — 🗑 delete-empty affordance. Only appears in the
+   count-chip area when the group has no tasks (and no sub-groups for
+   top-level). Subtle muted style → red on hover for the typical destructive
+   pattern; the window.confirm guard catches accidental clicks. */
+.exec-group-delete {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #6a6a73;
+  font-size: 11px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 4px;
+  line-height: 1;
+}
+.exec-group-delete:hover {
+  background: rgba(239, 83, 80, 0.15);
+  color: #ef5350;
+  border-color: #ef5350;
+}
+
 /* FORK 2026-05-23 (F1) — pencil affordance on group/sub-group headers for
    the rename action. Mirrors .exec-task-pencil: invisible by default,
    appears on header hover. Click → openInlineAxisLabelEdit. dblclick on the
