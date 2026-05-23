@@ -6108,10 +6108,22 @@ function updateSessionsPanel() {
   });
 }
 
+// FORK 2026-05-23 — defensive backstop matching the same-day server-side
+// fix in session-utils.ts. WS-client identification strings should never
+// surface as session labels even if old persisted rows still carry them.
+// Paired list with the GENERIC_WS_CLIENT_LABELS set in the server-side
+// resolver — keep them in sync if either side changes.
+const GENERIC_WS_CLIENT_LABELS = new Set(["Tinker UI", "webchat-ui", "openclaw-cli"]);
+function meaningfulSessionLabel(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  return GENERIC_WS_CLIENT_LABELS.has(s) ? undefined : s;
+}
+
 function renderSessionRow(s: unknown, shortLabel: string): string {
   const isActive = s.key === sessionKey || sessionKeyMatches(s.key);
   // FORK 2026-05-23: prefer the client-side tab.title for any session bound
-  // to a known tab. Fixes two coupled bugs:
+  // to a known tab. Fixes two coupled bugs (paired with session-utils.ts
+  // server-side filter on the same day):
   //   1. /clear rotates tab-main's sessionKey from agent:main:main →
   //      tinker:<ts>; the old `isMainSession = s.key.endsWith(":main")`
   //      check returned false post-rotate, so the renderer fell through
@@ -6122,11 +6134,19 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   //      "🔧 Fix auth bug", or "🏠 Main" for tab-main per loadTabs() force-
   //      restore) was being shadowed by the stale server-side label after
   //      gateway restart. The tab.title is the persisted source of truth.
-  // Resolution order: tab.title (any matching tab, includes "🏠 Main" for
-  // tab-main and Gemini titles for tinker:* tabs) → s.label (gateway-stored
-  // label, if any) → s.displayName (WS-client fallback) → shortLabel.
+  //   3. Orphaned sessions (closed sub-tabs, old /clear rotations) had no
+  //      matching tab AND no useful server label, so they fell through to
+  //      s.displayName = "Tinker UI" and showed up as duplicates in the
+  //      list. The meaningfulSessionLabel filter blocks that.
+  // Resolution order: tab.title (any matching tab) → s.label (server-stored
+  // meaningful label) → s.displayName (server-stored meaningful displayName,
+  // never a WS-client identifier) → shortLabel.
   const tab = tabs.find((t) => t.sessionKey === s.key);
-  const label = tab?.title || s.label || s.displayName || shortLabel;
+  const label =
+    tab?.title ||
+    meaningfulSessionLabel(s.label) ||
+    meaningfulSessionLabel(s.displayName) ||
+    shortLabel;
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
