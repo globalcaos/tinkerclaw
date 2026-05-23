@@ -4158,24 +4158,55 @@ code.fs-link.fs-link-error {
   font-style: italic;
   padding: 4px 12px;
 }
-.exec-group-add-sub {
+/* FORK 2026-05-23 (F2) — + Add task is the PRIMARY action per group; the
+   + Add sub-group sits beside it as a SECONDARY (smaller, quieter) affordance.
+   Both share the same square shape so the count-chip area stays tidy. */
+.exec-group-add-task {
   background: transparent;
-  border: 1px solid #2a2a2a;
-  color: #8a8a92;
-  font-size: 12px;
-  font-weight: 600;
-  width: 18px;
-  height: 18px;
+  border: 1px solid #3a3a45;
+  color: #c5c5cf;
+  font-size: 13px;
+  font-weight: 700;
+  width: 20px;
+  height: 20px;
   border-radius: 4px;
   cursor: pointer;
   padding: 0;
-  margin-left: 4px;
+  margin-left: 6px;
   line-height: 1;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-.exec-group-add-sub:hover {
+.exec-group-add-task:hover {
   background: #ff6b3d;
   color: #1a1a1a;
   border-color: #ff6b3d;
+}
+.exec-group-add-sub {
+  background: transparent;
+  border: 1px dashed #2a2a2a;
+  color: #6a6a73;
+  font-size: 10px;
+  font-weight: 500;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 3px;
+  line-height: 1;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease,
+    border-color 0.12s ease;
+}
+.exec-group-header:hover .exec-group-add-sub {
+  opacity: 0.85;
+}
+.exec-group-add-sub:hover {
+  opacity: 1;
+  background: #2a2a30;
+  color: #eaeaee;
+  border-color: #4a4a52;
+  border-style: solid;
 }
 
 /* FORK 2026-05-23 (F2) — 🗑 delete-empty affordance. Only appears in the
@@ -5318,117 +5349,15 @@ code.fs-link.fs-link-error {
   50%      { opacity: 1; }
 }
 
-/* FORK 2026-05-11 — Inline "+ Add task" bar at the bottom of the tasks
-   section. Toggle button reveals an inline form (text + axis + est + due).
-   Compact + always-visible — the same affordance for daily task capture
-   that you'd otherwise get from the chat. */
-.exec-task-add-bar {
-  border-top: 1px solid #232328;
-  background: #131318;
-  padding: 6px 8px;
-  flex-shrink: 0;
-}
-.exec-task-add-toggle {
-  width: 100%;
-  background: transparent;
-  border: 1px dashed #2a2a30;
-  border-radius: 4px;
-  color: #6a6a73;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 6px 10px;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.exec-task-add-toggle:hover {
-  border-color: #ff6b3d;
-  color: #ff6b3d;
-  background: rgba(255, 107, 61, 0.05);
-}
-.exec-task-add-form {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.exec-add-text {
-  background: #16161a;
-  border: 1px solid #2a2a30;
-  border-radius: 4px;
-  color: #eaeaee;
-  font-size: 12px;
-  padding: 6px 8px;
-  outline: none;
-  width: 100%;
-  box-sizing: border-box;
-  transition: border-color 0.15s ease;
-}
-.exec-add-text:focus {
-  border-color: #ff6b3d;
-}
+/* FORK 2026-05-23 (F2) — the bottom "+ Add task" bar + its expanded form
+   (text + axis + est + due) were removed in favour of per-group + Add task
+   buttons (see .exec-group-add-task / .exec-add-task-form below). Only the
+   .exec-add-text-error error-flash class is kept here — it's still used by
+   inline edit helpers (openInlineAxisLabelEdit, openInlineTaskTitleEdit,
+   openInlineTaskContextEdit, the new openInlineAddTaskForm). */
 .exec-add-text-error {
   border-color: #ef5350 !important;
   animation: exec-busy-pulse 0.4s 2;
-}
-.exec-add-fields {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-.exec-add-axis,
-.exec-add-est,
-.exec-add-due {
-  background: #16161a;
-  border: 1px solid #2a2a30;
-  border-radius: 4px;
-  color: #eaeaee;
-  font-size: 10.5px;
-  padding: 4px 6px;
-  outline: none;
-}
-.exec-add-axis {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.exec-add-est {
-  width: 50px;
-  flex: 0 0 50px;
-}
-.exec-add-due {
-  width: 110px;
-  flex: 0 0 110px;
-  color: #a3a3ad;
-}
-.exec-add-axis:focus,
-.exec-add-est:focus,
-.exec-add-due:focus {
-  border-color: #ff6b3d;
-}
-.exec-add-cancel,
-.exec-add-save {
-  background: transparent;
-  border: 1px solid #2a2a30;
-  border-radius: 4px;
-  color: #a3a3ad;
-  cursor: pointer;
-  font-size: 12px;
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-.exec-add-cancel:hover {
-  color: #ef5350;
-  border-color: #ef5350;
-}
-.exec-add-save {
-  border-color: #ff6b3d;
-  color: #ff6b3d;
-}
-.exec-add-save:hover {
-  background: #ff6b3d;
-  color: #16161a;
 }
 
 /* FORK 2026-05-22: inline + Add group form at the top of the tasks section. */
@@ -5510,6 +5439,45 @@ code.fs-link.fs-link-error {
   cursor: pointer;
 }
 .exec-add-subgroup-form button[data-cancel] {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+}
+
+/* FORK 2026-05-23 (F2): inline + Add task form. Anchored under the
+   group / sub-group header whose + button was clicked. Shape mirrors
+   .exec-add-subgroup-form so the two affordances feel like one family,
+   with a slightly punchier border (accent-coloured) since this is the
+   PRIMARY action. Indented to match the task rows under the same header. */
+.exec-add-task-form {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: 16px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+  padding: 2px 6px;
+}
+.exec-add-task-form input {
+  flex: 1;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.exec-add-task-form button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.exec-add-task-form button[data-cancel] {
   background: transparent;
   color: var(--fg-dim);
   border: 1px solid var(--border);

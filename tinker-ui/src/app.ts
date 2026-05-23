@@ -6683,19 +6683,12 @@ function init() {
             </form>
           </div>
           <div id="exec-tasks-body" class="exec-tasks-body">Loading…</div>
-          <div class="exec-task-add-bar" id="exec-task-add-bar">
-            <button class="exec-task-add-toggle" id="exec-task-add-toggle" title="Add a new task">+ Add task</button>
-            <form class="exec-task-add-form" id="exec-task-add-form" style="display:none">
-              <input type="text" id="exec-add-text" class="exec-add-text" placeholder="Task title…" autocomplete="off" maxlength="240">
-              <div class="exec-add-fields">
-                <select id="exec-add-axis" class="exec-add-axis" title="Axis"></select>
-                <input type="number" id="exec-add-est" class="exec-add-est" placeholder="min" min="5" max="480" step="5" value="30" title="Est minutes">
-                <input type="date" id="exec-add-due" class="exec-add-due" title="Due date (optional)">
-                <button type="button" class="exec-add-cancel" id="exec-add-cancel" title="Cancel">✕</button>
-                <button type="submit" class="exec-add-save" id="exec-add-save" title="Add task">➕</button>
-              </div>
-            </form>
-          </div>
+          <!-- FORK 2026-05-23 (F2) — bottom + Add task bar removed. The new
+               affordance is a per-group "+ Add task" button (data-action=
+               "add-task-to-axis") in each group / sub-group header, which
+               opens an inline form via openInlineAddTaskForm anchored under
+               that header. The task lands in the group it was added from,
+               so the axis dropdown is no longer needed. -->
         </div>
       </div>
     `;
@@ -6704,7 +6697,10 @@ function init() {
     attachExecPointerDragHandlers(el);
     attachExecGroupPointerDragHandlers(el);
     renderExecFilterBar();
-    attachExecTaskAddHandlers(el);
+    // FORK 2026-05-23 (F2) — bottom + Add task form replaced by per-group
+    // affordance. attachExecTaskAddHandlers + repopulateExecAddAxisOptions
+    // were deleted; openInlineAddTaskForm (mirrors openInlineSubgroupForm)
+    // takes over.
     attachExecAddGroupHandlers(el);
     attachExecTabHandlers(el);
     // Global handlers: click-outside closes context menu; Escape closes too.
@@ -7312,11 +7308,10 @@ function init() {
   // FORK 2026-05-22 (Task 18) — `EXEC_AXIS_ORDER` + `EXEC_AXIS_LABEL` deleted.
   // Axes now come exclusively from `control-panel.axes.list` (Task 10), cached
   // in `execAxesList` below. Writer: `loadExecTasks` (refreshed every load).
-  // Readers: the + Add task dropdown (via `repopulateExecAddAxisOptions`,
-  // called from loadExecTasks after each refresh) and `openExecContextMenu`
-  // (Reassign-axis submenu). The fresh-DB / RPC-failure fallback inlines the
-  // 5-axis defaults as a literal array inside loadExecTasks — search there
-  // for FRESH_DB_FALLBACK.
+  // Readers: `openExecContextMenu` (Reassign-axis submenu) and `renderExecGroups`
+  // (per-group + Add task button data-axis-id, F2 2026-05-23). The fresh-DB /
+  // RPC-failure fallback inlines the 5-axis defaults as a literal array inside
+  // loadExecTasks — search there for FRESH_DB_FALLBACK.
   let execAxesList: AxisRow[] = [];
   // FORK 2026-05-22 — `open` was "⬜" until the head-checkbox shipped (commit
   // d08cd06ca9); the checkbox now owns the open/resolved signal so the white
@@ -7377,6 +7372,11 @@ function init() {
               `<span class="exec-subgroup-label" data-axis-label="${escapeExecAttr(sub.label)}">${escapeHtml(sub.label)}</span>` +
               `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(sub.id)}" title="Rename sub-group">✏️</button>` +
               `<span class="exec-group-count">${subCount} open` +
+              // FORK 2026-05-23 (F2) — + Add task button on every sub-group
+              // header. priority_axis is the SUB-GROUP's id (the click
+              // handler reads data-axis-id from the closest header). Comes
+              // before the 🗑 delete-empty so deletion remains a hover-tail.
+              `<button class="exec-group-add-task" data-action="add-task-to-axis" data-axis-id="${escapeExecAttr(sub.id)}" title="Add task to ${escapeExecAttr(sub.label)}">+</button>` +
               (subCount === 0
                 ? `<button class="exec-group-delete" data-action="delete-axis" data-axis-id="${escapeExecAttr(sub.id)}" data-axis-label="${escapeExecAttr(sub.label)}" title="Delete empty sub-group">🗑</button>`
                 : ``) +
@@ -7397,7 +7397,12 @@ function init() {
           `<span class="exec-group-label" data-axis-label="${escapeExecAttr(group.label)}">${escapeHtml(group.label)}</span>` +
           `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(group.id)}" title="Rename group">✏️</button>` +
           `<span class="exec-group-count">${groupOpenCount} open` +
-          `<button class="exec-group-add-sub" data-action="add-subgroup" data-parent-id="${escapeExecAttr(group.id)}" title="Add sub-group under ${escapeExecAttr(group.label)}">+</button>` +
+          // FORK 2026-05-23 (F2) — + Add task button on every top-level
+          // group header (primary, bolder visual). Comes BEFORE the
+          // + Add sub-group button (secondary, muted) so the most-frequent
+          // action is the easier target.
+          `<button class="exec-group-add-task" data-action="add-task-to-axis" data-axis-id="${escapeExecAttr(group.id)}" title="Add task to ${escapeExecAttr(group.label)}">+</button>` +
+          `<button class="exec-group-add-sub" data-action="add-subgroup" data-parent-id="${escapeExecAttr(group.id)}" title="Add sub-group under ${escapeExecAttr(group.label)}">⤵</button>` +
           // FORK 2026-05-23 (F2) — 🗑 delete-empty button on top-level group
           // header. Renders only when the group itself has zero tasks AND
           // zero sub-groups (fully empty). Backend `axes.delete` accepts the
@@ -7432,6 +7437,18 @@ function init() {
           // click — short-circuit it here.
           if (target.closest(".exec-group-grip")) {
             ev.stopPropagation();
+            return;
+          }
+          // FORK 2026-05-23 (F2) — + Add task button: open the inline
+          // task-add form anchored under this header. Must intercept BEFORE
+          // the disclosure-toggle path so a click on the button doesn't also
+          // flip the group's collapsed state. The axis id comes from the
+          // button's data-axis-id (works for both top-level and sub-group).
+          const addTask = target.closest(".exec-group-add-task") as HTMLButtonElement | null;
+          if (addTask) {
+            ev.stopPropagation();
+            const axisId = addTask.dataset.axisId;
+            if (axisId) openInlineAddTaskForm(addTask, axisId);
             return;
           }
           // FORK 2026-05-22 (Task 12) — + Add sub-group button: open the
@@ -7978,12 +7995,12 @@ function init() {
             { id: "meta", label: "⚙️ Meta", position: 5, parent_id: null },
           ];
         }
-        // Cache the resolved list for non-render readers (the + Add task
-        // dropdown + the right-click Reassign-axis submenu) and refresh the
-        // add-form's dropdown so freshly-added groups appear without a panel
-        // rebuild.
+        // Cache the resolved list for non-render readers (the right-click
+        // Reassign-axis submenu + the new per-group + Add task affordance,
+        // which reads the parent axis id from the clicked header). The +
+        // Add task dropdown was removed in F2 (2026-05-23) since each task
+        // is now added directly under the group whose + button was clicked.
         execAxesList = axesFlat;
-        repopulateExecAddAxisOptions();
         const tree = buildAxisTree(axesFlat);
         // Collect every id reachable through the tree so we can detect
         // orphan tasks (priority_axis set but not in the tree).
@@ -8763,111 +8780,62 @@ function init() {
       </div>`;
   }
 
-  // FORK 2026-05-22 (Task 18) — repopulate the + Add task form's axis
-  // dropdown from `execAxesList` (set by loadExecTasks). Sub-groups are
-  // rendered as their parent's children with a "— " indent prefix so the
-  // hierarchy is legible inside a flat <select>. The dropdown is rebuilt
-  // every loadExecTasks() call so newly-added groups appear without
-  // tearing down the whole panel. We preserve the current selection across
-  // a rebuild when possible; otherwise fall back to last-used / first.
-  function repopulateExecAddAxisOptions(): void {
-    const sel = document.getElementById("exec-add-axis") as HTMLSelectElement | null;
-    if (!sel) return;
-    const prevValue = sel.value;
-    // Build tree-ordered flat options: each top-level group, followed by its
-    // sub-groups (indented). Sub-groups whose parent is missing fall through
-    // as roots so we don't drop them on the floor.
-    const byId = new Map<string, AxisRow>();
-    for (const a of execAxesList) byId.set(a.id, a);
-    const roots = execAxesList
-      .filter((a) => !a.parent_id || !byId.has(a.parent_id))
-      .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
-    const childrenOf = (pid: string) =>
-      execAxesList
-        .filter((a) => a.parent_id === pid)
-        .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
-    const opts: string[] = [];
-    for (const r of roots) {
-      opts.push(`<option value="${escapeExecAttr(r.id)}">${escapeHtml(r.label)}</option>`);
-      for (const c of childrenOf(r.id)) {
-        opts.push(`<option value="${escapeExecAttr(c.id)}">— ${escapeHtml(c.label)}</option>`);
-      }
-    }
-    sel.innerHTML = opts.join("");
-    // Restore previous selection if still valid; else last-used; else first.
-    const wantedValues = new Set(execAxesList.map((a) => a.id));
-    const lastAxis = localStorage.getItem("tinker.execAddAxis") || "ventures";
-    if (prevValue && wantedValues.has(prevValue)) sel.value = prevValue;
-    else if (wantedValues.has(lastAxis)) sel.value = lastAxis;
-    else if (sel.options.length > 0) sel.selectedIndex = 0;
-  }
+  // FORK 2026-05-23 (F2) — per-group + Add task inline form. Mirrors
+  // openInlineSubgroupForm: insert a one-input form right under the
+  // group/sub-group header, focus the input, Enter submits via
+  // control-panel.tasks.add with priority_axis = the clicked header's
+  // axis id (top-level OR sub-group). Esc / × cancel; the form is the
+  // only visible field — est defaults to nothing, due date stays unset
+  // (the user can fill them in via the drawer chips after the row lands).
+  function openInlineAddTaskForm(anchor: HTMLElement, axisId: string): void {
+    // Avoid stacking multiple forms (matches openInlineSubgroupForm).
+    document
+      .querySelectorAll(".exec-add-task-form, .exec-add-subgroup-form")
+      .forEach((f) => f.remove());
 
-  // FORK 2026-05-11 — Inline "+ Add task" form at the bottom of the tasks
-  // section. Toggle button reveals an inline form (text + axis + est_min +
-  // due_date). Submit calls control-panel.tasks.add and refreshes. ESC or
-  // Cancel button closes.
-  function attachExecTaskAddHandlers(panel: HTMLElement): void {
-    const toggle = panel.querySelector("#exec-task-add-toggle") as HTMLButtonElement | null;
-    const form = panel.querySelector("#exec-task-add-form") as HTMLFormElement | null;
-    const text = panel.querySelector("#exec-add-text") as HTMLInputElement | null;
-    const axis = panel.querySelector("#exec-add-axis") as HTMLSelectElement | null;
-    const est = panel.querySelector("#exec-add-est") as HTMLInputElement | null;
-    const due = panel.querySelector("#exec-add-due") as HTMLInputElement | null;
-    const cancel = panel.querySelector("#exec-add-cancel") as HTMLButtonElement | null;
-    if (!toggle || !form || !text || !axis || !est || !due || !cancel) return;
+    const form = document.createElement("form");
+    form.className = "exec-add-task-form";
+    form.innerHTML =
+      `<input type="text" placeholder="Task title…" maxlength="240" required />` +
+      `<button type="submit">Add</button>` +
+      `<button type="button" data-cancel="1">×</button>`;
+    // Anchor under the group header OR sub-group header containing the click.
+    const header =
+      (anchor.closest(".exec-group-header") as HTMLElement | null) ||
+      (anchor.closest(".exec-subgroup-header") as HTMLElement | null);
+    if (!header) return;
+    header.insertAdjacentElement("afterend", form);
+    const input = form.querySelector("input") as HTMLInputElement;
+    input.focus();
 
-    // Initial dropdown population. execAxesList is empty until the first
-    // loadExecTasks() resolves; once it does, the cache is filled and
-    // repopulateExecAddAxisOptions() runs again with real data. This
-    // call ensures the <select> isn't visually empty between panel
-    // construction and the first axes RPC reply.
-    repopulateExecAddAxisOptions();
-
-    const openForm = () => {
-      form.style.display = "";
-      toggle.style.display = "none";
-      text.focus();
-    };
-    const closeForm = () => {
-      form.style.display = "none";
-      toggle.style.display = "";
-      text.value = "";
-      est.value = "30";
-      due.value = "";
-    };
-
-    toggle.addEventListener("click", openForm);
-    cancel.addEventListener("click", closeForm);
-    text.addEventListener("keydown", (ev) => {
+    const close = () => form.remove();
+    (form.querySelector("button[data-cancel]") as HTMLButtonElement).addEventListener(
+      "click",
+      close,
+    );
+    input.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") {
         ev.preventDefault();
-        closeForm();
+        close();
       }
     });
-
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const payload: Record<string, unknown> = {
-        text: text.value.trim(),
-        priority_axis: axis.value,
-      };
-      if (!payload.text) {
-        text.focus();
+      const text = input.value.trim();
+      if (!text) {
+        input.focus();
         return;
       }
-      const estVal = parseInt(est.value, 10);
-      if (Number.isFinite(estVal) && estVal > 0) payload.est_minutes = estVal;
-      if (due.value) payload.due_date = due.value;
-      localStorage.setItem("tinker.execAddAxis", axis.value);
       try {
-        await req("control-panel.tasks.add", payload);
-        closeForm();
-        void loadExecTasks();
+        await req("control-panel.tasks.add", { text, priority_axis: axisId });
+        close();
+        await loadExecTasks();
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error("[exec] tasks.add failed", err);
-        text.classList.add("exec-add-text-error");
-        setTimeout(() => text.classList.remove("exec-add-text-error"), 1500);
+        console.error("[exec] tasks.add (per-group) failed", err);
+        input.classList.add("exec-add-text-error");
+        setTimeout(() => input.classList.remove("exec-add-text-error"), 1500);
+        input.focus();
       }
     });
   }
@@ -8875,7 +8843,7 @@ function init() {
   // FORK 2026-05-22 (Task 11) — inline "+ Add group" form at the top of the
   // tasks section. Toggles a one-line input that derives a slug-id from the
   // label and creates a top-level axis (parent_id implicitly null). Duplicate
-  // ids surface via the same error-flash pattern as attachExecTaskAddHandlers.
+  // ids surface via the same error-flash pattern as openInlineAddTaskForm.
   function attachExecAddGroupHandlers(panel: HTMLElement): void {
     const toggle = panel.querySelector("#exec-add-group-toggle") as HTMLButtonElement | null;
     const form = panel.querySelector("#exec-add-group-form") as HTMLFormElement | null;
