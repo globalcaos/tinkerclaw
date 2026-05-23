@@ -7366,7 +7366,7 @@ function init() {
             return (
               `<div class="exec-subgroup${subCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(sub.id)}" data-axis-parent="${escapeExecAttr(group.id)}" data-axis-position="${sub.position}">` +
               `<div class="exec-subgroup-header" data-axis-id="${escapeExecAttr(sub.id)}">` +
-              `<span class="exec-group-grip" title="Drag to reorder or move under another group">⋮⋮</span>` +
+              `<span class="exec-group-grip" aria-hidden="true">⋮⋮</span>` +
               `<span class="exec-group-disclosure">${subCollapsed ? "▶" : "▼"}</span>` +
               `<span class="exec-subgroup-label" data-axis-label="${escapeExecAttr(sub.label)}">${escapeHtml(sub.label)}</span>` +
               `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(sub.id)}" title="Rename sub-group">✏️</button>` +
@@ -7386,7 +7386,7 @@ function init() {
         return (
           `<div class="exec-group${groupCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(group.id)}" data-axis-position="${group.position}">` +
           `<div class="exec-group-header" data-axis-id="${escapeExecAttr(group.id)}">` +
-          `<span class="exec-group-grip" title="Drag to reorder">⋮⋮</span>` +
+          `<span class="exec-group-grip" aria-hidden="true">⋮⋮</span>` +
           `<span class="exec-group-disclosure">${groupCollapsed ? "▶" : "▼"}</span>` +
           `<span class="exec-group-label" data-axis-label="${escapeExecAttr(group.label)}">${escapeHtml(group.label)}</span>` +
           `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(group.id)}" title="Rename group">✏️</button>` +
@@ -8670,7 +8670,7 @@ function init() {
               data-axis="${axis}"
               data-rank="${t.priority_rank}">
         <div class="exec-task-head">
-          <span class="exec-task-grip" title="Drag to reorder or move axis">⋮⋮</span>
+          <span class="exec-task-grip" aria-hidden="true">⋮⋮</span>
           ${checkbox}
           ${icon ? `<span class="exec-task-icon">${icon}</span>` : ""}
           <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>

@@ -4098,16 +4098,24 @@ code.fs-link.fs-link-error {
 }
 
 /* FORK 2026-05-22 (Task 10) — disclosure-toggle + collapsed-state. Header
-   gets pointer cursor + flex layout so the disclosure caret, label, count
-   chip, and + button line up cleanly. Collapsed groups hide their children
-   via the body-element selector below — the markup is still in DOM but
-   visually empty. */
+   gets flex layout so the disclosure caret, label, count chip, and +
+   button line up cleanly. Collapsed groups hide their children via the
+   body-element selector below — the markup is still in DOM but visually
+   empty.
+   FORK 2026-05-23 (F4) — cursor: grab (was pointer) so the drag affordance
+   is visible across the whole row, not just on the (now invisible) ⋮⋮
+   grip strip. :active flips to grabbing during a drag. The header still
+   responds to clicks to toggle the disclosure; the underlying handler
+   distinguishes clicks-vs-drags via the pointer-event DnD threshold. */
 .exec-group-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  cursor: grab;
   user-select: none;
+}
+.exec-group-header:active {
+  cursor: grabbing;
 }
 .exec-group-label {
   flex: 1;
@@ -4133,8 +4141,12 @@ code.fs-link.fs-link-error {
   font-size: 11px;
   color: #8a8a92;
   padding: 3px 6px;
-  cursor: pointer;
+  /* FORK 2026-05-23 (F4) — see .exec-group-header above. */
+  cursor: grab;
   user-select: none;
+}
+.exec-subgroup-header:active {
+  cursor: grabbing;
 }
 .exec-subgroup-label {
   flex: 1;
@@ -4182,38 +4194,44 @@ code.fs-link.fs-link-error {
   padding: 0;
   margin-left: 4px;
   line-height: 1;
+  /* FORK 2026-05-23 (F5) — fade off when not hovering the row. The 🗑 was
+     visible at full strength even when the user wasn't aiming at the row,
+     making the count chip area visually noisy. Now invisible by default,
+     0.4 on row hover, 1 + red on direct button hover. */
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease,
+    border-color 0.12s ease;
+}
+.exec-group-header:hover .exec-group-delete,
+.exec-subgroup-header:hover .exec-group-delete {
+  opacity: 0.4;
 }
 .exec-group-delete:hover {
+  opacity: 1;
   background: rgba(239, 83, 80, 0.15);
   color: #ef5350;
   border-color: #ef5350;
 }
 
-/* FORK 2026-05-23 (F3) — drag grip on group + sub-group headers. Mirrors
-   the task grip visually but lives on the header row at the very left.
-   Pointer-event DnD on this element reorders or reparents the entire
-   group; the rest of the header (label, count chip, +, ✏️, 🗑) keep
-   their existing behaviors. */
+/* FORK 2026-05-23 (F4) — the visible ⋮⋮ glyph is replaced by an invisible
+   thin strip at the left of the header that still acts as the DnD hit
+   target. The grip's text is kept in DOM (so the pointer-event DnD code
+   that listens on .exec-group-grip stays unchanged) but rendered with
+   color: transparent and zero font-size so nothing shows. The cursor
+   affordance moved to the parent row's CSS rule (see .exec-group-header
+   / .exec-subgroup-header — cursor: grab). */
 .exec-group-grip {
-  color: #4a4a52;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -2px;
+  color: transparent;
+  font-size: 0;
   line-height: 1;
   user-select: none;
   cursor: grab;
-  transition: color 0.15s ease;
-  width: 12px;
-  text-align: center;
+  width: 6px;
   flex-shrink: 0;
-}
-.exec-group-header:hover .exec-group-grip,
-.exec-subgroup-header:hover .exec-group-grip {
-  color: #a3a3ad;
+  /* preserve a clickable area even though the text is invisible */
 }
 .exec-group-grip:active {
   cursor: grabbing;
-  color: var(--accent);
 }
 
 /* Source wrapper dim during an active group drag — parallels
@@ -4493,21 +4511,18 @@ code.fs-link.fs-link-error {
    .exec-task-source, .exec-drop-indicator).
    ────────────────────────────────────────────────────────────────────── */
 
+/* FORK 2026-05-23 (F4) — see .exec-group-grip above for the rationale.
+   The ⋮⋮ glyph is now invisible; cursor: grab moved up to .exec-task-head.
+   Kept in DOM so attachExecPointerDragHandlers' .exec-task-grip closest()
+   lookup still resolves on pointerdown. */
 .exec-task-grip {
-  color: #4a4a52;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -2px;
+  color: transparent;
+  font-size: 0;
   line-height: 1;
   user-select: none;
   cursor: grab;
-  transition: color 0.15s ease;
-  width: 12px;
-  text-align: center;
+  width: 6px;
   flex-shrink: 0;
-}
-.exec-task:hover .exec-task-grip {
-  color: #a3a3ad;
 }
 /* FORK 2026-05-11 — Removed the grid override that targeted .exec-task; the
    grid now lives only on .exec-task-head (further down in this file). */
@@ -4665,11 +4680,17 @@ code.fs-link.fs-link-error {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* FORK 2026-05-23 (F4) — invisible-strip override of the legacy grip CSS
+   above. Earlier source-order rule kept color: #4a4a52 visible; this one
+   wins because it's defined later. Keep both updated when polishing the
+   grip — they're effectively the same selector. */
 .exec-task-grip {
-  color: #4a4a52;
-  font-size: 10px;
+  color: transparent;
+  font-size: 0;
   user-select: none;
   cursor: grab;
+  width: 6px;
+  flex-shrink: 0;
 }
 .exec-task-grip:active {
   cursor: grabbing;
