@@ -145,6 +145,42 @@ For provider/model config specifically:
 - **Read at:** browser plugin
 - **Drives:** Chrome relay attach (existing-session driver, attachOnly:true, cdpUrl:`http://127.0.0.1:18792`)
 
+## control-panel plugin schema (v3.5 — 2026-05-22)
+
+The control-panel plugin owns the Today card / Exec panel surface (see `tinker-ui.md` §5.68). Its SQLite store lives at `~/.openclaw/data/control-panel.db`; schema in `extensions/tinkerclaw-control-panel/src/store/schema.{sql,ts}` + migrations in `db.ts`.
+
+### `task_axis.parent_id` (v3.5)
+
+- **Column shape:** `parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE` — self-referencing nullable FK. NULL = top-level group. Index `task_axis_parent` on `(parent_id)`.
+- **Migration owner:** `addAxisParentIdColumn` in `db.ts` (idempotent ALTER TABLE; checks `PRAGMA table_info` for the column before adding). The index is created **inside the migration**, not inside `schema.ts` (see `failures.md` M12 — schema-migration ordering bug).
+- **Depth cap:** two levels only (group → sub-group). Enforced at the application layer by `validateParentDepth` (`src/store/axes.ts`): an axis with `parent_id != NULL` cannot itself be a parent. `addAxis` and `updateAxis` reject violators with a thrown error. There is no DB-level CHECK constraint — the discipline is the function call.
+- **Cascade:** deleting a top-level group cascades-deletes its sub-groups via the FK. Tasks reference `priority_axis` via TEXT (not FK), so post-cascade their axis becomes a dangling reference; the UI falls back to an "unsorted" implicit bucket.
+- **Ordering:** `position` is per-level (top-level groups ordered among themselves; sub-groups ordered within their parent). The position-MAX query in `addAxis` uses `COALESCE(parent_id, '')` so the NULL-parent and named-parent scopes don't collide.
+
+### `task.priority_rank` (INTEGER, clean-spacing maintained client-side)
+
+- **Column shape:** `INTEGER` — unchanged from earlier versions.
+- **⚠️ History trap:** midpoint arithmetic `(prev + next) / 2` on integers compresses adjacent ranks to identical values over a few reorders, breaking sort. Confirmed in live data (`ventures` axis: 21 tasks at rank=30 + 17 at rank=40 before the 2026-05-23 fix). See `failures.md` M11.
+- **Current strategy:** client renumbers ALL tasks in the destination axis with spacing 100 on **every drop** via parallel `tasks.update` RPCs. "Fresh ranks on every move" instead of "midpoint forever." Schema stays INTEGER; clean-spacing is a UI invariant.
+- **Don't regress:** never reintroduce midpoint arithmetic on INTEGER ranks. If you need single-RPC ordering, change the column type to REAL — at which point midpoints are safe again.
+
+### `task_axis_metadata_json` — Todoist scrub (v3.5)
+
+- **Migration owner:** `stripTodoistMetadata` in `db.ts` (idempotent one-shot — scans every task's `metadata_json`, strips keys matching `^todoist_*`, rewrites). Re-running is a no-op.
+- **Trigger:** runs on every gateway boot via the migration step in `getDb()`. Drawer renders no longer recognise any `todoist_*` chips. Pair with the delete of `extensions/tinkerclaw-control-panel/scripts/import-from-todoist.mjs`.
+
+## cc-bridge ethical-rules prompt loader (FORK 2026-05-21)
+
+The cc-bridge plugin loads an `ethical-rules` block into the worker's `--append-system-prompt` between the persona block and the narration/tool-choice/plan-tools blocks. See `tool-loop.md` for the slot in `combinedSystemPrompt`.
+
+**Resolution order** (per `loadPromptFile` defaults; first existing path wins):
+
+1. `env.TINKERCLAW_ETHICAL_RULES_PROMPT` — explicit path override.
+2. `~/.openclaw/workspace/memory/knowledge/jarvis-ethical-rules.md` — user-personalised override (outside the public repo).
+3. `extensions/tinkerclaw-cc-bridge/prompts/ethical-rules-default.md` — bundled default (in the public repo). Ships ten Asimov-style priority-ordered rules + a generic preamble. The bundled file carries `default-version: 1.0` in its frontmatter so the drift-detection log line (see bible §5.76f) can flag override staleness.
+
+**Don't regress:** workspace override path is `memory/knowledge/jarvis-ethical-rules.md`, NOT `SOUL.md` (persona) and NOT `BRIEFING.md` (briefing). Each foundational block has its own override file; conflating them silently overrides the wrong layer.
+
 ## Dead-code config trap registry
 
 Each trap is a config surface that _looks_ like it should apply at runtime but doesn't. Tagged `dead-code` so the bug-log's `config-dead-code` failure class (see `bug-log.md`) can correlate. The pattern is always: a key/path that is syntactically valid, accepted by the config loader, and not flagged as an error — but never read by the code path that needs it.
