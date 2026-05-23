@@ -8267,11 +8267,22 @@ function init() {
       drag.ghost.remove();
       drag.source.classList.remove("exec-task-source");
 
-      // If we never crossed the drag threshold, this was a click on the grip — bail.
+      // If we never crossed the drag threshold, this was a click on the row.
+      // The click event itself was suppressed by ev.preventDefault() in
+      // pointerdown (necessary to stop text-selection during actual drags),
+      // so the row's normal click→toggle-expand handler never fires. Fire
+      // it ourselves: toggle execExpandedId on the source task. FORK
+      // 2026-05-23 — restoring click→expand after the DnD trigger was
+      // widened from the invisible grip to the whole row.
       if (!drag.passedThreshold) {
         drag.indicator.remove();
+        const taskId = drag.source.dataset.taskId;
         execPointerDrag = null;
         execDragRefreshSuppressed = false;
+        if (taskId) {
+          execExpandedId = execExpandedId === taskId ? null : taskId;
+          void loadExecTasks();
+        }
         return;
       }
 
@@ -8542,10 +8553,26 @@ function init() {
       drag.ghost.remove();
       drag.source.classList.remove("exec-group-source");
 
+      // FORK 2026-05-23 — same restoration as the task pointerup above:
+      // when the gesture is a plain click (no drag movement), fire the
+      // group/sub-group collapse-toggle ourselves since the click event
+      // was suppressed by ev.preventDefault() in pointerdown. Mirrors the
+      // logic in attachExecGroupCollapseHandlers (localStorage key flip +
+      // loadExecTasks).
       if (!drag.passedThreshold) {
         drag.indicator.remove();
+        const axisId = drag.source.dataset.axis;
         execGroupDrag = null;
         execDragRefreshSuppressed = false;
+        if (axisId) {
+          const key = `tinker.execGroupCollapsed.${axisId}`;
+          if (localStorage.getItem(key) === "1") {
+            localStorage.removeItem(key);
+          } else {
+            localStorage.setItem(key, "1");
+          }
+          void loadExecTasks();
+        }
         return;
       }
 
