@@ -7860,17 +7860,38 @@ function init() {
     input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
   }
 
+  // FORK 2026-05-23 (F4) — task duration semantics changed from integer
+  // minutes to decimal hours per user request 2026-05-23: "The duration
+  // of the tasks should be measured in hours, the number being decimal so
+  // 0.1h is also possible as an entry." Storage stays as `est_minutes`
+  // (the column is INTEGER in store.sql and rewriting the schema for a
+  // unit relabel would be gold-plating per [[feedback_minimal_blast_
+  // radius_collapse]]) — the UI converts at the input/display boundary:
+  //   - display: minutes / 60, formatted as decimal with trailing-zero
+  //     trim (60 → "1h", 30 → "0.5h", 6 → "0.1h", 45 → "0.75h").
+  //   - input:   decimal hours, rounded to nearest minute (0.1h → 6 min).
+  function formatEstHoursValue(minutes: number): string {
+    return (minutes / 60).toFixed(2).replace(/\.?0+$/, "");
+  }
+  function formatEstHours(minutes: number): string {
+    return `${formatEstHoursValue(minutes)}h`;
+  }
+
   // FORK 2026-05-23 (F3) — inline edit for the est_minutes chip in the
   // drawer meta-line. Replaces the chip with <input type="number">.
+  // FORK 2026-05-23 (F4) — input now takes decimal hours (step=0.1) and
+  // converts to integer minutes for storage. See formatEstHoursValue above.
   function openInlineTaskEstEdit(chipEl: HTMLElement, taskId: string): void {
     const t = execLastTasks.find((x) => x.id === taskId);
     if (!t) return;
     if (chipEl.tagName === "INPUT") return;
-    const current = t.est_minutes != null ? String(t.est_minutes) : "";
+    const current = t.est_minutes != null ? formatEstHoursValue(t.est_minutes) : "";
     const input = document.createElement("input");
     input.type = "number";
     input.min = "0";
-    input.step = "5";
+    input.step = "0.1";
+    input.placeholder = "hours";
+    input.title = "Duration in hours (e.g., 0.1 = 6 min, 0.5 = 30 min, 1.5 = 90 min)";
     input.className = "exec-task-chip-edit exec-task-chip-edit-num";
     input.value = current;
     input.dataset.taskId = taskId;
@@ -7891,11 +7912,13 @@ function init() {
         restore();
         return;
       }
-      const parsed = raw === "" ? null : Number.parseInt(raw, 10);
-      if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+      const parsedHours = raw === "" ? null : Number.parseFloat(raw);
+      if (parsedHours !== null && (!Number.isFinite(parsedHours) || parsedHours < 0)) {
         restore();
         return;
       }
+      // Hours → minutes: 0.1h = 6 min. Round so 0.166h doesn't store as 9.96.
+      const parsed = parsedHours === null ? null : Math.round(parsedHours * 60);
       resolved = true;
       try {
         await req("control-panel.tasks.update", {
@@ -8854,12 +8877,15 @@ function init() {
   // FORK 2026-05-23 (F3) — est chip renderer + placeholder, same pattern.
   function renderExecEstChip(t: ExecTask, editable: boolean): string {
     if (!t.est_minutes) return "";
-    const est = `${t.est_minutes}m`;
+    // FORK 2026-05-23 (F4) — display unit switched from minutes ("30m") to
+    // decimal hours ("0.5h"). Storage still in est_minutes; formatter trims
+    // trailing zeros so whole hours read clean (60 min → "1h").
+    const est = formatEstHours(t.est_minutes);
     const editableAttrs = editable ? ` data-action="edit-est" role="button" tabindex="0"` : "";
     return `<span class="exec-chip exec-chip-est${editable ? " exec-chip-editable" : ""}"${editableAttrs} title="Estimated ${est}${editable ? " (click to edit)" : ""}">${est}</span>`;
   }
   function renderExecEstPlaceholder(): string {
-    return `<span class="exec-chip exec-chip-est exec-chip-editable exec-chip-empty" data-action="edit-est" role="button" tabindex="0" title="Click to set an estimate (minutes)">⏱ Set est</span>`;
+    return `<span class="exec-chip exec-chip-est exec-chip-editable exec-chip-empty" data-action="edit-est" role="button" tabindex="0" title="Click to set an estimate (hours, e.g. 0.5 = 30 min)">⏱ Set est</span>`;
   }
 
   function renderExecTaskRow(t: ExecTask, axis: string): string {
@@ -9392,15 +9418,19 @@ function init() {
       }
       if (timedEvents.length > 0) {
         tipLines.push("");
-        tipLines.push(`📅 EVENTS (${Math.round(calMinutes)}min):`);
+        // FORK 2026-05-23 (F4) — tooltip totals in hours to match the rest
+        // of the duration UI (per-task chip + inline editor are now hours).
+        tipLines.push(`📅 EVENTS (${formatEstHours(Math.round(calMinutes))}):`);
         for (const ev of timedEvents.slice(0, 8))
           tipLines.push(`  • ${formatHHMM(ev.start_ts)} ${ev.title}`);
       }
       if (taskBucket.samples.length > 0) {
         tipLines.push("");
-        tipLines.push(`📋 TASKS (${Math.round(taskBucket.minutes)}min):`);
+        tipLines.push(`📋 TASKS (${formatEstHours(Math.round(taskBucket.minutes))}):`);
         for (const task of taskBucket.samples)
-          tipLines.push(`  • ${task.est_minutes ?? "?"}m  ${task.text.slice(0, 50)}`);
+          tipLines.push(
+            `  • ${task.est_minutes != null ? formatEstHours(task.est_minutes) : "?h"}  ${task.text.slice(0, 50)}`,
+          );
         if (taskBucket.count > taskBucket.samples.length)
           tipLines.push(`  + ${taskBucket.count - taskBucket.samples.length} more`);
       }
