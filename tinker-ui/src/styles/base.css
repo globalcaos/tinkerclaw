@@ -4166,6 +4166,59 @@ code.fs-link.fs-link-error {
   border-color: #ff6b3d;
 }
 
+/* FORK 2026-05-23 (F1) — pencil affordance on group/sub-group headers for
+   the rename action. Mirrors .exec-task-pencil: invisible by default,
+   appears on header hover. Click → openInlineAxisLabelEdit. dblclick on the
+   label itself is the other entry point. */
+.exec-group-pencil {
+  background: transparent;
+  border: none;
+  color: #4a4a52;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  flex: 0 0 auto;
+}
+.exec-group-header:hover .exec-group-pencil,
+.exec-subgroup-header:hover .exec-group-pencil {
+  opacity: 0.55;
+}
+.exec-group-pencil:hover {
+  opacity: 1 !important;
+  color: #eaeaee;
+  background: #232328;
+}
+
+/* FORK 2026-05-23 (F1) — inline rename <input> swapped in for a group or
+   sub-group label. Matches the label's font sizing so the swap is visually
+   minimal; a slight border + bg signals "edit mode" without resizing the
+   header row. */
+.exec-group-label-edit {
+  flex: 1;
+  background: #16161a;
+  color: #eaeaee;
+  border: 1px solid #3a3a45;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: 1.2;
+  outline: none;
+  min-width: 0;
+}
+.exec-group-label-edit:focus {
+  border-color: var(--accent);
+}
+.exec-group-label-edit.exec-add-text-error {
+  border-color: #ef5350;
+  background: #2a1818;
+}
+
 /* FORK 2026-05-11 — .exec-task is now a wrapper (header + optional drawer);
    the grid layout moved to .exec-task-head below. Keep .exec-task as a
    plain block so the head and drawer stack vertically with no overflow. */
