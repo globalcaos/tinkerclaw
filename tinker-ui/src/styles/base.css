@@ -248,6 +248,14 @@ body {
   gap: 8px;
   font-size: 12px;
   position: relative;
+  /* FORK 2026-05-23 — grid items default to min-width: auto (= min-content
+     width = sum of children's intrinsic minimums). With many tabs each at
+     min-width: 64px, the topbar's min-content grew, forcing column 2 wider
+     in the parent #app grid (48px / 3fr / 1fr) and stealing space from
+     column 3 (the right panel). `min-width: 0` lets the topbar shrink
+     below its content's natural minimum; the .tab-bar's overflow:hidden
+     then clips overflowing tabs and the scroll arrows take over. */
+  min-width: 0;
 }
 .topbar .logo {
   cursor: pointer;
@@ -4759,18 +4767,24 @@ code.fs-link.fs-link-error {
 /* FORK 2026-05-22: when expanded, hide the collapsed-head title — the
    drawer's full-title block is the sole title surface. Eliminates the
    duplicate-title redundancy in the UI. */
+/* FORK 2026-05-23 — was `display: none` (hid the head title and pushed
+   it into a drawer fulltitle block one line below). The user wanted the
+   title to stay in its collapsed-row position when expanded, just
+   wrapping for long text. Drop the `max-width:140px` ellipsis cap and
+   let the title use natural multi-line wrapping in place. The drawer's
+   redundant fulltitle block was removed in app.ts as part of the same
+   commit. */
 .exec-task-expanded .exec-task-text {
-  display: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
+  flex: 1 1 auto;
+  word-break: break-word;
 }
-/* FORK 2026-05-22: the head's pencil (data-action="edit-title") is
-   redundant with the drawer's full-title pencil (.exec-task-pencil-inline,
-   same data-action) once the card is expanded — they both edit the title.
-   Hide the head one when expanded so only the drawer's inline pencil
-   remains visible. Sibling to the .exec-task-text hide above. The drawer's
-   inline + context pencils are unaffected (they live outside .exec-task-head). */
-.exec-task-expanded .exec-task-head .exec-task-pencil {
-  display: none;
-}
+/* FORK 2026-05-23 — the head's edit-title pencil now stays visible when
+   expanded (was hidden because the drawer had a duplicate pencil; that
+   duplicate is gone). Removed the prior 2026-05-22 hide-on-expand rule. */
 .exec-task-drawer {
   background: #1f1f26;
   border-top: 1px solid #2a2a30;
