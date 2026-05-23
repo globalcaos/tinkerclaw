@@ -1116,7 +1116,7 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Rendering:** Parsed in `app.ts` alongside `__ERR_ENV__` detection. The label after the colon is displayed as the chip's body text.
 - **See also:** flows.md F-PLAN-RESUME; lifecycles.md L-PLAN.
 
-### 5.67 "Current Plan" section in prefrontal-tree.ts panel (2026-05-13)
+### 5.67 "Current Plan" section in prefrontal-tree.ts panel (2026-05-13, idle-blank 2026-05-23)
 
 - **Status:** `DEPLOYED`
 - **What:** The Prefrontal right-panel (`tinker-ui/src/panels/prefrontal-tree.ts`) shows a "Current Plan" section when a plan is active for the current session.
@@ -1130,7 +1130,56 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
     - Per-step elapsed (only for done/in_progress steps)
   - **Progress bar:** anchored below the step list showing `done / total` steps
 - **Data source:** `prefrontal.plan.get({ sessionKey })` polled at 3s interval while a plan is active
-- **Files:** `tinker-ui/src/panels/prefrontal-tree.ts` (renderPlanSection), `tinker-ui/src/styles/base.css` (`.plan-step-row`, `.chip-sys-plan-resume`)
+- **Idle-blank for verbose state (commit `fab44c7579`, 2026-05-23):** `render()` derives `treeIdle = !tree.active || !tree.root` and gates the **recipe header** + **action trail** behind `!treeIdle`. When the last subagent completes and the tree returns to "No active LLM calls", the recipe header + accumulated trail fold away. The plan section stays — it's a persistent task tracker per `panels.md` always-on contract, not an in-flight indicator. Recipe + trail state stay in memory for the next job's resumption; the UI just stops painting them. Without this gate the panel kept looking verbose for hours after work ended.
+- **Files:** `tinker-ui/src/panels/prefrontal-tree.ts` (renderPlanSection, treeIdle gate), `tinker-ui/src/styles/base.css` (`.plan-step-row`, `.chip-sys-plan-resume`)
+
+### 5.68 Today card / Exec panel — Control Panel surface (2026-05-22/23)
+
+- **Status:** `DEPLOYED` (v3.5 of the control-panel plugin)
+- **Surface:** `#exec-panel` HUD on the left side of Tinker UI when the Dev/Exec topbar toggle is set to Exec. Primary task interface; replaced Todoist 2026-05-11 (bible §14 / `project_control_panel_plugin` memory).
+- **Data store:** `extensions/tinkerclaw-control-panel/` SQLite, plugin v3.5. See `config-shape.md` for the `task_axis` / `task` schema, and `topology.md` for the plugin entry.
+- **Hierarchy render — 2-level tree (commit `a4cec8e517`):** `renderExecGroups` builds a 2-level tree from `axes.list` (top-level groups + sub-groups via `task_axis.parent_id`). Top-level groups are collapsible sections; sub-groups render indented inside their parent with their own count chip and affordances. Collapsed state of each group/sub-group persists in `localStorage` (existing `.exec-group-collapsed` pattern). Empty sub-groups still render so tasks can be dragged into them.
+- **+ buttons (commits `a102c80509`, `371fe91e6e`, `67b0ab5e9a`):**
+  - **`+ Add group`** chip at the panel top → inline form → `control-panel.axes.add {parent_id:null}`.
+  - **`+ Add sub-group`** affordance inside each top-level group header → inline form → `axes.add {parent_id:<group.id>}`.
+  - **Per-group `+` Add task** button on each (sub-)group header (replaced the pre-v3.5 single bottom form so the user creates tasks in context).
+- **Group-level affordances:** ✏️ inline rename on the group header (commit `69c1b35d2d`, double-click or pencil) and 🗑 delete-when-empty (commit `43259f4976`, faint-on-hover; refuses to delete a group that still has open tasks or sub-groups).
+- **Drawer simplification (commits `d08cd06ca9`, `13eb379d70`, `d1a0a8c340`, `ac97f46189`, `7575564e62`, `b7d5195fa6`, `f9880c893b`, `50595032d1`):**
+  - **Checkbox at the collapsed-head left edge** (18px round) replaces the drawer's Resolve + Start buttons. Click toggles `status` open ↔ resolved. `in_progress` is reserved for system-set state (Jarvis can set it via `control-panel.tasks.update` when an agent is actively working on it); no manual drawer affordance.
+  - **Title wraps in place** in the head when the card is expanded — the old duplicate `.exec-task-fulltitle` block in the drawer is gone. The head pencil hides when expanded because the drawer carries an inline-pencil that covers it.
+  - **Drawer block order**: title → due+est meta row (clickable inline edit) → context body (inline-edit `<textarea>`, Ctrl+Enter saves) → metadata strip → actions (Reschedule / Snooze-or-Bring-back / Delete / Refer in chat). The old popup editors are gone — title and body both edit in-place.
+  - **Todoist surface dropped:** entire `m.todoist_*` chip render block removed (commit `13eb379d70`). Paired with the `stripTodoistMetadata` one-shot migration (see `config-shape.md` + `failures.md`).
+- **Dropped/dismissed are unconditionally invisible (commit `2a34dae51c`):** the `Deleted` filter chip is gone; tasks with `status='dropped'` or `'dismissed'` never appear in any filter view. Recovery is RPC-only.
+- **Pointer-event drag-and-drop (commits `5312227ebf` → `f1a5d0dc37`, `7b91d26a6a`, `ce1da137bf`, `c0ebbf6b8b`):** HTML5 native DnD was deleted entirely (commit `9e3513a13b`) and replaced with a custom pointer-event implementation. No external library.
+  - **Trigger surface:** pointerdown anywhere on `.exec-task-head` (tasks), `.exec-group-header` or `.exec-subgroup-header` (categories). Interactive children (buttons, chips, `<input>`, `<textarea>`) are excluded so clicks on the checkbox / pencil / + don't start a drag. The visible `⋮⋮` grip is replaced by `cursor: grab` on the whole row (grip is now a 6px invisible hit-target inherited from the prior implementation; pointerdown surface was widened to the row).
+  - **Click vs drag:** `DRAG_START_THRESHOLD_PX = 4` separates a click (expand/collapse-toggle fired manually in pointerup) from a drag (commit via RPC on drop). Without this threshold the DnD takeover silently stole every click on the row.
+  - **Lifecycle:** pointerdown → state captured → pointermove (document-level) updates a `position:fixed` ghost clone + a 2px `var(--accent)` drop indicator → pointerup commits via parallel `tasks.update` RPCs (see rank renumber below) → pointercancel or Esc aborts cleanly (no RPC). `pointercancel` covers OS-level interruptions (alt-tab, Esc, focus loss).
+  - **Auto-scroll:** when the cursor is within 60px of the top or bottom of `#exec-tasks-body`, the container auto-scrolls at a speed proportional to edge proximity.
+  - **Cross-group drops** reassign `priority_axis` to the destination group/sub-group's id. Drop on the source itself is a no-op (silent cancel — no RPC).
+- **Rank-renumber-on-drop (commit `76df31f68d`):** `priority_rank` is `INTEGER` in the schema. The old midpoint arithmetic `(prevRank + nextRank) / 2` compressed adjacent ranks to identical values over multiple reorders — live data had 21 tasks at `rank=30` and 17 at `rank=40` in `ventures` before the fix. On every drop, the client now walks the destination axis container in DOM order (treating the indicator as the dragged task's new position, skipping `.exec-task-source`) → produces an `orderedIds[]` list → fires parallel `tasks.update {priority_rank:(i+1)*100}` RPCs for every task in the destination axis. Strategy: "fresh ranks on every move" instead of "midpoint forever." The schema stays `INTEGER`; spacing 100 is the visible-order spacing, not a collision-window. ~50 tasks renumber in well under a second. See `failures.md` M11 for the failure class.
+- **Visual outline for expanded card (commits `14a25f60c4`, `ce1da137bf`):** expanded `.exec-task` has a warm-brown background `#3a2e26` matching the wood-panel topbar `#6b5545` — gives a clear visual outline against the panel surface.
+- **Inline-edit refresh-suppression (commit `de2002d2eb`):** the 10s exec-panel poll skips its DOM rebuild when `document.activeElement` is an `<input>` or `<textarea>` inside `#exec-panel`. Without this guard the textarea/input would be wiped out of the DOM mid-edit, losing in-progress typing.
+- **Layout fixes (commits `a68132b180`, `747cffb4cb`, `3f5b3a1fc6`, `54268a94d4`, `50595032d1`):**
+  - **Logo z-index 50 → 70** so it renders above the exec-mode HUD panel (which lives at z-index 60).
+  - **Topbar `min-width: 0`** so the topbar grid item can shrink below its content's min-content — many tabs no longer steal width from the right panel.
+  - **Chrome-style tab strip on its own row**: `.tab` uses `flex: 0 1 auto; min-width: 64px; max-width: 200px` so tabs shrink uniformly before the ◀▶ scroll arrows appear.
+- **EXEC_AXIS_ORDER / EXEC_AXIS_LABEL deleted (commit `839b7cc5ab`)** — the live `axes.list` tree is now the single source of truth; the old hardcoded constants are gone (superseded by v3.3 axis taxonomy, fully obsolete with v3.5 hierarchy).
+- **Files:** `tinker-ui/src/app.ts` (`renderExecGroups`, pointer-event DnD handlers, rank-renumber, inline-edit handlers), `tinker-ui/src/styles/base.css` (sub-group indent, expanded-task warm-brown background, `.exec-task-source` fade, `.exec-drag-ghost`, `.exec-add-group-form` / `.exec-add-subgroup-form`), `extensions/tinkerclaw-control-panel/` (schema + axes + tasks + gateway, plugin v3.5).
+- **Spec:** `~/src/jarvis-icu/docs/superpowers/specs/2026-05-22-today-card-redesign-design.md`.
+
+### 5.69 Sessions list — server-resolver hardening + client-side resolution order (2026-05-23)
+
+- **Status:** `DEPLOYED` (commits `cd0ad59239`, `c438842cef`, `54268a94d4`)
+- **What:** Two-part fix for the right-panel sessions list rendering "Tinker UI" as every session's label. The Tinker UI WS-client identifies itself with `client.displayName = "Tinker UI"` at connect time (`tinker-ui/src/app.ts:1211`) for pairing + security audit; that string was inheriting into every chat-originated session's `origin.label`, and the displayName resolver was falling through to it.
+- **Server-side filter (`src/gateway/session-utils.ts:1271-1285`):** new `GENERIC_WS_CLIENT_LABELS = {"Tinker UI", "webchat-ui", "openclaw-cli"}` set. Both `entry.displayName` and `origin.label` are filtered through it before participating in the displayName resolution chain. Meaningful origin labels (e.g. `"jarvis-inject"`, group titles via `buildGroupDisplayName`) pass through unchanged.
+- **Client-side resolution order (`renderSessionRow`):**
+  1. `tab.title` (persisted localStorage — "Main" for tab-main, Gemini-generated titles for sub-tabs). Lookup uses `sessionKeyMatches` for prefix-tolerant matching since pre-canonicalised `tinker:xxx` may match server's `agent:main:tinker:xxx`.
+  2. `s.label` (server label, generic-filtered)
+  3. `s.displayName` (server displayName, generic-filtered)
+  4. `shortLabel` (key-derived synthetic fallback)
+- **Defensive client-side mirror:** the same `GENERIC_WS_CLIENT_LABELS` set is mirrored client-side as a backstop via `meaningfulSessionLabel(s)` (returns `undefined` when input is in the generic set), so even if persisted server data still carries "Tinker UI", rendering falls to `shortLabel`. **Keep the server-side and client-side sets in lockstep** when either side changes.
+- **Verified live:** 6 sessions that previously resolved to `displayName="Tinker UI"` now resolve to `displayName=""`; new `chat.send`-originated sessions inherit the same fix automatically.
+- **Files:** `src/gateway/session-utils.ts` (server filter), `tinker-ui/src/app.ts` (client resolver + mirror set).
 
 ## Generated FORK registry
 

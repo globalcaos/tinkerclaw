@@ -227,6 +227,8 @@ Dropped: everything after the sentinel (OpenClaw tool catalog, CLI quick-referen
 
 No functional loss: `claude-cli` maintains its own tool catalog via `--permission-mode` and the fork's OpenClaw tools are mediated by the bridge, not the subprocess. The persona block still carries Jarvis's identity.
 
+> _Current block order (FORK 2026-05-21):_ `persona → ethical-rules → narration → subagent-helper → tool-choice → plan-tools`. The ethical-rules layer was added as a foundation between persona and the mechanics blocks. See `tool-loop.md` "combinedSystemPrompt block order" and `config-shape.md` "cc-bridge ethical-rules prompt loader" for the loader path.
+
 #### Diagnosis kit (use this when it comes back)
 
 1. **Live probe:** `/tmp/catch-claude-pid.sh` polls `pgrep -x claude` and dumps the subprocess's cgroup + PPid + env. Copy from commit `a307dca393`'s context if missing.
@@ -1363,7 +1365,7 @@ These are fork-exclusive backend systems that run server-side. They are not part
 - **Status:** `DEPLOYED`
 - **What:** `extensions/tinkerclaw-cc-bridge/src/worker.ts::buildToolChoiceBlock()` appends a ~60-line markdown block to every spawned Claude-Code subagent's system prompt. Teaches the WebSearch-vs-WebFetch decision, when to load Deferred tools via `ToolSearch`, when to use Monitor/PushNotification/TaskCreate, and names the common anti-patterns (guessing URLs then WebFetching them, polling via `sleep+test -f` loops, posting routine status to chat).
 - **Why:** Claude Code 2.1.114 exposes a dozen tools as DEFERRED — the names show in the initial system prompt but schemas must be loaded via `ToolSearch({query:"select:<Name>"})` before use. Jarvis was reflexing to WebFetch on guessed domains and TLS-erroring out, because nothing in the spawn-time prompt told him WebSearch existed as a separate tool with different purpose.
-- **Pipeline:** Worker spawn → `combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody, toolChoiceBody].filter(Boolean).join("")` → Claude Code `--append-system-prompt`
+- **Pipeline:** Worker spawn → `combinedSystemPrompt = [systemPromptBody, rulesBody, subagentHelpBody, toolChoiceBody].filter(Boolean).join("")` → Claude Code `--append-system-prompt`. (FORK 2026-05-21: the live order is now `persona → ethical-rules → narration → subagent-helper → tool-choice → plan-tools`; see `tool-loop.md` "combinedSystemPrompt block order" for the current shape and `config-shape.md` for the ethical-rules loader path.)
 - **Files:** `extensions/tinkerclaw-cc-bridge/src/worker.ts` (lines 203-270 for `buildToolChoiceBlock`, 369-373 for the combine step)
 
 ### 11.18 04:00 Cron Pipeline Chain + md-File-Only Policy (2026-04-20)
