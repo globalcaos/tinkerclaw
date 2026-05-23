@@ -7368,7 +7368,11 @@ function init() {
               `<span class="exec-group-disclosure">${subCollapsed ? "▶" : "▼"}</span>` +
               `<span class="exec-subgroup-label" data-axis-label="${escapeExecAttr(sub.label)}">${escapeHtml(sub.label)}</span>` +
               `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(sub.id)}" title="Rename sub-group">✏️</button>` +
-              `<span class="exec-group-count">${subCount} open</span>` +
+              `<span class="exec-group-count">${subCount} open` +
+              (subCount === 0
+                ? `<button class="exec-group-delete" data-action="delete-axis" data-axis-id="${escapeExecAttr(sub.id)}" data-axis-label="${escapeExecAttr(sub.label)}" title="Delete empty sub-group">🗑</button>`
+                : ``) +
+              `</span>` +
               `</div>` +
               (subCollapsed
                 ? ""
@@ -7385,6 +7389,13 @@ function init() {
           `<button class="exec-group-pencil" data-action="edit-axis" data-axis-id="${escapeExecAttr(group.id)}" title="Rename group">✏️</button>` +
           `<span class="exec-group-count">${groupOpenCount} open` +
           `<button class="exec-group-add-sub" data-action="add-subgroup" data-parent-id="${escapeExecAttr(group.id)}" title="Add sub-group under ${escapeExecAttr(group.label)}">+</button>` +
+          // FORK 2026-05-23 (F2) — 🗑 delete-empty button on top-level group
+          // header. Renders only when the group itself has zero tasks AND
+          // zero sub-groups (fully empty). Backend `axes.delete` accepts the
+          // id; we re-render on success.
+          (ownTasks.length === 0 && group.children.length === 0
+            ? `<button class="exec-group-delete" data-action="delete-axis" data-axis-id="${escapeExecAttr(group.id)}" data-axis-label="${escapeExecAttr(group.label)}" title="Delete empty group">🗑</button>`
+            : ``) +
           `</span>` +
           `</div>` +
           (groupCollapsed ? "" : groupTasks + subgroupsHtml) +
@@ -7424,6 +7435,32 @@ function init() {
             ev.stopPropagation();
             const axisId = pencil.dataset.axisId;
             if (axisId) openInlineAxisLabelEdit(h, axisId);
+            return;
+          }
+          // FORK 2026-05-23 (F2) — 🗑 delete-empty button. The button only
+          // renders when the group is fully empty (no own tasks, no children
+          // for top-level), so the click here can assume axes.delete is safe.
+          // Still guard with window.confirm so an accidental click on a
+          // freshly-created group can be reverted before the RPC fires.
+          const del = target.closest(".exec-group-delete") as HTMLButtonElement | null;
+          if (del) {
+            ev.stopPropagation();
+            const axisId = del.dataset.axisId;
+            const label = del.dataset.axisLabel ?? axisId ?? "";
+            if (!axisId) return;
+            if (!window.confirm(`Delete empty group '${label}'?`)) return;
+            void (async () => {
+              try {
+                await req("control-panel.axes.delete", { id: axisId });
+                await loadExecTasks();
+              } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error("[exec] axes.delete failed", err);
+                flashExecError(
+                  `Delete failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            })();
             return;
           }
           const id = h.dataset.axisId;
