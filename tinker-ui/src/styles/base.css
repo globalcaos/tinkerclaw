@@ -256,12 +256,14 @@ body {
      the negative left offset pokes the logo into the left nav column
      adjacent to the topbar's start. The 76px-tall image drips below the
      ~32-40px-tall single-row topbar into the chat area — that's the
-     intended visual. The brief flex-wrap experiment that briefly broke
-     this is reverted; this rule is the original. */
+     intended visual.
+     FORK 2026-05-23 — bumped z-index 50 → 70 so the logo renders ABOVE
+     the exec-mode HUD panel (.exec-panel at z-index 60, base.css:3747).
+     Previously the exec panel covered the logo whenever exec mode was on. */
   position: absolute;
   top: 14px;
   left: -28px;
-  z-index: 50;
+  z-index: 70;
   pointer-events: auto;
   display: flex;
   align-items: center;
