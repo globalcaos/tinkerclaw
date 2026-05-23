@@ -4744,9 +4744,17 @@ code.fs-link.fs-link-error {
   color: #eaeaee;
 }
 
+/* FORK 2026-05-23 (F3) — expanded task wrapper bg lifted from #1c1c22
+   (which was identical to the hover bg, providing no visual lift) to a
+   visibly paler #2a2a32. The card now reads as the focal row: lighter
+   than its siblings (which sit at the panel-dark default), with the
+   drawer's own bg (#1f1f26, set below) layered on top so the structure
+   inside the card stays legible. Boxshadow adds a subtle outline so the
+   lift is unambiguous even on dense lists. */
 .exec-task-expanded {
-  background: #1c1c22;
+  background: #2a2a32;
   border-radius: 4px;
+  box-shadow: 0 0 0 1px #3a3a45;
 }
 /* FORK 2026-05-22: when expanded, hide the collapsed-head title — the
    drawer's full-title block is the sole title surface. Eliminates the
