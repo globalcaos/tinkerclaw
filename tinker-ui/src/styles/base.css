@@ -4771,6 +4771,16 @@ code.fs-link.fs-link-error {
   background: #4a3826;
   border-radius: 4px;
   box-shadow: 0 0 0 2px #d4a84a;
+  /* FORK 2026-05-23 (third pass) — user: "the outline is not visible on
+     the right and left. Make the card narrower so it can be seen."
+     The row spans the full width of #exec-tasks-body, so the 2px ring
+     was being painted under the body's scrollbar / against its inner
+     edge and clipped out of view. Inset the expanded card by 8px on
+     each side so the ring has clear breathing room. Use box-sizing
+     inheritance — width follows the parent automatically — and a
+     negative-margin-free approach so neighbor rows don't shift. */
+  margin-left: 8px;
+  margin-right: 8px;
 }
 /* FORK 2026-05-23 — explicit head bg so the title row sits on the same
    brown surface as the drawer (user: "title background also").
