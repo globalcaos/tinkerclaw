@@ -340,6 +340,18 @@ export class ClaudeCodeWorker extends EventEmitter {
       "stream-json",
       "--output-format",
       "stream-json",
+      // FORK 2026-05-23 — without this flag, claude-cli only emits
+      // `assistant` NDJSON lines at content-block boundaries (one big
+      // chunk per text block). That means the Tinker UI sees the answer
+      // arrive all at once at the END of the turn instead of token-by-
+      // token. With `--include-partial-messages`, claude-cli emits fine-
+      // grained `stream_event` lines (content_block_delta.text_delta),
+      // which stream.ts already routes through pushTextDelta() → the
+      // gateway's state:"delta" broadcast → the UI's _temporary bubble
+      // append path → real-time streaming with the splitSectionedReply /
+      // renderSectionedReply pipeline producing the answer/amygdala/
+      // fractal three-bubble structure incrementally as the model emits.
+      "--include-partial-messages",
       "--verbose",
       "-p",
       "--permission-mode",
