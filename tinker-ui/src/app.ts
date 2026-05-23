@@ -9666,6 +9666,26 @@ function init() {
     if (execTasksTimer) return;
     execTasksTimer = setInterval(() => {
       if (execDragRefreshSuppressed) return;
+      // FORK 2026-05-23 — suppress the 10s task-list refresh while ANY
+      // inline edit is open in the exec panel. The poll calls
+      // loadExecTasks() which rebuilds the entire task list HTML, ripping
+      // any in-flight <input> or <textarea> out of the DOM mid-edit. The
+      // textarea's blur fires when it's removed, the blur handler calls
+      // save() with whatever was typed so far, and the edit window
+      // appears to close at random — exactly the user's reported symptom.
+      // DOM-driven check (vs. a per-function open/close counter) covers
+      // every inline-edit pathway uniformly: title, description, due,
+      // est, axis-label, add-task, add-subgroup. The scope is intentional
+      // (`closest('#exec-panel')`) so a focused input in the main chat
+      // window or sessions panel does NOT block the tasks refresh.
+      const focused = document.activeElement;
+      if (
+        focused instanceof HTMLElement &&
+        (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA") &&
+        focused.closest("#exec-panel")
+      ) {
+        return;
+      }
       void loadExecTasks();
     }, 10_000);
   }
