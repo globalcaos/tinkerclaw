@@ -229,14 +229,12 @@ body {
 }
 
 /* Top bar
-   FORK 2026-05-23 — was a single-row flex container with toolbox + tab-bar
-   competing for horizontal space; with many tabs open the panel below
-   shrank because the tab-bar's flex:1 was clipping itself instead of
-   yielding. Restructured to wrap: toolbox + status sit in row 1, the
-   tab-bar gets a dedicated full-width row 2 below them. The tab strip
-   now has the full width to work with, and the Chrome-style shrink-
-   then-scroll behavior on `.tab` (flex-shrink:1, min-width) keeps the
-   panel below at its full size. */
+   FORK 2026-05-23 — single-row layout restored after a brief flex-wrap
+   experiment misplaced the logo. The tab-bar fits in the same row as the
+   toolbox; its tabs handle crowding via the Chrome-style shrink-then-
+   scroll behavior on `.tab` further down (flex:0 1 auto, min-width:64px).
+   `.tab-bar` itself has flex:1 and overflow:hidden so it can yield
+   horizontal space rather than pushing siblings around. */
 .topbar {
   grid-column: 2/3;
   grid-row: 1;
@@ -245,9 +243,8 @@ body {
   background-color: #6b5545;
   border-bottom: 1px solid var(--border);
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  padding: 4px 12px 0 110px;
+  padding: 0 12px 0 110px;
   gap: 8px;
   font-size: 12px;
   position: relative;
@@ -255,20 +252,15 @@ body {
 .topbar .logo {
   cursor: pointer;
   transition: opacity 0.1s;
-  /* FORK 2026-05-23 — was `position: absolute` anchored to `.topbar`; when
-     the topbar wrapped to 2 rows for the new Chrome-style tab strip, the
-     logo's relative anchor stayed at the topbar's top edge but the topbar
-     itself grew taller, so the 76px-tall logo started overlapping the
-     row-2 tab strip instead of cleanly resting above the chat area.
-     `position: fixed` anchors the logo to the viewport (top:14px) so its
-     vertical position is independent of how tall the topbar becomes. The
-     same `left` offset is retained relative to viewport — the left nav
-     column is 110px wide (see .topbar padding-left), so `left: 82px`
-     reproduces the prior visual (110px nav-col width minus the 28px
-     leftward poke). */
-  position: fixed;
+  /* Original placement: anchored to `.topbar` (which is position:relative);
+     the negative left offset pokes the logo into the left nav column
+     adjacent to the topbar's start. The 76px-tall image drips below the
+     ~32-40px-tall single-row topbar into the chat area — that's the
+     intended visual. The brief flex-wrap experiment that briefly broke
+     this is reverted; this rule is the original. */
+  position: absolute;
   top: 14px;
-  left: 82px;
+  left: -28px;
   z-index: 50;
   pointer-events: auto;
   display: flex;
@@ -285,24 +277,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* FORK 2026-05-23 — was `margin: 0 auto` which pushed the toolbox to
-     center via available space, contributing to the single-row layout
-     squeeze. With the topbar now flex-wrap, the toolbox sits naturally
-     on row 1 alongside the status. order:1 keeps it ahead of the
-     tab-bar (which is order:3) regardless of DOM order. */
-  order: 1;
-  margin-left: auto;
-}
-/* FORK 2026-05-23 — pin status to row 1 alongside the toolbox. */
-.topbar #gw-status {
-  order: 2;
-}
-/* FORK 2026-05-23 — tab-bar gets its own full-width row below the
-   toolbox/status row. flex-basis:100% forces the wrap; order:3 keeps
-   it visually below the row-1 items. */
-.topbar .tab-bar {
-  order: 3;
-  flex: 1 1 100%;
+  margin: 0 auto;
 }
 .topbar-icon-btn {
   cursor: pointer;
