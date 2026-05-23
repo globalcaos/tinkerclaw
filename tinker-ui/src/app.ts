@@ -8328,9 +8328,9 @@ function init() {
       const drag = execPointerDrag;
       if (!drag || ev.pointerId !== drag.pointerId) return;
 
-      // Always clean the floating + source visuals.
+      // Ghost is unconditionally safe to remove — it's just a floating
+      // visual clone that has no semantic role in the drop computation.
       drag.ghost.remove();
-      drag.source.classList.remove("exec-task-source");
 
       // If we never crossed the drag threshold, this was a click on the row.
       // The click event itself was suppressed by ev.preventDefault() in
@@ -8340,6 +8340,7 @@ function init() {
       // 2026-05-23 — restoring click→expand after the DnD trigger was
       // widened from the invisible grip to the whole row.
       if (!drag.passedThreshold) {
+        drag.source.classList.remove("exec-task-source");
         drag.indicator.remove();
         const taskId = drag.source.dataset.taskId;
         execPointerDrag = null;
@@ -8364,74 +8365,61 @@ function init() {
       // rapid clicks aren't blocked.
       execLastDragEndAt = Date.now();
 
-      // Indicator must live inside a .exec-group or .exec-subgroup.
+      // FORK 2026-05-23 (architectural rework) — the prior commit pulled
+      // the indicator AND the source's `.exec-task-source` class BEFORE
+      // walking the destination axis. The walk depends on both: the
+      // indicator marks the slot drag.id should occupy, and the source
+      // class lets the walk skip the source row (so it isn't pushed at
+      // its OLD position). With both stripped, the walk:
+      //   1. found ZERO .exec-drop-indicator → insertedSource stayed false
+      //   2. found the source row as a "normal" task at its OLD position
+      //      → pushed drag.id at that index
+      //   3. fell through to the trailing `if (!insertedSource)` clause
+      //      → pushed drag.id AGAIN at the end of orderedIds
+      // The RPC batch then issued two control-panel.tasks.update calls for
+      // drag.id with different priority_rank values; the higher-index
+      // (end) write won the race, so the dragged task always landed at
+      // the END of the destination axis. ("always at end" symptom)
+      //
+      // Fix: walk while the indicator is IN DOM and the source row still
+      // carries the .exec-task-source class. Only after orderedIds is
+      // built do we strip the visuals.
       const indParent = drag.indicator.parentElement;
-      drag.indicator.remove();
-      execPointerDrag = null;
-      execDragRefreshSuppressed = false;
-      if (!indParent) return;
+      if (!indParent) {
+        // Indicator never landed in a valid container (e.g., user dropped
+        // outside the panel or over an unhandled element). Bail with no
+        // RPC; restore the source visual.
+        drag.source.classList.remove("exec-task-source");
+        drag.indicator.remove();
+        execPointerDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
+      }
 
       const subgroupHost = indParent.closest(".exec-subgroup") as HTMLElement | null;
       const groupHost = subgroupHost ?? (indParent.closest(".exec-group") as HTMLElement | null);
-      if (!groupHost) return;
+      if (!groupHost) {
+        drag.source.classList.remove("exec-task-source");
+        drag.indicator.remove();
+        execPointerDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
+      }
       const axis = (subgroupHost ?? groupHost).dataset.axis!;
-
-      // Compute new rank via midpoint arithmetic between neighbors, skipping
-      // the source row itself and any non-.exec-task siblings (sub-group
-      // containers, empty-state divs, headers, etc.).
-      let prev: HTMLElement | null = drag.indicator.previousElementSibling as HTMLElement | null;
-      while (
-        prev &&
-        (prev.classList?.contains("exec-task-source") || !prev.classList?.contains("exec-task"))
-      ) {
-        prev = prev.previousElementSibling as HTMLElement | null;
-      }
-      let next: HTMLElement | null = drag.indicator.nextElementSibling as HTMLElement | null;
-      while (
-        next &&
-        (next.classList?.contains("exec-task-source") || !next.classList?.contains("exec-task"))
-      ) {
-        next = next.nextElementSibling as HTMLElement | null;
-      }
-      const prevRank = prev ? parseFloat(prev.dataset.rank ?? "0") : -10;
-      const nextRank = next ? parseFloat(next.dataset.rank ?? "100") : prevRank + 20;
-      const newRank = (prevRank + nextRank) / 2;
-
-      // No-op gestures (would not actually move the row): bail without RPC.
-      if (axis === drag.axisAtStart && prev?.dataset?.taskId === drag.id) {
-        return;
-      }
-      if (axis === drag.axisAtStart && next?.dataset?.taskId === drag.id) {
-        return;
-      }
-
-      // FORK 2026-05-23 — was a single tasks.update with the midpoint rank.
-      // priority_rank is an INTEGER column in store.sql, and midpoint
-      // arithmetic compresses toward existing rank values over multiple
-      // drops; eventually adjacent tasks share the same integer rank,
-      // sort order becomes undefined, and the user reports "tasks don't
-      // go where I want." Live data had 21 tasks at rank=30 and 17 at
-      // rank=40 in `ventures` before this fix. The schema migration to
-      // REAL would be invasive; instead, renumber the destination axis
-      // with clean spacing (100) after every drop. The dragged task is
-      // inserted at the indicator's DOM position; all tasks in the axis
-      // get new ranks 100, 200, 300, ... in their new visual order.
-      //
-      // Implementation: walk the indicator's enclosing axis container
-      // in DOM order, treating the indicator as the dragged task's new
-      // position, skipping the source row (which still carries the
-      // .exec-task-source class). Send parallel tasks.update RPCs for
-      // every task in the axis with the fresh rank assignment.
       const axisHost = subgroupHost ?? groupHost;
-      void newRank; // kept for diff legibility; not used in renumber path
+
+      // Walk the destination axis in DOM order. Indicator is still in
+      // place; source still has .exec-task-source. Every direct-axis
+      // task gets pushed in its current visual position, with drag.id
+      // pushed AT the indicator's slot (in place of the source's old
+      // position).
       const orderedIds: string[] = [];
       let insertedSource = false;
       for (const node of axisHost.querySelectorAll<HTMLElement>(
         ".exec-task, .exec-drop-indicator",
       )) {
-        // The renumber must only cover this axis — skip task rows that
-        // belong to a nested sub-group (their own axis container handles
-        // its own ordering).
+        // Only renumber this axis — skip tasks in nested sub-groups
+        // (those have their own axis container).
         const ownGroup =
           (node.closest(".exec-subgroup") as HTMLElement | null) ??
           (node.closest(".exec-group") as HTMLElement | null);
@@ -8447,9 +8435,39 @@ function init() {
         const id = node.dataset.taskId;
         if (id) orderedIds.push(id);
       }
+
+      // Indicator-not-found is now a hard error, not a "push at end"
+      // fallback. The only way insertedSource can be false at this point
+      // is if querySelectorAll didn't see the indicator inside axisHost
+      // — meaning indParent must be in a different subtree. Bail rather
+      // than silently shuffling the whole axis.
       if (!insertedSource) {
-        orderedIds.push(drag.id);
+        // eslint-disable-next-line no-console
+        console.warn("[exec-drag] indicator outside axisHost — aborting renumber", {
+          axisHost,
+          indParent,
+        });
+        drag.source.classList.remove("exec-task-source");
+        drag.indicator.remove();
+        execPointerDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
       }
+
+      // Visuals can now be stripped safely.
+      drag.source.classList.remove("exec-task-source");
+      drag.indicator.remove();
+      execPointerDrag = null;
+      execDragRefreshSuppressed = false;
+
+      // FORK 2026-05-23 — was a single tasks.update with a midpoint rank.
+      // priority_rank is INTEGER in store.sql, and midpoint arithmetic
+      // compresses toward existing rank values over multiple drops; with
+      // enough drops the column becomes degenerate (live ventures had 21
+      // tasks at rank=30 before the renumber landed). The renumber path:
+      // assign rank = (i+1)*100 to every task in the axis based on its
+      // new DOM index. Spacing 100 leaves headroom for future midpoint-
+      // style adjustments if we ever want them.
       try {
         await Promise.all(
           orderedIds.map((id, i) =>
@@ -8677,8 +8695,11 @@ function init() {
       const drag = execGroupDrag;
       if (!drag || ev.pointerId !== drag.pointerId) return;
 
+      // Ghost is the floating clone — no semantic role in the walk, safe
+      // to strip up front. Source class MUST stay until after the walk
+      // (it's how the walk distinguishes the source row from valid peers);
+      // the click branch can remove it inline since no walk runs there.
       drag.ghost.remove();
-      drag.source.classList.remove("exec-group-source");
 
       // FORK 2026-05-23 — same restoration as the task pointerup above:
       // when the gesture is a plain click (no drag movement), fire the
@@ -8687,6 +8708,7 @@ function init() {
       // logic in attachExecGroupCollapseHandlers (localStorage key flip +
       // loadExecTasks).
       if (!drag.passedThreshold) {
+        drag.source.classList.remove("exec-group-source");
         drag.indicator.remove();
         const axisId = drag.source.dataset.axis;
         execGroupDrag = null;
@@ -8708,23 +8730,30 @@ function init() {
       // collapse-toggle handler at attachExecGroupCollapseHandlers.
       execLastDragEndAt = Date.now();
 
+      // FORK 2026-05-23 (architectural rework) — same indicator-removed-
+      // before-walk bug the task DnD just shed: stripping the indicator at
+      // the top of the commit path made the renumber walk push drag.source
+      // at the END every time (the `if (!insertedSource) orderedPeers.push
+      // (drag.source)` fallback fired on every drop). The fix mirrors the
+      // task pointerup: walk while the indicator is still in DOM, then
+      // remove visuals.
       const indParent = drag.indicator.parentElement;
-      drag.indicator.remove();
-      execGroupDrag = null;
-      execDragRefreshSuppressed = false;
-      if (!indParent) return;
+      if (!indParent) {
+        drag.indicator.remove();
+        execGroupDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
+      }
 
       // Resolve the new parent from the indicator's wrapper context.
       const indicatorParentClass = indParent.className;
       let targetParentId: string | null;
       let containerEl: HTMLElement;
       if (drag.isTopLevel) {
-        // Top-level peers live as direct children of #exec-tasks-body.
         targetParentId = null;
         containerEl = body;
       } else {
         if (indParent.classList.contains("exec-group")) {
-          // Appended into a top-level group → that group is the new parent.
           targetParentId = (indParent.dataset.axis as string) ?? null;
           containerEl = indParent;
         } else {
@@ -8732,22 +8761,17 @@ function init() {
           targetParentId = (enclosingTop?.dataset.axis as string) ?? null;
           containerEl = enclosingTop ?? indParent;
         }
-        if (!targetParentId) return;
+        if (!targetParentId) {
+          drag.indicator.remove();
+          execGroupDrag = null;
+          execDragRefreshSuppressed = false;
+          return;
+        }
       }
 
-      // FORK 2026-05-23 — was a single axes.update with a midpoint position
-      // (prevPos + nextPos) / 2. task_axis.position is INTEGER in
-      // store.sql (see schema.sql), so the same rank-collision bug that
-      // plagued task DnD (commit 76df31f68d) hits group DnD as soon as a
-      // few midpoints round to the same integer. Symptom matches the user
-      // report: "changing the order of the groups does not seem to work
-      // all the time. the destination location does not get to the right
-      // place." Fix: mirror the task renumber-on-drop pattern. Walk the
-      // destination container in DOM order, treating the indicator as the
-      // dragged group's new slot (skipping the source wrapper), and send
-      // parallel axes.update RPCs renumbering every same-level peer at
-      // position (i + 1) * 100. Spacing 100 leaves headroom; renumbering
-      // every drop means collisions never accumulate.
+      // Walk the destination container in DOM order, still WITH the
+      // indicator + source visible. Source row carries .exec-group-source
+      // so the loop body skips it; indicator marks drag.source's new slot.
       const peerSelector = drag.isTopLevel ? ".exec-group" : ".exec-subgroup";
       const peerNodes = Array.from(
         containerEl.querySelectorAll<HTMLElement>(
@@ -8764,27 +8788,46 @@ function init() {
           }
           continue;
         }
-        if (node === drag.source) continue; // skip; will be reinserted at indicator slot
+        if (node === drag.source) continue;
         if (node.classList.contains("exec-group-source")) continue;
         orderedPeers.push(node);
       }
+
+      // Indicator-not-found in containerEl is a hard error, not a fallback
+      // to "push at end" (that was the bug we just fixed for task DnD).
       if (!insertedSource) {
-        orderedPeers.push(drag.source);
+        // eslint-disable-next-line no-console
+        console.warn("[exec-group-drag] indicator outside containerEl — aborting renumber", {
+          containerEl,
+          indParent,
+        });
+        drag.source.classList.remove("exec-group-source");
+        drag.indicator.remove();
+        execGroupDrag = null;
+        execDragRefreshSuppressed = false;
+        return;
       }
 
       // No-op detection: same parent AND the new order matches the current
-      // order at this same level. Avoid the parallel RPC batch + refresh
-      // round-trip when nothing actually changed.
+      // visual order (source's current DOM position vs. orderedPeers).
       const sameParent = (drag.parentAtStart ?? null) === (targetParentId ?? null);
+      let sameOrder = false;
       if (sameParent) {
         const currentOrder = Array.from(
           containerEl.querySelectorAll<HTMLElement>(`:scope > ${peerSelector}`),
         );
-        const sameOrder =
+        sameOrder =
           currentOrder.length === orderedPeers.length &&
           currentOrder.every((el, i) => el === orderedPeers[i]);
-        if (sameOrder) return;
       }
+
+      // Visuals can be stripped now that the walk is done.
+      drag.source.classList.remove("exec-group-source");
+      drag.indicator.remove();
+      execGroupDrag = null;
+      execDragRefreshSuppressed = false;
+
+      if (sameOrder) return;
 
       try {
         await Promise.all(
@@ -8794,9 +8837,6 @@ function init() {
               id: peerId,
               position: (i + 1) * 100,
             };
-            // Source axis carries the parent_id change (if any). Other
-            // peers in this container already have the correct parent_id;
-            // omit to leave it unchanged.
             if (peer === drag.source) {
               params.parent_id = targetParentId;
             }
