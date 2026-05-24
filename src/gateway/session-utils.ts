@@ -52,6 +52,7 @@ import {
   type SessionEntry,
   type SessionStoreTarget,
   type SessionScope,
+  updateSessionStore,
 } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
@@ -1651,12 +1652,48 @@ export function listSessionsFromStore(params: {
     }
   }
   if (storeMutated) {
-    try {
-      fs.writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[sessions.list] cookiePhrase write-back failed", err);
+    // FORK 2026-05-24 (sixth pass) — bug task-mpjhzu3j-ma9ts: was direct
+    // fs.writeFileSync of the in-memory store. That's a non-atomic
+    // last-writer-wins overwrite — if a concurrent sessions.delete had
+    // just stamped deletedAt via the atomic updateSessionStore path,
+    // and our in-memory snapshot was older than that write, we'd clobber
+    // the deletedAt on disk. Symptom: user clicks delete, server returns
+    // 200, but on page refresh the row reappears because the lazy-mint
+    // write that immediately followed wiped the deletedAt.
+    //
+    // Fix: use updateSessionStore (atomic read-modify-write via the
+    // rename-temp pattern). Re-reads disk INSIDE the helper, applies
+    // ONLY the cookiePhrase fields we minted, writes atomically. Any
+    // other field a concurrent writer set (deletedAt, label, etc.) is
+    // preserved.
+    //
+    // Fire-and-forget — the list response doesn't wait. Worst case the
+    // persistence fails for one mint and the next list re-mints; cost is
+    // a re-render of one phrase, not data loss.
+    const phrasesToPersist: Record<string, string> = {};
+    for (const [k, v] of Object.entries(store)) {
+      if (v?.cookiePhrase) {
+        phrasesToPersist[k] = v.cookiePhrase;
+      }
     }
+    setImmediate(() => {
+      updateSessionStore(storePath, async (s) => {
+        let mutated = false;
+        for (const [k, phrase] of Object.entries(phrasesToPersist)) {
+          const existing = s[k];
+          // Only set if missing or legacy 2-word — don't trample a
+          // value an explicit sessions.patch set since we read it.
+          if (existing && (!existing.cookiePhrase || isLegacy2WordPhrase(existing.cookiePhrase))) {
+            existing.cookiePhrase = phrase;
+            mutated = true;
+          }
+        }
+        return mutated;
+      }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn("[sessions.list] cookiePhrase persist failed", err);
+      });
+    });
   }
 
   const includeGlobal = opts.includeGlobal === true;
