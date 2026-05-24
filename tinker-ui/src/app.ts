@@ -5971,8 +5971,18 @@ function updateSessionsPanel() {
         const newTab = createTab();
         newTab.sessionKey = key;
         newTab.isAttached = true;
+        // FORK 2026-05-24 (fifth pass) — bug task-mpjhzu3j-ma9ts: when
+        // the user clicks a session row in the side panel and we create
+        // a new tab for it, the burned-in cookiePhrase MUST win over
+        // the fresh randomFortune() that createTab() just minted (and
+        // over sess.label, which is usually empty for chat-originated
+        // sessions). Previously this only checked sess.label, so the
+        // fresh random fortune stuck and the user saw a different name
+        // every time they opened a session.
         const sess = sessions.find((s: unknown) => s.key === key);
-        if (sess?.label) {
+        if (sess?.cookiePhrase) {
+          newTab.title = sess.cookiePhrase;
+        } else if (sess?.label) {
           newTab.title = sess.label.slice(0, 30);
         }
         renderTabs();
