@@ -5928,8 +5928,19 @@ function updateSessionsPanel() {
           // can recover if the click was a misfire or if an in-flight turn
           // was still writing its answer.
           await req("sessions.delete", { key, deleteTranscript: false });
-          // Close any tab that was using this session
-          const affectedTab = tabs.find((t) => t.sessionKey === key);
+          // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: tab-match was using
+          // exact `===` which missed the canonicalisation gap. The delete
+          // button's data-delete-key is the server's canonical key
+          // ("agent:main:tinker:abc") while tab.sessionKey is the
+          // unprefixed form ("tinker:abc"); exact equality always
+          // failed and the tab stayed open. updateSessionsPanel then
+          // re-injected the still-open tab as a "pinned" fake row, so
+          // the user saw the deleted session reappear immediately.
+          // sessionKeyMatches handles the prefix variance (same helper
+          // renderSessionRow uses for the same drift).
+          const affectedTab = tabs.find(
+            (t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey),
+          );
           if (affectedTab && affectedTab.id !== "tab-main") {
             closeTab(affectedTab.id);
           } else if (affectedTab?.id === "tab-main") {
