@@ -514,13 +514,32 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             return;
           }
           if (ev.type === "content_block_delta" && ev.delta) {
+            // FORK 2026-05-24 — the Anthropic API event includes `index`
+            // (content block index). We MUST keep block{Text,Thinking}Seen
+            // in sync with what fine-grained deltas have pushed so the
+            // cumulative `assistant` handler below doesn't re-emit the
+            // same text. Before this sync, enabling --include-partial-
+            // messages (commit 3e343cb5ee) duplicated every block: the
+            // text streamed once via content_block_delta.text_delta and
+            // then AGAIN when the block-complete `assistant` message
+            // arrived (its prev=blockTextSeen[index]="" → it sliced the
+            // whole cumulative as a "new" delta and pushed it). User saw
+            // "Good catches…Good catches…## 💬 ANSWER…" in the bubble.
+            const blockIndex =
+              typeof (ev as { index?: unknown }).index === "number"
+                ? ((ev as { index?: number }).index as number)
+                : 0;
             if (ev.delta.type === "text_delta" && typeof ev.delta.text === "string") {
               pushTextDelta(ev.delta.text);
+              const prev = blockTextSeen.get(blockIndex) ?? "";
+              blockTextSeen.set(blockIndex, prev + ev.delta.text);
             } else if (
               ev.delta.type === "thinking_delta" &&
               typeof ev.delta.thinking === "string"
             ) {
               pushThinkingDelta(ev.delta.thinking);
+              const prev = blockThinkingSeen.get(blockIndex) ?? "";
+              blockThinkingSeen.set(blockIndex, prev + ev.delta.thinking);
             }
           }
           return;
