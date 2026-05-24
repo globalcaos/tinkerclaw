@@ -1,41 +1,5 @@
 import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
-
-// FORK 2026-05-24 (diagnostic) — first-line module-level log so the user
-// can confirm in DevTools that the latest bundle actually loaded. If
-// THIS doesn't appear in the console after Cmd-Shift-R, the page is
-// still serving stale code (service worker, vite cache, or HMR didn't
-// re-bundle). Remove once bug task-mpjhzu3j-ma9ts converges.
-console.log(
-  "[tinker-ui boot] app.ts module loaded, build DIAG-2 c6bfd6ef3e+ @",
-  new Date().toISOString(),
-);
-
-// FORK 2026-05-24 (diagnostic) — document-level CAPTURE listener for any
-// click that touches a .session-delete-btn anywhere in the DOM. Fires
-// BEFORE bubble-phase listeners; survives stopPropagation. If THIS
-// doesn't fire when the user clicks the trash icon, the click event
-// is being swallowed BEFORE it reaches the document (pointer-events:
-// none, an overlay, or the icon is rendered inside a shadow root).
-// Remove once bug task-mpjhzu3j-ma9ts converges.
-document.addEventListener(
-  "click",
-  (e) => {
-    const t = e.target as HTMLElement;
-    const delBtn = t?.closest?.(".session-delete-btn");
-    if (delBtn) {
-      // eslint-disable-next-line no-console
-      console.log("[diag document-capture] click reached document on delete button", {
-        target: t,
-        delBtn,
-        dataDeleteKey: (delBtn as HTMLElement).dataset.deleteKey,
-        defaultPrevented: e.defaultPrevented,
-      });
-    }
-  },
-  true, // capture phase
-);
-
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
@@ -5941,50 +5905,36 @@ function updateSessionsPanel() {
   // (per-element listeners get destroyed on innerHTML re-render)
   if (!(el as unknown).__sessionsWired) {
     (el as unknown).__sessionsWired = true;
-    // FORK 2026-05-24 (diagnostic) — confirm this wire-up actually ran.
-    // If the user reloads and gets ZERO `[sessions-panel wired]` log,
-    // it means the new bundle didn't load OR the sessions-list element
-    // doesn't exist yet when this code runs.
-    // eslint-disable-next-line no-console
-    console.log(
-      "[sessions-panel wired] attaching click listener to",
-      el,
-      "bundle=DIAG-c6bfd6ef3e+",
-    );
 
     el.addEventListener("click", async (e) => {
       const tgt = e.target as HTMLElement;
-      // eslint-disable-next-line no-console
-      console.log(
-        "[sessions-panel click]",
-        "target=",
-        (tgt.tagName || "") + "." + (tgt.className || ""),
-        "closest(.session-delete-btn)=",
-        tgt.closest(".session-delete-btn"),
-        "closest(.session-row)=",
-        tgt.closest(".session-row"),
-      );
 
       // ── Delete button (check FIRST — before row click swallows it) ──
       const delBtn = tgt.closest(".session-delete-btn") as HTMLElement | null;
       if (delBtn) {
         e.stopPropagation();
         const key = delBtn.dataset.deleteKey;
-        // eslint-disable-next-line no-console
-        console.log("[session-delete] start", { key, btn: delBtn });
         if (!key) {
-          // eslint-disable-next-line no-console
-          console.warn("[session-delete] aborting — no data-delete-key");
           return;
         }
         const row = delBtn.closest(".session-row") as HTMLElement | null;
+        // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: in-flight delete
+        // feedback. Sessions with active claude-cli workers can take
+        // seconds to delete (server-side cleanupSessionBeforeMutation
+        // waits for the worker to drain). Without visible progress, the
+        // user clicks again, second click hits a re-rendered row that's
+        // a different state, looks like "delete didn't work". Now:
+        //   - lock the button (pointer-events: none) to swallow rapid
+        //     repeat clicks
+        //   - drop opacity to 0.3 (existing behaviour, kept)
+        //   - add a small ⌛ overlay so the user sees something is
+        //     happening even with no console open
+        // On error, restore everything. On success, the next loadSessions
+        // re-renders and the row is gone (or restored if server rejected).
         if (row) {
           row.style.opacity = "0.3";
-          // eslint-disable-next-line no-console
-          console.log("[session-delete] row grayed", row);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn("[session-delete] no .session-row ancestor");
+          row.style.pointerEvents = "none";
+          row.setAttribute("data-deleting", "1");
         }
         try {
           // FORK (2026-04-24): soft delete — archive transcript on disk
@@ -5993,11 +5943,7 @@ function updateSessionsPanel() {
           // mutation the transcript survives at `sessions-archive/` so we
           // can recover if the click was a misfire or if an in-flight turn
           // was still writing its answer.
-          // eslint-disable-next-line no-console
-          console.log("[session-delete] calling sessions.delete RPC", { key });
-          const rpcResult = await req("sessions.delete", { key, deleteTranscript: false });
-          // eslint-disable-next-line no-console
-          console.log("[session-delete] RPC returned", rpcResult);
+          await req("sessions.delete", { key, deleteTranscript: false });
           // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: tab-match was using
           // exact `===` which missed the canonicalisation gap. The delete
           // button's data-delete-key is the server's canonical key
@@ -6011,37 +5957,22 @@ function updateSessionsPanel() {
           const affectedTab = tabs.find(
             (t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey),
           );
-          // eslint-disable-next-line no-console
-          console.log("[session-delete] affectedTab lookup", {
-            key,
-            tabSessionKeys: tabs.map((t) => t.sessionKey),
-            affectedTab,
-          });
           if (affectedTab && affectedTab.id !== "tab-main") {
-            // eslint-disable-next-line no-console
-            console.log("[session-delete] closing tab", affectedTab.id);
             closeTab(affectedTab.id);
           } else if (affectedTab?.id === "tab-main") {
             // Main tab can't be closed — just clear its state
-            // eslint-disable-next-line no-console
-            console.log("[session-delete] affected tab is tab-main; clearing its state");
             sessionKey = "";
             messages = [];
             updateChat();
-          } else {
-            // eslint-disable-next-line no-console
-            console.log("[session-delete] no affected tab — skipping closeTab");
           }
-          // eslint-disable-next-line no-console
-          console.log("[session-delete] calling loadSessions() to refresh side panel");
           await loadSessions();
-          // eslint-disable-next-line no-console
-          console.log("[session-delete] DONE — loadSessions returned");
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.error("[session-delete] FAILED:", err);
+          console.error("Failed to delete session:", err);
           if (row) {
             row.style.opacity = "1";
+            row.style.pointerEvents = "";
+            row.removeAttribute("data-deleting");
           }
         }
         return;
