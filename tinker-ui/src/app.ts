@@ -3468,13 +3468,22 @@ type SectionedReply = {
   fractal?: string;
   other?: string;
 };
-// Markers tolerate: optional bold wrapping (** or __), optional colon, optional
-// space between emoji and label. Opus sometimes emits `💬 ANSWER:`, sometimes
-// `💬 **ANSWER**`, sometimes `💬 **ANSWER:**` — all three must match.
-const AMY_MARKER_RE = /(^|\n)\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
-const ANS_MARKER_RE = /(^|\n)\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+// Markers tolerate: optional markdown heading marks (#, ##, ###, ####), optional
+// bold wrapping (** or __), optional colon, optional space between emoji and
+// label. Opus has been observed emitting all of:
+//   `💬 ANSWER:`, `💬 **ANSWER**`, `💬 **ANSWER:**`, `## 💬 ANSWER`,
+//   `### 💬 ANSWER`, `**💬 ANSWER**`
+// — all of which must match. FORK 2026-05-24: added `#{0,4}\s*` after the
+// leading anchor because the model started emitting `## 💬 ANSWER` (a
+// markdown H2 heading) and the splitter was returning null → renderSectioned-
+// Reply never fired → the answer + amygdala + fractal rendered as one big
+// jumbled assistant bubble with the section markers as literal text.
+const AMY_MARKER_RE =
+  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+const ANS_MARKER_RE =
+  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 const FRA_MARKER_RE =
-  /(^|\n)\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 function splitSectionedReply(text: string): SectionedReply | null {
   if (!text) {
     return null;
