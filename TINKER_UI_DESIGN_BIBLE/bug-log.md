@@ -411,6 +411,14 @@ fix, pick from this list — extend it only if no tag fits.
 - **Commit:** `d32e44cc24`
 - **Rule:** when two paths can both deliver the same logical content (token-deltas + cumulative re-emit), the secondary tracker MUST be updated by BOTH paths or the consuming path will double-emit. Diagnostic recipe: count occurrences of identical text blocks in the rendered UI snapshot at `~/.openclaw/data/tinker-ui-snapshot.html` vs the source JSONL at `~/.claude/projects/<cwd>/<sessionId>.jsonl` — if JSONL has it once but UI has it twice → dual-path push regression. See `[[project_cc_bridge_streaming_partial_messages]]` in jarvis-icu memory.
 
+### FIXED [config-dead-code]: Gateway-side code change didn't take effect after `openclaw gateway restart` (no rebuild step) (2026-05-24)
+
+- **Symptom:** Shipped commit `cb0a6b4e1e` (fortune-cookie session names + soft-delete) + `openclaw gateway restart`. The user reported "secondary sessions are still named weird" — `sessions.list` was returning zero `cookiePhrase` fields despite the new code being committed + pushed.
+- **Root cause:** `openclaw gateway restart` runs `systemctl --user restart openclaw-gateway.service` which re-execs the SAME bundled binary at `~/src/tinkerclaw/dist/index.js`. The dist was built on May 23 (BEFORE the commit). The restart never picked up the new source. Gateway version `openclaw --version` reported the new commit hash (because the CLI is loaded from source via tsx), but the GATEWAY PROCESS was running the stale bundle.
+- **Fix:** `pnpm build` (runs `node scripts/build-all.mjs` → tsdown + postbuild + plugin-sdk checks) THEN `openclaw gateway restart`. Verified post-fix: `sessions.list` returns 49/50 entries with `cookiePhrase` populated, sample phrases `slate stream`, `indigo willow`, `silver hearth`, `ancient foxglove`, etc.
+- **Rule:** for any change touching `src/gateway/`, `src/config/`, `src/agents/`, `src/auto-reply/`, etc. (anything bundled into `dist/index.js`) — build BEFORE restart. The mtime check `ls -la dist/index.js` against your commit time is the canary. Plugins under `extensions/*/src/` are exempt — they're TS-loaded at runtime via `definePluginEntry` and need ONLY a restart (no build). Tinker UI has its own vite HMR loop and needs neither.
+- **Rule (jarvis-icu memory):** [[feedback_gateway_restart_does_not_rebuild]] carries the build-step responsibility table.
+
 ### FIXED [ui-state-clear]: Prefrontal "claude still running" with frozen clock after graceful restart (2026-05-24)
 
 - **Symptom:** "Prefrontal says claude is still running, with frozen clock, but I don't see thinking activity anywhere else. Should it not go back to idle?" Server-side `prefrontal.tree` RPC returned `{active:false, root:null}` while the Tinker UI's prefrontal panel still showed an active claude run with a frozen elapsed timer.
