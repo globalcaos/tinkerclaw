@@ -396,164 +396,27 @@ function randomFortune(): string {
   return FORTUNE_COOKIES[Math.floor(Math.random() * FORTUNE_COOKIES.length)];
 }
 
-// FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1). The
-// SHORT 2-word cookie-phrase generator. MUST stay in lockstep with the
-// server-side word lists at src/gateway/session-cookie-phrase.ts — the
-// client mints these as tab.title placeholders for brand-new tabs; the
-// server lazy-mints the same shape at sessions.list and persists into
-// sessions.json. The sessions.list response handler reconciles tab.title
-// to the server's value when the two differ (see syncTabTitlesFromCookie-
-// Phrases below). Wordlist parity is enforced by a bible verify in
-// session-naming.md frontmatter — if you change one list you MUST mirror
-// it in the other.
+// FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts. The first
+// pass invented a separate 2-word generator (COOKIE_ADJECTIVES /
+// COOKIE_NOUNS) — that was a hallucinated requirement; the existing
+// FORTUNE_COOKIES pool (200+ long poetic greetings with emojis) is
+// what the user wanted all along. randomFortune() above is the only
+// mint site now. The 2-word generator + its helpers have been
+// deleted. See bible session-naming.md for the contract.
 //
-// See TINKER_UI_DESIGN_BIBLE/session-naming.md for the full contract.
-const COOKIE_ADJECTIVES = [
-  "amber",
-  "quiet",
-  "drifting",
-  "dusk",
-  "gentle",
-  "restless",
-  "hidden",
-  "ember",
-  "mossy",
-  "lucid",
-  "fern",
-  "marble",
-  "brass",
-  "golden",
-  "opal",
-  "jade",
-  "slate",
-  "indigo",
-  "twilight",
-  "dawn",
-  "sage",
-  "copper",
-  "velvet",
-  "glass",
-  "paper",
-  "silver",
-  "ivory",
-  "ochre",
-  "ruby",
-  "woven",
-  "hushed",
-  "weathered",
-  "brindle",
-  "deep",
-  "pale",
-  "ancient",
-  "soft",
-  "windswept",
-  "tender",
-  "kindled",
-] as const;
-
-const COOKIE_NOUNS = [
-  "raven",
-  "dune",
-  "hearth",
-  "bramble",
-  "willow",
-  "lantern",
-  "river",
-  "harbor",
-  "vault",
-  "abacus",
-  "sparrow",
-  "ridge",
-  "anvil",
-  "mariner",
-  "vector",
-  "tower",
-  "glacier",
-  "garden",
-  "atlas",
-  "archer",
-  "kestrel",
-  "beacon",
-  "sentinel",
-  "oracle",
-  "foxglove",
-  "mountain",
-  "stream",
-  "almanac",
-  "courtyard",
-  "monastery",
-  "lighthouse",
-  "citadel",
-  "flute",
-  "threshold",
-  "melody",
-  "parable",
-  "signal",
-  "watcher",
-  "traveler",
-  "alibi",
-  "breath",
-  "ledger",
-  "current",
-  "story",
-  "axis",
-  "frame",
-  "lens",
-  "vessel",
-  "rune",
-  "compass",
-  "marsh",
-  "harbour",
-  "echo",
-  "fjord",
-  "orchard",
-  "forge",
-  "meadow",
-  "lattice",
-  "verse",
-  "alcove",
-  "cathedral",
-  "spire",
-  "isthmus",
-  "delta",
-  "harvest",
-  "loom",
-  "anchor",
-  "veil",
-  "tapestry",
-  "thicket",
-  "pilgrim",
-  "carillon",
-  "manuscript",
-  "scribe",
-  "promise",
-  "tide",
-  "constellation",
-  "envoy",
-  "wanderer",
-] as const;
-
-function randomCookiePhrase(): string {
-  const adj = COOKIE_ADJECTIVES[Math.floor(Math.random() * COOKIE_ADJECTIVES.length)];
-  const noun = COOKIE_NOUNS[Math.floor(Math.random() * COOKIE_NOUNS.length)];
-  return `${adj} ${noun}`;
-}
-
-// FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts. Default-cookie-phrase detector
-// used by the post-sessions.list reconciliation step. A tab.title that
-// matches this regex is treated as a "default cookie phrase shape" and is
-// eligible to be replaced by the server's authoritative cookiePhrase value;
-// anything that does NOT match (Gemini auto-title, "🏠 Main", user-edited
-// strings, anything with uppercase or punctuation) is left alone. The
-// regex mirrors the server's generator output exactly: two lowercase
-// adjective+noun words with an optional " NN" suffix from the collision-
-// retry path in session-cookie-phrase.ts.
-const COOKIE_PHRASE_RE = /^[a-z]+ [a-z]+( \d{2})?$/;
-function looksLikeDefaultCookiePhrase(value: string | undefined): boolean {
+// looksLikeLegacy2WordPhrase is kept for ONE purpose: migrating
+// sessions whose cookiePhrase was set by the server-side lazy-mint
+// during the first pass. When loadSessions sees a stored phrase
+// that matches the 2-word shape, it re-mints a long fortune and
+// patches the server. Once all legacy entries have flushed, this
+// helper has no remaining purpose — safe to delete after a week or
+// two of normal use.
+const LEGACY_2WORD_PHRASE_RE = /^[a-z]+ [a-z]+( \d{2})?$/;
+function looksLikeLegacy2WordPhrase(value: string | undefined): boolean {
   if (!value) {
     return false;
   }
-  return COOKIE_PHRASE_RE.test(value.trim());
+  return LEGACY_2WORD_PHRASE_RE.test(value.trim());
 }
 
 // FORK: Per-tab state isolation — each tab has its own chat state.
@@ -2736,18 +2599,33 @@ function onEvent(evt: unknown) {
 async function loadSessions(opts?: { loadChat?: boolean }) {
   const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
   sessions = res.sessions ?? [];
-  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts (Tabs behavior part 1):
-  // server-cookiePhrase reconciliation. For every tab whose sessionKey
-  // matches a returned session row WITH a `cookiePhrase` set, and whose
-  // current tab.title is a default cookie-phrase shape (lowercase
-  // adjective+noun, optional 2-digit collision suffix), replace tab.title
-  // with the server's value. Server is authoritative for the burned-in
-  // name; client cookie phrases mint locally for instant new-tab feedback
-  // and converge to the server's value on the next sessions.list. The
-  // looksLikeDefaultCookiePhrase regex deliberately excludes auto-title
-  // strings (uppercase, emoji, punctuation) and "🏠 Main" — those still
-  // win, per session-naming.md contract.
+  // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts (Tabs
+  // behavior part 1): cookiePhrase reconciliation per the unified
+  // contract in bible session-naming.md.
+  //
+  // For each tab whose sessionKey matches a returned session row, decide
+  // what the burned-in name should be and converge both tab.title AND
+  // the server-side cookiePhrase:
+  //
+  //   1. If the server returned a NON-legacy cookiePhrase, that's
+  //      authoritative — copy it into tab.title.
+  //   2. If the server returned NO cookiePhrase OR a legacy 2-word
+  //      phrase (from the first-pass server-side lazy-mint that was
+  //      WRONG), mint a fresh FORTUNE_COOKIES entry, patch it up via
+  //      sessions.patch, and set tab.title to match. The tab.title
+  //      preference (from addTab() or /clear) carries over — only
+  //      regenerate if tab.title is missing OR is itself a legacy
+  //      2-word value.
+  //
+  // The auto-title path (Gemini topic phrase) STILL beats both — if
+  // tab.title doesn't look like a legacy 2-word phrase AND doesn't
+  // look like a FORTUNE_COOKIES entry (e.g., "🔧 Fix auth bug"), it
+  // is treated as a meaningful customization and we don't overwrite it
+  // on the client. We still push to the server (so the side panel's
+  // cookiePhrase fallback matches when the tab is closed), but only
+  // if the server doesn't already have a NON-legacy value.
   let tabTitlesChanged = false;
+  const pendingPatches: { key: string; cookiePhrase: string }[] = [];
   for (const tab of tabs) {
     if (!tab.sessionKey || tab.id === "tab-main") {
       continue;
@@ -2757,20 +2635,52 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
         s &&
         typeof (s as { key?: unknown }).key === "string" &&
         sessionKeyMatches((s as { key: string }).key, tab.sessionKey ?? ""),
-    ) as { cookiePhrase?: string } | undefined;
-    const serverPhrase = sess?.cookiePhrase;
-    if (
-      serverPhrase &&
-      looksLikeDefaultCookiePhrase(tab.title) &&
-      tab.title.trim() !== serverPhrase.trim()
-    ) {
-      tab.title = serverPhrase;
+    ) as { key: string; cookiePhrase?: string } | undefined;
+    if (!sess) {
+      // Session not yet known to server — server-side entry will be
+      // created on first chat.send; we'll see it on a later poll.
+      continue;
+    }
+    const serverPhrase = sess.cookiePhrase;
+    const serverIsLegacy = serverPhrase ? looksLikeLegacy2WordPhrase(serverPhrase) : false;
+    const tabIsLegacy = looksLikeLegacy2WordPhrase(tab.title);
+
+    if (serverPhrase && !serverIsLegacy) {
+      // Server has a valid burned-in phrase. Sync tab.title to it if the
+      // tab.title is itself a default shape OR a legacy 2-word value.
+      if ((tabIsLegacy || tab.title === serverPhrase) && tab.title !== serverPhrase) {
+        tab.title = serverPhrase;
+        tabTitlesChanged = true;
+      }
+      continue;
+    }
+
+    // Server has no phrase, OR has a legacy 2-word phrase. We need to
+    // mint a fresh long fortune. Prefer the tab.title if it ISN'T a
+    // legacy 2-word value AND IS a meaningful name (else generate fresh).
+    let mint: string;
+    if (tab.title && !tabIsLegacy) {
+      mint = tab.title;
+    } else {
+      mint = randomFortune();
+      tab.title = mint;
       tabTitlesChanged = true;
     }
+    pendingPatches.push({ key: sess.key, cookiePhrase: mint });
   }
   if (tabTitlesChanged) {
     saveTabs();
     renderTabs();
+  }
+  // Fire-and-forget the patches. sessions.patch is a normal RPC that
+  // updates SessionEntry.cookiePhrase server-side. The result of these
+  // patches will surface on the next sessions.list poll; we don't await
+  // them to keep loadSessions snappy.
+  for (const patch of pendingPatches) {
+    void req("sessions.patch", patch).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("[loadSessions] cookiePhrase patch failed", patch.key, err);
+    });
   }
   const hadSessionKey = Boolean(sessionKey);
   if (!sessionKey && sessions.length) {
@@ -5444,16 +5354,16 @@ function switchToTab(tabId: string) {
 function createTab(): Tab {
   // FORK: Eagerly assign a session key so the tab appears in the
   // sessions panel immediately. Gateway auto-creates on first chat.send.
-  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts (Tabs behavior part 1): was
-  // `randomFortune()` (a long poetic FORTUNE_COOKIES greeting). That value
-  // diverged from the server's cookiePhrase (short 2-word) — see bible
-  // session-naming.md "Current divergence". Now mints a 2-word phrase from
-  // the same word-pool the server uses; sessions.list reconciliation will
-  // converge this to the server's authoritative value on the next round-trip.
+  // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts (Tabs behavior
+  // part 1): client mints the burned-in name from the existing
+  // FORTUNE_COOKIES pool (long poetic greetings, 200+ entries, includes
+  // emoji). loadSessions then patches this phrase to the server-side
+  // cookiePhrase field via sessions.patch once the session entry exists
+  // on the server, so it survives tab close + gateway restart.
   const tab: Tab = {
     id: generateTabId(),
     sessionKey: `tinker:${Date.now().toString(36)}`,
-    title: randomCookiePhrase(),
+    title: randomFortune(),
     isAttached: true,
   };
   tabs.push(tab);
@@ -12135,9 +12045,10 @@ function init() {
       tab.sessionKey = newKey;
       tab.isAttached = true;
       sessionKey = newKey;
-      // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: same wordpool as the
-      // server-side lazy-mint. See addTab() above + bible session-naming.md.
-      tab.title = randomCookiePhrase();
+      // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts: same as
+      // addTab(), uses the FORTUNE_COOKIES pool. loadSessions will patch
+      // server-side once the new session entry exists.
+      tab.title = randomFortune();
       tabStates.set(tab.id, freshTabState());
       loadTabState(tab.id);
       saveTabs();

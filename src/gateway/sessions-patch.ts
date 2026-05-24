@@ -249,6 +249,29 @@ export async function applySessionsPatchToStore(params: {
     }
   }
 
+  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+  // burn-in storage for the client-minted long-fortune session name. No
+  // server-side minting; whatever the client patches in here is the value
+  // future sessions.list responses surface. Set to null to clear (uncommon
+  // — used during 2-word-legacy migration). Length cap 2048 keeps it well
+  // under any JSON-blow-up risk while comfortably fitting the longest
+  // FORTUNE_COOKIES entry (~300 chars including emoji).
+  if ("cookiePhrase" in patch) {
+    const raw = patch.cookiePhrase;
+    if (raw === null) {
+      delete next.cookiePhrase;
+    } else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        delete next.cookiePhrase;
+      } else if (trimmed.length > 2048) {
+        return invalid(`cookiePhrase exceeds 2048 chars`);
+      } else {
+        next.cookiePhrase = trimmed;
+      }
+    }
+  }
+
   if ("thinkingLevel" in patch) {
     const raw = patch.thinkingLevel;
     if (raw === null) {
