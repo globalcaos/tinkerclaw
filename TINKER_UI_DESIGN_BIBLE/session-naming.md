@@ -1,46 +1,44 @@
 ---
 file: session-naming.md
-purpose: Single source of truth for how every visible name on a session is generated, persisted, and rendered. Captures the current state, the divergence bugs we hit, and the unified contract we want to land.
+purpose: Single source of truth for how every visible name on a session is generated, persisted, and rendered. Captures the current state, the divergence bugs we hit, and the unified contract.
 audience: AI
 last_verified: 2026-05-24
-last_verified_commit: 79e3546258
+last_verified_commit: HEAD
 single_owner: yes — anything about session/tab naming, fortune cookies, label-resolution priority lives ONLY here. cookiePhrase, tab.title, label, displayName all funnel through one chain documented below.
-see_also: tinker-ui.md §5.69 (sessions list — server-resolver hardening), bible.md §5.67 (amygdala/fractal — unrelated but uses "fortune" terminology too, watch the namespace collision), bug-log.md FIXED [config-dead-code] 2026-05-24 (gateway-rebuild gotcha that hid Bug 1 of `task-mpjhzu3j-ma9ts` for two hours).
-status: ANALYSIS — the unified contract at the bottom is the TARGET state. Sections "Current state" / "Current divergence" describe what's deployed today (post-cb0a6b4e1e + post-79e3546258). The Fix plan section is the work item.
+see_also: tinker-ui.md §5.69 (sessions list — server-resolver hardening), bug-log.md FIXED [config-dead-code] 2026-05-24 (gateway-rebuild gotcha that hid Bug 1 of `task-mpjhzu3j-ma9ts` for two hours).
+status: DEPLOYED 2026-05-24 second pass — the unified contract below is what ships. The first pass invented a server-side 2-word generator that was wrong; deleted. The user-curated FORTUNE_COOKIES pool (200+ long greetings with emoji) is the only phrase source.
 ---
 
 # Session-naming contract
 
 There is exactly ONE visible name per session. The user sees it in three places: the right-panel sessions list row, the active tab strip tab, and any session-selector dropdown. These three surfaces must always agree.
 
-Today they don't. This file maps why.
-
 ## The four name signals
 
-| Signal         | Where minted                                                              | Format                                                 | Persisted where                                                     | Lifetime                                                                 |
-| -------------- | ------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `tab.title`    | client (`tinker-ui/src/app.ts`)                                           | varies — see Tab.title sources below                   | `localStorage["tinker.tabs"]`                                       | until tab closed (and even then, if persisted)                           |
-| `cookiePhrase` | gateway (`src/gateway/session-cookie-phrase.ts`)                          | `"<adjective> <noun>"` — "ivory anvil", "slate stream" | `sessions.json` (SessionEntry.cookiePhrase)                         | burned-in forever once minted; survives every restart, rotation, close   |
-| `label`        | server (whatever set it — chat.send origin, group title, manual edit)     | freeform — usually empty for chat-originated sessions  | `sessions.json` (SessionEntry.label)                                | until cleared                                                            |
-| `displayName`  | server, derived from `origin.label` or `channel`/`subject`/`groupChannel` | freeform                                               | `sessions.json` (SessionEntry.displayName) OR computed at list-time | mostly persistent; the "Tinker UI" generic-WS-client leak (filtered now) |
+| Signal         | Where minted                                                              | Format                                                                                  | Persisted where                                                     | Lifetime                                                           |
+| -------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `tab.title`    | client (`tinker-ui/src/app.ts`)                                           | one of FORTUNE_COOKIES on mint; auto-title may override                                 | `localStorage["tinker.tabs"]`                                       | until tab closed (and even then, if persisted)                     |
+| `cookiePhrase` | client mints via `randomFortune()`; server stores via `sessions.patch`    | freeform string — whatever the client patches in (in practice: a FORTUNE_COOKIES entry) | `sessions.json` (SessionEntry.cookiePhrase)                         | burned-in forever once minted; survives every restart and rotation |
+| `label`        | server (whatever set it — chat.send origin, group title, manual edit)     | freeform — usually empty for chat-originated sessions                                   | `sessions.json` (SessionEntry.label)                                | until cleared                                                      |
+| `displayName`  | server, derived from `origin.label` or `channel`/`subject`/`groupChannel` | freeform                                                                                | `sessions.json` (SessionEntry.displayName) OR computed at list-time | mostly persistent                                                  |
 
 ## Tab.title sources (the client-side mint sites)
 
-Five callsites currently set `tab.title`. They use different generators:
+Four callsites currently set `tab.title`:
 
 1. **`addTab()`** (`app.ts:5251`) — new tab from the "+" button.
-   - Currently: `title: randomFortune()` → picks ONE of ~hundreds of LONG poetic greetings from `FORTUNE_COOKIES` (`app.ts:156`). Example: `"🔓 The thought you are most tempted to believe without questioning is the one most worth examining…"`
+   - `title: randomFortune()` → picks ONE of ~200+ LONG poetic greetings from `FORTUNE_COOKIES` (`app.ts:156`). Example: `"🔓 The thought you are most tempted to believe without questioning is the one most worth examining…"`
 
 2. **`/clear` handler** (`app.ts:11928`) — rotates main session, gives the rotated tab a fresh title.
-   - Currently: `tab.title = randomFortune()` (same generator as 1).
+   - `tab.title = randomFortune()` (same pool).
 
 3. **`attachSessionToTab(key)`** (`app.ts:5302`) — when the user clicks a row in the sessions panel to open it in the active tab.
-   - Currently: `if (sess?.label) tab.title = sess.label.slice(0, 30)`. If `sess.label` is empty (the common case for chat-originated sessions), tab.title stays as whatever it was — which is the LONG randomFortune from step 1.
+   - Prefers `sess.cookiePhrase` (the server's burned-in value, which is itself a `FORTUNE_COOKIES` entry); falls through to `sess.label.slice(0, 30)` if no phrase yet.
 
 4. **Auto-title** (Gemini-generated topic phrase from the chat content) — fires after the first turn.
-   - Sets `tab.title` to a topic summary like `"🔧 Fix auth bug"`. This is the meaningful-title path; we want to preserve it.
+   - Sets `tab.title` to a topic summary like `"🔧 Fix auth bug"`. The user-meaningful customisation path; should always win over the random fortune.
 
-5. **`loadTabs()`** restore at module load — reads `localStorage["tinker.tabs"]` and restores `tab.title` for previously-persisted tabs (`app.ts:635-636` for tab-main force "🏠 Main"). No new minting here.
+5. **`loadTabs()`** restore at module load — reads `localStorage["tinker.tabs"]` and restores `tab.title` for previously-persisted tabs. No new minting.
 
 ## Side-panel name resolution (the read site)
 
@@ -54,120 +52,66 @@ Five callsites currently set `tab.title`. They use different generators:
 5. shortLabel                                    (key-derived fallback like "mpgj631q")
 ```
 
-Tab strip rendering: `renderTabs()` just reads `tab.title` directly — no resolution chain, no fallback.
+Tab strip rendering: `renderTabs()` just reads `tab.title` directly.
 
-## Current divergence (the bug)
+## The unified contract (DEPLOYED 2026-05-24, second pass)
 
-Trace one session through the system as it stands today (2026-05-24, post-cb0a6b4e1e):
+1. **Single phrase pool — `FORTUNE_COOKIES`.** The 200+ long poetic greetings (with emoji) at `tinker-ui/src/app.ts:156`. There is no other generator. The first pass invented a separate 2-word adjective×noun pool server-side; that was wrong — the user had already curated `FORTUNE_COOKIES` for this exact purpose. Second pass deleted it.
 
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant UI as tinker-ui (client)
-  participant GW as gateway (sessions.json)
-
-  U->>UI: Click "+" (new tab)
-  UI->>UI: addTab() → tab.title = randomFortune()<br/>= "🔓 The crystal shows…" (LONG)<br/>tab.sessionKey = "tinker:abc"
-  Note over UI: localStorage["tinker.tabs"]<br/>has tab.title = LONG fortune
-
-  U->>UI: First chat message
-  UI->>GW: chat.send {sessionKey:"tinker:abc"}
-  GW->>GW: create session entry<br/>(no cookiePhrase yet)
-  GW-->>UI: response
-
-  UI->>GW: sessions.list (periodic)
-  GW->>GW: lazy-mint cookiePhrase = "slate stream"<br/>(SHORT 2-word)<br/>persists to sessions.json
-  GW-->>UI: row { key:"tinker:abc", cookiePhrase:"slate stream", … }
-
-  Note over UI: side panel render:<br/>tab.title FIRST → "🔓 The crystal shows…"<br/>(NOT cookiePhrase)
-  Note over UI: tab strip render:<br/>tab.title → "🔓 The crystal shows…"
-
-  U->>UI: Close tab
-  UI->>UI: closeTab() removes from tabs[]<br/>(localStorage no longer has tab.title)
-
-  Note over UI: side panel render now:<br/>tab=undefined → cookiePhrase wins<br/>"slate stream" (REVERTED)
-
-  U->>UI: Click row "slate stream" (or "+" then attach)
-  UI->>UI: attachSessionToTab("tinker:abc")<br/>sess.label is empty<br/>tab.title kept (from previous randomFortune)
-  Note over UI: tab strip + side panel<br/>show the LONG fortune again
-```
-
-**What the user sees:**
-
-- "I see 'ivory anvil', 'glass verse'…" → the SHORT cookiePhrase (sess.cookiePhrase) showing in side panel for sessions with no matching open tab.
-- "When I click them they correctly display a fortune cookie phrase from our repertoire" → opening a tab shows the LONG fortune. They're calling it "from our repertoire" because it's still emoji+poetic — but it's a DIFFERENT cookiePhrase family (FORTUNE_COOKIES, not the 2-word generator).
-- "When I close the session tab the title in the side panel reverts" → the priority chain falls from tab.title to cookiePhrase. Two different signals; the side panel changes.
-- "Upon opening a new tab the fortune cookie title is different" → addTab() rolls a fresh random — never the same as the server's persisted cookiePhrase.
-
-## Root cause
-
-There are TWO independent naming systems with NO sync between them:
-
-1. **Client tab.title** uses `randomFortune()` from `FORTUNE_COOKIES` (long poetic greetings). Persists in `localStorage`. Never reconciled with anything server-side.
-2. **Server cookiePhrase** uses `generateCookiePhrase()` from the adjective×noun word lists (short 2-word). Persists in `sessions.json`. Never read by tab.title.
-
-The label-resolution chain prefers `tab.title` over `cookiePhrase`, so as long as a tab is open the user sees the LONG fortune; the moment they close it, they see the SHORT cookiePhrase.
-
-## The unified contract (TARGET state)
-
-1. **Single phrase pool.** Both client and server use the SAME adjective×noun word lists. The client phrase format MUST match the server format (`/^[a-z]+ [a-z]+( \d{2})?$/` per the suffix rule in `session-cookie-phrase.ts`).
-
-2. **Server is authoritative.** `cookiePhrase` in `sessions.json` is the canonical name. Client `tab.title` mirrors it; never the other way around.
+2. **Client mints, server stores.** No server-side generation. `cookiePhrase` in `sessions.json` is a stored-only field (set via `sessions.patch {cookiePhrase}`); the server never picks a value. Client mints at `addTab()` / `/clear` via `randomFortune()`. `loadSessions()` patches the chosen phrase up to the server after the session entry exists.
 
 3. **Tab.title sourcing rule:**
-   - `addTab()` mints a client-side phrase from the SAME generator. Used as a placeholder until sessions.list reconciles.
-   - `/clear` mints a client-side phrase (rotated main session is treated as new).
-   - `attachSessionToTab(key)` uses `sess.cookiePhrase` if present, else falls through to current behavior.
-   - Auto-title (Gemini topic phrase) STILL OVERRIDES — it's the only meaningful user-facing customization and should beat both cookie phrases.
-   - After every `sessions.list` response, sync: for each tab whose sessionKey matches a session with a `cookiePhrase`, if `tab.title` looks like a default phrase (matches the 2-word regex) AND differs from `sess.cookiePhrase`, set `tab.title = sess.cookiePhrase` and persist. This converges client-mint phrases to the server-authoritative ones over the first sessions.list round-trip.
+   - `addTab()` mints `randomFortune()` and uses it as `tab.title`.
+   - `/clear` (main-session rotation) mints `randomFortune()` and uses it as `tab.title` for the rotated tab.
+   - `attachSessionToTab(key)` uses `sess.cookiePhrase` if present (and non-legacy); else falls through to `sess.label`.
+   - Auto-title (Gemini topic phrase) STILL OVERRIDES — it's the meaningful user-facing customisation. Detected by NOT matching `LEGACY_2WORD_PHRASE_RE`.
 
-4. **Side-panel resolution chain unchanged** — tab.title still wins because step (3) keeps it in sync with cookiePhrase OR carries a meaningful auto-title.
+4. **`loadSessions()` reconciliation** (after every `sessions.list` response, for each tab matching a returned session):
+   - **Server has non-legacy phrase**: copy it into `tab.title` if `tab.title` was itself a legacy 2-word value (or matches the server's).
+   - **Server missing phrase OR has legacy 2-word phrase**: mint `randomFortune()` (or keep `tab.title` if already a meaningful non-legacy value), then `sessions.patch {key, cookiePhrase: <chosen>}` — fire-and-forget; result surfaces on next poll. This is the migration path for sessions that got 2-word names from the first-pass server-side lazy-mint.
 
-5. **Deprecate `randomFortune()` for tab titles.** `FORTUNE_COOKIES` should either move to a chat-greeting feature (its own surface) OR be deleted entirely. Tab titles only ever use the 2-word phrase or the auto-title.
+5. **Side-panel resolution chain unchanged.** `tab.title` wins because step (4) keeps it in sync with the stored phrase OR carries a meaningful auto-title; the fallback to `sess.cookiePhrase` catches tabs the user has closed.
 
-## Fix plan (commits to ship)
+## Migration: legacy 2-word phrases
 
-| #   | Change                                                                                                                                                                                                                                                                                                                                 | File                                  |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| 1   | Port the 40×78 word lists from server `session-cookie-phrase.ts` to client `app.ts`. Add `randomCookiePhrase()` using identical algorithm.                                                                                                                                                                                             | `tinker-ui/src/app.ts`                |
-| 2   | Replace `randomFortune()` → `randomCookiePhrase()` at the two tab-creation sites (`addTab`, `/clear` handler).                                                                                                                                                                                                                         | `tinker-ui/src/app.ts:5254`, `:11928` |
-| 3   | `attachSessionToTab` reads `sess.cookiePhrase` first, then `sess.label`.                                                                                                                                                                                                                                                               | `tinker-ui/src/app.ts:5302`           |
-| 4   | In the `sessions.list` response handler (`loadSessions` at `app.ts:2576`), after `sessions = res.sessions`, sync tab.title for any tab whose `sessionKey` matches a session with a `cookiePhrase`, IF tab.title matches the default-phrase regex `/^[a-z]+ [a-z]+( \d{2})?$/` AND differs from `sess.cookiePhrase`. Then `saveTabs()`. | `tinker-ui/src/app.ts:~2580`          |
-| 5   | (Optional, later) Delete `FORTUNE_COOKIES` and `randomFortune()` entirely — they have no other consumers.                                                                                                                                                                                                                              | `tinker-ui/src/app.ts:156`, `:395`    |
+The first pass minted 2-word phrases server-side and persisted them to `sessions.json`. ~49 sessions on the live gateway had legacy values like `"ivory anvil"`, `"slate stream"`, `"silver hearth"` as of 2026-05-24 ~12:00 UTC.
+
+The `loadSessions()` reconciliation detects these via `LEGACY_2WORD_PHRASE_RE` (`/^[a-z]+ [a-z]+( \d{2})?$/`) and re-mints a long fortune, then patches the server. As the user opens tabs for these sessions, they get re-burned organically. No one-shot migration script needed.
+
+After ~a week or two of normal use, `LEGACY_2WORD_PHRASE_RE` + the migration branch in `loadSessions()` will have no remaining work. Both are safe to delete in a cleanup commit at that point.
 
 ## Don't regress
 
-- Never re-introduce `randomFortune()` for tab titles. The long poetic phrases are now a separate concern. The bible verify below asserts this.
-- Never let the client mint a phrase format different from the server. The wordlist MUST be a literal port. If you change the server's lists in `session-cookie-phrase.ts`, change the client's at the same time, in the same commit.
-- The auto-title path (Gemini topic phrase) STILL wins over cookiePhrase — it's the user-meaningful name. Don't break that by always clobbering tab.title from cookiePhrase. Use the default-phrase regex gate.
+- Never re-introduce a server-side `cookiePhrase` generator. `cookiePhrase` is stored-only; the client owns the mint.
+- Never re-introduce a 2-word format. `FORTUNE_COOKIES` is the only pool.
+- Auto-title (Gemini topic phrase) STILL wins over cookiePhrase. Don't break that by clobbering `tab.title` unconditionally. The `looksLikeLegacy2WordPhrase` gate IS what protects auto-titles — any title that doesn't match the legacy regex is treated as user-meaningful.
 
 ## Verify (proposed for next ship)
 
 ```yaml
 verify:
-  - name: addTab uses randomCookiePhrase, not randomFortune (FORK 2026-05-24)
+  - name: server-side cookie-phrase generator REMOVED (FORK 2026-05-24 second pass)
+    cmd: |
+      python3 -c '
+      import os
+      assert not os.path.exists(os.path.expanduser("~/src/tinkerclaw/src/gateway/session-cookie-phrase.ts")), "session-cookie-phrase.ts must not exist — server-side generation was the wrong approach (2-word output) and was removed. cookiePhrase is now stored-only; client mints from FORTUNE_COOKIES."
+      '
+  - name: addTab uses randomFortune (the FORTUNE_COOKIES pool)
     cmd: |
       python3 -c '
       import re, os
       t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read()
-      # locate addTab block by signature
       m = re.search(r"function addTab\([^{]*\{(.*?)^\}", t, re.S | re.M)
       assert m, "addTab block not found"
       block = m.group(1)
-      assert "randomCookiePhrase" in block, "addTab must use randomCookiePhrase, not randomFortune"
-      assert "randomFortune" not in block, "randomFortune must not appear in addTab"
+      assert "randomFortune()" in block, "addTab must mint via randomFortune() from FORTUNE_COOKIES"
+      assert "randomCookiePhrase" not in block, "randomCookiePhrase (legacy 2-word) must not appear"
       '
-  - name: client + server wordlists agree in length (canary for drift)
+  - name: sessions.patch schema accepts cookiePhrase
     cmd: |
       python3 -c '
-      import re, os
-      srv = open(os.path.expanduser("~/src/tinkerclaw/src/gateway/session-cookie-phrase.ts")).read()
-      cli = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read()
-      def count_words(src, key):
-        m = re.search(key + r"\s*=\s*\[([^]]+)\]", src)
-        if not m: return 0
-        return m.group(1).count(",")
-      assert count_words(srv, "ADJECTIVES") == count_words(cli, "COOKIE_ADJECTIVES"), "adjective lists drifted"
-      assert count_words(srv, "NOUNS") == count_words(cli, "COOKIE_NOUNS"), "noun lists drifted"
+      import os
+      t = open(os.path.expanduser("~/src/tinkerclaw/src/gateway/protocol/schema/sessions.ts")).read()
+      assert "cookiePhrase: Type.Optional" in t, "SessionsPatchParamsSchema must accept cookiePhrase or the client cannot persist the burned-in name"
       '
 ```
