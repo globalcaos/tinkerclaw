@@ -254,13 +254,27 @@ body {
      was a single horizontal flex row sharing space between the tabs and
      the toolbox icons. With many tabs the toolbox was getting squeezed
      and the right panel still shrank (the latter root-caused upstream
-     in #app's column template; fixed there). User wants vertical split:
-     tabs OWN the top row, toolbox + status sit in a bottom row pinned
-     as low as possible on the right. Two-row grid does this; column 1
-     (1fr) is the tab row's horizontal extent so tabs can use the full
-     topbar width; column 2 (auto) sizes to the controls cluster. The
-     .topbar-controls wrapper (added in app.ts) holds .toolbox + #gw-status
-     and lives in the row-2 / column-2 cell.
+     in #app's column template; fixed there). Vertical-split layout per
+     the spec verbatim: "the split should be vertical instead so that
+     the tabs can creep UNDER the buttons. Place the buttons, within
+     this split, as low as possible."
+
+       row 1 (top, 1fr):      buttons (toolbox + gw-status) right-
+                              aligned, anchored to the row's BOTTOM
+                              edge (align-self: end) — "as low as
+                              possible within this split"
+       row 2 (bottom, auto):  tab strip, full width, hanging from the
+                              very bottom of the topbar so the tabs
+                              touch the chat surface below — visually
+                              continuous with the chat content
+                              (Chrome-style tab-attached-to-page).
+
+     2026-05-24 (second pass): the FIRST attempt had this inverted (tabs
+     on top, controls on bottom). The user clarified: "the buttons need
+     to be at the top, but within this space, as low as possible. The
+     bottom spot obviously needs to be taken by the tabs, which needs
+     to be in contact with the chat." This is the corrected ordering.
+
      min-width: 0 carried over from the prior fix — combined with the
      tab-bar's overflow:hidden it keeps the topbar from pushing column 2
      wider in the parent #app grid. */
@@ -268,9 +282,9 @@ body {
   grid-template-columns: 1fr auto;
   grid-template-rows: 1fr auto;
   grid-template-areas:
-    "tabs     tabs"
-    ".        controls";
-  padding: 0 12px 4px 110px;
+    ".        controls"
+    "tabs     tabs";
+  padding: 0 12px 0 110px;
   font-size: 12px;
   position: relative;
   min-width: 0;
