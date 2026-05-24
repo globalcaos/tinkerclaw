@@ -1282,8 +1282,26 @@ function onFrame(f: unknown) {
     // Intentionally returns early so onEvent() does not process the shutdown frame.
     if (f.event === "shutdown" && f.payload?.restartExpectedMs != null) {
       if (activeRuns.size > 0) {
-        for (const [, info] of activeRuns) {
+        for (const [runId, info] of activeRuns) {
           info.state = "restarting";
+          // FORK 2026-05-24 — add the runId to unconfirmedRuns so the
+          // post-reconnect scheduleUnconfirmedPrune() at line ~1269 actually
+          // schedules its 30s cleanup timer for these restarting runs.
+          // Without this enrollment, runs marked "restarting" stayed in
+          // activeRuns forever after an in-tab graceful restart: the
+          // gateway process that owned them is dead, so no lifecycle:end
+          // will ever come; the reconnect-hello path runs scheduleUncon-
+          // firmedPrune() unconditionally but it early-returns at
+          // `unconfirmedRuns.size === 0`. Symptom (2026-05-24): prefrontal
+          // panel showed "claude still running" with a frozen elapsed
+          // clock while every other surface reported idle and the server's
+          // own `prefrontal.tree` RPC returned `active:false`. Only a page
+          // reload (which re-runs restoreActiveRuns and repopulates
+          // unconfirmedRuns from sessionStorage) used to clear the ghost.
+          // If lifecycle:start for this same runId arrives after reconnect
+          // (cc-bridge resume preserves runId), it confirms via
+          // unconfirmedRuns.delete(p.runId) — no spurious prune.
+          unconfirmedRuns.add(runId);
         }
         saveActiveRuns();
         startThinkingTick();
