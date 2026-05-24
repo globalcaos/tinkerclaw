@@ -554,6 +554,49 @@ async function detachTab(tabId, reason) {
 // CDP command handler — relay asks us to forward to chrome.debugger
 // ---------------------------------------------------------------------------
 
+// FORK 2026-05-24 — helpers for the Page.navigate cross-site guard above.
+// Kept dependency-free (no public-suffix-list lookup) — the suffix-match
+// heuristic covers the marketplace use cases (wallapop.com, es.wallapop.com,
+// www.wallapop.com all match each other; milanuncios.com does NOT match any
+// of those). Fails on weird ccTLDs like algo.com.es where "com.es" would
+// look like a sibling; not a concern for the current cron targets.
+
+function safeHostname(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "(invalid-url)";
+  }
+}
+
+function isBlankOrPrivilegedUrl(url) {
+  if (!url) return true;
+  if (url === "about:blank") return true;
+  if (url.startsWith("chrome://")) return true;
+  if (url.startsWith("chrome-extension://")) return true;
+  if (url.startsWith("edge://")) return true;
+  if (url.startsWith("about:newtab")) return true;
+  return false;
+}
+
+function isSameSiteUrl(currentUrl, targetUrl) {
+  let curHost, tarHost;
+  try {
+    curHost = new URL(currentUrl).hostname.toLowerCase().replace(/^www\./, "");
+    tarHost = new URL(targetUrl).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return false;
+  }
+  if (!curHost || !tarHost) return false;
+  if (curHost === tarHost) return true;
+  // Subdomain navigation (e.g. wallapop.com → es.wallapop.com) is allowed.
+  // Both directions of suffix match cover any combination of bare-host and
+  // subdomain pairs without needing a public suffix list.
+  if (curHost.endsWith("." + tarHost)) return true;
+  if (tarHost.endsWith("." + curHost)) return true;
+  return false;
+}
+
 async function handleForwardCdpCommand(msg) {
   const method = String(msg?.params?.method || "").trim();
   const params = msg?.params?.params || undefined;
@@ -596,6 +639,40 @@ async function handleForwardCdpCommand(msg) {
   // FORK: Block new tab/window creation — only user-shared tabs are accessible
   if (method === "Target.createTarget") {
     throw new Error("Tinkerclaw: creating new tabs is disabled. Share an existing tab instead.");
+  }
+
+  // FORK 2026-05-24 — bug "Overnight cron uses browser to explore milanuncios
+  // and wallapop" (task-mpie1ypb-1e8i6, part 2): block cross-site Page.navigate
+  // on shared tabs. Jarvis must follow LINKS within the current shared site,
+  // not switch sites via direct URL load (which loses the user's logged-in
+  // context and is, more fundamentally, a violation of the shared-tab
+  // contract — "this is my wallapop tab", not "any tab Jarvis decides to
+  // visit"). Origin is checked at request time from the tab's CURRENT url
+  // (chrome.tabs.get), not pinned on attach — the user remains free to
+  // navigate their own tab; only CDP-initiated cross-site jumps are blocked.
+  if (method === "Page.navigate") {
+    const targetUrl = typeof params?.url === "string" ? params.url : "";
+    if (!targetUrl) {
+      throw new Error("Tinkerclaw: Page.navigate requires a url parameter.");
+    }
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const currentUrl = tab?.url || "";
+    // Allow when the tab has no real URL yet (about:blank, chrome://newtab/,
+    // etc.) — the user may share a blank tab expecting the first nav to
+    // establish context. After that, the static-content URL pins the site.
+    if (
+      currentUrl &&
+      !isBlankOrPrivilegedUrl(currentUrl) &&
+      !isSameSiteUrl(currentUrl, targetUrl)
+    ) {
+      const curHost = safeHostname(currentUrl);
+      const tarHost = safeHostname(targetUrl);
+      throw new Error(
+        `Tinkerclaw: cross-site navigation is disabled on shared tabs ` +
+          `(current=${curHost}, requested=${tarHost}). Click a link within the page ` +
+          `or have the user share a different tab.`,
+      );
+    }
   }
 
   // Target.closeTarget — only close tabs we have attached
