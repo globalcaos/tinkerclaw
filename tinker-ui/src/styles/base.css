@@ -30,7 +30,15 @@ body {
 #app {
   height: 100%;
   display: grid;
-  grid-template-columns: 48px 3fr 1fr;
+  /* FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: right panel was `1fr` of
+     viewport, so a wider window expanded it proportionally. User wants
+     the right panel FIXED-width (matches every other side panel in the
+     workspace). Pinned to 420px (about what 1fr resolved to on a 1920px
+     monitor) so chat width grows with the window instead of the panel.
+     Column 2 (chat + topbar) absorbs all remaining width; `min-width:0`
+     on .topbar + overflow:hidden on .tab-bar contain the topbar so
+     extra tabs never push the right panel narrower. */
+  grid-template-columns: 48px 1fr 420px;
   grid-template-rows: 82px 3fr 1fr;
   overflow: hidden;
   transition:
@@ -42,7 +50,7 @@ body {
   grid-template-rows: 82px 3fr 0fr;
 }
 #app.right-collapsed {
-  grid-template-columns: 48px 3fr 0fr;
+  grid-template-columns: 48px 1fr 0px;
 }
 
 /* Left sidebar */
@@ -242,19 +250,29 @@ body {
   background-blend-mode: multiply;
   background-color: #6b5545;
   border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  padding: 0 12px 0 110px;
-  gap: 8px;
+  /* FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts (Tabs behavior): topbar
+     was a single horizontal flex row sharing space between the tabs and
+     the toolbox icons. With many tabs the toolbox was getting squeezed
+     and the right panel still shrank (the latter root-caused upstream
+     in #app's column template; fixed there). User wants vertical split:
+     tabs OWN the top row, toolbox + status sit in a bottom row pinned
+     as low as possible on the right. Two-row grid does this; column 1
+     (1fr) is the tab row's horizontal extent so tabs can use the full
+     topbar width; column 2 (auto) sizes to the controls cluster. The
+     .topbar-controls wrapper (added in app.ts) holds .toolbox + #gw-status
+     and lives in the row-2 / column-2 cell.
+     min-width: 0 carried over from the prior fix — combined with the
+     tab-bar's overflow:hidden it keeps the topbar from pushing column 2
+     wider in the parent #app grid. */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "tabs     tabs"
+    ".        controls";
+  padding: 0 12px 4px 110px;
   font-size: 12px;
   position: relative;
-  /* FORK 2026-05-23 — grid items default to min-width: auto (= min-content
-     width = sum of children's intrinsic minimums). With many tabs each at
-     min-width: 64px, the topbar's min-content grew, forcing column 2 wider
-     in the parent #app grid (48px / 3fr / 1fr) and stealing space from
-     column 3 (the right panel). `min-width: 0` lets the topbar shrink
-     below its content's natural minimum; the .tab-bar's overflow:hidden
-     then clips overflowing tabs and the scroll arrows take over. */
   min-width: 0;
 }
 .topbar .logo {
@@ -287,7 +305,26 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 auto;
+  /* FORK 2026-05-24 — was `margin: 0 auto` (center the toolbox between
+     the tab-bar's right edge and gw-status). With the vertical-split
+     layout, toolbox lives inside .topbar-controls (its own row), so
+     centering is no longer the right behaviour — it sits flush with
+     its siblings inside the controls cluster. */
+  margin: 0;
+}
+/* FORK 2026-05-24 — wrapper for the bottom-right controls cluster
+   (toolbox icons + gw-status). Placed in the topbar's bottom-right
+   grid cell; align-self: end pins it as low as possible inside the
+   row (the user's "Place the buttons as low as possible" requirement).
+   gap matches the prior intra-toolbox spacing so visual rhythm
+   doesn't shift. */
+.topbar-controls {
+  grid-area: controls;
+  align-self: end;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .topbar-icon-btn {
   cursor: pointer;
@@ -3054,14 +3091,21 @@ code.fs-link.fs-link-error {
 
 /* ─── Session Tabs ─── */
 .tab-bar {
+  /* FORK 2026-05-24 — vertical-split topbar (bug task-mpjhzu3j-ma9ts).
+     .tab-bar now lives in the topbar's `tabs` grid-area (full width of
+     the topbar, top row). `align-self: end` hangs the tabs from the
+     bottom of their row so they butt right up against the row-2
+     controls visually. min-width:0 + overflow:hidden keep the bar
+     from pushing the parent column wider when many tabs are open.
+     `flex: 1` and `margin-right` no longer apply — the grid template
+     handles sizing. */
+  grid-area: tabs;
+  align-self: end;
   display: flex;
   align-items: flex-end;
   min-width: 0;
   overflow: hidden;
   position: relative;
-  flex: 1;
-  margin-right: 8px;
-  align-self: flex-end;
 }
 .tab-bar-scroll {
   display: flex;
