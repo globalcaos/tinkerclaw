@@ -202,6 +202,15 @@ export default defineConfig({
   plugins: [tinkerDevConfig(), openFilePlugin(), kitContentPlugin()],
   server: {
     port: 18790,
+    // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: allow
+    // imports from `../src/shared/` so client + gateway share the
+    // FORTUNE_COOKIES JSON without duplication. Default fs.allow is
+    // the tinker-ui root only; opening to `..` lets the client import
+    // `../src/shared/fortune-cookies.json` (and any future shared
+    // module). Path stays inside the tinkerclaw repo — no escape.
+    fs: {
+      allow: [".", ".."],
+    },
     proxy: {
       // Proxy API calls to the gateway (dev mode only)
       "/api": {
