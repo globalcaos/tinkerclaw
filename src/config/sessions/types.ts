@@ -283,6 +283,31 @@ export type SessionEntry = {
   claudeCliSessionId?: string;
   label?: string;
   displayName?: string;
+  /**
+   * FORK 2026-05-24 (bug task-mpjhzu3j-ma9ts, "Tabs behavior" part 1):
+   * Fortune-cookie phrase ("amber raven", "golden lantern", etc.) burned
+   * into the session at first sessions.list. Becomes the session's
+   * display name in the SESSIONS panel for all non-main sessions —
+   * eliminates the "Tinker UI" / hex-code labels the user complained
+   * about. Persists across tab close, gateway restart, sessionId
+   * rotation. Generated lazily by the sessions.list handler via
+   * src/gateway/session-cookie-phrase.ts; not retroactively
+   * back-populated for existing sessions until they're next listed.
+   */
+  cookiePhrase?: string;
+  /**
+   * FORK 2026-05-24 (bug task-mpjhzu3j-ma9ts, "Tabs behavior" part 1):
+   * Soft-delete timestamp (epoch ms). When set, the entry is hidden
+   * from sessions.list by default (the entry remains in the store and
+   * the transcript files remain on disk — same as before — but the
+   * frontend no longer shows it). Recoverable: sessions.list with
+   * `includeDeleted:true` surfaces deleted entries for archaeology.
+   * The user's explicit ask: "When I delete the session from the
+   * sessions panel, the session will be no longer available from the
+   * frontend, it will not be deleted either, it will stay somewhere
+   * Jarvis can retrieve if necessary."
+   */
+  deletedAt?: number;
   channel?: string;
   groupId?: string;
   subject?: string;

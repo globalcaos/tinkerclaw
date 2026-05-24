@@ -37,6 +37,20 @@ export type GatewaySessionRow = {
   kind: "direct" | "group" | "global" | "unknown";
   label?: string;
   displayName?: string;
+  /**
+   * FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1).
+   * Persistent fortune-cookie name. See SessionEntry.cookiePhrase for the
+   * persistence + lazy-mint contract. Surfaced here so the Tinker UI can
+   * use it as the primary display string in renderSessionRow.
+   */
+  cookiePhrase?: string;
+  /**
+   * FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts. Soft-delete timestamp.
+   * sessions.list omits rows where this is set unless the caller passes
+   * `includeDeleted:true`. See SessionEntry.deletedAt for the full
+   * contract.
+   */
+  deletedAt?: number;
   derivedTitle?: string;
   lastMessagePreview?: string;
   channel?: string;
