@@ -5585,9 +5585,19 @@ code.fs-link.fs-link-error {
    was fine — only override when expanded. Brighten the static color to
    ~55% of the way from --border (#4a3f30) to --accent (#c19a6b) → #8b7150,
    a warm tan that sits clearly above the brown while staying distinctly
-   dimmer than the full accent so the :hover transition still reads. */
+   dimmer than the full accent so the :hover transition still reads.
+
+   Specificity note (2026-05-24 follow-up): the original `.exec-task-check
+   :hover { border-color: var(--accent) }` rule above has specificity
+   (0,2,0) — same as `.exec-task-expanded .exec-task-check`. CSS
+   tie-breaks on source order, so without the second rule below the
+   static override would also win on hover (no brighten-on-hover). The
+   second rule restores hover brightening with specificity (0,3,0). */
 .exec-task-expanded .exec-task-check {
   border-color: #8b7150;
+}
+.exec-task-expanded .exec-task-check:hover {
+  border-color: var(--accent);
 }
 .exec-task-check-checked {
   background: var(--accent);
