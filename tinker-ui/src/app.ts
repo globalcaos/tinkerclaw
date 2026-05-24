@@ -6235,8 +6235,7 @@ function init() {
   }
   initialized = true;
   restoreProviderErrors();
-  app.innerHTML =
-    `
+  app.innerHTML = `
     <nav class="sidebar">
       <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#D97757"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
       <div class="nav-sep"></div>
@@ -6270,8 +6269,10 @@ function init() {
            strip. Previously toolbox + gw-status were direct children of
            .topbar in a horizontal flex; that shared horizontal space with
            the tab-bar and made the topbar's min-content grow with each
-           added tab. See base.css `.topbar` + `.topbar -
-    controls`. -->
+           added tab. See base.css .topbar + .topbar-controls selectors.
+           (No backticks in this comment — the enclosing innerHTML is a
+            tagged template literal; inner backticks terminated it early
+            and crashed the page to black on load.) -->
       <div class="topbar-controls">
         <div class="toolbox">
           <!-- FORK 2026-05-12: Exec mode promoted to the leftmost slot — it is
