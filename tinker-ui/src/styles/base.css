@@ -5577,6 +5577,18 @@ code.fs-link.fs-link-error {
 .exec-task-check:hover {
   border-color: var(--accent);
 }
+/* FORK 2026-05-24 — bug "Task card" (TinkerClaw Bugs / task-mpjfaqlf-fg4kb):
+   the default border (--border #4a3f30) is too close in luminance to the
+   expanded-card brown bg (#4a3826 from §5.68's expanded styling), so the
+   checkbox circle vanished into the surface when a task was expanded. The
+   collapsed-row bg is dark (the page surface) so the default border there
+   was fine — only override when expanded. Brighten the static color to
+   ~55% of the way from --border (#4a3f30) to --accent (#c19a6b) → #8b7150,
+   a warm tan that sits clearly above the brown while staying distinctly
+   dimmer than the full accent so the :hover transition still reads. */
+.exec-task-expanded .exec-task-check {
+  border-color: #8b7150;
+}
 .exec-task-check-checked {
   background: var(--accent);
   border-color: var(--accent);
