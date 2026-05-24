@@ -43,6 +43,13 @@ export const SessionsListParamsSchema = Type.Object(
     includeGlobal: Type.Optional(Type.Boolean()),
     includeUnknown: Type.Optional(Type.Boolean()),
     /**
+     * FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+     * include soft-deleted sessions in the result. Sessions with a
+     * `deletedAt` timestamp are hidden by default; pass `true` to
+     * surface them for archaeology / recovery flows.
+     */
+    includeDeleted: Type.Optional(Type.Boolean()),
+    /**
      * Read first 8KB of each session transcript to derive title from first user message.
      * Performs a file read per session - use `limit` to bound result set on large stores.
      */
