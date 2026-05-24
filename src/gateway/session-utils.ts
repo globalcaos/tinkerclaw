@@ -1616,6 +1616,17 @@ export function listSessionsFromStore(params: {
   // patches all returned INVALID_REQUEST. Server is the only path that
   // can persist cookiePhrase for a chat-originated session.
   const mainKey = resolveMainSessionKey(cfg);
+  // FORK 2026-05-24 (fifth pass) — bug task-mpjhzu3j-ma9ts: heartbeat
+  // gets a fixed special-case label "❤️ Heartbeat" (same persistence
+  // mechanism as the random cookiePhrase — stored in
+  // SessionEntry.cookiePhrase, surfaced through the standard priority
+  // chain in renderSessionRow + tab.title sync). Previously heartbeat
+  // was excluded from the mint, so it had NO cookiePhrase; clicking
+  // the row opened a tab whose freshly-minted randomFortune title
+  // bubbled up through the priority chain and changed the side-panel
+  // display every time. With a stable cookiePhrase, both side panel
+  // and tab title hold the same "❤️ Heartbeat" value forever.
+  const HEARTBEAT_LABEL = "❤️ Heartbeat";
   let storeMutated = false;
   {
     const taken = collectExistingPhrases(store);
@@ -1624,7 +1635,14 @@ export function listSessionsFromStore(params: {
       if (key === mainKey) continue;
       if (key === "global" || key === "unknown") continue;
       if (isCronRunSessionKey(key)) continue;
-      if (key.includes(":heartbeat")) continue;
+      // Heartbeat sessions get a stable special label, not a random fortune.
+      if (key.includes(":heartbeat")) {
+        if (entry.cookiePhrase !== HEARTBEAT_LABEL) {
+          entry.cookiePhrase = HEARTBEAT_LABEL;
+          storeMutated = true;
+        }
+        continue;
+      }
       if (entry.cookiePhrase && !isLegacy2WordPhrase(entry.cookiePhrase)) continue;
       const phrase = generateCookiePhrase(taken);
       entry.cookiePhrase = phrase;
