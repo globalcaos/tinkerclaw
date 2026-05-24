@@ -47,6 +47,7 @@ import {
   resolveAllAgentSessionStoreTargetsSync,
   resolveAgentMainSessionKey,
   resolveFreshSessionTotalTokens,
+  resolveMainSessionKey,
   resolveStorePath,
   type SessionEntry,
   type SessionStoreTarget,
@@ -78,11 +79,19 @@ import {
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
 // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
-// FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts: session-cookie-
-// phrase.ts import REMOVED. Server-side generation was the wrong approach
-// (2-word output instead of the FORTUNE_COOKIES long-greeting pool the
-// user had already curated). cookiePhrase is now stored-only; the client
-// mints + patches via sessions.patch. See bible session-naming.md.
+// FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: server-side
+// lazy-mint restored, now drawing from the shared FORTUNE_COOKIES pool
+// (src/shared/fortune-cookies.json — 218 long poetic greetings). The
+// previous removal (second pass 000c7a0b7d) was on the assumption the
+// client could patch via sessions.patch — but the
+// `rejectWebchatSessionMutation` guard blocks webchat clients from
+// patching. Server is the only path that can actually write cookiePhrase
+// for chat-originated sessions. See bible session-naming.md history.
+import {
+  collectExistingPhrases,
+  generateCookiePhrase,
+  isLegacy2WordPhrase,
+} from "./session-cookie-phrase.js";
 import {
   canonicalizeSpawnedByForAgent,
   resolveSessionStoreAgentId,
@@ -1594,15 +1603,43 @@ export function listSessionsFromStore(params: {
   const { cfg, storePath, store, opts } = params;
   const now = Date.now();
 
-  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1)
-  // (second pass): server-side lazy-mint REMOVED. The first pass
-  // generated 2-word phrases like "amber raven" — this was wrong; the
-  // pre-existing FORTUNE_COOKIES pool in tinker-ui/src/app.ts (the long
-  // poetic greetings with emojis, 200+ entries) is the actual phrase
-  // pool the user wanted. cookiePhrase is now just persistent storage:
-  // the client mints from FORTUNE_COOKIES and persists via
-  // sessions.patch {cookiePhrase}. Server never generates. See bible
-  // session-naming.md for the unified contract.
+  // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: server-side
+  // lazy-mint, drawing from the shared FORTUNE_COOKIES pool. For each
+  // non-main / non-deleted / non-cron / non-heartbeat entry that either
+  // (a) has no cookiePhrase OR (b) has a legacy 2-word value from the
+  // first-pass invented generator, mint a fresh phrase + persist.
+  //
+  // Why server-side after the second pass tried client-side: webchat
+  // clients (the Tinker UI is one) are blocked from calling
+  // sessions.patch by the rejectWebchatSessionMutation guard in
+  // server-methods/sessions.ts. The third pass's 148 client-side
+  // patches all returned INVALID_REQUEST. Server is the only path that
+  // can persist cookiePhrase for a chat-originated session.
+  const mainKey = resolveMainSessionKey(cfg);
+  let storeMutated = false;
+  {
+    const taken = collectExistingPhrases(store);
+    for (const [key, entry] of Object.entries(store)) {
+      if (!entry || entry.deletedAt) continue;
+      if (key === mainKey) continue;
+      if (key === "global" || key === "unknown") continue;
+      if (isCronRunSessionKey(key)) continue;
+      if (key.includes(":heartbeat")) continue;
+      if (entry.cookiePhrase && !isLegacy2WordPhrase(entry.cookiePhrase)) continue;
+      const phrase = generateCookiePhrase(taken);
+      entry.cookiePhrase = phrase;
+      taken.add(phrase);
+      storeMutated = true;
+    }
+  }
+  if (storeMutated) {
+    try {
+      fs.writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[sessions.list] cookiePhrase write-back failed", err);
+    }
+  }
 
   const includeGlobal = opts.includeGlobal === true;
   const includeUnknown = opts.includeUnknown === true;

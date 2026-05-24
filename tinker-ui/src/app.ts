@@ -153,248 +153,14 @@ interface Tab {
   isAttached: boolean;
 }
 
-const FORTUNE_COOKIES = [
-  // ─── Shamatha · Calm Abiding ───
-  "🪷 Sit in stillness for just five breaths today, and the answer you've been chasing will arrive on its own quiet feet",
-  "🧘 A deep calm is settling into your bones right now — it will carry you through every challenge before sunset",
-  "🕯️ Pause before your next reaction and a clarity you haven't felt in months will flood through you like warm light",
-  "🪔 The still waters of your mind today reflect a truth that transforms your entire week ahead",
-  "🪷 Let your thoughts pass like clouds this morning; by afternoon your path will shine with a certainty born of stillness",
-  "🧘 Your breath is becoming your anchor today — each inhale draws in wisdom, each exhale releases doubt",
-  "🌙 Choose silence over noise for one hour and the universe will whisper something extraordinary to your quiet mind",
-  "🕊️ A peaceful awareness is rising in you that will make today's hardest moment feel effortless and light",
-  "🪷 Soften your gaze and relax your jaw right now — an insight you need will arrive within minutes of that release",
-  "🌿 The tranquility forming inside you today will radiate outward and calm everyone you encounter",
-  "🧘 Return to your breath each time the mind wanders; by evening you will discover something beautiful waiting there",
-  "🕯️ Stillness is building a cathedral in your mind today — its doors open to a revelation you didn't expect",
-  "🌀 Your calm today is not passive — it is a force reshaping circumstances in your favor as you sit",
-  // ─── Vipassana · Insight ───
-  "🔮 Observe your thoughts without judging them today, and one will reveal a solution hidden in plain sight all along",
-  "🔬 A flash of insight is approaching you — your awareness is sharp enough today to catch it before it passes",
-  "🧠 Watch the space between your thoughts today and you will notice a pattern that changes everything you assumed",
-  "👁️ Your inner observer is wide awake, seeing a door that your busy mind has been walking past for weeks without noticing",
-  "🪷 Notice what triggers your reactions this morning; by evening you will have freed yourself from an old invisible chain",
-  "🔬 The quality of your attention today is extraordinary — it will reveal the hidden structure beneath a stubborn problem",
-  "🧠 Sit with discomfort instead of running from it and it dissolves, leaving behind a gift of deep understanding in its place",
-  "🔍 Your awareness is a lens today — everything you examine closely will reveal layers of beauty and meaning within",
-  "🪷 Practice bare attention during your next conversation and you will hear what no one else in the room catches",
-  "🔬 A moment of pure seeing is coming — in that flash, months of confusion will reorganize into crystal clarity",
-  "🧠 Label each emotion as it arises without clinging, and tonight you will feel lighter than you have in years",
-  "🌠 The clear seeing you cultivate today ripples forward and prevents a mistake you would have made next week unknowingly",
-  // ─── Mastering the Mind · The Inner Throne ───
-  "🧠 Catch the first anxious thought before it breeds a second — that single interception today rewrites the mood of your entire afternoon",
-  "🪷 The moment you notice your mind racing, you have already won — awareness itself is the brake, and today it stops a spiral before it starts",
-  "🧘 Refuse to follow the next distraction that calls your name and an hour of focus will yield what a scattered day could not in a week",
-  "🔥 Your mind is a wild horse today — do not fight it, do not let it run, simply hold the reins with steady presence and it becomes your greatest ally",
-  "🗡️ Every thought you choose not to chase today strengthens a muscle of sovereignty that no circumstance can weaken once it is built",
-  "🎯 Discipline the wandering mind for ten minutes this morning and the concentration you build becomes a lens that magnifies everything you do after",
-  "🪞 When the inner critic speaks today, listen without obeying — that gap between hearing and believing is where your freedom lives and grows",
-  "🐉 Master one impulse today — just one — and the self-trust that follows unlocks a chain of better choices that lasts the rest of the week",
-  "🐒 The monkey mind chatters loudest when you are closest to a breakthrough — its noise today is proof you are almost through the wall",
-  "🏛️ Each time you return your attention from distraction to intention today, you are building a throne from which no thought can unseat you",
-  "🕳️ Slow the stream of thoughts for one minute and you will discover that beneath the rapids lies a still pool of knowing that has been waiting for you",
-  "🎭 Today your mind will offer you fear disguised as logic — see through the costume and the fear dissolves, leaving only clear, courageous action behind",
-  "⚔️ Train your attention like a blade today: sharpen it on small tasks, and by afternoon it cuts through complexity that baffled your scattered morning self",
-  "🔓 The thought you are most tempted to believe without questioning is the one most worth examining — investigate it today and discover unexpected freedom",
-  "👑 Whoever governs their own attention today governs their destiny — and you are governing yours with more skill than you realize right now",
-  "🏹 Watch how quickly a negative thought loses power when you simply name it: that naming is not passive, it is the most active thing a mind can do",
-  "🧩 Choose one hour today to think only about what you are doing, nothing else — that hour will outproduce the rest of the day combined",
-  "⏸️ Notice the gap between stimulus and response today: in that hairsbreadth pause lives a version of you that is free, sovereign, and unshakable",
-  // ─── Metta · Loving-Kindness ───
-  "💗 Silently wish well to the first stranger you see today, and a chain of kindness returns to you before dark in a form you didn't expect",
-  "🌸 A wave of compassion rising in your heart today will open a door that no amount of force could have budged",
-  "💝 Forgive one small thing before noon and the weight you've been carrying for months will lift entirely by evening",
-  "🫂 Your genuine warmth today is a beacon — someone who needs exactly what you offer will find their way to you",
-  "💗 Offer patience to someone who tests you today and watch the universe reward your restraint with something unexpectedly beautiful",
-  "🌸 The loving-kindness you send outward today returns as help from a direction you never imagined possible",
-  "💝 Replace one critical thought about yourself with a kind one, and your whole inner weather shifts as sunshine breaks through within",
-  "🫂 Someone is about to enter your day who desperately needs your warmth — your compassion will alter their entire trajectory",
-  "💗 Extend grace to yourself this morning and unlock a creative energy that has been waiting patiently behind self-doubt",
-  "🌸 Even a few silent phrases of metta today send ripples that reach farther than you will ever know",
-  "💝 Hold in your heart someone who frustrates you, and understanding will dawn that frees both of you from the cycle at once",
-  "🫂 Send loving-kindness to your past self and a wound you thought permanent begins its final healing today at last",
-  // ─── Awareness · Present Moment ───
-  "✨ Arrive fully in this present moment and you will notice an opportunity that was invisible to your scattered mind before",
-  "🌅 The present moment is extraordinarily rich for you today — each second you inhabit it fully multiplies your creative power",
-  "🍵 Taste your next meal with complete attention, and a forgotten joy will awaken that colors the rest of your entire day",
-  "🧲 Your presence today is magnetic — the moment you stop rehearsing the future, the right future walks directly toward you",
-  "📵 Put down your phone for the next ten minutes and just breathe; an idea worth more than anything on that screen is already arriving",
-  "🪙 Your attention is golden currency today — wherever you invest it fully, it returns compound interest in joy and clarity",
-  "🚶 Walk mindfully for even fifty steps today and the rhythm of your footfalls will unlock a solution you've been seeking",
-  "💫 Being fully here today is your superpower — while others rush past this moment, you find the treasure hidden inside it",
-  "🔎 Bring curious attention to a routine task today and it transforms into something surprisingly meaningful and revealing",
-  "✨ The quality of your presence today attracts exactly the people, ideas, and opportunities you have been quietly wishing for",
-  "⚓ Anchor yourself in this breath right now: the anxious future dissolves and the real path forward reveals itself clearly",
-  // ─── Non-Attachment · Letting Go ───
-  "🍃 Release your grip on one outcome today, and something far better than what you planned slides effortlessly into its place",
-  "🌬️ A burden you've been carrying is ready to be set down — the moment you release it, new energy floods that empty space",
-  "🕊️ Stop fighting what is and simply allow it; the situation rearranges itself into a configuration that serves you perfectly",
-  "🔗 The thing you cling to most tightly is the very thing blocking the abundance that is trying to reach you right now",
-  "🍃 Surrender the need to be right in one conversation today and you win something far more valuable than any argument ever gives",
-  "🫧 Your willingness to release control today creates space for a solution more elegant than anything you could have engineered",
-  "🛶 Trust the river today instead of swimming against it, and you arrive somewhere beautiful that was never on your original map",
-  "🦋 An attachment dissolving right now is not a loss — it is your cocoon cracking open so wings you didn't know you had can unfold",
-  "🍃 Watch a worry without feeding it today: it starves and fades, leaving behind pure clarity and a surprising sense of freedom",
-  "🤲 The hand that opens to release is the same hand that receives — your letting go today creates room for tomorrow's greatest gift",
-  "🌬️ Practice non-attachment with the results of your effort and the effort itself becomes joyful while the results exceed every expectation",
-  // ─── Karma · Right Action ───
-  "🌟 Choose the kind path over the clever one today and the ripples of that choice return to you magnified a hundredfold by evening",
-  "⚖️ Every small right action you take today is being woven into a safety net that catches you perfectly when you need it most next week",
-  "🪬 Act with integrity in the moment no one is watching, and the universe opens a door reserved only for the trustworthy",
-  "🌾 Seeds of your past generosity are germinating beneath the surface today — expect a bloom of abundance from a forgotten kindness",
-  "🎁 Give without expecting return today: the return finds you anyway, wearing a disguise so beautiful you almost don't recognize it",
-  "🧱 Your discipline today creates tomorrow's freedom — every conscious choice you make right now is a brick in the palace you're building",
-  "💊 Speak truth gently today, even when it's hard, and your words will land like medicine and heal something nobody knew was broken",
-  "🔄 A generous act from your past is circling back right now — someone you helped long ago is about to return the favor unexpectedly",
-  "🌟 Resist the easy shortcut and take the right path: what you build today stands forever while shortcuts collapse around you later",
-  "🕯️ Your intention behind each action matters more than the action itself — pure intentions today attract pure outcomes all week",
-  "🌟 Dedicate your effort today to something larger than yourself and your personal energy doubles while obstacles shrink to pebbles",
-  "🤝 Honor a commitment nobody would fault you for breaking, and your integrity today becomes your reputation tomorrow — opening doors",
-  // ─── Impermanence · Change ───
-  "🦋 Remember that this difficulty is temporary: that single remembrance strips it of power and transforms it into the teacher it was always meant to be",
-  "🌙 A phase of your life is completing right now — the ending feels tender, but what emerges will fill you with wonder and gratitude",
-  "🏄 Embrace today's uncertainty instead of resisting it and you ride the wave of change directly into something extraordinary and new",
-  "🌀 Something that seemed permanent is shifting beneath you — do not be afraid, for the ground is rearranging to support you even better",
-  "📬 Welcome each change today as a messenger rather than an enemy, and every message turns out to contain exactly the guidance you needed",
-  "🍂 The autumn of one chapter in your life is making room for a spring so vivid you will bless this very moment of change when you look back",
-  "⏳ Notice what is arising and passing away in you right now and you touch a freedom that no external circumstance can ever take from you",
-  "🌙 What feels like loss today is actually space being cleared — the universe is redecorating your life, and the new design is breathtaking",
-  "🪶 Hold lightly to both success and failure today, and a third option appears more creative than either winning or losing could ever be",
-  "🐍 An old identity is falling away and it feels strange — trust the process, because who you are becoming is worth every moment of uncertainty",
-  "🫁 Each breath is a tiny birth and death — discover that aliveness in this very second and it makes the whole day glow from inside out",
-  // ─── Inner Strength · Equanimity ───
-  "🏔️ Meet today's turbulence with a steady heart; by evening you'll see that your calm was the strongest force in the room all along",
-  "⚓ An unshakable center is forming in you right now — events that would have rattled you before pass through like wind through an open window",
-  "🏔️ Keep your balance when others lose theirs today and your steadiness becomes the lighthouse that guides everyone safely through the storm",
-  "⚓ Your equanimity is not indifference — it is the eye of a storm where vision is clearest and decisions are wisest and most precise",
-  "🎯 Respond instead of reacting just once today: that single moment of mastery cascades into a series of quiet victories all afternoon",
-  "🪨 The mountain in your heart does not move with the weather — storms may come today, but they only polish your summit into something magnificent",
-  "🫁 Breathe through the hardest moment instead of fleeing from it, and you prove to yourself a strength that nothing can ever take away",
-  "🌳 Your patience today is not weakness — it is a power so quiet that the world rearranges itself around your stillness without you even trying",
-  "☯️ Hold space for opposing feelings today without choosing sides, and a third intelligence emerges that resolves the tension beautifully",
-  "🛡️ Something that used to shake you tests you again today — and this time, you feel the difference your practice has made, clear as dawn",
-  "🏔️ Treat discomfort as information rather than threat and it delivers a message that unlocks months of stalled progress in a single moment",
-  "🧊 Your composure under pressure today earns a respect no boast could ever win — someone important sees your strength and never forgets it",
-  // ─── The Seer's Crystal Ball ───
-  "🔮 The crystal shows a stranger entering your orbit today who carries a message that reconnects you with a purpose you thought you had outgrown",
-  "🧭 Follow your curiosity into an unexpected direction today: the crystal shows it leading to a discovery that reshapes your entire month ahead",
-  "🕸️ I see a moment of synchronicity approaching before nightfall — two unrelated threads of your life are about to weave into something breathtaking",
-  "🔮 Trust the quiet voice over the loud one today, and the crystal reveals it leading you to the exact person you need to meet right now",
-  "✉️ The crystal ball shimmers with a coming conversation that will remind you why you chose this path and fill you with renewed fire",
-  "🫀 Share something vulnerable today — the crystal shows it being received with such warmth that it becomes a turning point in that relationship",
-  "🎰 I see three small blessings lining up for you: the first arrives before noon, the second over a meal, the third just before you sleep",
-  "📞 The crystal shows someone you haven't heard from in ages reaching out today with an opportunity you've been silently praying for",
-  "⚡ Act on your intuition before your logic catches up and the crystal sees you landing in exactly the right place at exactly the right time",
-  "🔮 I see a skill you've been quietly building suddenly clicking into place — today it stops being practice and becomes something you truly embody",
-  "🦁 Make one brave choice today, and the crystal reveals a cascade of fortunate events unfolding from it like dominoes over the next three weeks",
-  "☀️ The crystal glows warmest around this afternoon — something between two and five today will make you smile every time you remember it",
-  "🌃 I see tonight bringing a quiet realization that connects scattered pieces of your life into a picture so clear it takes your breath away",
-  // ─── Abundance · Flow ───
-  "🌊 Approach your work with gratitude today and abundance flows through channels you didn't even know existed until they opened before your eyes",
-  "💎 A current of prosperity is running beneath the surface of this ordinary day — your awareness is the dowsing rod that leads you straight to it",
-  "🤲 Give freely from your overflow today: the universe interprets it as a signal and amplifies your supply in a way that defies rational explanation",
-  "🎨 Your creative energy today is unusually potent — channel it with intention and what you produce will have value far beyond what you imagine now",
-  "🌊 Release scarcity thinking for just this one day and the evidence of abundance surrounding you becomes so obvious it makes you laugh out loud",
-  "💎 Something you considered ordinary about yourself is pure gold in someone else's world — today that recognition arrives and opens a new flow",
-  "🌈 Notice each small good thing today instead of waiting for the big one; by sunset the accumulation feels like a fortune quietly received",
-  "🧬 The work you love is aligning with what the world needs from you — today brings a sign of that alignment so clear you cannot dismiss it",
-  "🙏 Express appreciation for what you already have before asking for more, and the more arrives so quickly it feels like the universe was waiting",
-  "🗝️ An unexpected resource appears today — not money perhaps, but something equally valuable: a skill, a contact, a truth you'd stopped hoping for",
-  "📖 Share your knowledge without hoarding it, and the space that opens in your mind fills with an insight worth ten times what you gave away",
-  // ─── Connection · Sangha ───
-  "🤝 Reach out to someone you've been thinking of today and the connection reignites with a warmth and depth that surprises you both profoundly",
-  "🌉 A meaningful encounter is forming in today's ordinary fabric — your openness is the needle that threads it into something lasting and nourishing",
-  "👂 Listen more than you speak in your next exchange: you'll hear the hidden request beneath the words and your response will touch them deeply",
-  "🩹 Someone in your life is silently struggling — your simple presence today, without needing to fix a thing, becomes the medicine their heart required",
-  "❓ Ask a sincere question instead of giving advice today, and the answer you receive teaches you something that reshapes your own understanding",
-  "🌉 The bonds you nurture today with simple presence and authentic words will prove to be the strongest supports when unexpected change comes",
-  "👁️ Acknowledge someone's effort that usually goes unnoticed and you set off a chain reaction of goodwill that circles all the way back to you",
-  "🤝 A community you belong to is about to benefit enormously from something only you can contribute — today brings the moment to step forward",
-  "🪞 Show up authentically today without performing confidence or competence, and the real you lands better than any polished version ever could",
-  "😊 Your smile today reaches someone who was about to give up and gives them exactly enough light to keep going forward one more day",
-  "🗣️ Express your needs honestly instead of hinting, and someone steps forward today with exactly the help you need, grateful you finally asked",
-  // ─── Destiny · The Path ───
-  "🌌 Take one step today toward what excites you most, and the path illuminates itself twenty steps ahead in a direction more beautiful than your plan",
-  "⭐ A constellation of events has been quietly arranging around you — today you notice the pattern, and recognizing it is all you need to ride its current",
-  "📯 Honor the calling that has been whispering at the edge of your awareness and today it speaks clearly enough that doubt finally falls silent",
-  "🔄 Something you gave up on long ago is circling back in a new form — the universe did not forget your wish, it was simply perfecting the delivery",
-  "🌌 Make one choice today that aligns with who you are becoming rather than who you were, and a future you can barely imagine begins to crystallize",
-  "🧬 Your life is not a random sequence — today brings a moment of such clear synchronicity that you feel the pattern beneath the chaos and it steadies you",
-  "🚪 Say yes to the unexpected invitation today, and it becomes the first frame of a story you will tell with wonder for years to come",
-  "🗝️ A door you tried to open years ago is about to swing open on its own — you are finally ready for what waits on the other side of it",
-  "🛤️ Trust that every twist of your path, including the painful ones, was leading here — today rewards that trust with evidence so clear it moves you",
-  "⭐ You are closer to your purpose than you have ever been — today brings a sign so specific that even your inner skeptic goes quiet and listens",
-  "🧶 Follow the thread of joy today wherever it leads, even if impractical — it winds toward a door you didn't know was yours to open",
-  "📷 The universe has been preparing something for you in the dark — today, like a photograph developing, the first clear image of that gift becomes visible",
-  // ─── Protection · Sacred Shield ───
-  "🛡️ Set one clear boundary today and it protects not only this day but establishes a precedent that shields your peace for months to come",
-  "🧿 An invisible guardian energy surrounds you today — decisions that might have gone wrong course-correct as if an unseen hand adjusts them",
-  "🐍 Listen to the subtle warning in your body today and you sidestep something that would have cost you far more than you realize at the time",
-  "🧿 Your aura today is particularly strong — negativity that approaches you simply bounces off and dissolves, leaving you untouched and clear",
-  "😴 Honor your need for rest instead of pushing through, and you protect the very energy that tomorrow's breakthrough requires to emerge",
-  "🏰 Something you built with good intention is now building a protective field around you — your past diligence becomes today's invisible shield",
-  "🚶 Walk away from a conversation that drains you today: the energy you preserve becomes the fuel for a creative surge that arrives by evening",
-  "🪬 Your mindfulness practice is not just calming you — it is building a field of clarity that protects your decisions from the noise of the world",
-  "🐢 Slow down when everything around you speeds up and you become the eye of the storm where safety, clarity, and right action converge naturally",
-  "💛 The protection around you today comes from the love you have given freely — every act of kindness forms a circle of light that keeps you safe",
-  "🌍 Ground yourself this morning — feet on earth, breath in lungs, attention in body — and that grounding becomes armor against the day's uncertainties",
-  // ─── Transformation · The Chrysalis ───
-  "🐛 Sit with the discomfort of not knowing who you are becoming, and the chrysalis dissolves into something more beautiful than your boldest dream",
-  "🔥 A phoenix moment is approaching — something that felt like failure is about to reveal itself as the necessary burning away of what you'd outgrown",
-  "🧭 Honor the strange restlessness you've been feeling; it leads today to the exact threshold your soul has been searching for all this time",
-  "🪞 Your transformation is not visible to others yet, but today you feel it from the inside — a shift so real the mirror seems to show a new person",
-  "🛤️ Stop comparing your path to anyone else's today and your unique trajectory reveals an advantage that copying someone else would have erased",
-  "⚗️ What you've been through was not punishment — it was preparation, and today brings the first clear evidence of what it was all for",
-  "🌱 Embrace the awkwardness of growth instead of retreating to the familiar, and today you cross a threshold you can never be pushed back behind",
-  "🪶 An old version of you is dying so quietly you almost don't notice — the lightness you feel is the weight of who you no longer need to be",
-  "🐛 Allow yourself to be a beginner at something today and the humility opens a channel of learning so fast it feels like remembering",
-  "💎 The pressure you've endured is not breaking you — it is making you rare, and today someone reflects your diamond-nature back to you at last",
-  "🔥 Name the fear running beneath your decisions: naming it today strips it of power and what remains is pure, clear, actionable courage",
-  "🦊 Something you thought was your weakness is actually your most unusual strength — today proves it beyond any remaining shadow of doubt",
-  // ─── Joy · The Dancing Mind ───
-  "🎶 Allow yourself to feel delight without needing a reason and the unreasonable delight becomes the most productive energy you have ever channeled",
-  "🌻 A wave of spontaneous joy is approaching from an unexpected direction — your only job is to be present enough to catch it",
-  "😂 Laugh at something absurd today instead of analyzing it: the laughter unlocks a creative insight that serious thinking could never have reached",
-  "🔭 Your capacity for wonder is especially alive today — ordinary things reveal their hidden magnificence when you give them three seconds of attention",
-  "🃏 Take a playful approach to a serious task today and the playfulness produces better results than seriousness ever could",
-  "⚡ The joy reaching for you today is not a reward for finishing — it is the energy that makes the work feel like play and the hours like minutes",
-  "🎶 Notice beauty in something small today — light on water, a texture, a sound — and that noticing activates a gratitude that colors your evening golden",
-  "🌻 Someone will say something today that makes you laugh from a place so deep it feels like medicine, healing something you didn't know needed healing",
-  "💃 Move your body to music, even for thirty seconds, and stagnant energy transforms into momentum that carries your next three decisions forward",
-  "🧒 Your childlike wonder is not naivety — it is wisdom in its purest form, leading you today to something your adult seriousness would have walked past",
-  "🏆 Celebrate a small victory today instead of immediately chasing the next one: the celebration itself becomes a magnet that draws the next victory closer",
-  "🌺 Joy is not the absence of difficulty — it is the presence of aliveness, and today your aliveness is so strong that difficulties shrink in its light",
-  // ─── Wisdom · The Ancient Mind ───
-  "🦉 Approach a familiar problem today as if seeing it for the first time: fresh eyes reveal what experience alone had been concealing from you",
-  "📿 Ancient wisdom is alive in your body today — the answer you seek does not live in your thoughts but in the knowing that pulses just beneath",
-  "🏊 Choose depth over speed in one task today, and the depth rewards you with understanding that saves weeks of surface-level effort down the road",
-  "🌾 A lesson you learned long ago and forgot is resurfacing today — it arrives at exactly the right moment, as if your past self planted it here",
-  "💡 Question one assumption you have been taking for granted and the crack in that assumption lets light into a room that was unnecessarily dark",
-  "📿 Your inner sage is especially accessible today — pause and ask a sincere question of yourself, and the answer that rises will be remarkably wise",
-  "🦉 Teach someone what you know today: the act of teaching reveals layers of your own knowledge you didn't realize you possessed until now",
-  "📜 A book, a sentence, or a sign catches your eye today — it is the universe's footnote on a question you've been holding in your heart",
-  "🫗 Accept that not knowing is a valid position today, and the humility of it attracts exactly the teacher or experience that fills the gap",
-  "🧪 Your accumulated experience is crystallizing into intuition — decisions that used to require analysis now arrive as clear, embodied knowing",
-  "🌙 Sit with a question tonight instead of rushing to answer it: by morning the answer presents itself fully formed and more elegant than you could have built",
-  "🪶 Trust the simplest explanation when complexity tempts you today — simplicity turns out to be the key that complexity was only pretending to be",
-  // ─── The Morning Star · New Beginnings ───
-  "🌅 Set one intention with your whole heart this morning and the day organizes itself around it as if reality itself wants to help you fulfill it",
-  "⭐ A fresh chapter is opening in your story — the first paragraph writes itself beautifully when you show up with presence and willingness to begin",
-  "🧹 Release yesterday completely and start today with beginner's mind; the freshness reveals opportunities that habit had been hiding from you",
-  "🌱 Something dormant in you is waking up — today is when you first feel it stir and recognize it as the beginning of something real and lasting",
-  "🎁 Greet this morning as a gift rather than an obligation and the quality of everything that follows shifts in a way that surprises you with its magnitude",
-  "🌱 A new cycle is beginning in your life right now — the seed was planted in silence, but today it breaks the surface where you can finally see it",
-  "⏱️ Begin the project you've been postponing with just five minutes of effort: those five minutes unlock a momentum that was waiting for your first step",
-  "📄 The blank page of today is not emptiness — it is infinite possibility, and the first mark you make sets a tone more harmonious than you expect",
-  "🌅 Make today's first choice a conscious one instead of automatic: that consciousness ripples through every subsequent choice and elevates them all",
-  "☀️ Your energy has the quality of dawn — something in you is rising, warming, and illuminating what was dark before no matter what time you read this",
-  "🙏 Start today by feeling grateful for your own existence: every cell responds and the physical vitality that follows feels almost miraculous",
-  "🌿 Whatever happened yesterday is compost now — today's garden grows from it, and the flowers that bloom from composted difficulty are always the most vibrant",
-];
-
-function randomFortune(): string {
-  return FORTUNE_COOKIES[Math.floor(Math.random() * FORTUNE_COOKIES.length)];
-}
+// FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts:
+// FORTUNE_COOKIES moved to src/shared/fortune-cookies.json (single
+// source of truth shared between client and server lazy-mint). The
+// inline 218-entry array + randomFortune() function that lived here
+// were extracted on 2026-05-24. Both client (this file, addTab + /clear)
+// and server (src/gateway/session-cookie-phrase.ts) import from the
+// same JSON now. See bible session-naming.md.
+import { FORTUNE_COOKIES, randomFortune } from "../../src/shared/fortune-cookies.js";
 
 // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts. The first
 // pass invented a separate 2-word generator (COOKIE_ADJECTIVES /
@@ -2615,31 +2381,23 @@ function findTabByMatch(tabsByKey: Map<string, Tab>, sessionKey: string): Tab | 
 async function loadSessions(opts?: { loadChat?: boolean }) {
   const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
   sessions = res.sessions ?? [];
-  // FORK 2026-05-24 (third pass) — bug task-mpjhzu3j-ma9ts (Tabs
-  // behavior part 1): cookiePhrase reconciliation walks ALL sessions
-  // (not just the open tabs[] list — that was the previous bug; sessions
-  // without a matching open tab never got phrases, so the side panel
-  // showed alphanumeric shortLabel codes for them).
+  // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: tab.title
+  // sync only. The server's `listSessionsFromStore` lazy-mint (now
+  // restored, drawing from the shared FORTUNE_COOKIES pool) is the
+  // single source of truth for cookiePhrase. The client just reads it
+  // and syncs any matching tab's title.
   //
-  // Per the user spec: "I want you to assign a proper name to each of
-  // the sessions, and to keep it forever attached to that session."
+  // The previous attempt at client-side sessions.patch (third pass)
+  // failed: every patch returned INVALID_REQUEST because the
+  // rejectWebchatSessionMutation guard blocks webchat clients from
+  // patching session metadata. Server-side mint is the only path that
+  // works for chat-originated sessions.
   //
-  // For each returned session row:
-  //   - Skip the main session (always "🏠 Main") and global/unknown.
-  //   - Skip cron-run sessions (no UI surface).
-  //   - If cookiePhrase is missing OR matches the legacy 2-word shape
-  //     (from the WRONG first-pass server-side lazy-mint), mint a
-  //     randomFortune() from FORTUNE_COOKIES and queue a patch.
-  //
-  // For each open tab matching a returned session:
-  //   - If tab.title is missing OR is the legacy 2-word shape, sync to
-  //     the server's cookiePhrase (or to the just-queued mint).
-  //   - Auto-title (Gemini topic phrase) — anything not matching the
-  //     legacy regex — is treated as meaningful and left alone.
-  //
-  // Patches are fire-and-forget; ~150 missing phrases on first run
-  // means ~150 round-trips, completes in seconds. Subsequent loads
-  // touch zero (phrases burned in).
+  // Tab.title sync logic: for any open tab whose sessionKey matches a
+  // returned session, if tab.title is empty OR matches the legacy
+  // 2-word shape (from the wrong first-pass mints), replace with the
+  // server's cookiePhrase. Auto-title (Gemini topic phrase) doesn't
+  // match the legacy regex and is left alone.
   const tabsByKey = new Map<string, Tab>();
   for (const tab of tabs) {
     if (tab.sessionKey && tab.id !== "tab-main") {
@@ -2647,58 +2405,22 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
     }
   }
   let tabTitlesChanged = false;
-  const pendingPatches: { key: string; cookiePhrase: string }[] = [];
   for (const s of sessions) {
     if (!s || typeof (s as { key?: unknown }).key !== "string") continue;
-    const sess = s as { key: string; cookiePhrase?: string; kind?: string };
-    const key = sess.key;
-    // Skip non-user-facing keys.
-    if (key === "global" || key === "unknown") continue;
-    if (key.endsWith(":main")) continue; // main sessions keep "🏠 Main"
-    if (key.includes(":cron:")) continue;
-    if (key.includes(":heartbeat")) continue;
-
+    const sess = s as { key: string; cookiePhrase?: string };
     const serverPhrase = sess.cookiePhrase;
-    const serverNeedsPhrase = !serverPhrase || looksLikeLegacy2WordPhrase(serverPhrase);
-
-    // Decide the burned-in phrase for THIS session.
-    let burnedPhrase: string;
-    if (serverPhrase && !looksLikeLegacy2WordPhrase(serverPhrase)) {
-      burnedPhrase = serverPhrase;
-    } else {
-      // Need to mint. Prefer a matching tab's meaningful title; else random.
-      const tab = tabsByKey.get(key) ?? findTabByMatch(tabsByKey, key);
-      if (tab?.title && !looksLikeLegacy2WordPhrase(tab.title)) {
-        burnedPhrase = tab.title;
-      } else {
-        burnedPhrase = randomFortune();
-      }
-    }
-
-    if (serverNeedsPhrase) {
-      pendingPatches.push({ key, cookiePhrase: burnedPhrase });
-    }
-
-    // Sync any matching tab's title.
-    const tab = tabsByKey.get(key) ?? findTabByMatch(tabsByKey, key);
-    if (tab) {
-      const tabNeedsSync =
-        !tab.title || looksLikeLegacy2WordPhrase(tab.title) || tab.title === serverPhrase;
-      if (tabNeedsSync && tab.title !== burnedPhrase) {
-        tab.title = burnedPhrase;
-        tabTitlesChanged = true;
-      }
+    if (!serverPhrase || looksLikeLegacy2WordPhrase(serverPhrase)) continue;
+    const tab = tabsByKey.get(sess.key) ?? findTabByMatch(tabsByKey, sess.key);
+    if (!tab) continue;
+    const tabNeedsSync = !tab.title || looksLikeLegacy2WordPhrase(tab.title);
+    if (tabNeedsSync && tab.title !== serverPhrase) {
+      tab.title = serverPhrase;
+      tabTitlesChanged = true;
     }
   }
   if (tabTitlesChanged) {
     saveTabs();
     renderTabs();
-  }
-  for (const patch of pendingPatches) {
-    void req("sessions.patch", patch).catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn("[loadSessions] cookiePhrase patch failed", patch.key, err);
-    });
   }
   const hadSessionKey = Boolean(sessionKey);
   if (!sessionKey && sessions.length) {
