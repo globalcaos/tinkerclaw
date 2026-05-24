@@ -2595,87 +2595,105 @@ function onEvent(evt: unknown) {
   // Prefrontal tree updates are now reactive (driven by activeRuns, same as thinking indicator)
 }
 
+// FORK 2026-05-24 (third pass) — bug task-mpjhzu3j-ma9ts. Tab lookup helper
+// for the cookiePhrase reconciliation in loadSessions. The primary lookup
+// is the tabsByKey Map (exact match on tab.sessionKey). This fallback
+// catches the prefix-canonicalisation case where a server returns
+// "agent:main:tinker:abc" but tab.sessionKey is the unprefixed "tinker:abc"
+// (mirrors the renderSessionRow comment at app.ts:6172 explaining the
+// same drift). Returns undefined when no tab matches.
+function findTabByMatch(tabsByKey: Map<string, Tab>, sessionKey: string): Tab | undefined {
+  const direct = tabsByKey.get(sessionKey);
+  if (direct) return direct;
+  for (const [tabKey, tab] of tabsByKey.entries()) {
+    if (sessionKeyMatches(sessionKey, tabKey)) return tab;
+  }
+  return undefined;
+}
+
 // ─── API ───
 async function loadSessions(opts?: { loadChat?: boolean }) {
   const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
   sessions = res.sessions ?? [];
-  // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts (Tabs
-  // behavior part 1): cookiePhrase reconciliation per the unified
-  // contract in bible session-naming.md.
+  // FORK 2026-05-24 (third pass) — bug task-mpjhzu3j-ma9ts (Tabs
+  // behavior part 1): cookiePhrase reconciliation walks ALL sessions
+  // (not just the open tabs[] list — that was the previous bug; sessions
+  // without a matching open tab never got phrases, so the side panel
+  // showed alphanumeric shortLabel codes for them).
   //
-  // For each tab whose sessionKey matches a returned session row, decide
-  // what the burned-in name should be and converge both tab.title AND
-  // the server-side cookiePhrase:
+  // Per the user spec: "I want you to assign a proper name to each of
+  // the sessions, and to keep it forever attached to that session."
   //
-  //   1. If the server returned a NON-legacy cookiePhrase, that's
-  //      authoritative — copy it into tab.title.
-  //   2. If the server returned NO cookiePhrase OR a legacy 2-word
-  //      phrase (from the first-pass server-side lazy-mint that was
-  //      WRONG), mint a fresh FORTUNE_COOKIES entry, patch it up via
-  //      sessions.patch, and set tab.title to match. The tab.title
-  //      preference (from addTab() or /clear) carries over — only
-  //      regenerate if tab.title is missing OR is itself a legacy
-  //      2-word value.
+  // For each returned session row:
+  //   - Skip the main session (always "🏠 Main") and global/unknown.
+  //   - Skip cron-run sessions (no UI surface).
+  //   - If cookiePhrase is missing OR matches the legacy 2-word shape
+  //     (from the WRONG first-pass server-side lazy-mint), mint a
+  //     randomFortune() from FORTUNE_COOKIES and queue a patch.
   //
-  // The auto-title path (Gemini topic phrase) STILL beats both — if
-  // tab.title doesn't look like a legacy 2-word phrase AND doesn't
-  // look like a FORTUNE_COOKIES entry (e.g., "🔧 Fix auth bug"), it
-  // is treated as a meaningful customization and we don't overwrite it
-  // on the client. We still push to the server (so the side panel's
-  // cookiePhrase fallback matches when the tab is closed), but only
-  // if the server doesn't already have a NON-legacy value.
+  // For each open tab matching a returned session:
+  //   - If tab.title is missing OR is the legacy 2-word shape, sync to
+  //     the server's cookiePhrase (or to the just-queued mint).
+  //   - Auto-title (Gemini topic phrase) — anything not matching the
+  //     legacy regex — is treated as meaningful and left alone.
+  //
+  // Patches are fire-and-forget; ~150 missing phrases on first run
+  // means ~150 round-trips, completes in seconds. Subsequent loads
+  // touch zero (phrases burned in).
+  const tabsByKey = new Map<string, Tab>();
+  for (const tab of tabs) {
+    if (tab.sessionKey && tab.id !== "tab-main") {
+      tabsByKey.set(tab.sessionKey, tab);
+    }
+  }
   let tabTitlesChanged = false;
   const pendingPatches: { key: string; cookiePhrase: string }[] = [];
-  for (const tab of tabs) {
-    if (!tab.sessionKey || tab.id === "tab-main") {
-      continue;
-    }
-    const sess = sessions.find(
-      (s: unknown) =>
-        s &&
-        typeof (s as { key?: unknown }).key === "string" &&
-        sessionKeyMatches((s as { key: string }).key, tab.sessionKey ?? ""),
-    ) as { key: string; cookiePhrase?: string } | undefined;
-    if (!sess) {
-      // Session not yet known to server — server-side entry will be
-      // created on first chat.send; we'll see it on a later poll.
-      continue;
-    }
-    const serverPhrase = sess.cookiePhrase;
-    const serverIsLegacy = serverPhrase ? looksLikeLegacy2WordPhrase(serverPhrase) : false;
-    const tabIsLegacy = looksLikeLegacy2WordPhrase(tab.title);
+  for (const s of sessions) {
+    if (!s || typeof (s as { key?: unknown }).key !== "string") continue;
+    const sess = s as { key: string; cookiePhrase?: string; kind?: string };
+    const key = sess.key;
+    // Skip non-user-facing keys.
+    if (key === "global" || key === "unknown") continue;
+    if (key.endsWith(":main")) continue; // main sessions keep "🏠 Main"
+    if (key.includes(":cron:")) continue;
+    if (key.includes(":heartbeat")) continue;
 
-    if (serverPhrase && !serverIsLegacy) {
-      // Server has a valid burned-in phrase. Sync tab.title to it if the
-      // tab.title is itself a default shape OR a legacy 2-word value.
-      if ((tabIsLegacy || tab.title === serverPhrase) && tab.title !== serverPhrase) {
-        tab.title = serverPhrase;
+    const serverPhrase = sess.cookiePhrase;
+    const serverNeedsPhrase = !serverPhrase || looksLikeLegacy2WordPhrase(serverPhrase);
+
+    // Decide the burned-in phrase for THIS session.
+    let burnedPhrase: string;
+    if (serverPhrase && !looksLikeLegacy2WordPhrase(serverPhrase)) {
+      burnedPhrase = serverPhrase;
+    } else {
+      // Need to mint. Prefer a matching tab's meaningful title; else random.
+      const tab = tabsByKey.get(key) ?? findTabByMatch(tabsByKey, key);
+      if (tab?.title && !looksLikeLegacy2WordPhrase(tab.title)) {
+        burnedPhrase = tab.title;
+      } else {
+        burnedPhrase = randomFortune();
+      }
+    }
+
+    if (serverNeedsPhrase) {
+      pendingPatches.push({ key, cookiePhrase: burnedPhrase });
+    }
+
+    // Sync any matching tab's title.
+    const tab = tabsByKey.get(key) ?? findTabByMatch(tabsByKey, key);
+    if (tab) {
+      const tabNeedsSync =
+        !tab.title || looksLikeLegacy2WordPhrase(tab.title) || tab.title === serverPhrase;
+      if (tabNeedsSync && tab.title !== burnedPhrase) {
+        tab.title = burnedPhrase;
         tabTitlesChanged = true;
       }
-      continue;
     }
-
-    // Server has no phrase, OR has a legacy 2-word phrase. We need to
-    // mint a fresh long fortune. Prefer the tab.title if it ISN'T a
-    // legacy 2-word value AND IS a meaningful name (else generate fresh).
-    let mint: string;
-    if (tab.title && !tabIsLegacy) {
-      mint = tab.title;
-    } else {
-      mint = randomFortune();
-      tab.title = mint;
-      tabTitlesChanged = true;
-    }
-    pendingPatches.push({ key: sess.key, cookiePhrase: mint });
   }
   if (tabTitlesChanged) {
     saveTabs();
     renderTabs();
   }
-  // Fire-and-forget the patches. sessions.patch is a normal RPC that
-  // updates SessionEntry.cookiePhrase server-side. The result of these
-  // patches will surface on the next sessions.list poll; we don't await
-  // them to keep loadSessions snappy.
   for (const patch of pendingPatches) {
     void req("sessions.patch", patch).catch((err) => {
       // eslint-disable-next-line no-console
