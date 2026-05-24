@@ -6177,8 +6177,21 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   // instead of "🏠 Main"). sessionKeyMatches handles the prefix variance
   // (defined at app.ts:482 — checks suffix-match in either direction).
   const tab = tabs.find((t) => sessionKeyMatches(s.key, t.sessionKey));
+  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+  // session-name resolution now includes the fortune-cookie phrase
+  // (`s.cookiePhrase`) the gateway lazy-mints for every non-main
+  // session at first list. Priority:
+  //   1. tab.title — persisted localStorage (Gemini-titled or "🏠 Main")
+  //   2. s.cookiePhrase — gateway-burned "amber raven"-style name; the
+  //      sticky display name for any session whose tab the user closed
+  //      or never named, eliminating the hex-code + "Tinker UI" labels.
+  //   3. meaningfulSessionLabel(s.label) — server-stored explicit label
+  //   4. meaningfulSessionLabel(s.displayName) — server displayName
+  //   5. shortLabel — key-derived fallback (only reached for the main
+  //      session pre-bootstrap, or in genuinely-broken states).
   const label =
     tab?.title ||
+    (s.cookiePhrase as string | undefined) ||
     meaningfulSessionLabel(s.label) ||
     meaningfulSessionLabel(s.displayName) ||
     shortLabel;

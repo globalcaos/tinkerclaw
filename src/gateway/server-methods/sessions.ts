@@ -1540,13 +1540,26 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       return;
     }
     const sessionId = entry?.sessionId;
+    // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+    // SOFT-delete. Previously this site did `delete store[primaryKey]`,
+    // physically removing the metadata entry; the user explicitly
+    // asked for the entry to be kept so Jarvis can retrieve it later
+    // ("it will stay somewhere Jarvis can retrieve if necessary").
+    // Now we stamp `deletedAt = Date.now()` on the entry — the
+    // sessions.list filter at session-utils.ts hides deletedAt entries
+    // by default (the includeDeleted:true param surfaces them for
+    // archaeology). The transcript file archival via
+    // archiveSessionTranscriptsForSessionDetailed (below) is unchanged
+    // — it still renames the JSONL with `.deleted.<ts>` suffix, so
+    // BOTH the metadata + the transcript persist as soft-deleted.
     const deleted = await updateSessionStore(storePath, (store) => {
       const { primaryKey } = migrateAndPruneGatewaySessionStoreKey({ cfg, key, store });
-      const hadEntry = Boolean(store[primaryKey]);
-      if (hadEntry) {
-        delete store[primaryKey];
+      const existing = store[primaryKey];
+      if (!existing) {
+        return false;
       }
-      return hadEntry;
+      existing.deletedAt = Date.now();
+      return true;
     });
 
     const archivedTranscripts =

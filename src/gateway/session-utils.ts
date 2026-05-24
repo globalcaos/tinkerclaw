@@ -47,6 +47,7 @@ import {
   resolveAllAgentSessionStoreTargetsSync,
   resolveAgentMainSessionKey,
   resolveFreshSessionTotalTokens,
+  resolveMainSessionKey,
   resolveStorePath,
   type SessionEntry,
   type SessionStoreTarget,
@@ -77,6 +78,10 @@ import {
 } from "../shared/string-coerce.js";
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
+// FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+// fortune-cookie phrase generator + collision-aware helper for the
+// lazy-mint site in listSessionsFromStore.
+import { collectExistingPhrases, generateCookiePhrase } from "./session-cookie-phrase.js";
 import {
   canonicalizeSpawnedByForAgent,
   resolveSessionStoreAgentId,
@@ -1472,6 +1477,14 @@ export function buildGatewaySessionRow(params: {
     kind: classifySessionKey(key, entry),
     label: entry?.label,
     displayName,
+    // FORK 2026-05-24 (bug task-mpjhzu3j-ma9ts) — surface cookiePhrase
+    // and deletedAt to the client. The Tinker UI's renderSessionRow uses
+    // cookiePhrase as the primary display name for non-main sessions
+    // (above generic-filtered label/displayName); deletedAt presence is
+    // an audit signal (only reaches the client when includeDeleted is
+    // requested, since the lister filters by default).
+    cookiePhrase: entry?.cookiePhrase,
+    deletedAt: entry?.deletedAt,
     derivedTitle,
     lastMessagePreview,
     channel,
@@ -1580,8 +1593,51 @@ export function listSessionsFromStore(params: {
   const { cfg, storePath, store, opts } = params;
   const now = Date.now();
 
+  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+  // lazy-mint cookiePhrase for any non-main, non-deleted entry missing
+  // one. Done here (rather than at session-creation time) because
+  // sessions get minted across many code paths (chat.send rotation,
+  // /clear, WhatsApp first inbound, cron spawn, etc.) and centralising
+  // in the lister catches them all without invasive hook plumbing.
+  // The phrase becomes the entry's permanent burned-in name (persists
+  // across tab close, gateway restart, sessionId rotation).
+  const mainKey = resolveMainSessionKey(cfg);
+  let storeMutated = false;
+  {
+    const taken = collectExistingPhrases(store);
+    for (const [key, entry] of Object.entries(store)) {
+      if (!entry || entry.cookiePhrase || entry.deletedAt) continue;
+      if (key === mainKey) continue; // main session keeps "🏠 Main"
+      if (key === "global" || key === "unknown") continue;
+      if (isCronRunSessionKey(key)) continue;
+      const phrase = generateCookiePhrase(taken);
+      entry.cookiePhrase = phrase;
+      taken.add(phrase);
+      storeMutated = true;
+    }
+  }
+  if (storeMutated) {
+    // Best-effort persistence — minted phrases must survive process
+    // restart so they remain "burned in". Failure to write is logged
+    // but doesn't fail the list call (the entries still carry the
+    // phrase in-memory for THIS response; the next list call will
+    // re-mint, which collide-detects against any persisted entries
+    // that DID make it). Uses fs.writeFileSync directly (rather than
+    // the async updateSessionStore + atomic rename used by mutating
+    // RPCs) because listSessionsFromStore is sync and writes here are
+    // additive — concurrent writers can clobber the cookiePhrase but
+    // the collision-retry on re-mint absorbs that.
+    try {
+      fs.writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[sessions.list] cookiePhrase write-back failed", err);
+    }
+  }
+
   const includeGlobal = opts.includeGlobal === true;
   const includeUnknown = opts.includeUnknown === true;
+  const includeDeleted = opts.includeDeleted === true;
   const includeDerivedTitles = opts.includeDerivedTitles === true;
   const includeLastMessage = opts.includeLastMessage === true;
   const spawnedBy = typeof opts.spawnedBy === "string" ? opts.spawnedBy : "";
@@ -1594,6 +1650,19 @@ export function listSessionsFromStore(params: {
       : undefined;
 
   let entries = Object.entries(store)
+    .filter(([, entry]) => {
+      // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: soft-delete filter.
+      // Entries with a deletedAt timestamp are hidden by default; the
+      // metadata stays in the store + the transcript JSONL stays on
+      // disk (archived with .deleted.<ts> suffix by sessions.delete)
+      // so Jarvis can still archaeology them when needed. The user
+      // explicitly asked for this safety net: "it will stay somewhere
+      // Jarvis can retrieve if necessary."
+      if (entry?.deletedAt && !includeDeleted) {
+        return false;
+      }
+      return true;
+    })
     .filter(([key]) => {
       if (isCronRunSessionKey(key)) {
         return false;
