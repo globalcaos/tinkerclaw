@@ -6222,7 +6222,8 @@ function init() {
   }
   initialized = true;
   restoreProviderErrors();
-  app.innerHTML = `
+  app.innerHTML =
+    `
     <nav class="sidebar">
       <button class="nav-btn nav-active" data-tab="chat" data-hint="Chat"><svg viewBox="0 0 24 24" style="stroke:#D97757"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
       <div class="nav-sep"></div>
@@ -6249,28 +6250,39 @@ function init() {
         <button class="tab-add" id="tab-add" data-hint="New tab">+</button>
         <button class="tab-nav tab-nav-right" id="tab-nav-right" data-hint="Scroll right">&#9654;</button>
       </div>
-      <div class="toolbox">
-        <!-- FORK 2026-05-12: Exec mode promoted to the leftmost slot — it is
-             the primary "mode" toggle in the topbar (per SPEC §0a / §7.1),
-             so it sits before the per-feature toggles. -->
-        <span id="tb-exec" class="topbar-icon-btn" data-hint="Exec mode — Control Panel HUD">🎯</span>
-        <!-- FORK 2026-04-18: Amygdala + Fractal injection toggles.
-             Enabled = Jarvis replies with 💬 ANSWER + 🧠 AMYGDALA (gut-read)
-             + 🌿 FRACTAL (post-reflection). Disable for speed. -->
-        <span id="tb-amygdala" class="topbar-icon-btn tb-active" data-hint="Amygdala (gut read)">🧠</span>
-        <span id="tb-fractal" class="topbar-icon-btn tb-active" data-hint="Fractal reflection">🌿</span>
-        <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
-        <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
-        <!-- FORK 2026-04-27: renamed "Models" → "Side panel". The button
-             expands/collapses the entire right rpanel cluster (models,
-             sessions, prefrontal, …); the old "Models" label only described
-             the topmost section, which was confusing once the panel grew.
-             Story Mode (🎬) was removed entirely — collapsed-by-default is
-             the design contract per bible §5.6, and the per-tool click
-             toggle is the only override that should exist. -->
-        <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Side panel">🗂️</span>
+      <!-- FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts (Tabs behavior): topbar
+           reorganised into a vertical split. The .topbar-controls wrapper
+           groups the toolbox + gateway-status into the bottom-right grid
+           cell of .topbar so they sit in their own row beneath the tab
+           strip. Previously toolbox + gw-status were direct children of
+           .topbar in a horizontal flex; that shared horizontal space with
+           the tab-bar and made the topbar's min-content grow with each
+           added tab. See base.css `.topbar` + `.topbar -
+    controls`. -->
+      <div class="topbar-controls">
+        <div class="toolbox">
+          <!-- FORK 2026-05-12: Exec mode promoted to the leftmost slot — it is
+               the primary "mode" toggle in the topbar (per SPEC §0a / §7.1),
+               so it sits before the per-feature toggles. -->
+          <span id="tb-exec" class="topbar-icon-btn" data-hint="Exec mode — Control Panel HUD">🎯</span>
+          <!-- FORK 2026-04-18: Amygdala + Fractal injection toggles.
+               Enabled = Jarvis replies with 💬 ANSWER + 🧠 AMYGDALA (gut-read)
+               + 🌿 FRACTAL (post-reflection). Disable for speed. -->
+          <span id="tb-amygdala" class="topbar-icon-btn tb-active" data-hint="Amygdala (gut read)">🧠</span>
+          <span id="tb-fractal" class="topbar-icon-btn tb-active" data-hint="Fractal reflection">🌿</span>
+          <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
+          <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
+          <!-- FORK 2026-04-27: renamed "Models" → "Side panel". The button
+               expands/collapses the entire right rpanel cluster (models,
+               sessions, prefrontal, …); the old "Models" label only described
+               the topmost section, which was confusing once the panel grew.
+               Story Mode (🎬) was removed entirely — collapsed-by-default is
+               the design contract per bible §5.6, and the per-tool click
+               toggle is the only override that should exist. -->
+          <span id="tb-models" class="topbar-icon-btn tb-active" data-hint="Side panel">🗂️</span>
+        </div>
+        <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
       </div>
-      <span id="gw-status" style="color:var(--muted);font-size:11px;display:flex;align-items:center;gap:4px"><span class="status-dot gw-dot dot-red"></span> <span id="gw-label">Connecting…</span></span>
     </div>
     <div id="recipe-banner" class="recipe-banner hidden">
       <span class="recipe-banner-icon">📋</span>
