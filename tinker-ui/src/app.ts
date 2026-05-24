@@ -1,5 +1,41 @@
 import MarkdownIt from "markdown-it";
 import { mountContextTimeline } from "./panels/context-timeline.js";
+
+// FORK 2026-05-24 (diagnostic) — first-line module-level log so the user
+// can confirm in DevTools that the latest bundle actually loaded. If
+// THIS doesn't appear in the console after Cmd-Shift-R, the page is
+// still serving stale code (service worker, vite cache, or HMR didn't
+// re-bundle). Remove once bug task-mpjhzu3j-ma9ts converges.
+console.log(
+  "[tinker-ui boot] app.ts module loaded, build DIAG-2 c6bfd6ef3e+ @",
+  new Date().toISOString(),
+);
+
+// FORK 2026-05-24 (diagnostic) — document-level CAPTURE listener for any
+// click that touches a .session-delete-btn anywhere in the DOM. Fires
+// BEFORE bubble-phase listeners; survives stopPropagation. If THIS
+// doesn't fire when the user clicks the trash icon, the click event
+// is being swallowed BEFORE it reaches the document (pointer-events:
+// none, an overlay, or the icon is rendered inside a shadow root).
+// Remove once bug task-mpjhzu3j-ma9ts converges.
+document.addEventListener(
+  "click",
+  (e) => {
+    const t = e.target as HTMLElement;
+    const delBtn = t?.closest?.(".session-delete-btn");
+    if (delBtn) {
+      // eslint-disable-next-line no-console
+      console.log("[diag document-capture] click reached document on delete button", {
+        target: t,
+        delBtn,
+        dataDeleteKey: (delBtn as HTMLElement).dataset.deleteKey,
+        defaultPrevented: e.defaultPrevented,
+      });
+    }
+  },
+  true, // capture phase
+);
+
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
@@ -5905,11 +5941,19 @@ function updateSessionsPanel() {
   // (per-element listeners get destroyed on innerHTML re-render)
   if (!(el as unknown).__sessionsWired) {
     (el as unknown).__sessionsWired = true;
+    // FORK 2026-05-24 (diagnostic) — confirm this wire-up actually ran.
+    // If the user reloads and gets ZERO `[sessions-panel wired]` log,
+    // it means the new bundle didn't load OR the sessions-list element
+    // doesn't exist yet when this code runs.
+    // eslint-disable-next-line no-console
+    console.log(
+      "[sessions-panel wired] attaching click listener to",
+      el,
+      "bundle=DIAG-c6bfd6ef3e+",
+    );
+
     el.addEventListener("click", async (e) => {
       const tgt = e.target as HTMLElement;
-      // FORK 2026-05-24 (diagnostic) — trace every click on the sessions
-      // panel until the delete flow is confirmed working. Remove once
-      // bug task-mpjhzu3j-ma9ts is verified.
       // eslint-disable-next-line no-console
       console.log(
         "[sessions-panel click]",
