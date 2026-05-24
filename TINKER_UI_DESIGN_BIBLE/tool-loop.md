@@ -203,7 +203,14 @@ The bundled default ships ten priority-ordered rules (truth before agreement, pr
 
 ### Streaming
 
-`src/stream.ts` converts claude's cumulative `assistant` NDJSON frames into pi-ai `text_delta` / `thinking_delta` increments (`cumulative.slice(accumulatedText.length)`), with an eager `pushStart()` the instant the turn begins so the 4 thinking indicators fire during long tool-call chains.
+`src/stream.ts` converts claude's NDJSON output into pi-ai `text_delta` / `thinking_delta` increments. Two complementary input shapes both feed the same `pushTextDelta` / `pushThinkingDelta` helpers:
+
+- **Fine-grained path (FORK 2026-05-23 — `--include-partial-messages` flag, commit `3e343cb5ee`):** the cc-bridge spawn args now include `--include-partial-messages` (`extensions/tinkerclaw-cc-bridge/src/worker.ts:338`), which makes claude-cli emit `stream_event` lines carrying `content_block_delta.text_delta` / `.thinking_delta` events token-by-token. Without this flag claude-cli only emits the `assistant` block-complete frames (one big chunk per text block at end), so the UI saw replies appear all at once at the END of the turn instead of streaming. Diagnostic recipe: `openclaw logs | grep 'spawning claude'` — the args list shows the flag.
+- **Cumulative path (legacy):** claude-cli's periodic `assistant` NDJSON frames carry the cumulative per-block text. Handler slices `cumulative.slice(blockTextSeen.get(bi) ?? "")` and pushes the new tail.
+
+Both paths fire when `--include-partial-messages` is on. The fine-grained handler **MUST** mirror every pushed delta into `blockTextSeen[ev.index] += delta` so the cumulative-handler's slice condition (`cumulative.length > prev.length && cumulative.startsWith(prev)`) doesn't re-push the same text. **Don't regress (commit `d32e44cc24`, 2026-05-24):** before this sync, every block of streamed text was emitted twice — once via fine-grained deltas, once via the cumulative re-push (`prev = ""` → it sliced the whole cumulative as a "new delta"). The duplicate appeared in the rendered bubble as `"Good catches…Good catches…## 💬 ANSWER…"`, and with gap-split bubbles in the mix the `_segmentStart` cursors went past `finalText.length` during tail-recover, surfacing to the user as "truncation."
+
+The `pushStart()` is eager — fires the instant the turn begins so the 4 thinking indicators (chat label, session panel, model glow, prefrontal tree) animate during long tool-call chains.
 
 ### Auth
 
