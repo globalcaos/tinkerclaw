@@ -47,7 +47,6 @@ import {
   resolveAllAgentSessionStoreTargetsSync,
   resolveAgentMainSessionKey,
   resolveFreshSessionTotalTokens,
-  resolveMainSessionKey,
   resolveStorePath,
   type SessionEntry,
   type SessionStoreTarget,
@@ -79,9 +78,11 @@ import {
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
 // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
-// fortune-cookie phrase generator + collision-aware helper for the
-// lazy-mint site in listSessionsFromStore.
-import { collectExistingPhrases, generateCookiePhrase } from "./session-cookie-phrase.js";
+// FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts: session-cookie-
+// phrase.ts import REMOVED. Server-side generation was the wrong approach
+// (2-word output instead of the FORTUNE_COOKIES long-greeting pool the
+// user had already curated). cookiePhrase is now stored-only; the client
+// mints + patches via sessions.patch. See bible session-naming.md.
 import {
   canonicalizeSpawnedByForAgent,
   resolveSessionStoreAgentId,
@@ -1593,47 +1594,15 @@ export function listSessionsFromStore(params: {
   const { cfg, storePath, store, opts } = params;
   const now = Date.now();
 
-  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
-  // lazy-mint cookiePhrase for any non-main, non-deleted entry missing
-  // one. Done here (rather than at session-creation time) because
-  // sessions get minted across many code paths (chat.send rotation,
-  // /clear, WhatsApp first inbound, cron spawn, etc.) and centralising
-  // in the lister catches them all without invasive hook plumbing.
-  // The phrase becomes the entry's permanent burned-in name (persists
-  // across tab close, gateway restart, sessionId rotation).
-  const mainKey = resolveMainSessionKey(cfg);
-  let storeMutated = false;
-  {
-    const taken = collectExistingPhrases(store);
-    for (const [key, entry] of Object.entries(store)) {
-      if (!entry || entry.cookiePhrase || entry.deletedAt) continue;
-      if (key === mainKey) continue; // main session keeps "🏠 Main"
-      if (key === "global" || key === "unknown") continue;
-      if (isCronRunSessionKey(key)) continue;
-      const phrase = generateCookiePhrase(taken);
-      entry.cookiePhrase = phrase;
-      taken.add(phrase);
-      storeMutated = true;
-    }
-  }
-  if (storeMutated) {
-    // Best-effort persistence — minted phrases must survive process
-    // restart so they remain "burned in". Failure to write is logged
-    // but doesn't fail the list call (the entries still carry the
-    // phrase in-memory for THIS response; the next list call will
-    // re-mint, which collide-detects against any persisted entries
-    // that DID make it). Uses fs.writeFileSync directly (rather than
-    // the async updateSessionStore + atomic rename used by mutating
-    // RPCs) because listSessionsFromStore is sync and writes here are
-    // additive — concurrent writers can clobber the cookiePhrase but
-    // the collision-retry on re-mint absorbs that.
-    try {
-      fs.writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[sessions.list] cookiePhrase write-back failed", err);
-    }
-  }
+  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1)
+  // (second pass): server-side lazy-mint REMOVED. The first pass
+  // generated 2-word phrases like "amber raven" — this was wrong; the
+  // pre-existing FORTUNE_COOKIES pool in tinker-ui/src/app.ts (the long
+  // poetic greetings with emojis, 200+ entries) is the actual phrase
+  // pool the user wanted. cookiePhrase is now just persistent storage:
+  // the client mints from FORTUNE_COOKIES and persists via
+  // sessions.patch {cookiePhrase}. Server never generates. See bible
+  // session-naming.md for the unified contract.
 
   const includeGlobal = opts.includeGlobal === true;
   const includeUnknown = opts.includeUnknown === true;

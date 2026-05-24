@@ -176,6 +176,15 @@ export const SessionsPatchParamsSchema = Type.Object(
     groupActivation: Type.Optional(
       Type.Union([Type.Literal("mention"), Type.Literal("always"), Type.Null()]),
     ),
+    /**
+     * FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
+     * burned-in session name. Client picks one of the 200+ long fortune-cookie
+     * phrases (`FORTUNE_COOKIES` in tinker-ui/src/app.ts) and persists it
+     * here so it survives tab close, gateway restart, sessionId rotation.
+     * Server doesn't mint — it just stores what the client patches in. Set
+     * to null to clear. See bible session-naming.md for the full contract.
+     */
+    cookiePhrase: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   },
   { additionalProperties: false },
 );
