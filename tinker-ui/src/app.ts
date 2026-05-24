@@ -5907,18 +5907,40 @@ function updateSessionsPanel() {
     (el as unknown).__sessionsWired = true;
     el.addEventListener("click", async (e) => {
       const tgt = e.target as HTMLElement;
+      // FORK 2026-05-24 (diagnostic) — trace every click on the sessions
+      // panel until the delete flow is confirmed working. Remove once
+      // bug task-mpjhzu3j-ma9ts is verified.
+      // eslint-disable-next-line no-console
+      console.log(
+        "[sessions-panel click]",
+        "target=",
+        (tgt.tagName || "") + "." + (tgt.className || ""),
+        "closest(.session-delete-btn)=",
+        tgt.closest(".session-delete-btn"),
+        "closest(.session-row)=",
+        tgt.closest(".session-row"),
+      );
 
       // ── Delete button (check FIRST — before row click swallows it) ──
       const delBtn = tgt.closest(".session-delete-btn") as HTMLElement | null;
       if (delBtn) {
         e.stopPropagation();
         const key = delBtn.dataset.deleteKey;
+        // eslint-disable-next-line no-console
+        console.log("[session-delete] start", { key, btn: delBtn });
         if (!key) {
+          // eslint-disable-next-line no-console
+          console.warn("[session-delete] aborting — no data-delete-key");
           return;
         }
         const row = delBtn.closest(".session-row") as HTMLElement | null;
         if (row) {
           row.style.opacity = "0.3";
+          // eslint-disable-next-line no-console
+          console.log("[session-delete] row grayed", row);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn("[session-delete] no .session-row ancestor");
         }
         try {
           // FORK (2026-04-24): soft delete — archive transcript on disk
@@ -5927,7 +5949,11 @@ function updateSessionsPanel() {
           // mutation the transcript survives at `sessions-archive/` so we
           // can recover if the click was a misfire or if an in-flight turn
           // was still writing its answer.
-          await req("sessions.delete", { key, deleteTranscript: false });
+          // eslint-disable-next-line no-console
+          console.log("[session-delete] calling sessions.delete RPC", { key });
+          const rpcResult = await req("sessions.delete", { key, deleteTranscript: false });
+          // eslint-disable-next-line no-console
+          console.log("[session-delete] RPC returned", rpcResult);
           // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: tab-match was using
           // exact `===` which missed the canonicalisation gap. The delete
           // button's data-delete-key is the server's canonical key
@@ -5941,17 +5967,35 @@ function updateSessionsPanel() {
           const affectedTab = tabs.find(
             (t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey),
           );
+          // eslint-disable-next-line no-console
+          console.log("[session-delete] affectedTab lookup", {
+            key,
+            tabSessionKeys: tabs.map((t) => t.sessionKey),
+            affectedTab,
+          });
           if (affectedTab && affectedTab.id !== "tab-main") {
+            // eslint-disable-next-line no-console
+            console.log("[session-delete] closing tab", affectedTab.id);
             closeTab(affectedTab.id);
           } else if (affectedTab?.id === "tab-main") {
             // Main tab can't be closed — just clear its state
+            // eslint-disable-next-line no-console
+            console.log("[session-delete] affected tab is tab-main; clearing its state");
             sessionKey = "";
             messages = [];
             updateChat();
+          } else {
+            // eslint-disable-next-line no-console
+            console.log("[session-delete] no affected tab — skipping closeTab");
           }
+          // eslint-disable-next-line no-console
+          console.log("[session-delete] calling loadSessions() to refresh side panel");
           await loadSessions();
+          // eslint-disable-next-line no-console
+          console.log("[session-delete] DONE — loadSessions returned");
         } catch (err) {
-          console.error("Failed to delete session:", err);
+          // eslint-disable-next-line no-console
+          console.error("[session-delete] FAILED:", err);
           if (row) {
             row.style.opacity = "1";
           }
