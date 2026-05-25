@@ -34,6 +34,14 @@ describe("POST /navigate", () => {
   });
 });
 
+// Anti-regression — click-driven cross-origin navigation must NOT be blocked.
+// There is no dedicated /click route; clicks dispatch through POST /act with
+// kind: "click". Coverage that clicks succeed (HTTP 200, chrome-mcp click
+// invoked) and can legitimately trigger navigation / new tabs lives in
+// agent.act.existing-session-navigation-guard.test.ts (see e.g. the
+// "checks navigation after click and key-driven submit paths" and "checks
+// URLs for tabs opened during the interaction window" cases).
+
 describe("POST /tabs/open", () => {
   function buildTabsApp(): Express {
     const app = express();
