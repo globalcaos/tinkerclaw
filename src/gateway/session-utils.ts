@@ -1726,21 +1726,34 @@ export function listSessionsFromStore(params: {
     })
     .filter(([key]) => {
       // FORK 2026-05-25 — hide ALL cron-related sessions from the panel,
-      // not just `:run:` per-execution sub-sessions. Per user 2026-05-25:
-      // "I see there were nearly 100 cron jobs sessions. I would prefer
-      // if every cron job reuses the same session over and over." The
-      // top-level cron entries (cron:morning-briefing, cron:cleaning-lady,
-      // …) already DO reuse one session per cron name; the explosion was
-      // people-profiles, which legitimately uses one session per profile
-      // (~80 profiles → ~80 entries) to keep per-person memory context
-      // isolated. That isolation is by design and not changing here.
-      // The fix is purely panel-visibility: cron-machinery isn't user-
-      // interactable surface, so don't list it. The :run: filter below
-      // becomes redundant but stays for explicit documentation.
+      // not just `:run:` per-execution sub-sessions. The top-level cron
+      // entries (cron:morning-briefing, etc.) already reuse one session
+      // per cron name; the per-profile sessions in cron:people-profiles
+      // legitimately stay separate for per-person memory isolation. None
+      // of this is user-interactable, so don't list it.
       if (key.includes(":cron:")) {
         return false;
       }
       if (isCronRunSessionKey(key)) {
+        return false;
+      }
+      // FORK 2026-05-25 — hide the canonical `*:main` session from the
+      // panel. The Tinker UI's tab-main is a persistent tab whose
+      // sessionKey rotates on every /clear (default `agent:main:main`
+      // → `agent:main:tinker:<ts>` on first rotation). After rotation,
+      // `agent:main:main` becomes an orphaned server-internal slot — its
+      // displayName 'webchat:g-agent-main-main' isn't user-friendly and
+      // its content drifts from what the user perceives as their "main."
+      // Per user 2026-05-25: "When I press on the main session a new
+      // session opens, instead of focusing into the current main one
+      // … they might not refer to the same session and thus we have one
+      // session opened as a tab with no corresponding session." That
+      // was exactly the orphan-`:main` situation. Hiding it means
+      // tab-main's CURRENT binding (a `tinker:<ts>`) is the only row
+      // labeled "🏠 Main" via tab.title priority in renderSessionRow;
+      // clicking it falls through to the existing-tab-matches branch
+      // and focuses tab-main, no new tab spawned.
+      if (key.endsWith(":main")) {
         return false;
       }
       if (!includeGlobal && key === "global") {
