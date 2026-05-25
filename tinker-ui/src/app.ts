@@ -5904,6 +5904,25 @@ function updateSessionsPanel() {
     }
   }
 
+  // FORK 2026-05-25 — within the pinned group, force Main first and
+  // Heartbeat second. Array.prototype.sort is stable in every modern
+  // browser, so items at the same priority (the tinker:* tabs) keep
+  // their original ordering — the order sessions.list returned them
+  // plus any tab-only entries injected just above.
+  const pinned = groups.get("pinned");
+  if (pinned) {
+    const pinnedPriority = (key: string): number => {
+      if (key.endsWith(":main")) return 0;
+      if (key.includes(":heartbeat")) return 1;
+      return 2;
+    };
+    pinned.sort(
+      (a, b) =>
+        pinnedPriority((a.session as { key: string }).key) -
+        pinnedPriority((b.session as { key: string }).key),
+    );
+  }
+
   const totalEntries = [...groups.values()].reduce((n, arr) => n + arr.length, 0);
   if (!totalEntries) {
     el.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:11px">No sessions</div>';
