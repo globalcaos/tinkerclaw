@@ -1235,7 +1235,7 @@ This covers the "I'm at my desk, I want to add a task" case that's currently Tod
 
 ### 14.6 Future capture endpoints (post v3.1)
 
-Oscar already has the `apple-reminders` (`remindctl`) and `things-mac` skills installed. Both are candidates for future capture endpoints into the Control Panel:
+The `apple-reminders` (`remindctl`) and `things-mac` skills are already installed in the workspace. Both are candidates for future capture endpoints into the Control Panel:
 
 | Surface             | Direction                                                                                                                                                                                                                    | When                                     |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
