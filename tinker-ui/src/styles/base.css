@@ -4398,6 +4398,74 @@ code.fs-link.fs-link-error {
   background: #2a1818;
 }
 
+/* FORK 2026-05-25 — inline-rename wrapper holding the input + emoji
+   trigger. Replaces the bare <input> so the trigger button can sit
+   to the right of the text box and stay aligned with it. */
+.exec-group-label-edit-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+.exec-group-label-edit-wrap .exec-group-label-edit {
+  flex: 1 1 auto;
+}
+.exec-group-label-emoji-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid #3a3a45;
+  border-radius: 3px;
+  color: #eaeaee;
+  padding: 1px 5px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.2;
+  height: 22px;
+  user-select: none;
+}
+.exec-group-label-emoji-btn:hover {
+  background: #2a2a32;
+  border-color: var(--accent);
+}
+
+/* Floating scrollable emoji picker. Anchored to the trigger via
+   inline `top`/`left`; position:fixed escapes ancestor overflow:hidden
+   in the control-panel layout. */
+.exec-emoji-picker {
+  position: fixed;
+  z-index: 9999;
+  width: 300px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #16161a;
+  border: 1px solid #3a3a45;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+}
+.exec-emoji-picker-item {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 4px 0;
+  font-size: 18px;
+  line-height: 1.1;
+  text-align: center;
+  color: inherit;
+}
+.exec-emoji-picker-item:hover {
+  background: #2a2a32;
+}
+.exec-emoji-picker-item:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 /* FORK 2026-05-23 (F1) — inline <input> for renaming a task title. Used in
    the drawer (replacing .exec-task-fulltitle-text). Matches the surrounding
    typography so the swap is visually minimal. */
