@@ -45,6 +45,7 @@ import {
   untrackSessionBrowserTab,
 } from "./browser-tool.runtime.js";
 import { DEFAULT_BROWSER_SCREENSHOT_TIMEOUT_MS } from "./browser/constants.js";
+import { buildNavigationForbiddenBody } from "./browser/routes/navigation-lock.js";
 
 const browserToolDeps = {
   browserAct,
@@ -132,13 +133,6 @@ function readOptionalTargetAndTimeout(params: Record<string, unknown>) {
       ? params.timeoutMs
       : undefined;
   return { targetId, timeoutMs };
-}
-
-function readTargetUrlParam(params: Record<string, unknown>) {
-  return (
-    readStringParam(params, "targetUrl") ??
-    readStringParam(params, "url", { required: true, label: "targetUrl" })
-  );
 }
 
 const LEGACY_BROWSER_ACT_REQUEST_KEYS = [
@@ -482,6 +476,9 @@ export function createBrowserTool(opts?: {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const action = readStringParam(params, "action", { required: true });
+      if (action === "navigate" || action === "open") {
+        return jsonResult(buildNavigationForbiddenBody(action));
+      }
       const profile = readStringParam(params, "profile");
       const requestedNode = readStringParam(params, "node");
       const requestedTimeoutMs = readToolTimeoutMs(params);
@@ -663,32 +660,8 @@ export function createBrowserTool(opts?: {
             timeoutMs: toolTimeoutMs,
             proxyRequest,
           });
-        case "open": {
-          const targetUrl = readTargetUrlParam(params);
-          const label = normalizeOptionalString(params.label);
-          if (proxyRequest) {
-            const result = await proxyRequest({
-              method: "POST",
-              path: "/tabs/open",
-              profile,
-              body: { url: targetUrl, ...(label ? { label } : {}) },
-              timeoutMs: toolTimeoutMs,
-            });
-            return jsonResult(result);
-          }
-          const opened = await browserToolDeps.browserOpenTab(baseUrl, targetUrl, {
-            profile,
-            label,
-            timeoutMs: toolTimeoutMs,
-          });
-          browserToolDeps.trackSessionBrowserTab({
-            sessionKey: opts?.agentSessionKey,
-            targetId: opened.targetId,
-            baseUrl,
-            profile,
-          });
-          return jsonResult(opened);
-        }
+        case "open":
+          return jsonResult(buildNavigationForbiddenBody("open"));
         case "focus": {
           const targetId = readStringParam(params, "targetId", {
             required: true,
@@ -805,29 +778,8 @@ export function createBrowserTool(opts?: {
             details: result,
           });
         }
-        case "navigate": {
-          const targetUrl = readTargetUrlParam(params);
-          const targetId = readStringParam(params, "targetId");
-          if (proxyRequest) {
-            const result = await proxyRequest({
-              method: "POST",
-              path: "/navigate",
-              profile,
-              body: {
-                url: targetUrl,
-                targetId,
-              },
-            });
-            return jsonResult(result);
-          }
-          const result = await browserToolDeps.browserNavigate(baseUrl, {
-            url: targetUrl,
-            targetId,
-            profile,
-          });
-          touchTrackedTab(readStringValue(result.targetId) ?? targetId);
-          return jsonResult(result);
-        }
+        case "navigate":
+          return jsonResult(buildNavigationForbiddenBody("navigate"));
         case "console":
           return await executeConsoleAction({
             input: params,
