@@ -35,19 +35,29 @@ export function augmentChatHistoryWithCliSessionImports(params: {
   localMessages: unknown[];
   homeDir?: string;
 }): unknown[] {
-  // FORK 2026-05-21: when sessions.json carries no cliSessionBinding (the
-  // common case for cc-bridge-served sessions — see header note in
-  // `cc-bridge-session-map.ts`), fall back to the cc-bridge session map keyed
-  // on the OpenClaw-side sessionId. Without this fallback hard-refresh of any
-  // cc-bridge tab shows only whatever stale sessionFile sessions.json last
-  // pointed at, regardless of how many turns happened afterwards.
-  const cliSessionId =
-    resolveClaudeCliBindingSessionId(params.entry) ??
-    resolveCcBridgeCliSessionIdForOpenclawSession({
-      openclawSessionId: params.entry?.sessionId,
-      homeDir: params.homeDir,
-    });
-  if (!cliSessionId) {
+  // FORK 2026-05-21a: chain BOTH the explicit binding AND the cc-bridge
+  // session-map fallback as imports. A sessionKey can be served across
+  // multiple claude-cli sessions over time (every cc-bridge respawn mints a
+  // new sessionId), and any one of them may carry context the user expects
+  // to keep seeing. Returning the first match alone made hard-refresh show
+  // either the current spawn OR the prior spawn, but never both. Now we
+  // import each distinct candidate and let the merge sort by timestamp.
+  const cliSessionIds: string[] = [];
+  const seen = new Set<string>();
+  const bindingSessionId = resolveClaudeCliBindingSessionId(params.entry);
+  if (bindingSessionId) {
+    cliSessionIds.push(bindingSessionId);
+    seen.add(bindingSessionId);
+  }
+  const mapSessionId = resolveCcBridgeCliSessionIdForOpenclawSession({
+    openclawSessionId: params.entry?.sessionId,
+    homeDir: params.homeDir,
+  });
+  if (mapSessionId && !seen.has(mapSessionId)) {
+    cliSessionIds.push(mapSessionId);
+    seen.add(mapSessionId);
+  }
+  if (cliSessionIds.length === 0) {
     return params.localMessages;
   }
 
@@ -61,12 +71,19 @@ export function augmentChatHistoryWithCliSessionImports(params: {
     return params.localMessages;
   }
 
-  const importedMessages = readClaudeCliSessionMessages({
-    cliSessionId,
-    homeDir: params.homeDir,
-  });
-  return mergeImportedChatHistoryMessages({
-    localMessages: params.localMessages,
-    importedMessages,
-  });
+  let merged = params.localMessages;
+  for (const id of cliSessionIds) {
+    const importedMessages = readClaudeCliSessionMessages({
+      cliSessionId: id,
+      homeDir: params.homeDir,
+    });
+    if (importedMessages.length === 0) {
+      continue;
+    }
+    merged = mergeImportedChatHistoryMessages({
+      localMessages: merged,
+      importedMessages,
+    });
+  }
+  return merged;
 }
