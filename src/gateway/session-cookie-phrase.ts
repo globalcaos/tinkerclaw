@@ -21,32 +21,49 @@
  * See bible session-naming.md for the full contract.
  */
 
-import { randomFortune } from "../shared/fortune-cookies.js";
+import { fortuneForKey, randomFortune } from "../shared/fortune-cookies.js";
 
 /**
- * Generate one fortune-cookie phrase. Optional `taken` set lets the
- * caller pre-empt collisions by passing in phrases already in use —
- * with 218 fortunes in the pool, collisions are unlikely but the
- * collision-retry path makes them deterministic when they do happen.
+ * Generate one fortune-cookie phrase.
  *
- * NOTE: with 218 phrases, the birthday-paradox 50% collision threshold
- * is at ~17 sessions. For a user with 150+ sessions, collisions are
- * EXPECTED — they're not bugs. Each session still gets a meaningful
- * phrase; uniqueness is best-effort, not invariant.
+ * Preferred path (FORK 2026-05-25): pass `sessionKey` so the phrase is
+ * picked deterministically by FNV-1a hash. Client (`createTab` at
+ * tinker-ui/src/app.ts) and server both use `fortuneForKey(key)` from
+ * `src/shared/fortune-cookies.ts`, so the SAME key produces the SAME
+ * phrase on both sides — the tab.title the client mints at session
+ * creation and the cookiePhrase the server lazy-mints on next
+ * sessions.list converge by construction, with no patches and no race.
+ *
+ * Bug pre-2026-05-25: each side called `randomFortune()` independently
+ * and picked a DIFFERENT element. While the tab was open, tab.title
+ * (= client's pick) won the side-panel priority chain; the moment the
+ * tab closed, the lookup fell through to cookiePhrase (= server's
+ * pick) and the displayed phrase flipped. After that the cookiePhrase
+ * stayed "stuck" because reopening just spawned another fresh
+ * client-side random that still didn't match the persisted server one.
+ * Deterministic keying eliminates the divergence at the source.
+ *
+ * Fallback path (no key): non-deterministic `randomFortune()` with
+ * collision retry against `taken`. Used only when the caller doesn't
+ * have a sessionKey context — currently no live caller hits this.
+ *
+ * NOTE on collisions: with 218 phrases, the birthday-paradox 50%
+ * collision threshold is at ~17 sessions. For a user with 150+
+ * sessions, collisions are EXPECTED — they're not bugs. Each session
+ * still gets a meaningful phrase; uniqueness is best-effort.
  */
 const MAX_RETRIES = 8;
 
-export function generateCookiePhrase(taken?: ReadonlySet<string>): string {
+export function generateCookiePhrase(taken?: ReadonlySet<string>, sessionKey?: string): string {
+  if (sessionKey) {
+    return fortuneForKey(sessionKey);
+  }
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const phrase = randomFortune();
     if (!taken || !taken.has(phrase)) {
       return phrase;
     }
   }
-  // After MAX_RETRIES the pool is genuinely depleted (or close). Accept
-  // a duplicate rather than block the mint. The session still gets a
-  // meaningful name; in practice the user won't notice unless they have
-  // 218+ sessions AND happen to compare two with the same phrase.
   return randomFortune();
 }
 
