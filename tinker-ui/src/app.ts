@@ -4331,25 +4331,19 @@ function renderSectionedReply(sec: SectionedReply, elapsed: string = ""): string
   // bubble (the visible main reply). When sectioned answer falls through to
   // raw `other`, attach to that bubble instead.
   // FORK 2026-05-25 (task-mpkw1a0b-9jsfy): render `sec.other` (pre-answer
-  // narration — Jarvis thinking out loud before the markers land) as a
-  // COLLAPSED <details> block when an answer section IS present, instead of
-  // silently dropping it. Per user feedback: "Whatever came before that needs
-  // to be in bubbles, collapsed when the final answer lands." Visual placement BEFORE
-  // the answer so the chronology reads top-to-bottom (think → answer →
-  // amygdala/fractal annotations).
+  // narration emitted before the section markers land) as a plain visible
+  // bubble ABOVE the answer, NOT silently dropped. Slightly muted styling
+  // to indicate it's narration, not the final answer — but no details/
+  // summary wrapping, no "Thinking" label. The future reasoning-bundle
+  // surface (n-steps collapser) will fold this in.
   // FORK 2026-05-25 (same task): strip residual section markers from the
   // answer body before rendering. The model occasionally echoes the marker
-  // text inside its own answer body (e.g. "as the 💬 ANSWER section said…"),
-  // and the splitter only consumes the FIRST marker occurrence per section.
-  // The residual marker then leaks into the rendered text as plain prose.
+  // text inside its own answer body; the splitter only consumes the FIRST
+  // marker per section, so duplicates leak as plain prose without the scrub.
   let h = "";
   const hasAnyMarker = Boolean(sec.answer || sec.amygdala || sec.fractal);
   if (sec.other && hasAnyMarker) {
-    h +=
-      `<details class="msg msg-thinking">` +
-      `<summary class="thinking-summary">💭 <em>Thinking</em></summary>` +
-      `<div class="thinking-body">${md(sec.other)}</div>` +
-      `</details>`;
+    h += `<div class="msg assistant msg-narration">${md(sec.other)}</div>`;
   }
   const effectiveAnswer =
     sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
