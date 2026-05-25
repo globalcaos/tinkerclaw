@@ -23,11 +23,15 @@ const BROWSER_TOOL_ACTIONS = [
   "stop",
   "profiles",
   "tabs",
+  // 🚫 Disabled by design — the agent cannot change the URL of a tab. The user
+  // navigates via the Chrome extension; the agent works with whatever tab is shared.
   "open",
   "focus",
   "close",
   "snapshot",
   "screenshot",
+  // 🚫 Disabled by design — the agent cannot change the URL of a tab. The user
+  // navigates via the Chrome extension; the agent works with whatever tab is shared.
   "navigate",
   "console",
   "pdf",
