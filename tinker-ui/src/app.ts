@@ -2073,6 +2073,28 @@ function onEvent(evt: unknown) {
         }
       }
       const deltaText = p.message?.content?.[0]?.text ?? "";
+      // FORK 2026-05-25 (task-mpkw1a0b-9jsfy "Response rendering"):
+      // diagnostic for the duplicate-sentence bug. deltaText is the
+      // SERVER-CUMULATIVE text for the current run, NOT a per-delta
+      // increment. Logging its length and tail lets us see whether the
+      // duplicate exists at the bytes the server sent (tail.includes
+      // a chunk that's also earlier in deltaText), or whether the
+      // duplication appears only after client-side slicing into
+      // multiple bubbles. Tag "[duprep-ui]" for grep, throttle to one
+      // log per ~500ms to avoid spam.
+      if (
+        deltaText &&
+        (typeof (window as Record<string, unknown>).__duprepLastLogAt !== "number" ||
+          Date.now() - ((window as Record<string, unknown>).__duprepLastLogAt as number) > 500)
+      ) {
+        (window as Record<string, unknown>).__duprepLastLogAt = Date.now();
+        const flat = deltaText.replace(/\n/g, "↵");
+        const tail = flat.length > 80 ? flat.slice(-80) : flat;
+        // eslint-disable-next-line no-console
+        console.log(
+          `[duprep-ui] deltaText runId=${p.runId ?? "?"} cumulative.len=${deltaText.length} bubbles=${messages.filter((m: unknown) => (m as Record<string, unknown>)._temporary).length} tail=${JSON.stringify(tail)}`,
+        );
+      }
       if (deltaText) {
         // FORK 2026-05-09 (Feature C, revised): detect >5s gap between deltas
         // and split the streaming bubble. The bubble keeps `_temporary` so
