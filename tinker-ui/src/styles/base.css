@@ -817,17 +817,6 @@ code.fs-link.fs-link-error {
 }
 
 /* FORK 2026-04-18: Amygdala collapsed bubble — warm amber, left-aligned, subtle. */
-/* FORK 2026-05-25 (task-mpkw1a0b-9jsfy): pre-answer narration emitted
-   before the section markers land. Visible plain bubble (no collapse,
-   no label) — slightly muted compared to the final answer to indicate
-   it's the lead-up. Future reasoning-bundle surface (n-steps collapser)
-   will fold this in. */
-.msg.msg-narration {
-  opacity: 0.72;
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
 .msg.msg-amygdala {
   align-self: flex-start;
   max-width: 85%;
