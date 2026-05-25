@@ -367,6 +367,36 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             `emit text_end contentIndex=${textIndex()} content.len=${accumulatedText.length}`,
           );
         }
+        // FORK 2026-05-25 (task-mpkw1a0b-9jsfy): thinking-vs-text overlap
+        // detector. Top hypothesis for the duplicate-sentence bug: Claude's
+        // extended-thinking block restates a sentence verbatim inside the
+        // visible text block, and the rendered bubble shows both. Scan
+        // accumulatedThinking for any 60+char span that also appears
+        // verbatim in accumulatedText; log a sample if found. Tagged
+        // "[duprep]" for grep.
+        if (accumulatedThinking.length >= 60 && accumulatedText.length >= 60) {
+          const overlapMin = 60;
+          let firstOverlapAt = -1;
+          let overlapSample = "";
+          for (let i = 0; i + overlapMin <= accumulatedThinking.length; i += 20) {
+            const probe = accumulatedThinking.slice(i, i + overlapMin);
+            const hit = accumulatedText.indexOf(probe);
+            if (hit >= 0) {
+              firstOverlapAt = hit;
+              overlapSample = probe;
+              break;
+            }
+          }
+          if (firstOverlapAt >= 0) {
+            log.warn(
+              `[duprep] WARN thinking-text overlap detected sessionKey=${sessionKey} thinking.len=${accumulatedThinking.length} text.len=${accumulatedText.length} overlapAt=${firstOverlapAt} sample=${JSON.stringify(overlapSample.replace(/\n/g, "↵"))}`,
+            );
+          } else {
+            log.info(
+              `[duprep] no thinking-text overlap sessionKey=${sessionKey} thinking.len=${accumulatedThinking.length} text.len=${accumulatedText.length}`,
+            );
+          }
+        }
         stream.push({
           type: "text_end",
           contentIndex: textIndex(),
@@ -376,10 +406,29 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         recordPush();
       };
 
+      // FORK 2026-05-25 (task-mpkw1a0b-9jsfy "Response rendering"):
+      // diagnostic instrumentation for the duplicate-text bug. Per user:
+      // "put logs wherever you see fit so that the next time we get to
+      // this problem again you have answers." Goal: when the user sees
+      // an identical sentence twice in a row in an assistant bubble,
+      // these logs let us pin the source — Claude's thinking-vs-text
+      // overlap, duplicate stream-line delivery, or a concat-stage bug.
+      //
+      // Strategy: log first/last 60 chars (single-line, no newlines) of
+      // every delta + accumulated length. Tagged "[duprep]" for grep.
+      const previewDelta = (s: string): string => {
+        const flat = s.replace(/\n/g, "↵").replace(/\r/g, "");
+        if (flat.length <= 120) return flat;
+        return `${flat.slice(0, 60)} … ${flat.slice(-60)}`;
+      };
+
       const pushThinkingDelta = (delta: string) => {
         pushStart();
         pushThinkingStart();
         accumulatedThinking += delta;
+        log.info(
+          `[duprep] thinking_delta sessionKey=${sessionKey} delta.len=${delta.length} accumulated.len=${accumulatedThinking.length} preview=${JSON.stringify(previewDelta(delta))}`,
+        );
         stream.push({ type: "thinking_delta", contentIndex: 0, delta, partial: buildPartial() });
         recordPush();
       };
@@ -391,10 +440,22 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
         pushTextStart();
         accumulatedText += delta;
-        if (log.debug) {
-          log.debug(
-            `emit text_delta contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length}`,
-          );
+        log.info(
+          `[duprep] text_delta sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(delta))}`,
+        );
+        // FORK 2026-05-25 — naive duplicate-tail detector: if the new
+        // delta starts with text that already appears at the end of the
+        // accumulator BEFORE the append, log a warning. Catches the
+        // case where the same delta arrives twice in a row (the most
+        // common "sentence repeated" pattern).
+        if (delta.length >= 40) {
+          const head = delta.slice(0, 40);
+          const tail = accumulatedText.slice(0, accumulatedText.length - delta.length);
+          if (tail.length >= 40 && tail.slice(-40 - head.length).includes(head)) {
+            log.warn(
+              `[duprep] WARN delta head appears in accumulator tail (likely duplicate delivery) sessionKey=${sessionKey} head=${JSON.stringify(head)}`,
+            );
+          }
         }
         stream.push({
           type: "text_delta",
