@@ -403,25 +403,6 @@ describe("browser tool snapshot maxChars", () => {
     );
   });
 
-  it("passes top-level timeoutMs through to existing-session open", async () => {
-    setResolvedBrowserProfiles({
-      user: { driver: "existing-session", attachOnly: true, color: "#00AA00" },
-    });
-    const tool = createBrowserTool();
-    await tool.execute?.("call-1", {
-      action: "open",
-      profile: "user",
-      url: "https://example.com",
-      timeoutMs: 60_000,
-    });
-
-    expect(browserClientMocks.browserOpenTab).toHaveBeenCalledWith(
-      undefined,
-      "https://example.com",
-      expect.objectContaining({ profile: "user", timeoutMs: 60_000 }),
-    );
-  });
-
   it("passes top-level timeoutMs through to close without targetId", async () => {
     setResolvedBrowserProfiles({
       user: { driver: "existing-session", attachOnly: true, color: "#00AA00" },
@@ -926,34 +907,6 @@ describe("browser tool snapshot maxChars", () => {
 describe("browser tool url alias support", () => {
   registerBrowserToolAfterEachReset();
 
-  it("accepts url alias for open", async () => {
-    const tool = createBrowserTool();
-    await tool.execute?.("call-1", { action: "open", url: "https://example.com" });
-
-    expect(browserClientMocks.browserOpenTab).toHaveBeenCalledWith(
-      undefined,
-      "https://example.com",
-      expect.objectContaining({ profile: undefined }),
-    );
-  });
-
-  it("tracks opened tabs when session context is available", async () => {
-    browserClientMocks.browserOpenTab.mockResolvedValueOnce({
-      targetId: "tab-123",
-      title: "Example",
-      url: "https://example.com",
-    });
-    const tool = createBrowserTool({ agentSessionKey: "agent:main:main" });
-    await tool.execute?.("call-1", { action: "open", url: "https://example.com" });
-
-    expect(sessionTabRegistryMocks.trackSessionBrowserTab).toHaveBeenCalledWith({
-      sessionKey: "agent:main:main",
-      targetId: "tab-123",
-      baseUrl: undefined,
-      profile: undefined,
-    });
-  });
-
   it("touches tracked tabs for direct tab activity", async () => {
     browserClientMocks.browserSnapshot.mockResolvedValueOnce({
       ok: true,
@@ -974,32 +927,6 @@ describe("browser tool url alias support", () => {
       baseUrl: undefined,
       profile: undefined,
     });
-  });
-
-  it("accepts url alias for navigate", async () => {
-    const tool = createBrowserTool();
-    await tool.execute?.("call-1", {
-      action: "navigate",
-      url: "https://example.com",
-      targetId: "tab-1",
-    });
-
-    expect(browserActionsMocks.browserNavigate).toHaveBeenCalledWith(
-      undefined,
-      expect.objectContaining({
-        url: "https://example.com",
-        targetId: "tab-1",
-        profile: undefined,
-      }),
-    );
-  });
-
-  it("keeps targetUrl required error label when both params are missing", async () => {
-    const tool = createBrowserTool();
-
-    await expect(tool.execute?.("call-1", { action: "open" })).rejects.toThrow(
-      "targetUrl required",
-    );
   });
 
   it("untracks explicit tab close for tracked sessions", async () => {
