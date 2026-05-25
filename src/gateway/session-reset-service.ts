@@ -627,6 +627,26 @@ export async function performGatewaySessionReset(params: {
       totalTokens: 0,
       totalTokensFresh: true,
     };
+    // FORK 2026-05-25 — clear CLI session bindings on reset so the
+    // archived transcript can't be re-imported by chat.history.
+    // Before this clear, the preserved cliSessionBindings.claude-cli
+    // / cliSessionIds / claudeCliSessionId fields above pointed at
+    // the OLD claude-cli sessionId. On the next chat.history, the
+    // augmentChatHistoryWithCliSessionImports pass at
+    // cli-session-history.ts:47 picked up that binding, read the
+    // archived `~/.claude/projects/<cwd>/<oldId>.jsonl` transcript
+    // back in, and the UI re-filled — the user typed /clear, hard-
+    // refreshed, and the conversation came right back. Per user
+    // 2026-05-25: "When a chat is cleared, there should be no going
+    // back (unless I ask Jarvis to create a new tab with the
+    // previous session)." Reset means reset: drop all the CLI
+    // session pointers; the next chat.send spawns cc-bridge fresh
+    // (no --resume) under a new claude-cli sessionId, and the new
+    // OpenClaw sessionId has no entry in cc-bridge session-map.json
+    // either, so the second augment-path is empty too.
+    nextEntry.cliSessionBindings = undefined;
+    nextEntry.cliSessionIds = undefined;
+    nextEntry.claudeCliSessionId = undefined;
     store[primaryKey] = nextEntry;
     return nextEntry;
   });
