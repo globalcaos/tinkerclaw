@@ -160,7 +160,7 @@ interface Tab {
 // were extracted on 2026-05-24. Both client (this file, addTab + /clear)
 // and server (src/gateway/session-cookie-phrase.ts) import from the
 // same JSON now. See bible session-naming.md.
-import { FORTUNE_COOKIES, randomFortune } from "../../src/shared/fortune-cookies.js";
+import { FORTUNE_COOKIES, fortuneForKey, randomFortune } from "../../src/shared/fortune-cookies.js";
 
 // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts. The first
 // pass invented a separate 2-word generator (COOKIE_ADJECTIVES /
@@ -5094,16 +5094,21 @@ function switchToTab(tabId: string) {
 function createTab(): Tab {
   // FORK: Eagerly assign a session key so the tab appears in the
   // sessions panel immediately. Gateway auto-creates on first chat.send.
-  // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts (Tabs behavior
-  // part 1): client mints the burned-in name from the existing
-  // FORTUNE_COOKIES pool (long poetic greetings, 200+ entries, includes
-  // emoji). loadSessions then patches this phrase to the server-side
-  // cookiePhrase field via sessions.patch once the session entry exists
-  // on the server, so it survives tab close + gateway restart.
+  // FORK 2026-05-25 — bug task-mpjhzu3j-ma9ts (Tabs behavior part 1):
+  // tab.title is picked DETERMINISTICALLY from sessionKey via
+  // fortuneForKey(). The server-side lazy-mint at session-utils.ts:1648
+  // calls the SAME fortuneForKey(key) when populating cookiePhrase, so
+  // both sides converge on the same phrase for any given key — no
+  // patches, no race, no flip-on-close. Earlier passes used
+  // randomFortune() independently on each side; they diverged and the
+  // side-panel row flipped phrase the moment the tab closed (priority
+  // chain fell from tab.title to cookiePhrase, exposing the server's
+  // different pick). See src/shared/fortune-cookies.ts:fortuneForKey.
+  const sessionKey = `tinker:${Date.now().toString(36)}`;
   const tab: Tab = {
     id: generateTabId(),
-    sessionKey: `tinker:${Date.now().toString(36)}`,
-    title: randomFortune(),
+    sessionKey,
+    title: fortuneForKey(sessionKey),
     isAttached: true,
   };
   tabs.push(tab);
@@ -11858,10 +11863,13 @@ function init() {
       tab.sessionKey = newKey;
       tab.isAttached = true;
       sessionKey = newKey;
-      // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts: same as
-      // addTab(), uses the FORTUNE_COOKIES pool. loadSessions will patch
-      // server-side once the new session entry exists.
-      tab.title = randomFortune();
+      // FORK 2026-05-25 — bug task-mpjhzu3j-ma9ts: deterministic phrase
+      // by sessionKey hash. Same picker as createTab() and the
+      // server-side lazy-mint (src/shared/fortune-cookies.ts:
+      // fortuneForKey), so tab.title and the eventual cookiePhrase for
+      // this new key converge automatically — the panel row won't flip
+      // phrase when this tab is closed.
+      tab.title = fortuneForKey(newKey);
       tabStates.set(tab.id, freshTabState());
       loadTabState(tab.id);
       saveTabs();

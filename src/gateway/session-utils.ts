@@ -1645,7 +1645,14 @@ export function listSessionsFromStore(params: {
         continue;
       }
       if (entry.cookiePhrase && !isLegacy2WordPhrase(entry.cookiePhrase)) continue;
-      const phrase = generateCookiePhrase(taken);
+      // FORK 2026-05-25 — pass the sessionKey so generateCookiePhrase
+      // uses the deterministic fortuneForKey() path. The client's
+      // createTab() also picks via fortuneForKey(sessionKey), so the
+      // server-minted cookiePhrase here matches the client's tab.title
+      // for the same key — the side-panel row no longer flips phrase
+      // when the tab closes (the bug `task-mpjhzu3j-ma9ts` 2026-05-25
+      // "phrase changes on first close" symptom).
+      const phrase = generateCookiePhrase(taken, key);
       entry.cookiePhrase = phrase;
       taken.add(phrase);
       storeMutated = true;
