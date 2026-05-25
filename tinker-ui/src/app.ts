@@ -6077,19 +6077,39 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   // instead of "🏠 Main"). sessionKeyMatches handles the prefix variance
   // (defined at app.ts:482 — checks suffix-match in either direction).
   const tab = tabs.find((t) => sessionKeyMatches(s.key, t.sessionKey));
+  // FORK 2026-05-25 — bug task-mpjhzu3j-ma9ts: special sessions (main +
+  // heartbeat) get a fixed friendly label AND no delete button. The
+  // server already rejects sessions.delete on main with INVALID_REQUEST
+  // ("Cannot delete the main session …"), so the button was always
+  // useless for main; for heartbeat it would technically work but the
+  // session immediately reappears as the heartbeat runtime keeps
+  // touching it. Per user 2026-05-25: "those sessions should not be
+  // deletable" + "I am trying to delete webchat:g-agent-main-main but
+  // it does not do anything. Not sure how it came to be, but this is
+  // no longer the main session" — the displayName "webchat:g-agent-
+  // main-main" was leaking through meaningfulSessionLabel for main
+  // (label/displayName fall-through), making main unrecognisable.
+  // Hard-special-case both keys: main → "🏠 Main", heartbeat → keep
+  // its "❤️ Heartbeat" cookiePhrase (already minted server-side), and
+  // OMIT the delete button entirely for either.
+  const keySuffix = s.key.split(":").pop() ?? "";
+  const isMainSession = s.key.endsWith(":main") || keySuffix === "main";
+  const isHeartbeatSession = s.key.endsWith(":heartbeat") || keySuffix === "heartbeat";
+  const isProtected = isMainSession || isHeartbeatSession;
+  const protectedLabel = isMainSession ? "🏠 Main" : isHeartbeatSession ? "❤️ Heartbeat" : null;
+
   // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
-  // session-name resolution now includes the fortune-cookie phrase
-  // (`s.cookiePhrase`) the gateway lazy-mints for every non-main
-  // session at first list. Priority:
+  // session-name resolution. Priority:
+  //   0. protectedLabel — main/heartbeat get a hard-coded friendly name
+  //      (so a stale "webchat:g-agent-main-main" displayName cannot leak
+  //      through)
   //   1. tab.title — persisted localStorage (Gemini-titled or "🏠 Main")
-  //   2. s.cookiePhrase — gateway-burned "amber raven"-style name; the
-  //      sticky display name for any session whose tab the user closed
-  //      or never named, eliminating the hex-code + "Tinker UI" labels.
+  //   2. s.cookiePhrase — gateway-burned long fortune phrase
   //   3. meaningfulSessionLabel(s.label) — server-stored explicit label
   //   4. meaningfulSessionLabel(s.displayName) — server displayName
-  //   5. shortLabel — key-derived fallback (only reached for the main
-  //      session pre-bootstrap, or in genuinely-broken states).
+  //   5. shortLabel — key-derived fallback
   const label =
+    protectedLabel ||
     tab?.title ||
     (s.cookiePhrase as string | undefined) ||
     meaningfulSessionLabel(s.label) ||
@@ -6105,12 +6125,16 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   const liveStyle = liveInfo.live
     ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
     : "";
+  // Delete button omitted for protected (main + heartbeat) sessions.
+  const deleteBtnHtml = isProtected
+    ? ""
+    : `<button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>`;
   return `<div class="session-row${isActive ? " session-active" : ""}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
     <span class="session-label" data-hint="${esc(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
-    <button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-    </button>
+    ${deleteBtnHtml}
   </div>`;
 }
 
