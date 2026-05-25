@@ -162,6 +162,672 @@ interface Tab {
 // same JSON now. See bible session-naming.md.
 import { FORTUNE_COOKIES, fortuneForKey, randomFortune } from "../../src/shared/fortune-cookies.js";
 
+// FORK 2026-05-25 — emoji catalog for the inline group/sub-group
+// rename picker (openInlineAxisLabelEdit). Curated common set across
+// faces, hands, hearts/symbols, objects, nature, animals, food,
+// activities, travel, time/weather. Skin-tone + gender variants
+// omitted to keep the grid compact; users can paste those manually
+// if needed. Order roughly matches Unicode emoji order within each
+// section so the scroll feels like Slack/Discord rather than random.
+const EMOJI_CATALOG: readonly string[] = [
+  // Smileys & emotion
+  "😀",
+  "😁",
+  "😂",
+  "🤣",
+  "😃",
+  "😄",
+  "😅",
+  "😆",
+  "😉",
+  "😊",
+  "😋",
+  "😎",
+  "😍",
+  "🥰",
+  "😘",
+  "🥲",
+  "😗",
+  "😙",
+  "😚",
+  "🙂",
+  "🤗",
+  "🤩",
+  "🤔",
+  "🫡",
+  "🤨",
+  "😐",
+  "😑",
+  "😶",
+  "🙄",
+  "😏",
+  "😣",
+  "😥",
+  "😮",
+  "🤐",
+  "😯",
+  "😪",
+  "😫",
+  "🥱",
+  "😴",
+  "😌",
+  "😛",
+  "😜",
+  "🤪",
+  "😝",
+  "🤤",
+  "😒",
+  "😓",
+  "😔",
+  "😕",
+  "🙃",
+  "🤑",
+  "😲",
+  "☹️",
+  "🙁",
+  "😖",
+  "😞",
+  "😟",
+  "😤",
+  "😢",
+  "😭",
+  "😦",
+  "😧",
+  "😨",
+  "😩",
+  "🤯",
+  "😬",
+  "😰",
+  "😱",
+  "🥵",
+  "🥶",
+  "😳",
+  "😵",
+  "🥴",
+  "😠",
+  "😡",
+  "🤬",
+  "😷",
+  "🤒",
+  "🤕",
+  "🤢",
+  "🤮",
+  "🥳",
+  "🥺",
+  "🤠",
+  "🤡",
+  "🤥",
+  "🥸",
+  "🤫",
+  "🤭",
+  "🫣",
+  // Hands & body
+  "👍",
+  "👎",
+  "👌",
+  "✌️",
+  "🤞",
+  "🤟",
+  "🤘",
+  "🤙",
+  "👈",
+  "👉",
+  "👆",
+  "👇",
+  "☝️",
+  "✋",
+  "🤚",
+  "🖐️",
+  "🖖",
+  "👋",
+  "🤝",
+  "👏",
+  "🙌",
+  "🙏",
+  "🤲",
+  "💪",
+  "🫶",
+  "🫰",
+  "🫵",
+  "🦾",
+  "🧠",
+  "👁️",
+  "👀",
+  "👄",
+  "🫦",
+  // Hearts & symbols
+  "❤️",
+  "🧡",
+  "💛",
+  "💚",
+  "💙",
+  "💜",
+  "🖤",
+  "🤍",
+  "🤎",
+  "💔",
+  "❣️",
+  "💕",
+  "💞",
+  "💓",
+  "💗",
+  "💖",
+  "💘",
+  "💝",
+  "💟",
+  "💯",
+  "💢",
+  "💥",
+  "💫",
+  "💦",
+  "💨",
+  "💬",
+  "💭",
+  "🗯️",
+  "♻️",
+  "✨",
+  "⭐",
+  "🌟",
+  "🌠",
+  "🌈",
+  "☀️",
+  "☁️",
+  "⛅",
+  "🌤️",
+  "🌧️",
+  "⛈️",
+  "❄️",
+  "☃️",
+  "🔥",
+  "💧",
+  "🌊",
+  // Objects, tools, work
+  "💼",
+  "🎒",
+  "👜",
+  "🎓",
+  "📱",
+  "💻",
+  "⌨️",
+  "🖥️",
+  "🖨️",
+  "📷",
+  "📹",
+  "🎥",
+  "📞",
+  "📺",
+  "📻",
+  "🎙️",
+  "🎛️",
+  "⏰",
+  "🕰️",
+  "⌛",
+  "⏳",
+  "📡",
+  "🔋",
+  "🔌",
+  "💡",
+  "🔦",
+  "🕯️",
+  "🧯",
+  "💸",
+  "💵",
+  "💰",
+  "💳",
+  "🧾",
+  "💎",
+  "⚖️",
+  "🧰",
+  "🔧",
+  "🪛",
+  "🔩",
+  "⚙️",
+  "🪤",
+  "🧲",
+  "🔫",
+  "💣",
+  "🧨",
+  "⚔️",
+  "🛡️",
+  "🪦",
+  "⚱️",
+  "🏺",
+  "🔮",
+  "🧿",
+  "🪬",
+  "⚗️",
+  "🔭",
+  "🔬",
+  "💊",
+  "💉",
+  "🩹",
+  "🩺",
+  "🧬",
+  "🦠",
+  "🧪",
+  "🌡️",
+  "🧹",
+  "🧺",
+  "🔑",
+  "🗝️",
+  "🚪",
+  "🛋️",
+  "🛏️",
+  "🛁",
+  "🛒",
+  "🎁",
+  "🎈",
+  "🎀",
+  "🎊",
+  "🎉",
+  "✉️",
+  "📩",
+  "📨",
+  "📧",
+  "💌",
+  "📥",
+  "📤",
+  "📦",
+  "🏷️",
+  "🪧",
+  "📜",
+  "📃",
+  "📄",
+  "📑",
+  "📊",
+  "📈",
+  "📉",
+  "🗒️",
+  "🗓️",
+  "📆",
+  "📅",
+  "🗑️",
+  "🗃️",
+  "📋",
+  "📁",
+  "📂",
+  "🗂️",
+  "🗞️",
+  "📰",
+  "📓",
+  "📒",
+  "📕",
+  "📗",
+  "📘",
+  "📙",
+  "📚",
+  "📖",
+  "🔖",
+  "🔗",
+  "📎",
+  "📐",
+  "📏",
+  "🧮",
+  "📌",
+  "📍",
+  "✂️",
+  "🖊️",
+  "✒️",
+  "🖌️",
+  "📝",
+  "✏️",
+  "🔍",
+  "🔎",
+  "🔒",
+  "🔓",
+  // Nature, places
+  "🌳",
+  "🌲",
+  "🌴",
+  "🌱",
+  "🌿",
+  "☘️",
+  "🍀",
+  "🎋",
+  "🌾",
+  "🌵",
+  "🌷",
+  "🌸",
+  "🌹",
+  "🥀",
+  "🌺",
+  "🌻",
+  "🌼",
+  "🌎",
+  "🌍",
+  "🌏",
+  "🗺️",
+  "🧭",
+  "🏔️",
+  "⛰️",
+  "🌋",
+  "🏕️",
+  "🏖️",
+  "🏜️",
+  "🏝️",
+  "🏞️",
+  "🏛️",
+  "🏗️",
+  "🧱",
+  "🪨",
+  "🛖",
+  "🏘️",
+  "🏠",
+  "🏡",
+  "🏢",
+  "🏥",
+  "🏦",
+  "🏨",
+  "🏪",
+  "🏫",
+  "🏬",
+  "🏭",
+  "🏯",
+  "🏰",
+  "⛪",
+  "🗼",
+  "🗽",
+  "⛲",
+  "⛺",
+  "🌅",
+  "🌆",
+  "🌇",
+  "🌉",
+  "🌁",
+  "🌃",
+  "🌄",
+  // Animals
+  "🐶",
+  "🐱",
+  "🐭",
+  "🐹",
+  "🐰",
+  "🦊",
+  "🐻",
+  "🐼",
+  "🦁",
+  "🐮",
+  "🐷",
+  "🐸",
+  "🐵",
+  "🙈",
+  "🙉",
+  "🙊",
+  "🐒",
+  "🐔",
+  "🐧",
+  "🐦",
+  "🐤",
+  "🦆",
+  "🦉",
+  "🦇",
+  "🐺",
+  "🐗",
+  "🐴",
+  "🦄",
+  "🐝",
+  "🐛",
+  "🦋",
+  "🐌",
+  "🐞",
+  "🐜",
+  "🕷️",
+  "🐢",
+  "🐍",
+  "🦎",
+  "🐙",
+  "🦐",
+  "🦀",
+  "🐠",
+  "🐬",
+  "🐳",
+  "🐊",
+  "🦓",
+  "🦍",
+  "🐘",
+  "🦒",
+  "🐪",
+  "🐎",
+  "🐑",
+  "🐐",
+  "🐕",
+  "🐈",
+  "🦮",
+  "🦝",
+  "🦨",
+  "🐾",
+  // Food & drink
+  "🍇",
+  "🍉",
+  "🍊",
+  "🍋",
+  "🍌",
+  "🍍",
+  "🥭",
+  "🍎",
+  "🍏",
+  "🍐",
+  "🍑",
+  "🍒",
+  "🍓",
+  "🥝",
+  "🍅",
+  "🥥",
+  "🥑",
+  "🍆",
+  "🥔",
+  "🥕",
+  "🌽",
+  "🌶️",
+  "🥒",
+  "🥬",
+  "🥦",
+  "🧄",
+  "🧅",
+  "🍄",
+  "🥜",
+  "🍞",
+  "🥐",
+  "🥖",
+  "🥨",
+  "🥯",
+  "🥞",
+  "🧇",
+  "🧀",
+  "🍖",
+  "🍗",
+  "🥩",
+  "🥓",
+  "🍔",
+  "🍟",
+  "🍕",
+  "🌭",
+  "🥪",
+  "🌮",
+  "🌯",
+  "🥙",
+  "🥚",
+  "🍳",
+  "🥘",
+  "🍲",
+  "🥗",
+  "🍿",
+  "🧂",
+  "🍱",
+  "🍙",
+  "🍚",
+  "🍛",
+  "🍜",
+  "🍝",
+  "🍣",
+  "🍤",
+  "🍥",
+  "🍡",
+  "🥟",
+  "🍦",
+  "🍩",
+  "🍪",
+  "🎂",
+  "🍰",
+  "🧁",
+  "🥧",
+  "🍫",
+  "🍬",
+  "🍭",
+  "🍮",
+  "🍯",
+  "🍼",
+  "🥛",
+  "☕",
+  "🍵",
+  "🍶",
+  "🍷",
+  "🍸",
+  "🍹",
+  "🍺",
+  "🥂",
+  "🥃",
+  "🥤",
+  "🧊",
+  // Activities, sports, music
+  "⚽",
+  "🏀",
+  "🏈",
+  "⚾",
+  "🎾",
+  "🏐",
+  "🏓",
+  "🥊",
+  "🎣",
+  "⛳",
+  "🎯",
+  "🎳",
+  "🎮",
+  "🎲",
+  "🧩",
+  "🎬",
+  "🎤",
+  "🎧",
+  "🎼",
+  "🎹",
+  "🎸",
+  "🥁",
+  "🎷",
+  "🎺",
+  "🎻",
+  "🏆",
+  "🥇",
+  "🥈",
+  "🥉",
+  "🏅",
+  "🎫",
+  "🎟️",
+  "🎭",
+  "🎨",
+  // Travel
+  "🚗",
+  "🚕",
+  "🚌",
+  "🏎️",
+  "🚓",
+  "🚑",
+  "🚒",
+  "🚚",
+  "🚜",
+  "🛴",
+  "🚲",
+  "🏍️",
+  "✈️",
+  "🚀",
+  "🛸",
+  "🚁",
+  "⛵",
+  "🚤",
+  "🚢",
+  "⚓",
+  "⛽",
+  "🚧",
+  "🚦",
+  "🗺️",
+  "🗿",
+  // Time, weather
+  "🌑",
+  "🌒",
+  "🌓",
+  "🌔",
+  "🌕",
+  "🌖",
+  "🌗",
+  "🌘",
+  "🌙",
+  "🪐",
+  "⚡",
+  "🌪️",
+  "🌫️",
+  // Misc symbols & flags-ish
+  "✅",
+  "❌",
+  "⛔",
+  "🚫",
+  "✔️",
+  "☑️",
+  "✖️",
+  "➕",
+  "➖",
+  "➗",
+  "✳️",
+  "❇️",
+  "💢",
+  "♻️",
+  "☮️",
+  "✝️",
+  "☪️",
+  "🕉️",
+  "☸️",
+  "✡️",
+  "🔯",
+  "☯️",
+  "☦️",
+  "⚛️",
+  "🕎",
+  "🛐",
+  "♈",
+  "♉",
+  "♊",
+  "♋",
+  "♌",
+  "♍",
+  "♎",
+  "♏",
+  "♐",
+  "♑",
+  "♒",
+  "♓",
+  "⛎",
+  "🆗",
+  "🆒",
+  "🆕",
+  "🆓",
+  "🆙",
+  "🆖",
+  "🆘",
+  "🔴",
+  "🟠",
+  "🟡",
+  "🟢",
+  "🔵",
+  "🟣",
+  "⚫",
+  "⚪",
+  "🟤",
+  "🔺",
+  "🔻",
+  "🔶",
+  "🔷",
+  "🔸",
+  "🔹",
+] as const;
+
 // FORK 2026-05-24 (second pass) — bug task-mpjhzu3j-ma9ts. The first
 // pass invented a separate 2-word generator (COOKIE_ADJECTIVES /
 // COOKIE_NOUNS) — that was a hallucinated requirement; the existing
@@ -7601,6 +8267,115 @@ function init() {
       });
   }
 
+  // FORK 2026-05-25 — emoji picker for inline group/sub-group rename.
+  // Singleton: only one picker open at a time across the whole UI.
+  // Module-scoped variable + helpers; the picker DOM is appended to
+  // document.body with position:fixed so it escapes any ancestor's
+  // overflow:hidden clipping (the control panel uses several).
+  let activeEmojiPicker: {
+    el: HTMLElement;
+    cleanup: () => void;
+  } | null = null;
+
+  function closeActiveEmojiPicker(): void {
+    if (!activeEmojiPicker) return;
+    activeEmojiPicker.cleanup();
+    activeEmojiPicker.el.remove();
+    activeEmojiPicker = null;
+  }
+
+  function insertAtCursor(input: HTMLInputElement, text: string): void {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    input.value = before + text + after;
+    const pos = start + text.length;
+    input.setSelectionRange(pos, pos);
+    input.focus();
+    // Dispatch input event so any listeners (length counters, etc.)
+    // see the synthetic update.
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function openEmojiPicker(anchor: HTMLElement, target: HTMLInputElement): void {
+    // Toggle: re-clicking the same trigger closes the picker.
+    if (activeEmojiPicker) {
+      closeActiveEmojiPicker();
+      return;
+    }
+    const picker = document.createElement("div");
+    picker.className = "exec-emoji-picker";
+    for (const emoji of EMOJI_CATALOG) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "exec-emoji-picker-item";
+      item.textContent = emoji;
+      item.title = emoji;
+      // Keep focus on the host input — same trick as the trigger button.
+      item.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      });
+      item.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        insertAtCursor(target, emoji);
+        // Close after pick. Common picker UX (Slack/Discord behave the
+        // same on single-click outside the shift-modifier path).
+        closeActiveEmojiPicker();
+      });
+      picker.appendChild(item);
+    }
+    // Position below the anchor, clamped to viewport. position:fixed
+    // because the anchor lives inside several scroll containers in the
+    // control panel; absolute positioning would clip.
+    const rect = anchor.getBoundingClientRect();
+    const pickerWidth = 300;
+    const pickerMaxHeight = 280;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - pickerWidth - 8));
+    const top =
+      rect.bottom + 4 + pickerMaxHeight > window.innerHeight
+        ? Math.max(8, rect.top - pickerMaxHeight - 4)
+        : rect.bottom + 4;
+    picker.style.left = `${left}px`;
+    picker.style.top = `${top}px`;
+    document.body.appendChild(picker);
+
+    const onDocMouseDown = (ev: MouseEvent) => {
+      const t = ev.target as Node;
+      if (!picker.contains(t) && t !== anchor && !anchor.contains(t)) {
+        closeActiveEmojiPicker();
+      }
+    };
+    const onDocKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeActiveEmojiPicker();
+      }
+    };
+    // Stop the picker's own clicks from bubbling out and triggering
+    // exec-group header handlers.
+    picker.addEventListener("click", (ev) => ev.stopPropagation());
+    picker.addEventListener("mousedown", (ev) => ev.stopPropagation());
+
+    // Defer attaching the document mousedown so this very click
+    // (which OPENED the picker) doesn't immediately close it.
+    const handle = setTimeout(() => {
+      document.addEventListener("mousedown", onDocMouseDown);
+      document.addEventListener("keydown", onDocKey, true);
+    }, 0);
+
+    activeEmojiPicker = {
+      el: picker,
+      cleanup: () => {
+        clearTimeout(handle);
+        document.removeEventListener("mousedown", onDocMouseDown);
+        document.removeEventListener("keydown", onDocKey, true);
+      },
+    };
+  }
+
   // FORK 2026-05-23 (F1) — inline rename for a top-level group or sub-group.
   // Replaces the `.exec-group-label` / `.exec-subgroup-label` span with an
   // <input> pre-filled with the current label. Enter or blur saves via
@@ -7625,7 +8400,23 @@ function init() {
     input.value = current;
     input.dataset.axisId = axisId;
     if (wasSubgroup) input.dataset.subgroup = "1";
-    labelEl.replaceWith(input);
+    // FORK 2026-05-25 — wrap input + emoji-picker trigger button in
+    // an inline-flex container, so the trigger sits to the right of
+    // the text box and stays aligned with it during inline rename.
+    // Clicking the button toggles a floating scrollable emoji grid
+    // (openEmojiPicker) that inserts at the input's caret position
+    // and closes on outside click / Escape / re-click.
+    const wrap = document.createElement("span");
+    wrap.className = "exec-group-label-edit-wrap";
+    const emojiBtn = document.createElement("button");
+    emojiBtn.type = "button";
+    emojiBtn.className = "exec-group-label-emoji-btn";
+    emojiBtn.title = "Insert emoji";
+    emojiBtn.tabIndex = -1;
+    emojiBtn.textContent = "🙂";
+    wrap.appendChild(input);
+    wrap.appendChild(emojiBtn);
+    labelEl.replaceWith(wrap);
     input.focus();
     input.select();
 
@@ -7633,11 +8424,12 @@ function init() {
     const restore = () => {
       if (resolved) return;
       resolved = true;
+      closeActiveEmojiPicker();
       const span = document.createElement("span");
       span.className = wasSubgroup ? "exec-subgroup-label" : "exec-group-label";
       span.dataset.axisLabel = current;
       span.textContent = current;
-      input.replaceWith(span);
+      wrap.replaceWith(span);
     };
     const save = async () => {
       if (resolved) return;
@@ -7647,6 +8439,7 @@ function init() {
         return;
       }
       resolved = true;
+      closeActiveEmojiPicker();
       try {
         await req("control-panel.axes.update", { id: axisId, label: next });
         await loadExecTasks();
@@ -7660,6 +8453,19 @@ function init() {
       }
     };
 
+    // FORK 2026-05-25 — emoji button: mousedown.preventDefault keeps
+    // focus on the input (so blur doesn't fire → save doesn't trigger
+    // a premature save when the user just wants to insert an emoji).
+    emojiBtn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    emojiBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      openEmojiPicker(emojiBtn, input);
+    });
+
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         ev.preventDefault();
@@ -7669,17 +8475,24 @@ function init() {
         restore();
       }
     });
-    input.addEventListener("blur", () => {
+    input.addEventListener("blur", (ev) => {
+      // FORK 2026-05-25 — if focus is leaving for the emoji button or
+      // a picker item, don't save. The mousedown.preventDefault above
+      // SHOULD keep focus, but defensively check relatedTarget too.
+      const next = (ev.relatedTarget as HTMLElement | null) ?? null;
+      if (next && (next === emojiBtn || next.closest(".exec-emoji-picker"))) {
+        return;
+      }
       // Blur saves (mirrors Enter). If the input is empty, the save path
       // calls restore() so the user can never accidentally erase a label.
       void save();
     });
-    // The replaced <input> sits inside the header which has its own click
-    // handler; stop clicks/mousedowns inside the input from bubbling up to
-    // the collapse-toggle and dblclick handlers above.
-    input.addEventListener("click", (ev) => ev.stopPropagation());
-    input.addEventListener("mousedown", (ev) => ev.stopPropagation());
-    input.addEventListener("dblclick", (ev) => ev.stopPropagation());
+    // The replaced wrapper sits inside the header which has its own click
+    // handler; stop clicks/mousedowns inside it from bubbling up to the
+    // collapse-toggle and dblclick handlers above.
+    wrap.addEventListener("click", (ev) => ev.stopPropagation());
+    wrap.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    wrap.addEventListener("dblclick", (ev) => ev.stopPropagation());
   }
 
   // FORK 2026-05-23 (F1) — inline rename for a task title. Replaces the
