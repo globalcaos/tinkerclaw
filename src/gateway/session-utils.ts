@@ -1725,6 +1725,21 @@ export function listSessionsFromStore(params: {
       return true;
     })
     .filter(([key]) => {
+      // FORK 2026-05-25 — hide ALL cron-related sessions from the panel,
+      // not just `:run:` per-execution sub-sessions. Per user 2026-05-25:
+      // "I see there were nearly 100 cron jobs sessions. I would prefer
+      // if every cron job reuses the same session over and over." The
+      // top-level cron entries (cron:morning-briefing, cron:cleaning-lady,
+      // …) already DO reuse one session per cron name; the explosion was
+      // people-profiles, which legitimately uses one session per profile
+      // (~80 profiles → ~80 entries) to keep per-person memory context
+      // isolated. That isolation is by design and not changing here.
+      // The fix is purely panel-visibility: cron-machinery isn't user-
+      // interactable surface, so don't list it. The :run: filter below
+      // becomes redundant but stays for explicit documentation.
+      if (key.includes(":cron:")) {
+        return false;
+      }
       if (isCronRunSessionKey(key)) {
         return false;
       }

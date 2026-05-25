@@ -6125,9 +6125,18 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   const liveStyle = liveInfo.live
     ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
     : "";
-  // Delete button omitted for protected (main + heartbeat) sessions.
+  // FORK 2026-05-25 — for protected (main + heartbeat) sessions, render
+  // an INVISIBLE placeholder button with the same dimensions as the real
+  // delete button so the row's right-edge layout (tokens + age + button
+  // column) stays aligned across all rows. Per user 2026-05-25: "main
+  // and heartbeat now have their details moved to the right. Can you
+  // just put a placeholder button, fully transparent, with no action,
+  // so that it aligns with the rest?" — `visibility: hidden` keeps the
+  // layout space, kills the click, no aria/data-hint exposure.
   const deleteBtnHtml = isProtected
-    ? ""
+    ? `<button class="session-delete-btn" aria-hidden="true" tabindex="-1" style="visibility:hidden;pointer-events:none">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>`
     : `<button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
     </button>`;
