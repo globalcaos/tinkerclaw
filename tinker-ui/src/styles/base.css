@@ -817,45 +817,13 @@ code.fs-link.fs-link-error {
 }
 
 /* FORK 2026-04-18: Amygdala collapsed bubble — warm amber, left-aligned, subtle. */
-/* FORK 2026-05-25 (task-mpkw1a0b-9jsfy): pre-answer narration — Jarvis
-   thinking out loud before the section markers land. Collapsed by default
-   so the visible focus stays on the final answer below it. Muted-blue
-   theme to distinguish from the warm amygdala/fractal annotations. */
-.msg.msg-thinking {
-  align-self: flex-start;
-  max-width: 85%;
-  margin: 2px 0;
-  padding: 0;
-  background: none;
-  border: none;
-}
-.msg.msg-thinking > summary.thinking-summary {
-  cursor: pointer;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: rgba(96, 165, 250, 0.08);
-  border: 1px solid rgba(96, 165, 250, 0.22);
-  border-left: 3px solid #60a5fa;
-  color: #a3c2e8;
-  font-size: 12px;
-  list-style: none;
-  user-select: none;
-}
-.msg.msg-thinking > summary.thinking-summary::-webkit-details-marker {
-  display: none;
-}
-.msg.msg-thinking > summary.thinking-summary:hover {
-  background: rgba(96, 165, 250, 0.13);
-}
-.msg.msg-thinking[open] > summary.thinking-summary {
-  margin-bottom: 4px;
-}
-.msg.msg-thinking > .thinking-body {
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: rgba(96, 165, 250, 0.05);
-  border-left: 3px solid rgba(96, 165, 250, 0.4);
-  color: #b8c8de;
+/* FORK 2026-05-25 (task-mpkw1a0b-9jsfy): pre-answer narration emitted
+   before the section markers land. Visible plain bubble (no collapse,
+   no label) — slightly muted compared to the final answer to indicate
+   it's the lead-up. Future reasoning-bundle surface (n-steps collapser)
+   will fold this in. */
+.msg.msg-narration {
+  opacity: 0.72;
   font-size: 12.5px;
   line-height: 1.45;
 }
