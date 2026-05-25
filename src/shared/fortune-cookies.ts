@@ -32,21 +32,33 @@ export function randomFortune(): string {
  * server-side cookiePhrase converge automatically for any given key —
  * no patches, no race, no divergence on tab close.
  *
- * Bug 2026-05-25: previously both sides called randomFortune()
- * independently and got DIFFERENT phrases for the same key. The tab
- * showed phrase X while the session row in the side panel showed
- * phrase Y the moment the tab closed (tab.title fell out of the
- * priority chain, exposing the server's cookiePhrase). With
- * fortuneForKey, X === Y by construction.
+ * Canonicalisation 2026-05-25 (second pass): the client creates tabs
+ * with short keys like `tinker:mpkXXX`, but the server stores them
+ * under canonical keys like `agent:main:tinker:mpkXXX`. The first
+ * deterministic pass hashed the raw key on each side and STILL
+ * diverged because the two strings were different. We now strip a
+ * leading `agent:<id>:` namespace before hashing, so both forms map
+ * to the same suffix (`tinker:mpkXXX`) and produce the same phrase.
+ * Symmetric for `agent:main:heartbeat` vs `:heartbeat` etc.
+ *
+ * Bug pre-2026-05-25: both sides called randomFortune() independently
+ * and got different phrases for the same logical session. The tab
+ * showed phrase X while the side-panel row showed phrase Y the moment
+ * the tab closed (tab.title fell out of the priority chain, exposing
+ * the server's cookiePhrase). With canonicalised fortuneForKey, X
+ * === Y by construction.
  *
  * Hash: FNV-1a (32-bit, unseeded, well-distributed for short ASCII
  * strings — sessionKey tokens are exactly this).
  */
+const AGENT_PREFIX_RE = /^agent:[^:]+:/;
+
 export function fortuneForKey(key: string): string {
   if (FORTUNE_COOKIES.length === 0) return "(no fortune)";
+  const canonical = key.replace(AGENT_PREFIX_RE, "");
   let h = 0x811c9dc5 >>> 0;
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
+  for (let i = 0; i < canonical.length; i++) {
+    h ^= canonical.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return FORTUNE_COOKIES[h % FORTUNE_COOKIES.length];

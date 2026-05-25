@@ -72,6 +72,7 @@ import {
   isWorkspaceRelativeAvatarPath,
   resolveAvatarMime,
 } from "../shared/avatar-policy.js";
+import { fortuneForKey } from "../shared/fortune-cookies.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -1644,17 +1645,22 @@ export function listSessionsFromStore(params: {
         }
         continue;
       }
-      if (entry.cookiePhrase && !isLegacy2WordPhrase(entry.cookiePhrase)) continue;
-      // FORK 2026-05-25 — pass the sessionKey so generateCookiePhrase
-      // uses the deterministic fortuneForKey() path. The client's
-      // createTab() also picks via fortuneForKey(sessionKey), so the
-      // server-minted cookiePhrase here matches the client's tab.title
-      // for the same key — the side-panel row no longer flips phrase
-      // when the tab closes (the bug `task-mpjhzu3j-ma9ts` 2026-05-25
-      // "phrase changes on first close" symptom).
-      const phrase = generateCookiePhrase(taken, key);
-      entry.cookiePhrase = phrase;
-      taken.add(phrase);
+      // FORK 2026-05-25 (third pass) — canonical-deterministic phrase
+      // is the ONLY source of truth now. Re-mint any entry whose
+      // cookiePhrase doesn't match fortuneForKey(key), not just legacy
+      // 2-word shapes. This heals pre-canonicalisation entries where
+      // the client side picked phrase X (hash of short "tinker:abc")
+      // and the server side picked phrase Y (hash of canonical
+      // "agent:main:tinker:abc"). After today's fortuneForKey strips
+      // the `agent:<id>:` prefix before hashing, both sides agree on
+      // the same phrase; this loop drives the in-memory store toward
+      // that agreement on the next sessions.list. Customised phrases
+      // can't reach this path — sessions.patch from webchat is
+      // rejected — so there's nothing to trample.
+      const canonicalPhrase = fortuneForKey(key);
+      if (entry.cookiePhrase === canonicalPhrase) continue;
+      entry.cookiePhrase = canonicalPhrase;
+      taken.add(canonicalPhrase);
       storeMutated = true;
     }
   }
@@ -1688,9 +1694,14 @@ export function listSessionsFromStore(params: {
         let mutated = false;
         for (const [k, phrase] of Object.entries(phrasesToPersist)) {
           const existing = s[k];
-          // Only set if missing or legacy 2-word — don't trample a
-          // value an explicit sessions.patch set since we read it.
-          if (existing && (!existing.cookiePhrase || isLegacy2WordPhrase(existing.cookiePhrase))) {
+          // FORK 2026-05-25 (third pass) — persist if the disk value
+          // doesn't already match the canonical-deterministic phrase
+          // we minted in-memory. Includes empty entries, legacy
+          // 2-word holdovers, and off-canonical phrases from before
+          // fortuneForKey learned to strip the agent prefix. Same
+          // logic as the in-memory mint loop above; the two must
+          // agree or we'd repeatedly re-mint without persisting.
+          if (existing && existing.cookiePhrase !== phrase) {
             existing.cookiePhrase = phrase;
             mutated = true;
           }
