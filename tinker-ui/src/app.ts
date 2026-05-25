@@ -4330,21 +4330,25 @@ function renderSectionedReply(sec: SectionedReply, elapsed: string = ""): string
   // FORK 2026-05-09 (Feature B): the elapsed-chip is appended to the ANSWER
   // bubble (the visible main reply). When sectioned answer falls through to
   // raw `other`, attach to that bubble instead.
-  // FORK 2026-05-25 (task-mpkw1a0b-9jsfy): render `sec.other` (pre-answer
-  // narration emitted before the section markers land) as a plain visible
-  // bubble ABOVE the answer, NOT silently dropped. Slightly muted styling
-  // to indicate it's narration, not the final answer — but no details/
-  // summary wrapping, no "Thinking" label. The future reasoning-bundle
-  // surface (n-steps collapser) will fold this in.
-  // FORK 2026-05-25 (same task): strip residual section markers from the
-  // answer body before rendering. The model occasionally echoes the marker
-  // text inside its own answer body; the splitter only consumes the FIRST
-  // marker per section, so duplicates leak as plain prose without the scrub.
+  // FORK 2026-05-25 (task-mpkw1a0b-9jsfy): fold pre-answer narration
+  // (sec.other) INTO the amygdala body so it's compacted under the
+  // existing reasoning surface, not rendered as a separate bubble.
+  // Per user: "Pre-answer bubble needs to be compacted into the
+  // reasoning." When amygdala already has content, prepend sec.other
+  // with a thin separator. When amygdala doesn't exist but sec.other
+  // does, promote sec.other to be the amygdala body.
+  // FORK 2026-05-25 (same task): strip residual section markers from
+  // the answer body before rendering. The model occasionally echoes
+  // the marker text inside its own answer body; the splitter only
+  // consumes the FIRST marker per section.
   let h = "";
   const hasAnyMarker = Boolean(sec.answer || sec.amygdala || sec.fractal);
-  if (sec.other && hasAnyMarker) {
-    h += `<div class="msg assistant msg-narration">${md(sec.other)}</div>`;
-  }
+  const mergedAmygdala =
+    sec.other && hasAnyMarker
+      ? sec.amygdala
+        ? `${sec.other}\n\n---\n\n${sec.amygdala}`
+        : sec.other
+      : sec.amygdala;
   const effectiveAnswer =
     sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
   if (effectiveAnswer) {
@@ -4353,11 +4357,11 @@ function renderSectionedReply(sec: SectionedReply, elapsed: string = ""): string
     // No markers at all — fall back to raw
     h += `<div class="msg assistant">${md(sec.other)}${elapsed}</div>`;
   }
-  if (sec.amygdala) {
+  if (mergedAmygdala) {
     h +=
       `<details class="msg msg-amygdala">` +
       `<summary class="amygdala-summary">🧠 <em>Amygdala</em> — gut read</summary>` +
-      `<div class="amygdala-body">${md(sec.amygdala)}</div>` +
+      `<div class="amygdala-body">${md(mergedAmygdala)}</div>` +
       `</details>`;
   }
   if (sec.fractal) {
