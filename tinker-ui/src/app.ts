@@ -1027,6 +1027,23 @@ function onFrame(f: unknown) {
             isAttached: true,
           };
           const restoredMain = restored.find((t) => t.id === "tab-main");
+          // FORK 2026-05-25 — one-shot migration: tab-main must always be
+          // bound to the canonical main key (e.g. `agent:main:main`).
+          // Before today's fix to /clear, every /clear rotated tab-main
+          // to a fresh `tinker:<ts>`, orphaning the canonical slot and
+          // creating duplicate-"🏠 Main" rows in the side panel. Users
+          // who hit that path have a stale `tinker:<ts>` persisted in
+          // localStorage; force-rebind here so the next sessions.list
+          // surfaces a single canonical main row and clicking it
+          // focuses tab-main correctly.
+          if (
+            restoredMain &&
+            defs?.mainSessionKey &&
+            restoredMain.sessionKey !== defs.mainSessionKey
+          ) {
+            restoredMain.sessionKey = defs.mainSessionKey;
+            restoredMain.isAttached = true;
+          }
           const mainTab = restoredMain ?? defaultMainTab;
           const others = restored.filter((t) => t.id !== "tab-main");
           tabs = [mainTab, ...others];
@@ -2660,7 +2677,28 @@ async function send(text: string) {
     const oldSessionKey = sessionKey;
     const clearTab = tabs.find((t) => t.id === activeTabId);
 
-    const freshKey = `tinker:${Date.now().toString(36)}`;
+    // FORK 2026-05-25 — tab-main does NOT rotate its sessionKey on
+    // /clear. It stays on `agent:main:main` (the canonical main slot)
+    // for its entire life. sessions.reset below archives the old
+    // transcript on the SAME key and the gateway mints a fresh
+    // underlying cc-bridge worker / claude-cli sessionId so memory
+    // does reset — only the OpenClaw-level session key is preserved.
+    //
+    // Why this matters: before 2026-05-25 every /clear rotated
+    // tab-main to a brand-new `tinker:<ts>`. The original
+    // `agent:main:main` was left on disk as an orphan with its own
+    // content. The side panel surfaced BOTH as "🏠 Main" (the orphan
+    // via key-suffix protectedLabel, the rotated one via tab.title),
+    // and clicking the orphan opened a new tab pointing at content
+    // tab-main was no longer bound to. By keeping tab-main pinned to
+    // `agent:main:main`, the orphan can't arise — there's always
+    // exactly one canonical "🏠 Main."
+    //
+    // Non-main tabs still rotate to a fresh `tinker:<ts>` on /clear;
+    // their original keys also archive via sessions.reset.
+    const isMainTab = clearTab?.id === "tab-main";
+    const freshKey =
+      isMainTab && oldSessionKey ? oldSessionKey : `tinker:${Date.now().toString(36)}`;
     sessionKey = freshKey;
     if (clearTab) {
       clearTab.sessionKey = freshKey;
