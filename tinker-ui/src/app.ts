@@ -2422,6 +2422,13 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
     }
   }
   let tabTitlesChanged = false;
+  // FORK 2026-05-25 (third pass) — set of FORTUNE_COOKIES for O(1)
+  // "is this title a fortune phrase?" lookup. Used to identify tabs
+  // whose title was burned in BY a fortune-cookie mint (random or
+  // canonical) so we can resync them without trampling
+  // user/Gemini-set titles like "🔧 Fix auth bug" that happen to
+  // not equal what fortuneForKey(key) currently expects.
+  const fortuneSet = new Set(FORTUNE_COOKIES);
   for (const s of sessions) {
     if (!s || typeof (s as { key?: unknown }).key !== "string") continue;
     const sess = s as { key: string; cookiePhrase?: string };
@@ -2429,7 +2436,15 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
     if (!serverPhrase || looksLikeLegacy2WordPhrase(serverPhrase)) continue;
     const tab = tabsByKey.get(sess.key) ?? findTabByMatch(tabsByKey, sess.key);
     if (!tab) continue;
-    const tabNeedsSync = !tab.title || looksLikeLegacy2WordPhrase(tab.title);
+    // Sync conditions:
+    //   - empty title (initial render)
+    //   - legacy 2-word title (from the wrong first-pass mints)
+    //   - title IS a known fortune phrase but doesn't match the
+    //     server's current cookiePhrase (post-canonicalisation heal)
+    // Gemini-generated titles (free-form short strings) aren't in
+    // fortuneSet, so they're never resynced.
+    const isStaleFortune = fortuneSet.has(tab.title) && tab.title !== serverPhrase;
+    const tabNeedsSync = !tab.title || looksLikeLegacy2WordPhrase(tab.title) || isStaleFortune;
     if (tabNeedsSync && tab.title !== serverPhrase) {
       tab.title = serverPhrase;
       tabTitlesChanged = true;
