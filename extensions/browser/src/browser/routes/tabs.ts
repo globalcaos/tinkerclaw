@@ -5,12 +5,12 @@ import {
   BrowserTargetAmbiguousError,
 } from "../errors.js";
 import {
-  assertBrowserNavigationAllowed,
   assertBrowserNavigationResultAllowed,
   withBrowserNavigationPolicy,
 } from "../navigation-guard.js";
 import type { BrowserRouteContext, ProfileContext } from "../server-context.js";
 import { resolveTargetIdFromTabs } from "../target-id.js";
+import { sendNavigationForbidden } from "./navigation-lock.js";
 import type { BrowserRequest, BrowserResponse, BrowserRouteRegistrar } from "./types.js";
 import {
   asyncBrowserRoute,
@@ -183,28 +183,8 @@ export function registerBrowserTabRoutes(app: BrowserRouteRegistrar, ctx: Browse
 
   app.post(
     "/tabs/open",
-    asyncBrowserRoute(async (req, res) => {
-      const url = toStringOrEmpty((req.body as { url?: unknown })?.url);
-      const label = readOptionalTabLabel(req.body);
-      if (!url) {
-        return jsonError(res, 400, "url is required");
-      }
-
-      await withTabsProfileRoute({
-        req,
-        res,
-        ctx,
-        mapTabError: true,
-        run: async (profileCtx) => {
-          await assertBrowserNavigationAllowed({
-            url,
-            ...browserNavigationPolicyForProfile(ctx, profileCtx),
-          });
-          await profileCtx.ensureBrowserAvailable();
-          const tab = await profileCtx.openTab(url, { label });
-          res.json(tab);
-        },
-      });
+    asyncBrowserRoute(async (_req, res) => {
+      sendNavigationForbidden(res, "open");
     }),
   );
 
