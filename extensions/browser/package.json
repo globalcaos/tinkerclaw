@@ -14,7 +14,9 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@openclaw/plugin-sdk": "workspace:*"
+    "@openclaw/plugin-sdk": "workspace:*",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2"
   },
   "openclaw": {
     "extensions": [
