@@ -1669,6 +1669,48 @@ export const chatHandlers: GatewayRequestHandlers = {
       provider: resolvedSessionModel.provider,
       localMessages,
     });
+    // FORK 2026-05-26 (task-mpkw1a0b-9jsfy): chat.history instrumentation
+    // for the "user prompt appears twice on hard refresh" bug. Counts the
+    // sources merged here so next reproduction tells us which layer
+    // duplicated. Tag "[duprep-history]" for grep. localMessages = what
+    // the OpenClaw sessionFile holds. rawMessages = after the cli-session
+    // imports merge (binding + cc-bridge-map chained per the orphan fix
+    // a1b7819258). If rawMessages.user-count > localMessages.user-count
+    // by more than the legitimate gap, the merge dedup is missing a case.
+    const countUser = (msgs: unknown[]): number =>
+      msgs.filter(
+        (m) => m != null && typeof m === "object" && (m as { role?: unknown }).role === "user",
+      ).length;
+    const lastUserText = (msgs: unknown[]): string => {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m && typeof m === "object" && (m as { role?: unknown }).role === "user") {
+          const content = (m as { content?: unknown }).content;
+          if (typeof content === "string") {
+            return content.replace(/\n/g, "↵").slice(0, 80);
+          }
+          if (Array.isArray(content)) {
+            const txt = content
+              .map((b: unknown) =>
+                b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string"
+                  ? ((b as { text: string }).text as string)
+                  : "",
+              )
+              .join("");
+            return txt.replace(/\n/g, "↵").slice(0, 80);
+          }
+          break;
+        }
+      }
+      return "";
+    };
+    const localUsers = countUser(localMessages);
+    const rawUsers = countUser(rawMessages);
+    if (rawUsers > localUsers || rawUsers >= 2) {
+      context.logGateway.info(
+        `[duprep-history] sessionKey=${sessionKey} local.total=${localMessages.length} local.user=${localUsers} raw.total=${rawMessages.length} raw.user=${rawUsers} lastLocalUser=${JSON.stringify(lastUserText(localMessages))} lastRawUser=${JSON.stringify(lastUserText(rawMessages))}`,
+      );
+    }
     const hardMax = 1000;
     const defaultLimit = 200;
     const requested = typeof limit === "number" ? limit : defaultLimit;
