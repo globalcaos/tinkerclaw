@@ -443,17 +443,22 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         log.info(
           `[duprep] text_delta sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(delta))}`,
         );
-        // FORK 2026-05-25 — naive duplicate-tail detector: if the new
-        // delta starts with text that already appears at the end of the
-        // accumulator BEFORE the append, log a warning. Catches the
-        // case where the same delta arrives twice in a row (the most
-        // common "sentence repeated" pattern).
-        if (delta.length >= 40) {
-          const head = delta.slice(0, 40);
+        // FORK 2026-05-25 (revised 2026-05-26) — duplicate-delta detector.
+        // Original version sliced only the LAST (head.length + 40) chars of
+        // the accumulator and missed the common case where the duplicate
+        // starts at position 0 of the accumulator (model regenerated the
+        // whole opening sentence). Revised: scan the FULL pre-append
+        // accumulator for the delta's 60-char head. If found, the same
+        // content was already streamed — WARN. The new guard above DROPS
+        // the cumulative-source variant; this detector covers the broader
+        // case (e.g. content_block_delta delivering the same fine-grained
+        // payload twice).
+        if (delta.length >= 60) {
+          const head = delta.slice(0, 60);
           const tail = accumulatedText.slice(0, accumulatedText.length - delta.length);
-          if (tail.length >= 40 && tail.slice(-40 - head.length).includes(head)) {
+          if (tail.length >= 60 && tail.includes(head)) {
             log.warn(
-              `[duprep] WARN delta head appears in accumulator tail (likely duplicate delivery) sessionKey=${sessionKey} head=${JSON.stringify(head)}`,
+              `[duprep] WARN duplicate delta detected — head already in accumulator sessionKey=${sessionKey} delta.len=${delta.length} head.sample=${JSON.stringify(head.replace(/\n/g, "↵"))}`,
             );
           }
         }
@@ -632,6 +637,32 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               const prev = blockTextSeen.get(bi) ?? "";
               if (cumulative.length > prev.length && cumulative.startsWith(prev)) {
                 const delta = cumulative.slice(prev.length);
+                // FORK 2026-05-26 (task-mpkw1a0b-9jsfy "Response rendering"):
+                // duplicate-emit guard. Claude-cli's `assistant` cumulative
+                // message has been observed (sessionKey=cc-sp-1b6f2ca4 logs
+                // at 11:29:16) emitting cumulative=2*prev — the SAME 217-char
+                // block re-appended onto its prior 217-char self. The slice
+                // computation then yields a 217-char delta that's a verbatim
+                // copy of prev's content, and pushTextDelta doubles the
+                // bubble. Detect via a 60-char prefix match: if the proposed
+                // delta's first 60 chars equal prev's first 60 chars (both
+                // long enough to be unique-by-content), DROP the delta and
+                // still advance blockTextSeen so we don't re-encounter the
+                // same condition on the next assistant emit. Soft fix at the
+                // cc-bridge layer; the upstream SDK quirk persists but no
+                // longer leaks into the UI.
+                const DUPLICATE_GUARD_MIN_LEN = 60;
+                const isDuplicateRestart =
+                  prev.length >= DUPLICATE_GUARD_MIN_LEN &&
+                  delta.length >= DUPLICATE_GUARD_MIN_LEN &&
+                  delta.startsWith(prev.slice(0, DUPLICATE_GUARD_MIN_LEN));
+                if (isDuplicateRestart) {
+                  log.warn(
+                    `[duprep] WARN dropping duplicate assistant emit sessionKey=${sessionKey} bi=${bi} prev.len=${prev.length} delta.len=${delta.length} sample=${JSON.stringify(delta.slice(0, 60).replace(/\n/g, "↵"))}`,
+                  );
+                  blockTextSeen.set(bi, cumulative);
+                  continue;
+                }
                 // First-ever delta of a NEW non-zero block index means the
                 // model has just resumed emitting text after a tool_use
                 // chain — clear pending narration so the post-tool prose
