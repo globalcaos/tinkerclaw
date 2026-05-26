@@ -55,9 +55,6 @@ export type TaskRow = {
   created_at: number;
   updated_at: number;
   resolved_at: number | null;
-  // v3.6 (FORK 2026-05-26) — when the task was moved to a deletion state
-  // ('dropped' / 'dismissed'). Null on live entries.
-  deleted_at: number | null;
 };
 
 export type TaskListFilter = {
@@ -67,16 +64,7 @@ export type TaskListFilter = {
   due_date_filter?: "today" | "upcoming" | "all" | "overdue";
   since_ts?: number;
   limit?: number;
-  // FORK 2026-05-26 (task-mpkw1a0b adjacent): default-hidden filter for the
-  // post-/clear era. When `false` (or omitted), the default behaviour is:
-  //   - hide deleted entries (deleted_at IS NOT NULL)
-  //   - hide resolved entries older than 24h (resolved_at < now - 86400000)
-  // When `true`, ALL rows return regardless. Use this when restoring a
-  // deleted task or auditing the history.
-  includeHidden?: boolean;
 };
-
-const RESOLVED_VISIBILITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type TaskAddInput = {
   id?: string;
@@ -264,29 +252,6 @@ export function listTasks(cfg: ControlPanelResolvedConfig, filter: TaskListFilte
     }
   }
 
-  // FORK 2026-05-26 (task-mpkw1a0b-9jsfy follow-on, user instruction:
-  // "I don't want to see [deleted tasks] anywhere. At the same time,
-  // the completed tasks should disappear the day after they have been
-  // completed.")
-  //
-  // Default-hide:
-  //   - deleted (deleted_at IS NOT NULL — anything moved to 'dropped' /
-  //     'dismissed' since the deleted_at backfill at boot)
-  //   - resolved entries whose resolved_at is older than 24h
-  //
-  // Override via filter.includeHidden = true (Jarvis recovery paths,
-  // history audits). Override via explicit filter.status (the caller
-  // is asking for a specific status; we respect their selection rather
-  // than apply the cover filter on top — the user knows what they're
-  // looking for).
-  if (!filter.includeHidden && !filter.status) {
-    where.push(`deleted_at IS NULL`);
-    where.push(
-      `(status != 'resolved' OR resolved_at IS NULL OR resolved_at >= @resolved_visibility_floor)`,
-    );
-    params.resolved_visibility_floor = Date.now() - RESOLVED_VISIBILITY_WINDOW_MS;
-  }
-
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const limit = filter.limit ?? 500;
 
@@ -335,18 +300,6 @@ export function updateTask(cfg: ControlPanelResolvedConfig, input: TaskUpdateInp
     fields.push(`resolved_at = @now`);
   } else if (statusChanged && input.status !== "resolved" && existing.status === "resolved") {
     fields.push(`resolved_at = NULL`);
-  }
-  // FORK 2026-05-26 — stamp deleted_at on transition INTO 'dropped' /
-  // 'dismissed'; clear it on transition OUT. Used by listTasks' default
-  // hidden filter to keep deleted tasks invisible across all views while
-  // the row stays recoverable on disk.
-  const DELETED_STATUSES = new Set(["dropped", "dismissed"]);
-  const wasDeleted = DELETED_STATUSES.has(existing.status);
-  const willBeDeleted = input.status !== undefined && DELETED_STATUSES.has(input.status);
-  if (statusChanged && willBeDeleted && !wasDeleted) {
-    fields.push(`deleted_at = @now`);
-  } else if (statusChanged && wasDeleted && !willBeDeleted) {
-    fields.push(`deleted_at = NULL`);
   }
 
   if (fields.length === 1) {
