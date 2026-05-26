@@ -9057,14 +9057,40 @@ function init() {
       // real errors. The req() helper rejects with literal "disconnected"
       // before the WS handshake completes; show a calm green loading state
       // and schedule a fast retry instead of a red error.
-      const msg = String(err);
+      // FORK 2026-05-26 (task-mpkw1a0b-9jsfy follow-on, user instruction:
+      // "make sure that visible errors deliver user-level information, and
+      // that they log in console the deeper issue, so we can debug it"):
+      // GatewayClientRequestError and the plain Error class both stringify
+      // to "[object Object]" on naive `String(err)`. Extract a real human
+      // message via the error's own .message field (preferred) before
+      // falling back to JSON serialisation. The full object — stack, code,
+      // details, the lot — goes to console.error so devtools has the
+      // diagnostic depth while the bubble stays user-readable.
+      // eslint-disable-next-line no-console
+      console.error("[exec] loadExecTasks failed", err);
+      const errorRecord = err as Record<string, unknown> | string | null;
+      const rawMsg =
+        typeof err === "string"
+          ? err
+          : err instanceof Error
+            ? err.message
+            : errorRecord && typeof errorRecord === "object" && "message" in errorRecord
+              ? String((errorRecord as { message: unknown }).message)
+              : (() => {
+                  try {
+                    return JSON.stringify(err);
+                  } catch {
+                    return "unknown error";
+                  }
+                })();
+      const msg = rawMsg || "unknown error";
       if (msg === "disconnected" || msg.includes("disconnected")) {
         body.innerHTML = `<div class="exec-loading">⏳ Loading tasks — connecting to gateway…</div>`;
         setTimeout(() => {
           void loadExecTasks();
         }, 1500);
       } else {
-        body.innerHTML = `<div class="exec-error">Failed to load tasks: ${escapeHtml(msg)}</div>`;
+        body.innerHTML = `<div class="exec-error">Failed to load tasks: ${escapeHtml(msg)} <span style="opacity:.6;font-size:11px">(devtools console has full error)</span></div>`;
       }
     }
   }
