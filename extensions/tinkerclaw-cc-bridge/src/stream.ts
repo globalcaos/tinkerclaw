@@ -433,7 +433,14 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         recordPush();
       };
 
-      const pushTextDelta = (delta: string) => {
+      // FORK 2026-05-26 (task-mpkw1a0b-9jsfy "Response rendering"):
+      // tag every pushTextDelta with its caller so the next log capture
+      // tells us which handler (content_block_delta vs assistant_cumulative
+      // vs heartbeat) sourced the duplicate. Without this tag, I had to
+      // GUESS from timing alone — the user called this out: "Differentiate
+      // what you know vs what you assume … recognize what you don't know
+      // for certain." Future regressions will have the source on the line.
+      const pushTextDelta = (delta: string, source: string = "unknown") => {
         pushStart();
         if (thinkingStarted) {
           pushThinkingEnd();
@@ -441,7 +448,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         pushTextStart();
         accumulatedText += delta;
         log.info(
-          `[duprep] text_delta sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(delta))}`,
+          `[duprep] text_delta source=${source} sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(delta))}`,
         );
         // FORK 2026-05-25 (revised 2026-05-26) — duplicate-delta detector.
         // Original version sliced only the LAST (head.length + 40) chars of
@@ -596,7 +603,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 ? ((ev as { index?: number }).index as number)
                 : 0;
             if (ev.delta.type === "text_delta" && typeof ev.delta.text === "string") {
-              pushTextDelta(ev.delta.text);
+              pushTextDelta(ev.delta.text, "content_block_delta");
               const prev = blockTextSeen.get(blockIndex) ?? "";
               blockTextSeen.set(blockIndex, prev + ev.delta.text);
             } else if (
@@ -670,7 +677,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 if (bi > 0 && prev === "") {
                   pendingToolNarration = "";
                 }
-                pushTextDelta(delta);
+                pushTextDelta(delta, "assistant_cumulative");
                 pendingToolNarration += delta;
                 blockTextSeen.set(bi, cumulative);
               }
@@ -860,7 +867,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             log.info(
               `tail-recover: streamed ${streamedLen}B, result_text ${resTxt.length}B, recovering ${tail.length}B (prefix-match)`,
             );
-            pushTextDelta(tail);
+            pushTextDelta(tail, "tail_recover_prefix");
           } else if (resTxt.length > streamedLen * 2 + 50) {
             // Streams diverged enough to suggest the streamed accumulation
             // is just the preamble; replace with the result line.
@@ -874,7 +881,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             // pass into buildContent + the final `done` message, so reset
             // the stored value directly here.
             const overwriteDelta = streamedLen > 0 ? `\n\n${resTxt}` : resTxt;
-            pushTextDelta(overwriteDelta);
+            pushTextDelta(overwriteDelta, "tail_recover_diverged");
           }
         }
 
