@@ -4083,18 +4083,30 @@ type SectionedReply = {
 // markdown H2 heading) and the splitter was returning null → renderSectioned-
 // Reply never fired → the answer + amygdala + fractal rendered as one big
 // jumbled assistant bubble with the section markers as literal text.
-// FORK 2026-05-26 (task-mpkw1a0b-9jsfy): anchor was `(^|\n)`. Observed
-// model output: "…resolved.💬 ANSWER\n\nBookmarking…" — no newline
-// between the previous sentence's terminator and the marker, so the
-// regex missed and the literal `💬 ANSWER` leaked into the bubble.
-// Anchor now also accepts a sentence terminator (`.!?`); the terminator
-// stays attached to the preface via an offset in pushMarker below.
+// FORK 2026-05-26 (task-mpkw1a0b-9jsfy):
+//
+// 1. Anchor was `(^|\n)`. Observed model output:
+//    "…resolved.💬 ANSWER\n\nBookmarking…" — no newline between the
+//    previous sentence's terminator and the marker. Anchor now accepts
+//    `.!?` too; the terminator stays attached to the preface via an
+//    offset in pushMarker below.
+//
+// 2. Trailing decoration regex was `\s*:?\s*(?:\*\*|__)?\s*:?\s*`. The
+//    `\s*` BEFORE `(?:\*\*|__)?` let the regex eat across a paragraph
+//    break into the following bold title: "💬 ANSWER\n\n**Title**"
+//    was being consumed as "💬 ANSWER\n\n**" (marker), leaving
+//    "Title**" with a dangling closing `**` in the rendered bubble.
+//    Trailing now requires the closing bold-marker to be DIRECTLY
+//    attached to `ANSWER` (or after a colon attached to ANSWER) — no
+//    intervening whitespace. Still covers the documented variants:
+//      `💬 ANSWER:`, `💬 **ANSWER**`, `💬 **ANSWER:**`,
+//      `## 💬 ANSWER`, `### 💬 ANSWER`, `**💬 ANSWER**`.
 const AMY_MARKER_RE =
-  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA:?(?:\*\*|__)?:?\s*/i;
 const ANS_MARKER_RE =
-  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER:?(?:\*\*|__)?:?\s*/i;
 const FRA_MARKER_RE =
-  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?:?(?:\*\*|__)?:?\s*/i;
 function splitSectionedReply(text: string): SectionedReply | null {
   if (!text) {
     return null;
