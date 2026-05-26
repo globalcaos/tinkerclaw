@@ -4083,12 +4083,18 @@ type SectionedReply = {
 // markdown H2 heading) and the splitter was returning null → renderSectioned-
 // Reply never fired → the answer + amygdala + fractal rendered as one big
 // jumbled assistant bubble with the section markers as literal text.
+// FORK 2026-05-26 (task-mpkw1a0b-9jsfy): anchor was `(^|\n)`. Observed
+// model output: "…resolved.💬 ANSWER\n\nBookmarking…" — no newline
+// between the previous sentence's terminator and the marker, so the
+// regex missed and the literal `💬 ANSWER` leaked into the bubble.
+// Anchor now also accepts a sentence terminator (`.!?`); the terminator
+// stays attached to the preface via an offset in pushMarker below.
 const AMY_MARKER_RE =
-  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 const ANS_MARKER_RE =
-  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 const FRA_MARKER_RE =
-  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?\s*(?:\*\*|__)?\s*:?\s*/i;
 function splitSectionedReply(text: string): SectionedReply | null {
   if (!text) {
     return null;
@@ -4112,7 +4118,14 @@ function splitSectionedReply(text: string): SectionedReply | null {
     if (!m) {
       return;
     }
-    markers.push({ key, start: idx, hdrLen: m[0].length });
+    // FORK 2026-05-26 — if the anchor captured a sentence terminator
+    // (`.`/`!`/`?`), that character belongs to the previous sentence's
+    // preface, not the marker. Shift the marker start one byte forward
+    // and trim its header length so the period stays with the
+    // narration when we slice the preface.
+    const prefix = m[1] ?? "";
+    const skip = prefix && /[.!?]/.test(prefix) ? 1 : 0;
+    markers.push({ key, start: idx + skip, hdrLen: m[0].length - skip });
   };
   pushMarker(amyIdx, "amygdala", AMY_MARKER_RE);
   pushMarker(ansIdx, "answer", ANS_MARKER_RE);
