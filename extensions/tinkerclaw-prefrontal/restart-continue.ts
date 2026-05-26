@@ -89,15 +89,19 @@ function buildPlanResumeChipParams(opts: { plan: Plan; sessionKey: string }) {
 }
 
 function buildContinueParams(opts: { plan: Plan; sessionKey: string; systemKind: string }) {
-  const step = opts.plan.steps[opts.plan.currentStep];
   const hh = new Date().toISOString().slice(11, 19);
-  const planFsPath = `~/.openclaw/workspace/state/prefrontal/plans/${opts.sessionKey.replace(/:/g, "__")}.md`;
-  const noteSuffix = step?.note ? ` (your last note: "${step.note}")` : "";
-  const message =
-    `[System] Gateway restarted at ${hh}. You were working on plan "${opts.plan.intent}". ` +
-    `Step ${opts.plan.currentStep}: ${step?.title ?? "(unknown)"} was in progress${noteSuffix}. ` +
-    `Read ${planFsPath} for your full checklist, then continue. ` +
-    `Update the plan as you go (prefrontal.plan.step status:"done" / "in_progress").`;
+  // FORK 2026-05-26 (task-mpi990vu-ixgc3 "Gateway Restart"): the persisted
+  // restart-continue chip used to be a 4-line paragraph carrying the plan
+  // intent, the active step title + note, the plan-file path, and the
+  // instructions to update the plan. That's the visible bubble the user saw
+  // bloating his chat after every restart. The model has all that context
+  // already (it can call prefrontal.plan.get whenever it needs it), so the
+  // persisted message is now a one-liner. The HH:MM:SS timestamp keeps the
+  // text unique per restart so the long-text dedup (>=50 chars) catches
+  // intra-restart double-writes without collapsing two distinct restart
+  // chips minutes apart. Detailed step + plan context is no longer in the
+  // chat row — it lives in the plan file the model can read on demand.
+  const message = `[System] Gateway restarted at ${hh} — resume from your current plan state.`;
   return {
     sessionKey: opts.sessionKey,
     message,
