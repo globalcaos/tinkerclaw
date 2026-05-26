@@ -70,6 +70,19 @@ function resolveImportedExternalId(message: unknown): string | undefined {
   return normalizeOptionalString(meta?.externalId);
 }
 
+// FORK 2026-05-26 (task-mpkw1a0b-9jsfy): long-text dedup threshold.
+// Messages with text shorter than this fall back to the 5-min
+// timestamp window (so legit short repeats — "yes", "ok", "done"
+// — aren't collapsed). Messages at or above this length are
+// considered effectively unique by content, and any same-role text
+// match is taken as a re-import regardless of timestamp distance.
+// Hit on the duplicate-prompt bug: cli-session jsonl + local
+// sessionFile both held the same user prompts, but timestamps
+// differed by hours across cc-bridge respawns, so the 5-min window
+// failed for every long historical message and chat.history
+// returned the entire conversation twice.
+const LONG_TEXT_DEDUP_MIN_LEN = 50;
+
 function isEquivalentImportedMessage(existing: unknown, imported: unknown): boolean {
   const importedExternalId = resolveImportedExternalId(imported);
   if (importedExternalId && resolveImportedExternalId(existing) === importedExternalId) {
@@ -86,6 +99,13 @@ function isEquivalentImportedMessage(existing: unknown, imported: unknown): bool
   const importedText = extractComparableText(imported);
   if (!existingText || !importedText || existingText !== importedText) {
     return false;
+  }
+
+  // FORK 2026-05-26: long matched text → unconditional dedup. Short
+  // matched text falls through to the original timestamp-window logic
+  // below so legit short repeats survive.
+  if (existingText.length >= LONG_TEXT_DEDUP_MIN_LEN) {
+    return true;
   }
 
   const existingTimestamp = resolveComparableTimestamp(existing);
