@@ -3422,6 +3422,29 @@ async function send(text: string) {
     // case the next chat.send auto-creates a fresh entry on the new key.
     if (oldSessionKey) {
       req("sessions.reset", { key: oldSessionKey, reason: "reset" }).catch(() => {});
+      // FORK 2026-05-26 (task-mpkw1a0b-9jsfy follow-on, user instruction:
+      // "I keep typing /clear in the main chat but new messages appear
+      // all the time without me typing them, plus responses that
+      // indicate tokens are being wasted"):
+      //
+      // Restart-continue auto-fires for any plan with status="in_progress"
+      // — including plans Jarvis never marked closed even though the turn
+      // finished successfully. /clear is the user's signal that THIS
+      // sessionKey's work is done; the plan should die with it. Without
+      // this abandon call, every subsequent gateway restart would
+      // re-fire the resume chip → cc-bridge spawn → token burn → another
+      // bubble the user didn't ask for.
+      //
+      // tab-main keeps its sessionKey across /clear (per the fork at
+      // line ~3385), so abandoning oldSessionKey IS abandoning the
+      // canonical main plan. Non-main tabs rotate, but their oldSessionKey
+      // (the about-to-be-archived one) ALSO had any pending plan, so
+      // abandoning it before the rotation locks in the user's intent.
+      req("prefrontal.plan.close", {
+        sessionKey: oldSessionKey,
+        status: "abandoned",
+        note: "Closed by /clear — user signalled session work is done.",
+      }).catch(() => {});
     }
     return;
   }
@@ -12848,6 +12871,14 @@ function init() {
       const oldKey = sessionKey;
       if (oldKey && oldKey.startsWith("tinker:")) {
         req("sessions.reset", { key: oldKey, reason: "new" }).catch(() => {});
+        // FORK 2026-05-26 — symmetric with /clear: abandon any
+        // in_progress plan on the OLD sessionKey so restart-continue
+        // can't auto-fire on it after a future gateway restart.
+        req("prefrontal.plan.close", {
+          sessionKey: oldKey,
+          status: "abandoned",
+          note: "Closed by /new — user rotated to a fresh session.",
+        }).catch(() => {});
       }
       const newKey = `tinker:${Date.now().toString(36)}`;
       tab.sessionKey = newKey;
