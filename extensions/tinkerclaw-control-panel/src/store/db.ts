@@ -47,12 +47,6 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   // a FK target); idempotent via PRAGMA table_info check.
   addAxisParentIdColumn(db);
 
-  // v3.6 migration (FORK 2026-05-26) — task.deleted_at column. Stamped when
-  // a task transitions to status='dropped' or 'dismissed' so the list view
-  // can hide deleted entries by default while keeping them recoverable on
-  // disk. Idempotent via PRAGMA table_info check.
-  addTaskDeletedAtColumn(db);
-
   // FORK 2026-05-22: Todoist deprecation cleanup. Walk task.metadata_json and
   // remove every `todoist_*` key. Idempotent one-shot — subsequent boots find
   // nothing to strip and are no-ops.
@@ -198,27 +192,6 @@ export function addAxisParentIdColumn(db: Database.Database): void {
     "ALTER TABLE task_axis ADD COLUMN parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE",
   );
   db.exec("CREATE INDEX IF NOT EXISTS task_axis_parent ON task_axis(parent_id)");
-}
-
-// v3.6 (FORK 2026-05-26) — task.deleted_at. Same shape as resolved_at, but
-// stamped on status transitions INTO 'dropped' / 'dismissed' (the
-// "deletion" states). Used by listTasks' default filter to hide deleted
-// entries from every view while keeping them recoverable on disk
-// (soft-delete invariant — the user's standing rule, never `rm` a task).
-// Idempotent via PRAGMA table_info check.
-export function addTaskDeletedAtColumn(db: Database.Database): void {
-  const cols = db.prepare("PRAGMA table_info(task)").all() as Array<{ name: string }>;
-  if (cols.some((c) => c.name === "deleted_at")) return; // idempotent
-  db.exec("ALTER TABLE task ADD COLUMN deleted_at INTEGER");
-  // Backfill: existing 'dropped' / 'dismissed' rows get their updated_at as
-  // an approximation of when they were deleted (no real timestamp survives,
-  // but updated_at is the last edit which usually IS the deletion moment).
-  db.exec(
-    "UPDATE task SET deleted_at = updated_at WHERE status IN ('dropped','dismissed') AND deleted_at IS NULL",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS task_deleted_at ON task(deleted_at) WHERE deleted_at IS NOT NULL",
-  );
 }
 
 /**
