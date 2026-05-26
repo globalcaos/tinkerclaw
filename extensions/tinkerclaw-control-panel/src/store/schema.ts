@@ -91,10 +91,15 @@ CREATE TABLE IF NOT EXISTS task (
   recurrence_parent_id TEXT REFERENCES task(id),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  resolved_at INTEGER
+  resolved_at INTEGER,
+  -- v3.6 (FORK 2026-05-26): stamped when status transitions INTO
+  -- 'dropped' / 'dismissed' (the deletion states). Drives listTasks'
+  -- default hidden filter while keeping rows recoverable on disk.
+  deleted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS task_open_priority ON task(status, priority_axis, priority_rank) WHERE status IN ('open','in_progress');
 CREATE INDEX IF NOT EXISTS task_resolved_recent ON task(resolved_at DESC) WHERE status = 'resolved';
+CREATE INDEX IF NOT EXISTS task_deleted_at ON task(deleted_at) WHERE deleted_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS task_due_date ON task(due_date) WHERE due_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS task_briefing_pass ON task(briefing_pass_id);
 CREATE INDEX IF NOT EXISTS task_dismissed ON task(status, dismissal_kind) WHERE status = 'dismissed';
