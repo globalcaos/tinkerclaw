@@ -446,6 +446,31 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           pushThinkingEnd();
         }
         pushTextStart();
+        // FORK 2026-05-28 — defense-in-depth assistant-cumulative blocker.
+        // The block-scoped guard at the assistant handler (lines 661-672)
+        // depends on blockTextSeen index alignment between content_block_delta
+        // (keyed by Anthropic's ev.index) and the assistant handler (keyed by
+        // message.content[] array position). When claude-cli reorders blocks
+        // or omits earlier blocks (e.g. thinking) from in-progress assistant
+        // messages, the keys diverge, prev resolves to "" (too short for the
+        // 60-char gate), and the cumulative re-emits content already pushed
+        // via content_block_delta — the user sees the answer parroted twice
+        // in the same bubble with no separator (observed 2026-05-28 12:32:01
+        // sessionKey=cc-sp-4b620f70). Catch it here at the actual push site
+        // against the GLOBAL accumulator: if the delta's 60-char head is
+        // already present anywhere in what we've accumulated for this turn,
+        // it's the upstream SDK quirk. Scoped to assistant_cumulative ONLY —
+        // the content_block_delta source can legitimately repeat 60-char
+        // openings (e.g. "Step 1: ..." / "Step 2: ...").
+        if (source === "assistant_cumulative" && delta.length >= 60) {
+          const head = delta.slice(0, 60);
+          if (accumulatedText.length >= 60 && accumulatedText.includes(head)) {
+            log.warn(
+              `[duprep] WARN BLOCKED duplicate assistant_cumulative emit (head already in accumulator) sessionKey=${sessionKey} delta.len=${delta.length} accumulated.len=${accumulatedText.length} head.sample=${JSON.stringify(head.slice(0, 60).replace(/\n/g, "↵"))}`,
+            );
+            return;
+          }
+        }
         accumulatedText += delta;
         log.info(
           `[duprep] text_delta source=${source} sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${delta.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(delta))}`,
@@ -456,16 +481,17 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // starts at position 0 of the accumulator (model regenerated the
         // whole opening sentence). Revised: scan the FULL pre-append
         // accumulator for the delta's 60-char head. If found, the same
-        // content was already streamed — WARN. The new guard above DROPS
-        // the cumulative-source variant; this detector covers the broader
-        // case (e.g. content_block_delta delivering the same fine-grained
-        // payload twice).
+        // content was already streamed — WARN. The 2026-05-28 BLOCKED guard
+        // above now drops the cumulative-source variant outright; this
+        // detector remains active to cover any other source (e.g. duplicated
+        // content_block_delta payloads from upstream) for diagnostic
+        // visibility without false-positive dropping.
         if (delta.length >= 60) {
           const head = delta.slice(0, 60);
           const tail = accumulatedText.slice(0, accumulatedText.length - delta.length);
           if (tail.length >= 60 && tail.includes(head)) {
             log.warn(
-              `[duprep] WARN duplicate delta detected — head already in accumulator sessionKey=${sessionKey} delta.len=${delta.length} head.sample=${JSON.stringify(head.replace(/\n/g, "↵"))}`,
+              `[duprep] WARN duplicate delta detected — head already in accumulator sessionKey=${sessionKey} source=${source} delta.len=${delta.length} head.sample=${JSON.stringify(head.replace(/\n/g, "↵"))}`,
             );
           }
         }
