@@ -161,6 +161,35 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const blockTextSeen = new Map<number, string>();
       const blockThinkingSeen = new Map<number, string>();
 
+      // FORK 2026-05-28 — per-turn text-block index tracker. Anthropic's
+      // streaming API guarantees `content_block_delta.index` and every text
+      // block in `assistant.message.content` carries an array position.
+      // When the index advances between text deltas (typically a tool_use
+      // block fired between two pieces of prose), emit a lifecycle event so
+      // Tinker UI splits the streaming bubble. Same mechanism as the
+      // tool_use trigger at app.ts:2396, but earlier on the timeline (the
+      // pre-tool narration becomes its own bubble instead of piling into
+      // one with all subsequent narrations).
+      let activeTextBlockIndex: number | null = null;
+      const emitTextBlockBreak = (fromIndex: number | null, toIndex: number) => {
+        if (!runId) {
+          return;
+        }
+        log.info(
+          `text_block_break from=${fromIndex ?? "null"} to=${toIndex} sessionKey=${sessionKey}`,
+        );
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "lifecycle",
+          data: {
+            phase: "text-block-break",
+            fromIndex,
+            toIndex,
+          },
+        });
+      };
+
       const emitToolStart = (
         toolCallId: string,
         name: string,
@@ -629,6 +658,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 ? ((ev as { index?: number }).index as number)
                 : 0;
             if (ev.delta.type === "text_delta" && typeof ev.delta.text === "string") {
+              if (activeTextBlockIndex !== null && activeTextBlockIndex !== blockIndex) {
+                emitTextBlockBreak(activeTextBlockIndex, blockIndex);
+              }
+              activeTextBlockIndex = blockIndex;
               pushTextDelta(ev.delta.text, "content_block_delta");
               const prev = blockTextSeen.get(blockIndex) ?? "";
               blockTextSeen.set(blockIndex, prev + ev.delta.text);
@@ -702,6 +735,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 // doesn't get attributed to a stale upcoming tool.
                 if (bi > 0 && prev === "") {
                   pendingToolNarration = "";
+                  // FORK 2026-05-28 — same boundary, also fire the bubble
+                  // break for the UI. Covers the path where claude-cli's
+                  // cumulative `assistant` message arrives without prior
+                  // fine-grained content_block_delta events (block index
+                  // advances only via this loop iteration).
+                  if (activeTextBlockIndex !== null && activeTextBlockIndex !== bi) {
+                    emitTextBlockBreak(activeTextBlockIndex, bi);
+                  }
+                  activeTextBlockIndex = bi;
                 }
                 pushTextDelta(delta, "assistant_cumulative");
                 pendingToolNarration += delta;

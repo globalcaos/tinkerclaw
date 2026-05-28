@@ -2449,6 +2449,24 @@ function onEvent(evt: unknown) {
         updateChat();
       }
     }
+    // FORK 2026-05-28 — cc-bridge text-block boundary. Anthropic's streaming
+    // protocol guarantees content_block_delta carries an index field; cc-
+    // bridge emits this event whenever the active text block index advances
+    // (typically a tool_use block fired between two pieces of prose, but
+    // also fires before the first tool when the model emits a long pre-tool
+    // narration as a single block). Treat exactly like a tool_start: freeze
+    // the current streaming text bubble so the next text delta opens a
+    // fresh one. Result: each text block between tool_use blocks becomes
+    // its own bubble instead of piling into one with all subsequent
+    // narrations.
+    if (
+      p?.stream === "lifecycle" &&
+      p.data?.phase === "text-block-break" &&
+      sessionKeyMatches(p.sessionKey)
+    ) {
+      streamMsgIdx = -1;
+      return;
+    }
     // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
     if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
       if (p.data.anatomy && timelineCtrl) {
