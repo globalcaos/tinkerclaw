@@ -209,6 +209,12 @@ export default definePluginEntry({
                 );
                 return `[${model}/${role}] (error)`;
               }
+              if (wait?.status === "timeout") {
+                api.logger.warn(
+                  `[round-table] child ${childSessionKey} timed out (no completion within ${RUN_TIMEOUT_S}s)`,
+                );
+                return `[${model}/${role}] (no response)`;
+              }
 
               // Read the final assistant text; retry for sessionFile flush
               // (mirrors readLatestSubagentOutputWithRetry: ~15s cap, 100ms interval).
@@ -254,7 +260,9 @@ export default definePluginEntry({
               }
               return finalText;
             } catch (err) {
-              api.logger.warn(`[round-table] debate model call threw: ${String(err)}`);
+              api.logger.warn(
+                `[round-table] debate model call threw: ${err instanceof Error ? err.message : String(err)}`,
+              );
               return `[${model}/${role}] (error)`;
             }
           };
