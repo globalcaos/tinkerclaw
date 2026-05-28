@@ -255,6 +255,25 @@ function buildEthicalRulesBlock(): string {
   });
 }
 
+// FORK 2026-05-29: orchestration-disposition advisory block. Maps task classes
+// to quality kits (adversarial-verify, judge-panel, completeness-critic,
+// multi-modal-sweep, loop-until-dry) so the agent picks the right kit without
+// being told each time. Advisory — no code enforces it. Inserted immediately
+// after ethical-rules (foundational layer) and before narration (mechanics),
+// so the disposition is framed as intent rather than procedure.
+// Resolution order (per loadPromptFile defaults):
+//   1. env var TINKERCLAW_ORCHESTRATION_DISPOSITION_PROMPT
+//   2. extensions/tinkerclaw-cc-bridge/prompts/orchestration-disposition.md (bundled)
+function buildOrchestrationDispositionBlock(): string {
+  return loadPromptFile({
+    plugin: "tinkerclaw-cc-bridge",
+    subdir: "prompts",
+    file: "orchestration-disposition.md",
+    envVar: "TINKERCLAW_ORCHESTRATION_DISPOSITION_PROMPT",
+    workspaceFile: false, // generic kit-class → kit mapping; no workspace override
+  });
+}
+
 function buildAppendedPromptRules(): string {
   const blocks: string[] = [];
   for (const entry of PROMPT_FILES) {
@@ -388,6 +407,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const narrationBody = buildChatNarrationBlock();
     const planToolsBody = buildPlanToolsBlock();
     const ethicalRulesBody = buildEthicalRulesBlock();
+    const orchestrationDispositionBody = buildOrchestrationDispositionBlock();
     // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
     // OpenClaw's pi-embedded-runner appends its full tool catalog + OpenClaw
     // CLI quick-reference + heartbeat section + Runtime metadata to the
@@ -439,6 +459,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const combinedSystemPrompt = [
       personaOnly,
       ethicalRulesBody,
+      orchestrationDispositionBody,
       narrationBody,
       subagentHelpBody,
       toolChoiceBody,
