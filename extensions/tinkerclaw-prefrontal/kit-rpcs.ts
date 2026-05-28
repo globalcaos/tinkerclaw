@@ -378,6 +378,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         ok: runResult.ok,
         planId: runResult.planId,
         errorMessage: runResult.errorMessage,
+        results: runResult.results,
         note: runResult.ok ? "kit runner completed; check plan board for step results" : undefined,
       };
     },
