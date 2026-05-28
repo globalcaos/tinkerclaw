@@ -4,6 +4,7 @@ import { resolveBrowserNavigationProxyMode } from "../browser-proxy-mode.js";
 import { captureScreenshot, snapshotAria, snapshotRoleViaCdp } from "../cdp.js";
 import {
   evaluateChromeMcpScript,
+  navigateChromeMcpPage,
   takeChromeMcpScreenshot,
   takeChromeMcpSnapshot,
   type ChromeMcpProfileOptions,
@@ -13,7 +14,10 @@ import {
   flattenChromeMcpSnapshotToAriaNodes,
 } from "../chrome-mcp.snapshot.js";
 import { DEFAULT_BROWSER_SCREENSHOT_TIMEOUT_MS } from "../constants.js";
-import { assertBrowserNavigationResultAllowed } from "../navigation-guard.js";
+import {
+  assertBrowserNavigationAllowed,
+  assertBrowserNavigationResultAllowed,
+} from "../navigation-guard.js";
 import { withBrowserNavigationPolicy } from "../navigation-guard.js";
 import { getBrowserProfileCapabilities } from "../profile-capabilities.js";
 import {
@@ -31,13 +35,13 @@ import {
   withPlaywrightRouteContext,
   withRouteTabContext,
 } from "./agent.shared.js";
+import { resolveTargetIdAfterNavigate } from "./agent.snapshot-target.js";
 import {
   resolveSnapshotPlan,
   shouldUsePlaywrightForAriaSnapshot,
   shouldUsePlaywrightForScreenshot,
 } from "./agent.snapshot.plan.js";
 import { EXISTING_SESSION_LIMITS } from "./existing-session-limits.js";
-import { sendNavigationForbidden } from "./navigation-lock.js";
 import type { BrowserResponse, BrowserRouteRegistrar } from "./types.js";
 import { asyncBrowserRoute, jsonError, toBoolean, toNumber, toStringOrEmpty } from "./utils.js";
 
@@ -250,8 +254,56 @@ export function registerBrowserAgentSnapshotRoutes(
 ) {
   app.post(
     "/navigate",
-    asyncBrowserRoute(async (_req, res) => {
-      sendNavigationForbidden(res, "navigate");
+    asyncBrowserRoute(async (req, res) => {
+      const body = readBody(req);
+      const url = toStringOrEmpty(body.url);
+      const targetId = toStringOrEmpty(body.targetId) || undefined;
+      if (!url) {
+        return jsonError(res, 400, "url is required");
+      }
+      // FORK 2026-05-28: restore programmatic navigate. The extension's
+      // Page.navigate guard (chrome-extension/background.js ~L653) enforces
+      // within-site only — cross-site jumps are rejected at the CDP layer
+      // before they leave the relay. The gateway-level 403 stub the old
+      // policy used was redundant and over-restrictive (blocked subdomain
+      // hops within amazon.es, breaking the amazon-shopper PA-API setup).
+      // See [[feedback_browser-relay-policy]] / [[reference_browser-relay-within-site-navigation]].
+      await withRouteTabContext({
+        req,
+        res,
+        ctx,
+        targetId,
+        run: async ({ profileCtx, tab, cdpUrl }) => {
+          if (getBrowserProfileCapabilities(profileCtx.profile).usesChromeMcp) {
+            const ssrfPolicyOpts = browserNavigationPolicyForProfile(ctx, profileCtx);
+            await assertBrowserNavigationAllowed({ url, ...ssrfPolicyOpts });
+            const result = await navigateChromeMcpPage({
+              profileName: profileCtx.profile.name,
+              profile: profileCtx.profile,
+              targetId: tab.targetId,
+              url,
+            });
+            await assertBrowserNavigationResultAllowed({ url: result.url, ...ssrfPolicyOpts });
+            return res.json({ ok: true, targetId: tab.targetId, ...result });
+          }
+          const pw = await requirePwAi(res, "navigate");
+          if (!pw) {
+            return;
+          }
+          const result = await pw.navigateViaPlaywright({
+            cdpUrl,
+            targetId: tab.targetId,
+            url,
+            ...browserNavigationPolicyForProfile(ctx, profileCtx),
+          });
+          const currentTargetId = await resolveTargetIdAfterNavigate({
+            oldTargetId: tab.targetId,
+            navigatedUrl: result.url,
+            listTabs: () => profileCtx.listTabs(),
+          });
+          res.json({ ok: true, targetId: currentTargetId, ...result });
+        },
+      });
     }),
   );
 
