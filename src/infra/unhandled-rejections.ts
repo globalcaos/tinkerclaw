@@ -206,6 +206,33 @@ function extractErrorCodeWithCause(err: unknown): string | undefined {
 }
 
 /**
+ * Checks if an error is a benign Go-subprocess exit signal (SIGTERM/SIGKILL,
+ * surfaced as ProcessExitedError with exitCode === null by @whatsmeow-node).
+ * These fire whenever the gateway shuts down the whatsmeow Go subprocess
+ * gracefully or whenever a reconnect cycle terminates the prior process.
+ * The whatsmeow-node process.ts rejects ALL pending IPC requests with this
+ * error on exit (process.ts:46) — including the null-exitCode case which is
+ * a normal shutdown signal, not a crash. Without this filter, any in-flight
+ * IPC at the moment of subprocess termination leaks as an unhandled rejection
+ * and brings down the entire gateway (observed 2026-05-28: 4 crashes in 6h,
+ * all matching this signature). Real Go crashes (non-null exitCode) still
+ * fall through to the default fatal handler so we can see them.
+ */
+export function isBenignGoProcessExit(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const code = "code" in err ? (err as { code?: unknown }).code : undefined;
+  if (code !== "ERR_PROCESS_EXITED") {
+    return false;
+  }
+  const exitCode = "exitCode" in err ? (err as { exitCode?: unknown }).exitCode : undefined;
+  // null = process killed by signal (SIGTERM/SIGKILL during normal shutdown).
+  // Non-null = Go process crashed with that code — keep that loud.
+  return exitCode === null;
+}
+
+/**
  * Checks if an error is an AbortError.
  * These are typically intentional cancellations (e.g., during shutdown) and shouldn't crash.
  */
@@ -415,6 +442,18 @@ export function installUnhandledRejectionHandler(): void {
     // Log it but don't crash - these are expected during graceful shutdown
     if (isAbortError(reason)) {
       console.warn("[openclaw] Suppressed AbortError:", formatUncaughtError(reason));
+      return;
+    }
+
+    // ProcessExitedError(null) from @whatsmeow-node — see isBenignGoProcessExit
+    // doc above. Normal shutdown signal, not a crash; gateway should keep
+    // running so the whatsapp plugin can reconnect or be left disconnected
+    // until manually restarted.
+    if (isBenignGoProcessExit(reason)) {
+      console.warn(
+        "[openclaw] Suppressed benign Go-subprocess exit signal:",
+        formatUncaughtError(reason),
+      );
       return;
     }
 
