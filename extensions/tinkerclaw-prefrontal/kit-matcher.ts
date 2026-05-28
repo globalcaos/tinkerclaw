@@ -263,6 +263,17 @@ export async function seedPlanFromPrompt(
 ): Promise<{ seeded: boolean; intent?: string; stepCount?: number; kitRefs?: string[] }> {
   const snippet = deps.prompt.replace(/\s+/g, " ").trim().slice(0, 120);
 
+  // FORK (Task 1.5): never seed a plan for a kit-completion re-injection — that
+  // would create a phantom plan-of-a-plan. Mirrors the [System] restart-continue
+  // guard (MEMORY.md "Kit-matcher false-positive on restart-continue message").
+  // long-run-surface.ts re-injects the completion turn with this sentinel.
+  if (deps.prompt.trimStart().startsWith("__KIT_DONE__")) {
+    deps.log?.info?.(
+      `[kit-matcher] sessionKey=${deps.sessionKey} kit-completion re-injection (suppressed)`,
+    );
+    return { seeded: false };
+  }
+
   // Respect an existing plan — don't overwrite explicit/prior-turn plans.
   let existing: unknown | null = null;
   try {

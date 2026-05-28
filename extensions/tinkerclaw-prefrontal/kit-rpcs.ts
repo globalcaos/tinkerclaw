@@ -3,6 +3,7 @@ import path from "node:path";
 import Ajv from "ajv";
 import { fetch as undiciFetch } from "undici";
 import { parse as parseYaml } from "yaml";
+import { callGateway } from "../../src/gateway/call.js";
 import {
   PrefrontalKitSearchParamsSchema,
   PrefrontalKitGetParamsSchema,
@@ -19,6 +20,7 @@ import {
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { runKit } from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
+import { surfaceKitOutcome } from "./long-run-surface.js";
 
 const ajv = new Ajv({ allErrors: true });
 const vSearch = ajv.compile(PrefrontalKitSearchParamsSchema);
@@ -373,6 +375,20 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         ownKitsDir: deps.ownKitsDir,
         kitInstallSandbox: deps.kitInstallSandbox,
       });
+
+      // Surface progress/completion back into the (possibly closed) parent turn.
+      // Only worth doing when the run actually produced step results.
+      if (runResult.results && runResult.results.length > 0) {
+        void surfaceKitOutcome(
+          {
+            sessionKey: p.sessionKey,
+            kitRef: p.kitRef,
+            ok: runResult.ok,
+            results: runResult.results,
+          },
+          { callGateway: (args) => callGateway(args as Parameters<typeof callGateway>[0]) },
+        ).catch(() => {});
+      }
 
       return {
         ok: runResult.ok,
