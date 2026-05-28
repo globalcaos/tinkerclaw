@@ -135,6 +135,13 @@ function readOptionalTargetAndTimeout(params: Record<string, unknown>) {
   return { targetId, timeoutMs };
 }
 
+function readTargetUrlParam(params: Record<string, unknown>) {
+  return (
+    readStringParam(params, "targetUrl") ??
+    readStringParam(params, "url", { required: true, label: "targetUrl" })
+  );
+}
+
 const LEGACY_BROWSER_ACT_REQUEST_KEYS = [
   "targetId",
   "ref",
@@ -476,7 +483,11 @@ export function createBrowserTool(opts?: {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const action = readStringParam(params, "action", { required: true });
-      if (action === "navigate" || action === "open") {
+      // FORK 2026-05-28: navigate is allowed at the gateway boundary; the
+      // extension's Page.navigate guard enforces within-site only. Only
+      // `open` (creating new tabs) remains forbidden — see
+      // [[feedback_browser-relay-policy]].
+      if (action === "open") {
         return jsonResult(buildNavigationForbiddenBody(action));
       }
       const profile = readStringParam(params, "profile");
@@ -778,8 +789,29 @@ export function createBrowserTool(opts?: {
             details: result,
           });
         }
-        case "navigate":
-          return jsonResult(buildNavigationForbiddenBody("navigate"));
+        case "navigate": {
+          const targetUrl = readTargetUrlParam(params);
+          const targetId = readStringParam(params, "targetId");
+          if (proxyRequest) {
+            const result = await proxyRequest({
+              method: "POST",
+              path: "/navigate",
+              profile,
+              body: {
+                url: targetUrl,
+                targetId,
+              },
+            });
+            return jsonResult(result);
+          }
+          const result = await browserToolDeps.browserNavigate(baseUrl, {
+            url: targetUrl,
+            targetId,
+            profile,
+          });
+          touchTrackedTab(readStringValue(result.targetId) ?? targetId);
+          return jsonResult(result);
+        }
         case "console":
           return await executeConsoleAction({
             input: params,

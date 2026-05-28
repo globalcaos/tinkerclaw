@@ -92,20 +92,12 @@ async function runAction(action: string) {
 }
 
 describe("browser-tool CLI navigation lock", () => {
-  it("refuses action=navigate without calling browserNavigate or any proxy path", async () => {
-    runtimeMocks.browserNavigate.mockClear();
-    runtimeMocks.callGatewayTool.mockClear();
-    const result = await runAction("navigate");
-    expect(result?.details).toEqual(buildNavigationForbiddenBody("navigate"));
-    expect(result?.details).toMatchObject({
-      status: "forbidden",
-      action: "navigate",
-      reason: NAVIGATION_FORBIDDEN_REASON,
-    });
-    expect(runtimeMocks.browserNavigate).not.toHaveBeenCalled();
-    expect(runtimeMocks.callGatewayTool).not.toHaveBeenCalled();
-  });
-
+  // FORK 2026-05-28: action=navigate is no longer hard-locked at the CLI
+  // entry point — it dispatches to /navigate, where the chrome-extension's
+  // Page.navigate guard enforces within-site-only. Cross-site rejection
+  // coverage is in pw-session.create-page.navigation-guard.test.ts. Only
+  // action=open remains forbidden here (no new tabs, ever) — see
+  // [[feedback_browser-relay-policy]].
   it("refuses action=open without calling browserOpenTab or any proxy path", async () => {
     runtimeMocks.browserOpenTab.mockClear();
     runtimeMocks.callGatewayTool.mockClear();
