@@ -26,6 +26,7 @@ import fs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
 import type { PlanStore } from "./plan-store.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -54,6 +55,16 @@ export interface KitRunResult {
   planId: string;
   dryRunPlan?: DryRunDispatchPlan;
   errorMessage?: string;
+  /** Per-step results harvested from the plan after the run settles. */
+  results?: StepResult[];
+}
+
+export interface StepResult {
+  stepIndex: number;
+  title: string;
+  status: "done" | "error";
+  /** The subagent-authored done-note (or error reason), or null if absent. */
+  note: string | null;
 }
 
 interface StepDispatch {
@@ -291,6 +302,28 @@ async function loadKitText(
   throw new Error(`kit-runner: kit ${kitRef} not found in ${candidates.join(" or ")}`);
 }
 
+// ─── Result collection ────────────────────────────────────────────────────────
+
+/**
+ * Harvest per-step results from a settled plan. Returns title + status + the
+ * done-note the subagent (or the runner, on failure) wrote into the plan row.
+ * This is the result-capture seam: the note is a SHORT summary, not the
+ * subagent's full transcript. Only done/error steps are returned.
+ */
+export function collectStepResults(plan: Plan): StepResult[] {
+  const out: StepResult[] = [];
+  plan.steps.forEach((s, i) => {
+    if (s.status !== "done" && s.status !== "error") return;
+    out.push({
+      stepIndex: i,
+      title: s.title,
+      status: s.status,
+      note: s.note ?? null,
+    });
+  });
+  return out;
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
@@ -448,6 +481,11 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
     // If any step in this group errored, abort the whole plan
     const failed = settlements.find((s) => s.outcome !== "done");
     if (failed) {
+      let partialResults: StepResult[] = [];
+      const abortPlan = await store.get(opts.sessionKey);
+      if (abortPlan) {
+        partialResults = collectStepResults(abortPlan);
+      }
       try {
         await store.close({ sessionKey: opts.sessionKey, status: "aborted" });
       } catch {}
@@ -455,14 +493,21 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
         ok: false,
         planId,
         errorMessage: `kit-runner: group failed at step ${failed.stepIndex}; plan aborted`,
+        results: partialResults,
       };
     }
   }
 
-  // All groups complete — close the plan as done
+  // All groups complete — close the plan as done. Harvest results BEFORE close()
+  // archives + unlinks the live file (close() removes it from the store).
+  let results: StepResult[] = [];
+  const finalPlan = await store.get(opts.sessionKey);
+  if (finalPlan) {
+    results = collectStepResults(finalPlan);
+  }
   try {
     await store.close({ sessionKey: opts.sessionKey, status: "done" });
   } catch {}
 
-  return { ok: true, planId };
+  return { ok: true, planId, results };
 }
