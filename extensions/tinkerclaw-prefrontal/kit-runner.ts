@@ -22,6 +22,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -324,14 +325,39 @@ export function collectStepResults(plan: Plan): StepResult[] {
   return out;
 }
 
+// ─── Kits-dir resolution ────────────────────────────────────────────────────
+//
+// The own-kits dir is `<repo-root>/extensions/tinkerclaw-prefrontal/kits`. The
+// caller lives at a DIFFERENT depth depending on layout: source is at
+// extensions/tinkerclaw-prefrontal/ (3 levels deep) while the bundle is at
+// dist/ root (1 level deep). A fixed `..` count is correct for only one of them.
+// Walk UP from startDir and return the FIRST ancestor whose
+// `extensions/tinkerclaw-prefrontal/kits` exists on disk — both layouts share
+// the same repo root, so this resolves correctly regardless of bundle depth.
+// Falls back to the legacy 3-up resolve so behavior never gets worse.
+export function resolveOwnKitsDir(startDir: string): string {
+  const MAX_LEVELS = 8;
+  let dir = startDir;
+  for (let i = 0; i < MAX_LEVELS; i++) {
+    const candidate = join(dir, "extensions", "tinkerclaw-prefrontal", "kits");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      break; // reached filesystem root
+    }
+    dir = parent;
+  }
+  return resolve(startDir, "..", "..", "..", "extensions", "tinkerclaw-prefrontal", "kits");
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
   // Resolve directories
   const thisDir = dirname(fileURLToPath(import.meta.url));
-  const ownKitsDir =
-    opts.ownKitsDir ??
-    resolve(thisDir, "..", "..", "..", "extensions", "tinkerclaw-prefrontal", "kits");
+  const ownKitsDir = opts.ownKitsDir ?? resolveOwnKitsDir(thisDir);
   const kitInstallSandbox =
     opts.kitInstallSandbox ?? join(process.env.HOME ?? "/tmp", ".openclaw", "workspace", "kits");
 

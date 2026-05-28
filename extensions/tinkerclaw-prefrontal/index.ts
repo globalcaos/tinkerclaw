@@ -71,6 +71,7 @@ import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
 import { seedPlanFromPrompt } from "./kit-matcher.js";
 import { createKitRpcs } from "./kit-rpcs.js";
+import { resolveOwnKitsDir } from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
@@ -709,17 +710,10 @@ export default function register(api: OpenClawPluginApi) {
   // ── Kit dir constants (used by both plan-rpcs and kit-rpcs) ──
   const kitInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
   // Resolve ownKitsDir relative to this file's location so it works regardless of
-  // the gateway's working directory. From dist/extensions/tinkerclaw-prefrontal/ go three levels
-  // up to the repo root, then into extensions/tinkerclaw-prefrontal/kits/.
-  const ownKitsDir = join(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "..",
-    "extensions",
-    "tinkerclaw-prefrontal",
-    "kits",
-  );
+  // the gateway's working directory AND of the bundle depth (source lives at
+  // extensions/tinkerclaw-prefrontal/, the bundle at dist/ root — different `..`
+  // counts). resolveOwnKitsDir walks up to the first existing kits dir.
+  const ownKitsDir = resolveOwnKitsDir(dirname(fileURLToPath(import.meta.url)));
 
   // ── Plan store + RPCs (FORK 2026-05-13) ──
   const planRootDir = join(os.homedir(), ".openclaw", "workspace", "state", "prefrontal", "plans");
