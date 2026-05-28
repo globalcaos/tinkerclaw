@@ -2,8 +2,11 @@
  * FORK: Round Table extension entry point -- registers the `synapse_debate` tool.
  *
  * Wires the RAAC protocol debate engine into the OpenClaw plugin SDK as a
- * callable agent tool. Creates simulated debate participants that exercise the
- * full 5-phase protocol (Propose -> Challenge -> Defend -> Synthesize -> Ratify).
+ * callable agent tool. Constructs real-LLM, CROSS-PROVIDER debate participants
+ * (createRealParticipant) routed by role to Anthropic + OpenAI + Google models,
+ * each exercising the full 5-phase RAAC protocol (Propose -> Challenge -> Defend
+ * -> Synthesize -> Ratify). Each phase is a real model call dispatched via
+ * fork.subagents.spawn and read back via agent.wait + chat.history.
  *
  * Cross-extension discovery: writes `~/.openclaw/cognitive/round-table.json`
  * so other extensions (e.g. Total Recall) can detect Round Table availability.
@@ -16,7 +19,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { DEFAULT_PROVIDER_PROFILES, type ProviderProfile } from "./src/cognitive-diversity.js";
+import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
+import { DEFAULT_PROVIDER_PROFILES } from "./src/cognitive-diversity.js";
 import { createPersistentDeliberation } from "./src/persistent-deliberation.js";
 import {
   runDebate,
@@ -25,6 +29,7 @@ import {
   type DebateParticipant,
   type DebateConfig,
 } from "./src/raac-protocol.js";
+import { createRealParticipant, type Phase } from "./src/real-participant.js";
 
 // -- Constants --
 
@@ -55,44 +60,6 @@ const DEPTH_CONFIGS: Record<string, Partial<DebateConfig>> = {
   standard: { maxRounds: 4, maxBudgetPerDebate: 3.0 },
   deep: { maxRounds: 6, maxBudgetPerDebate: 8.0 },
 };
-
-// -- Simulated participant factory --
-
-/**
- * Create a simulated debate participant that generates deterministic responses
- * based on the model profile. In production, these would be backed by real LLM
- * calls; here they demonstrate the protocol flow and produce meaningful traces.
- */
-function createSimulatedParticipant(profile: ProviderProfile): DebateParticipant {
-  return {
-    modelId: profile.modelId,
-    role: profile.role,
-    profile,
-    async propose(task: string, role: string, priorSynthesis?: string): Promise<string> {
-      const base = `[${profile.modelId}/${role}] Proposal: `;
-      if (priorSynthesis) {
-        return `${base}Building on prior synthesis, I suggest approaching "${task}" by leveraging ${profile.strengths.join(", ")}. Refinement of: ${priorSynthesis.slice(0, 100)}`;
-      }
-      return `${base}For "${task}", I recommend focusing on ${profile.strengths.join(" and ")} as key considerations.`;
-    },
-    async challenge(proposal: string, role: string): Promise<string> {
-      return `[${profile.modelId}/${role}] Challenge: The proposal overlooks ${profile.strengths[0]} implications. Specifically: ${proposal.slice(0, 80)}... needs deeper analysis.`;
-    },
-    async defend(attacks: string[], role: string): Promise<string> {
-      return `[${profile.modelId}/${role}] Defense: Addressing ${attacks.length} challenge(s) -- my approach accounts for these through ${profile.strengths.join(", ")}.`;
-    },
-    async synthesize(
-      proposals: string[],
-      challenges: string[],
-      defenses: string[],
-    ): Promise<string> {
-      return `Synthesis: After ${proposals.length} proposals, ${challenges.length} challenges, and ${defenses.length} defenses, the consensus approach integrates multiple perspectives for a balanced solution.`;
-    },
-    async ratify(_synthesis: string): Promise<"accept" | "reject" | "amend"> {
-      return "accept";
-    },
-  };
-}
 
 // -- Cross-extension state helpers --
 
@@ -184,10 +151,123 @@ export default definePluginEntry({
 
           // Select and assign participants
           const profiles = DEFAULT_PROVIDER_PROFILES.slice(0, depth === "quick" ? 3 : 5);
-          const roleAssignment = assignRoles(profiles.map((p) => p.modelId));
 
+          const callModel = async ({
+            model,
+            prompt,
+            role,
+          }: {
+            model: string;
+            prompt: string;
+            phase: Phase;
+            role: string;
+          }): Promise<string> => {
+            // One real LLM call via the SAME fan-out fabric subagents use (shares
+            // the cc-bridge billing harness + 8-worker fan-out budget). Spawn is
+            // FIRE-AND-FORGET (no synchronous result); we read the child transcript
+            // back ourselves via agent.wait + chat.history (the engine's own path).
+            // callGatewayFromCli signature is (method, opts, params?, extra?) —
+            // confirmed against src/cli/gateway-rpc.ts:22-30; NOT positional
+            // (method, params). No awaitResult / res.result anywhere (do not exist).
+            const RUN_TIMEOUT_S = 120;
+            try {
+              const spawn = (await callGatewayFromCli(
+                "fork.subagents.spawn",
+                // GatewayRpcOpts.timeout is a string (raw CLI --timeout <ms>).
+                { timeout: String((RUN_TIMEOUT_S + 10) * 1000) },
+                {
+                  task: prompt,
+                  model,
+                  label: `debate:${role}`,
+                  parentSessionKey: "agent:main:main",
+                  runTimeoutSeconds: RUN_TIMEOUT_S,
+                  // We read the transcript ourselves; do NOT post a farewell to the
+                  // parent channel.
+                  expectsCompletionMessage: false,
+                },
+                { progress: false },
+              )) as { ok?: boolean; childSessionKey?: string; runId?: string; note?: string };
+              if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
+                api.logger.warn(
+                  `[round-table] spawn failed for ${role}: ${spawn?.note ?? "no childSessionKey/runId"}`,
+                );
+                return `[${model}/${role}] (no response)`;
+              }
+              const { childSessionKey, runId } = spawn;
+
+              // Block until the child run terminates (or timeout). Real RPC + params
+              // (agent.wait schema: { runId, timeoutMs }).
+              const wait = (await callGatewayFromCli(
+                "agent.wait",
+                { timeout: String(RUN_TIMEOUT_S * 1000 + 5_000) },
+                { runId, timeoutMs: RUN_TIMEOUT_S * 1000 },
+                { progress: false },
+              )) as { status?: "ok" | "timeout" | "error"; error?: string };
+              if (wait?.status === "error") {
+                api.logger.warn(
+                  `[round-table] child ${childSessionKey} errored: ${wait.error ?? "?"}`,
+                );
+                return `[${model}/${role}] (error)`;
+              }
+
+              // Read the final assistant text; retry for sessionFile flush
+              // (mirrors readLatestSubagentOutputWithRetry: ~15s cap, 100ms interval).
+              const deadline = Date.now() + 15_000;
+              let finalText: string | undefined;
+              do {
+                const hist = (await callGatewayFromCli(
+                  "chat.history",
+                  { timeout: "10000" },
+                  { sessionKey: childSessionKey, limit: 100 },
+                  { progress: false },
+                )) as { messages?: Array<{ role?: string; content?: unknown }> };
+                const messages = Array.isArray(hist?.messages) ? hist.messages : [];
+                for (let i = messages.length - 1; i >= 0; i--) {
+                  const m = messages[i];
+                  if (m?.role !== "assistant") continue;
+                  const text =
+                    typeof m.content === "string"
+                      ? m.content
+                      : Array.isArray(m.content)
+                        ? m.content
+                            .map((b: unknown) =>
+                              typeof (b as { text?: unknown })?.text === "string"
+                                ? (b as { text: string }).text
+                                : "",
+                            )
+                            .join("")
+                        : "";
+                  if (text.trim()) {
+                    finalText = text.trim();
+                    break;
+                  }
+                }
+                if (finalText || Date.now() >= deadline) break;
+                await new Promise((r) => setTimeout(r, 100));
+              } while (true);
+
+              if (!finalText) {
+                api.logger.warn(
+                  `[round-table] child ${childSessionKey} produced no final assistant text (status=${wait?.status})`,
+                );
+                return `[${model}/${role}] (no response)`;
+              }
+              return finalText;
+            } catch (err) {
+              api.logger.warn(`[round-table] debate model call threw: ${String(err)}`);
+              return `[${model}/${role}] (error)`;
+            }
+          };
+
+          // Preserve the bipartite role assignment (assignRoles, raac-protocol.ts:117)
+          // the ORIGINAL construction applied; route the ASSIGNED role into the profile
+          // so modelForRole picks the right cross-provider model.
+          const roleAssignment = assignRoles(profiles.map((p) => p.modelId));
           const participants: DebateParticipant[] = profiles.map((p) =>
-            createSimulatedParticipant({ ...p, role: roleAssignment[p.modelId] ?? p.role }),
+            createRealParticipant(
+              { ...p, role: roleAssignment[p.modelId] ?? p.role },
+              { callModel },
+            ),
           );
 
           // Run the debate
