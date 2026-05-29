@@ -86,11 +86,19 @@ interface StepDispatch {
 
 /**
  * Detect a `uses: <kitRef>` directive in a step body — the composition seam.
- * Accepts a bare own-kit slug (`uses: debug`) or a full ref (`uses: owner/slug`).
- * Normalizes bare slugs to `globalcaos/<slug>` so loadKitText resolves them.
+ * The directive MUST be the first non-blank line of the body, so a `uses:`
+ * example buried in prose or a fenced/indented code block never triggers a real
+ * sub-kit dispatch (review finding 2026-05-29). Accepts a bare own-kit slug
+ * (`uses: debug`) or a full ref (`uses: owner/slug`); bare slugs normalize to
+ * `globalcaos/<slug>` so loadKitText resolves them.
  */
 export function parseUsesDirective(body: string): string | undefined {
-  const m = /^\s*uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/im.exec(body);
+  const firstLine = body
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!firstLine) return undefined;
+  const m = /^uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/i.exec(firstLine);
   if (!m) return undefined;
   const ref = m[1];
   return ref.includes("/") ? ref : `globalcaos/${ref}`;
@@ -498,7 +506,10 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
 
       // ── Composition: this step runs a sub-kit ──
       if (dispatch.usesKitRef) {
-        const chain = opts._usesChain ?? [];
+        // Seed the chain with THIS kit's own ref so a self-`uses:` is caught at
+        // depth 0 (review finding: an unseeded chain let a self-referencing root
+        // kit re-execute once before the guard fired).
+        const chain = opts._usesChain ?? [opts.kitRef];
         const depth = opts._depth ?? 0;
         if (depth >= MAX_USES_DEPTH) {
           return markError(
