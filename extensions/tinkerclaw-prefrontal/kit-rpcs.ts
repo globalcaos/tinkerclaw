@@ -422,16 +422,28 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       const dir = path.join(deps.ownKitsDir, spec.slug);
       const target = path.join(dir, "kit.md");
       let existed = false;
+      let existingText = "";
       try {
-        await fs.access(target);
+        existingText = await fs.readFile(target, "utf-8");
         existed = true;
       } catch {
         existed = false;
       }
-      if (existed && !p.overwrite) {
-        throw new Error(
-          `prefrontal.kit.author: kit "${spec.slug}" already exists — pass overwrite:true to replace it`,
-        );
+      if (existed) {
+        // Never clobber a hand-curated, version-controlled kit. Only kits this
+        // author RPC itself wrote (authoredBy: jarvis-*) are overwritable, and
+        // only with explicit overwrite:true (review finding 2026-05-29).
+        const isAuthored = /authoredBy:\s*["']?jarvis/i.test(existingText);
+        if (!isAuthored) {
+          throw new Error(
+            `prefrontal.kit.author: "${spec.slug}" is a curated kit — refusing to overwrite. Pick a different slug.`,
+          );
+        }
+        if (!p.overwrite) {
+          throw new Error(
+            `prefrontal.kit.author: authored kit "${spec.slug}" already exists — pass overwrite:true to replace it`,
+          );
+        }
       }
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(target, kitMd, "utf-8");

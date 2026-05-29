@@ -236,8 +236,15 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
   const hasPaths = /(^|\s)[~./][\w./-]*\/[\w./-]+/.test(prompt);
   const deepHits = DEEP_KEYWORDS.filter((kw) => lower.includes(kw));
   const ultraHits = ULTRA_KEYWORDS.filter((kw) => lower.includes(kw));
+  // Word-boundary match for trivial keywords so 2-char tokens ("no", "ok", "hi")
+  // don't match as substrings inside real words ("another", "lookup", "this")
+  // (review finding 2026-05-29). And a trivial turn must have NO deep/ultra verbs.
+  const promptWords = new Set(lower.match(/[a-z']+/g) ?? []);
   const trivialHit =
-    words <= 8 && TRIVIAL_KEYWORDS.some((kw) => lower.includes(kw)) && ultraHits.length === 0;
+    words <= 8 &&
+    deepHits.length === 0 &&
+    ultraHits.length === 0 &&
+    TRIVIAL_KEYWORDS.some((kw) => (kw.includes(" ") ? lower.includes(kw) : promptWords.has(kw)));
   const questionsAsked = (prompt.match(/\?/g) ?? []).length;
 
   const signals: ComplexitySignals = {
@@ -261,7 +268,7 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
   if (clauses >= 10) score += 1;
   if (hasCode) score += 1;
   if (hasPaths) score += 1;
-  score += Math.min(3, deepHits.length); // up to +3 for distinct deep verbs
+  score += Math.min(4, deepHits.length); // up to +4 for distinct deep verbs
   score += Math.min(4, ultraHits.length * 2); // ultra words weigh double, cap +4
   if (questionsAsked >= 3) score += 1;
 
@@ -272,6 +279,8 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
   else if (score >= 7 || ultraHits.length >= 2) level = "ultra";
   else if (score >= 4) level = "deep";
   else level = "standard";
+  // Floor: 3+ distinct hard verbs is deep work even if other signals are light.
+  if (level === "standard" && deepHits.length >= 3) level = "deep";
 
   const byLevel: Record<
     ComplexityLevel,
