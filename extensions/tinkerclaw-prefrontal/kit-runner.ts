@@ -49,7 +49,14 @@ export interface KitRunOptions {
   ownKitsDir?: string;
   /** path to the install sandbox (for downloaded kits) */
   kitInstallSandbox?: string;
+  /** FORK 2026-05-29 composition: recursion depth (sub-kits invoked via `uses:`). */
+  _depth?: number;
+  /** FORK 2026-05-29 composition: kitRefs already on the call stack (cycle guard). */
+  _usesChain?: string[];
 }
+
+/** Max depth for `uses:` sub-kit recursion — recipes calling recipes. */
+const MAX_USES_DEPTH = 3;
 
 export interface KitRunResult {
   ok: boolean;
@@ -73,6 +80,20 @@ interface StepDispatch {
   title: string;
   task: string;
   label: string;
+  /** FORK: if set, this step runs another kit (owner/slug) instead of a plain subagent. */
+  usesKitRef?: string;
+}
+
+/**
+ * Detect a `uses: <kitRef>` directive in a step body — the composition seam.
+ * Accepts a bare own-kit slug (`uses: debug`) or a full ref (`uses: owner/slug`).
+ * Normalizes bare slugs to `globalcaos/<slug>` so loadKitText resolves them.
+ */
+export function parseUsesDirective(body: string): string | undefined {
+  const m = /^\s*uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/im.exec(body);
+  if (!m) return undefined;
+  const ref = m[1];
+  return ref.includes("/") ? ref : `globalcaos/${ref}`;
 }
 
 interface DryRunDispatchPlan {
@@ -393,7 +414,8 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       const rawTask = `Kit: ${opts.kitRef}\nStep ${idx + 1}/${kit.steps.length}: ${step.title}\n\n${step.body}`;
       const task = substituteParameters(rawTask, params);
       const label = `${opts.kitRef}:step-${idx}`;
-      return { stepIndex: idx, title: step.title, task, label };
+      const usesKitRef = parseUsesDirective(step.body);
+      return { stepIndex: idx, title: step.title, task, label, usesKitRef };
     }),
   );
 
@@ -458,47 +480,82 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       }
     }
 
-    // Spawn all steps in the group in parallel
-    const spawnPromises = groupDispatches.map(async (dispatch) => {
+    // Settle each step in the group in parallel. A step either (a) delegates to
+    // another kit (composition via `uses:` — recipes calling recipes), or
+    // (b) spawns a single subagent and waits for its plan row to settle.
+    const settlePromises = groupDispatches.map(async (dispatch) => {
+      const markError = async (note: string) => {
+        try {
+          await store.step({
+            sessionKey: opts.sessionKey,
+            stepIndex: dispatch.stepIndex,
+            status: "error",
+            note,
+          });
+        } catch {}
+        return { stepIndex: dispatch.stepIndex, outcome: "error" as const };
+      };
+
+      // ── Composition: this step runs a sub-kit ──
+      if (dispatch.usesKitRef) {
+        const chain = opts._usesChain ?? [];
+        const depth = opts._depth ?? 0;
+        if (depth >= MAX_USES_DEPTH) {
+          return markError(
+            `composition depth limit (${MAX_USES_DEPTH}) reached at ${dispatch.usesKitRef}`,
+          );
+        }
+        if (chain.includes(dispatch.usesKitRef)) {
+          return markError(
+            `composition cycle: ${dispatch.usesKitRef} already on stack [${chain.join(" → ")}]`,
+          );
+        }
+        try {
+          await store.step({
+            sessionKey: opts.sessionKey,
+            stepIndex: dispatch.stepIndex,
+            status: "in_progress",
+            note: `↳ running ${dispatch.usesKitRef}`,
+          });
+        } catch {}
+        const sub = await runKit({
+          kitRef: dispatch.usesKitRef,
+          sessionKey: `${opts.sessionKey}::uses::${dispatch.stepIndex}`,
+          intent: `↳ ${dispatch.title}`,
+          parameters: opts.parameters,
+          planStore: store,
+          ownKitsDir,
+          kitInstallSandbox,
+          _depth: depth + 1,
+          _usesChain: [...chain, dispatch.usesKitRef],
+        });
+        if (!sub.ok) {
+          return markError(
+            `sub-kit ${dispatch.usesKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
+          );
+        }
+        try {
+          await store.step({
+            sessionKey: opts.sessionKey,
+            stepIndex: dispatch.stepIndex,
+            status: "done",
+            note: `composed ${dispatch.usesKitRef} (${sub.results?.length ?? 0} sub-steps)`,
+          });
+        } catch {}
+        return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
+      }
+
+      // ── Normal: spawn one subagent and poll the plan row ──
       const spawnResult = await spawnStep(dispatch.task, dispatch.label);
-      return { dispatch, spawnResult };
-    });
-    const spawnResults = await Promise.all(spawnPromises);
-
-    // For each spawned step, poll until the subagent marks it done in the plan,
-    // OR mark it done/error based on the spawn result itself.
-    const settlePromises = spawnResults.map(async ({ dispatch, spawnResult }) => {
       if (!spawnResult.ok) {
-        // Spawn failed immediately — mark error and record reason
-        try {
-          await store.step({
-            sessionKey: opts.sessionKey,
-            stepIndex: dispatch.stepIndex,
-            status: "error",
-            note: `spawn failed: ${spawnResult.error ?? "unknown"}`,
-          });
-        } catch {}
-        return { stepIndex: dispatch.stepIndex, outcome: "error" as const };
+        return markError(`spawn failed: ${spawnResult.error ?? "unknown"}`);
       }
-
-      // Spawn succeeded; wait for the subagent to mark the plan step done.
-      // The subagent is responsible for calling prefrontal.plan.step when it
-      // completes. We poll for up to 10 minutes.
       const outcome = await waitForStepDone(store, opts.sessionKey, dispatch.stepIndex, 600_000);
-
       if (outcome !== "done") {
-        // Timed out or errored — mark the step with the outcome
-        try {
-          await store.step({
-            sessionKey: opts.sessionKey,
-            stepIndex: dispatch.stepIndex,
-            status: "error",
-            note: outcome === "timeout" ? "step timed out after 10 minutes" : "step ended in error",
-          });
-        } catch {}
-        return { stepIndex: dispatch.stepIndex, outcome: "error" as const };
+        return markError(
+          outcome === "timeout" ? "step timed out after 10 minutes" : "step ended in error",
+        );
       }
-
       return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
     });
 

@@ -11,13 +11,19 @@ import {
   PrefrontalKitPublishParamsSchema,
   PrefrontalKitListParamsSchema,
   PrefrontalKitRunParamsSchema,
+  PrefrontalKitAuthorParamsSchema,
+  PrefrontalKitMatchParamsSchema,
   type PrefrontalKitSearchParams,
   type PrefrontalKitGetParams,
   type PrefrontalKitInstallParams,
   type PrefrontalKitPublishParams,
   type PrefrontalKitListParams,
   type PrefrontalKitRunParams,
+  type PrefrontalKitAuthorParams,
+  type PrefrontalKitMatchParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
+import { buildKitMd, validateKitSpec, type KitSpec } from "./kit-author.js";
+import { loadKitIndex, matchKitsDetailed, invalidateKitIndexCache } from "./kit-matcher.js";
 import { runKit } from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
 import { surfaceKitOutcome } from "./long-run-surface.js";
@@ -29,6 +35,8 @@ const vInstall = ajv.compile(PrefrontalKitInstallParamsSchema);
 const vPublish = ajv.compile(PrefrontalKitPublishParamsSchema);
 const vList = ajv.compile(PrefrontalKitListParamsSchema);
 const vRun = ajv.compile(PrefrontalKitRunParamsSchema);
+const vAuthor = ajv.compile(PrefrontalKitAuthorParamsSchema);
+const vMatch = ajv.compile(PrefrontalKitMatchParamsSchema);
 
 type Validator = ReturnType<typeof ajv.compile>;
 
@@ -396,6 +404,69 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         errorMessage: runResult.errorMessage,
         results: runResult.results,
         note: runResult.ok ? "kit runner completed; check plan board for step results" : undefined,
+      };
+    },
+
+    // FORK 2026-05-29: compose a recipe on the fly. Validates the spec, builds a
+    // kit/1.0 doc, and writes it to the own-kits dir so the turn-start matcher
+    // picks it up immediately. This is the NO-MATCH escape hatch — Jarvis turns a
+    // recipe gap into a reusable recipe in one call.
+    "prefrontal.kit.author": async (raw: unknown) => {
+      const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.kit.author");
+      const spec = p as unknown as KitSpec;
+      const v = validateKitSpec(spec);
+      if (!v.ok) {
+        throw new Error(`prefrontal.kit.author: invalid spec — ${v.errors.join("; ")}`);
+      }
+      const kitMd = buildKitMd(spec);
+      const dir = path.join(deps.ownKitsDir, spec.slug);
+      const target = path.join(dir, "kit.md");
+      let existed = false;
+      try {
+        await fs.access(target);
+        existed = true;
+      } catch {
+        existed = false;
+      }
+      if (existed && !p.overwrite) {
+        throw new Error(
+          `prefrontal.kit.author: kit "${spec.slug}" already exists — pass overwrite:true to replace it`,
+        );
+      }
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(target, kitMd, "utf-8");
+      invalidateKitIndexCache(); // next turn's matcher re-scans the catalog
+      return {
+        ok: true,
+        slug: spec.slug,
+        kitRef: `globalcaos/${spec.slug}`,
+        path: target,
+        stepCount: spec.steps.length,
+        replaced: existed,
+        note: existed
+          ? `overwrote existing kit "${spec.slug}"`
+          : `authored new kit "${spec.slug}" — matchable on the next turn`,
+      };
+    },
+
+    // FORK 2026-05-29: LLM-free best-fit lookup. Returns ranked local-catalog
+    // candidates + a confidence so the caller can decide use-vs-author.
+    "prefrontal.kit.match": async (raw: unknown) => {
+      const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.kit.match");
+      const index = await loadKitIndex(deps.ownKitsDir);
+      const { matches, confidence } = matchKitsDetailed(p.prompt, index, { max: p.limit ?? 5 });
+      return {
+        confidence,
+        catalogSize: index.length,
+        recommendAuthor: matches.length === 0,
+        matches: matches.map((m) => ({
+          kitRef: `globalcaos/${m.entry.slug}`,
+          slug: m.entry.slug,
+          title: m.entry.title,
+          summary: m.entry.summary,
+          score: m.score,
+          composes: m.entry.composes,
+        })),
       };
     },
   } as const;
