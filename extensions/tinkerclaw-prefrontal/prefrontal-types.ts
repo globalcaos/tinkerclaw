@@ -11,6 +11,13 @@ export interface PrefrontalTreeNode {
   lastEventAge: number;
   skill?: string;
   summary?: string;
+  // FORK 2026-05-29: per-subagent vitals joined from the topology graph so the
+  // RECIPES panel can show how each subagent is going (tokens / tool-calls /
+  // current phase + tool arg). Optional — absent when topology has no node yet.
+  tokens?: number;
+  toolCalls?: number;
+  phase?: string;
+  currentToolArg?: string;
   children: PrefrontalTreeNode[];
 }
 

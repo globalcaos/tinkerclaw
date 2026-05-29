@@ -25,6 +25,9 @@
  *
  *   Trail event mode:
  *     --trail <kind>       one of: dispatch | complete | note | transition | warn
+ *                          | searched | matched | merged | composed | authored
+ *                          (the last 5 are recipe-lifecycle provenance verbs the
+ *                           RECIPES panel renders as a banner; unknown kinds → note)
  *     --label <label>      optional short label of what the event concerns
  *     --message <text>     required message body
  *     --icon <glyph>       optional single-char icon override
@@ -45,7 +48,9 @@ import { WebSocket } from "ws";
 const argv = process.argv.slice(2);
 function flag(name, fallback = undefined) {
   const i = argv.indexOf(`--${name}`);
-  if (i < 0) {return fallback;}
+  if (i < 0) {
+    return fallback;
+  }
   return argv[i + 1];
 }
 function boolFlag(name) {
@@ -67,9 +72,7 @@ const SESSION = flag("session", "agent:main:main");
 const EMIT_JSON = boolFlag("json");
 
 if (!RECIPE && !TRAIL_KIND) {
-  console.error(
-    "openclaw-recipe-state: either --recipe <id> or --trail <kind> must be provided.",
-  );
+  console.error("openclaw-recipe-state: either --recipe <id> or --trail <kind> must be provided.");
   process.exit(2);
 }
 if (TRAIL_KIND && !MESSAGE) {
@@ -82,12 +85,16 @@ const WS_URL = (process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789")
   .replace(/\/$/, "");
 
 function resolveToken() {
-  if (process.env.OPENCLAW_GATEWAY_TOKEN) {return process.env.OPENCLAW_GATEWAY_TOKEN;}
+  if (process.env.OPENCLAW_GATEWAY_TOKEN) {
+    return process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
   const cfgPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
   try {
     const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     const t = cfg?.gateway?.auth?.token ?? cfg?.gateway?.controlUi?.auth?.token;
-    if (typeof t === "string" && t) {return t;}
+    if (typeof t === "string" && t) {
+      return t;
+    }
   } catch {}
   return "";
 }
@@ -134,7 +141,9 @@ const done = (code, payload) => {
   } else {
     console.error("failed:", payload?.error ?? payload ?? "unknown");
   }
-  try { ws.close(); } catch {}
+  try {
+    ws.close();
+  } catch {}
   process.exit(code);
 };
 
@@ -170,7 +179,9 @@ ws.on("message", (buf) => {
             stepName: STEP_NAME,
             parallelismCap: CAP ? Number(CAP) : undefined,
             inFlightLabels: IN_FLIGHT
-              ? IN_FLIGHT.split(",").map((s) => s.trim()).filter(Boolean)
+              ? IN_FLIGHT.split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
               : undefined,
             note: NOTE,
             sessionKey: SESSION,
@@ -190,10 +201,15 @@ ws.on("message", (buf) => {
   }
   if (frame.type === "res") {
     const p = pending.get(frame.id);
-    if (!p) {return;}
+    if (!p) {
+      return;
+    }
     pending.delete(frame.id);
-    if (frame.ok) {p.resolve(frame.payload);}
-    else {p.reject(frame.error);}
+    if (frame.ok) {
+      p.resolve(frame.payload);
+    } else {
+      p.reject(frame.error);
+    }
   }
 });
 

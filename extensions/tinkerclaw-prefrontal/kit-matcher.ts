@@ -1,26 +1,24 @@
 /**
- * FORK 2026-05-16: prefrontal/kit-matcher — the "smart router" matching half.
+ * FORK 2026-05-16 (matching half of the smart router); upgraded 2026-05-29.
  *
  * The execution half (kit-runner.ts) consumes parallelism.groups and fans out
- * subagents. But nothing CALLED it from a normal conversational turn — Jarvis
- * had to remember to invoke prefrontal.kit.run himself, and he didn't (the
- * 2026-05-14 plan-not-set incident). Per the "force rules in code" preference,
- * the matcher fires automatically at turn start.
+ * subagents. The matcher fires automatically at turn start (before_prompt_build)
+ * so Jarvis never has to remember to invoke a recipe.
  *
- * Contract (decided with the user 2026-05-14/16):
- *   - Fires on EVERY user message to the main session (no heuristic gate —
- *     "no match" frequency is a clean signal that the kit catalog is too thin).
- *   - When >=1 kits match above threshold, MERGE their step lists into one
- *     plan (dedupe by normalized title) and seed it via plan-store. Jarvis
- *     then follows that plan; restart-continue can resume it.
- *   - When NO kit matches, seed nothing and emit a WARN with the prompt
- *     snippet so we can mine recipe gaps. The implicit 2-step panel takes
- *     over (content-rich, see prefrontal-tree.ts humanizeRootStatus).
+ * 2026-05-29 upgrades (the user's "best way of finding the right recipe" + compose):
+ *   - FUZZY scoring: stemming + prefix + edit-distance-1 token matching, so
+ *     "debugging the crash" matches the `debug` kit even though no literal token
+ *     is shared. Lexical-only used to silently NO-MATCH on paraphrases.
+ *   - CONFIDENCE: matchKits reports none | low | high so the hook can decide
+ *     between seeding silently, surfacing alternatives, or prompting authoring.
+ *   - COMPOSITION: a kit's frontmatter `composes: [slug, ...]` pulls those kits'
+ *     steps into the merged plan (cycle-guarded) — recipes built from recipes.
+ *   - PROVENANCE: seedPlanFromPrompt returns the full match detail so the hook
+ *     can emit searched/matched/merged/authored trail events to the panel.
  *
- * Matching is LOCAL and fast (no Journey network call on every turn): it
- * scores the prompt against each local kit's frontmatter tags/title/summary.
+ * Matching stays LOCAL and fast (no Journey network call per turn).
  *
- * See bible subagents-and-kits.md ("the smart frontier") + tool-loop.md.
+ * See bible subagents-and-kits.md + tool-loop.md.
  */
 import fs from "node:fs/promises";
 import { join } from "node:path";
@@ -32,6 +30,8 @@ export interface KitIndexEntry {
   title: string;
   summary: string;
   tags: string[];
+  /** Other kit slugs this kit composes (frontmatter `composes:`). */
+  composes: string[];
   /** Absolute path to the kit.md, for lazy step parsing on a match. */
   path: string;
 }
@@ -41,10 +41,19 @@ export interface KitMatch {
   score: number;
 }
 
+export type MatchConfidence = "none" | "low" | "high";
+
+export interface MatchResult {
+  matches: KitMatch[];
+  confidence: MatchConfidence;
+}
+
 export interface MergedPlan {
   intent: string;
   steps: Array<{ title: string }>;
   kitRefs: string[];
+  /** Slugs pulled in via `composes:` expansion (subset of kitRefs). */
+  composedFrom: string[];
 }
 
 const STOPWORDS = new Set([
@@ -99,12 +108,67 @@ function tokenize(s: string): string[] {
   );
 }
 
+/** Lightweight stemmer — strips the common English inflections that broke
+ * lexical matching ("debugging"→"debug", "tests"→"test", "fixes"→"fix"). */
+function stem(t: string): string {
+  return t
+    .replace(/(ization|isation)$/, "ize")
+    .replace(/(ing|edly|ed|ly|es|s)$/, "")
+    .replace(/(er|or)$/, "");
+}
+
+/** Edit distance ≤1 check (cheap early-exit), for typo/inflection tolerance. */
+function withinEdit1(a: string, b: string): boolean {
+  if (a === b) return true;
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (++edits > 1) return false;
+    if (la > lb) i++;
+    else if (lb > la) j++;
+    else {
+      i++;
+      j++;
+    }
+  }
+  if (i < la || j < lb) edits++;
+  return edits <= 1;
+}
+
+/** Fuzzy token match: equality, shared stem, prefix (len≥4), or edit-distance-1
+ * (len≥5). The graduated rules avoid false hits on tiny tokens. */
+export function tokenMatches(promptTok: string, kitTok: string): boolean {
+  if (promptTok === kitTok) return true;
+  const ps = stem(promptTok);
+  const ks = stem(kitTok);
+  if (ps === ks && ps.length >= 3) return true;
+  if (promptTok.length >= 4 && kitTok.length >= 4) {
+    if (promptTok.startsWith(kitTok) || kitTok.startsWith(promptTok)) return true;
+  }
+  if (promptTok.length >= 5 && kitTok.length >= 5 && withinEdit1(ps, ks)) return true;
+  return false;
+}
+
+function anyTokenMatches(promptTokens: string[], kitTok: string): boolean {
+  return promptTokens.some((pt) => tokenMatches(pt, kitTok));
+}
+
 let cache: { mtimeMs: number; index: KitIndexEntry[] } | null = null;
 
-/**
- * Scan ownKitsDir/<slug>/kit.md, parse frontmatter. Cached; invalidated when
- * the kits directory mtime changes (kit added/edited).
- */
+/** Drop the in-memory index cache (call after authoring a kit on the fly). */
+export function invalidateKitIndexCache(): void {
+  cache = null;
+}
+
 export async function loadKitIndex(ownKitsDir: string): Promise<KitIndexEntry[]> {
   let dirStat: Awaited<ReturnType<typeof fs.stat>>;
   try {
@@ -142,11 +206,15 @@ export async function loadKitIndex(ownKitsDir: string): Promise<KitIndexEntry[]>
     const tags = Array.isArray(parsed.tags)
       ? (parsed.tags as unknown[]).filter((t): t is string => typeof t === "string")
       : [];
+    const composes = Array.isArray(parsed.composes)
+      ? (parsed.composes as unknown[]).filter((t): t is string => typeof t === "string")
+      : [];
     index.push({
       slug: typeof parsed.slug === "string" ? parsed.slug : slug,
       title: typeof parsed.title === "string" ? parsed.title : slug,
       summary: typeof parsed.summary === "string" ? parsed.summary : "",
       tags,
+      composes,
       path,
     });
   }
@@ -155,38 +223,53 @@ export async function loadKitIndex(ownKitsDir: string): Promise<KitIndexEntry[]>
 }
 
 /**
- * Score a kit against the prompt. Tag hits weigh most (tags are the
- * hand-curated trigger surface), then title, then summary. Multi-word tags
- * ("push to prod") match as a phrase substring on the raw prompt too.
+ * Score a kit against the prompt. Tag hits weigh most (hand-curated trigger
+ * surface), then title, then summary. Multi-word tags match as a phrase
+ * substring; single-word tags + title/summary words match FUZZILY (stem /
+ * prefix / edit-1) so paraphrases and inflections still score.
  */
 export function scoreKit(prompt: string, promptTokens: Set<string>, kit: KitIndexEntry): number {
   let score = 0;
   const lowPrompt = prompt.toLowerCase();
+  const tokenList = [...promptTokens];
   for (const tag of kit.tags) {
     const tl = tag.toLowerCase();
     if (tl.includes(" ")) {
       if (lowPrompt.includes(tl)) score += 5; // exact phrase tag
       continue;
     }
-    if (promptTokens.has(tl)) score += 3; // single-word tag hit
+    if (promptTokens.has(tl))
+      score += 3; // exact single-word tag hit
+    else if (anyTokenMatches(tokenList, tl)) score += 2; // fuzzy tag hit
   }
   for (const tok of tokenize(kit.title)) {
     if (promptTokens.has(tok)) score += 2;
+    else if (anyTokenMatches(tokenList, tok)) score += 1;
   }
   for (const tok of tokenize(kit.summary)) {
-    if (promptTokens.has(tok)) score += 1;
+    if (anyTokenMatches(tokenList, tok)) score += 1;
   }
   return score;
 }
 
-const DEFAULT_THRESHOLD = 3; // one single-word tag hit, or a title word + summary word
-const DEFAULT_MAX_KITS = 3; // merge at most this many kits into one plan
+const DEFAULT_THRESHOLD = 3;
+const DEFAULT_MAX_KITS = 3;
 
 export function matchKits(
   prompt: string,
   index: KitIndexEntry[],
   opts?: { threshold?: number; max?: number },
 ): KitMatch[] {
+  return matchKitsDetailed(prompt, index, opts).matches;
+}
+
+/** Like matchKits but also classifies confidence — used by the turn hook to
+ * decide seed-silently vs surface-alternatives vs prompt-authoring. */
+export function matchKitsDetailed(
+  prompt: string,
+  index: KitIndexEntry[],
+  opts?: { threshold?: number; max?: number },
+): MatchResult {
   const promptTokens = new Set(tokenize(prompt));
   const threshold = opts?.threshold ?? DEFAULT_THRESHOLD;
   const max = opts?.max ?? DEFAULT_MAX_KITS;
@@ -194,26 +277,53 @@ export function matchKits(
     .map((entry) => ({ entry, score: scoreKit(prompt, promptTokens, entry) }))
     .filter((m) => m.score >= threshold)
     .sort((a, b) => b.score - a.score);
-  return scored.slice(0, max);
+  const matches = scored.slice(0, max);
+
+  let confidence: MatchConfidence = "none";
+  if (matches.length > 0) {
+    const top = matches[0].score;
+    const second = matches[1]?.score ?? 0;
+    // High: a clear leader well above the bar. Low: barely over bar or a tie.
+    confidence = top >= threshold + 3 && top - second >= 2 ? "high" : "low";
+  }
+  return { matches, confidence };
 }
 
 /**
  * Build a single merged plan from matched kits. Steps are concatenated in
- * match-rank order, deduped by normalized title (first occurrence wins so the
- * highest-scored kit's phrasing is kept). The intent is a short summary of
- * which kits drove the plan.
+ * match-rank order, deduped by normalized title. COMPOSITION: when a matched
+ * kit declares `composes: [slug, ...]`, those kits' steps are pulled in too
+ * (recipes built from recipes), cycle-guarded against infinite expansion.
  */
-export async function buildMergedPlan(matches: KitMatch[]): Promise<MergedPlan> {
+export async function buildMergedPlan(
+  matches: KitMatch[],
+  index?: KitIndexEntry[],
+): Promise<MergedPlan> {
   const steps: Array<{ title: string }> = [];
   const seen = new Set<string>();
   const kitRefs: string[] = [];
-  for (const m of matches) {
-    kitRefs.push(m.entry.slug);
+  const composedFrom: string[] = [];
+  const bySlug = new Map<string, KitIndexEntry>((index ?? []).map((e) => [e.slug, e]));
+  const expanded = new Set<string>();
+
+  const addStepsFrom = async (entry: KitIndexEntry, depth: number): Promise<void> => {
+    if (expanded.has(entry.slug) || depth > 3) return;
+    expanded.add(entry.slug);
+    // Expand composed kits FIRST so their steps lead (a composite recipe reads
+    // as: do sub-recipe A, then sub-recipe B, then my own steps).
+    for (const subSlug of entry.composes) {
+      const sub = bySlug.get(subSlug);
+      if (sub && !expanded.has(sub.slug)) {
+        composedFrom.push(sub.slug);
+        if (!kitRefs.includes(sub.slug)) kitRefs.push(sub.slug);
+        await addStepsFrom(sub, depth + 1);
+      }
+    }
     let text: string;
     try {
-      text = await fs.readFile(m.entry.path, "utf8");
+      text = await fs.readFile(entry.path, "utf8");
     } catch {
-      continue;
+      return;
     }
     const parsed = parseKitStepsAndParallelism(text);
     for (const s of parsed.steps) {
@@ -225,12 +335,19 @@ export async function buildMergedPlan(matches: KitMatch[]): Promise<MergedPlan> 
       seen.add(norm);
       steps.push({ title: s.title });
     }
+  };
+
+  for (const m of matches) {
+    if (!kitRefs.includes(m.entry.slug)) kitRefs.push(m.entry.slug);
+    await addStepsFrom(m.entry, 0);
   }
+
+  const baseLabels = matches.map((m) => m.entry.title);
   const intent =
-    matches.length === 1
+    matches.length === 1 && composedFrom.length === 0
       ? `${matches[0].entry.title}`
-      : `Merged: ${matches.map((m) => m.entry.title).join(" + ")}`;
-  return { intent, steps, kitRefs };
+      : `Merged: ${baseLabels.join(" + ")}${composedFrom.length ? ` (composes ${composedFrom.join(", ")})` : ""}`;
+  return { intent, steps, kitRefs, composedFrom };
 }
 
 export interface SeedPlanDeps {
@@ -251,30 +368,48 @@ export interface SeedPlanDeps {
   log?: { info?: (m: string) => void; warn?: (m: string) => void };
 }
 
+export interface SeedPlanOutcome {
+  seeded: boolean;
+  intent?: string;
+  stepCount?: number;
+  kitRefs?: string[];
+  composedFrom?: string[];
+  /** All scored matches (for provenance trail). */
+  matches: Array<{ slug: string; score: number }>;
+  confidence: MatchConfidence;
+  /** Total kits scanned this turn (catalog size). */
+  catalogSize: number;
+  /** True when nothing cleared threshold — the authoring opportunity. */
+  noMatch: boolean;
+  /** Reason a seed was skipped despite matches (existing plan, etc.). */
+  skipped?: string;
+}
+
 /**
  * Orchestration entry called from the before_prompt_build hook. Returns the
- * outcome so the hook can decide whether to inject a "plan seeded" note.
- *
- * Never clobbers an existing in_progress plan (the user — or a prior turn —
- * may have set one explicitly; that wins).
+ * full outcome so the hook can emit provenance trails + inject guidance.
+ * Never clobbers an existing in_progress plan.
  */
-export async function seedPlanFromPrompt(
-  deps: SeedPlanDeps,
-): Promise<{ seeded: boolean; intent?: string; stepCount?: number; kitRefs?: string[] }> {
+export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOutcome> {
   const snippet = deps.prompt.replace(/\s+/g, " ").trim().slice(0, 120);
+  const empty = (over: Partial<SeedPlanOutcome>): SeedPlanOutcome => ({
+    seeded: false,
+    matches: [],
+    confidence: "none",
+    catalogSize: 0,
+    noMatch: false,
+    ...over,
+  });
 
-  // FORK (Task 1.5): never seed a plan for a kit-completion re-injection — that
-  // would create a phantom plan-of-a-plan. Mirrors the [System] restart-continue
-  // guard (MEMORY.md "Kit-matcher false-positive on restart-continue message").
-  // long-run-surface.ts re-injects the completion turn with this sentinel.
+  // Never seed for a kit-completion re-injection (phantom plan-of-a-plan).
   if (deps.prompt.trimStart().startsWith("__KIT_DONE__")) {
     deps.log?.info?.(
       `[kit-matcher] sessionKey=${deps.sessionKey} kit-completion re-injection (suppressed)`,
     );
-    return { seeded: false };
+    return empty({ skipped: "kit-completion" });
   }
 
-  // Respect an existing plan — don't overwrite explicit/prior-turn plans.
+  // Respect an existing in_progress plan.
   let existing: unknown | null = null;
   try {
     existing = await deps.planStore.get(deps.sessionKey);
@@ -285,32 +420,36 @@ export async function seedPlanFromPrompt(
     deps.log?.info?.(
       `[kit-matcher] sessionKey=${deps.sessionKey} skipped — plan already in_progress`,
     );
-    return { seeded: false };
+    return empty({ skipped: "plan-in-progress" });
   }
 
   const index = await loadKitIndex(deps.ownKitsDir);
   if (index.length === 0) {
     deps.log?.warn?.(`[kit-matcher] no kits found in ${deps.ownKitsDir}`);
-    return { seeded: false };
+    return empty({ skipped: "empty-catalog" });
   }
 
-  const matches = matchKits(deps.prompt, index);
+  const { matches, confidence } = matchKitsDetailed(deps.prompt, index);
+  const matchSummary = matches.map((m) => ({ slug: m.entry.slug, score: m.score }));
+
   if (matches.length === 0) {
-    // The recipe-gap signal. If this fires often for a class of prompts the
-    // catalog is too thin / our work has drifted — see bible subagents-and-kits.md.
     deps.log?.warn?.(
-      `[kit-matcher] NO-MATCH sessionKey=${deps.sessionKey} prompt="${snippet}" ` +
-        `(catalog=${index.length} kits) — recipe-gap signal; implicit 2-step panel takes over`,
+      `[kit-matcher] NO-MATCH sessionKey=${deps.sessionKey} prompt="${snippet}" (catalog=${index.length}) — recipe-gap; authoring offered`,
     );
-    return { seeded: false };
+    return empty({ catalogSize: index.length, noMatch: true });
   }
 
-  const plan = await buildMergedPlan(matches);
+  const plan = await buildMergedPlan(matches, index);
   if (plan.steps.length === 0) {
     deps.log?.warn?.(
       `[kit-matcher] matched ${plan.kitRefs.join("+")} but produced 0 steps — skipping seed`,
     );
-    return { seeded: false };
+    return empty({
+      catalogSize: index.length,
+      matches: matchSummary,
+      confidence,
+      skipped: "zero-steps",
+    });
   }
 
   await deps.planStore.set({
@@ -321,14 +460,18 @@ export async function seedPlanFromPrompt(
     steps: plan.steps,
   });
   deps.log?.info?.(
-    `[kit-matcher] seeded plan sessionKey=${deps.sessionKey} ` +
-      `kits=${plan.kitRefs.join("+")} steps=${plan.steps.length} ` +
-      `scores=[${matches.map((m) => `${m.entry.slug}:${m.score}`).join(",")}]`,
+    `[kit-matcher] seeded plan sessionKey=${deps.sessionKey} kits=${plan.kitRefs.join("+")} ` +
+      `steps=${plan.steps.length} conf=${confidence} scores=[${matchSummary.map((m) => `${m.slug}:${m.score}`).join(",")}]`,
   );
   return {
     seeded: true,
     intent: plan.intent,
     stepCount: plan.steps.length,
     kitRefs: plan.kitRefs,
+    composedFrom: plan.composedFrom,
+    matches: matchSummary,
+    confidence,
+    catalogSize: index.length,
+    noMatch: false,
   };
 }

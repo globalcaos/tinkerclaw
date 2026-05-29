@@ -32,6 +32,8 @@ export interface PrefrontalNode {
   status: NodeStatus;
   role: string;
   phase: string;
+  /** FORK 2026-05-29: short rendering of the in-flight tool's primary arg. */
+  currentToolArg?: string;
   tokens: number;
   depth: number;
   spawnedAt: number;
@@ -269,14 +271,17 @@ export class TopologyStore {
     this.changeCount++;
   }
 
-  /** Increment tool call count for a session */
-  addToolCall(sessionKey: string, toolName: string): void {
+  /** Increment tool call count for a session. FORK 2026-05-29: optional `arg`
+   * captures a short rendering of the tool's primary argument (e.g. the path or
+   * query) so the RECIPES panel can show "tool: Grep(oauth)" not just "tool: Grep". */
+  addToolCall(sessionKey: string, toolName: string, arg?: string): void {
     const node = this.nodes.get(sessionKey);
     if (!node) {
       return;
     }
     node.toolCalls++;
     node.phase = `tool: ${toolName}`;
+    node.currentToolArg = arg ? arg.slice(0, 60) : undefined;
     node.updatedAt = Date.now();
   }
 
@@ -287,6 +292,7 @@ export class TopologyStore {
       return;
     }
     node.phase = node.toolCalls > 0 ? `${node.toolCalls} tools used` : "";
+    node.currentToolArg = undefined;
     node.updatedAt = Date.now();
   }
 

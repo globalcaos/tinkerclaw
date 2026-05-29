@@ -54,6 +54,11 @@ export interface TreeNode {
   lastEventAge: number;
   skill?: string;
   summary?: string;
+  // FORK 2026-05-29: per-subagent vitals joined from the topology graph.
+  tokens?: number;
+  toolCalls?: number;
+  phase?: string;
+  currentToolArg?: string;
   children: TreeNode[];
 }
 
@@ -80,7 +85,14 @@ export type TrailEventKind =
   | "transition"
   | "warn"
   | "recipe-step"
-  | "spawn-fail";
+  | "spawn-fail"
+  // FORK 2026-05-29: recipe-lifecycle provenance — searched/matched/merged the
+  // catalog, composed from sub-recipes, or authored a new one on the fly.
+  | "searched"
+  | "matched"
+  | "merged"
+  | "composed"
+  | "authored";
 
 export interface TrailEvent {
   ts: number;
@@ -110,6 +122,11 @@ const TRAIL_ICON_BY_KIND: Record<TrailEventKind, string> = {
   warn: "!",
   "recipe-step": "🕸",
   "spawn-fail": "✗",
+  searched: "🔎",
+  matched: "🎯",
+  merged: "🧩",
+  composed: "🪢",
+  authored: "✦",
 };
 
 function fmtClock(ts: number): string {
@@ -129,6 +146,60 @@ function fmtDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds - m * 60;
   return s > 0 ? `${m}m${s}s` : `${m}m`;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+  return String(n);
+}
+
+// FORK 2026-05-29: per-subagent vitals — phase + current tool(arg) + tool count
+// + token spend, joined from the topology graph onto each tree node. Renders a
+// compact sub-line under the subagent row so "how is each subagent going" is
+// visible without expanding the chat tool rows.
+function renderVitals(node: TreeNode): HTMLElement | null {
+  const bits: string[] = [];
+  const phase = (node.phase ?? "").trim();
+  if (phase) {
+    const toolMatch = /^tool:\s*(.+)$/i.exec(phase);
+    if (toolMatch) {
+      bits.push(`🔧 ${toolMatch[1]}${node.currentToolArg ? `(${node.currentToolArg})` : ""}`);
+    } else {
+      bits.push(phase);
+    }
+  }
+  if (typeof node.toolCalls === "number" && node.toolCalls > 0)
+    bits.push(`${node.toolCalls} tools`);
+  if (typeof node.tokens === "number" && node.tokens > 0)
+    bits.push(`${fmtTokens(node.tokens)} tok`);
+  if (bits.length === 0) return null;
+  const v = el("div", "pf-vitals");
+  v.textContent = bits.join(" · ");
+  return v;
+}
+
+// FORK 2026-05-29: recipe-lifecycle provenance banner. Reads the trail for the
+// matcher's searched/matched/merged/composed/authored events (last 2 min) and
+// renders them as an arrow chain — the "are recipes being found / built /
+// combined right now" headline that the plan checklist alone never showed.
+function renderProvenanceStrip(trail: TrailEvent[]): HTMLElement | null {
+  const KINDS = new Set<TrailEventKind>(["searched", "matched", "merged", "composed", "authored"]);
+  const now = Date.now();
+  const recent = trail.filter((t) => KINDS.has(t.kind) && now - t.ts < 120_000);
+  if (recent.length === 0) return null;
+  const strip = el("div", "pf-provenance");
+  recent.slice(-5).forEach((t, i) => {
+    if (i > 0) {
+      const arr = el("span", "pf-prov-arrow");
+      arr.textContent = "→";
+      strip.appendChild(arr);
+    }
+    const chip = el("span", `pf-prov-chip pf-prov-${t.kind}`);
+    const icon = TRAIL_ICON_BY_KIND[t.kind] ?? "•";
+    chip.textContent = `${icon} ${t.label ? t.label + " · " : ""}${t.message}`;
+    strip.appendChild(chip);
+  });
+  return strip;
 }
 
 // FORK 2026-05-14: map the raw root.status string from the prefrontal tree
@@ -393,6 +464,13 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     // job picks up where it left off), but is not rendered while idle.
     const treeIdle = !tree.active || !tree.root;
 
+    // ─── Recipe provenance strip (FORK 2026-05-29) ─────────────────────────
+    // The headline: is a recipe being searched / matched / merged / composed /
+    // authored right now? This is the "what's happening to recipes" lens that
+    // the plan checklist alone never showed. Sits above the plan as a banner.
+    const prov = renderProvenanceStrip(trail);
+    if (prov) card.appendChild(prov);
+
     // ─── Current Plan (FORK 2026-05-14 — always renders per panels.md) ──────
     card.appendChild(renderPlanSection(plan, tree));
 
@@ -451,6 +529,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       row.addEventListener("click", () => toggleExpanded(expandKey));
     }
     wrap.appendChild(row);
+
+    // FORK 2026-05-29: per-subagent vitals sub-line (how this subagent is going).
+    if (!isRoot) {
+      const vitals = renderVitals(node);
+      if (vitals) wrap.appendChild(vitals);
+    }
 
     // Render this node's own trail (expanded) and its children (always).
     const needsChildrenContainer =
