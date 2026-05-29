@@ -68,7 +68,6 @@ import {
   validateModelAssignment,
   DEFAULT_EFFORT_ROUTING_CONFIG,
   buildEffortGuidance,
-  classifyComplexity,
 } from "./effort-router.js";
 import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./exploration-gate.js";
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
@@ -868,7 +867,9 @@ export default function register(api: OpenClawPluginApi) {
             "gap",
           );
           // Auto on-the-fly authoring directive — only for non-trivial work.
-          if (classifyComplexity(prompt).level !== "trivial") {
+          // effortGuidance is non-null iff classifyComplexity != "trivial", so
+          // reuse it instead of re-classifying (review finding 2026-05-29).
+          if (effortGuidance !== null) {
             parts.push(
               `<recipe_gap>No existing recipe matched (catalog=${outcome.catalogSize}). If this is repeatable work, COMPOSE one now: call \`prefrontal.kit.author\` with {slug,title,summary,tags,category,steps:[{title,tools,doneWhen,body}],parallelismGroups}. It becomes matchable next turn. To build a recipe FROM other recipes, add a \`uses: <slug>\` line to a step (runtime sub-kit) or a frontmatter \`composes: [slug,...]\` list (merged steps).</recipe_gap>`,
             );

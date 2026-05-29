@@ -90,6 +90,13 @@ export function validateKitSpec(spec: unknown): KitValidationResult {
         if (typeof st.title !== "string" || !st.title.trim())
           errors.push(`step ${i} missing title`);
         if (typeof st.body !== "string" || !st.body.trim()) errors.push(`step ${i} missing body`);
+        // A numbered markdown heading in the body would reparse as a PHANTOM
+        // step (the runner splits on "### N. Title"), desyncing step count and
+        // parallelism dispatch. Forbid it (review finding 2026-05-29).
+        else if (/^#{1,6}\s+\d+\.\s+/m.test(st.body))
+          errors.push(
+            `step ${i} body has a numbered markdown heading ("### N. …") that would reparse as a phantom step — reword it`,
+          );
       }
     });
   }
@@ -107,9 +114,9 @@ export function validateKitSpec(spec: unknown): KitValidationResult {
           continue;
         }
         for (const idx of group) {
-          if (typeof idx !== "number" || idx < 0 || idx >= stepCount) {
+          if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= stepCount) {
             errors.push(
-              `parallelism group references invalid step index ${idx} (steps=${stepCount})`,
+              `parallelism group references invalid step index ${idx} (steps=${stepCount}, must be a 0-based integer)`,
             );
           } else if (seen.has(idx)) {
             errors.push(`parallelism group repeats step index ${idx}`);
@@ -152,6 +159,16 @@ export function buildKitMd(spec: KitSpec): string {
       ? spec.parallelismGroups
       : defaultGroups(spec.steps.length);
 
+  // The matcher scores against `tags` (not `triggers`), so fold trigger phrases
+  // into the tag set — otherwise an authored kit's trigger phrases would never
+  // make it matchable (review finding 2026-05-29). Dedup, lowercase.
+  const tagSet = new Set<string>();
+  for (const t of [...spec.tags, ...(spec.triggers ?? [])]) {
+    const v = String(t).trim().toLowerCase();
+    if (v) tagSet.add(v);
+  }
+  const allTags = [...tagSet];
+
   const fm: string[] = [
     "---",
     `schema: "kit/1.0"`,
@@ -162,7 +179,7 @@ export function buildKitMd(spec: KitSpec): string {
     `owner: "globalcaos"`,
     `license: "MIT"`,
     `category: ${JSON.stringify(spec.category ?? "operations")}`,
-    `tags: [${spec.tags.map((t) => JSON.stringify(t)).join(", ")}]`,
+    `tags: [${allTags.map((t) => JSON.stringify(t)).join(", ")}]`,
     `testedHarnesses: ["OpenClaw", "Claude Code"]`,
     `authoredBy: "jarvis-on-the-fly"`,
     "parallelism:",
