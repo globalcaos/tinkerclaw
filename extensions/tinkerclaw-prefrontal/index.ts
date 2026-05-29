@@ -64,7 +64,12 @@ import {
 import { ChatEmitter } from "./chat-emitter.js";
 import { DEFAULT_CORF_CONFIG } from "./corf-trigger.js";
 import { createDenialTracker } from "./denial-tracking.js";
-import { validateModelAssignment, DEFAULT_EFFORT_ROUTING_CONFIG } from "./effort-router.js";
+import {
+  validateModelAssignment,
+  DEFAULT_EFFORT_ROUTING_CONFIG,
+  buildEffortGuidance,
+  classifyComplexity,
+} from "./effort-router.js";
 import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./exploration-gate.js";
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
@@ -624,10 +629,42 @@ export default function register(api: OpenClawPluginApi) {
     }
   }
 
+  // FORK 2026-05-29: join topology vitals (tokens / toolCalls / phase /
+  // currentToolArg) onto the tree the monitor builds — runToNode itself never
+  // reads topology, so without this the per-subagent vitals never reach the UI.
+  function enrichTreeWithTopology(tree: ReturnType<typeof monitor.buildTree>) {
+    try {
+      const snap = topology.snapshot();
+      const byRun = new Map<string, (typeof snap.nodes)[number]>();
+      for (const n of snap.nodes) if (n.runId) byRun.set(n.runId, n);
+      const walk = (node: {
+        runId: string;
+        tokens?: number;
+        toolCalls?: number;
+        phase?: string;
+        currentToolArg?: string;
+        children: unknown[];
+      }) => {
+        const t = byRun.get(node.runId);
+        if (t) {
+          node.tokens = t.tokens;
+          node.toolCalls = t.toolCalls;
+          if (t.phase) node.phase = t.phase;
+          if (t.currentToolArg) node.currentToolArg = t.currentToolArg;
+        }
+        for (const c of node.children) walk(c as Parameters<typeof walk>[0]);
+      };
+      if (tree.root) walk(tree.root as unknown as Parameters<typeof walk>[0]);
+    } catch {
+      // enrichment is best-effort — never break the broadcast
+    }
+  }
+
   function rebuildAndBroadcastTree() {
     try {
       const runs = Array.from(subagentRuns.values());
       const tree = monitor.buildTree(runs, getPrefrontalSessionKey());
+      enrichTreeWithTopology(tree);
       if (tree.active) {
         log.info?.(
           `[prefrontal] Tree active: root=${tree.root?.model} children=${tree.root?.children?.length ?? 0}`,
@@ -754,6 +791,7 @@ export default function register(api: OpenClawPluginApi) {
     "before_prompt_build",
     // oxlint-disable-next-line typescript-eslint/no-explicit-any
     async (event: any, ctx: any) => {
+      const parts: string[] = [];
       try {
         const sessionKey: string = ctx?.sessionKey ?? "";
         const trigger: string = ctx?.trigger ?? "";
@@ -771,7 +809,34 @@ export default function register(api: OpenClawPluginApi) {
         }
         const prompt: string = typeof event?.prompt === "string" ? event.prompt : "";
         if (!prompt.trim()) return {};
-        await seedPlanFromPrompt({
+
+        // Provenance trail emitter → the RECIPES panel sees searched/matched/
+        // merged/composed/authored as the recipe lifecycle unfolds. Same shape
+        // as fork.prefrontal.trailEvent's broadcast (UI maps unknown kinds → note).
+        const emitTrail = (kind: string, message: string, label?: string) => {
+          try {
+            // oxlint-disable-next-line typescript-eslint/no-explicit-any
+            (api as any).broadcast?.("agent", {
+              stream: "lifecycle",
+              data: {
+                phase: "prefrontal-trail-event",
+                kind,
+                message,
+                label,
+                ts: Date.now(),
+                sessionKey,
+              },
+              sessionKey,
+            });
+          } catch {}
+        };
+
+        // 1) Dynamic effort adaptation — scale reasoning/orchestration to the task.
+        const effortGuidance = buildEffortGuidance(prompt);
+        if (effortGuidance) parts.push(effortGuidance);
+
+        // 2) Recipe matching + provenance.
+        const outcome = await seedPlanFromPrompt({
           prompt,
           sessionKey,
           runId: ctx?.runId ?? "",
@@ -779,10 +844,40 @@ export default function register(api: OpenClawPluginApi) {
           planStore,
           log,
         });
+
+        if (outcome.catalogSize > 0) {
+          emitTrail("searched", `scored ${outcome.catalogSize} recipes`, "match");
+        }
+        if (outcome.seeded) {
+          const kits = outcome.kitRefs ?? [];
+          if (kits.length > 1 || (outcome.composedFrom?.length ?? 0) > 0) {
+            emitTrail("merged", `${outcome.intent} — ${outcome.stepCount} steps`, kits.join("+"));
+          } else {
+            emitTrail("matched", `${outcome.intent} (conf ${outcome.confidence})`, kits[0]);
+          }
+          if ((outcome.composedFrom?.length ?? 0) > 0) {
+            emitTrail("composed", `pulled in ${outcome.composedFrom!.join(", ")}`, "composes");
+          }
+          parts.push(
+            `<active_recipe kits="${kits.join(",")}" steps="${outcome.stepCount}">A plan was auto-seeded from the matched recipe(s). Follow its steps and keep the RECIPES panel honest via the recipe-state CLI: one \`--recipe <id> --step N\` call per transition, and \`--trail dispatch\`/\`--trail complete\` around each subagent.</active_recipe>`,
+          );
+        } else if (outcome.noMatch) {
+          emitTrail(
+            "warn",
+            `no recipe fit (catalog ${outcome.catalogSize}) — authoring offered`,
+            "gap",
+          );
+          // Auto on-the-fly authoring directive — only for non-trivial work.
+          if (classifyComplexity(prompt).level !== "trivial") {
+            parts.push(
+              `<recipe_gap>No existing recipe matched (catalog=${outcome.catalogSize}). If this is repeatable work, COMPOSE one now: call \`prefrontal.kit.author\` with {slug,title,summary,tags,category,steps:[{title,tools,doneWhen,body}],parallelismGroups}. It becomes matchable next turn. To build a recipe FROM other recipes, add a \`uses: <slug>\` line to a step (runtime sub-kit) or a frontmatter \`composes: [slug,...]\` list (merged steps).</recipe_gap>`,
+            );
+          }
+        }
       } catch (err) {
         log.warn?.(`[kit-matcher] before_prompt_build failed: ${String(err)}`);
       }
-      // Never mutate the prompt — plan-store side-effect only.
+      if (parts.length > 0) return { prependSystemContext: parts.join("\n\n") };
       return {};
     },
     { priority: 20 },
