@@ -494,10 +494,15 @@ export default function register(api: OpenClawPluginApi) {
       });
       rebuildAndBroadcastTree();
     }
+    // FORK 2026-05-30: clear the active-main marker BEFORE the UI's 6s ext-tree
+    // cache (PREFRONTAL_EXT_TREE_TTL_MS) expires. The old 10s delay left a 4s
+    // window where the UI fell back to a still-"active" tree built from a
+    // completed run — the panel showed a frozen "thinking" while every other
+    // indicator was idle (the "Prefrontal rethink" stuck bug).
     setTimeout(() => {
       monitor.setActiveMain(null);
       rebuildAndBroadcastTree();
-    }, 10_000);
+    }, 4_000);
 
     // WS6: Track task outcome for FAAR metrics
     if (isEnabled(featureFlags, "faarTracking")) {

@@ -178,28 +178,64 @@ function renderVitals(node: TreeNode): HTMLElement | null {
   return v;
 }
 
-// FORK 2026-05-29: recipe-lifecycle provenance banner. Reads the trail for the
-// matcher's searched/matched/merged/composed/authored events (last 2 min) and
-// renders them as an arrow chain — the "are recipes being found / built /
-// combined right now" headline that the plan checklist alone never showed.
-function renderProvenanceStrip(trail: TrailEvent[]): HTMLElement | null {
-  const KINDS = new Set<TrailEventKind>(["searched", "matched", "merged", "composed", "authored"]);
+// FORK 2026-05-30: recipe DECISION TRAIL — the compact-by-default, expand-on-click
+// log of what Jarvis decided about recipes (searched/matched/merged/composed/
+// authored + stage transitions). Collapsed it's a single line ("N decisions ·
+// <latest>"); clicking uncovers the full trail underneath — mirroring the main
+// chat's compaction banner so the panel stays terse but the reasoning is one
+// click away. Open state is persisted by the caller (expanded Set) so it
+// survives the panel's frequent re-renders.
+const DECISION_KINDS = new Set<TrailEventKind>([
+  "searched",
+  "matched",
+  "merged",
+  "composed",
+  "authored",
+  "transition",
+  "recipe-step",
+]);
+function renderDecisionTrail(
+  trail: TrailEvent[],
+  isOpen: boolean,
+  onToggle: () => void,
+): HTMLElement | null {
   const now = Date.now();
-  const recent = trail.filter((t) => KINDS.has(t.kind) && now - t.ts < 120_000);
+  const recent = trail.filter((t) => DECISION_KINDS.has(t.kind) && now - t.ts < 300_000);
   if (recent.length === 0) return null;
-  const strip = el("div", "pf-provenance");
-  recent.slice(-5).forEach((t, i) => {
-    if (i > 0) {
-      const arr = el("span", "pf-prov-arrow");
-      arr.textContent = "→";
-      strip.appendChild(arr);
+  const wrap = el("div", `pf-decisions${isOpen ? " is-open" : ""}`);
+
+  const summary = el("div", "pf-decisions-summary");
+  const chev = el("span", "pf-decisions-chev");
+  chev.textContent = isOpen ? "▾" : "▸";
+  const count = el("span", "pf-decisions-count");
+  count.textContent = `${recent.length} decision${recent.length > 1 ? "s" : ""}`;
+  const latest = recent[recent.length - 1];
+  const head = el("span", "pf-decisions-latest");
+  head.textContent = `${TRAIL_ICON_BY_KIND[latest.kind] ?? "•"} ${latest.label ? latest.label + " · " : ""}${latest.message}`;
+  summary.appendChild(chev);
+  summary.appendChild(count);
+  summary.appendChild(head);
+  summary.addEventListener("click", onToggle);
+  wrap.appendChild(summary);
+
+  if (isOpen) {
+    const body = el("div", "pf-decisions-body");
+    for (const t of recent) {
+      const row = el("div", "pf-decision-row");
+      const clk = el("span", "pf-decision-clock");
+      clk.textContent = fmtClock(t.ts);
+      const ic = el("span", "pf-decision-icon");
+      ic.textContent = TRAIL_ICON_BY_KIND[t.kind] ?? "•";
+      const msg = el("span", "pf-decision-msg");
+      msg.textContent = `${t.label ? t.label + " · " : ""}${t.message}`;
+      row.appendChild(clk);
+      row.appendChild(ic);
+      row.appendChild(msg);
+      body.appendChild(row);
     }
-    const chip = el("span", `pf-prov-chip pf-prov-${t.kind}`);
-    const icon = TRAIL_ICON_BY_KIND[t.kind] ?? "•";
-    chip.textContent = `${icon} ${t.label ? t.label + " · " : ""}${t.message}`;
-    strip.appendChild(chip);
-  });
-  return strip;
+    wrap.appendChild(body);
+  }
+  return wrap;
 }
 
 // FORK 2026-05-14: map the raw root.status string from the prefrontal tree
@@ -464,11 +500,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     // job picks up where it left off), but is not rendered while idle.
     const treeIdle = !tree.active || !tree.root;
 
-    // ─── Recipe provenance strip (FORK 2026-05-29) ─────────────────────────
-    // The headline: is a recipe being searched / matched / merged / composed /
-    // authored right now? This is the "what's happening to recipes" lens that
-    // the plan checklist alone never showed. Sits above the plan as a banner.
-    const prov = renderProvenanceStrip(trail);
+    // ─── Recipe decision trail (FORK 2026-05-30) ──────────────────────────
+    // Compact by default ("N decisions · <latest>"); click to uncover the full
+    // trail of recipe decisions underneath. Open state persists in `expanded`.
+    const prov = renderDecisionTrail(trail, expanded.has("decisions"), () =>
+      toggleExpanded("decisions"),
+    );
     if (prov) card.appendChild(prov);
 
     // ─── Current Plan (FORK 2026-05-14 — always renders per panels.md) ──────
@@ -683,7 +720,9 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     } else if (node.status === "stalled") {
       glyph.textContent = "!";
     } else {
-      glyph.textContent = isActive ? "▶" : "·";
+      // FORK 2026-05-30: a filled dot, not a "▶" triangle — the triangle read
+      // as a fake expand-arrow (only the pf-caret should look expandable).
+      glyph.textContent = isActive ? "●" : "·";
     }
     glyph.style.color = node.status === "failed" ? "#f85149" : color;
     row.appendChild(glyph);
