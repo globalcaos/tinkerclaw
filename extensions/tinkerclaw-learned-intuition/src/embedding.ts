@@ -6,6 +6,9 @@
  * ONNX is loaded lazily -- EmbeddingWindow works without the native addon.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 type OrtModule = typeof import("onnxruntime-node");
 import type { AmygdalaConfig } from "./types.js";
 
@@ -124,6 +127,106 @@ function naiveTokenize(text: string, maxLength: number, ort: OrtModule): Tokeniz
   };
 }
 
+// -- Real WordPiece tokenizer (FORK 2026-05-30) ------------------------------
+// Replaces naiveTokenize (char-codes → meaningless to MiniLM) with the actual
+// BERT/MiniLM WordPiece scheme, loaded from the model's vocab.txt. This is what
+// makes "similar situations → similar embeddings" actually hold.
+
+const CLS_ID = 101n;
+const SEP_ID = 102n;
+const UNK_ID = 100;
+
+export function loadVocab(path: string): Map<string, number> {
+  const lines = readFileSync(path, "utf8").split("\n");
+  const vocab = new Map<string, number>();
+  for (let i = 0; i < lines.length; i++) {
+    const tok = lines[i].replace(/\r$/, "");
+    if (tok.length > 0) vocab.set(tok, i);
+  }
+  return vocab;
+}
+
+/** BERT "basic" tokenizer: lowercase, split on whitespace, isolate punctuation. */
+function basicTokenize(text: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const ch of text.toLowerCase()) {
+    if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+    } else if (/[^\p{L}\p{N}]/u.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+      out.push(ch); // punctuation is its own token
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Greedy longest-match WordPiece for a single basic token. */
+function wordpiece(token: string, vocab: Map<string, number>): number[] {
+  const chars = Array.from(token);
+  if (chars.length > 100) return [UNK_ID];
+  const ids: number[] = [];
+  let start = 0;
+  while (start < chars.length) {
+    let end = chars.length;
+    let matched: number | undefined;
+    while (start < end) {
+      const piece = (start > 0 ? "##" : "") + chars.slice(start, end).join("");
+      const id = vocab.get(piece);
+      if (id !== undefined) {
+        matched = id;
+        break;
+      }
+      end--;
+    }
+    if (matched === undefined) return [UNK_ID]; // unmatchable subword → whole token UNK
+    ids.push(matched);
+    start = end;
+  }
+  return ids;
+}
+
+function wordpieceTokenize(
+  text: string,
+  maxLength: number,
+  vocab: Map<string, number>,
+  ort: OrtModule,
+): TokenizerOutput {
+  const body: number[] = [];
+  outer: for (const w of basicTokenize(text)) {
+    for (const id of wordpiece(w, vocab)) {
+      if (body.length >= maxLength - 2) break outer;
+      body.push(id);
+    }
+  }
+  const ids = new BigInt64Array(maxLength);
+  const mask = new BigInt64Array(maxLength);
+  const typeIds = new BigInt64Array(maxLength); // single-sentence → all zeros
+  ids[0] = CLS_ID;
+  mask[0] = 1n;
+  let i = 0;
+  for (; i < body.length; i++) {
+    ids[i + 1] = BigInt(body[i]);
+    mask[i + 1] = 1n;
+  }
+  ids[i + 1] = SEP_ID;
+  mask[i + 1] = 1n;
+  return {
+    input_ids: new ort.Tensor("int64", ids, [1, maxLength]),
+    attention_mask: new ort.Tensor("int64", mask, [1, maxLength]),
+    token_type_ids: new ort.Tensor("int64", typeIds, [1, maxLength]),
+  };
+}
+
 /**
  * Embedding pipeline: serialized situation string -> 512d internal embedding.
  * Uses frozen sentence encoder (all-MiniLM-L6-v2) + learned projection layer,
@@ -137,6 +240,8 @@ export class EmbeddingPipeline {
   private ort: OrtModule | null = null;
   private readonly config: AmygdalaConfig["embedding"];
   private _available = false;
+  /** Real WordPiece vocab (null → char-level fallback). FORK 2026-05-30. */
+  private vocab: Map<string, number> | null = null;
 
   /** Temporal window of last K embeddings (K = config.window_size, default 32). */
   readonly window: EmbeddingWindow;
@@ -165,7 +270,9 @@ export class EmbeddingPipeline {
 
     const ort = this.ort;
     const options = {
-      executionProviders: [{ name: "cuda" }, { name: "cpu" }],
+      // FORK 2026-05-30: onnxruntime-node EP short name; CPU is ample for MiniLM
+      // and avoids the noisy GPU-device probing + the cuda-EP unavailability path.
+      executionProviders: ["cpu" as const],
       graphOptimizationLevel: "all" as const,
       enableCpuMemArena: true,
     };
@@ -190,6 +297,15 @@ export class EmbeddingPipeline {
       // Projection model not found -- release encoder, stay in stub mode
       await this.encoderSession?.release();
       this.encoderSession = null;
+      return;
+    }
+
+    // FORK 2026-05-30: load the real WordPiece vocab (vocab.txt next to the
+    // encoder). Without it we fall back to the char-level placeholder.
+    try {
+      this.vocab = loadVocab(join(dirname(this.config.encoder_model_path), "vocab.txt"));
+    } catch {
+      this.vocab = null;
     }
   }
 
@@ -205,8 +321,10 @@ export class EmbeddingPipeline {
 
     const ort = this.ort;
 
-    // Step 1-2: Sentence encoder
-    const encoded = naiveTokenize(situationString, 128, ort);
+    // Step 1-2: Sentence encoder — real WordPiece tokenization (char-level fallback only if vocab absent)
+    const encoded = this.vocab
+      ? wordpieceTokenize(situationString, 128, this.vocab, ort)
+      : naiveTokenize(situationString, 128, ort);
     const encoderResult = await this.encoderSession.run({
       input_ids: encoded.input_ids,
       attention_mask: encoded.attention_mask,
