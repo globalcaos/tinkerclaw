@@ -103,11 +103,16 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
   return {
     enabled: true,
     trust: {
-      alpha_prudence: 0.0,
-      alpha_personality: 0.0,
+      // FORK 2026-05-30 ("Amygdala" task): crank the LLM personality-nudge
+      // influence to the ceiling (alpha_max) so we can actually SEE its effect.
+      // Both alphas were 0.0 — the nudge had literally zero weight, which is
+      // why it "didn't seem to do anything". This is the nudge (LLM tone), NOT
+      // the AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
+      alpha_prudence: 0.15,
+      alpha_personality: 0.15,
       alpha_max: 0.15,
       alpha_min: 0.0,
-      phase: 1,
+      phase: 4,
       ramp_eta: 0.01,
       reward_threshold: 0.7,
     },
@@ -182,7 +187,11 @@ export default definePluginEntry({
     };
     const log = api.logger;
 
-    const phase = cfg.phase ?? 1;
+    // FORK 2026-05-30 ("Amygdala" task): default the nudge to its top phase so
+    // its LLM influence is at maximum. observeOnly stays true by default so the
+    // AEGIS tool-gate keeps only OBSERVING (no surprise tool aborts) — set
+    // observeOnly:false in plugin config to also enable active blocking.
+    const phase = cfg.phase ?? 4;
     const observeOnly = cfg.observeOnly ?? true;
     const modelsDir = cfg.modelsDir ?? join(homedir(), "src", "tinkerclaw", "models", "amygdala");
 
@@ -191,7 +200,7 @@ export default definePluginEntry({
 
     // Build full config
     const amygdalaConfig = loadAmygdalaConfig(modelsDir);
-    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.0;
+    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.15; // FORK 2026-05-30: max by default
     amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
 
     // Create hook instance
