@@ -86,14 +86,6 @@ interface StepDispatch {
   loop?: LoopSpec;
 }
 
-/**
- * Detect a `uses: <kitRef>` directive in a step body — the composition seam.
- * The directive MUST be the first non-blank line of the body, so a `uses:`
- * example buried in prose or a fenced/indented code block never triggers a real
- * sub-kit dispatch (review finding 2026-05-29). Accepts a bare own-kit slug
- * (`uses: debug`) or a full ref (`uses: owner/slug`); bare slugs normalize to
- * `globalcaos/<slug>` so loadKitText resolves them.
- */
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
  * themselves `uses:`/`loop:` directives, starting from the top (after any blank
  * lines), stopping at the first prose/blank line. So a step may carry both a
@@ -114,6 +106,8 @@ function leadingDirectives(body: string): string[] {
   return out;
 }
 
+/** The composition seam: a leading `uses: <kit>` directive runs another kit
+ * instead of a plain subagent. Bare slugs normalize to `globalcaos/<slug>`. */
 export function parseUsesDirective(body: string): string | undefined {
   for (const line of leadingDirectives(body)) {
     const m = /^uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/i.exec(line);
