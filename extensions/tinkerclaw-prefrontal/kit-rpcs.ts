@@ -382,6 +382,11 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         planStore: deps.planStore,
         ownKitsDir: deps.ownKitsDir,
         kitInstallSandbox: deps.kitInstallSandbox,
+        // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
+        // interrupted in_progress plan only when resume:true is explicitly passed
+        // (no silent re-attach — Oscar's policy). Read defensively so this works
+        // even before `resume` is added to PrefrontalKitRunParamsSchema.
+        resume: (p as { resume?: boolean }).resume === true,
       });
 
       // Surface progress/completion back into the (possibly closed) parent turn.

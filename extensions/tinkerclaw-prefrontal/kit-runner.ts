@@ -53,6 +53,76 @@ export interface KitRunOptions {
   _depth?: number;
   /** FORK 2026-05-29 composition: kitRefs already on the call stack (cycle guard). */
   _usesChain?: string[];
+  /**
+   * FORK 2026-05-30 durable checkpointing (Upgrade 5).
+   * When true, an existing in_progress plan for this sessionKey with the SAME
+   * kitRef is resumed: dispatch starts at plan.currentStep, already-`done` rows
+   * are skipped, and prior steps' artifacts are injected into later steps' tasks.
+   * Default policy (Oscar, 2026-05-30): NO silent re-attach — auto-resume fires
+   * only when resume:true is passed. A bare run always force-restarts at step 0.
+   */
+  resume?: boolean;
+  /** FORK 2026-05-30 (Upgrade 5): optional in-flight checkpoint heartbeat sink. */
+  onCheckpoint?: CheckpointEmitter;
+}
+
+/** FORK 2026-05-30 (Upgrade 5): max chars of a step's done-note persisted as the
+ * durable artifact digest. Schema field is bounded at 500 (prefrontal-plan.ts). */
+export const ARTIFACT_DIGEST_MAX = 500;
+
+/**
+ * FORK 2026-05-30 (Upgrade 5): condense a subagent's done-note into a ≤500-char
+ * artifact digest the plan-store can carry in its bounded `artifact` field. Keeps
+ * the decision/result line, collapses whitespace, and truncates with an ellipsis.
+ * Idempotent on already-short input. The FULL note still lives in the plan body
+ * (`step.note`) — this is the bounded carry-forward, not a lossy replacement.
+ */
+export function summarizeOutput(doneNote: string | null | undefined): string {
+  if (!doneNote) return "";
+  const collapsed = doneNote.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= ARTIFACT_DIGEST_MAX) return collapsed;
+  // Truncate on a word boundary near the cap so we don't cut mid-token.
+  const slice = collapsed.slice(0, ARTIFACT_DIGEST_MAX - 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  const body = lastSpace > ARTIFACT_DIGEST_MAX - 80 ? slice.slice(0, lastSpace) : slice;
+  return `${body}…`;
+}
+
+/** FORK 2026-05-30 (Upgrade 5): is a given step already settled `done`? */
+export function isStepDone(plan: Plan, stepIndex: number): boolean {
+  return plan.steps[stepIndex]?.status === "done";
+}
+
+/** FORK 2026-05-30 (Upgrade 5): a prior step's carry-forward context. */
+export interface PriorArtifact {
+  stepIndex: number;
+  title: string;
+  artifact: string;
+}
+
+/**
+ * FORK 2026-05-30 (Upgrade 5): collect the durable artifacts of every `done`
+ * step BEFORE stepIndex, so a resuming / downstream step can read upstream output.
+ */
+export function collectPriorArtifacts(plan: Plan, beforeStep: number): PriorArtifact[] {
+  const out: PriorArtifact[] = [];
+  plan.steps.forEach((s, i) => {
+    if (i >= beforeStep) return;
+    if (s.status !== "done") return;
+    const artifact = s.artifact ?? summarizeOutput(s.note ?? "");
+    if (artifact) out.push({ stepIndex: i, title: s.title, artifact });
+  });
+  return out;
+}
+
+/**
+ * FORK 2026-05-30 (Upgrade 5): prepend a `## Prior step outputs` block to a
+ * step's task so the subagent has upstream context. No-op when there are none.
+ */
+export function withPriorArtifacts(task: string, prior: PriorArtifact[]): string {
+  if (prior.length === 0) return task;
+  const lines = prior.map((p) => `- Step ${p.stepIndex + 1} (${p.title}): ${p.artifact}`);
+  return `## Prior step outputs\n${lines.join("\n")}\n\n---\n\n${task}`;
 }
 
 /** Max depth for `uses:` sub-kit recursion — recipes calling recipes. */
@@ -346,18 +416,45 @@ function spawnStep(task: string, label: string): Promise<SpawnResult> {
 // ─── Plan-row polling ─────────────────────────────────────────────────────────
 
 /**
+ * FORK 2026-05-30 (Upgrade 5): how long a single step may poll before we emit a
+ * checkpoint heartbeat trail event. Lets the guardian distinguish a stalled poll
+ * from genuine long work (mitigates Risk 3 loop-runaway + Risk 4 lossy recovery).
+ */
+const CHECKPOINT_INTERVAL_MS = 120_000;
+
+/** FORK 2026-05-30 (Upgrade 5): optional in-flight checkpoint emitter. */
+export type CheckpointEmitter = (ev: {
+  sessionKey: string;
+  stepIndex: number;
+  elapsedMs: number;
+}) => void;
+
+/**
  * Poll the plan store until the given step reaches a terminal status
- * (done | error). Times out after maxWaitMs.
+ * (done | error). Times out after maxWaitMs. Emits a heartbeat checkpoint every
+ * CHECKPOINT_INTERVAL_MS so a long-polling step is observably alive (Upgrade 5).
  */
 async function waitForStepDone(
   store: PlanStore,
   sessionKey: string,
   stepIndex: number,
   maxWaitMs = 600_000,
+  onCheckpoint?: CheckpointEmitter,
 ): Promise<"done" | "error" | "timeout"> {
-  const deadline = Date.now() + maxWaitMs;
+  const start = Date.now();
+  const deadline = start + maxWaitMs;
+  let lastCheckpoint = start;
   while (Date.now() < deadline) {
     await sleep(3_000);
+    const now = Date.now();
+    if (onCheckpoint && now - lastCheckpoint >= CHECKPOINT_INTERVAL_MS) {
+      lastCheckpoint = now;
+      try {
+        onCheckpoint({ sessionKey, stepIndex, elapsedMs: now - start });
+      } catch {
+        // a broken emitter must never abort the poll loop
+      }
+    }
     const plan = await store.get(sessionKey);
     if (!plan) return "error";
     const step = plan.steps[stepIndex];
@@ -516,27 +613,63 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
 
   const store = opts.planStore;
 
-  // Seed the plan
-  let planId: string;
+  // ── Durable checkpointing (FORK 2026-05-30, Upgrade 5) ───────────────────────
+  // Decide resume vs. fresh BEFORE seeding. Default policy (Oscar 2026-05-30):
+  // never silently re-attach — auto-resume requires resume:true AND a matching
+  // in_progress plan with the SAME kitRef (a stale plan from an unrelated session
+  // must not be hijacked). A partially-written plan that fails to parse is
+  // quarantined by store.get() (returns null) → we fall back to a fresh run
+  // (mitigates Risk 4 lossy recovery).
+  let existing: Plan | null = null;
   try {
-    const result = await store.set({
-      sessionKey: opts.sessionKey,
-      intent: opts.intent,
-      runId: `kit-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
-      kitRef: opts.kitRef,
-      steps: kit.steps.map((s) => ({ title: s.title })),
-    });
-    planId = result.runId;
-  } catch (err) {
-    return {
-      ok: false,
-      planId: "",
-      errorMessage: `kit-runner: failed to seed plan: ${String(err)}`,
-    };
+    existing = await store.get(opts.sessionKey);
+  } catch {
+    existing = null;
   }
+  const resuming =
+    opts.resume === true &&
+    !!existing &&
+    existing.status === "in_progress" &&
+    existing.kitRef === opts.kitRef &&
+    existing.steps.length === kit.steps.length;
+  const startIndex = resuming ? existing!.currentStep : 0;
+  // Carry forward the artifacts of every already-`done` step so later steps read
+  // upstream output. Built once here; the per-step task wire reads from the live
+  // plan each dispatch so it also picks up artifacts produced THIS run.
+  const seedPriorArtifacts: PriorArtifact[] = resuming
+    ? collectPriorArtifacts(existing!, startIndex)
+    : [];
+
+  // Seed the plan (fresh run) OR keep the existing one (resume).
+  let planId: string;
+  if (resuming) {
+    planId = existing!.runId;
+  } else {
+    try {
+      const result = await store.set({
+        sessionKey: opts.sessionKey,
+        intent: opts.intent,
+        runId: `kit-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
+        kitRef: opts.kitRef,
+        steps: kit.steps.map((s) => ({ title: s.title })),
+      });
+      planId = result.runId;
+    } catch (err) {
+      return {
+        ok: false,
+        planId: "",
+        errorMessage: `kit-runner: failed to seed plan: ${String(err)}`,
+      };
+    }
+  }
+  void seedPriorArtifacts; // computed for parity / future logging; live read below
 
   // Execute each group sequentially; within a group, fan out in parallel
   for (const groupDispatches of dispatchGroups) {
+    // Resume: skip any group whose every step is already settled `done`.
+    if (resuming && groupDispatches.every((d) => isStepDone(existing!, d.stepIndex))) {
+      continue;
+    }
     // Mark all steps in this group as in_progress (best-effort; plan-store
     // enforces at-most-one invariant by demoting previous, so we accept that)
     for (const dispatch of groupDispatches) {
@@ -555,6 +688,28 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
     // another kit (composition via `uses:` — recipes calling recipes), or
     // (b) spawns a single subagent and waits for its plan row to settle.
     const settlePromises = groupDispatches.map(async (dispatch) => {
+      // Resume idempotency (Upgrade 5): a step already settled `done` is not
+      // re-dispatched. Trust the durable row over re-running work.
+      if (resuming && isStepDone(existing!, dispatch.stepIndex)) {
+        return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
+      }
+
+      // Persist a ≤500-char artifact digest for a successful step + advance the
+      // carry-forward (Upgrade 5). The full note stays in step.note.
+      const persistArtifact = async (note: string | null): Promise<void> => {
+        const artifact = summarizeOutput(note);
+        if (!artifact) return;
+        try {
+          await store.step({
+            sessionKey: opts.sessionKey,
+            stepIndex: dispatch.stepIndex,
+            status: "done",
+            note: note ?? undefined,
+            artifact,
+          });
+        } catch {}
+      };
+
       const markError = async (note: string) => {
         try {
           await store.step({
@@ -642,11 +797,33 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
             });
           } catch {}
         }
-        const spawnResult = await spawnStep(dispatch.task, dispatch.label);
+        // Inject the artifacts of every prior `done` step into this step's task
+        // so the subagent has upstream context (Upgrade 5 artifact→context wire).
+        // Read the LIVE plan so artifacts produced earlier THIS run are included,
+        // not just the resume snapshot.
+        let taskWithContext = dispatch.task;
+        try {
+          const live = await store.get(opts.sessionKey);
+          if (live) {
+            taskWithContext = withPriorArtifacts(
+              dispatch.task,
+              collectPriorArtifacts(live, dispatch.stepIndex),
+            );
+          }
+        } catch {
+          // fall back to the bare task on any read failure
+        }
+        const spawnResult = await spawnStep(taskWithContext, dispatch.label);
         if (!spawnResult.ok) {
           return { ok: false, note: `spawn failed: ${spawnResult.error ?? "unknown"}` };
         }
-        const outcome = await waitForStepDone(store, opts.sessionKey, dispatch.stepIndex, 600_000);
+        const outcome = await waitForStepDone(
+          store,
+          opts.sessionKey,
+          dispatch.stepIndex,
+          600_000,
+          opts.onCheckpoint,
+        );
         if (outcome !== "done") {
           return {
             ok: false,
@@ -660,18 +837,11 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       if (!dispatch.loop) {
         const r = await executeOnce("");
         if (!r.ok) return markError(r.note ?? "step failed");
-        // The spawn path's subagent already wrote done+note; only the sub-kit
-        // (uses:) path needs the runner to stamp the row done.
-        if (dispatch.usesKitRef) {
-          try {
-            await store.step({
-              sessionKey: opts.sessionKey,
-              stepIndex: dispatch.stepIndex,
-              status: "done",
-              note: r.note ?? undefined,
-            });
-          } catch {}
-        }
+        // Persist the artifact digest (Upgrade 5). For the spawn path the
+        // subagent already wrote done+note; we re-stamp `done` with the digest
+        // (idempotent, keeps the row done). For the sub-kit (uses:) path the
+        // sub-plan's terminal result becomes the PARENT step's artifact.
+        await persistArtifact(r.note);
         return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
       }
 
@@ -695,14 +865,8 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
         }
         // count mode: keep going until loop.max iterations.
       }
-      try {
-        await store.step({
-          sessionKey: opts.sessionKey,
-          stepIndex: dispatch.stepIndex,
-          status: "done",
-          note: `looped ${iter}× (${loop.mode}); last: ${(lastNote ?? "").slice(0, 80)}`,
-        });
-      } catch {}
+      const loopNote = `looped ${iter}× (${loop.mode}); last: ${(lastNote ?? "").slice(0, 80)}`;
+      await persistArtifact(loopNote);
       return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
     });
 

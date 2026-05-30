@@ -2,8 +2,20 @@
  * Tests for CDI (Cognitive Diversity Index) scoring (extension copy).
  */
 
-import { describe, it, expect } from "vitest";
-import { pearsonCorrelation, measureCDI, correlationCI } from "../src/cognitive-diversity.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  pearsonCorrelation,
+  measureCDI,
+  correlationCI,
+  providerOf,
+  assertProviderDiversity,
+  selectModelsForDebateWithProviderDiversity,
+  selectBackupParticipant,
+  DEFAULT_PROVIDER_PROFILES,
+  type ProviderProfile,
+} from "../src/cognitive-diversity.js";
+import { ROLE_AFFINITY } from "../src/raac-protocol.js";
+import { modelForRole } from "../src/real-participant.js";
 
 describe("CDI: returns 0 for unanimous proposals", () => {
   it("identical error vectors produce CDI = 0", () => {
@@ -90,5 +102,115 @@ describe("CDI: edge cases", () => {
     const result = measureCDI({ a: [true], b: [false] });
     expect(() => new Date(result.timestamp)).not.toThrow();
     expect(new Date(result.timestamp).toISOString()).toBe(result.timestamp);
+  });
+});
+
+// -- 7C: Provider-diversity LOCK --
+
+describe("7C: providerOf derives vendor from the resolved ref", () => {
+  it("splits 'provider/model' on the first slash", () => {
+    expect(providerOf("claude-code/claude-opus-4-8")).toBe("claude-code");
+    expect(providerOf("openai/o3")).toBe("openai");
+    expect(providerOf("google/gemini-3.1-pro-preview")).toBe("google");
+  });
+  it("treats a ref without a slash as its own provider", () => {
+    expect(providerOf("localmodel")).toBe("localmodel");
+  });
+});
+
+describe("7C: assertProviderDiversity counts vendors from resolved refs", () => {
+  it("3 refs across 3 vendors yields all counts = 1", () => {
+    const mix = assertProviderDiversity(["claude-code/opus", "openai/o3", "google/gemini"]);
+    expect(mix).toEqual({ "claude-code": 1, openai: 1, google: 1 });
+  });
+  it("a duplicated provider produces a count > 1", () => {
+    const mix = assertProviderDiversity(["claude-code/opus", "claude-code/sonnet", "openai/o3"]);
+    expect(mix["claude-code"]).toBe(2);
+  });
+});
+
+describe("7C: provider-diversity LOCK on the default catalog", () => {
+  // Default catalog resolved providers (via modelForRole on each profile.role):
+  //   architect  -> claude-code
+  //   critic     -> openai
+  //   pragmatist -> google
+  //   researcher -> openai   (o3)
+  //   synthesizer-> claude-code (sonnet)
+  // => claude-code x2, openai x2, google x1 — only 3 DISTINCT providers.
+  const resolveRef = (p: ProviderProfile): string => modelForRole(p.role, {});
+
+  it("drops the duplicate-provider models so the selected set is provider-unique", () => {
+    const chosen = selectModelsForDebateWithProviderDiversity(DEFAULT_PROVIDER_PROFILES, {
+      resolveRef,
+      affinity: ROLE_AFFINITY,
+    });
+    const providers = chosen.map((p) => providerOf(resolveRef(p)));
+    // No provider appears more than once in the selected set.
+    expect(new Set(providers).size).toBe(providers.length);
+  });
+
+  it("keeps at most one claude-code participant", () => {
+    const chosen = selectModelsForDebateWithProviderDiversity(DEFAULT_PROVIDER_PROFILES, {
+      resolveRef,
+      affinity: ROLE_AFFINITY,
+    });
+    const claudeCount = chosen.filter((p) => providerOf(resolveRef(p)) === "claude-code").length;
+    expect(claudeCount).toBeLessThanOrEqual(1);
+  });
+
+  it("provider is derived from the ref, not the cosmetic modelId", () => {
+    // A profile whose modelId says 'gpt-o3' but whose role resolves to a claude-code
+    // ref must count as claude-code (the label must not win over the ref).
+    const trickProfile: ProviderProfile = {
+      ...DEFAULT_PROVIDER_PROFILES[1], // modelId "gpt-o3"
+      role: "architect", // architect -> claude-code/claude-opus-4-8
+    };
+    expect(providerOf(resolveRef(trickProfile))).toBe("claude-code");
+  });
+
+  it("falls back gracefully (WARN, best-effort set) when the catalog has too few providers", () => {
+    // All profiles resolve to the SAME provider. The lock drops the lowest-affinity
+    // duplicate, fails to refill (no other provider exists), and returns the
+    // best-effort remainder with a WARN — it does NOT hard-fail or empty the set.
+    const onlyClaude: ProviderProfile[] = DEFAULT_PROVIDER_PROFILES.slice(0, 3);
+    const allClaudeRef = (): string => "claude-code/some-model";
+    const onWarn = vi.fn();
+    const chosen = selectModelsForDebateWithProviderDiversity(onlyClaude, {
+      resolveRef: allClaudeRef,
+      affinity: ROLE_AFFINITY,
+      onWarn,
+    });
+    // Best-effort: non-empty, WARN fired (documented "return chosen as-is + WARN").
+    expect(chosen.length).toBeGreaterThan(0);
+    expect(onWarn).toHaveBeenCalled();
+  });
+});
+
+describe("7E: selectBackupParticipant", () => {
+  it("picks a not-yet-active profile for the dropped role", () => {
+    const active = new Set(["claude-opus", "gpt-o3", "claude-sonnet"]);
+    const backup = selectBackupParticipant(DEFAULT_PROVIDER_PROFILES, active, "researcher", {
+      affinity: ROLE_AFFINITY,
+    });
+    expect(backup).not.toBeNull();
+    expect(active.has(backup!.modelId)).toBe(false);
+  });
+  it("does not re-introduce a represented provider (respects the 7C lock)", () => {
+    const resolveRef = (p: ProviderProfile): string => modelForRole(p.role, {});
+    // Active set already represents claude-code + openai + google.
+    const active = new Set(["claude-opus", "gpt-o3", "gemini-pro"]);
+    const activeRefs = ["claude-code/opus", "openai/o3", "google/gemini"];
+    const backup = selectBackupParticipant(DEFAULT_PROVIDER_PROFILES, active, "synthesizer", {
+      resolveRef,
+      activeRefs,
+      affinity: ROLE_AFFINITY,
+    });
+    // deepseek-r1 (researcher role -> openai/o3) and claude-sonnet (-> claude-code)
+    // are both blocked by represented providers => no safe backup.
+    expect(backup).toBeNull();
+  });
+  it("returns null when every profile is already active", () => {
+    const active = new Set(DEFAULT_PROVIDER_PROFILES.map((p) => p.modelId));
+    expect(selectBackupParticipant(DEFAULT_PROVIDER_PROFILES, active, "critic")).toBeNull();
   });
 });

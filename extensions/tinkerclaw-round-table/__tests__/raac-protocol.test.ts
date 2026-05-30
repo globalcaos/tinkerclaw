@@ -2,7 +2,7 @@
  * Tests for the RAAC debate protocol engine (extension copy).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DEFAULT_PROVIDER_PROFILES, type ProviderProfile } from "../src/cognitive-diversity.js";
 import {
   assignRoles,
@@ -10,9 +10,12 @@ import {
   runDebateRound,
   runDebate,
   totalDebateCost,
+  isDropout,
+  recoverPhase,
   DEFAULT_DEBATE_CONFIG,
   type DebateParticipant,
   type DebateConfig,
+  type RecoveryHooks,
 } from "../src/raac-protocol.js";
 
 // -- Mock Participants --
@@ -178,5 +181,156 @@ describe("RAAC Protocol: each round has proposals with role, position, reasoning
     expect(phases.has("ratify")).toBe(true);
 
     expect(totalDebateCost(round.costs)).toBeGreaterThan(0);
+  });
+});
+
+// -- 7E: Participant dropout recovery --
+
+describe("7E: isDropout matches the index.ts sentinel exactly", () => {
+  it("matches the (error) and (no response) sentinels", () => {
+    expect(isDropout("[openai/o3/critic] (error)")).toBe(true);
+    expect(isDropout("[claude-code/claude-opus-4-8/architect] (no response)")).toBe(true);
+  });
+  it("does not match a real proposal", () => {
+    expect(isDropout("We should add a write-through cache to reduce latency.")).toBe(false);
+    expect(isDropout("[note] this is fine")).toBe(false);
+  });
+  it("tolerates surrounding whitespace", () => {
+    expect(isDropout("  [x/y] (error)  ")).toBe(true);
+  });
+});
+
+describe("7E: recoverPhase promotes a backup", () => {
+  it("replaces a sentinel response with the backup's text", async () => {
+    const responses: Record<string, string> = {
+      "claude-opus": "[claude-code/x/architect] (error)",
+      "gpt-o3": "a real critique",
+    };
+    const backupProfile = DEFAULT_PROVIDER_PROFILES[4]; // claude-sonnet
+    const backup: DebateParticipant = createMockParticipant(
+      backupProfile.modelId,
+      "architect",
+      backupProfile,
+    );
+    const callBackup = vi.fn().mockResolvedValue("backup architect proposal");
+
+    const dropouts = await recoverPhase(
+      "propose",
+      responses,
+      () => "architect",
+      () => backup,
+      callBackup,
+    );
+
+    expect(responses["claude-opus"]).toBe("backup architect proposal");
+    expect(dropouts).toHaveLength(0);
+    expect(callBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a dropout when the backup ALSO returns a sentinel", async () => {
+    const responses: Record<string, string> = {
+      "claude-opus": "[claude-code/x/architect] (error)",
+    };
+    const backup = createMockParticipant("claude-sonnet", "architect");
+    const callBackup = vi.fn().mockResolvedValue("[claude-code/sonnet/architect] (error)");
+
+    const dropouts = await recoverPhase(
+      "propose",
+      responses,
+      () => "architect",
+      () => backup,
+      callBackup,
+    );
+
+    expect(dropouts).toEqual([
+      { modelId: "claude-opus", phase: "propose", reason: "backup also failed" },
+    ]);
+  });
+
+  it("records a dropout when NO backup is available", async () => {
+    const responses: Record<string, string> = {
+      "claude-opus": "[claude-code/x/architect] (no response)",
+    };
+    const dropouts = await recoverPhase(
+      "propose",
+      responses,
+      () => "architect",
+      () => null, // no backup
+      async () => "unused",
+    );
+    expect(dropouts).toEqual([
+      { modelId: "claude-opus", phase: "propose", reason: "no backup available" },
+    ]);
+  });
+});
+
+describe("7E: runDebateRound integrates recovery", () => {
+  it("promotes a backup so the synthesis input is the backup text, not the sentinel", async () => {
+    // One participant emits a sentinel on PROPOSE; recovery promotes a backup.
+    const failing = createMockParticipant("claude-opus", "architect");
+    failing.propose = async () => "[claude-code/opus/architect] (error)";
+    const synthesizer = createMockParticipant("claude-sonnet", "synthesizer");
+
+    // Capture what the synthesizer receives as proposals.
+    let synthesizedProposals: string[] = [];
+    synthesizer.synthesize = async (proposals) => {
+      synthesizedProposals = proposals;
+      return "the consensus";
+    };
+
+    const backup = createMockParticipant("backup-model", "architect");
+    const recovery: RecoveryHooks = {
+      selectBackup: () => backup,
+      callBackup: async () => "recovered architect proposal",
+    };
+
+    const round = await runDebateRound(
+      "Design a cache",
+      [failing, synthesizer],
+      1,
+      undefined,
+      DEFAULT_DEBATE_CONFIG,
+      recovery,
+    );
+
+    // The architect slot's proposal must be the recovered text, not the sentinel.
+    expect(round.proposals["claude-opus"]).toBe("recovered architect proposal");
+    expect(synthesizedProposals).toContain("recovered architect proposal");
+    expect(synthesizedProposals.some((p) => isDropout(p))).toBe(false);
+    expect(round.dropouts).toBeUndefined(); // recovery succeeded => no recorded dropout
+  });
+
+  it("records a dropout in the round when recovery cannot succeed", async () => {
+    const failing = createMockParticipant("claude-opus", "architect");
+    failing.propose = async () => "[claude-code/opus/architect] (error)";
+    const synthesizer = createMockParticipant("claude-sonnet", "synthesizer");
+
+    const recovery: RecoveryHooks = {
+      selectBackup: () => null, // no backup
+      callBackup: async () => "unused",
+    };
+
+    const round = await runDebateRound(
+      "Design a cache",
+      [failing, synthesizer],
+      1,
+      undefined,
+      DEFAULT_DEBATE_CONFIG,
+      recovery,
+    );
+
+    expect(round.dropouts).toEqual([
+      { modelId: "claude-opus", phase: "propose", reason: "no backup available" },
+    ]);
+  });
+
+  it("default runDebateRound (no recovery arg) is unchanged — no dropouts field", async () => {
+    const failing = createMockParticipant("claude-opus", "architect");
+    failing.propose = async () => "[claude-code/opus/architect] (error)";
+    const synthesizer = createMockParticipant("claude-sonnet", "synthesizer");
+    const round = await runDebateRound("Task", [failing, synthesizer], 1);
+    // Without recovery wired in, behaviour is byte-identical: no dropouts key.
+    expect(round.dropouts).toBeUndefined();
+    expect("dropouts" in round).toBe(false);
   });
 });

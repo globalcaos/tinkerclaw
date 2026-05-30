@@ -52,6 +52,12 @@ export interface DebateCost {
   estimatedCost: number;
 }
 
+export interface Dropout {
+  modelId: string;
+  phase: string;
+  reason: string;
+}
+
 export interface DebateRound {
   roundNumber: number;
   proposals: Record<string, string>;
@@ -61,6 +67,8 @@ export interface DebateRound {
   ratification: Record<string, "accept" | "reject" | "amend">;
   converged: boolean;
   costs: DebateCost[];
+  /** 7E: participants whose phase response was a sentinel and could not be recovered. */
+  dropouts?: Dropout[];
 }
 
 export interface DebateResult {
@@ -161,6 +169,66 @@ export function assignRoles(modelIds: string[]): Record<string, string> {
   return assignment;
 }
 
+// -- 7E: Dropout detection & recovery --
+
+/**
+ * Matches the exact sentinel text index.ts emits when a participant call fails:
+ *   `[${model}/${role}] (error)` or `[${model}/${role}] (no response)`.
+ * The model ref itself contains a slash (e.g. "openai/o3"), so the bracketed part is
+ * matched non-greedily across any chars; the trailing parenthetical is the signal.
+ */
+export const DROPOUT_SENTINEL = /^\[.+\] \((error|no response)\)$/;
+
+/** 7E: true when `text` is a participant-failure sentinel, not a real response. */
+export function isDropout(text: string): boolean {
+  return DROPOUT_SENTINEL.test(text.trim());
+}
+
+/**
+ * 7E: recover a phase's `responses` map in place. For each id whose response is a
+ * sentinel, ask `selectBackup(role)` for a not-yet-active backup profile and re-issue
+ * the call once via `callBackup`. If the backup also returns a sentinel (or no backup
+ * exists), record a Dropout. Returns the dropouts collected (responses mutated).
+ *
+ * Recovery is a SECOND serialized pass after the parallel phase — it raises latency
+ * and re-spends budget (the backup call is charged like any other), and caps backup
+ * attempts at 1 per slot so a provider-wide outage cannot loop.
+ */
+export async function recoverPhase(
+  phase: string,
+  responses: Record<string, string>,
+  roleOf: (modelId: string) => string,
+  selectBackup: (role: string, activeIds: Set<string>) => DebateParticipant | null,
+  callBackup: (backup: DebateParticipant, phase: string) => Promise<string>,
+): Promise<Dropout[]> {
+  const dropouts: Dropout[] = [];
+  const activeIds = new Set(Object.keys(responses));
+
+  for (const [modelId, text] of Object.entries(responses)) {
+    if (!isDropout(text)) continue;
+    const role = roleOf(modelId);
+    const backup = selectBackup(role, activeIds);
+    if (!backup) {
+      dropouts.push({ modelId, phase, reason: "no backup available" });
+      continue;
+    }
+    let recovered: string;
+    try {
+      recovered = await callBackup(backup, phase);
+    } catch {
+      recovered = `[${backup.modelId}/${role}] (error)`;
+    }
+    if (isDropout(recovered)) {
+      dropouts.push({ modelId, phase, reason: "backup also failed" });
+    } else {
+      // Promote the backup's text in place of the dropped participant's slot.
+      responses[modelId] = recovered;
+      activeIds.add(backup.modelId);
+    }
+  }
+  return dropouts;
+}
+
 // -- Convergence Detection --
 
 /**
@@ -248,14 +316,29 @@ export function totalDebateCost(costs: DebateCost[]): number {
 /**
  * Run a single debate round through all 5 phases.
  */
+/**
+ * 7E: optional dropout-recovery wiring. When supplied, the PROPOSE phase is scanned
+ * for sentinel responses and each is recovered via a promoted backup participant (one
+ * attempt). Omitting `recovery` leaves runDebateRound behaviour byte-identical to the
+ * original protocol (the existing test suite asserts this).
+ */
+export interface RecoveryHooks {
+  /** Pick a not-yet-active backup for a dropped role, or null. */
+  selectBackup: (role: string, activeIds: Set<string>) => DebateParticipant | null;
+  /** Re-issue the failing phase for the backup; resolves to the backup's text. */
+  callBackup: (backup: DebateParticipant, phase: string) => Promise<string>;
+}
+
 export async function runDebateRound(
   task: string,
   participants: DebateParticipant[],
   roundNumber: number,
   prevRound?: DebateRound,
   config: DebateConfig = DEFAULT_DEBATE_CONFIG,
+  recovery?: RecoveryHooks,
 ): Promise<DebateRound> {
   const costs: DebateCost[] = [];
+  const dropouts: Dropout[] = [];
 
   // Phase 1: PROPOSE (parallel)
   const proposalEntries = await Promise.all(
@@ -272,6 +355,21 @@ export async function runDebateRound(
     }),
   );
   const proposals = Object.fromEntries(proposalEntries);
+
+  // 7E: detect sentinel proposals and promote a backup rather than letting the
+  // sentinel flow into challenge/synthesize as a real proposal (recon Risk 3).
+  if (recovery) {
+    const roleOf = (modelId: string): string =>
+      participants.find((p) => p.modelId === modelId)?.role ?? "participant";
+    const phaseDropouts = await recoverPhase(
+      "propose",
+      proposals,
+      roleOf,
+      recovery.selectBackup,
+      recovery.callBackup,
+    );
+    dropouts.push(...phaseDropouts);
+  }
 
   // Phase 2: CHALLENGE (each challenges all others, parallel)
   const challenges: Record<string, Record<string, string>> = {};
@@ -378,6 +476,7 @@ export async function runDebateRound(
     ratification,
     converged,
     costs,
+    ...(dropouts.length > 0 ? { dropouts } : {}),
   };
 }
 
@@ -388,6 +487,7 @@ export async function runDebate(
   task: string,
   participants: DebateParticipant[],
   config: DebateConfig = DEFAULT_DEBATE_CONFIG,
+  recovery?: RecoveryHooks,
 ): Promise<DebateResult> {
   const rounds: DebateRound[] = [];
   let converged = false;
@@ -395,7 +495,7 @@ export async function runDebate(
 
   for (let i = 0; i < config.maxRounds; i++) {
     const prevRound = rounds.length > 0 ? rounds[rounds.length - 1] : undefined;
-    const round = await runDebateRound(task, participants, i + 1, prevRound, config);
+    const round = await runDebateRound(task, participants, i + 1, prevRound, config, recovery);
     rounds.push(round);
 
     // Budget check

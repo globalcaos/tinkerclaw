@@ -1,3 +1,5 @@
+import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
+import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
 /**
  * FORK: fork.prefrontal.setRecipe -- orchestration observability broadcast.
  *
@@ -18,8 +20,8 @@
  */
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
-import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
+// FORK 2026-05-30 (J8 THALAMUS, 2e): NO-MATCH trail events feed the curiosity buffer.
+import { appendGap, classifyGap, makeGap } from "./curiosity-store.js";
 
 const log = createSubsystemLogger("fork-prefrontal-state");
 
@@ -33,7 +35,9 @@ function readNum(p: Record<string, unknown>, k: string): number | undefined {
 }
 function readStrArray(p: Record<string, unknown>, k: string): string[] | undefined {
   const v = p[k];
-  if (!Array.isArray(v)) {return undefined;}
+  if (!Array.isArray(v)) {
+    return undefined;
+  }
   const out = v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
   return out.length > 0 ? out : undefined;
 }
@@ -88,8 +92,20 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
 
   "fork.prefrontal.trailEvent": async ({ params, respond }) => {
     const p = params ?? {};
-    const kind = readStr(p, "kind"); // e.g. "dispatch" | "complete" | "note" | "transition"
-    const message = readStr(p, "message");
+    // kind: existing callers use "dispatch" | "complete" | "note" | "transition".
+    // FORK 2026-05-30 (2e): additive "NO-MATCH" kind for recipe-gap / tool-failure
+    // detection — it carries a structured payload and feeds the curiosity buffer.
+    const kind = readStr(p, "kind");
+    const isNoMatch = kind === "NO-MATCH";
+    // NO-MATCH derives a default message from its structured fields, so `message`
+    // is required for the legacy kinds but optional for NO-MATCH.
+    const recipeName = readStr(p, "recipeName");
+    const stepName = readStr(p, "stepName");
+    const toolName = readStr(p, "toolName");
+    const reason = readStr(p, "reason");
+    const message =
+      readStr(p, "message") ??
+      (isNoMatch ? `NO-MATCH: ${toolName ?? "tool"}${reason ? ` — ${reason}` : ""}` : undefined);
     if (!kind || !message) {
       respond(
         false,
@@ -106,6 +122,9 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
     const icon = readStr(p, "icon");
     const label = readStr(p, "label");
 
+    // 2e: classify the gap so a transient outage is never logged as learnable.
+    const resolutionType = isNoMatch ? classifyGap(toolName, reason) : undefined;
+
     emitAgentEvent({
       runId,
       stream: "lifecycle",
@@ -115,12 +134,51 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
         message,
         icon,
         label,
+        ...(isNoMatch
+          ? {
+              recipeName,
+              stepName,
+              toolName,
+              reason,
+              resolutionType,
+            }
+          : {}),
         ts: Date.now(),
         ...(sessionKey ? { sessionKey } : {}),
       },
       ...(sessionKey ? { sessionKey } : {}),
     });
-    log.info(`fork.prefrontal.trailEvent kind=${kind} label=${label ?? "-"} msg.len=${message.length}`);
-    respond(true, { ok: true }, undefined);
+
+    // 2e: only a "knowledge-gap" NO-MATCH (the agent doesn't know how to use the
+    // tool) is a learnable curiosity driver. "recoverable" (permission) and
+    // "external-outage" emit the trail event but write NO buffer entry.
+    let bufferedGapId: string | undefined;
+    if (isNoMatch && resolutionType === "knowledge-gap") {
+      try {
+        const gap = makeGap({
+          topic: `use ${toolName ?? "tool"}`,
+          source: "no-match",
+          sessionKey,
+          runId,
+          recipeName,
+          stepName,
+          toolName,
+          reason,
+          resolutionType,
+          // a knowledge-gap NO-MATCH is highly learnable + externally grounded
+          learnability: 0.8,
+          importance: 0.6,
+        });
+        appendGap(gap);
+        bufferedGapId = gap.id;
+      } catch (err) {
+        console.error("[fork.prefrontal.trailEvent NO-MATCH] appendGap failed", err);
+      }
+    }
+
+    log.info(
+      `fork.prefrontal.trailEvent kind=${kind} label=${label ?? "-"} msg.len=${message.length}${isNoMatch ? ` resolutionType=${resolutionType ?? "-"} buffered=${bufferedGapId ?? "no"}` : ""}`,
+    );
+    respond(true, { ok: true, ...(bufferedGapId ? { gapId: bufferedGapId } : {}) }, undefined);
   },
 };

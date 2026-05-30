@@ -27,8 +27,66 @@ const ROLE_MODEL: Record<string, string> = {
 };
 const FALLBACK_MODEL = "claude-code/claude-sonnet-4-6";
 
-export function modelForRole(role: string): string {
+/**
+ * 7B: user-configurable role -> model-ref map ("provider/model"). Supplied from
+ * `openclaw.plugin.json:configSchema.properties.roleModels`. Lets a cloner whose
+ * catalog lacks the 2026 default refs keep genuine cross-provider diversity
+ * instead of silently collapsing every role to FALLBACK_MODEL.
+ */
+export type RoleModels = Record<string, string>;
+
+/**
+ * 7B precedence: roleModels[role] (config override) -> ROLE_MODEL[role] (builtin
+ * default) -> FALLBACK_MODEL. An empty-string override is ignored (treated as
+ * unset) so a malformed config key cannot route a role to "".
+ */
+export function modelForRole(role: string, overrides?: RoleModels): string {
+  const override = overrides?.[role];
+  if (typeof override === "string" && override.trim().length > 0) {
+    return override.trim();
+  }
   return ROLE_MODEL[role] ?? FALLBACK_MODEL;
+}
+
+/** The builtin defaults, exported so callers/validators can compare against them. */
+export const DEFAULT_ROLE_MODELS: Readonly<RoleModels> = ROLE_MODEL;
+export { FALLBACK_MODEL };
+
+/**
+ * 7B: one role whose chosen ref was unavailable in the host catalog and had to
+ * fall back. Surfacing these (one WARN per substitution at debate start) makes a
+ * silent cross-provider-diversity collapse visible (recon Risk 1).
+ */
+export interface Substitution {
+  role: string;
+  requested: string;
+  fellBackTo: string;
+}
+
+/**
+ * 7B: validate each profile's chosen ref against the host catalog. `resolveAvailable`
+ * returns true when a ref is resolvable (e.g. a thin wrapper over the gateway's
+ * model-resolution path). Records a substitution for every role whose chosen ref is
+ * unavailable; the debate still runs (graceful-degrade — see the 7B open question),
+ * but the caller can WARN per entry. Pure + injectable so it is unit-testable.
+ */
+export async function validateRoleModels(
+  profiles: Array<{ role: string }>,
+  resolveAvailable: (ref: string) => boolean | Promise<boolean>,
+  overrides?: RoleModels,
+): Promise<Substitution[]> {
+  const subs: Substitution[] = [];
+  const seen = new Set<string>();
+  for (const { role } of profiles) {
+    if (seen.has(role)) continue;
+    seen.add(role);
+    const requested = modelForRole(role, overrides);
+    const ok = await resolveAvailable(requested);
+    if (!ok) {
+      subs.push({ role, requested, fellBackTo: FALLBACK_MODEL });
+    }
+  }
+  return subs;
 }
 
 export interface PhaseContext {
@@ -114,8 +172,9 @@ export interface RealParticipantDeps {
 export function createRealParticipant(
   profile: ProviderProfile,
   deps: RealParticipantDeps,
+  overrides?: RoleModels,
 ): DebateParticipant {
-  const model = modelForRole(profile.role);
+  const model = modelForRole(profile.role, overrides);
   const call = (phase: Phase, ctx: PhaseContext) =>
     deps.callModel({ model, prompt: buildPhasePrompt(phase, profile, ctx), phase, role: ctx.role });
   return {
