@@ -2,7 +2,7 @@
 file: subagents-and-kits.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-05-16
+last_verified: 2026-05-30
 last_verified_commit: HEAD
 single_owner: yes — subagent + kit orchestration + plan persistence facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream)
@@ -96,15 +96,18 @@ The kit/1.0 format is documented at https://www.journeykits.ai/api/docs/kit-md. 
 
 ### Kit RPCs
 
-Five RPCs in `prefrontal.kit.*`:
+Eight RPCs in `prefrontal.kit.*` (was five; `run` added 2026-05-16, `author` + `match` added 2026-05-29):
 
-| RPC                      | Params                                     | Returns                                              |
-| ------------------------ | ------------------------------------------ | ---------------------------------------------------- |
-| `prefrontal.kit.search`  | `{ query: string, limit?: number }`        | `{ results: KitSummary[] }`                          |
-| `prefrontal.kit.get`     | `{ kitRef: string }`                       | `{ kit: KitManifest, body: string }`                 |
-| `prefrontal.kit.install` | `{ kitRef: string, allowRisky?: boolean }` | `{ ok, installedPath, preflightResults, nextSteps }` |
-| `prefrontal.kit.publish` | `{ slug, body, apiKey? }`                  | `{ ok, url }`                                        |
-| `prefrontal.kit.list`    | `{}`                                       | `{ kits: LocalKitEntry[] }`                          |
+| RPC                      | Params                                                                               | Returns                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `prefrontal.kit.search`  | `{ query: string, limit?: number }`                                                  | `{ results: KitSummary[] }`                               |
+| `prefrontal.kit.get`     | `{ kitRef: string }`                                                                 | `{ kit: KitManifest, body: string }`                      |
+| `prefrontal.kit.install` | `{ kitRef: string, allowRisky?: boolean }`                                           | `{ ok, installedPath, preflightResults, nextSteps }`      |
+| `prefrontal.kit.publish` | `{ slug, body, apiKey? }`                                                            | `{ ok, url }`                                             |
+| `prefrontal.kit.list`    | `{}`                                                                                 | `{ kits: LocalKitEntry[] }`                               |
+| `prefrontal.kit.run`     | `{ kitRef, sessionKey, intent, parameters?, dryRun? }`                               | `{ ok, planId, dryRunPlan?, results? }`                   |
+| `prefrontal.kit.author`  | `{ slug, title, summary, tags, category?, steps[], parallelismGroups?, overwrite? }` | `{ ok, kitRef, path, stepCount }`                         |
+| `prefrontal.kit.match`   | `{ prompt, limit? }`                                                                 | `{ confidence, catalogSize, recommendAuthor, matches[] }` |
 
 `kitRef` format: `<owner>/<slug>` (e.g., `globalcaos/feature`). Search and get hit `https://www.journeykits.ai`.
 
@@ -245,6 +248,37 @@ Flow:
 7. No match → a `WARN [kit-matcher] NO-MATCH … prompt="…" (catalog=N kits)` line. **This is the recipe-gap signal**: if it fires often for a class of prompts, the catalog is too thin, or the work has drifted into new territory, or we need on-the-fly kit authoring. Mining this WARN is how the catalog grows. The implicit 2-step panel (content-rich, see `tinker-ui.md` / `prefrontal-tree.ts` `humanizeRootStatus`) is the acceptable recovery UX for genuinely trivial no-match turns.
 
 Recovery contract: because the matcher seeds a plan for substantially every non-trivial turn, **restart-continue almost always has an `in_progress` plan to resume** — that is the "working recovery system against restart." Trivial no-match turns are short enough that a restart just means the user re-asks; no plan-replay machinery is needed (deliberately not built — minimal blast radius).
+
+## Composition, loops, and on-the-fly authoring (FORK 2026-05-29/30)
+
+The matcher's fuzzy scorer (`matchKitsDetailed`, stem + prefix + edit-distance-1, with a `none|low|high` confidence) feeds three capabilities that close most of the gap vs Claude Code's dynamic workflows:
+
+- **Composition — recipes built from recipes.** A kit's frontmatter `composes: [slug, ...]` expands those kits' steps into the merged plan ahead of its own (cycle-guarded). A step body whose **leading directive** is `uses: <owner/slug>` (or a bare own-slug) makes `kit-runner` recurse into that sub-kit at runtime on a derived `sessionKey` (`…::uses::<idx>`), depth-capped (`MAX_USES_DEPTH=3`) + cycle-guarded by the `_usesChain`. A `uses:` buried in prose or a code fence does NOT fire — only the **consecutive leading directive lines** are parsed (`leadingDirectives`), a 2026-05-29 review fix.
+- **Loops — the structural gap, now closed.** A leading `loop:` directive repeats a step (spawn or sub-kit) until a condition or a hard cap: `loop: count <N>`, `loop: until-dry [max <M>]` (stops when the subagent's done-note reads "dry" per `isDryNote`), or `loop: until <MARKER> [max <M>]`. Bounded by `DEFAULT_LOOP_MAX=5`, hard-capped at `HARD_LOOP_MAX=25` — a recipe can never spin forever. `uses:` and `loop:` coexist on the leading lines (loop a whole sub-recipe until dry).
+- **On-the-fly authoring.** On NO-MATCH for a non-trivial turn, the `before_prompt_build` hook injects a `<recipe_gap>` directive telling Jarvis to call `prefrontal.kit.author` ({slug,title,summary,tags,steps,parallelismGroups}). `kit-author.ts` validates (traversal-safe slug, parallelism coverage, no phantom `### N.` headings), assembles `kit.md`, and writes it to the own-kits dir (curated kits are never overwritten — only `authoredBy: jarvis-*` kits, and only with `overwrite:true`). The new kit is matchable next turn. `prefrontal.kit.match` is the LLM-free lookup Jarvis can call to inspect candidates first.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Searched: user turn (before_prompt_build)
+  Searched --> Matched: matchKitsDetailed score≥threshold
+  Searched --> NoMatch: nothing clears threshold
+  Matched --> Merged: ≥2 kits OR composes: expansion
+  Matched --> Seeded: single kit
+  Merged --> Seeded: dedup'd step list
+  Seeded --> Running: prefrontal.kit.run fans groups → subagents
+  Running --> Looping: step has loop: directive
+  Looping --> Running: condition not met & iter<max
+  Looping --> Running: (count/until-dry/until-marker)
+  Running --> Composing: step has uses: → recurse sub-kit
+  Composing --> Running: sub-plan settles
+  Running --> [*]: all groups done → plan closed
+  NoMatch --> Authoring: non-trivial → <recipe_gap> directive
+  Authoring --> [*]: kit.author writes kit.md (matchable next turn)
+  NoMatch --> Idle: trivial → implicit 2-step panel
+  Idle --> [*]
+```
+
+Every transition emits a provenance trail verb (`searched`/`matched`/`merged`/`composed`/`authored`) the RECIPES panel renders as its decision trail.
 
 ## Prefrontal observability — the kit-state CLI
 
