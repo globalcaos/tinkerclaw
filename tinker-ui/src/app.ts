@@ -996,6 +996,11 @@ function chatEventIsSubagentOfView(evtKey?: unknown): boolean {
 // never clobber each other or the single-stream main-run state. On final/end the
 // bubble is frozen (drop _temporary) so it persists in the transcript.
 const subagentStreamIdx = new Map<string, number>();
+// FORK 2026-05-30: which subagent bubbles are expanded (collapsed by default). The
+// colored "▸ label" header is always shown (the live roster); the thinking body is
+// behind a <details> the user expands. Persisted here so it survives the per-delta
+// innerHTML rebuild in updateChat.
+const expandedSubagents = new Set<string>();
 
 function subagentLabelFor(runId: string, sk: string): string {
   const info = activeRuns.get(runId);
@@ -5095,8 +5100,16 @@ function renderMsg(
           // oxlint-disable-next-line typescript-eslint/no-explicit-any
           const saLabel =
             ((msg as any)?._subagentLabel as string | undefined) ?? shortSubagentId(saId);
-          const badge = `<span class="msg-subagent-badge" style="background:${c}">▸ ${esc(saLabel)}</span>`;
-          h += `<div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}" style="--subagent-color:${c}">${badge}${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
+          // oxlint-disable-next-line typescript-eslint/no-explicit-any
+          const saLive = (msg as any)?._temporary === true;
+          // FORK 2026-05-30: collapsible per-subagent bubble. The colored "▸ label"
+          // header is the <summary> (always visible = the live roster of running
+          // subagents); the thinking body is collapsed by default, expand-on-click.
+          // Open state persists in expandedSubagents across the per-delta re-render.
+          const saOpen = expandedSubagents.has(saId) ? " open" : "";
+          const liveDot = saLive ? `<span class="msg-subagent-live" title="streaming"></span>` : "";
+          const badge = `<span class="msg-subagent-badge" style="background:${c}">${esc(saLabel)}</span>`;
+          h += `<details class="msg-subagent-details${saLive ? " is-live" : ""}" data-subagent-id="${esc(saId)}"${saOpen} style="--subagent-color:${c}"><summary class="msg-subagent-summary">${badge}${liveDot}</summary><div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div></details>`;
         } else {
           // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
           h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
@@ -5921,6 +5934,22 @@ function updateChat(skipScroll = false) {
       }
     });
   }
+  // FORK 2026-05-30: capture subagent <details> toggles into expandedSubagents so the
+  // open/closed state survives the next per-delta innerHTML rebuild (the `open` attr is
+  // rendered from the same set, so first paint is already correct without a restore pass).
+  el.querySelectorAll("details.msg-subagent-details[data-subagent-id]").forEach((det) => {
+    det.addEventListener("toggle", () => {
+      const sid = det.getAttribute("data-subagent-id");
+      if (!sid) {
+        return;
+      }
+      if ((det as HTMLDetailsElement).open) {
+        expandedSubagents.add(sid);
+      } else {
+        expandedSubagents.delete(sid);
+      }
+    });
+  });
   if (wasAtBottom) {
     el.scrollTop = el.scrollHeight;
   } else {
