@@ -20,7 +20,13 @@ async function loadOrt(): Promise<OrtModule | null> {
   try {
     _ort = (await import("onnxruntime-node")) as OrtModule;
     return _ort;
-  } catch {
+  } catch (err) {
+    // FORK 2026-05-30: surface WHY the runtime failed to import (was silent → hid
+    // the 1.26.0 regression). If this fires, onnxruntime-node itself didn't load
+    // (e.g. device-discovery throwing under systemd), so the gate can't be onnx.
+    console.error(
+      `[learned-intuition] onnxruntime-node import failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
     return null;
   }
 }
@@ -117,8 +123,14 @@ export class AmygdalaGate {
         const pPath = this.config.prudence.model_paths[key];
         this.prudenceSessions.set(key, await ort.InferenceSession.create(pPath, opts));
         this._onnxAvailable = true;
-      } catch {
-        // Model not yet trained -- silently use fallback
+      } catch (err) {
+        // FORK 2026-05-30: was a SILENT catch — which hid the onnxruntime-node 1.26.0
+        // regression (gate fell to rule-based with no explained reason). d/e have no
+        // trained full-weight model (expected); a/b/c failing is a real problem worth
+        // surfacing to the devtools console.
+        console.error(
+          `[learned-intuition] prudence '${key}' load failed (${this.config.prudence.model_paths[key]}): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       // Personality
@@ -126,8 +138,10 @@ export class AmygdalaGate {
         const iPath = this.config.personality.model_paths[key];
         this.personalitySessions.set(key, await ort.InferenceSession.create(iPath, opts));
         this._onnxAvailable = true;
-      } catch {
-        // Model not yet trained -- silently use fallback
+      } catch (err) {
+        console.error(
+          `[learned-intuition] personality '${key}' load failed (${this.config.personality.model_paths[key]}): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
