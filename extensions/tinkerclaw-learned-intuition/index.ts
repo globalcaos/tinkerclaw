@@ -124,16 +124,17 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       window_size: 32,
     },
     prudence: {
-      // FORK 2026-05-30: paths now match what's actually on disk
-      // (models/amygdala/onnx/prudence_{a..e}.onnx). The old `_gru_mlp`/`_tcn`/…
-      // suffixed names matched nothing, so every prudence net silently returned
-      // NEUTRAL and the "5 competing architectures" never ran. All 5 exist.
+      // FORK 2026-05-30: point a/b/c at the top-level FULL-WEIGHT models
+      // (prudence-{a,b,c}.onnx, ~1MB, verified loadable). The onnx/prudence_*.onnx
+      // set is graph-only and references external-data sidecars that don't exist
+      // (→ "external data path does not exist"), so those never load. d/e have no
+      // full-weight model on disk yet → they neutral-fallback (3/5 ensemble runs).
       model_paths: {
-        a: join(modelsDir, "onnx", "prudence_a.onnx"),
-        b: join(modelsDir, "onnx", "prudence_b.onnx"),
-        c: join(modelsDir, "onnx", "prudence_c.onnx"),
-        d: join(modelsDir, "onnx", "prudence_d.onnx"),
-        e: join(modelsDir, "onnx", "prudence_e.onnx"),
+        a: join(modelsDir, "prudence-a.onnx"),
+        b: join(modelsDir, "prudence-b.onnx"),
+        c: join(modelsDir, "prudence-c.onnx"),
+        d: join(modelsDir, "prudence-d.onnx"),
+        e: join(modelsDir, "prudence-e.onnx"),
       },
       meta_weights: [0.2, 0.2, 0.2, 0.2, 0.2],
       conservative_override_threshold: 0.9,

@@ -30,6 +30,9 @@
     "models/amygdala/prudence-*.onnx"
   ],
   "type": "module",
+  "dependencies": {
+    "onnxruntime-node": "^1.26.0"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.4.25"
   },
