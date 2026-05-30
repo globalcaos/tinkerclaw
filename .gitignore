@@ -280,3 +280,7 @@ extensions/qa-lab/web/dist/
 # Generated bundled plugin runtime dependency manifests
 extensions/**/.openclaw-runtime-deps.json
 extensions/**/.openclaw-runtime-deps-stamp.json
+
+# FORK 2026-05-30: regeneratable build artifact (~90MB, all-MiniLM-L6-v2).
+# Regenerate: python3 scripts (export_encoder.py) — see TRAINING.md. Not in git.
+models/amygdala/encoder.onnx
