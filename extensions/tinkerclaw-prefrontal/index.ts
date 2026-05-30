@@ -785,8 +785,8 @@ export default function register(api: OpenClawPluginApi) {
   // ── Kit-matcher: auto-seed a plan at turn start (FORK 2026-05-16) ──
   // The "smart router" matching half. Fires on every real user turn to the
   // main session, scores the prompt against the local kit catalog, and
-  // (when matched) seeds a merged plan so restart-continue can resume it and
-  // the prefrontal panel shows real steps. No match → WARN recipe-gap signal
+  // (when matched) seeds a merged plan so the prefrontal panel shows real
+  // steps and an interrupted turn can re-read it on resume. No match → WARN recipe-gap signal
   // + the implicit 2-step panel takes over. Registered as a second
   // before_prompt_build hook (separate concern from the anti-goldplating
   // one at priority 40) — runs at lower priority so prompt-context plugins
@@ -923,48 +923,17 @@ export default function register(api: OpenClawPluginApi) {
     `[prefrontal] kit RPCs registered (baseUrl=${typeof journeyCfg.baseUrl === "string" ? journeyCfg.baseUrl : "default"}, apiKey=${journeyCfg.apiKey ? "set" : "absent"})`,
   );
 
-  // ── Restart auto-continue (Phase 3, FORK 2026-05-13) ──
-  // 3s delay gives the HTTP server and cc-bridge plugin time to finish binding
-  // before we fire chat.send. Uses callGateway loopback (same pattern as
-  // subagent-orphan-recovery / main-session-restart-recovery).
-  // operator.admin scope is required because buildContinueParams injects
-  // systemInputProvenance; the loopback backend client preserves declared scopes
-  // (shouldSkipLocalBackendSelfPairing = true for direct-local GATEWAY_CLIENT).
-  if (api.registrationMode === "full") {
-    setTimeout(() => {
-      void (async () => {
-        try {
-          const { runRestartContinue } = await import("./restart-continue.js");
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { callGateway } = await import("../../src/gateway/call.js");
-          const gatewayCall = async (
-            method: string,
-            params: unknown,
-          ): Promise<{ runId: string }> => {
-            if (method !== "chat.send" && method !== "chat.inject") {
-              throw new Error(`[prefrontal] gatewayCall: unsupported method ${method}`);
-            }
-            return callGateway<{ runId: string }>({
-              method: method as "chat.send" | "chat.inject",
-              params,
-              scopes: ["operator.admin"],
-              timeoutMs: 30_000,
-            });
-          };
-          const result = await runRestartContinue({ store: planStore, gatewayCall });
-          if (result.fired.length > 0) {
-            log.info?.(
-              `[prefrontal] restart-continue fired for ${result.fired.length} plan(s): ${result.fired.join(", ")}`,
-            );
-          } else {
-            log.info?.(`[prefrontal] restart-continue: no in-progress plans to resume`);
-          }
-        } catch (err) {
-          log.warn?.(`[prefrontal] restart-continue failed: ${String(err)}`);
-        }
-      })();
-    }, 3000);
-  }
+  // ── Restart resume: single source of truth (FORK 2026-05-30) ──
+  // The plan-based `restart-continue` auto-fire was REMOVED. It resumed any
+  // in_progress plan on boot regardless of whether a turn was actually
+  // interrupted, so a parked/incomplete plan triggered a phantom resume on
+  // every restart (and could double-resume alongside the interruption path).
+  // Restart recovery now has ONE trigger, owned by
+  // `src/agents/main-session-restart-recovery.ts`: a session that was
+  // `status:"running"` at boot is — by definition — interrupted mid-turn, and
+  // only those are resumed. The plan is still seeded for the Prefrontal panel
+  // and for the resumed model to read via `prefrontal.plan.get`; it is no
+  // longer itself a resume trigger.
 
   log.info?.(
     `[prefrontal] Prefrontal plugin registered (poll: ${pollIntervalMs}ms, staleness: ${stalenessThresholdMs}ms, monitor: ${monitorIntervalMs}ms)`,

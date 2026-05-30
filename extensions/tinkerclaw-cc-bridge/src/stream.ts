@@ -271,6 +271,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // FORK 2026-05-10: thread the openclaw agent sessionId through so
         // session-map can index by it for the across-restart resume path.
         openclawSessionId,
+        // FORK 2026-05-30: thread the CANONICAL openclaw session key
+        // (`agent:main:main`) so the worker can export it as TC_SESSION_KEY
+        // for the jarvis voice gate + chat.inject routing (see worker.ts).
+        openclawSessionKey,
       });
 
       // FORK 2026-05-11: emit lifecycle:start so the TUI's activeRuns map
@@ -870,8 +874,18 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         const usage = buildUsage(result.usage);
 
         log.info(
-          `turn result sessionKey=${sessionKey} subtype=${result.subtype} is_error=${result.is_error} num_turns=${result.num_turns} duration_ms=${result.duration_ms} result_text=${(result.result ?? "").slice(0, 500)}`,
+          `turn result sessionKey=${sessionKey} subtype=${result.subtype} is_error=${result.is_error} num_turns=${result.num_turns} duration_ms=${result.duration_ms} output_tokens=${usage.output} final_text_len=${accumulatedText.length} result_text=${(result.result ?? "").slice(0, 500)}`,
         );
+        // FORK 2026-05-29 (truncation diagnostic): if the model stopped because
+        // it hit the output-token ceiling, the answer is genuinely cut mid-
+        // generation — distinct from a UI/display truncation. Surface it loudly
+        // so the next "truncated" report is unambiguous. error_max_turns is the
+        // agent-loop cap; a max_tokens stop is the per-message output cap.
+        if (result.subtype === "error_max_turns") {
+          log.warn(
+            `TRUNCATION SUSPECT sessionKey=${sessionKey} hit agent-loop cap (error_max_turns) after ${result.num_turns} turns — answer may be cut. final_text_len=${accumulatedText.length}`,
+          );
+        }
 
         // On provider error (e.g. 401 auth, 400 billing), build a structured
         // ErrorEnvelope and emit it as the ONLY text of the turn. Previous

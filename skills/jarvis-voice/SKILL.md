@@ -52,27 +52,17 @@ The built-in `tts` tool uses Edge TTS (cloud, wrong voice, no effects). **Always
 
 ## How to Speak
 
-Every response that warrants voice output must include BOTH:
+**One call does everything.** Run the jarvis command once, in background:
 
-1. **Audio execution FIRST** — run the jarvis command in background BEFORE writing the reply:
+```
+exec(command='jarvis "Your spoken text here."', background=true)
+```
 
-   ```
-   exec(command='jarvis "Your spoken text here."', background=true)
-   ```
+The script (`~/.local/bin/jarvis`) **both** (a) posts the text to the chat UI as a purple `**Jarvis:** *…*` bubble — via the `chat.inject` gateway RPC, which the webchat renders in purple italic (`.jarvis-voice`, `#9b59b6`) — **and** (b) plays the metallic TTS. You do **NOT** hand-write a `**Jarvis:**` line; the script is the single source of truth, so what's shown always matches what's spoken.
 
-   This fires immediately — the user hears the voice BEFORE the text appears on screen.
+**Channel-gated, automatic:** the script reads the session channel from `$TC_SESSION_KEY` (format `agent:<agent>:<channel>:<id>`) and speaks + posts only on the home Tinker-UI session (channel `tinker`). WhatsApp / cron / subagent turns produce neither voice nor bubble — no per-turn judgment needed. Override the allowed channel with `TC_VOICE_CHANNEL`. The mute toggle (`~/.openclaw/data/jarvis-muted.json`) silences the speaker while still posting the bubble.
 
-2. **Visible transcript** — bold **Jarvis:** prefix followed by the spoken text:
-
-   ```
-   **Jarvis:** *Your spoken text here.*
-   ```
-
-   The webchat UI has custom CSS + JS that automatically detects `**Jarvis:**` and renders the following text in **purple italic** (`.jarvis-voice` class, color `#9b59b6`). You just write the markdown — the styling is automatic.
-
-This is called **hybrid output**: the user hears the voice first, then sees the transcript.
-
-> **Note:** The server-side `triggerJarvisAutoTts` hook is DISABLED (no-op). It fired too late (after text render). Voice comes exclusively from the `exec` call.
+> **Note:** The old prompt-driven "exec FIRST then hand-write the `**Jarvis:**` transcript line" model (and the server-side `triggerJarvisAutoTts` hook) are superseded — the script owns both speaking and posting as of 2026-05-30.
 
 ## Command Reference
 

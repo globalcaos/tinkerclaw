@@ -5471,6 +5471,40 @@ code.fs-link.fs-link-error {
   background: #232328;
 }
 
+/* FORK 2026-05-29 — pin affordance next to the title pencil. Toggles the 🟡
+   in-progress marker on the task name. Same hover-reveal as the pencil:
+   invisible by default, appears on row hover, full on its own hover. When the
+   marker is ON (.exec-task-pin-on) it stays visible with a yellow tint so the
+   active state is obvious even before hover. */
+.exec-task-pin {
+  background: transparent;
+  border: none;
+  color: #4a4a52;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  flex: 0 0 auto;
+}
+.exec-task:hover .exec-task-pin {
+  opacity: 0.55;
+}
+.exec-task-pin:hover {
+  opacity: 1 !important;
+  background: #232328;
+}
+.exec-task-pin-on {
+  opacity: 0.9;
+  color: #e0b020;
+}
+.exec-task:hover .exec-task-pin-on,
+.exec-task-pin-on:hover {
+  opacity: 1;
+}
+
 /* Full title block at the top of the drawer — wraps long titles, with
    pencil at the end so the user can rename in place. */
 .exec-task-fulltitle {
@@ -5749,4 +5783,155 @@ code.fs-link.fs-link-error {
   border-radius: 1px;
   margin: 0 6px;
   pointer-events: none;
+}
+
+/* ── FORK 2026-05-29: RECIPES panel — provenance strip + per-subagent vitals,
+   and colored subagent chat sub-bubbles. ───────────────────────────────── */
+.pf-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--bg-elev, rgba(255, 255, 255, 0.03));
+  font-size: 11px;
+  line-height: 1.4;
+}
+.pf-prov-chip {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+.pf-prov-arrow {
+  opacity: 0.5;
+}
+.pf-prov-authored {
+  background: rgba(168, 85, 247, 0.22);
+}
+.pf-prov-merged,
+.pf-prov-composed {
+  background: rgba(59, 130, 246, 0.2);
+}
+.pf-prov-matched {
+  background: rgba(34, 197, 94, 0.2);
+}
+.pf-vitals {
+  margin: 1px 0 3px 22px;
+  font-size: 10.5px;
+  opacity: 0.7;
+  font-family: var(--mono, monospace);
+}
+
+/* Colored subagent chat sub-bubble — keyed by --subagent-color from a stable
+   per-subagent hash so parallel subagents are visually distinct in chat. */
+.msg.msg-subagent {
+  border-left: 3px solid var(--subagent-color, #3b82f6);
+  padding-left: 9px;
+  position: relative;
+}
+.msg-subagent-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  padding: 0 6px;
+  border-radius: 999px;
+  margin-bottom: 4px;
+  letter-spacing: 0.2px;
+}
+
+/* ── FORK 2026-05-30: RECIPES header is a button into the recipe book. ── */
+.rpanel-header-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  letter-spacing: inherit;
+}
+.rpanel-header-btn:hover {
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+/* ── FORK 2026-05-30: collapsible recipe DECISION TRAIL (mirrors chat
+   compaction): a compact one-line summary that expands the trail on click. ── */
+.pf-decisions {
+  margin: 2px 0 6px;
+  font-size: 11px;
+}
+.pf-decisions-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--bg-elev, rgba(255, 255, 255, 0.03));
+  opacity: 0.85;
+}
+.pf-decisions-summary:hover {
+  opacity: 1;
+}
+.pf-decisions-chev {
+  opacity: 0.6;
+  width: 9px;
+  display: inline-block;
+}
+.pf-decisions-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.pf-decisions-latest {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+.pf-decisions.is-open .pf-decisions-summary {
+  margin-bottom: 4px;
+}
+.pf-decisions-body {
+  border-left: 2px solid var(--accent, #888);
+  margin-left: 8px;
+  padding-left: 4px;
+}
+.pf-decision-row {
+  display: flex;
+  gap: 6px;
+  padding: 1px 6px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+.pf-decision-clock {
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── FORK 2026-05-30: Amygdala/Fractal compacted summary shows a one-liner;
+   an md/code file change is surfaced FIRST and styled distinctly. ── */
+.amygdala-summary,
+.fractal-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.amygdala-summary.artifact-filechange,
+.fractal-summary.artifact-filechange {
+  border-left: 3px solid #eab308;
+  padding-left: 7px;
+  background: rgba(234, 179, 8, 0.1);
+  border-radius: 4px;
+  font-weight: 600;
+}
+.amygdala-summary.artifact-filechange strong,
+.fractal-summary.artifact-filechange strong {
+  font-family: var(--mono, monospace);
+  color: #eab308;
 }

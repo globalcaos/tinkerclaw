@@ -45,7 +45,10 @@ Connect the dots. Build a mental model of how the system works. Identify cause-a
 ### 4. Report
 **Done when:** Concise report delivered with evidence
 
+**Before presenting: resolve any uncertainty that could invalidate the conclusion.** If an assumption is load-bearing — i.e. if it were wrong the answer would flip — close it FIRST (search the web, run the calc, fetch the source), then report. A caveat that "could render the analysis wrong" is a prerequisite, not a footnote. Never bury it at the end; if it cannot be resolved, it leads the report, not trails it.
+
 Present findings clearly:
+- The load-bearing assumption, stated and resolved up front (or flagged as unresolved if it genuinely can't be closed)
 - Direct answer to the question
 - Supporting evidence (file paths, code snippets, log entries)
 - Confidence level (certain, likely, uncertain)
@@ -54,6 +57,8 @@ Present findings clearly:
 ## Constraints
 - Don't guess -- follow evidence
 - Report confidence levels honestly
+- **Resolve material assumptions before concluding.** If a few tokens of web search, a calc, or a fetch can close a gap that affects the answer, do it — reporting ignorance you could have closed is a failure, not honesty.
+- **Lead with the analysis-invalidating uncertainty, never trail it.** The thing that could flip the conclusion goes first.
 - If the answer requires reading 20+ files, narrow the scope first
 - Stop when the question is answered, don't keep exploring
 
@@ -66,3 +71,4 @@ Present findings clearly:
 - **Rabbit hole exploration:** Agent keeps reading files without converging on an answer. Scoping and bounded gather steps prevent this.
 - **Premature conclusion:** Agent reads one file and reports a conclusion. Must check multiple sources before synthesizing.
 - **Correlation as causation:** Agent sees two things happening together and assumes one causes the other. Analysis step requires explicit cause-and-effect reasoning.
+- **Buried invalidating caveat:** Agent presents a confident conclusion, then trails a caveat that — if true — would flip it ("assuming the concentration is ~100%..."). The caveat should have led the report AND been resolved (a quick search confirmed pool granulate is 90-99% bisulfate). Resolve-then-lead, never conclude-then-hedge. (ph-minus value analysis, 2026-05-29)
