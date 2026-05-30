@@ -28,7 +28,7 @@ describe("kit-rpcs", () => {
     fs.rmSync(ownKitsDir, { recursive: true, force: true });
   });
 
-  it("prefrontal.kit.search returns parsed results (flat array shape)", async () => {
+  it("prefrontal.recipe.search returns parsed results (flat array shape)", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/search?q=feature", method: "GET" })
@@ -50,12 +50,12 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.search"]({ query: "feature" });
+    const res = await rpcs["prefrontal.recipe.search"]({ query: "feature" });
     expect(res.results).toHaveLength(1);
     expect(res.results[0].kitRef).toBe("globalcaos/feature");
   });
 
-  it("prefrontal.kit.search dedupes by kitRef keeping highest releaseTag", async () => {
+  it("prefrontal.recipe.search dedupes by kitRef keeping highest releaseTag", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/search?q=feature", method: "GET" })
@@ -87,13 +87,13 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.search"]({ query: "feature" });
+    const res = await rpcs["prefrontal.recipe.search"]({ query: "feature" });
     expect(res.results).toHaveLength(1);
     expect(res.results[0].releaseTag).toBe("3.0.0");
     expect(res.results[0].title).toBe("Build Feature v3 (latest)");
   });
 
-  it("prefrontal.kit.get returns the kit", async () => {
+  it("prefrontal.recipe.get returns the kit", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/globalcaos/feature", method: "GET" })
@@ -105,11 +105,11 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.get"]({ kitRef: "globalcaos/feature" });
+    const res = await rpcs["prefrontal.recipe.get"]({ kitRef: "globalcaos/feature" });
     expect(res.kit.slug).toBe("feature");
   });
 
-  it("prefrontal.kit.install refuses Critical-risk kits unless allowRisky=true", async () => {
+  it("prefrontal.recipe.install refuses Critical-risk kits unless allowRisky=true", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/foo/bar/install?target=openclaw&ref=latest", method: "GET" })
@@ -128,12 +128,12 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    await expect(rpcs["prefrontal.kit.install"]({ kitRef: "foo/bar" })).rejects.toThrow(
+    await expect(rpcs["prefrontal.recipe.install"]({ kitRef: "foo/bar" })).rejects.toThrow(
       /risk|Critical/,
     );
   });
 
-  it("prefrontal.kit.install rejects file entries that escape the sandbox", async () => {
+  it("prefrontal.recipe.install rejects file entries that escape the sandbox", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/foo/bar/install?target=openclaw&ref=latest", method: "GET" })
@@ -152,12 +152,12 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    await expect(rpcs["prefrontal.kit.install"]({ kitRef: "foo/bar" })).rejects.toThrow(
+    await expect(rpcs["prefrontal.recipe.install"]({ kitRef: "foo/bar" })).rejects.toThrow(
       /escapes sandbox/,
     );
   });
 
-  it("prefrontal.kit.install with allowRisky writes files when risk is High", async () => {
+  it("prefrontal.recipe.install with allowRisky writes files when risk is High", async () => {
     mock
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/foo/bar/install?target=openclaw&ref=latest", method: "GET" })
@@ -176,13 +176,13 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.install"]({ kitRef: "foo/bar", allowRisky: true });
+    const res = await rpcs["prefrontal.recipe.install"]({ kitRef: "foo/bar", allowRisky: true });
     expect(res.ok).toBe(true);
     expect(res.installedPath).toContain("foo/bar");
     expect(fs.existsSync(path.join(root, "foo/bar/kit.md"))).toBe(true);
   });
 
-  it("prefrontal.kit.list returns inventory under sandbox", async () => {
+  it("prefrontal.recipe.list returns inventory under sandbox", async () => {
     await store.writeKitFiles({
       owner: "globalcaos",
       slug: "feature",
@@ -195,7 +195,7 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.list"]({});
+    const res = await rpcs["prefrontal.recipe.list"]({});
     expect(res.kits.find((k) => k.kitRef === "globalcaos/feature")).toBeTruthy();
   });
 
@@ -218,12 +218,12 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.list"]({});
+    const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "block-scalar");
     expect(kit?.summary).toBe("Line one of summary continues here.");
   });
 
-  it("prefrontal.kit.publish requires apiKey", async () => {
+  it("prefrontal.recipe.publish requires apiKey", async () => {
     const rpcs = createKitRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
@@ -232,11 +232,11 @@ describe("kit-rpcs", () => {
       ownKitsDir,
     });
     await expect(
-      rpcs["prefrontal.kit.publish"]({ slug: "feature", visibility: "public" }),
+      rpcs["prefrontal.recipe.publish"]({ slug: "feature", visibility: "public" }),
     ).rejects.toThrow(/apiKey|missing.*key/i);
   });
 
-  it("prefrontal.kit.publish reads source kit body and POSTs to Journey", async () => {
+  it("prefrontal.recipe.publish reads source kit body and POSTs to Journey", async () => {
     fs.mkdirSync(path.join(ownKitsDir, "feature"), { recursive: true });
     fs.writeFileSync(
       path.join(ownKitsDir, "feature", "kit.md"),
@@ -261,7 +261,7 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.publish"]({ slug: "feature", visibility: "public" });
+    const res = await rpcs["prefrontal.recipe.publish"]({ slug: "feature", visibility: "public" });
     expect(res.ok).toBe(true);
     expect(res.url).toContain("globalcaos/feature");
   });
@@ -341,7 +341,7 @@ describe("kit-rpcs", () => {
 
   // ─── kit.list: source=ours + combined list ──────────────────────────────
 
-  it("prefrontal.kit.list includes source-tree kits with source:'ours'", async () => {
+  it("prefrontal.recipe.list includes source-tree kits with source:'ours'", async () => {
     fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
     fs.writeFileSync(
       path.join(ownKitsDir, "debug", "kit.md"),
@@ -355,7 +355,7 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.list"]({});
+    const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "debug");
     expect(kit).toBeTruthy();
     expect(kit?.source).toBe("ours");
@@ -363,7 +363,7 @@ describe("kit-rpcs", () => {
     expect(kit?.category).toBe("coding");
   });
 
-  it("prefrontal.kit.list combines ours + downloaded, ours appear first", async () => {
+  it("prefrontal.recipe.list combines ours + downloaded, ours appear first", async () => {
     // Set up one own kit
     fs.mkdirSync(path.join(ownKitsDir, "own-kit"), { recursive: true });
     fs.writeFileSync(
@@ -390,7 +390,7 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.list"]({});
+    const res = await rpcs["prefrontal.recipe.list"]({});
     const ownIdx = res.kits.findIndex((k) => k.slug === "own-kit");
     const dlIdx = res.kits.findIndex((k) => k.slug === "dl-kit");
     expect(ownIdx).toBeGreaterThanOrEqual(0);
@@ -400,7 +400,7 @@ describe("kit-rpcs", () => {
     expect(res.kits[dlIdx].source).toBe("downloaded");
   });
 
-  it("prefrontal.kit.list kit items include category field", async () => {
+  it("prefrontal.recipe.list kit items include category field", async () => {
     await store.writeKitFiles({
       owner: "globalcaos",
       slug: "feature",
@@ -419,7 +419,7 @@ describe("kit-rpcs", () => {
       kitInstallSandbox: store.rootDirPublic(),
       ownKitsDir,
     });
-    const res = await rpcs["prefrontal.kit.list"]({});
+    const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "feature");
     expect(kit?.category).toBe("coding");
   });

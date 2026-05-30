@@ -211,8 +211,8 @@ export function createKitRpcs(deps: KitRpcsDeps) {
   };
 
   return {
-    "prefrontal.kit.search": async (raw: unknown) => {
-      const p = check<PrefrontalKitSearchParams>(vSearch, raw, "prefrontal.kit.search");
+    "prefrontal.recipe.search": async (raw: unknown) => {
+      const p = check<PrefrontalKitSearchParams>(vSearch, raw, "prefrontal.recipe.search");
       const j: any = await fetchJson(
         `/api/kits/search?q=${encodeURIComponent(p.query)}${p.limit ? `&limit=${p.limit}` : ""}`,
       );
@@ -229,16 +229,16 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       return { results: [...seen.values()] };
     },
 
-    "prefrontal.kit.get": async (raw: unknown) => {
-      const p = check<PrefrontalKitGetParams>(vGet, raw, "prefrontal.kit.get");
+    "prefrontal.recipe.get": async (raw: unknown) => {
+      const p = check<PrefrontalKitGetParams>(vGet, raw, "prefrontal.recipe.get");
       const j: any = await fetchJson(
         `/api/kits/${p.kitRef}${p.ref ? `?ref=${encodeURIComponent(p.ref)}` : ""}`,
       );
       return { kit: j };
     },
 
-    "prefrontal.kit.install": async (raw: unknown) => {
-      const p = check<PrefrontalKitInstallParams>(vInstall, raw, "prefrontal.kit.install");
+    "prefrontal.recipe.install": async (raw: unknown) => {
+      const p = check<PrefrontalKitInstallParams>(vInstall, raw, "prefrontal.recipe.install");
       const ref = p.ref ?? "latest";
       const install: any = await fetchJson(
         `/api/kits/${p.kitRef}/install?target=openclaw&ref=${encodeURIComponent(ref)}`,
@@ -273,8 +273,8 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       } as const;
     },
 
-    "prefrontal.kit.list": async (raw: unknown) => {
-      const p = check<PrefrontalKitListParams>(vList, raw, "prefrontal.kit.list");
+    "prefrontal.recipe.list": async (raw: unknown) => {
+      const p = check<PrefrontalKitListParams>(vList, raw, "prefrontal.recipe.list");
 
       // ── Downloaded kits (existing path) ──────────────────────────────────
       const downloadedEntries = await deps.store.list({ owner: p.owner });
@@ -317,11 +317,11 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       return { kits };
     },
 
-    "prefrontal.kit.publish": async (raw: unknown) => {
-      const p = check<PrefrontalKitPublishParams>(vPublish, raw, "prefrontal.kit.publish");
+    "prefrontal.recipe.publish": async (raw: unknown) => {
+      const p = check<PrefrontalKitPublishParams>(vPublish, raw, "prefrontal.recipe.publish");
       if (!deps.apiKey)
         throw new Error(
-          "prefrontal.kit.publish: missing apiKey (set integrations.journey.apiKey in openclaw.json)",
+          "prefrontal.recipe.publish: missing apiKey (set integrations.journey.apiKey in openclaw.json)",
         );
       const pathP = await import("node:path");
       const kitMdPath = pathP.join(deps.ownKitsDir, p.slug, "kit.md");
@@ -343,8 +343,8 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       return await res.json();
     },
 
-    "prefrontal.kit.run": async (raw: unknown) => {
-      const p = check<PrefrontalKitRunParams>(vRun, raw, "prefrontal.kit.run");
+    "prefrontal.recipe.run": async (raw: unknown) => {
+      const p = check<PrefrontalKitRunParams>(vRun, raw, "prefrontal.recipe.run");
 
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
@@ -411,8 +411,8 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     // kit/1.0 doc, and writes it to the own-kits dir so the turn-start matcher
     // picks it up immediately. This is the NO-MATCH escape hatch — Jarvis turns a
     // recipe gap into a reusable recipe in one call.
-    "prefrontal.kit.author": async (raw: unknown) => {
-      const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.kit.author");
+    "prefrontal.recipe.author": async (raw: unknown) => {
+      const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.recipe.author");
       const spec = p as unknown as KitSpec;
       const v = validateKitSpec(spec);
       if (!v.ok) {
@@ -463,8 +463,8 @@ export function createKitRpcs(deps: KitRpcsDeps) {
 
     // FORK 2026-05-29: LLM-free best-fit lookup. Returns ranked local-catalog
     // candidates + a confidence so the caller can decide use-vs-author.
-    "prefrontal.kit.match": async (raw: unknown) => {
-      const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.kit.match");
+    "prefrontal.recipe.match": async (raw: unknown) => {
+      const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.recipe.match");
       const index = await loadKitIndex(deps.ownKitsDir);
       const { matches, confidence } = matchKitsDetailed(p.prompt, index, { max: p.limit ?? 5 });
       return {
