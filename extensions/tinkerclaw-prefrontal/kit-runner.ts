@@ -82,6 +82,8 @@ interface StepDispatch {
   label: string;
   /** FORK: if set, this step runs another kit (owner/slug) instead of a plain subagent. */
   usesKitRef?: string;
+  /** FORK 2026-05-30: if set, this step repeats (count / until-dry / until-marker). */
+  loop?: LoopSpec;
 }
 
 /**
@@ -92,16 +94,82 @@ interface StepDispatch {
  * (`uses: debug`) or a full ref (`uses: owner/slug`); bare slugs normalize to
  * `globalcaos/<slug>` so loadKitText resolves them.
  */
+/** The CONSECUTIVE leading directive lines of a step body — only lines that are
+ * themselves `uses:`/`loop:` directives, starting from the top (after any blank
+ * lines), stopping at the first prose/blank line. So a step may carry both a
+ * `loop:` and a `uses:` directive in either order, but a `uses:` buried in prose
+ * or a code fence is NOT collected (re-opening that was a 2026-05-29 review bug). */
+function leadingDirectives(body: string): string[] {
+  const out: string[] = [];
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      if (out.length > 0) break; // a blank after directives ends the block
+      continue; // skip leading blank lines
+    }
+    if (!/^(?:uses|loop):/i.test(line)) break; // first prose line ends the block
+    out.push(line);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 export function parseUsesDirective(body: string): string | undefined {
-  const firstLine = body
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.length > 0);
-  if (!firstLine) return undefined;
-  const m = /^uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/i.exec(firstLine);
-  if (!m) return undefined;
-  const ref = m[1];
-  return ref.includes("/") ? ref : `globalcaos/${ref}`;
+  for (const line of leadingDirectives(body)) {
+    const m = /^uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/i.exec(line);
+    if (!m) continue;
+    const ref = m[1];
+    return ref.includes("/") ? ref : `globalcaos/${ref}`;
+  }
+  return undefined;
+}
+
+// ─── Recipe loops (FORK 2026-05-30) ─────────────────────────────────────────
+// A step can repeat — the structural gap vs Claude Code workflows. A leading
+// `loop:` directive re-runs the step (spawn or sub-kit) until a condition or a
+// hard cap. Three modes mirror the workflow patterns:
+//   loop: count <N>           — run exactly N times (or until an iteration fails)
+//   loop: until-dry [max <M>] — re-run until a subagent reports nothing new
+//   loop: until <MARKER> [max <M>] — re-run until a step note contains MARKER
+// Every loop is bounded (DEFAULT_LOOP_MAX, hard-capped at HARD_LOOP_MAX) so a
+// runaway recipe can never spin forever.
+
+export interface LoopSpec {
+  mode: "count" | "until-dry" | "until-marker";
+  max: number;
+  marker?: string;
+}
+
+const DEFAULT_LOOP_MAX = 5;
+const HARD_LOOP_MAX = 25;
+
+export function parseLoopDirective(body: string): LoopSpec | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^loop:\s*(?:count\s+(\d+)|until-dry|until\s+(\S+))(?:\s+max\s+(\d+))?\s*$/i.exec(
+      line,
+    );
+    if (!m) continue;
+    const clamp = (n: number) => Math.max(1, Math.min(HARD_LOOP_MAX, n));
+    if (m[1] !== undefined) return { mode: "count", max: clamp(parseInt(m[1], 10)) };
+    if (m[2] !== undefined) {
+      return {
+        mode: "until-marker",
+        marker: m[2],
+        max: clamp(m[3] ? parseInt(m[3], 10) : DEFAULT_LOOP_MAX),
+      };
+    }
+    return { mode: "until-dry", max: clamp(m[3] ? parseInt(m[3], 10) : DEFAULT_LOOP_MAX) };
+  }
+  return undefined;
+}
+
+/** A step note signals "dry" (nothing new this iteration) → stop an until-dry
+ * loop. Empty/absent notes count as dry. */
+export function isDryNote(note: string | null | undefined): boolean {
+  if (!note || !note.trim()) return true;
+  return /\b(no new|nothing new|none (?:found|left|remain\w*)|complete\w*|done|dry|exhausted|finished|no more|all (?:covered|found|done))\b/i.test(
+    note,
+  );
 }
 
 interface DryRunDispatchPlan {
@@ -423,7 +491,8 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       const task = substituteParameters(rawTask, params);
       const label = `${opts.kitRef}:step-${idx}`;
       const usesKitRef = parseUsesDirective(step.body);
-      return { stepIndex: idx, title: step.title, task, label, usesKitRef };
+      const loop = parseLoopDirective(step.body);
+      return { stepIndex: idx, title: step.title, task, label, usesKitRef, loop };
     }),
   );
 
@@ -504,69 +573,142 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
         return { stepIndex: dispatch.stepIndex, outcome: "error" as const };
       };
 
-      // ── Composition: this step runs a sub-kit ──
-      if (dispatch.usesKitRef) {
-        // Seed the chain with THIS kit's own ref so a self-`uses:` is caught at
-        // depth 0 (review finding: an unseeded chain let a self-referencing root
-        // kit re-execute once before the guard fired).
-        const chain = opts._usesChain ?? [opts.kitRef];
-        const depth = opts._depth ?? 0;
-        if (depth >= MAX_USES_DEPTH) {
-          return markError(
-            `composition depth limit (${MAX_USES_DEPTH}) reached at ${dispatch.usesKitRef}`,
-          );
-        }
-        if (chain.includes(dispatch.usesKitRef)) {
-          return markError(
-            `composition cycle: ${dispatch.usesKitRef} already on stack [${chain.join(" → ")}]`,
-          );
-        }
+      const readNote = async (): Promise<string | null> => {
         try {
-          await store.step({
-            sessionKey: opts.sessionKey,
-            stepIndex: dispatch.stepIndex,
-            status: "in_progress",
-            note: `↳ running ${dispatch.usesKitRef}`,
+          const p = await store.get(opts.sessionKey);
+          return p?.steps[dispatch.stepIndex]?.note ?? null;
+        } catch {
+          return null;
+        }
+      };
+
+      // ONE execution of the step: run a sub-kit (composition via `uses:`) or
+      // spawn a subagent and poll the plan row. Returns ok + the note the row
+      // ended with, so the loop wrapper can decide whether to run again.
+      const executeOnce = async (
+        progressNote: string,
+      ): Promise<{ ok: boolean; note: string | null }> => {
+        if (dispatch.usesKitRef) {
+          // Seed the chain with THIS kit's own ref so a self-`uses:` is caught at
+          // depth 0 (review finding: an unseeded chain let a self-referencing
+          // root kit re-execute once before the guard fired).
+          const chain = opts._usesChain ?? [opts.kitRef];
+          const depth = opts._depth ?? 0;
+          if (depth >= MAX_USES_DEPTH) {
+            return {
+              ok: false,
+              note: `composition depth limit (${MAX_USES_DEPTH}) reached at ${dispatch.usesKitRef}`,
+            };
+          }
+          if (chain.includes(dispatch.usesKitRef)) {
+            return {
+              ok: false,
+              note: `composition cycle: ${dispatch.usesKitRef} already on stack [${chain.join(" → ")}]`,
+            };
+          }
+          try {
+            await store.step({
+              sessionKey: opts.sessionKey,
+              stepIndex: dispatch.stepIndex,
+              status: "in_progress",
+              note: progressNote || `↳ running ${dispatch.usesKitRef}`,
+            });
+          } catch {}
+          const sub = await runKit({
+            kitRef: dispatch.usesKitRef,
+            sessionKey: `${opts.sessionKey}::uses::${dispatch.stepIndex}`,
+            intent: `↳ ${dispatch.title}`,
+            parameters: opts.parameters,
+            planStore: store,
+            ownKitsDir,
+            kitInstallSandbox,
+            _depth: depth + 1,
+            _usesChain: [...chain, dispatch.usesKitRef],
           });
-        } catch {}
-        const sub = await runKit({
-          kitRef: dispatch.usesKitRef,
-          sessionKey: `${opts.sessionKey}::uses::${dispatch.stepIndex}`,
-          intent: `↳ ${dispatch.title}`,
-          parameters: opts.parameters,
-          planStore: store,
-          ownKitsDir,
-          kitInstallSandbox,
-          _depth: depth + 1,
-          _usesChain: [...chain, dispatch.usesKitRef],
-        });
-        if (!sub.ok) {
-          return markError(
-            `sub-kit ${dispatch.usesKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
-          );
-        }
-        try {
-          await store.step({
-            sessionKey: opts.sessionKey,
-            stepIndex: dispatch.stepIndex,
-            status: "done",
+          if (!sub.ok) {
+            return {
+              ok: false,
+              note: `sub-kit ${dispatch.usesKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
+            };
+          }
+          return {
+            ok: true,
             note: `composed ${dispatch.usesKitRef} (${sub.results?.length ?? 0} sub-steps)`,
-          });
-        } catch {}
+          };
+        }
+
+        // Normal: spawn one subagent and poll the plan row.
+        if (progressNote) {
+          try {
+            await store.step({
+              sessionKey: opts.sessionKey,
+              stepIndex: dispatch.stepIndex,
+              status: "in_progress",
+              note: progressNote,
+            });
+          } catch {}
+        }
+        const spawnResult = await spawnStep(dispatch.task, dispatch.label);
+        if (!spawnResult.ok) {
+          return { ok: false, note: `spawn failed: ${spawnResult.error ?? "unknown"}` };
+        }
+        const outcome = await waitForStepDone(store, opts.sessionKey, dispatch.stepIndex, 600_000);
+        if (outcome !== "done") {
+          return {
+            ok: false,
+            note: outcome === "timeout" ? "step timed out after 10 minutes" : "step ended in error",
+          };
+        }
+        return { ok: true, note: await readNote() };
+      };
+
+      // ── No loop: single execution ──
+      if (!dispatch.loop) {
+        const r = await executeOnce("");
+        if (!r.ok) return markError(r.note ?? "step failed");
+        // The spawn path's subagent already wrote done+note; only the sub-kit
+        // (uses:) path needs the runner to stamp the row done.
+        if (dispatch.usesKitRef) {
+          try {
+            await store.step({
+              sessionKey: opts.sessionKey,
+              stepIndex: dispatch.stepIndex,
+              status: "done",
+              note: r.note ?? undefined,
+            });
+          } catch {}
+        }
         return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
       }
 
-      // ── Normal: spawn one subagent and poll the plan row ──
-      const spawnResult = await spawnStep(dispatch.task, dispatch.label);
-      if (!spawnResult.ok) {
-        return markError(`spawn failed: ${spawnResult.error ?? "unknown"}`);
+      // ── Loop: repeat until the condition or the hard cap (recipe loops) ──
+      const loop = dispatch.loop;
+      let iter = 0;
+      let lastNote: string | null = null;
+      while (iter < loop.max) {
+        const r = await executeOnce(`loop ${iter + 1}/${loop.max} · ${loop.mode}`);
+        iter++;
+        if (!r.ok) return markError(`loop aborted at iter ${iter}: ${r.note ?? "failed"}`);
+        lastNote = r.note;
+        if (loop.mode === "until-dry" && isDryNote(r.note)) break;
+        if (
+          loop.mode === "until-marker" &&
+          r.note &&
+          loop.marker &&
+          r.note.toLowerCase().includes(loop.marker.toLowerCase())
+        ) {
+          break;
+        }
+        // count mode: keep going until loop.max iterations.
       }
-      const outcome = await waitForStepDone(store, opts.sessionKey, dispatch.stepIndex, 600_000);
-      if (outcome !== "done") {
-        return markError(
-          outcome === "timeout" ? "step timed out after 10 minutes" : "step ended in error",
-        );
-      }
+      try {
+        await store.step({
+          sessionKey: opts.sessionKey,
+          stepIndex: dispatch.stepIndex,
+          status: "done",
+          note: `looped ${iter}× (${loop.mode}); last: ${(lastNote ?? "").slice(0, 80)}`,
+        });
+      } catch {}
       return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
     });
 
