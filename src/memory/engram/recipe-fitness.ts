@@ -90,7 +90,9 @@ export function updateRecipeFitness(
   atISO: string = new Date().toISOString(),
 ): RecipeFitness {
   const recipeId = attributeRecipe(episode, episodeEvents) ?? prior?.recipeId ?? "unknown";
-  const base = prior ?? createInitialRecipeFitness(recipeId, prior?.version ?? 1);
+  // In this branch `prior` is null (it's the `?? fallback`), so version is the
+  // initial 1; reading prior?.version here narrowed to `never` and never applied.
+  const base = prior ?? createInitialRecipeFitness(recipeId, 1);
 
   const isSuccess = episode.outcome === "completed";
   const runs = base.runs + 1;

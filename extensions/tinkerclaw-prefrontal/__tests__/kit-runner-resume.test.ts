@@ -159,6 +159,14 @@ describe("isStepDone", () => {
   });
 });
 
+// FORK 2026-05-30: no-op spawn injected via runKit's _spawnStep seam so the mock
+// planStore drives step completion without a live gateway (the real spawn helper
+// shells out to openclaw-spawn-subagent.mjs, which needs a running gateway).
+const noopSpawn = async (_task: string, _label: string) => ({
+  ok: true as const,
+  runId: "mock-run",
+});
+
 describe("runKit — durable resume (live mode, mock store)", () => {
   let kitsDir: string;
   beforeAll(async () => {
@@ -222,6 +230,7 @@ describe("runKit — durable resume (live mode, mock store)", () => {
       intent: "Four Step",
       planStore: store as never,
       ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
       resume: true,
     });
     expect(res.ok).toBe(true);
@@ -245,6 +254,7 @@ describe("runKit — durable resume (live mode, mock store)", () => {
       intent: "Four Step",
       planStore: store as never,
       ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
       resume: true,
     });
     const artifactWrites = store.calls.filter((c) => c.artifact !== undefined);
@@ -263,6 +273,7 @@ describe("runKit — durable resume (live mode, mock store)", () => {
       intent: "Four Step",
       planStore: store as never,
       ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
       // resume omitted → fresh run
     });
     expect(res.ok).toBe(true);
@@ -283,6 +294,7 @@ describe("runKit — durable resume (live mode, mock store)", () => {
       intent: "Four Step",
       planStore: store as never,
       ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
       resume: true,
     });
     expect(res.ok).toBe(true);
@@ -300,6 +312,7 @@ describe("runKit — durable resume (live mode, mock store)", () => {
       intent: "Four Step",
       planStore: store as never,
       ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
       resume: true,
       onCheckpoint: (ev) => beats.push(ev.stepIndex),
     });
