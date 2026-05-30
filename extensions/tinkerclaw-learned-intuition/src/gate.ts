@@ -102,7 +102,13 @@ export class AmygdalaGate {
     }
 
     const opts: import("onnxruntime-node").InferenceSession.SessionOptions = {
-      executionProviders: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+      // FORK 2026-05-30: onnxruntime-node uses SHORT EP names ('cpu'/'cuda'),
+      // NOT the C++ long names. Passing "CPUExecutionProvider" made
+      // InferenceSession.create throw "backend not found" → onnxAvailable was
+      // permanently false → the gate could never leave rule-based fallback even
+      // with the runtime installed. CPU is ample for these small nets and skips
+      // the noisy GPU-device probing.
+      executionProviders: ["cpu"],
     };
 
     for (const key of ARCH_KEYS) {
