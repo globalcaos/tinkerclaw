@@ -1,3 +1,18 @@
+// Upgrade 6: trust dimension on indexed code chunks.
+export type VerificationStatus = "unverified" | "partial" | "verified" | "failed";
+
+// Upgrade 9: Zettelkasten link vocabulary. v1 similarity only emits duplicate/related;
+// the richer semantic types are populated by the reflection layer.
+export type LinkType = "duplicate" | "related" | "reference" | "supports" | "contradicts";
+
+// Upgrade 9: a referrer/neighbour edge surfaced alongside a search result.
+export type Backlink = {
+  id: string;
+  linkType: LinkType;
+  linkStrength: number;
+  snippet: string;
+};
+
 export type StoredChunk = {
   id: string;
   path: string;
@@ -9,6 +24,21 @@ export type StoredChunk = {
   text: string;
   embedding: number[];
   updatedAt: number;
+  // Upgrade 3: bi-temporal validity interval + ingestion clock.
+  // validityStart defaults to updatedAt at insert; validityEnd === null means
+  // currently-valid/unbounded; ingestionTime is stamped once at first insert.
+  validityStart?: number;
+  validityEnd?: number | null;
+  ingestionTime?: number;
+  supersededBy?: string | null;
+  // Upgrade 6: verification metadata (defaults to 'unverified' at index time).
+  verificationStatus?: VerificationStatus;
+  testCoveragePercent?: number | null;
+  verifiedBy?: string | null;
+  verificationTimestamp?: number | null;
+  // Upgrade 9: denormalized cache of the durable backlinks (the backlinks table is
+  // authoritative; this JSON is a rebuildable convenience copy).
+  relatedChunks?: string[];
 };
 
 export type SearchResult = {
@@ -19,6 +49,11 @@ export type SearchResult = {
   score: number;
   snippet: string;
   source: string;
+  // Upgrade 6: surface trust so callers can see why a result ranked where it did.
+  verificationStatus?: VerificationStatus;
+  testCoveragePercent?: number | null;
+  // Upgrade 9: opt-in hydrated neighbours (only present when SearchParams.backlinks).
+  backlinks?: Backlink[];
 };
 
 export type SearchParams = {
@@ -33,6 +68,16 @@ export type SearchParams = {
     vector: number;
     text: number;
   };
+  // Upgrade 3: which temporal slice to query. 'current' (default) returns only facts
+  // whose validity interval is open or extends past now; 'valid-at' returns the slice
+  // that was true at asOfTime; 'all' ignores the temporal predicate.
+  temporalMode?: "current" | "valid-at" | "all";
+  asOfTime?: number;
+  // Upgrade 6: trust filters/boost knobs.
+  verificationRequired?: boolean;
+  minTestCoverage?: number;
+  // Upgrade 9: opt-in backlink hydration (off by default to avoid N+1 on every search).
+  backlinks?: boolean;
 };
 
 export type EmbeddingCacheKey = {

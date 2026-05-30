@@ -944,8 +944,12 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
 
     this.db
       .prepare(
-        `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at, granularity, topic_cluster)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        // Upgrade 3: bi-temporal columns. validity_start tracks the latest write;
+        // ingestion_time is set once and must NOT be overwritten on conflict (preserve
+        // first-seen). validity_end stays at its DEFAULT (NULL = currently valid) on insert
+        // and is left untouched on update — closing an interval goes through invalidate().
+        `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at, granularity, topic_cluster, validity_start, ingestion_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            hash=excluded.hash,
            model=excluded.model,
@@ -953,7 +957,8 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
            embedding=excluded.embedding,
            updated_at=excluded.updated_at,
            granularity=excluded.granularity,
-           topic_cluster=excluded.topic_cluster`,
+           topic_cluster=excluded.topic_cluster,
+           validity_start=excluded.validity_start`,
       )
       .run(
         chunkId,
@@ -968,6 +973,8 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         now,
         granularity,
         topicCluster,
+        now,
+        now,
       );
 
     if (vectorReady && embedding.length > 0) {

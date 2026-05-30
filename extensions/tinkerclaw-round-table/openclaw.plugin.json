@@ -17,6 +17,23 @@
       "maxRounds": {
         "type": "number",
         "default": 6
+      },
+      "speakerSelectionMode": {
+        "type": "string",
+        "enum": ["builtin", "ag2-hook", "auto"],
+        "default": "builtin",
+        "description": "7A: who drives role assignment. 'builtin' = greedy bipartite match; 'ag2-hook' = external speaker-selection hook (falls back to builtin if absent); 'auto' = external if present else builtin."
+      },
+      "roleModels": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "default": {},
+        "description": "7B: per-role model overrides (role -> 'provider/model'). Precedence: roleModels[role] > builtin ROLE_MODEL[role] > FALLBACK_MODEL. Lets a cloner keep cross-provider diversity on their own catalog."
+      },
+      "enforceProviderDiversity": {
+        "type": "boolean",
+        "default": false,
+        "description": "7C: when true, guarantee at most one participant per resolved provider (greedily drop the lowest-affinity duplicate). The selected set may shrink to the provider count."
       }
     }
   }

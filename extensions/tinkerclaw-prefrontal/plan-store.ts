@@ -204,13 +204,19 @@ function renderStep(s: PlanStep, i: number): string {
         : s.status === "error"
           ? "[!]"
           : "[ ]";
+  // Timestamps are token-shaped (no spaces) so they round-trip on one comment
+  // line split by spaces. The artifact digest CAN contain spaces, so it gets its
+  // OWN comment line, base64-encoded, to survive the space-split parser
+  // (FORK 2026-05-30, Upgrade 5: durable per-step artifact persistence).
   const meta: string[] = [];
   if (s.startedAt) meta.push(`startedAt:${s.startedAt}`);
   if (s.completedAt) meta.push(`completedAt:${s.completedAt}`);
-  if (s.artifact) meta.push(`artifact:${s.artifact}`);
   const metaLine = meta.length ? `\n  <!-- ${meta.join(" ")} -->` : "";
+  const artifactLine = s.artifact
+    ? `\n  <!-- artifact64:${Buffer.from(s.artifact, "utf-8").toString("base64")} -->`
+    : "";
   const note = s.note ? `\n  ${s.note.replace(/\n/g, "\n  ")}` : "";
-  return `- ${marker} **${i}. ${s.title}**${metaLine}${note}`;
+  return `- ${marker} **${i}. ${s.title}**${metaLine}${artifactLine}${note}`;
 }
 
 export function parsePlanMd(text: string): Plan {
@@ -246,7 +252,21 @@ export function parsePlanMd(text: string): Plan {
       steps.push(lastStep);
       continue;
     }
+    // Artifact comment line (Upgrade 5): <!-- artifact64:<base64> --> — its own
+    // line because the digest may contain spaces (the space-split metadata parser
+    // below would mangle them).
+    const am = /^\s+<!--\s+artifact64:(\S+)\s+-->$/.exec(line);
+    if (am && lastStep) {
+      try {
+        lastStep.artifact = Buffer.from(am[1], "base64").toString("utf-8");
+      } catch {
+        // ignore an undecodable artifact line
+      }
+      continue;
+    }
     // HTML-comment metadata line: <!-- startedAt:... completedAt:... artifact:... -->
+    // (`artifact:` token kept for back-compat with plans written before Upgrade 5;
+    // single-token values only — multi-word digests now use the artifact64 line.)
     const mm = /^\s+<!--\s+(.+?)\s+-->$/.exec(line);
     if (mm && lastStep) {
       for (const kv of mm[1].split(" ")) {

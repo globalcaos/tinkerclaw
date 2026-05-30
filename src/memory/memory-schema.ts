@@ -90,6 +90,49 @@ export function ensureMemoryIndexSchema(params: {
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_granularity ON chunks(granularity);`);
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_topic_cluster ON chunks(topic_cluster);`);
 
+  // Upgrade 3: Bi-temporal graph edges. A fact has a validity interval
+  // (validity_start..validity_end) describing when it was true in the world, and an
+  // ingestion_time describing when the system learned it. New facts that contradict old
+  // ones CLOSE the old interval (set validity_end) and stamp superseded_by — history is
+  // preserved, never overwritten. validity_end IS NULL == currently valid / unbounded.
+  ensureColumn(params.db, "chunks", "validity_start", "INTEGER DEFAULT 0");
+  ensureColumn(params.db, "chunks", "validity_end", "INTEGER DEFAULT NULL");
+  ensureColumn(params.db, "chunks", "ingestion_time", "INTEGER DEFAULT 0");
+  ensureColumn(params.db, "chunks", "superseded_by", "TEXT DEFAULT NULL");
+  // Covering index so the hot-path "current" filter (validity_end IS NULL OR >now)
+  // does not table-scan.
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_validity ON chunks(validity_end);`);
+
+  // Upgrade 6: Retrieve verified code by embedding. Each chunk carries a trust
+  // dimension so retrieval can weight battle-tested code above unreviewed snippets.
+  ensureColumn(params.db, "chunks", "verification_status", "TEXT DEFAULT 'unverified'");
+  ensureColumn(params.db, "chunks", "test_coverage_percent", "INTEGER DEFAULT NULL");
+  ensureColumn(params.db, "chunks", "verified_by", "TEXT DEFAULT NULL");
+  ensureColumn(params.db, "chunks", "verification_timestamp", "INTEGER DEFAULT NULL");
+  params.db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_chunks_verification ON chunks(verification_status);`,
+  );
+
+  // Upgrade 9: Zettelkasten auto-linking. Inter-chunk relatedness (previously ephemeral,
+  // computed during enhancement and thrown away) becomes durable. The backlinks table is
+  // the authoritative store; related_chunks JSON on the chunk row is a rebuildable cache.
+  ensureColumn(params.db, "chunks", "related_chunks", "TEXT DEFAULT NULL");
+  ensureColumn(params.db, "chunks", "link_count", "INTEGER DEFAULT 0");
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS backlinks (
+      from_chunk_id TEXT NOT NULL,
+      to_chunk_id TEXT NOT NULL,
+      link_type TEXT NOT NULL DEFAULT 'related',
+      link_strength REAL NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      verified INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (from_chunk_id, to_chunk_id, link_type)
+    );
+  `);
+  // Index both directions: getBacklinks walks to_chunk_id, k-hop walks from_chunk_id.
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_backlinks_to ON backlinks(to_chunk_id);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_backlinks_from ON backlinks(from_chunk_id);`);
+
   return { ftsAvailable, ...(ftsError ? { ftsError } : {}) };
 }
 

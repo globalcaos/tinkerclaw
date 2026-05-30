@@ -18,9 +18,19 @@ import {
 } from "./embeddings.js";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
 import { MemoryManagerEmbeddingOps } from "./manager-embedding-ops.js";
-import { searchKeyword, searchVector } from "./manager-search.js";
+import {
+  getBacklinks,
+  getBreadthFirstNeighbors,
+  hydrateBacklinks,
+  rankByVerification,
+  searchKeyword,
+  searchVector,
+  type TemporalMode,
+} from "./manager-search.js";
 import { extractKeywords } from "./query-expansion.js";
 import { readMemoryFile } from "./read-file.js";
+import type { Backlink, SearchResult } from "./storage/types.js";
+import { invalidate as invalidateChunk } from "./temporal-invalidation.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
@@ -335,6 +345,14 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       maxResults?: number;
       minScore?: number;
       sessionKey?: string;
+      // Upgrade 3: bi-temporal slice. 'current' (default) | 'valid-at' | 'all'.
+      temporalMode?: TemporalMode;
+      asOfTime?: number;
+      // Upgrade 6: trust filtering/boost.
+      verificationRequired?: boolean;
+      minTestCoverage?: number;
+      // Upgrade 9: opt-in backlink hydration.
+      backlinks?: boolean;
     },
   ): Promise<MemorySearchResult[]> {
     await this.ensureProviderInitialized();
@@ -350,30 +368,52 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     }
     const minScore = opts?.minScore ?? this.settings.query.minScore;
     const maxResults = opts?.maxResults ?? this.settings.query.maxResults;
+    const temporalMode = opts?.temporalMode;
+    const asOfTime = opts?.asOfTime;
     const hybrid = this.settings.query.hybrid;
     const candidates = Math.min(
       HYBRID_CANDIDATES_MAX,
       Math.max(1, Math.floor(maxResults * hybrid.candidateMultiplier)),
     );
+    // Upgrade 6/9: post-rank by verification trust + (optionally) hydrate backlinks before
+    // returning. Applied to whatever the underlying pipeline produced.
+    const finalize = (results: MemorySearchResult[]): MemorySearchResult[] => {
+      let out: MemorySearchResult[] = results;
+      if (opts?.verificationRequired || opts?.minTestCoverage != null) {
+        out = rankByVerification(out as Array<MemorySearchResult & { score: number }>, {
+          verificationRequired: opts?.verificationRequired,
+          minTestCoverage: opts?.minTestCoverage,
+        }) as MemorySearchResult[];
+      }
+      if (opts?.backlinks) {
+        out = hydrateBacklinks(
+          this.db,
+          out as unknown as SearchResult[],
+        ) as unknown as MemorySearchResult[];
+      }
+      return out;
+    };
 
     if (!this.provider) {
-      return this.searchFtsOnly(cleaned, minScore, maxResults, candidates);
+      return finalize(await this.searchFtsOnly(cleaned, minScore, maxResults, candidates));
     }
 
     // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
     const keywordResults =
       hybrid.enabled && this.fts.enabled && this.fts.available
-        ? await this.searchKeyword(cleaned, candidates).catch(() => [])
+        ? await this.searchKeyword(cleaned, candidates, { temporalMode, asOfTime }).catch(() => [])
         : [];
 
     const queryVec = await this.embedQueryWithTimeout(cleaned);
     const hasVector = queryVec.some((v) => v !== 0);
     const vectorResults = hasVector
-      ? await this.searchVector(queryVec, candidates).catch(() => [])
+      ? await this.searchVector(queryVec, candidates, { temporalMode, asOfTime }).catch(() => [])
       : [];
 
     if (!hybrid.enabled || !this.fts.enabled || !this.fts.available) {
-      return vectorResults.filter((entry) => entry.score >= minScore).slice(0, maxResults);
+      return finalize(
+        vectorResults.filter((entry) => entry.score >= minScore).slice(0, maxResults),
+      );
     }
 
     const merged = await this.mergeHybridResults({
@@ -386,7 +426,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     });
     const strict = merged.filter((entry) => entry.score >= minScore);
     if (strict.length > 0 || keywordResults.length === 0) {
-      return strict.slice(0, maxResults);
+      return finalize(strict.slice(0, maxResults));
     }
 
     // Hybrid defaults can produce keyword-only matches with max score equal to
@@ -399,13 +439,60 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         (entry) => `${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`,
       ),
     );
-    return merged
-      .filter(
-        (entry) =>
-          keywordKeys.has(`${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`) &&
-          entry.score >= relaxedMinScore,
-      )
-      .slice(0, maxResults);
+    return finalize(
+      merged
+        .filter(
+          (entry) =>
+            keywordKeys.has(`${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`) &&
+            entry.score >= relaxedMinScore,
+        )
+        .slice(0, maxResults),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Upgrade 3: bi-temporal invalidation (supersede, never delete).
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Close the validity interval of a chunk as of `validAt` (default now), recording the
+   * chunk that superseded it. Preserves history: the row is not deleted, and a "valid-at"
+   * query for the old window still returns it. Returns true if a currently-open interval
+   * was closed.
+   */
+  invalidate(
+    chunkId: string,
+    opts?: { supersededBy?: string | null; reason?: string; validAt?: number },
+  ): boolean {
+    const result = invalidateChunk(
+      this.db,
+      chunkId,
+      opts?.supersededBy ?? null,
+      opts?.reason ?? "manual",
+      { validAt: opts?.validAt, log: (msg) => log.info(msg) },
+    );
+    return result.closed;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Upgrade 9: Zettelkasten retrieval (backlinks + k-hop neighbourhood).
+  // ---------------------------------------------------------------------------
+
+  /** Chunks that link TO `chunkId`, ordered by link strength (descending). */
+  getBacklinks(chunkId: string, limit = 10): Backlink[] {
+    return getBacklinks(this.db, chunkId, limit);
+  }
+
+  /**
+   * Breadth-first walk of the link graph from `chunkId`, both directions, cycle-safe,
+   * capped at `maxDepth`. Returns each reachable neighbour with the depth it was found at.
+   */
+  getBreadthFirstNeighbors(
+    chunkId: string,
+    maxDepth: number,
+    opts?: { limit?: number },
+  ): Array<{ id: string; depth: number }> {
+    return getBreadthFirstNeighbors(this.db, chunkId, maxDepth, opts);
   }
 
   private computeSourceCounts(sourceFilter: {
@@ -483,6 +570,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private async searchVector(
     queryVec: number[],
     limit: number,
+    temporal?: { temporalMode?: TemporalMode; asOfTime?: number },
   ): Promise<Array<MemorySearchResult & { id: string }>> {
     // This method should never be called without a provider
     if (!this.provider) {
@@ -498,6 +586,8 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       ensureVectorReady: async (dimensions) => await this.ensureVectorReady(dimensions),
       sourceFilterVec: this.buildSourceFilter("c"),
       sourceFilterChunks: this.buildSourceFilter(),
+      temporalMode: temporal?.temporalMode,
+      asOfTime: temporal?.asOfTime,
     });
     return results.map((entry) => entry as MemorySearchResult & { id: string });
   }
@@ -509,6 +599,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private async searchKeyword(
     query: string,
     limit: number,
+    temporal?: { temporalMode?: TemporalMode; asOfTime?: number },
   ): Promise<Array<MemorySearchResult & { id: string; textScore: number }>> {
     if (!this.fts.enabled || !this.fts.available) {
       return [];
@@ -524,6 +615,8 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       limit,
       snippetMaxChars: SNIPPET_MAX_CHARS,
       sourceFilter,
+      temporalMode: temporal?.temporalMode,
+      asOfTime: temporal?.asOfTime,
       buildFtsQuery: (raw) => this.buildFtsQuery(raw),
       bm25RankToScore,
     });

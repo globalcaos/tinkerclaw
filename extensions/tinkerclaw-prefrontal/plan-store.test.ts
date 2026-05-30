@@ -68,6 +68,28 @@ describe("PlanStore", () => {
     expect(plan!.currentStep).toBe(1);
   });
 
+  it("round-trips a per-step artifact digest (incl. spaces) via render/parse (Upgrade 5)", async () => {
+    await store.set({
+      sessionKey: "agent:main:main",
+      intent: "x",
+      runId: "r1",
+      steps: [{ title: "A" }, { title: "B" }],
+    });
+    await store.step({ sessionKey: "agent:main:main", stepIndex: 0, status: "in_progress" });
+    const digest = "found 3 call sites in app.ts and patched the filter at line 2046";
+    await store.step({
+      sessionKey: "agent:main:main",
+      stepIndex: 0,
+      status: "done",
+      note: "long note here",
+      artifact: digest,
+    });
+    // Re-read from disk → exercises renderPlanMd → parsePlanMd.
+    const plan = await store.get("agent:main:main");
+    expect(plan!.steps[0].artifact).toBe(digest);
+    expect(plan!.steps[0].note).toBe("long note here");
+  });
+
   it("close archives the file under archive/<YYYY-MM-DD>/ and removes the live plan", async () => {
     await store.set({
       sessionKey: "agent:main:main",

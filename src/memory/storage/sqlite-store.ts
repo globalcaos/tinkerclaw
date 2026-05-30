@@ -149,8 +149,9 @@ export class SQLiteMemoryStore implements MemoryStore {
     }
 
     const insertChunk = this.db.prepare(
-      `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at) ` +
-        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at, ` +
+        `validity_start, validity_end, ingestion_time, verification_status, test_coverage_percent) ` +
+        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     const insertVec = this.vectorReady
@@ -172,6 +173,10 @@ export class SQLiteMemoryStore implements MemoryStore {
     try {
       for (const chunk of chunks) {
         const embeddingStr = JSON.stringify(chunk.embedding);
+        // Upgrade 3: validity_start defaults to updatedAt; ingestion_time stamped once.
+        // validity_end stays NULL (currently-valid). Upgrade 6: status defaults unverified.
+        const validityStart = chunk.validityStart ?? chunk.updatedAt;
+        const ingestionTime = chunk.ingestionTime ?? chunk.updatedAt;
         insertChunk.run(
           chunk.id,
           chunk.path,
@@ -183,6 +188,11 @@ export class SQLiteMemoryStore implements MemoryStore {
           chunk.text,
           embeddingStr,
           chunk.updatedAt,
+          validityStart,
+          chunk.validityEnd ?? null,
+          ingestionTime,
+          chunk.verificationStatus ?? "unverified",
+          chunk.testCoveragePercent ?? null,
         );
 
         if (insertVec) {

@@ -20,16 +20,34 @@ import { join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
-import { DEFAULT_PROVIDER_PROFILES } from "./src/cognitive-diversity.js";
+import {
+  DEFAULT_PROVIDER_PROFILES,
+  assertProviderDiversity,
+  selectBackupParticipant,
+  selectModelsForDebateWithProviderDiversity,
+  type ProviderProfile,
+} from "./src/cognitive-diversity.js";
 import { createPersistentDeliberation } from "./src/persistent-deliberation.js";
 import {
   runDebate,
   DEFAULT_DEBATE_CONFIG,
-  assignRoles,
+  ROLE_AFFINITY,
   type DebateParticipant,
   type DebateConfig,
+  type RecoveryHooks,
 } from "./src/raac-protocol.js";
-import { createRealParticipant, type Phase } from "./src/real-participant.js";
+import {
+  createRealParticipant,
+  modelForRole,
+  type Phase,
+  type RoleModels,
+} from "./src/real-participant.js";
+import {
+  assignRolesViaHook,
+  resolveSpeakerSelection,
+  type SpeakerSelectionHook,
+  type SpeakerSelectionMode,
+} from "./src/speaker-selection-api.js";
 
 // -- Constants --
 
@@ -117,6 +135,33 @@ export default definePluginEntry({
     const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
     const defaultDepth = (cfg.defaultDepth as string) ?? "standard";
     const maxRoundsOverride = cfg.maxRounds as number | undefined;
+    // 7A/7B/7C config (all declared in openclaw.plugin.json:configSchema —
+    // additionalProperties:false rejects any key not declared there).
+    const speakerSelectionMode = (cfg.speakerSelectionMode as SpeakerSelectionMode) ?? "builtin";
+    const roleModels = (cfg.roleModels as RoleModels) ?? {};
+    const enforceProviderDiversity = (cfg.enforceProviderDiversity as boolean) ?? false;
+
+    // 7A: an external AG2 speaker-selection hook may be exported by a sibling plugin.
+    // The INTERFACE lives in this extension; the PROVIDER is resolved lazily so the
+    // substrate stays open without a hard dependency. Absent provider => builtin.
+    let externalSpeakerHook: SpeakerSelectionHook | null = null;
+    const loadExternalSpeakerHook = async (): Promise<SpeakerSelectionHook | null> => {
+      if (speakerSelectionMode === "builtin") return null;
+      if (externalSpeakerHook) return externalSpeakerHook;
+      try {
+        const res = (await callGatewayFromCli(
+          "plugins.getSpeakerSelectionHook",
+          { timeout: "5000" },
+          {},
+          { progress: false },
+        )) as { ok?: boolean; hook?: SpeakerSelectionHook } | null;
+        externalSpeakerHook = res?.ok && res.hook ? res.hook : null;
+      } catch {
+        // RPC absent or errored — builtin fallback (never hard-fail; recon Risk 4).
+        externalSpeakerHook = null;
+      }
+      return externalSpeakerHook;
+    };
 
     // Write cross-extension state for discovery
     try {
@@ -149,8 +194,22 @@ export default definePluginEntry({
             ...(maxRoundsOverride != null ? { maxRounds: maxRoundsOverride } : {}),
           };
 
-          // Select and assign participants
-          const profiles = DEFAULT_PROVIDER_PROFILES.slice(0, depth === "quick" ? 3 : 5);
+          // Select and assign participants.
+          // 7C: when enforceProviderDiversity is on, the selection guarantees <=1
+          // participant per RESOLVED provider (provider derived from modelForRole's
+          // ref, not the cosmetic modelId), greedily dropping the lowest-affinity
+          // duplicate. Otherwise keep the original depth-based slice.
+          const candidateProfiles = DEFAULT_PROVIDER_PROFILES.slice(0, depth === "quick" ? 3 : 5);
+          // resolveRef wires 7C's provider derivation to 7B's role->ref mapping so the
+          // two upgrades agree on what "provider" means for each profile.
+          const resolveRef = (p: ProviderProfile): string => modelForRole(p.role, roleModels);
+          const profiles: ProviderProfile[] = enforceProviderDiversity
+            ? selectModelsForDebateWithProviderDiversity(candidateProfiles, {
+                resolveRef,
+                affinity: ROLE_AFFINITY,
+                onWarn: (msg) => api.logger.warn(msg),
+              })
+            : candidateProfiles;
 
           const callModel = async ({
             model,
@@ -267,19 +326,75 @@ export default definePluginEntry({
             }
           };
 
-          // Preserve the bipartite role assignment (assignRoles, raac-protocol.ts:117)
-          // the ORIGINAL construction applied; route the ASSIGNED role into the profile
-          // so modelForRole picks the right cross-provider model.
-          const roleAssignment = assignRoles(profiles.map((p) => p.modelId));
-          const participants: DebateParticipant[] = profiles.map((p) =>
-            createRealParticipant(
-              { ...p, role: roleAssignment[p.modelId] ?? p.role },
-              { callModel },
-            ),
+          // 7A: resolve role assignment via the pluggable speaker-selection hook.
+          // Builtin mode reproduces assignRoles byte-for-byte; ag2-hook/auto modes let
+          // an external manager drive it. assignRolesViaHook guarantees a builtin
+          // fallback on null/throw/empty/invalid (so the debate never hard-fails).
+          const activeHook = resolveSpeakerSelection(
+            speakerSelectionMode,
+            await loadExternalSpeakerHook(),
+          );
+          const roleAssignment = await assignRolesViaHook(
+            {
+              profiles,
+              roles: ["architect", "critic", "pragmatist", "researcher", "synthesizer"],
+              task: topic,
+            },
+            activeHook,
+            (msg) => api.logger.warn(msg),
+          );
+          // Route the ASSIGNED role into each profile so modelForRole (with 7B
+          // overrides) picks the right cross-provider model.
+          const assignedProfiles: ProviderProfile[] = profiles.map((p) => ({
+            ...p,
+            role: roleAssignment[p.modelId] ?? p.role,
+          }));
+          const participants: DebateParticipant[] = assignedProfiles.map((p) =>
+            createRealParticipant(p, { callModel }, roleModels),
           );
 
-          // Run the debate
-          const result = await runDebate(topic, participants, config);
+          // 7C: log the provider mix at debate start so a diversity collapse is
+          // visible in the trace (the empirical backbone of the paper's claim).
+          const debateRefs = assignedProfiles.map((p) => modelForRole(p.role, roleModels));
+          const providerMix = assertProviderDiversity(debateRefs);
+          api.logger.info(
+            `[round-table] debate_providers=${Object.keys(providerMix).join(",")} ` +
+              `mix=${JSON.stringify(providerMix)}`,
+          );
+
+          // 7E: dropout recovery — promote a backup participant when a phase response
+          // is a failure sentinel, rather than letting the sentinel poison the
+          // synthesis. The backup respects the 7C provider lock and is charged like any
+          // other call (one attempt per slot).
+          const activeIds = new Set(assignedProfiles.map((p) => p.modelId));
+          const recovery: RecoveryHooks = {
+            selectBackup: (role, currentlyActive) =>
+              ((): DebateParticipant | null => {
+                const backupProfile = selectBackupParticipant(
+                  DEFAULT_PROVIDER_PROFILES,
+                  new Set([...activeIds, ...currentlyActive]),
+                  role,
+                  {
+                    resolveRef,
+                    activeRefs: debateRefs,
+                    affinity: ROLE_AFFINITY,
+                  },
+                );
+                if (!backupProfile) return null;
+                return createRealParticipant({ ...backupProfile, role }, { callModel }, roleModels);
+              })(),
+            callBackup: async (backup, phase) => {
+              switch (phase) {
+                case "propose":
+                  return backup.propose(topic, backup.role);
+                default:
+                  return backup.propose(topic, backup.role);
+              }
+            },
+          };
+
+          // Run the debate (with dropout recovery wired in)
+          const result = await runDebate(topic, participants, config, recovery);
 
           // Persist traces
           try {
