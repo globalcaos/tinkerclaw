@@ -64,6 +64,13 @@ export interface KitRunOptions {
   resume?: boolean;
   /** FORK 2026-05-30 (Upgrade 5): optional in-flight checkpoint heartbeat sink. */
   onCheckpoint?: CheckpointEmitter;
+  /**
+   * FORK 2026-05-30 (Upgrade 5): per-step spawn injection seam. Defaults to the
+   * real openclaw-spawn-subagent.mjs helper (`spawnStep`). Tests inject a no-op
+   * so a mock planStore can drive step completion without a live gateway — the
+   * real dispatch path stays untouched in production.
+   */
+  _spawnStep?: (task: string, label: string) => Promise<SpawnResult>;
 }
 
 /** FORK 2026-05-30 (Upgrade 5): max chars of a step's done-note persisted as the
@@ -813,7 +820,7 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
         } catch {
           // fall back to the bare task on any read failure
         }
-        const spawnResult = await spawnStep(taskWithContext, dispatch.label);
+        const spawnResult = await (opts._spawnStep ?? spawnStep)(taskWithContext, dispatch.label);
         if (!spawnResult.ok) {
           return { ok: false, note: `spawn failed: ${spawnResult.error ?? "unknown"}` };
         }
