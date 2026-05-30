@@ -17,6 +17,9 @@
 // All blocks render together every time update() is called; partial
 // updates are cheap because the DOM is just rebuilt (<~50 nodes total).
 
+// FORK 2026-05-30: subagent (child) rows take their stable per-subagent color so a
+// panel row matches that subagent's chat sub-bubble — the SAME function the chat uses.
+import { colorForSubagent } from "../subagent-color.js";
 import { getProviderColor, getProviderBorderColor, getProviderLogoSvg } from "./provider-logos.js";
 
 // FORK 2026-05-13 — Current Plan types (Phase 2 plan-board).
@@ -684,8 +687,14 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
 
   function renderNode(node: TreeNode, isChild: boolean): HTMLElement {
     const row = el("div", `pf-node ${isChild ? "pf-child" : "pf-root"}`);
-    const color = getProviderColor(node.provider);
-    const borderColor = getProviderBorderColor(node.provider);
+    // FORK 2026-05-30: child = subagent → use its stable per-subagent identity color
+    // (glyph dot, glow, model name) so the row matches the subagent's chat sub-bubble.
+    // The root (main run) keeps the provider color. The provider LOGO below still
+    // renders the provider's own brand color so the model family stays legible.
+    const color = isChild ? colorForSubagent(node.runId) : getProviderColor(node.provider);
+    const borderColor = isChild
+      ? colorForSubagent(node.runId)
+      : getProviderBorderColor(node.provider);
     const isActive =
       node.status !== "completed" && node.status !== "failed" && node.status !== "stalled";
 
