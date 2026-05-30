@@ -5935,3 +5935,65 @@ code.fs-link.fs-link-error {
   font-family: var(--mono, monospace);
   color: #eab308;
 }
+
+/* FORK 2026-05-30: collapsible per-subagent chat bubble. The colored "label"
+   summary is always visible (the live roster of running subagents); the thinking
+   body is behind a <details>, collapsed by default. --subagent-color is the
+   subagent's stable identity color — the SAME color as its RECIPES panel row
+   (both via colorForSubagent), so chat and panel always match. */
+.msg-subagent-details {
+  margin: 4px 0 4px 8px;
+  border-left: 3px solid var(--subagent-color, #6b7280);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--subagent-color, #6b7280) 6%, transparent);
+}
+.msg-subagent-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  user-select: none;
+}
+.msg-subagent-summary::-webkit-details-marker {
+  display: none;
+}
+.msg-subagent-summary::before {
+  content: "▸";
+  color: var(--subagent-color, #6b7280);
+  font-size: 11px;
+  transition: transform 0.12s ease;
+}
+.msg-subagent-details[open] > .msg-subagent-summary::before {
+  transform: rotate(90deg);
+}
+.msg-subagent-badge {
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+.msg-subagent-details > .msg-subagent {
+  margin: 0 8px 8px 8px;
+}
+.msg-subagent-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--subagent-color, #6b7280);
+  animation: subagent-pulse 1.1s ease-in-out infinite;
+}
+@keyframes subagent-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
