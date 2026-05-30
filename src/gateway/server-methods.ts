@@ -1,3 +1,4 @@
+import { forkCuriosityHandlers } from "../fork/curiosity-rpc.js";
 import { forkPrefrontalStateHandlers } from "../fork/prefrontal-state-rpc.js";
 import { forkSubagentsHandlers } from "../fork/subagents-rpc.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
@@ -134,6 +135,9 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...forkSubagentsHandlers,
   // FORK 2026-04-20: prefrontal orchestration observability (recipe state + trail events).
   ...forkPrefrontalStateHandlers,
+  // FORK 2026-05-30 (J8 Upgrade 2): curiosity / intrinsic-motivation RPCs
+  // (logGap + episodic-buffer surface). Registered like the prefrontal handlers.
+  ...forkCuriosityHandlers,
   ...wizardHandlers,
   ...talkHandlers,
   ...toolsCatalogHandlers,
