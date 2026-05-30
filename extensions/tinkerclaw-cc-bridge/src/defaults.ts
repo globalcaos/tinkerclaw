@@ -78,15 +78,62 @@ export const DEFAULT_PLUGIN_DIRS = [
 // still bail correctly on truly stuck subprocesses.
 export const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
+// FORK 2026-05-29: per-model `maxOutputTokens` — the model's real max output
+// (thinking + visible text), the value cc-bridge pins as
+// CLAUDE_CODE_MAX_OUTPUT_TOKENS on the CLI and reports as the provider's
+// maxTokens. NOT a round-number reflex: each is at-or-below its family's
+// documented output ceiling (so it never 400s) and far above any realistic
+// response (~15k), so it never truncates. Sonnet 4.x carries the higher 64k
+// output ceiling; the Opus/Haiku families sit at 32k. Bump a value here when
+// Anthropic raises a model's output limit — single source of truth.
 export const DEFAULT_MODELS = [
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7", reasoning: true, contextWindow: 1_000_000 },
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", reasoning: true, contextWindow: 200_000 },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", reasoning: true, contextWindow: 1_000_000 },
-  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: false, contextWindow: 200_000 },
+  {
+    id: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
+    id: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
+    id: "claude-opus-4-6",
+    name: "Claude Opus 4.6",
+    reasoning: true,
+    contextWindow: 200_000,
+    maxOutputTokens: 32_000,
+  },
+  {
+    id: "claude-sonnet-4-6",
+    name: "Claude Sonnet 4.6",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 64_000,
+  },
+  {
+    id: "claude-haiku-4-5",
+    name: "Claude Haiku 4.5",
+    reasoning: false,
+    contextWindow: 200_000,
+    maxOutputTokens: 32_000,
+  },
 ] as const;
 
 export const MODEL_ALIASES: Record<string, string> = {
-  opus: "claude-opus-4-7",
+  opus: "claude-opus-4-8",
   sonnet: "claude-sonnet-4-6",
   haiku: "claude-haiku-4-5",
 };
+
+/** Output-token ceiling for a model id (resolves aliases). Falls back to a
+ *  safe 32k when the model is unknown/unset. */
+export function maxOutputTokensFor(modelId: string | undefined): number {
+  if (!modelId) return 32_000;
+  const id = MODEL_ALIASES[modelId] ?? modelId;
+  return DEFAULT_MODELS.find((m) => m.id === id)?.maxOutputTokens ?? 32_000;
+}

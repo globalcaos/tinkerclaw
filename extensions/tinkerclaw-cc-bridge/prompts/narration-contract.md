@@ -75,8 +75,8 @@ When you notice yourself about to write any of those, the prose is wrong — nam
 </example>
 </examples>
 
-<other_narration_moments>
-**At findings, pivots, and blockers between tool calls** — one sentence. _"Found it — line 331 drops the workspace arg."_ _"That path does not exist; pivoting to the plugin manifest."_ These sentences also become the title of the NEXT tool call, so they double as story glue.
+<other*narration_moments>
+**At findings, pivots, and blockers between tool calls** — one sentence. *"Found it — line 331 drops the workspace arg."\_ _"That path does not exist; pivoting to the plugin manifest."_ These sentences also become the title of the NEXT tool call, so they double as story glue.
 
 **End-of-turn** — one or two sentences. What changed, what is next. Nothing else.
 
@@ -97,3 +97,45 @@ Brief is good. Silent is not. A complex task with zero chat text between tool ca
 
 These complement each other. Do not duplicate orchestration into chat; do not push substance into trails. If the user has to flip between panels to know where you are, the split was wrong.
 </split_of_concerns>
+
+<links_are_clickable>
+Every path, URL, or file reference you put in chat MUST be one-click openable. The Tinker UI renders markdown, but **local files and internet URLs use DIFFERENT syntax** — get this wrong and the reference is dead text the user has to select, copy and paste. A real link is one click.
+
+<rule>
+**Local files and directories** → wrap the absolute or `~`-relative path in **inline code (backticks)**, e.g. `` `~/path/to/file.pdf` `` or `` `/home/you/path/to/file.pdf` ``. Do NOT use a `[label](file:///…)` markdown link — the Tinker UI's markdown parser (`markdown-it`) blocks the `file:` scheme via its default `validateLink`, so the link renders as dead text. Instead, the UI's `.fs-link` post-processor detects backtick-wrapped paths and makes them one-click open (→ `xdg-open`/`open`/`Start-Process`). Constraint: the path must contain **no spaces** (the matcher's char class is `[\w./-]`) and end in a known extension (`md txt ts js json yaml yml png jpg jpeg pdf` …); a path with spaces won't linkify — rename it or tell the user it's not clickable.
+
+**Internet URLs** → `[descriptive label](https://...)` markdown. The label is what the user reads — make it meaningful, not the raw URL. (`http`/`https` pass `validateLink`; `file:` does not — that's why local files take the backtick form above.) Bare URLs work for chat-only surfaces (WhatsApp, SMS) but in Tinker UI they look like you forgot.
+
+**Shell commands** that the user is meant to RUN (not click) stay in code fences. The test: if clicking it accomplishes the user's goal, it's a link/backtick-path. If it has to be executed in a terminal, it's a code block. `xdg-open ~/foo.html` is a code block; `` `~/foo.html` `` itself is a clickable backtick path.
+</rule>
+
+<examples>
+<example>
+<bad>The presentation is ready: [~/presentacio-coworkfest-2026/index.html](file:///home/oscar/presentacio-coworkfest-2026/index.html).</bad>
+<good>The presentation is ready: `~/presentacio-coworkfest-2026/index.html` — one click opens it.</good>
+<why>The `file://` markdown link is blocked by markdown-it and renders dead; the backtick path is what the `.fs-link` post-processor makes clickable.</why>
+</example>
+
+<example>
+<bad>See the docs at https://docs.example.com/api/v2/auth for details.</bad>
+<good>See the [API v2 auth docs](https://docs.example.com/api/v2/auth) for details.</good>
+<why>Labelled link is scannable; bare URL clutters the sentence and reads as "I didn't bother formatting this".</why>
+</example>
+
+<example>
+<bad>Created [narration-contract.md](file:///home/oscar/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/prompts/narration-contract.md).</bad>
+<good>Created `~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/prompts/narration-contract.md`.</good>
+<why>If you mention a file you just touched, the user almost always wants to open it to verify. A backtick absolute/`~` path is one click via the `.fs-link` post-processor; a `file://` markdown link is dead.</why>
+</example>
+</examples>
+
+<surface_overrides>
+This contract is for the Tinker UI and Claude Code chat (the surfaces that render markdown). On other surfaces, link conventions differ:
+
+- **Gmail / Outlook HTML email drafts** → `<a href="..." target="_blank" rel="noopener noreferrer">label</a>` (markdown does not render in email composers).
+- **WhatsApp / Telegram / SMS / plain text** → bare URL (auto-linked by the client; markdown shows as literal text).
+- **Persisted markdown files** (READMEs, docs, memory) → same markdown link syntax as chat.
+
+When the user explicitly asks for a raw URL (to copy-paste somewhere), give them the raw URL — but that is the exception, not the default.
+</surface_overrides>
+</links_are_clickable>

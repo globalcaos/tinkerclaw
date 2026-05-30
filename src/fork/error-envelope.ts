@@ -93,8 +93,8 @@ const GENERIC: ErrorLookupEntry = {
   category: "generic",
   fatal: true,
   headline: "Something went wrong",
-  explanation: "An unexpected error occurred. The raw message is attached below.",
-  suggestedActions: ["Try again", "Check the gateway logs for details"],
+  explanation: "An unexpected error occurred. Expand for the raw message.",
+  suggestedActions: [],
   icon: "⚠️",
 };
 
@@ -115,7 +115,6 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
       "OpenClaw cannot recover on its own: a fresh login is required.",
     suggestedActions: [
       "Run `claude` in a terminal to re-login to Claude Code",
-      "If login succeeds but this error persists, restart the OpenClaw gateway",
       "If Anthropic keeps rejecting, check https://www.anthropic.com/status",
     ],
     // 🔐 padlock — credentials / unlock-this-to-fix
@@ -202,11 +201,9 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     category: "timeout",
     fatal: false,
     headline: "Request timed out",
-    explanation: "The provider did not reply within the configured timeout window.",
-    suggestedActions: [
-      "Try again",
-      "Increase `agents.defaults.timeoutSeconds` if this is frequent",
-    ],
+    explanation:
+      "The provider did not reply within the configured timeout window. I'm retrying automatically.",
+    suggestedActions: ["If timeouts are frequent, raise `agents.defaults.timeoutSeconds`"],
     // ⏱️ stopwatch — deadline exceeded
     icon: "⏱️",
   },
@@ -214,8 +211,9 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     category: "provider_error",
     fatal: true,
     headline: "Provider error",
-    explanation: "The provider returned an error but did not specify a known failure mode.",
-    suggestedActions: ["Check the raw message below", "Retry"],
+    explanation:
+      "The provider returned an error but did not specify a known failure mode. I'm retrying; expand for the raw message.",
+    suggestedActions: [],
     // ⚠️ warning — generic unclassified fault
     icon: "⚠️",
   },
@@ -224,8 +222,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     fatal: false,
     headline: "Previous run still shutting down",
     explanation:
-      "A prior turn has not fully released the session lane. This usually clears within a few seconds.",
-    suggestedActions: ["Wait a moment and resend"],
+      "A prior turn has not fully released the session lane. This clears within a few seconds on its own.",
+    suggestedActions: [],
     // 🔄 cyclic-arrow — cycle still draining
     icon: "🔄",
   },
@@ -233,8 +231,9 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     category: "busy",
     fatal: false,
     headline: "Another reply is already running",
-    explanation: "The gateway still holds an active reply operation for this session.",
-    suggestedActions: ["Wait a moment and resend"],
+    explanation:
+      "The gateway still holds an active reply operation for this session. It clears on its own.",
+    suggestedActions: [],
     // ⏳ hourglass — still processing, just wait
     icon: "⏳",
   },
@@ -243,8 +242,8 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     fatal: true,
     headline: "Turn ended without a response",
     explanation:
-      "The provider closed the stream without producing any assistant output. This usually indicates a silent provider failure.",
-    suggestedActions: ["Retry", "Check gateway logs for details"],
+      "The provider closed the stream without producing any output — usually a silent provider failure. I'm retrying automatically.",
+    suggestedActions: [],
     // 🫥 dotted-line-face — the model went silent
     icon: "🫥",
   },
@@ -273,54 +272,40 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
   cc_bridge_sigterm: {
     category: "provider_error",
     fatal: false,
-    headline: "Gateway restart killed this turn",
+    headline: "Gateway restarted",
     explanation:
-      "The `claude` subprocess received **SIGTERM (exit 143)** mid-turn. This is almost always a gateway restart — not an Anthropic rejection. Any partial text you saw in the bubble above was what Jarvis had streamed before the kill. Retry and it should run clean.",
-    suggestedActions: [
-      "Retry the message",
-      "Check gateway journal if this recurs without a restart",
-    ],
+      "Your previous turn was interrupted by a gateway restart — not a provider or auth problem. I'm resuming it automatically; any partial text above is what streamed before the interruption.",
+    suggestedActions: [],
     // 🔌 plug — interrupted externally
     icon: "🔌",
   },
   cc_bridge_sigkill: {
     category: "provider_error",
     fatal: false,
-    headline: "Claude subprocess force-killed",
+    headline: "Turn interrupted to free memory",
     explanation:
-      "The `claude` subprocess was **SIGKILL'd (exit 137)**. Usually the Linux OOM killer reclaiming memory. Not an Anthropic or auth issue. Retry; if it repeats, gateway memory is tight.",
-    suggestedActions: [
-      "Retry the message",
-      "Check `dmesg` for `oom-kill` events",
-      "Restart the gateway to reclaim memory",
-    ],
+      "The turn was stopped to reclaim memory — not a provider or auth issue. I'm resuming it automatically. If it keeps happening, the gateway is running tight on memory.",
+    suggestedActions: [],
     // 💀 skull — hard kill
     icon: "💀",
   },
   cc_bridge_silent: {
     category: "timeout",
     fatal: false,
-    headline: "Claude subprocess went silent",
+    headline: "Turn stalled — restarting it",
     explanation:
-      "The `claude` subprocess was alive but emitted no stream output for over the configured watchdog window. This can happen when the CLI is hung on a slow tool call or waiting on network. The worker killed it to free the lane.",
-    suggestedActions: [
-      "Retry — the new worker spawns a fresh subprocess",
-      "If recurring, check the last tool call in the bubble above",
-    ],
+      "The assistant stopped producing output for longer than the watchdog allows, usually a hung tool call or a slow network wait. I restarted it on a fresh worker and am continuing.",
+    suggestedActions: [],
     // 🔇 muted — no output
     icon: "🔇",
   },
   cc_bridge_nonzero_exit: {
     category: "provider_error",
     fatal: true,
-    headline: "Claude subprocess crashed",
+    headline: "The assistant process crashed",
     explanation:
-      "The `claude` CLI exited with a non-zero status mid-turn without a recognised kill signal. Check the stderr tail attached below for the CLI's own error message.",
-    suggestedActions: [
-      "Retry the message",
-      "If this is new, roll back the latest `claude` CLI update",
-      "Check `journalctl --user -u openclaw-gateway` for stack traces",
-    ],
+      "The underlying `claude` process exited unexpectedly mid-turn. I have the error details and am retrying; if this started after a recent `claude` CLI update, rolling that update back usually fixes it.",
+    suggestedActions: ["If this began after a `claude` CLI update, roll the update back"],
     // 💥 collision — process crashed
     icon: "💥",
   },
