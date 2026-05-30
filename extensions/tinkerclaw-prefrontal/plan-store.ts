@@ -26,7 +26,7 @@ export class PlanStore {
     return this.filePath(sessionKey);
   }
 
-  /** Public accessor for the root directory (used by restart-continue scanner). */
+  /** Public accessor for the plans root directory. */
   rootDirPublic(): string {
     return this.opts.rootDir;
   }

@@ -1116,6 +1116,34 @@ const PROVIDER_COLORS: Record<string, string> = {
   deepseek: "#4f8ff7",
 };
 
+// FORK 2026-05-29: stable per-subagent colors for chat sub-bubbles + tree rows.
+// Mirrors the 🟦🟢🟣🟠🔴🟡🟤 palette Jarvis uses for one-bubble-per-task narration,
+// so a given subagent has ONE identity everywhere (chat + RECIPES panel).
+const SUBAGENT_PALETTE = [
+  "#3b82f6", // 🟦 blue
+  "#22c55e", // 🟢 green
+  "#a855f7", // 🟣 purple
+  "#f97316", // 🟠 orange
+  "#ef4444", // 🔴 red
+  "#eab308", // 🟡 yellow
+  "#a16207", // 🟤 brown
+];
+const subagentColorCache = new Map<string, string>();
+function colorForSubagent(id: string): string {
+  const cached = subagentColorCache.get(id);
+  if (cached) return cached;
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  const color = SUBAGENT_PALETTE[h % SUBAGENT_PALETTE.length];
+  subagentColorCache.set(id, color);
+  return color;
+}
+function shortSubagentId(id: string): string {
+  // Last path segment, truncated — runIds/sessionKeys are long.
+  const tail = id.split(/[:/]/).filter(Boolean).pop() ?? id;
+  return tail.length > 10 ? tail.slice(0, 10) : tail;
+}
+
 // API cost per MTok [input, output] by model short name
 const MODEL_COST: Record<string, [number, number]> = {
   // Anthropic (source: platform.claude.com/docs/en/docs/about-claude/models)
@@ -1459,7 +1487,14 @@ function buildPrefrontalTree(): TreeResponse {
     budgetScope === "all" &&
     latestTreeFromExtension &&
     Date.now() - latestTreeFromExtensionAt < PREFRONTAL_EXT_TREE_TTL_MS &&
-    latestTreeFromExtension.active
+    latestTreeFromExtension.active &&
+    // FORK 2026-05-30 ("Prefrontal rethink" stuck bug): the extension tree is the
+    // GLOBAL view and keeps broadcasting active:true until the extension clears
+    // its active-main marker (which lags, or never fires if agent_end is missed).
+    // chat.final/aborted is authoritative and empties activeRuns immediately, so
+    // if THIS client knows of zero running runs, the panel must go idle in sync
+    // with every other indicator instead of showing a frozen-clock "thinking".
+    activeRuns.size > 0
   ) {
     if (PF_DEBUG_STATE.lastRenderSource !== "extension") {
       PF_DEBUG_STATE.lastRenderSource = "extension";
@@ -2805,6 +2840,12 @@ function onEvent(evt: unknown) {
           "warn",
           "recipe-step",
           "spawn-fail",
+          // FORK 2026-05-29: recipe-lifecycle provenance verbs.
+          "searched",
+          "matched",
+          "merged",
+          "composed",
+          "authored",
         ];
         const kind: TrailEventKind = ALLOWED.includes(d.kind as TrailEventKind)
           ? (d.kind as TrailEventKind)
@@ -4445,17 +4486,56 @@ function renderSectionedReply(sec: SectionedReply, elapsed: string = ""): string
     // No markers at all — fall back to raw
     h += `<div class="msg assistant">${md(sec.other)}${elapsed}</div>`;
   }
+  // FORK 2026-05-30 ("Amygdala/Fractal" task): the compacted views now show a
+  // one-line content summary, and if the turn changed an internal md (or code)
+  // file, that is surfaced FIRST (📝 file — change), replacing the summary and
+  // styled distinctly so a file mutation never hides behind a generic label.
+  const detectFileChange = (t: string): { file: string; change: string } | null => {
+    const verb = /\b(chang|updat|edit|wrote|writ|modif|append|added|creat|remov|delet)/i;
+    const fileRe = /([\w./-]+\.(?:md|markdown|ts|tsx|js|mjs|json|py|css|sh))/i;
+    for (const raw of t.split("\n")) {
+      const fm = fileRe.exec(raw);
+      if (fm && verb.test(raw)) {
+        const change = raw
+          .replace(/[*_`#>]/g, "")
+          .replace(/^\s*[-+]\s*/, "")
+          .trim();
+        return { file: fm[1], change: change.length > 110 ? change.slice(0, 110) + "…" : change };
+      }
+    }
+    return null;
+  };
+  const firstLine = (t: string): string => {
+    for (const raw of t.split("\n")) {
+      const ln = raw.replace(/[*_`#>]/g, "").trim();
+      if (ln && !/^[-=]{2,}$/.test(ln)) return ln.length > 90 ? ln.slice(0, 90) + "…" : ln;
+    }
+    return "";
+  };
+  const artifactSummary = (t: string, fallback: string): { html: string; cls: string } => {
+    const fc = detectFileChange(t);
+    if (fc) {
+      return {
+        html: `📝 <strong>${esc(fc.file)}</strong> — ${esc(fc.change)}`,
+        cls: " artifact-filechange",
+      };
+    }
+    const ln = firstLine(t);
+    return { html: ln ? esc(ln) : fallback, cls: "" };
+  };
   if (mergedAmygdala) {
+    const s = artifactSummary(mergedAmygdala, "<em>Amygdala</em> — gut read");
     h +=
       `<details class="msg msg-amygdala">` +
-      `<summary class="amygdala-summary">🧠 <em>Amygdala</em> — gut read</summary>` +
+      `<summary class="amygdala-summary${s.cls}">🧠 ${s.html}</summary>` +
       `<div class="amygdala-body">${md(mergedAmygdala)}</div>` +
       `</details>`;
   }
   if (sec.fractal) {
+    const s = artifactSummary(sec.fractal, "<em>Fractal</em> — reflection");
     h +=
       `<details class="fractal-details">` +
-      `<summary class="fractal-summary">🌿 <em>Fractal</em> — reflection</summary>` +
+      `<summary class="fractal-summary${s.cls}">🌿 ${s.html}</summary>` +
       `<div class="msg msg-fractal">${md(sec.fractal)}</div>` +
       `</details>`;
   }
@@ -4602,13 +4682,21 @@ function renderEnvelope(env: Envelope): string {
   const explanation = env.explanation
     ? `<div class="env-explanation">${md(env.explanation)}</div>`
     : "";
+  // FORK 2026-05-30 (Oscar directive): progressive disclosure. The COLLAPSED
+  // view is just the icon + headline — a small, plain-language warning the
+  // normal user can glance past ("Gateway restarted"). Everything else
+  // (explanation, actions, the technical kv/raw block) lives inside the
+  // expand, so an advanced user can open it and explore. Recoverable errors
+  // (fatal:false) collapse by default — I'm already handling them, so there's
+  // nothing to act on. Fatal errors render `open` because the user must act,
+  // so we never hide the call-to-action behind a click.
+  const openAttr = env.fatal ? " open" : "";
+  const body = explanation + actions + tech;
   return (
-    `<div class="msg msg-envelope ${variantClass}" data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
-    `<div class="env-header"><span class="env-icon">${esc(env.icon ?? "⚠️")}</span><span class="env-headline">${esc(env.headline)}</span></div>` +
-    explanation +
-    actions +
-    tech +
-    `</div>`
+    `<details class="msg msg-envelope ${variantClass}"${openAttr} data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
+    `<summary class="env-header"><span class="env-icon">${esc(env.icon ?? "⚠️")}</span><span class="env-headline">${esc(env.headline)}</span></summary>` +
+    (body ? `<div class="env-body">${body}</div>` : "") +
+    `</details>`
   );
 }
 
@@ -4905,8 +4993,23 @@ function renderMsg(
         const openAttr = hasAction ? " open" : "";
         h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
       } else {
-        // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
-        h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
+        // FORK 2026-05-29: colored subagent sub-bubble. When a message is tagged
+        // with a subagent origin (_subagentId), render it with that subagent's
+        // stable color + an id badge so parallel subagents are visually distinct
+        // in the chat stream. Untagged messages are unaffected.
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
+        const saId = (msg as any)?._subagentId as string | undefined;
+        if (saId) {
+          const c = colorForSubagent(saId);
+          // oxlint-disable-next-line typescript-eslint/no-explicit-any
+          const saLabel =
+            ((msg as any)?._subagentLabel as string | undefined) ?? shortSubagentId(saId);
+          const badge = `<span class="msg-subagent-badge" style="background:${c}">▸ ${esc(saLabel)}</span>`;
+          h += `<div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}" style="--subagent-color:${c}">${badge}${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
+        } else {
+          // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
+          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
+        }
       }
     } else {
       h += renderSystemMsg(text, idx);
@@ -5563,10 +5666,15 @@ function updateChat(skipScroll = false) {
         }
         assistantTextIndices.push(j);
       }
-      // During streaming, render all bubbles as normal assistant (no thinking style).
-      // After finalization, all except the last become thinking → reasoning group.
-      const isCurrentRun = i === messages.length && streamMsgIdx >= 0;
-      const intermediates = isCurrentRun ? [] : assistantTextIndices.slice(0, -1);
+      // All assistant text messages except the last in each run are thinking steps.
+      // This applies during streaming too — frozen bubbles before tool calls are
+      // definitively intermediate and slice(0,-1) already excludes the live bubble.
+      // DO NOT re-add an `isCurrentRun`/`streamMsgIdx`-style guard here: it makes
+      // ALL prior bubbles flash to final-answer style on each delta and snap back on
+      // each tool call (the "blinking chat text" bug). Removed 2026-03-26 in 69693d3f61,
+      // collateral-reverted by the 2026-03-28 restart-badge refactor c893c87370, removed
+      // again 2026-05-29. See bible §5.8.
+      const intermediates = assistantTextIndices.slice(0, -1);
       for (const idx of intermediates) {
         thinkingSet.add(idx);
       }
@@ -7126,7 +7234,7 @@ function init() {
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="prefrontal-panel">
-        <div class="rpanel-header">🌳 Prefrontal <span id="prefrontal-count" class="sessions-count"></span>
+        <div class="rpanel-header"><button id="recipes-book-btn" class="rpanel-header-btn" title="Open the recipe book">🌳 RECIPES</button> <span id="prefrontal-count" class="sessions-count"></span>
           <span class="ct-switch" id="prefrontal-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -8169,7 +8277,13 @@ function init() {
   // dropped/dismissed) that the checkbox does NOT communicate.
   const EXEC_STATUS_ICON: Record<string, string> = {
     open: "",
-    in_progress: "🟡",
+    // FORK 2026-05-29 — the 🟡 "in-progress" signal moved from this status-icon
+    // to a 🟡 prefix on the task NAME, toggled by the pin button (data-action=
+    // toggle-pin). Kept empty here so in-progress tasks don't show 🟡 TWICE
+    // (status icon + name prefix). The name prefix is now the single source of
+    // truth for the yellow marker. A one-time migration carried existing
+    // in_progress task names over to the prefix. See feedback_bug_upgrade_task_lifecycle_protocol.
+    in_progress: "",
     // FORK 2026-05-23 — dropped "✅" (was redundant with the head
     // checkbox which already turns accent-green with a ✓ when
     // status='resolved'; doubled up green checkmarks on every resolved
@@ -9985,6 +10099,7 @@ function init() {
           ${icon ? `<span class="exec-task-icon">${icon}</span>` : ""}
           <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>
           <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
+          <button class="exec-task-pin${t.text.startsWith("🟡") ? " exec-task-pin-on" : ""}" data-action="toggle-pin" title="${t.text.startsWith("🟡") ? "Unpin (remove yellow marker)" : "Pin (mark as in-progress)"}" aria-pressed="${t.text.startsWith("🟡") ? "true" : "false"}">📌</button>
           <span class="exec-task-chips">
             ${dueChip}
             ${estChip}
@@ -10652,6 +10767,7 @@ function init() {
           t.closest(".exec-task-menu") ||
           t.closest(".exec-task-grip") ||
           t.closest(".exec-task-pencil") ||
+          t.closest(".exec-task-pin") ||
           t.closest(".exec-task-check")
         ) {
           return;
@@ -10679,6 +10795,14 @@ function init() {
       // title, expanded context). They fire dedicated edit-title /
       // edit-context actions and must NOT toggle the row's expand state.
       row.querySelectorAll<HTMLElement>(".exec-task-pencil").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void handleExecTaskAction(id, btn.dataset.action!);
+        });
+      });
+      // FORK 2026-05-29 — pin button toggles the 🟡 in-progress name marker.
+      // Same hover-revealed treatment as the pencil; must not toggle expand.
+      row.querySelectorAll<HTMLElement>(".exec-task-pin").forEach((btn) => {
         btn.addEventListener("click", (ev) => {
           ev.stopPropagation();
           void handleExecTaskAction(id, btn.dataset.action!);
@@ -10904,6 +11028,15 @@ function init() {
           textarea.dispatchEvent(new Event("input", { bubbles: true }));
         }
         return;
+      } else if (action === "toggle-pin") {
+        // FORK 2026-05-29 — pin toggles the 🟡 "in-progress" marker on the task
+        // NAME (the convention: 🟡 prefix = Jarvis is actively on this; user
+        // deleting the task = tested & done). Pure text edit via tasks.update;
+        // strip a leading 🟡 (+ optional space) if present, else prepend "🟡 ".
+        if (!t) return;
+        const stripped = t.text.replace(/^🟡\s*/u, "");
+        const next = t.text.startsWith("🟡") ? stripped : `🟡 ${stripped}`;
+        await req("control-panel.tasks.update", { id: taskId, text: next });
       } else {
         return;
       }
@@ -12855,6 +12988,11 @@ function init() {
     switchTab(tab);
   });
 
+  // FORK 2026-05-30: the RECIPES panel header doubles as a button into the book.
+  document
+    .getElementById("recipes-book-btn")
+    ?.addEventListener("click", () => switchTab("recipes"));
+
   $("new-session-btn")!.addEventListener("click", async () => {
     if (!connected) {
       return;
@@ -13042,7 +13180,7 @@ function init() {
       // Preserve search input across filter updates
       const existingSearch = body.querySelector(".recipe-search-input") as HTMLInputElement | null;
       if (!existingSearch) {
-        const searchRow = `<div class="recipe-search-row"><input class="recipe-search-input" type="search" placeholder="Search kits by name, slug, tags…" value="${altEsc(q)}" autocomplete="off" spellcheck="false"></div>`;
+        const searchRow = `<div class="recipe-search-row"><input class="recipe-search-input" type="search" placeholder="Search kits by name, slug, tags…" value="${altEsc(q)}" autocomplete="off" spellcheck="false"><button class="recipe-new-btn" title="Compose a new recipe (scaffold + edit)">+ New recipe</button></div>`;
         body.innerHTML = searchRow + html;
       } else {
         const viewEl = body.querySelector(".recipes-view");
@@ -13067,6 +13205,53 @@ function init() {
       const inp = e.target as HTMLElement;
       if (inp.classList.contains("recipe-search-input")) {
         applyFilter((inp as HTMLInputElement).value);
+      }
+    });
+
+    // FORK 2026-05-29: "New recipe" — scaffold a kit via prefrontal.kit.author,
+    // then open it in the editor. Same authoring path Jarvis uses on the fly.
+    body.addEventListener("click", async (e) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest(".recipe-new-btn")) return;
+      const slug = `draft-${Date.now().toString(36).slice(-5)}`;
+      try {
+        const res = await req<{ ok: boolean; path: string; kitRef: string }>(
+          "prefrontal.kit.author",
+          {
+            slug,
+            title: "Untitled recipe",
+            summary: "Describe what this recipe does (edit me).",
+            tags: ["draft"],
+            category: "operations",
+            steps: [
+              {
+                title: "First step",
+                tools: ["read"],
+                doneWhen: "TODO: success criterion",
+                body: "Describe what to do in this step.",
+              },
+            ],
+          },
+        );
+        if (res?.path) {
+          const nk: NormalizedKit = {
+            kitRef: res.kitRef,
+            owner: "globalcaos",
+            slug,
+            title: "Untitled recipe",
+            summary: "Describe what this recipe does (edit me).",
+            tags: ["draft"],
+            category: "operations",
+            source: "ours",
+            path: res.path,
+          };
+          allKits.push(nk);
+          grouped.set("operations", [...(grouped.get("operations") ?? []), nk]);
+          applyFilter("");
+          void openKitModal(res.path);
+        }
+      } catch (err) {
+        console.error("[recipes] new-recipe author failed", err);
       }
     });
 

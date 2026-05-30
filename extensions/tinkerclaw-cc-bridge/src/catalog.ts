@@ -25,7 +25,12 @@ export function buildClaudeCodeProviderConfig(): ModelProviderConfig {
     // pi-agent-core's preemptive-compaction budget matches the real capacity
     // of each model (Opus 4.7 and Sonnet 4.6 at 1M, others at 200k).
     contextWindow: m.contextWindow,
-    maxTokens: 8192,
+    // FORK 2026-05-29: per-model output ceiling (was a hardcoded 8192 for
+    // every model — an arbitrary floor below what Claude 4.x emits, which
+    // truncated long answers and throttled pi-agent-core's budgeting). Single
+    // source of truth in defaults.ts; same value cc-bridge pins on the CLI via
+    // CLAUDE_CODE_MAX_OUTPUT_TOKENS (worker.ts).
+    maxTokens: m.maxOutputTokens,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     aliases: Object.entries(MODEL_ALIASES)
       .filter(([, target]) => target === m.id)

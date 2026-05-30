@@ -85,10 +85,16 @@ function resolveMainSessionResumeBlockReason(messages: unknown[]): string | null
 }
 
 function buildResumeMessage(): string {
+  // FORK 2026-05-30 (Oscar directive): the resume must be LEGIBLE. The user
+  // wants a brief "here's where I'm picking up" note — which plan step, what's
+  // already on disk vs. half-written — so they can see whether the restart
+  // cost much work and that resume actually worked, THEN seamless continuation.
   return (
-    "[System] Your previous turn was interrupted by a gateway restart while " +
-    "OpenClaw was waiting on tool/model work. Continue from the existing " +
-    "transcript and finish the interrupted response."
+    "[System] The gateway restarted and interrupted your previous turn. Resume it, and make the resume legible to the user:\n" +
+    '1. ORIENT FIRST — post one short message (1-3 sentences) stating where you are picking up. If you have an active prefrontal plan, call prefrontal.plan.get and name the step you were on plus which artifacts are already complete on disk vs. half-finished; if there is no plan, summarize from the transcript tail what was in flight. Example shape: "Plan was already written; I was interrupted on step 3 — 3 files complete on disk, 1 half-written. Reading them and resuming."\n' +
+    "2. RECOVER CONTEXT — read any half-written artifacts (and run `git status`) so you continue from the real on-disk state, not from memory.\n" +
+    "3. CONTINUE as if nothing happened — finish the interrupted work; do NOT redo steps already marked done.\n" +
+    "Keep the orientation brief; its only job is to show the user where you resumed and roughly what the restart cost."
   );
 }
 
@@ -136,10 +142,16 @@ async function pushRestartWarningEnvelope(params: { sessionKey: string }): Promi
     id: `gw-restart-${now.getTime()}`,
     fatal: false,
     category: "busy",
-    headline: `Gateway restarted at ${localTime} — picking up where I stopped`,
+    // FORK 2026-05-30 (Oscar directive): the collapsed warning is just
+    // "Gateway restarted" — small, plain, easy to glance past. The restart
+    // time is technical, so it lives in `details` (the expandable kv block),
+    // not the headline. No "retry"/"check the journal" hints: I resume and
+    // inspect logs myself; those are not the user's job.
+    headline: "Gateway restarted",
     explanation:
-      "Your previous turn was interrupted by a gateway restart. Resuming from the existing transcript — your chat context is preserved.",
+      "Your previous turn was interrupted. I'm resuming it automatically — your chat context is preserved.",
     icon: "🔄",
+    details: { restarted_at: localTime },
     timestamp: now.toISOString(),
   };
   try {

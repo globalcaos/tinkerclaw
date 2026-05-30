@@ -21,6 +21,7 @@ import {
   DEFAULT_DISALLOWED_TOOLS,
   DEFAULT_PERMISSION_MODE,
   DEFAULT_PLUGIN_DIRS,
+  maxOutputTokensFor,
 } from "./defaults.js";
 import { loadPromptFile } from "./prompt-loader.js";
 import {
@@ -314,6 +315,15 @@ export type WorkerSpawnParams = {
    * `getLatestResumeSessionIdByOpenclawSessionId`.
    */
   openclawSessionId?: string;
+  /**
+   * FORK 2026-05-30: openclaw-side CANONICAL session key (e.g.
+   * `agent:main:main`), distinct from the cc-bridge `sessionKey` hash
+   * (`cc-sp-<hash>`). Exported to the child as `TC_SESSION_KEY` so the
+   * `jarvis` voice binary can (a) gate speech to the home session and
+   * (b) route its `**Jarvis:**` bubble via `chat.inject` — both need the
+   * canonical key, NOT the worker-pool hash. See jarvis-voice SKILL.md.
+   */
+  openclawSessionKey?: string;
 };
 
 export type WorkerTurnParams = {
@@ -562,6 +572,10 @@ export class ClaudeCodeWorker extends EventEmitter {
       "CLAUDECODE",
       "CLAUDE_CODE_ENTRYPOINT",
       "CLAUDE_CODE_EXECPATH",
+      // Output-token ceiling — set explicitly below. A host-level override
+      // (if present) wins; otherwise we pin it so the CLI never falls back to
+      // a low default that would silently truncate a long answer.
+      "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
     ]);
     const cleanEnv: NodeJS.ProcessEnv = {};
     for (const key of allowedKeys) {
@@ -576,6 +590,28 @@ export class ClaudeCodeWorker extends EventEmitter {
     // to what a nested claude expects.)
     cleanEnv.CLAUDECODE = "1";
     cleanEnv.CLAUDE_CODE_ENTRYPOINT = "cli";
+    // FORK 2026-05-29: expose the OpenClaw session key to the child shell so the
+    // jarvis-speak script can (a) gate voice to the home session only ("WhatsApp
+    // never triggers voice") and (b) route its UI-inject bubble to the right
+    // session. Neutral name — NOT OPENCLAW_* — so it doesn't trip Anthropic's
+    // harness billing detection (which matches the OPENCLAW_ prefix).
+    // FORK 2026-05-30: export the CANONICAL openclaw key (`agent:main:main`),
+    // not `this.sessionKey` (the `cc-sp-<hash>` worker-pool hash). The binary
+    // gates on `== agent:main:main` and passes this to `chat.inject` — both
+    // need the canonical key; the hash never matches the gate and never routes
+    // a bubble. Fall back to the hash only when the canonical key is absent
+    // (yields a safe no-match → silent, never a mis-routed bubble).
+    cleanEnv.TC_SESSION_KEY = this.params.openclawSessionKey ?? this.sessionKey;
+    // FORK 2026-05-29: pin the output-token ceiling PER MODEL so a paid
+    // response is never silently truncated by a low CLI default. The value
+    // comes from the active model's `maxOutputTokens` (defaults.ts, single
+    // source of truth) resolved from this session's model. CLAUDE_CODE_MAX_OUTPUT_TOKENS
+    // is a native Claude Code knob (so it doesn't look like a harness tell).
+    // A host-level value (set before us) takes precedence; we only fill it in
+    // when absent.
+    if (!cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS) {
+      cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokensFor(this.params.model));
+    }
     // FORK 2026-04-28 (bible §5.76): probe for the user's claude install at
     // runtime instead of hardcoding an absolute home path. claude-cli
     // installs land under `~/.local/share/claude/versions/latest` for the

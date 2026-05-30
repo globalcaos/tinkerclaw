@@ -71,7 +71,11 @@ export function resolveOutboundPrefix(cfg: OpenClawConfig, accountId: string): s
 /**
  * Idempotent prefix application. If `prefix` is undefined/empty or `text`
  * is empty, returns text unchanged. If `text` already starts with `prefix`,
- * returns text unchanged. Otherwise prepends `${prefix} ${text}`.
+ * returns text unchanged. If `text` is a single pictographic grapheme (e.g.
+ * "⚡" alone), returns text unchanged — single-emoji messages are end-of-turn
+ * signature markers that WhatsApp jumbos at large size; appending the persona
+ * prefix would defeat the jumbo and turn the visual marker into noise.
+ * Otherwise prepends `${prefix} ${text}`.
  *
  * Used by both the explicit-send path (send-api.ts) and the auto-reply path
  * (deliver-reply.ts) so every outbound text from Jarvis carries the persona.
@@ -83,7 +87,43 @@ export function applyOutboundPrefix(text: string, prefix: string | undefined): s
   if (text.startsWith(prefix)) {
     return text;
   }
+  if (isSinglePictographicGrapheme(text)) {
+    return text;
+  }
   return `${prefix} ${text}`;
+}
+
+/**
+ * Returns true when `text` (after trim) is exactly one extended-pictographic
+ * grapheme cluster — i.e. a single emoji/symbol with optional variation
+ * selectors and ZWJ sequences. WhatsApp renders such messages at jumbo size
+ * IF the wire payload contains nothing else. Used by applyOutboundPrefix to
+ * suppress the persona prefix on intentional single-emoji "signature" sends
+ * (e.g. the ⚡ done-separator from the morning-briefing cron). Multi-character
+ * messages, single ASCII letters, and emoji+text combinations all return false
+ * and keep the prefix.
+ */
+export function isSinglePictographicGrapheme(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const SegmenterCtor = (globalThis as { Intl?: { Segmenter?: typeof Intl.Segmenter } }).Intl
+    ?.Segmenter;
+  if (!SegmenterCtor) {
+    // Older runtimes — fall back to a permissive regex that matches a single
+    // pictographic codepoint (with optional VS-16 / ZWJ sequences). Imperfect
+    // but covers ⚡, 🔥, 🎯, ✅ etc. without false positives on ASCII.
+    return /^\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic}|\p{Emoji_Modifier})*$/u.test(
+      trimmed,
+    );
+  }
+  const segmenter = new SegmenterCtor("en", { granularity: "grapheme" });
+  const segments = Array.from(segmenter.segment(trimmed));
+  if (segments.length !== 1) {
+    return false;
+  }
+  return /\p{Extended_Pictographic}/u.test(segments[0]?.segment ?? "");
 }
 
 /**
