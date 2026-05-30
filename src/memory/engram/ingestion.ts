@@ -10,6 +10,7 @@
 import { createArtifactStore } from "./artifact-store.js";
 import { createEventStore, estimateTokens } from "./event-store.js";
 import type { EventKind, MemoryEvent } from "./event-types.js";
+import type { MemoryReconciler } from "./reconciliation.js";
 
 /**
  * Minimal structural interface for conversation messages that can be bulk-ingested.
@@ -91,6 +92,13 @@ export interface IngestionPipelineConfig {
    * Default: 1024 (1 KB).
    */
   artifactThresholdBytes?: number;
+  /**
+   * Optional Mem0-style write reconciler (Upgrade 8). Consulted on the hot path
+   * via `decideSync`, which MUST return only ADD or NONE. A NONE decision skips
+   * the event entirely (not persisted). When absent, every event is ADDed —
+   * byte-identical to pre-reconciliation behavior (the back-compat default).
+   */
+  reconciler?: MemoryReconciler;
 }
 
 export interface IngestionPipeline {
@@ -134,7 +142,12 @@ export interface IngestionPipeline {
  * ```
  */
 export function createIngestionPipeline(config: IngestionPipelineConfig): IngestionPipeline {
-  const { baseDir, sessionKey, artifactThresholdBytes = DEFAULT_ARTIFACT_THRESHOLD_BYTES } = config;
+  const {
+    baseDir,
+    sessionKey,
+    artifactThresholdBytes = DEFAULT_ARTIFACT_THRESHOLD_BYTES,
+    reconciler,
+  } = config;
 
   const eventStore = createEventStore({ baseDir, sessionKey });
   const artifactStore = createArtifactStore({ baseDir });
@@ -149,7 +162,7 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
     turnId: number,
     extraMetadata: Record<string, unknown> = {},
   ): MemoryEvent {
-    return eventStore.append({
+    const draft: Omit<MemoryEvent, "id" | "timestamp"> = {
       turnId,
       sessionKey,
       kind,
@@ -159,7 +172,33 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
         importance: importanceFor(kind),
         ...extraMetadata,
       },
-    });
+    };
+
+    if (reconciler) {
+      // Hot path: decideSync MUST return only ADD or NONE (enforced by the
+      // reconciler implementations). NONE → skip persistence entirely.
+      const decision = reconciler.decideSync(
+        // The id/timestamp are not yet assigned; the hot-path decision does not
+        // depend on them. A stable placeholder keeps the type satisfied.
+        { id: "", timestamp: "", ...draft },
+        {
+          totalMemoryBytes: 0,
+          eventCount: eventStore.count(),
+          memoryMdLineCount: 0,
+          phase: "ingest",
+        },
+      );
+      if (decision.action === "NONE") {
+        // Not persisted; return a synthetic (un-stored) event so callers that
+        // inspect the return value still get a shaped object.
+        return { id: "", timestamp: new Date().toISOString(), ...draft };
+      }
+      if (decision.importance != null) {
+        draft.metadata = { ...draft.metadata, importance: decision.importance };
+      }
+    }
+
+    return eventStore.append(draft);
   }
 
   return {
