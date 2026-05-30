@@ -21,7 +21,7 @@ import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/c
 import { decodePersonalityNudge } from "./src/personality-decoder.js";
 import { generateTargetVector, DEFAULT_TARGET_DIMENSIONS } from "./src/personality-seed.js";
 import { evaluateRuleBased } from "./src/rule-based-gate.js";
-import { AmygdalaHook } from "./src/runtime-hook.js";
+import { AmygdalaHook, type AegisChecker } from "./src/runtime-hook.js";
 import type { AmygdalaConfig, PersonalityNudge } from "./src/types.js";
 
 // -- Constants --
@@ -124,24 +124,31 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       window_size: 32,
     },
     prudence: {
+      // FORK 2026-05-30: paths now match what's actually on disk
+      // (models/amygdala/onnx/prudence_{a..e}.onnx). The old `_gru_mlp`/`_tcn`/…
+      // suffixed names matched nothing, so every prudence net silently returned
+      // NEUTRAL and the "5 competing architectures" never ran. All 5 exist.
       model_paths: {
-        a: join(modelsDir, "onnx", "prudence_a_gru_mlp.onnx"),
-        b: join(modelsDir, "onnx", "prudence_b_tcn.onnx"),
-        c: join(modelsDir, "onnx", "prudence_c_transformer.onnx"),
-        d: join(modelsDir, "onnx", "prudence_d_dual_encoder.onnx"),
-        e: join(modelsDir, "onnx", "prudence_e_ensemble_mlp.onnx"),
+        a: join(modelsDir, "onnx", "prudence_a.onnx"),
+        b: join(modelsDir, "onnx", "prudence_b.onnx"),
+        c: join(modelsDir, "onnx", "prudence_c.onnx"),
+        d: join(modelsDir, "onnx", "prudence_d.onnx"),
+        e: join(modelsDir, "onnx", "prudence_e.onnx"),
       },
       meta_weights: [0.2, 0.2, 0.2, 0.2, 0.2],
       conservative_override_threshold: 0.9,
       disagreement_threshold: 0.3,
     },
     personality: {
+      // FORK 2026-05-30: only a/b/c personality nets exist on disk (top-level,
+      // hyphenated). a/b/c now load real weights; d/e remain absent → NEUTRAL
+      // (the d/e personality architectures were never trained — tracked as a gap).
       model_paths: {
-        a: join(modelsDir, "onnx", "personality_a_gru_mlp.onnx"),
-        b: join(modelsDir, "onnx", "personality_b_tcn.onnx"),
-        c: join(modelsDir, "onnx", "personality_c_transformer.onnx"),
-        d: join(modelsDir, "onnx", "personality_d_dual_encoder.onnx"),
-        e: join(modelsDir, "onnx", "personality_e_ensemble_mlp.onnx"),
+        a: join(modelsDir, "personality-a.onnx"),
+        b: join(modelsDir, "personality-b.onnx"),
+        c: join(modelsDir, "personality-c.onnx"),
+        d: join(modelsDir, "onnx", "personality_d.onnx"),
+        e: join(modelsDir, "onnx", "personality_e.onnx"),
       },
       meta_weights: [0.2, 0.2, 0.2, 0.2, 0.2],
       target_vector: targetVector,
@@ -203,8 +210,28 @@ export default definePluginEntry({
     amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.15; // FORK 2026-05-30: max by default
     amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
 
-    // Create hook instance
-    const hook = new AmygdalaHook(amygdalaConfig);
+    // FORK 2026-05-30: wire the AEGIS absolute-veto checker. It was previously
+    // unwired (`new AmygdalaHook(config)` with no checker) → the paper's §4.11
+    // "absolute block" tier was dead code. This deterministic checker (backed by
+    // the rule-based destructive-pattern gate) runs as the AEGIS pre-check on
+    // EVERY tool call AND the post-check even when the ONNX gate allows — so the
+    // hard veto holds in both ONNX and rule-based-fallback modes. Disable only by
+    // explicit config `aegisEnabled:false`.
+    const aegisChecker: AegisChecker = {
+      async check(action) {
+        const argsStr = action.metadata ? JSON.stringify(action.metadata) : action.target;
+        const r = evaluateRuleBased(action.type, argsStr);
+        return {
+          blocked: r.decision === "hard_block",
+          rule_id: r.rule ?? undefined,
+          reason: r.explanation,
+        };
+      },
+    };
+    const hook = new AmygdalaHook(
+      amygdalaConfig,
+      cfg.aegisEnabled === false ? undefined : aegisChecker,
+    );
 
     // Initialize asynchronously (non-blocking)
     let initPromise: Promise<void> | null = null;
@@ -276,21 +303,25 @@ export default definePluginEntry({
           const modeTag = result.ruleBasedFallback ? "[rules]" : "[onnx]";
 
           if (result.blocked) {
-            if (observeOnly || phase === 1) {
-              // Phase 1: observe-only -- log but never block
-              log.info(
-                `[learned-intuition] ${modeTag} WOULD block ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"} (observe-only, not blocking)`,
-              );
-            } else {
-              // Phase 2+: active blocking
+            // FORK 2026-05-30: AEGIS is the ABSOLUTE deterministic veto. A
+            // `hard_block` (rule-based gate OR an AEGIS pre/post-check) ALWAYS
+            // aborts, independent of the AMYGDALA trust ramp — "AEGIS active, not
+            // observe-only". Only the neural `soft_block`s stay observe-only while
+            // the learned gate ramps (phase 1 / observeOnly).
+            const isAegisHardBlock = result.decision === "hard_block";
+            if (isAegisHardBlock || !(observeOnly || phase === 1)) {
               log.warn(
-                `[learned-intuition] ${modeTag} BLOCKED ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
+                `[learned-intuition] ${modeTag} ${isAegisHardBlock ? "AEGIS BLOCKED" : "BLOCKED"} ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
               );
               return {
                 abort: true,
                 message: result.response?.reason ?? "Action blocked by safety gate.",
               };
             }
+            // Neural soft-block during the trust ramp — observe-only.
+            log.info(
+              `[learned-intuition] ${modeTag} WOULD block ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"} (observe-only, not blocking)`,
+            );
           } else {
             log.debug(`[learned-intuition] ${modeTag} allowed ${event.toolName}(${target})`);
           }
