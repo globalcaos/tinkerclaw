@@ -13097,7 +13097,7 @@ function init() {
       listErr = true;
     }
 
-    sub.textContent = `${allKits.length} kits`;
+    sub.textContent = `${allKits.length} recipes`;
 
     // ── Build grouped map by category ──
     const grouped = new Map<string, NormalizedKit[]>();
@@ -13123,14 +13123,14 @@ function init() {
       h += `<div class="recipe-card-header">`;
       h += `<span class="recipe-name">${altEsc(displayName)}</span>`;
       if (isDownloaded) {
-        h += `<span class="recipe-kit-external" title="Downloaded kit">↗</span>`;
+        h += `<span class="recipe-kit-external" title="Downloaded recipe">↗</span>`;
       }
       h += `<span class="recipe-trigger">${altEsc(displayTrigger)}</span>`;
       h += `</div>`;
       if (hasSummary) {
         h += `<div class="recipe-summary">${altEsc(kit.summary.trim())}</div>`;
       } else {
-        h += `<div class="recipe-summary-placeholder">(no summary in kit.md)</div>`;
+        h += `<div class="recipe-summary-placeholder">(no summary in recipe)</div>`;
       }
       h += `</div>`;
       return h;
@@ -13172,7 +13172,7 @@ function init() {
         html += `</div></div>`;
       }
       if (totalVisible === 0 && ql) {
-        html += `<div class="recipe-no-results">No kits match "${altEsc(ql)}"</div>`;
+        html += `<div class="recipe-no-results">No recipes match "${altEsc(ql)}"</div>`;
       }
 
       html += `</div>`;
@@ -13180,7 +13180,7 @@ function init() {
       // Preserve search input across filter updates
       const existingSearch = body.querySelector(".recipe-search-input") as HTMLInputElement | null;
       if (!existingSearch) {
-        const searchRow = `<div class="recipe-search-row"><input class="recipe-search-input" type="search" placeholder="Search kits by name, slug, tags…" value="${altEsc(q)}" autocomplete="off" spellcheck="false"><button class="recipe-new-btn" title="Compose a new recipe (scaffold + edit)">+ New recipe</button></div>`;
+        const searchRow = `<div class="recipe-search-row"><input class="recipe-search-input" type="search" placeholder="Search recipes by name, slug, tags…" value="${altEsc(q)}" autocomplete="off" spellcheck="false"><button class="recipe-new-btn" title="Compose a new recipe (scaffold + edit)">+ New recipe</button></div>`;
         body.innerHTML = searchRow + html;
       } else {
         const viewEl = body.querySelector(".recipes-view");
@@ -13378,7 +13378,7 @@ function init() {
         summaryEl.textContent = summary || "";
         summaryEl.style.fontStyle = summary ? "" : "italic";
         summaryEl.style.color = summary ? "" : "#6b5a48";
-        if (!summary) summaryEl.textContent = "(no summary in kit.md)";
+        if (!summary) summaryEl.textContent = "(no summary in recipe)";
 
         // Render body via markdown-it
         const body = kitBodyOnly(data.content);
@@ -13389,11 +13389,11 @@ function init() {
           const chip = document.createElement("div");
           chip.className = "kit-modal-warn-chip";
           chip.textContent =
-            "⚠ Editing a downloaded kit. Changes are local and will be overwritten if you reinstall.";
+            "⚠ Editing a downloaded recipe. Changes are local and will be overwritten if you reinstall.";
           rawEl.prepend(chip);
         }
       } catch (err) {
-        titleEl.textContent = "Error loading kit";
+        titleEl.textContent = "Error loading recipe";
         viewEl.innerHTML = `<em style="color:#ef4444">${altEsc(String(err))}</em>`;
         saveBtn.disabled = true;
       }
@@ -13437,7 +13437,7 @@ function init() {
           const newTitle = fmField(content, "title") || titleEl.textContent;
           const newSummary = fmSummary(content);
           titleEl.textContent = newTitle ?? "";
-          summaryEl.textContent = newSummary || "(no summary in kit.md)";
+          summaryEl.textContent = newSummary || "(no summary in recipe)";
           // Re-render view pane
           viewEl.innerHTML = mdParser.render(kitBodyOnly(content));
           closeKitModal();
