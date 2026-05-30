@@ -909,7 +909,13 @@ export default function register(api: OpenClawPluginApi) {
     planStore,
   });
   for (const [name, handler] of Object.entries(kitRpcs)) {
-    api.registerGatewayMethod(name, async ({ respond, params }) => {
+    const wrapped = async ({
+      respond,
+      params,
+    }: {
+      respond: (ok: boolean, result?: unknown, err?: unknown) => void;
+      params: unknown;
+    }) => {
       try {
         const result = await handler(params);
         respond(true, result);
@@ -917,7 +923,19 @@ export default function register(api: OpenClawPluginApi) {
         const message = err instanceof Error ? err.message : String(err);
         respond(false, undefined, { code: "INVALID_REQUEST", message });
       }
-    });
+    };
+    // FORK 2026-05-30: "recipe" is the canonical term. Register under
+    // prefrontal.recipe.* (primary) AND keep prefrontal.kit.* as a deprecated
+    // back-compat alias so any in-flight client/CLI keeps working through the
+    // rename. (The kit/1.0 wire format itself stays — it's the external Journey
+    // standard.)
+    // oxlint-disable-next-line typescript-eslint/no-explicit-any
+    api.registerGatewayMethod(name, wrapped as any);
+    const alias = name.replace(".recipe.", ".kit.");
+    if (alias !== name) {
+      // oxlint-disable-next-line typescript-eslint/no-explicit-any
+      api.registerGatewayMethod(alias, wrapped as any);
+    }
   }
   log.info?.(
     `[prefrontal] kit RPCs registered (baseUrl=${typeof journeyCfg.baseUrl === "string" ? journeyCfg.baseUrl : "default"}, apiKey=${journeyCfg.apiKey ? "set" : "absent"})`,
