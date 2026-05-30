@@ -14,6 +14,9 @@ import {
   type TreeResponse,
 } from "./panels/prefrontal-tree.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
+// FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
+// panel row + thinking-row all import the SAME function so colors always match).
+import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 
 // FORK 2026-05-09: disable linkify — markdown-it was auto-converting plain
 // text like "BRIEFING.md" into <a href="http://BRIEFING.md"> which navigates
@@ -972,6 +975,104 @@ function runBelongsToViewedSession(info: ActiveRunInfo): boolean {
   );
 }
 
+// FORK 2026-05-30: a chat event whose sessionKey is a subagent OF the viewed
+// session. sessionKeyMatches() is intentionally strict (it returns false for
+// ":subagent:" descendants), so the onEvent chat guard used to drop these and
+// the colored sub-bubble renderer (_subagentId) was dead code. This predicate
+// re-admits them so a subagent's thinking streams into the parent chat live.
+function chatEventIsSubagentOfView(evtKey?: unknown): boolean {
+  if (typeof evtKey !== "string" || !sessionKey) {
+    return false;
+  }
+  return (
+    evtKey.includes(":subagent:") &&
+    evtKey.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
+  );
+}
+
+// FORK 2026-05-30: per-subagent streaming bubbles in the PARENT chat. Each subagent
+// run owns its OWN _temporary bubble (keyed by runId) tagged with _subagentId, so the
+// renderer paints it with colorForSubagent + a "▸ label" badge and PARALLEL subagents
+// never clobber each other or the single-stream main-run state. On final/end the
+// bubble is frozen (drop _temporary) so it persists in the transcript.
+const subagentStreamIdx = new Map<string, number>();
+
+function subagentLabelFor(runId: string, sk: string): string {
+  const info = activeRuns.get(runId);
+  if (info?.model) {
+    return modelName(info.model);
+  }
+  return shortSubagentId(sk || runId);
+}
+
+function handleSubagentChatEvent(p: {
+  runId?: unknown;
+  sessionKey?: unknown;
+  state?: unknown;
+  message?: { content?: Array<{ text?: string }> };
+}): void {
+  const runId = typeof p.runId === "string" ? p.runId : "";
+  if (!runId) {
+    return;
+  }
+  const sk = typeof p.sessionKey === "string" ? p.sessionKey : "";
+  const text = p.message?.content?.[0]?.text ?? "";
+  if (p.state === "delta") {
+    if (!text) {
+      return;
+    }
+    const existing = subagentStreamIdx.get(runId);
+    const live =
+      existing !== undefined &&
+      !!messages[existing] &&
+      (messages[existing] as Record<string, unknown>)._temporary === true &&
+      (messages[existing] as Record<string, unknown>)._subagentId === runId;
+    if (!live) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "text", text }],
+        _temporary: true,
+        _bubbleStartedAt: Date.now(),
+      });
+      const idx = messages.length - 1;
+      const m = messages[idx] as Record<string, unknown>;
+      m._subagentId = runId;
+      m._subagentLabel = subagentLabelFor(runId, sk);
+      subagentStreamIdx.set(runId, idx);
+    } else {
+      const block = (messages[existing].content as Array<{ type: string; text?: string }>).find(
+        (b) => b.type === "text",
+      );
+      if (block) {
+        block.text = text; // server-cumulative text for this run
+      }
+    }
+    updateChat();
+  } else if (
+    p.state === "final" ||
+    p.state === "end" ||
+    p.state === "error" ||
+    p.state === "aborted"
+  ) {
+    const idx = subagentStreamIdx.get(runId);
+    if (idx !== undefined && (messages[idx] as Record<string, unknown>)?._subagentId === runId) {
+      if (text) {
+        const block = (messages[idx].content as Array<{ type: string; text?: string }>).find(
+          (b) => b.type === "text",
+        );
+        if (block) {
+          block.text = text;
+        }
+      }
+      // Freeze: keep the bubble + its tag, drop _temporary so it survives the next
+      // `messages.filter(m => !m._temporary)` purge and persists in the transcript.
+      delete (messages[idx] as Record<string, unknown>)._temporary;
+    }
+    subagentStreamIdx.delete(runId);
+    updateChat();
+  }
+}
+
 /** activeRuns entries in scope of the session/all toggle: when "session", only
  *  runs for the viewed tab's session; when "all", every run. The ONE place the
  *  budgetScope filter is applied — model count, prefrontal tree, and the
@@ -1116,33 +1217,11 @@ const PROVIDER_COLORS: Record<string, string> = {
   deepseek: "#4f8ff7",
 };
 
-// FORK 2026-05-29: stable per-subagent colors for chat sub-bubbles + tree rows.
-// Mirrors the 🟦🟢🟣🟠🔴🟡🟤 palette Jarvis uses for one-bubble-per-task narration,
-// so a given subagent has ONE identity everywhere (chat + RECIPES panel).
-const SUBAGENT_PALETTE = [
-  "#3b82f6", // 🟦 blue
-  "#22c55e", // 🟢 green
-  "#a855f7", // 🟣 purple
-  "#f97316", // 🟠 orange
-  "#ef4444", // 🔴 red
-  "#eab308", // 🟡 yellow
-  "#a16207", // 🟤 brown
-];
-const subagentColorCache = new Map<string, string>();
-function colorForSubagent(id: string): string {
-  const cached = subagentColorCache.get(id);
-  if (cached) return cached;
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  const color = SUBAGENT_PALETTE[h % SUBAGENT_PALETTE.length];
-  subagentColorCache.set(id, color);
-  return color;
-}
-function shortSubagentId(id: string): string {
-  // Last path segment, truncated — runIds/sessionKeys are long.
-  const tail = id.split(/[:/]/).filter(Boolean).pop() ?? id;
-  return tail.length > 10 ? tail.slice(0, 10) : tail;
-}
+// FORK 2026-05-30: colorForSubagent / shortSubagentId / SUBAGENT_PALETTE moved to
+// ./subagent-color.ts (imported at the top of this file) so the RECIPES panel and
+// the thinking-rows import the SAME color function as the chat sub-bubbles. Before
+// this they were local to app.ts and unused by the panel — which is exactly why
+// panel/thinking-row colors (provider-based) never matched the bubble colors.
 
 // API cost per MTok [input, output] by model short name
 const MODEL_COST: Record<string, [number, number]> = {
@@ -2078,10 +2157,22 @@ function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown 
 function onEvent(evt: unknown) {
   if (evt.event === "chat") {
     const p = evt.payload;
-    if (p.sessionKey !== sessionKey && !sessionKeyMatches(p.sessionKey)) {
+    // FORK 2026-05-30: admit chat events from subagents OF the viewed session so a
+    // subagent's thinking streams into the parent chat in real time. Before, the
+    // strict guard below dropped every ":subagent:" delta (sessionKeyMatches=false
+    // for descendants), so subagent progress was invisible and "looked stuck".
+    const isViewedMain = p.sessionKey === sessionKey || sessionKeyMatches(p.sessionKey);
+    const isViewedSubagent = !isViewedMain && chatEventIsSubagentOfView(p.sessionKey);
+    if (!isViewedMain && !isViewedSubagent) {
       return;
     }
     bumpActiveRunActivity(p);
+    // Subagent chat events take their OWN per-run tagged-bubble path and never fall
+    // through to the single-stream main-run logic below (which assumes one stream).
+    if (isViewedSubagent) {
+      handleSubagentChatEvent(p);
+      return;
+    }
     if (p.state === "delta") {
       if (!streamRunId) {
         streamProvider = "";
@@ -5237,7 +5328,12 @@ function renderThinkingIndicator(): string {
         sk.includes(":subagent:") &&
         !!sessionKey &&
         sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:");
-      const color = PROVIDER_COLORS[info.provider] || "#6b7280";
+      // FORK 2026-05-30: subagents use their stable per-subagent identity color
+      // (matches the chat sub-bubble + RECIPES panel row); the main run keeps its
+      // provider color. Was: always provider color → never matched the bubbles.
+      const color = isSubagentDescendant
+        ? colorForSubagent(runId)
+        : PROVIDER_COLORS[info.provider] || "#6b7280";
       const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
       const name = modelName(info.model);
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
