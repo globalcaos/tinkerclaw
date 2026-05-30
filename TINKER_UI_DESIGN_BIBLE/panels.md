@@ -126,6 +126,30 @@ FORK 2026-05-14: the prefrontal panel inside right-panels MUST always render con
 
 The implicit and idle states are derived from the same data the call-tree block already consumes — no new WS event needed. They use the same `.pf-plan` CSS family (with an additional `.pf-plan-synthetic` class for visual distinction).
 
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Explicit: prefrontal-plan-state (status:in_progress)
+  Idle --> Implicit: tree.active===true (run alive, no plan)
+  Explicit --> Idle: plan.close / chat.final & no run
+  Implicit --> Explicit: prefrontal-plan-state arrives
+  Implicit --> Idle: chat.final/aborted (authoritative) empties activeRuns
+  state Implicit {
+    [*] --> Thinking
+    Thinking --> Doing: first tool/text delta
+    Doing --> [*]: run state:final
+  }
+  note right of Idle
+    FORK 2026-05-30 stuck-bug fix: under "all" scope the
+    global ext-tree shortcut is gated on activeRuns.size>0,
+    and the extension clears active-main 4s after agent_end
+    (< the UI's 6s ext-tree cache) — so the panel goes Idle
+    in lockstep with chat.final instead of a frozen-clock
+    "thinking". The decision-trail collapsible + per-subagent
+    vitals render on top of whichever state is active.
+  end note
+```
+
 The "no active recipe" placeholder text used until 2026-05-14 is REMOVED — it conflicts with this contract. The recipe header collapses into the plan header now (recipe = source kit; plan = live instance).
 
 ## Event-driven transitions
