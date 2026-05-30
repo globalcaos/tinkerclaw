@@ -13091,7 +13091,7 @@ function init() {
     let allKits: NormalizedKit[] = [];
     let listErr = false;
     try {
-      const res = await req<{ kits: NormalizedKit[] }>("prefrontal.kit.list", {});
+      const res = await req<{ kits: NormalizedKit[] }>("prefrontal.recipe.list", {});
       allKits = res.kits ?? [];
     } catch {
       listErr = true;
@@ -13216,7 +13216,7 @@ function init() {
       const slug = `draft-${Date.now().toString(36).slice(-5)}`;
       try {
         const res = await req<{ ok: boolean; path: string; kitRef: string }>(
-          "prefrontal.kit.author",
+          "prefrontal.recipe.author",
           {
             slug,
             title: "Untitled recipe",
