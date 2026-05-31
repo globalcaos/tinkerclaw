@@ -10,6 +10,7 @@ import {
   type RecipeState,
   type TrailEvent,
   type TrailEventKind,
+  type TrailEventPayload,
   type TreeNode,
   type TreeResponse,
 } from "./panels/prefrontal-tree.js";
@@ -1342,6 +1343,11 @@ type ActiveRunInfo = {
   phase: ActiveRunPhase;
   currentTool?: string;
   state?: "restarting";
+  // FORK 2026-05-31: per-run task text ("what this run is doing"), surfaced as the
+  // subagent sub-line in the fallback tree. Populated from the "start" lifecycle
+  // event when it carries a task/label (the global "all"-scope orchestration view
+  // gets task from the richer extension tree broadcast instead).
+  task?: string;
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 
@@ -1633,6 +1639,8 @@ function buildPrefrontalTree(): TreeResponse {
     status: info.currentTool ? `tool: ${info.currentTool}` : info.phase,
     progress: 0,
     lastEventAge: Math.floor((Date.now() - info.startedAt) / 1000),
+    // FORK 2026-05-31: surface the run's task as the subagent sub-line when known.
+    ...(info.task ? { summary: info.task } : {}),
     children: [],
   });
 
@@ -2926,6 +2934,11 @@ function onEvent(evt: unknown) {
         message?: string;
         icon?: string;
         ts?: number;
+        // FORK 2026-05-31: optional structured provenance (recipeId, confidence,
+        // score, semantic-lane flags, recipe-apply outcome, …). Forwarded
+        // verbatim from the producer's emitTrail so the decision-trail summary
+        // can name the matched recipe + confidence at a glance.
+        payload?: TrailEventPayload;
       };
       if (d.message) {
         const ALLOWED: TrailEventKind[] = [
@@ -2942,6 +2955,10 @@ function onEvent(evt: unknown) {
           "merged",
           "composed",
           "authored",
+          // FORK 2026-05-31: autonomous recipe-evolution provenance verbs.
+          "recipe-apply",
+          "recipe-reject",
+          "recipe-supersede",
         ];
         const kind: TrailEventKind = ALLOWED.includes(d.kind as TrailEventKind)
           ? (d.kind as TrailEventKind)
@@ -2952,6 +2969,7 @@ function onEvent(evt: unknown) {
           label: d.label,
           message: d.message,
           icon: d.icon,
+          ...(d.payload ? { payload: d.payload } : {}),
         };
         pushTrail(entry);
         PF_DEBUG_STATE.lastTrailEvent = entry;
@@ -3027,6 +3045,16 @@ function onEvent(evt: unknown) {
         }
         providerErrors.delete(startModel);
         persistProviderErrors();
+        // FORK 2026-05-31: capture task/label text if the start event carries it,
+        // so the fallback tree can show "what this run is doing" as a sub-line.
+        // The event does not carry it today; this is the forward-compatible seam
+        // (the "all"-scope extension tree surfaces task via its own broadcast).
+        const startTask =
+          typeof (p.data as { task?: unknown }).task === "string"
+            ? ((p.data as { task?: string }).task as string)
+            : typeof (p.data as { label?: unknown }).label === "string"
+              ? ((p.data as { label?: string }).label as string)
+              : undefined;
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: startProvider,
@@ -3035,6 +3063,7 @@ function onEvent(evt: unknown) {
           lastEventAt: Date.now(),
           sessionKey: p.data.sessionKey as string | undefined,
           phase: "thinking",
+          ...(startTask ? { task: startTask } : {}),
         });
         // FORK 2026-04-20: synthesize an implicit trail entry when a subagent
         // session starts/ends, so the panel trail still shows motion even if

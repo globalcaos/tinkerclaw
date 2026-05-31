@@ -5825,6 +5825,18 @@ code.fs-link.fs-link-error {
   font-family: var(--mono, monospace);
 }
 
+/* FORK 2026-05-31: per-subagent TASK sub-line ("what this subagent is doing").
+   Sits above .pf-vitals; single-line, ellipsised, full text on hover via title. */
+.pf-subtask {
+  margin: 1px 0 2px 22px;
+  font-size: 10.5px;
+  opacity: 0.82;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 /* Colored subagent chat sub-bubble — keyed by --subagent-color from a stable
    per-subagent hash so parallel subagents are visually distinct in chat. */
 .msg.msg-subagent {
@@ -5893,6 +5905,20 @@ code.fs-link.fs-link-error {
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.9;
+  /* FORK 2026-05-31: shrink + ellipsis correctly now that a flex-shrink:0
+     provenance chip precedes this in the flex summary row. */
+  flex: 1;
+  min-width: 0;
+}
+/* FORK 2026-05-31: always-visible recipe-provenance chip inside the decision-trail
+   summary — names the matched recipe + confidence + live step so the collapsed
+   trail carries real information instead of just "N decisions · <prose>". */
+.pf-decisions-recipe {
+  font-weight: 600;
+  color: var(--gold, #d8b25a);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 .pf-decisions.is-open .pf-decisions-summary {
   margin-bottom: 4px;
