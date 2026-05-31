@@ -14,6 +14,7 @@ import {
 } from "./embedding-input-limits.js";
 import { type EmbeddingInput, hasNonTextEmbeddingParts } from "./embedding-inputs.js";
 import { buildGeminiEmbeddingRequest } from "./embeddings-gemini.js";
+import { supersedeContradictions, type SupersedeMode } from "./engram/supersede-writer.js";
 import {
   buildMultimodalChunkForIndexing,
   chunkMarkdown,
@@ -1002,6 +1003,44 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           chunk.startLine,
           chunk.endLine,
         );
+    }
+
+    // J14 SUPERSEDE-WRITER (Upgrade 3): the candidate chunk is now persisted (above), so
+    // close the validity interval of any prior currently-valid chunk it supersedes (same
+    // fact identity: source+path+span+model, different content hash). NON-LOSSY — stamps
+    // validity_end + superseded_by, never deletes, so superseded rows stay queryable in
+    // 'all'/'valid-at' mode. Gated default-OFF: fires ONLY when ENGRAM_SUPERSEDE_ENABLED
+    // === "true", so memory-write behavior is unchanged until explicitly enabled (then it
+    // is one env var to soak and one to revert). Never throws into the write path.
+    if (this.provider && process.env.ENGRAM_SUPERSEDE_ENABLED === "true") {
+      try {
+        supersedeContradictions(
+          this.db,
+          {
+            id: chunkId,
+            source,
+            path: entry.path,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            model: this.provider.model,
+            hash: chunk.hash,
+            validityStart: now,
+          },
+          {
+            mode: (process.env.ENGRAM_SUPERSEDE_MODE as SupersedeMode | undefined) ?? "supersede",
+            log: (msg) => log.info(msg),
+          },
+        );
+      } catch (err) {
+        // The chunk is already persisted; supersede is best-effort and must never break
+        // the write path. Full object to devtools, real message to the structured log.
+        console.error("[supersede-writer] non-fatal", err);
+        log.warn(
+          `[supersede-writer] skipped for ${chunkId} (devtools console has full error): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
   }
 }
