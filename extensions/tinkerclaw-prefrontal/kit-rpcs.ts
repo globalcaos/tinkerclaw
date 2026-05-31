@@ -22,11 +22,21 @@ import {
   type PrefrontalKitAuthorParams,
   type PrefrontalKitMatchParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
+import { createSubsystemLogger } from "../../src/logging/subsystem.js";
 import { buildKitMd, validateKitSpec, type KitSpec } from "./kit-author.js";
 import { loadKitIndex, matchKitsDetailed, invalidateKitIndexCache } from "./kit-matcher.js";
 import { runKit } from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
 import { surfaceKitOutcome } from "./long-run-surface.js";
+import {
+  applyMutationProposal,
+  buildRewritePrompt,
+  isApplyEnabled,
+  type ApplyProposalInput,
+} from "./recipe-apply.js";
+import { snapshotKit } from "./recipe-snapshot.js";
+
+const recipeApplyLog = createSubsystemLogger("recipe-apply");
 
 const ajv = new Ajv({ allErrors: true });
 const vSearch = ajv.compile(PrefrontalKitSearchParamsSchema);
@@ -185,6 +195,114 @@ async function listOwnKits(ownKitsDir: string): Promise<OwnKitEntry[]> {
   // Sort for deterministic ordering
   out.sort((a, b) => a.slug.localeCompare(b.slug));
   return out;
+}
+
+// ─── Shared kit-write (guarded) + recipe-rewrite spawn ──────────────────────
+
+/**
+ * Validate + persist a KitSpec to the own-kits dir, enforcing the authorship guard: an existing
+ * kit is only overwritten when it carries `authoredBy: jarvis-*` AND overwrite is true. Hand-
+ * curated kits are NEVER clobbered. Shared by the prefrontal.recipe.author RPC and the J5
+ * self-apply loop so the guard lives in ONE place. Throws on invalid spec or guard violation.
+ */
+export async function persistKitSpec(
+  spec: KitSpec,
+  ownKitsDir: string,
+  overwrite: boolean,
+): Promise<{ slug: string; path: string; replaced: boolean; note: string }> {
+  const v = validateKitSpec(spec);
+  if (!v.ok) {
+    throw new Error(`invalid spec — ${v.errors.join("; ")}`);
+  }
+  const kitMd = buildKitMd(spec);
+  const dir = path.join(ownKitsDir, spec.slug);
+  const target = path.join(dir, "kit.md");
+  let existed = false;
+  let existingText = "";
+  try {
+    existingText = await fs.readFile(target, "utf-8");
+    existed = true;
+  } catch {
+    existed = false;
+  }
+  if (existed) {
+    // Never clobber a hand-curated, version-controlled kit. Only kits authored by this fork
+    // (authoredBy: jarvis-*) are overwritable, and only with explicit overwrite.
+    const isAuthored = /authoredBy:\s*["']?jarvis/i.test(existingText);
+    if (!isAuthored) {
+      throw new Error(
+        `"${spec.slug}" is a curated kit — refusing to overwrite. Pick a different slug.`,
+      );
+    }
+    if (!overwrite) {
+      throw new Error(
+        `authored kit "${spec.slug}" already exists — pass overwrite:true to replace it`,
+      );
+    }
+  }
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(target, kitMd, "utf-8");
+  invalidateKitIndexCache(); // next turn's matcher re-scans the catalog
+  return {
+    slug: spec.slug,
+    path: target,
+    replaced: existed,
+    note: existed ? `overwrote existing kit "${spec.slug}"` : `authored new kit "${spec.slug}"`,
+  };
+}
+
+/**
+ * Spawn a one-shot subagent to rewrite a recipe and return its final text. Mirrors the
+ * overseer/curiosity spawn → wait → history pattern. Returns undefined on any failure so the
+ * self-apply loop falls back to keeping the original recipe. Never throws.
+ */
+async function spawnRecipeRewrite(task: string): Promise<string | undefined> {
+  try {
+    const spawn = await callGateway<{ ok?: boolean; childSessionKey?: string; runId?: string }>({
+      method: "fork.subagents.spawn",
+      params: {
+        task,
+        label: "recipe-evolve",
+        parentSessionKey: "agent:main:main",
+        runTimeoutSeconds: 90,
+        expectsCompletionMessage: false,
+      },
+      timeoutMs: 100_000,
+    });
+    if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) return undefined;
+    const wait = await callGateway<{ status?: "ok" | "timeout" | "error" }>({
+      method: "agent.wait",
+      params: { runId: spawn.runId, timeoutMs: 90_000 },
+      timeoutMs: 95_000,
+    });
+    if (wait?.status === "error" || wait?.status === "timeout") return undefined;
+    const hist = await callGateway<{ messages?: Array<{ role?: string; content?: unknown }> }>({
+      method: "chat.history",
+      params: { sessionKey: spawn.childSessionKey, limit: 30 },
+      timeoutMs: 10_000,
+    });
+    const msgs = Array.isArray(hist?.messages) ? hist.messages : [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i]?.role !== "assistant") continue;
+      const c = msgs[i]?.content;
+      const text =
+        typeof c === "string"
+          ? c
+          : Array.isArray(c)
+            ? c
+                .map((b) =>
+                  typeof (b as { text?: unknown })?.text === "string"
+                    ? (b as { text: string }).text
+                    : "",
+                )
+                .join("")
+            : "";
+      return text.trim() ? text : undefined;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── RPC deps + factory ─────────────────────────────────────────────────────
@@ -419,51 +537,79 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     "prefrontal.recipe.author": async (raw: unknown) => {
       const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.recipe.author");
       const spec = p as unknown as KitSpec;
-      const v = validateKitSpec(spec);
-      if (!v.ok) {
-        throw new Error(`prefrontal.kit.author: invalid spec — ${v.errors.join("; ")}`);
-      }
-      const kitMd = buildKitMd(spec);
-      const dir = path.join(deps.ownKitsDir, spec.slug);
-      const target = path.join(dir, "kit.md");
-      let existed = false;
-      let existingText = "";
+      // Guarded write (validate + authorship-guard + persist) lives in persistKitSpec.
+      let r: { slug: string; path: string; replaced: boolean };
       try {
-        existingText = await fs.readFile(target, "utf-8");
-        existed = true;
-      } catch {
-        existed = false;
+        r = await persistKitSpec(spec, deps.ownKitsDir, p.overwrite === true);
+      } catch (err) {
+        throw new Error(
+          `prefrontal.kit.author: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-      if (existed) {
-        // Never clobber a hand-curated, version-controlled kit. Only kits this
-        // author RPC itself wrote (authoredBy: jarvis-*) are overwritable, and
-        // only with explicit overwrite:true (review finding 2026-05-29).
-        const isAuthored = /authoredBy:\s*["']?jarvis/i.test(existingText);
-        if (!isAuthored) {
-          throw new Error(
-            `prefrontal.kit.author: "${spec.slug}" is a curated kit — refusing to overwrite. Pick a different slug.`,
-          );
-        }
-        if (!p.overwrite) {
-          throw new Error(
-            `prefrontal.kit.author: authored kit "${spec.slug}" already exists — pass overwrite:true to replace it`,
-          );
-        }
-      }
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(target, kitMd, "utf-8");
-      invalidateKitIndexCache(); // next turn's matcher re-scans the catalog
       return {
         ok: true,
-        slug: spec.slug,
-        kitRef: `globalcaos/${spec.slug}`,
-        path: target,
+        slug: r.slug,
+        kitRef: `globalcaos/${r.slug}`,
+        path: r.path,
         stepCount: spec.steps.length,
-        replaced: existed,
-        note: existed
-          ? `overwrote existing kit "${spec.slug}"`
-          : `authored new kit "${spec.slug}" — matchable on the next turn`,
+        replaced: r.replaced,
+        note: r.replaced
+          ? `overwrote existing kit "${r.slug}"`
+          : `authored new kit "${r.slug}" — matchable on the next turn`,
       };
+    },
+
+    // FORK 2026-05-31: J5 self-apply — apply ONE autoPromotable recipe-evolution proposal.
+    // Snapshot the current recipe (rollback net) → LLM rewrites it applying the op+intent →
+    // validate → guarded write (persistKitSpec, which refuses hand-curated kits). Gated by
+    // RECIPE_AUTOAPPLY_ENABLED; never throws into the caller (returns a typed result).
+    "prefrontal.recipe.applyProposal": async (raw: unknown) => {
+      const p = (raw ?? {}) as {
+        recipeId?: unknown;
+        op?: unknown;
+        intent?: unknown;
+        rationale?: unknown;
+      };
+      if (typeof p.recipeId !== "string" || !p.recipeId.trim()) {
+        throw new Error("prefrontal.recipe.applyProposal: recipeId (non-empty string) required");
+      }
+      if (!isApplyEnabled()) {
+        return { ok: true, applied: false, reason: "disabled" };
+      }
+      const input: ApplyProposalInput = {
+        recipeId: p.recipeId,
+        op: typeof p.op === "string" ? p.op : "tighten_criteria",
+        intent: typeof p.intent === "string" ? p.intent : "",
+        rationale: typeof p.rationale === "string" ? p.rationale : "",
+      };
+      const result = await applyMutationProposal(input, {
+        loadKitText: async (slug) => {
+          try {
+            const target = path.join(deps.ownKitsDir, slug, "kit.md");
+            const text = await fs.readFile(target, "utf-8");
+            return { path: target, text };
+          } catch {
+            return null;
+          }
+        },
+        snapshot: (slug, text) =>
+          snapshotKit(deps.ownKitsDir, slug, text, new Date().toISOString()),
+        rewrite: (currentText, op, intent) =>
+          spawnRecipeRewrite(buildRewritePrompt(currentText, op, intent)),
+        authorKit: async (spec) => {
+          try {
+            const r = await persistKitSpec(spec, deps.ownKitsDir, true);
+            return { ok: true, note: r.note };
+          } catch (err) {
+            return { ok: false, note: err instanceof Error ? err.message : String(err) };
+          }
+        },
+        log: {
+          info: (m) => recipeApplyLog.info(m),
+          warn: (m) => recipeApplyLog.warn(m),
+        },
+      });
+      return { ok: true, ...result };
     },
 
     // FORK 2026-05-29: LLM-free best-fit lookup. Returns ranked local-catalog
