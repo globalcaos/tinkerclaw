@@ -207,6 +207,33 @@ export async function runSleepConsolidation(
     recipeMutationsProposed = proposals.length;
     recipeMutationsAutoPromotable = proposals.filter((p) => p.autoPromotable).length;
     manifestEntries.push(...recipeMutationEntries(proposals, nowISO));
+
+    // J5 self-apply (full autonomy): hand each autoPromotable proposal to the Prefrontal apply
+    // loop via gateway RPC — engram cannot reach KitStore directly. Gated by RECIPE_AUTOAPPLY_ENABLED
+    // ("true" only, so it is OFF in tests/clones). Fire-and-forget + try/caught: consolidation never
+    // blocks or fails on it, and the proposal is already in the manifest as the audit trail. The
+    // apply loop snapshots (rollback net), validates, and refuses hand-curated kits (authorship guard).
+    if (process.env.RECIPE_AUTOAPPLY_ENABLED === "true") {
+      for (const pr of proposals.filter((pp) => pp.autoPromotable)) {
+        void (async () => {
+          try {
+            const { callGateway } = await import("../../gateway/call.js");
+            await callGateway({
+              method: "prefrontal.recipe.applyProposal",
+              params: {
+                recipeId: pr.recipeId,
+                op: pr.op,
+                intent: typeof pr.payload.note === "string" ? pr.payload.note : "",
+                rationale: pr.rationale,
+              },
+              timeoutMs: 120_000,
+            });
+          } catch {
+            // best-effort; the proposal stays in the manifest for human review
+          }
+        })();
+      }
+    }
   }
 
   let strategySwitchesProposed = 0;
