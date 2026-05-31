@@ -505,6 +505,26 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         // (no silent re-attach — Oscar's policy). Read defensively so this works
         // even before `resume` is added to PrefrontalKitRunParamsSchema.
         resume: (p as { resume?: boolean }).resume === true,
+        // FORK 2026-05-31: forward live recipe-state to the RECIPES panel via the
+        // setRecipe broadcast RPC (same loopback callGateway pattern as
+        // surfaceKitOutcome below). Fire-and-forget — observability never blocks
+        // or fails the run. This is the producer half of the dull-panel fix: the
+        // kit-runner was previously silent, so the rich recipe header never had a
+        // data source and the panel always fell back to "Thinking → Acting".
+        onRecipeState: (state) => {
+          void callGateway({
+            method: "fork.prefrontal.setRecipe",
+            params: {
+              recipeId: state.recipeId,
+              step: state.step,
+              totalSteps: state.totalSteps,
+              stepName: state.stepName,
+              parallelismCap: state.parallelismCap,
+              inFlightLabels: state.inFlightLabels,
+              sessionKey: state.sessionKey,
+            },
+          }).catch(() => {});
+        },
       });
 
       // Surface progress/completion back into the (possibly closed) parent turn.
@@ -609,6 +629,37 @@ export function createKitRpcs(deps: KitRpcsDeps) {
           warn: (m) => recipeApplyLog.warn(m),
         },
       });
+      // FORK 2026-05-31: surface the autonomous recipe rewrite in the RECIPES
+      // panel decision trail (apply on success, reject on any skip reason), so the
+      // unsupervised self-edit loop is legible instead of RPC-only. Fire-and-forget
+      // via the trailEvent RPC; never blocks or fails the proposal.
+      try {
+        void callGateway({
+          method: "fork.prefrontal.trailEvent",
+          params: result.applied
+            ? {
+                kind: "recipe-apply",
+                label: result.recipeId,
+                message: `rewrote ${result.recipeId} (${input.op})`,
+                payload: {
+                  recipeId: result.recipeId,
+                  applied: true,
+                  op: input.op,
+                  ...(result.archivePath ? { archivePath: result.archivePath } : {}),
+                },
+              }
+            : {
+                kind: "recipe-reject",
+                label: result.recipeId,
+                message: `declined ${result.recipeId} rewrite — ${result.reason}`,
+                payload: {
+                  recipeId: result.recipeId,
+                  applied: false,
+                  reason: result.reason,
+                },
+              },
+        }).catch(() => {});
+      } catch {}
       return { ok: true, ...result };
     },
 

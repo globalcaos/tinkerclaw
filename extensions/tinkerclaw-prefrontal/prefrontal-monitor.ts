@@ -65,7 +65,12 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
       status,
       progress: stored?.progress ?? 0,
       lastEventAge: age,
-      summary: stored?.summary,
+      // FORK 2026-05-31: fall back to the subagent's task so the panel renders a
+      // "↳ <task>" sub-line ("what this subagent is doing"). A live progress note
+      // (stored.summary) wins when present — it's more current than the task text.
+      // Bound the fallback: task bodies can be multi-KB (kit step text) and this
+      // broadcasts every monitor cycle — the panel only shows one ellipsised line.
+      summary: stored?.summary ?? (run.task ? run.task.slice(0, 200) : undefined),
       children: [],
     };
   }

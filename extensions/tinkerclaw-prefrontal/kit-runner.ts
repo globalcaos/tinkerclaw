@@ -71,6 +71,32 @@ export interface KitRunOptions {
    * real dispatch path stays untouched in production.
    */
   _spawnStep?: (task: string, label: string) => Promise<SpawnResult>;
+  /**
+   * FORK 2026-05-31: recipe-state observability sink. runKit calls this at kit
+   * start, on each parallel-group transition, and on completion so the Tinker
+   * RECIPES panel can render the live recipe header (id + step M/N +
+   * parallelism). The caller wires it to fork.prefrontal.setRecipe, which
+   * broadcasts the prefrontal-recipe-state lifecycle event. Best-effort and
+   * fire-and-forget: kit-runner wraps every call so observability NEVER throws
+   * into the execution loop. Until this was wired the header had no data source
+   * and the panel always fell back to the synthetic "Thinking → Acting" plan.
+   */
+  onRecipeState?: (state: RecipeStateUpdate) => void;
+}
+
+/**
+ * FORK 2026-05-31: a single recipe-state observability update emitted by runKit.
+ * Mirrors the fork.prefrontal.setRecipe param shape so the caller can forward it
+ * verbatim. All progress fields optional — the start emit may omit step detail.
+ */
+export interface RecipeStateUpdate {
+  recipeId: string;
+  step?: number;
+  totalSteps?: number;
+  stepName?: string;
+  parallelismCap?: number;
+  inFlightLabels?: string[];
+  sessionKey?: string;
 }
 
 /** FORK 2026-05-30 (Upgrade 5): max chars of a step's done-note persisted as the
@@ -620,6 +646,27 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
 
   const store = opts.planStore;
 
+  // FORK 2026-05-31: recipe-state observability sink. Emits the live recipe
+  // header (id + step M/N + parallelism + in-flight labels) so the RECIPES panel
+  // shows the running playbook instead of the generic synthetic plan. The cap is
+  // the widest parallel group. Best-effort: every emit is wrapped so observability
+  // can never throw into the dispatch loop.
+  const maxParallelism = Math.max(1, ...dispatchGroups.map((g) => g.length));
+  const emitRecipeState = (update: Omit<Partial<RecipeStateUpdate>, "recipeId">): void => {
+    if (!opts.onRecipeState) return;
+    try {
+      opts.onRecipeState({
+        recipeId: opts.kitRef,
+        totalSteps: kit.steps.length,
+        parallelismCap: maxParallelism,
+        sessionKey: opts.sessionKey,
+        ...update,
+      });
+    } catch {
+      // observability must never break the run
+    }
+  };
+
   // ── Durable checkpointing (FORK 2026-05-30, Upgrade 5) ───────────────────────
   // Decide resume vs. fresh BEFORE seeding. Default policy (Oscar 2026-05-30):
   // never silently re-attach — auto-resume requires resume:true AND a matching
@@ -671,6 +718,13 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
   }
   void seedPriorArtifacts; // computed for parity / future logging; live read below
 
+  // FORK 2026-05-31: announce the recipe to the panel as soon as the plan is
+  // seeded (resume picks up at the checkpoint step; fresh runs at step 1).
+  emitRecipeState({
+    step: startIndex + 1,
+    stepName: kit.steps[startIndex]?.title,
+  });
+
   // Execute each group sequentially; within a group, fan out in parallel
   for (const groupDispatches of dispatchGroups) {
     // Resume: skip any group whose every step is already settled `done`.
@@ -689,6 +743,17 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       } catch {
         // non-fatal — plan board may show stale state briefly
       }
+    }
+
+    // FORK 2026-05-31: surface this parallel group's live step + in-flight labels
+    // so the recipe header advances as the kit walks its groups.
+    {
+      const groupFirst = groupDispatches[0]?.stepIndex ?? 0;
+      emitRecipeState({
+        step: groupFirst + 1,
+        stepName: groupDispatches.map((d) => d.title).join(" ∥ "),
+        inFlightLabels: groupDispatches.map((d) => d.label),
+      });
     }
 
     // Settle each step in the group in parallel. A step either (a) delegates to
@@ -780,6 +845,9 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
             kitInstallSandbox,
             _depth: depth + 1,
             _usesChain: [...chain, dispatch.usesKitRef],
+            // FORK 2026-05-31: sub-kits surface their own recipe-state too (latest
+            // emit wins in the panel, so the header tracks the active sub-recipe).
+            onRecipeState: opts.onRecipeState,
           });
           if (!sub.ok) {
             return {
