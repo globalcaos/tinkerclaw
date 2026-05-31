@@ -1,5 +1,3 @@
-import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
-import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
 /**
  * FORK: fork.prefrontal.setRecipe -- orchestration observability broadcast.
  *
@@ -18,6 +16,13 @@ import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-ty
  * regular provider's sessions_spawn tool keeps working; this RPC just sits
  * unused until someone wires a different frontend to it.
  */
+import { resolveDefaultAgentId } from "../agents/agent-scope-config.js";
+import { resolveAgentDir } from "../agents/agent-scope.js";
+import { resolveMemorySearchConfig } from "../agents/memory-search.js";
+import { getRuntimeConfig } from "../config/io.js";
+import { createConfiguredEmbeddingProvider } from "../gateway/embeddings-http.js";
+import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
+import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 // FORK 2026-05-30 (J8 THALAMUS, 2e): NO-MATCH trail events feed the curiosity buffer.
@@ -121,6 +126,14 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
     const runId = readStr(p, "runId") ?? "prefrontal-trail";
     const icon = readStr(p, "icon");
     const label = readStr(p, "label");
+    // FORK 2026-05-31: forward an optional structured payload (recipeId, op,
+    // applied, reason, …) so RPC-emitted trail events carry the same provenance
+    // the in-extension emitTrail broadcasts inline. The UI reads data.payload.
+    const payloadRaw = (p as { payload?: unknown }).payload;
+    const payload =
+      payloadRaw && typeof payloadRaw === "object"
+        ? (payloadRaw as Record<string, unknown>)
+        : undefined;
 
     // 2e: classify the gap so a transient outage is never logged as learnable.
     const resolutionType = isNoMatch ? classifyGap(toolName, reason) : undefined;
@@ -134,6 +147,7 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
         message,
         icon,
         label,
+        ...(payload ? { payload } : {}),
         ...(isNoMatch
           ? {
               recipeName,
@@ -180,5 +194,75 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
       `fork.prefrontal.trailEvent kind=${kind} label=${label ?? "-"} msg.len=${message.length}${isNoMatch ? ` resolutionType=${resolutionType ?? "-"} buffered=${bufferedGapId ?? "no"}` : ""}`,
     );
     respond(true, { ok: true, ...(bufferedGapId ? { gapId: bufferedGapId } : {}) }, undefined);
+  },
+
+  // FORK 2026-05-31: scoped INTERNAL embeddings RPC for the J13 semantic
+  // recipe-match lane. The matcher's embedFn previously POSTed /v1/embeddings,
+  // which 404s unless the openAiCompat HTTP surface is enabled. This RPC reuses
+  // the SAME in-process embedding provider (ollama/mxbai via memorySearch) with
+  // NO new HTTP/chat surface. Lives in core (not the bundled extension) so the
+  // provider/native-dep stack is never dragged into the extension bundle. Fails
+  // SAFE: any error returns empty embeddings so the matcher degrades to lexical.
+  "fork.prefrontal.embed": async ({ params, respond }) => {
+    const p = params ?? {};
+    const rawTexts = (p as { texts?: unknown }).texts;
+    const rawText = (p as { text?: unknown }).text;
+    let texts: string[];
+    if (Array.isArray(rawTexts)) {
+      texts = rawTexts.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    } else if (typeof rawText === "string" && rawText.trim().length > 0) {
+      texts = [rawText];
+    } else {
+      texts = [];
+    }
+    if (texts.length === 0) {
+      respond(true, { embeddings: [], count: 0 }, undefined);
+      return;
+    }
+    // Bound inputs (mirrors the /v1/embeddings limits) so a runaway caller can't
+    // OOM the embed provider.
+    const MAX_INPUTS = 128;
+    const MAX_INPUT_CHARS = 8_192;
+    const MAX_TOTAL_CHARS = 65_536;
+    if (texts.length > MAX_INPUTS) texts = texts.slice(0, MAX_INPUTS);
+    let total = 0;
+    texts = texts.map((t) => (t.length > MAX_INPUT_CHARS ? t.slice(0, MAX_INPUT_CHARS) : t));
+    for (const t of texts) {
+      total += t.length;
+      if (total > MAX_TOTAL_CHARS) {
+        respond(true, { embeddings: [], error: "input too large" }, undefined);
+        return;
+      }
+    }
+    try {
+      const cfg = getRuntimeConfig();
+      // Use the gateway's actual default agent (not a hardcoded "main") so we read
+      // the right agent's memorySearch config even when agents.list renames it.
+      const agentId = resolveDefaultAgentId(cfg);
+      const agentDir = resolveAgentDir(cfg, agentId);
+      const memorySearch = resolveMemorySearchConfig(cfg, agentId);
+      if (!memorySearch || !memorySearch.provider) {
+        respond(true, { embeddings: [], error: "memorySearch not configured" }, undefined);
+        return;
+      }
+      const provider = await createConfiguredEmbeddingProvider({
+        cfg,
+        agentDir,
+        provider: memorySearch.provider,
+        model: memorySearch.model,
+        // Pass only the fields the factory reads (it Picks local/remote/dims).
+        memorySearch: {
+          local: memorySearch.local,
+          remote: memorySearch.remote,
+          outputDimensionality: memorySearch.outputDimensionality,
+        },
+      });
+      const embeddings = await provider.embedBatch(texts);
+      respond(true, { embeddings, model: memorySearch.model, count: texts.length }, undefined);
+    } catch (err) {
+      // Soft failure → empty embeddings → matcher uses lexical-only (unchanged).
+      log.info(`fork.prefrontal.embed soft-fail (lexical fallback): ${String(err)}`);
+      respond(true, { embeddings: [], error: String(err) }, undefined);
+    }
   },
 };

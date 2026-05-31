@@ -95,7 +95,36 @@ export type TrailEventKind =
   | "matched"
   | "merged"
   | "composed"
-  | "authored";
+  | "authored"
+  // FORK 2026-05-31: autonomous recipe-evolution provenance — Jarvis rewrote one
+  // of its own recipes at consolidation (apply), declined a proposed rewrite
+  // (reject), or superseded a contradicting memory chunk (supersede). These make
+  // the unsupervised self-edit loop legible in the panel instead of RPC-only.
+  | "recipe-apply"
+  | "recipe-reject"
+  | "recipe-supersede";
+
+// FORK 2026-05-31: structured provenance carried alongside a trail event's prose
+// message. Previously confidence/recipeId lived ONLY inside the message string
+// (e.g. "intent (conf high)"), so the panel couldn't surface them in the
+// always-visible 1-line summary. All fields optional — older producers omit them
+// and the renderer degrades to the prose message.
+export interface TrailEventPayload {
+  confidence?: string; // MatchConfidence: "none" | "low" | "high"
+  recipeId?: string;
+  score?: number;
+  matches?: Array<{ slug: string; score: number }>;
+  catalogSize?: number;
+  composedFrom?: string[];
+  semanticInvoked?: boolean;
+  recoveredBySemantic?: string[];
+  step?: number;
+  totalSteps?: number;
+  op?: string; // recipe-apply: the mutation op (e.g. "add_step")
+  applied?: boolean;
+  reason?: string; // recipe-apply/reject outcome reason
+  archivePath?: string; // recipe-apply: snapshot-before-write location
+}
 
 export interface TrailEvent {
   ts: number;
@@ -103,6 +132,8 @@ export interface TrailEvent {
   label?: string;
   message: string;
   icon?: string;
+  // FORK 2026-05-31: optional structured provenance (see TrailEventPayload).
+  payload?: TrailEventPayload;
 }
 
 export interface PrefrontalDashboardState {
@@ -130,6 +161,10 @@ const TRAIL_ICON_BY_KIND: Record<TrailEventKind, string> = {
   merged: "🧩",
   composed: "🪢",
   authored: "✦",
+  // FORK 2026-05-31: autonomous recipe-evolution provenance.
+  "recipe-apply": "♻",
+  "recipe-reject": "⊘",
+  "recipe-supersede": "⇄",
 };
 
 function fmtClock(ts: number): string {
@@ -196,11 +231,50 @@ const DECISION_KINDS = new Set<TrailEventKind>([
   "authored",
   "transition",
   "recipe-step",
+  // FORK 2026-05-31: autonomous recipe-evolution shows in the decision trail.
+  "recipe-apply",
+  "recipe-reject",
+  "recipe-supersede",
 ]);
+// FORK 2026-05-31: derive the always-visible "🎯 <recipe> · conf <x> · step M/N"
+// chip from the richest recent decision payload + the live recipe state. This is
+// the core "raise the entropy" fix — the user complaint was the collapsed trail
+// said "N decisions · <prose>" with no recipe name or confidence. We walk the
+// recent decisions newest-first for the first structured recipeId/confidence,
+// fall back to the live recipe header id, and append live step progress.
+const MATCH_KINDS = new Set<TrailEventKind>(["matched", "merged", "composed"]);
+function buildProvenanceChip(recent: TrailEvent[], recipe: RecipeState | null): string {
+  let recipeId: string | undefined;
+  let confidence: string | undefined;
+  let semantic = false;
+  // Only recipe-MATCH events drive the chip ("what recipe is driving this turn").
+  // recipe-apply / recipe-supersede are autonomous-evolution events, not matches,
+  // so they must not relabel the chip.
+  for (let i = recent.length - 1; i >= 0; i--) {
+    if (!MATCH_KINDS.has(recent[i].kind)) continue;
+    const p = recent[i].payload;
+    if (!recipeId) recipeId = p?.recipeId ?? recent[i].label ?? undefined;
+    if (!confidence && p?.confidence) confidence = p.confidence;
+    if (p?.semanticInvoked) semantic = true;
+    if (recipeId && confidence) break;
+  }
+  if (!recipeId && recipe) recipeId = recipe.recipeId;
+  const bits: string[] = [];
+  if (recipeId) bits.push(`🎯 ${recipeId}`);
+  if (confidence && confidence !== "none") bits.push(`conf ${confidence}`);
+  if (recipe?.step != null) {
+    const total = recipe.totalSteps != null ? `/${recipe.totalSteps}` : "";
+    bits.push(`step ${recipe.step}${total}`);
+  }
+  if (semantic) bits.push("semantic");
+  return bits.join(" · ");
+}
+
 function renderDecisionTrail(
   trail: TrailEvent[],
   isOpen: boolean,
   onToggle: () => void,
+  recipe: RecipeState | null,
 ): HTMLElement | null {
   const now = Date.now();
   const recent = trail.filter((t) => DECISION_KINDS.has(t.kind) && now - t.ts < 300_000);
@@ -212,11 +286,22 @@ function renderDecisionTrail(
   chev.textContent = isOpen ? "▾" : "▸";
   const count = el("span", "pf-decisions-count");
   count.textContent = `${recent.length} decision${recent.length > 1 ? "s" : ""}`;
+  summary.appendChild(chev);
+  summary.appendChild(count);
+
+  // FORK 2026-05-31: always-visible recipe-provenance chip (matched recipe +
+  // confidence + live step). Named so the user knows WHICH recipe and HOW
+  // confident at a glance, without expanding.
+  const provenance = buildProvenanceChip(recent, recipe);
+  if (provenance) {
+    const chip = el("span", "pf-decisions-recipe");
+    chip.textContent = provenance;
+    summary.appendChild(chip);
+  }
+
   const latest = recent[recent.length - 1];
   const head = el("span", "pf-decisions-latest");
   head.textContent = `${TRAIL_ICON_BY_KIND[latest.kind] ?? "•"} ${latest.label ? latest.label + " · " : ""}${latest.message}`;
-  summary.appendChild(chev);
-  summary.appendChild(count);
   summary.appendChild(head);
   summary.addEventListener("click", onToggle);
   wrap.appendChild(summary);
@@ -506,8 +591,11 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     // ─── Recipe decision trail (FORK 2026-05-30) ──────────────────────────
     // Compact by default ("N decisions · <latest>"); click to uncover the full
     // trail of recipe decisions underneath. Open state persists in `expanded`.
-    const prov = renderDecisionTrail(trail, expanded.has("decisions"), () =>
-      toggleExpanded("decisions"),
+    const prov = renderDecisionTrail(
+      trail,
+      expanded.has("decisions"),
+      () => toggleExpanded("decisions"),
+      recipe,
     );
     if (prov) card.appendChild(prov);
 
@@ -569,6 +657,18 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       row.addEventListener("click", () => toggleExpanded(expandKey));
     }
     wrap.appendChild(row);
+
+    // FORK 2026-05-31: per-subagent TASK sub-line — "what this subagent is doing".
+    // node.summary carries the subagent's task text (set producer-side from
+    // SubagentRunInfo.task in the prefrontal-tree broadcast). Render it above the
+    // vitals when present and not already shown verbatim as the row label.
+    if (!isRoot && node.summary && node.summary.trim() && node.summary !== node.label) {
+      const taskLine = el("div", "pf-subtask");
+      const t = node.summary.trim();
+      taskLine.textContent = `↳ ${t}`;
+      taskLine.title = t;
+      wrap.appendChild(taskLine);
+    }
 
     // FORK 2026-05-29: per-subagent vitals sub-line (how this subagent is going).
     if (!isRoot) {

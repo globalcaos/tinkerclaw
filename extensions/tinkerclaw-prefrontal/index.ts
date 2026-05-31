@@ -56,6 +56,7 @@ function getSessionStoreLoader(): ((cfg: any) => any) | null {
   }
   return _sessionStoreLoader;
 }
+import { callGateway } from "../../src/gateway/call.js";
 import {
   loadAntiGoldplatingPrompt,
   shouldInjectAntiGoldplating,
@@ -86,7 +87,7 @@ import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
 import type { SubagentRunInfo } from "./prefrontal-monitor.js";
 import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
-import { makeHttpEmbedFn, type EmbedFn } from "./semantic-matcher.js";
+import { type EmbedFn } from "./semantic-matcher.js";
 import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "tinkerclaw-prefrontal";
@@ -818,7 +819,17 @@ export default function register(api: OpenClawPluginApi) {
         // Provenance trail emitter → the RECIPES panel sees searched/matched/
         // merged/composed/authored as the recipe lifecycle unfolds. Same shape
         // as fork.prefrontal.trailEvent's broadcast (UI maps unknown kinds → note).
-        const emitTrail = (kind: string, message: string, label?: string) => {
+        // FORK 2026-05-31: optional 4th arg carries structured provenance
+        // (recipeId, confidence, score, matches, composedFrom, semanticInvoked, …)
+        // alongside the prose message. The UI reads d.payload and surfaces the
+        // matched recipe + confidence in the always-visible decision-trail summary
+        // instead of leaving them buried inside the message string.
+        const emitTrail = (
+          kind: string,
+          message: string,
+          label?: string,
+          payload?: Record<string, unknown>,
+        ) => {
           try {
             // oxlint-disable-next-line typescript-eslint/no-explicit-any
             (api as any).broadcast?.("agent", {
@@ -828,6 +839,7 @@ export default function register(api: OpenClawPluginApi) {
                 kind,
                 message,
                 label,
+                ...(payload ? { payload } : {}),
                 ts: Date.now(),
                 sessionKey,
               },
@@ -848,17 +860,24 @@ export default function register(api: OpenClawPluginApi) {
         // safe: any embed error inside the lane degrades to the lexical result.
         let embedFn: EmbedFn | undefined;
         if (process.env.PREFRONTAL_SEMANTIC_MATCH_ENABLED === "true") {
-          try {
-            const port = config.gateway?.port ?? 18789;
-            const token = config.gateway?.auth?.token;
-            embedFn = makeHttpEmbedFn({
-              baseUrl: `http://127.0.0.1:${port}`,
-              authHeader: token ? { Authorization: `Bearer ${token}` } : undefined,
-              fetchImpl: (url, init) => fetch(url, init as RequestInit),
-            });
-          } catch (err) {
-            log.warn?.(`[semantic-matcher] embed seam unavailable (lexical-only): ${String(err)}`);
-          }
+          // FORK 2026-05-31: embed via the scoped internal fork.prefrontal.embed
+          // RPC (loopback callGateway, default backend mode) instead of POST
+          // /v1/embeddings — that route 404s unless the openAiCompat HTTP surface
+          // is enabled. The RPC reuses the same in-process ollama/mxbai provider
+          // with no new HTTP surface. Fails safe: any error → no embeddings → the
+          // semantic lane degrades to lexical-only (behavior unchanged).
+          embedFn = async (texts: string[]): Promise<number[][]> => {
+            try {
+              const res = await callGateway<{ embeddings?: number[][] }>({
+                method: "fork.prefrontal.embed",
+                params: { texts },
+              });
+              return res?.embeddings ?? [];
+            } catch (err) {
+              log.warn?.(`[semantic-matcher] embed RPC failed (lexical-only): ${String(err)}`);
+              return [];
+            }
+          };
         }
         const outcome = await seedPlanFromPrompt({
           prompt,
@@ -871,24 +890,54 @@ export default function register(api: OpenClawPluginApi) {
         });
 
         if (outcome.catalogSize > 0) {
-          emitTrail("searched", `scored ${outcome.catalogSize} recipes`, "match");
+          emitTrail("searched", `scored ${outcome.catalogSize} recipes`, "match", {
+            catalogSize: outcome.catalogSize,
+            semanticInvoked: outcome.semanticInvoked,
+          });
         }
         if (outcome.recoveredBySemantic && outcome.recoveredBySemantic.length > 0) {
           emitTrail(
             "note",
             `recovered [${outcome.recoveredBySemantic.join(", ")}] via embedding similarity`,
             "semantic",
+            {
+              semanticInvoked: true,
+              recoveredBySemantic: outcome.recoveredBySemantic,
+            },
           );
         }
         if (outcome.seeded) {
           const kits = outcome.kitRefs ?? [];
+          // FORK 2026-05-31: structured provenance so the panel can name the recipe
+          // + confidence in its always-visible summary (previously confidence lived
+          // ONLY in the prose "(conf high)" suffix, invisible to the renderer).
+          const matchPayload: Record<string, unknown> = {
+            recipeId: kits.join("+") || outcome.intent,
+            confidence: outcome.confidence,
+            score: outcome.matches?.[0]?.score,
+            catalogSize: outcome.catalogSize,
+            matches: outcome.matches,
+            semanticInvoked: outcome.semanticInvoked,
+            ...(outcome.recoveredBySemantic
+              ? { recoveredBySemantic: outcome.recoveredBySemantic }
+              : {}),
+          };
           if (kits.length > 1 || (outcome.composedFrom?.length ?? 0) > 0) {
-            emitTrail("merged", `${outcome.intent} — ${outcome.stepCount} steps`, kits.join("+"));
+            emitTrail("merged", `${outcome.intent} — ${outcome.stepCount} steps`, kits.join("+"), {
+              ...matchPayload,
+              composedFrom: outcome.composedFrom,
+              stepCount: outcome.stepCount,
+            });
           } else {
-            emitTrail("matched", `${outcome.intent} (conf ${outcome.confidence})`, kits[0]);
+            emitTrail("matched", `${outcome.intent} (conf ${outcome.confidence})`, kits[0], {
+              ...matchPayload,
+              recipeId: kits[0] ?? outcome.intent,
+            });
           }
           if ((outcome.composedFrom?.length ?? 0) > 0) {
-            emitTrail("composed", `pulled in ${outcome.composedFrom!.join(", ")}`, "composes");
+            emitTrail("composed", `pulled in ${outcome.composedFrom!.join(", ")}`, "composes", {
+              composedFrom: outcome.composedFrom,
+            });
           }
           parts.push(
             `<active_recipe kits="${kits.join(",")}" steps="${outcome.stepCount}">A plan was auto-seeded from the matched recipe(s). Follow its steps and keep the RECIPES panel honest via the recipe-state CLI: one \`--recipe <id> --step N\` call per transition, and \`--trail dispatch\`/\`--trail complete\` around each subagent.</active_recipe>`,
