@@ -1,6 +1,7 @@
 import { forkCuriosityHandlers } from "../fork/curiosity-rpc.js";
 import { forkOverseerHandlers } from "../fork/overseer-runtime.js";
 import { forkPrefrontalStateHandlers } from "../fork/prefrontal-state-rpc.js";
+import { forkReasoningHandlers } from "../fork/reasoning-runtime.js";
 import { forkSubagentsHandlers } from "../fork/subagents-rpc.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "./control-plane-audit.js";
@@ -142,6 +143,9 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // FORK 2026-05-31: THE OVERSEER — activate/deactivate/status for the supervisory
   // critic-loop persona. The loop itself runs from onTurnComplete (overseer-runtime).
   ...forkOverseerHandlers,
+  // FORK 2026-05-31: Tree-of-Thoughts — fork.reasoning.search runs a bounded deliberate
+  // search on a hard problem (wires the previously-dead reasoning-tree/thought-search lib).
+  ...forkReasoningHandlers,
   ...wizardHandlers,
   ...talkHandlers,
   ...toolsCatalogHandlers,
