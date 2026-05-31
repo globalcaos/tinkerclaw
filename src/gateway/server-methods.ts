@@ -1,4 +1,5 @@
 import { forkCuriosityHandlers } from "../fork/curiosity-rpc.js";
+import { forkOverseerHandlers } from "../fork/overseer-runtime.js";
 import { forkPrefrontalStateHandlers } from "../fork/prefrontal-state-rpc.js";
 import { forkSubagentsHandlers } from "../fork/subagents-rpc.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
@@ -138,6 +139,9 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // FORK 2026-05-30 (J8 Upgrade 2): curiosity / intrinsic-motivation RPCs
   // (logGap + episodic-buffer surface). Registered like the prefrontal handlers.
   ...forkCuriosityHandlers,
+  // FORK 2026-05-31: THE OVERSEER — activate/deactivate/status for the supervisory
+  // critic-loop persona. The loop itself runs from onTurnComplete (overseer-runtime).
+  ...forkOverseerHandlers,
   ...wizardHandlers,
   ...talkHandlers,
   ...toolsCatalogHandlers,
