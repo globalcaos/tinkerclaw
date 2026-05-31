@@ -84,13 +84,22 @@ function realDeps(): IdleGoalDeps {
   return {
     fetchTopGaps: async () => {
       const { callGateway } = await import("../gateway/call.js");
-      const res = await callGateway<{ ok?: boolean; gaps?: Array<{ topic?: string }> }>({
+      const res = await callGateway<{
+        ok?: boolean;
+        // topGaps returns scored items shaped { gap: { topic }, priority } (and OMNI's
+        // ScoredGap is also { gap, ... }), so the topic lives at g.gap.topic — read that
+        // first, with a flat g.topic fallback for forward-compat.
+        gaps?: Array<{ topic?: string; gap?: { topic?: string } }>;
+      }>({
         method: "fork.curiosity.topGaps",
         params: { k: 3 },
         timeoutMs: 8000,
       });
       return (res?.gaps ?? [])
-        .map((g) => ({ topic: typeof g?.topic === "string" ? g.topic : "" }))
+        .map((g) => {
+          const topic = g?.gap?.topic ?? g?.topic;
+          return { topic: typeof topic === "string" ? topic : "" };
+        })
         .filter((g) => g.topic);
     },
     emit: (sessionKey, goals) => {
