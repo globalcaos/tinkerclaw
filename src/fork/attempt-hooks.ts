@@ -875,6 +875,18 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
       log.warn(`[overseer] hook dispatch failed (non-fatal): ${String(err)}`);
     }
   })();
+
+  // FORK 2026-05-31: re-arm the idle goal-generation timer (J8 2d). Synchronous + guarded;
+  // a NON-intrusive curiosity proposal fires only if the session then stays quiet past the
+  // threshold (CURIOSITY_IDLE_MS, default 30m). See src/fork/idle-goals.ts.
+  void (async () => {
+    try {
+      const { noteTurnActivity } = await import("./idle-goals.js");
+      noteTurnActivity(params.sessionKey);
+    } catch (err) {
+      log.warn(`[idle-goals] arm failed (non-fatal): ${String(err)}`);
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------
