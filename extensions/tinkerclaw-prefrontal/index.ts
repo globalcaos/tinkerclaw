@@ -865,6 +865,29 @@ export default function register(api: OpenClawPluginApi) {
           parts.push(
             `<active_recipe kits="${kits.join(",")}" steps="${outcome.stepCount}">A plan was auto-seeded from the matched recipe(s). Follow its steps and keep the RECIPES panel honest via the recipe-state CLI: one \`--recipe <id> --step N\` call per transition, and \`--trail dispatch\`/\`--trail complete\` around each subagent.</active_recipe>`,
           );
+          // FORK 2026-05-31: auto-engage the Overseer on a HIGH-confidence overseer
+          // match so the supervisory loop starts deterministically (the recipe also
+          // instructs Jarvis to activate — this just guarantees it). Fire-and-forget,
+          // gated on HIGH confidence so it never fires on simple tasks.
+          if (
+            outcome.confidence === "high" &&
+            kits.some((k) => k === "overseer" || k.endsWith("/overseer"))
+          ) {
+            void (async () => {
+              try {
+                const { callGatewayFromCli } = await import("openclaw/plugin-sdk/gateway-runtime");
+                await callGatewayFromCli(
+                  "fork.overseer.activate",
+                  { timeout: "8000" },
+                  { sessionKey, task: prompt },
+                  { progress: false },
+                );
+                emitTrail("note", "Overseer engaged (high-confidence match)", "overseer");
+              } catch (err) {
+                log.warn?.(`[overseer] auto-activate failed: ${String(err)}`);
+              }
+            })();
+          }
         } else if (outcome.noMatch) {
           emitTrail(
             "warn",
