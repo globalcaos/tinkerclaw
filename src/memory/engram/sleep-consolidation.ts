@@ -101,6 +101,12 @@ export interface ConsolidationResult {
   durationMs: number;
   /** Count of gated recipe-mutation proposals written (Upgrade 1). 0 when dep absent. */
   recipeMutationsProposed?: number;
+  /**
+   * Of `recipeMutationsProposed`, how many are autoPromotable (needsHumanReview
+   * false) — high-confidence, reversible mutations that may skip human review
+   * (Upgrade 1, autonomy-first). 0 when dep absent.
+   */
+  recipeMutationsAutoPromotable?: number;
   /** Count of gated strategy-switch proposals written (Upgrade 4). 0 when dep absent. */
   strategySwitchesProposed?: number;
   /** Count of reconciliation UPDATE/DELETE ledger entries (Upgrade 8). 0 when dep absent. */
@@ -182,6 +188,7 @@ export async function runSleepConsolidation(
   const manifestBaseDir = config.manifestBaseDir;
 
   let recipeMutationsProposed = 0;
+  let recipeMutationsAutoPromotable = 0;
   if (config.recipeEvolution) {
     const { archive, currentBody, config: evoCfg } = config.recipeEvolution;
     const proposals: MutationProposal[] = [];
@@ -198,6 +205,7 @@ export async function runSleepConsolidation(
       proposals.push(...proposeMutations(fitness, archive.history(rid), evoCfg));
     }
     recipeMutationsProposed = proposals.length;
+    recipeMutationsAutoPromotable = proposals.filter((p) => p.autoPromotable).length;
     manifestEntries.push(...recipeMutationEntries(proposals, nowISO));
   }
 
@@ -270,7 +278,7 @@ export async function runSleepConsolidation(
     summariesGenerated,
     eventsProcessed: unprocessed.length,
     durationMs: Date.now() - start,
-    ...(config.recipeEvolution ? { recipeMutationsProposed } : {}),
+    ...(config.recipeEvolution ? { recipeMutationsProposed, recipeMutationsAutoPromotable } : {}),
     ...(config.strategySwitch ? { strategySwitchesProposed } : {}),
     ...(reconciliationDecisions ? { reconciliationDecisions } : {}),
   };
