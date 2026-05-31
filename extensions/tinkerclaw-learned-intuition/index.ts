@@ -253,6 +253,12 @@ export default definePluginEntry({
               log.warn(
                 `[learned-intuition] ONNX models not available at ${modelsDir}. Using rule-based fallback.`,
               );
+              // FORK 2026-05-30: surface the REAL load failure via the structured
+              // logger (raw console.error inside the gate is not captured).
+              const diags = hook.gateLoadErrors;
+              log.warn(
+                `[learned-intuition] onnx load diagnostics: ${diags.length ? diags.join(" || ") : "no errors collected — model loop did not run (loadOrt returned null without a captured import error)"}`,
+              );
             }
           })
           .catch((err) => {
