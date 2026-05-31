@@ -86,6 +86,7 @@ import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
 import type { SubagentRunInfo } from "./prefrontal-monitor.js";
 import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
+import { makeHttpEmbedFn, type EmbedFn } from "./semantic-matcher.js";
 import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "tinkerclaw-prefrontal";
@@ -840,6 +841,25 @@ export default function register(api: OpenClawPluginApi) {
         if (effortGuidance) parts.push(effortGuidance);
 
         // 2) Recipe matching + provenance.
+        // J13 semantic recipe-match lane, gated default-OFF. Only when
+        // PREFRONTAL_SEMANTIC_MATCH_ENABLED === "true" do we build the embed seam against the
+        // gateway's /v1/embeddings endpoint (routes to the configured memorySearch provider).
+        // Otherwise embedFn stays undefined → lexical-only, behavior unchanged. The seam fails
+        // safe: any embed error inside the lane degrades to the lexical result.
+        let embedFn: EmbedFn | undefined;
+        if (process.env.PREFRONTAL_SEMANTIC_MATCH_ENABLED === "true") {
+          try {
+            const port = config.gateway?.port ?? 18789;
+            const token = config.gateway?.auth?.token;
+            embedFn = makeHttpEmbedFn({
+              baseUrl: `http://127.0.0.1:${port}`,
+              authHeader: token ? { Authorization: `Bearer ${token}` } : undefined,
+              fetchImpl: (url, init) => fetch(url, init as RequestInit),
+            });
+          } catch (err) {
+            log.warn?.(`[semantic-matcher] embed seam unavailable (lexical-only): ${String(err)}`);
+          }
+        }
         const outcome = await seedPlanFromPrompt({
           prompt,
           sessionKey,
@@ -847,10 +867,18 @@ export default function register(api: OpenClawPluginApi) {
           ownKitsDir,
           planStore,
           log,
+          embed: embedFn,
         });
 
         if (outcome.catalogSize > 0) {
           emitTrail("searched", `scored ${outcome.catalogSize} recipes`, "match");
+        }
+        if (outcome.recoveredBySemantic && outcome.recoveredBySemantic.length > 0) {
+          emitTrail(
+            "note",
+            `recovered [${outcome.recoveredBySemantic.join(", ")}] via embedding similarity`,
+            "semantic",
+          );
         }
         if (outcome.seeded) {
           const kits = outcome.kitRefs ?? [];

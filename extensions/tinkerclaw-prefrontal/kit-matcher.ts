@@ -24,6 +24,7 @@ import fs from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { parseKitStepsAndParallelism } from "./kit-runner.js";
+import type { EmbedFn } from "./semantic-matcher.js";
 
 export interface KitIndexEntry {
   slug: string;
@@ -366,6 +367,8 @@ export interface SeedPlanDeps {
     }) => Promise<unknown>;
   };
   log?: { info?: (m: string) => void; warn?: (m: string) => void };
+  /** J13 semantic fallback: injected embed seam. Omit/undefined → lexical-only (default). */
+  embed?: EmbedFn;
 }
 
 export interface SeedPlanOutcome {
@@ -383,6 +386,10 @@ export interface SeedPlanOutcome {
   noMatch: boolean;
   /** Reason a seed was skipped despite matches (existing plan, etc.). */
   skipped?: string;
+  /** J13: true when the semantic fallback lane actually ran this turn. */
+  semanticInvoked?: boolean;
+  /** J13: slugs recovered ONLY by the semantic lane (not in the lexical set). */
+  recoveredBySemantic?: string[];
 }
 
 /**
@@ -429,7 +436,38 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
     return empty({ skipped: "empty-catalog" });
   }
 
-  const { matches, confidence } = matchKitsDetailed(deps.prompt, index);
+  const lexical = matchKitsDetailed(deps.prompt, index);
+  let matches = lexical.matches;
+  let confidence = lexical.confidence;
+  let semanticInvoked = false;
+  let recoveredBySemantic: string[] = [];
+  // J13 semantic fallback lane — runs ONLY when an embed seam was injected (gated default-OFF
+  // in index.ts). Lexical stays the single owner of scoring; smartMatch short-circuits on a
+  // clear lexical winner and falls back to lexical on any embed failure, so it can only
+  // RECOVER matches the lexical lane missed, never drop one. Loaded lazily (dynamic import) to
+  // avoid an import cycle (semantic-matcher imports types from this module).
+  if (deps.embed) {
+    try {
+      const { smartMatch } = await import("./semantic-matcher.js");
+      const smart = await smartMatch({
+        lexical,
+        prompt: deps.prompt,
+        index,
+        embed: deps.embed,
+        log: deps.log,
+      });
+      matches = smart.matches;
+      confidence = smart.confidence;
+      semanticInvoked = smart.semanticInvoked;
+      recoveredBySemantic = smart.recoveredBySemantic;
+    } catch (err) {
+      deps.log?.warn?.(
+        `[kit-matcher] semantic lane failed (lexical kept): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
   const matchSummary = matches.map((m) => ({ slug: m.entry.slug, score: m.score }));
 
   if (matches.length === 0) {
@@ -473,5 +511,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
     confidence,
     catalogSize: index.length,
     noMatch: false,
+    semanticInvoked,
+    recoveredBySemantic,
   };
 }
