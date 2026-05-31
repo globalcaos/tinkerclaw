@@ -63,4 +63,4 @@ Bounded: at most **5 nudges** per task (`MAX_OVERSEER_ITERATIONS`), so the loop 
 ### 1. Engage the Overseer supervisory loop
 
 done-when: the Overseer judges the original task complete (it goes silent) or the nudge cap is reached
-Activate the Overseer for this session against the user's original request. Let Jarvis work; after each Jarvis turn, the Overseer verifies completion against the original task and nudges forward if anything is unfinished. Stop when the Overseer is satisfied.
+As your **FIRST action**, call the `fork.overseer.activate` RPC with `{ "sessionKey": "<this session's key>", "task": "<the user's original request, verbatim>" }` to engage the supervisory loop. Then proceed to do the work normally. After each of your turns, the Overseer (a separate persona) automatically verifies completion against the original task and, if anything is unfinished, injects a nudge — which arrives as a prompt prefixed `⟦OVERSEER⟧` and renders as a left amber "Overseer" bubble. Keep working until the Overseer goes silent (the loop self-terminates; it is also capped at 5 nudges).
