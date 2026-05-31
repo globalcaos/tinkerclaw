@@ -1,0 +1,66 @@
+---
+schema: "kit/1.0"
+slug: "overseer"
+title: "Overseer"
+summary: "Supervisory critic loop — a distinct Overseer persona verifies the original task is FULLY done and nudges Jarvis forward until it is, then goes silent."
+version: "1.0.0"
+owner: "globalcaos"
+license: "MIT"
+tags:
+  [
+    "overseer",
+    "oversight",
+    "supervise",
+    "complex",
+    "multi-step",
+    "verify completion",
+    "ensure done",
+    "make sure",
+    "see it through",
+    "end-to-end",
+    "thorough",
+    "don't stop until",
+  ]
+tools: ["read"]
+testedHarnesses: ["OpenClaw"]
+parallelism:
+  groups:
+    - [0]
+  notes: |
+    This recipe is a MODE, not a step sequence. Matching it ACTIVATES the Overseer
+    supervisory loop (src/fork/overseer.ts) for the session — it does not dispatch
+    subagents via the kit-runner. The single step below documents the contract.
+model:
+  provider: "anthropic"
+  name: "claude-opus-4-8"
+  hosting: "cloud API"
+resolverHints:
+  [
+    {
+      "match": "overseer | oversee | make sure it's done | see it through | don't stop until | complex multi-step",
+      "load": ["kit.md"],
+      "purpose": "Engage the Overseer when a task is complex enough to warrant a completion-enforcing critic loop.",
+    },
+  ]
+---
+
+## Goal
+
+Guarantee a complex, multi-part request is **fully** completed — not merely attempted — by running a supervisory critic loop around Jarvis.
+
+## How it works (a mode, not a step list)
+
+When this recipe matches, the session activates **The Overseer** (`src/fork/overseer.ts`):
+
+- The Overseer is a **distinct persona** from Jarvis (a terse QA/supervisor; it never does the work itself).
+- After **each** Jarvis turn completes, the Overseer is consulted with the **chat window + the original task**.
+- If the task is **not** fully done, the Overseer emits **one concise nudge**, which is injected into Jarvis' session as a prompt (Jarvis sees it as input) and rendered as a **left-side bubble in the Overseer's amber colour with an "Overseer" label**.
+- Jarvis answers the nudge → the Overseer is consulted again → loop.
+- When the Overseer judges the task **complete, it stays silent** — which cuts the loop.
+
+Bounded: at most **5 nudges** per task (`MAX_OVERSEER_ITERATIONS`), so the loop can never run away.
+
+### 1. Engage the Overseer supervisory loop
+
+done-when: the Overseer judges the original task complete (it goes silent) or the nudge cap is reached
+Activate the Overseer for this session against the user's original request. Let Jarvis work; after each Jarvis turn, the Overseer verifies completion against the original task and nudges forward if anything is unfinished. Stop when the Overseer is satisfied.
