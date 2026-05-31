@@ -4479,6 +4479,13 @@ function formatHHMMSS(ms: number): string {
   const ss = String(d.getSeconds()).padStart(2, "0");
   return `${hh}:${mm}:${ss}`;
 }
+// FORK 2026-05-31: Overseer nudge sentinel + colour — MUST match OVERSEER_PROMPT_PREFIX
+// / OVERSEER_COLOR in src/fork/overseer.ts. An Overseer nudge is injected into Jarvis'
+// session as a user-role prompt (Jarvis sees it as input) but renders as a LEFT amber
+// "Overseer" bubble, so it reads as the Overseer's own voice on the assistant side.
+const OVERSEER_MARKER = "⟦OVERSEER⟧";
+const OVERSEER_COLOR = "#d97706";
+
 function renderUserBubbleWithPromptToggle(
   userText: string,
   msg: { _fullPrompt?: string; _briefingPath?: string; _promptStartedAt?: number },
@@ -4486,6 +4493,13 @@ function renderUserBubbleWithPromptToggle(
   queuedBadge: string,
   idx: number,
 ): string {
+  if (userText.startsWith(OVERSEER_MARKER)) {
+    const body = userText.slice(OVERSEER_MARKER.length).trim();
+    return (
+      `<div class="msg assistant msg-overseer" data-msg-idx="${idx}" style="--overseer-color:${OVERSEER_COLOR}">` +
+      `<span class="msg-overseer-badge">🔭 Overseer</span>${md(body)}</div>`
+    );
+  }
   // FORK 2026-05-09 (Feature A, simplified): timestamp lives on the bubble
   // itself as a `data-timestamp` attribute. CSS uses a `::after` pseudo-
   // element to render the value below the bubble's bottom-left corner.

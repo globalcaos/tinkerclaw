@@ -5997,3 +5997,24 @@ code.fs-link.fs-link-error {
     transform: scale(0.7);
   }
 }
+
+/* FORK 2026-05-31: THE OVERSEER bubble. The Overseer's nudge is injected as a prompt
+   to Jarvis but renders on the LEFT (assistant side) in its own amber colour with an
+   "Overseer" label, so it reads as a distinct supervisory voice. See src/fork/overseer.ts. */
+.msg.assistant.msg-overseer {
+  border-left: 3px solid var(--overseer-color, #d97706);
+  background: color-mix(in srgb, var(--overseer-color, #d97706) 8%, transparent);
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+.msg-overseer-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--overseer-color, #d97706);
+  vertical-align: baseline;
+}
