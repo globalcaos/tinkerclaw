@@ -49,6 +49,10 @@ function readNum(p: Record<string, unknown>, k: string): number | undefined {
   const v = p[k];
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
+function readBool(p: Record<string, unknown>, k: string): boolean {
+  const v = p[k];
+  return v === true || v === "true" || v === 1;
+}
 
 export const forkCuriosityHandlers: GatewayRequestHandlers = {
   // 2a — log a detected knowledge gap.
@@ -139,6 +143,28 @@ export const forkCuriosityHandlers: GatewayRequestHandlers = {
       return;
     }
     const top = topGapsPure(gaps, { k });
+    // OMNI (J8 THALAMUS): opt-in LLM interestingness re-rank of the cheap top-k shortlist.
+    // Default OFF → byte-identical to the fixed linear order unless the caller sets omni:true.
+    // Spawns one judge per shortlisted gap; on ANY judge failure each gap falls back to its
+    // fixed score, and on any wholesale error we drop to the fixed order below — so this can
+    // only ADD ranking signal, never break or empty the queue.
+    if (readBool(p, "omni")) {
+      try {
+        const { scoreGapsWithInterestingness } = await import("./curiosity-interestingness.js");
+        const reranked = await scoreGapsWithInterestingness(
+          top.map((t) => t.gap),
+          { blendWeight: readNum(p, "blendWeight") },
+        );
+        log.info(
+          `fork.curiosity.topGaps OMNI re-ranked ${reranked.length} gap(s) sinceDays=${sinceDays} k=${k}`,
+        );
+        respond(true, { ok: true, gaps: reranked, omni: true }, undefined);
+        return;
+      } catch (err) {
+        console.error("[fork.curiosity.topGaps] OMNI re-rank failed; using fixed order", err);
+        // fall through to the fixed-order response
+      }
+    }
     log.info(`fork.curiosity.topGaps sinceDays=${sinceDays} k=${k} returned=${top.length}`);
     respond(true, { ok: true, gaps: top }, undefined);
   },
