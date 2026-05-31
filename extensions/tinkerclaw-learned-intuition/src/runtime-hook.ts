@@ -88,6 +88,12 @@ export class AmygdalaHook {
     return this._useRuleBasedFallback;
   }
 
+  /** FORK 2026-05-30: gate load errors, surfaced so index.ts can log the REAL onnx
+   * failure via the structured logger (console.error here is not captured). */
+  get gateLoadErrors(): string[] {
+    return this.gate.loadErrors;
+  }
+
   /**
    * Initialise all sub-systems. Must be called once before evaluate().
    * If ONNX is not available, falls back to rule-based gate.

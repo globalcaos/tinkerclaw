@@ -13,6 +13,10 @@
 // in test environments where the native addon is not installed.
 type OrtModule = typeof import("onnxruntime-node");
 let _ort: OrtModule | null = null;
+// FORK 2026-05-30: last onnxruntime-node import error, surfaced via the gate's
+// loadErrors so index.ts can log it through the STRUCTURED logger (raw console.error
+// from this extension is not captured by the journal / openclaw logs).
+let _lastImportError: string | null = null;
 async function loadOrt(): Promise<OrtModule | null> {
   if (_ort) {
     return _ort;
@@ -21,6 +25,7 @@ async function loadOrt(): Promise<OrtModule | null> {
     _ort = (await import("onnxruntime-node")) as OrtModule;
     return _ort;
   } catch (err) {
+    _lastImportError = err instanceof Error ? (err.stack ?? err.message) : String(err);
     // FORK 2026-05-30: surface WHY the runtime failed to import (was silent → hid
     // the 1.26.0 regression). If this fires, onnxruntime-node itself didn't load
     // (e.g. device-discovery throwing under systemd), so the gate can't be onnx.
@@ -73,6 +78,9 @@ export class AmygdalaGate {
   private personalitySessions: Map<ArchKey, any> = new Map();
   private config: AmygdalaConfig;
   private _onnxAvailable = false;
+  // FORK 2026-05-30: load errors collected during initialize(), surfaced by index.ts
+  // via the structured logger (raw console.error here is not captured by the journal).
+  private _loadErrors: string[] = [];
 
   // Per-network calibration quantiles: [q_safe, q_needs_review, q_dangerous]
   private conformalQuantiles: Map<ArchKey, [number, number, number]> = new Map();
@@ -93,6 +101,11 @@ export class AmygdalaGate {
     return this._onnxAvailable;
   }
 
+  /** FORK 2026-05-30: load errors collected during initialize(), for diagnostics. */
+  get loadErrors(): string[] {
+    return this._loadErrors;
+  }
+
   // -- Lifecycle --
 
   /**
@@ -103,7 +116,8 @@ export class AmygdalaGate {
   async initialize(): Promise<void> {
     const ort = await loadOrt();
     if (!ort) {
-      // onnxruntime-node not installed -- gate runs in stub mode
+      // onnxruntime-node failed to import — gate runs in rule-based fallback.
+      this._loadErrors.push(`onnxruntime-node import failed: ${_lastImportError ?? "unknown"}`);
       return;
     }
 
@@ -128,6 +142,9 @@ export class AmygdalaGate {
         // regression (gate fell to rule-based with no explained reason). d/e have no
         // trained full-weight model (expected); a/b/c failing is a real problem worth
         // surfacing to the devtools console.
+        this._loadErrors.push(
+          `prudence '${key}' (${this.config.prudence.model_paths[key]}): ${err instanceof Error ? err.message : String(err)}`,
+        );
         console.error(
           `[learned-intuition] prudence '${key}' load failed (${this.config.prudence.model_paths[key]}): ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -139,6 +156,9 @@ export class AmygdalaGate {
         this.personalitySessions.set(key, await ort.InferenceSession.create(iPath, opts));
         this._onnxAvailable = true;
       } catch (err) {
+        this._loadErrors.push(
+          `personality '${key}' (${this.config.personality.model_paths[key]}): ${err instanceof Error ? err.message : String(err)}`,
+        );
         console.error(
           `[learned-intuition] personality '${key}' load failed (${this.config.personality.model_paths[key]}): ${err instanceof Error ? err.message : String(err)}`,
         );
