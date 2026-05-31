@@ -863,6 +863,18 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
       }
     }
   }
+
+  // FORK 2026-05-31: THE OVERSEER — after a real Jarvis turn, run one bounded critic
+  // cycle. Fire-and-forget + fully guarded: inert unless the `overseer` recipe activated
+  // this session, never throws, never blocks the turn (see src/fork/overseer-runtime.ts).
+  void (async () => {
+    try {
+      const { maybeRunOverseerFromHook } = await import("./overseer-runtime.js");
+      await maybeRunOverseerFromHook(params.sessionKey, params.messagesSnapshot);
+    } catch (err) {
+      log.warn(`[overseer] hook dispatch failed (non-fatal): ${String(err)}`);
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------
