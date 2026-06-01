@@ -81,6 +81,49 @@ export interface DebateResult {
   convergenceRound: number | null;
 }
 
+// -- 7D: Cost-aware debate budget (billing-gate-aware) --
+
+/**
+ * 7D: remaining spend headroom for the current subscription/metered window, as
+ * reported by the gateway billing state. `source` discriminates how the number
+ * was derived; `"unknown"` means the gateway could not (or does not) report a
+ * real figure, in which case the budget resolver becomes a no-op (today's
+ * behaviour is preserved — see resolveDebateBudget).
+ */
+export interface BillingHeadroom {
+  remainingUsd: number;
+  source: "subscription" | "metered" | "unknown";
+}
+
+/** 7D: default fraction of remaining headroom a single debate may consume. */
+export const DEFAULT_BUDGET_HEADROOM_FRACTION = 0.2;
+
+/**
+ * 7D: tie the per-debate USD cap to real billing headroom.
+ *
+ *   activeBudget = min(depthBudget, fraction * remainingHeadroom)
+ *
+ * - When `headroom` is absent or its `source` is `"unknown"`, returns
+ *   `depthBudget` unchanged (non-blocking: identical to pre-7D behaviour, so an
+ *   absent `agent.getBillingState` RPC degrades gracefully).
+ * - Never returns a negative number (a negative `remainingUsd` clamps to 0, as
+ *   does a negative `depthBudget`).
+ *
+ * Async so a caller can `await` a billing RPC inline without changing call sites
+ * once the real headroom is threaded in.
+ */
+export async function resolveDebateBudget(
+  depthBudget: number,
+  headroom?: BillingHeadroom,
+  fraction: number = DEFAULT_BUDGET_HEADROOM_FRACTION,
+): Promise<number> {
+  if (!headroom || headroom.source === "unknown") {
+    return Math.max(0, depthBudget);
+  }
+  const fromHeadroom = fraction * headroom.remainingUsd;
+  return Math.max(0, Math.min(depthBudget, fromHeadroom));
+}
+
 // -- Role Assignment via Bipartite Matching --
 
 export const ROLE_AFFINITY: Record<string, Record<string, number>> = {
@@ -481,20 +524,48 @@ export async function runDebateRound(
 }
 
 /**
+ * 7F: cross-tool-call context carried into a resumed debate. Today it carries the
+ * prior debate's last synthesis, which round 1's PROPOSE phase picks up exactly the
+ * way an intra-debate prevRound synthesis already does (real-participant.ts seeds
+ * `priorSynthesis` into the propose prompt). Optional and additive — omitting it
+ * leaves runDebate behaviour byte-identical to the original (the existing suite
+ * asserts this).
+ */
+export interface ContextMixin {
+  priorSynthesis?: string;
+}
+
+/**
  * Run a full multi-round debate until convergence or max rounds.
+ *
+ * 7F: an optional `contextMixin` seeds round 1's propose with a prior synthesis
+ * (multi-turn speaker memory) without changing the per-round protocol — round 1 is
+ * given a synthetic `prevRound` whose only populated field is `synthesis`, which
+ * `runDebateRound` already threads into `propose(task, role, prevRound.synthesis)`.
  */
 export async function runDebate(
   task: string,
   participants: DebateParticipant[],
   config: DebateConfig = DEFAULT_DEBATE_CONFIG,
   recovery?: RecoveryHooks,
+  contextMixin?: ContextMixin,
 ): Promise<DebateResult> {
   const rounds: DebateRound[] = [];
   let converged = false;
   let convergenceRound: number | null = null;
 
+  // 7F: a non-empty priorSynthesis from a resumed debate seeds round 1 only. It is
+  // context, NOT live state — never replayed as a real round (so it is not pushed
+  // into `rounds` and does not affect convergence/cost math), only handed to
+  // round 1's propose via the prevRound.synthesis seam.
+  const seededPrior =
+    contextMixin?.priorSynthesis && contextMixin.priorSynthesis.trim().length > 0
+      ? ({ synthesis: contextMixin.priorSynthesis } as Pick<DebateRound, "synthesis">)
+      : undefined;
+
   for (let i = 0; i < config.maxRounds; i++) {
-    const prevRound = rounds.length > 0 ? rounds[rounds.length - 1] : undefined;
+    const prevRound =
+      rounds.length > 0 ? rounds[rounds.length - 1] : (seededPrior as DebateRound | undefined);
     const round = await runDebateRound(task, participants, i + 1, prevRound, config, recovery);
     rounds.push(round);
 

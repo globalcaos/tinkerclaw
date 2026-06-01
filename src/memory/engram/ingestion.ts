@@ -10,7 +10,7 @@
 import { createArtifactStore } from "./artifact-store.js";
 import { createEventStore, estimateTokens } from "./event-store.js";
 import type { EventKind, MemoryEvent } from "./event-types.js";
-import type { MemoryReconciler } from "./reconciliation.js";
+import { createAlwaysAddReconciler, type MemoryReconciler } from "./reconciliation.js";
 
 /**
  * Minimal structural interface for conversation messages that can be bulk-ingested.
@@ -95,8 +95,15 @@ export interface IngestionPipelineConfig {
   /**
    * Optional Mem0-style write reconciler (Upgrade 8). Consulted on the hot path
    * via `decideSync`, which MUST return only ADD or NONE. A NONE decision skips
-   * the event entirely (not persisted). When absent, every event is ADDed —
-   * byte-identical to pre-reconciliation behavior (the back-compat default).
+   * the event entirely (not persisted). An ADD decision may carry an `importance`
+   * override that replaces the static IMPORTANCE_BY_KIND value.
+   *
+   * BACK-COMPAT GATING: when no reconciler is supplied, the field defaults to
+   * `createAlwaysAddReconciler()` (every event ADDed). The reconciler is only
+   * *consulted* on the hot path when EITHER an explicit reconciler was passed OR
+   * the `ENGRAM_RECONCILE` env flag is "true" (the active path). With neither,
+   * the decision call is skipped entirely → byte-identical to pre-reconciliation
+   * behavior.
    */
   reconciler?: MemoryReconciler;
 }
@@ -142,12 +149,14 @@ export interface IngestionPipeline {
  * ```
  */
 export function createIngestionPipeline(config: IngestionPipelineConfig): IngestionPipeline {
-  const {
-    baseDir,
-    sessionKey,
-    artifactThresholdBytes = DEFAULT_ARTIFACT_THRESHOLD_BYTES,
-    reconciler,
-  } = config;
+  const { baseDir, sessionKey, artifactThresholdBytes = DEFAULT_ARTIFACT_THRESHOLD_BYTES } = config;
+
+  // Default to the always-ADD reconciler so the field is never undefined
+  // (Upgrade 8 back-compat default). The hot path only CONSULTS it when an
+  // explicit reconciler was injected OR ENGRAM_RECONCILE is on — otherwise the
+  // decision call is skipped and behavior is byte-identical to before.
+  const reconciler = config.reconciler ?? createAlwaysAddReconciler();
+  const reconcileActive = config.reconciler != null || process.env.ENGRAM_RECONCILE === "true";
 
   const eventStore = createEventStore({ baseDir, sessionKey });
   const artifactStore = createArtifactStore({ baseDir });
@@ -174,7 +183,7 @@ export function createIngestionPipeline(config: IngestionPipelineConfig): Ingest
       },
     };
 
-    if (reconciler) {
+    if (reconcileActive) {
       // Hot path: decideSync MUST return only ADD or NONE (enforced by the
       // reconciler implementations). NONE → skip persistence entirely.
       const decision = reconciler.decideSync(

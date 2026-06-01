@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import Ajv from "ajv";
+import AjvPkg from "ajv";
 import { fetch as undiciFetch } from "undici";
 import { parse as parseYaml } from "yaml";
 import { callGateway } from "../../src/gateway/call.js";
@@ -23,9 +23,11 @@ import {
   type PrefrontalKitMatchParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
+import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
+import { skillMdToKitSpec, buildBridgedKitMd, BRIDGED_SKILLS_DIRNAME } from "./cc-skills-bridge.js";
 import { buildKitMd, validateKitSpec, type KitSpec } from "./kit-author.js";
 import { loadKitIndex, matchKitsDetailed, invalidateKitIndexCache } from "./kit-matcher.js";
-import { runKit } from "./kit-runner.js";
+import { parseUsesDirective, runKit } from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
 import { surfaceKitOutcome } from "./long-run-surface.js";
 import {
@@ -34,11 +36,18 @@ import {
   isApplyEnabled,
   type ApplyProposalInput,
 } from "./recipe-apply.js";
+import {
+  bumpVersion,
+  makeRatingLookup,
+  type Marketplace,
+  type SemverBump,
+} from "./recipe-marketplace.js";
 import { snapshotKit } from "./recipe-snapshot.js";
 
 const recipeApplyLog = createSubsystemLogger("recipe-apply");
 
-const ajv = new Ajv({ allErrors: true });
+const AjvCtor = AjvPkg as unknown as typeof import("ajv").default;
+const ajv = new AjvCtor({ allErrors: true });
 const vSearch = ajv.compile(PrefrontalKitSearchParamsSchema);
 const vGet = ajv.compile(PrefrontalKitGetParamsSchema);
 const vInstall = ajv.compile(PrefrontalKitInstallParamsSchema);
@@ -144,6 +153,37 @@ export async function parseKitMd(filePath: string): Promise<KitParsed> {
   }
 
   return { slug, title, summary, tags, category };
+}
+
+// ─── Frontmatter scalar read/write (U12 version/owner) ───────────────────────
+
+/**
+ * Read a single scalar YAML frontmatter field (e.g. `version`, `owner`) from a
+ * kit.md. Tolerates quoted (`version: "1.2.3"`) or bare (`owner: globalcaos`)
+ * values. Returns undefined when there is no frontmatter or the key is absent.
+ */
+export function readFrontmatterField(kitMd: string, key: string): string | undefined {
+  const fm = /^---\n([\s\S]+?)\n---/.exec(kitMd);
+  if (!fm) return undefined;
+  const re = new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m");
+  const m = re.exec(fm[1]);
+  if (!m) return undefined;
+  return m[1].replace(/^["']|["']$/g, "").trim() || undefined;
+}
+
+/**
+ * Return `kitMd` with the frontmatter scalar `key` set to `value` (quoted). If the
+ * key exists it is replaced in place; if absent it is appended just before the
+ * closing `---`. No-op-safe on a doc without frontmatter (returns it unchanged).
+ */
+export function setFrontmatterField(kitMd: string, key: string, value: string): string {
+  const fm = /^(---\n)([\s\S]+?)(\n---)/.exec(kitMd);
+  if (!fm) return kitMd;
+  const block = fm[2];
+  const re = new RegExp(`^${key}:.*$`, "m");
+  const line = `${key}: ${JSON.stringify(value)}`;
+  const newBlock = re.test(block) ? block.replace(re, line) : `${block}\n${line}`;
+  return kitMd.slice(0, fm.index) + fm[1] + newBlock + fm[3] + kitMd.slice(fm.index + fm[0].length);
 }
 
 // ─── Own-kits walker ────────────────────────────────────────────────────────
@@ -316,64 +356,311 @@ export interface KitRpcsDeps {
   /** Optional plan store — required for prefrontal.kit.run in live mode */
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   planStore?: any;
+  /**
+   * FORK 2026-06-01 (U12): the recipe marketplace facade (recipe-marketplace.ts).
+   * When wired, publish bumps + immutability-checks against it and get/install
+   * resolve a version-constraint through it. Omitted → version logic is skipped
+   * (back-compat: publish POSTs the kit verbatim, get/install pass ref straight
+   * to Journey), so a marketplace-less deploy keeps working.
+   */
+  marketplace?: Marketplace;
+  /**
+   * FORK 2026-06-01 (U12): the identity that may publish/overwrite kits. Used for
+   * the publish owner-permission check (a kit whose frontmatter `owner:` differs
+   * is refused). Default "globalcaos".
+   */
+  currentOwner?: string;
+  /**
+   * FORK 2026-06-01 (Wire-seam 5): injectable Journey JSON fetch seam. Defaults to
+   * the undici-backed implementation built in the factory. Mirrors recipe-
+   * marketplace's injectable MarketplaceFetch so the RPCs are unit-testable
+   * offline; production passes nothing and gets the real network path.
+   */
+  fetchJsonImpl?: (p: string, init?: Parameters<typeof undiciFetch>[1]) => Promise<unknown>;
+  /**
+   * FORK 2026-06 (U1): engram base dir for the on-disk recipe-fitness store. When
+   * supplied, prefrontal.recipe.match + the recipe.search local fallback fold each
+   * candidate's empirical-fitness boost into the score (via makeFitnessLookup),
+   * matching the turn-start seed in index.ts. Omitted → pure lexical scoring
+   * (back-compat: a fitness-less deploy / offline test keeps working).
+   */
+  engramBaseDir?: string;
 }
 
 export function createKitRpcs(deps: KitRpcsDeps) {
-  const fetchJson = async (p: string, init?: Parameters<typeof undiciFetch>[1]) => {
-    const headers = new Headers((init?.headers as Record<string, string>) ?? undefined);
-    headers.set("Accept", "application/json");
-    if (deps.apiKey) headers.set("Authorization", `Bearer ${deps.apiKey}`);
-    const res = await undiciFetch(`${deps.baseUrl}${p}`, { ...init, headers });
-    if (!res.ok) throw new Error(`Journey ${p} -> ${res.status} ${res.statusText}`);
-    return res.json();
+  const fetchJson =
+    deps.fetchJsonImpl ??
+    (async (p: string, init?: Parameters<typeof undiciFetch>[1]) => {
+      const headers: Record<string, string> = {
+        ...((init?.headers as Record<string, string> | undefined) ?? {}),
+        Accept: "application/json",
+      };
+      if (deps.apiKey) headers.Authorization = `Bearer ${deps.apiKey}`;
+      const res = await undiciFetch(`${deps.baseUrl}${p}`, { ...init, headers });
+      if (!res.ok) throw new Error(`Journey ${p} -> ${res.status} ${res.statusText}`);
+      return res.json();
+    });
+
+  // FORK 2026-06-01 (U11): bridged CC-skill imports land under the install
+  // sandbox in a dedicated dir (BRIDGED_SKILLS_DIRNAME). The matcher scans it via
+  // loadKitIndex's extraDirs so imported recipes become matchable. One source of
+  // truth for the name lives in cc-skills-bridge.ts.
+  const bridgedSkillsDir = path.join(deps.kitInstallSandbox, BRIDGED_SKILLS_DIRNAME);
+
+  // FORK 2026-06 (U1) + 2026-06-01 (U12): build the matcher's empirical-fitness +
+  // marketplace-rating lookups for the local-match RPCs (recipe.match + the
+  // recipe.search local fallback). Built FRESH per call so a fitness write between
+  // calls is reflected (makeFitnessLookup memoizes only within one lookup). Returns
+  // `{}` (no lookups) when neither seam is wired, so an offline test / fitness-less
+  // deploy keeps pure-lexical scoring. Mirrors the index.ts turn-start seed wiring.
+  const buildMatchSignals = (): {
+    feedback?: (slug: string) => number | undefined;
+    rating?: (slug: string) => number | undefined;
+  } => ({
+    ...(deps.engramBaseDir ? { feedback: makeFitnessLookup(deps.engramBaseDir) } : {}),
+    ...(deps.marketplace ? { rating: makeRatingLookup(deps.marketplace) } : {}),
+  });
+
+  /**
+   * FORK 2026-06-01 (U12): resolve an optional `ref` to a concrete published
+   * version when (a) a marketplace is wired and (b) ref looks like a version
+   * constraint. Returns the raw ref unchanged when no marketplace, no ref, or the
+   * marketplace cannot resolve it (so non-version refs and marketplace-less
+   * deploys are untouched). Never throws.
+   */
+  const resolveRef = async (
+    kitRef: string,
+    ref: string | undefined,
+  ): Promise<string | undefined> => {
+    if (!deps.marketplace || !ref) return ref;
+    try {
+      const resolved = await deps.marketplace.resolveVersion(kitRef, ref);
+      return resolved ?? ref;
+    } catch {
+      return ref;
+    }
+  };
+
+  /**
+   * FORK 2026-06-01 (U11): bridge ONE Claude-Code SKILL.md into a recipe/1.0 and
+   * write it (sandboxed) into the bridged-skills dir. Reuses the existing
+   * cc-skills-bridge transpiler + the buildKitMd/validateKitSpec guards (no fork).
+   * Throws on a malformed skill BEFORE any write (validation lives in
+   * skillMdToKitSpec). Returns the slug + on-disk path.
+   */
+  const bridgeSkill = async (skillMd: string): Promise<{ slug: string; path: string }> => {
+    const spec = skillMdToKitSpec(skillMd); // throws on malformed skill (pre-write)
+    const v = validateKitSpec(spec);
+    if (!v.ok) {
+      throw new Error(`cc-skills-bridge: transpiled spec is invalid — ${v.errors.join("; ")}`);
+    }
+    const md = buildBridgedKitMd(spec);
+    const dir = path.join(bridgedSkillsDir, spec.slug);
+    await fs.mkdir(dir, { recursive: true });
+    const target = path.join(dir, "kit.md");
+    await fs.writeFile(target, md, "utf-8");
+    invalidateKitIndexCache(); // matcher re-scans (incl. bridgedSkillsDir) next turn
+    return { slug: spec.slug, path: target };
+  };
+
+  /**
+   * Split a declared dependency ref into its `owner/slug` and an optional trailing
+   * `@<constraint>` (e.g. `globalcaos/foo@^1.2.0` → ["globalcaos/foo", "^1.2.0"]).
+   * A dep with no `@` carries no declared constraint (→ undefined), which the
+   * installer resolves as `latest`. Bare slugs normalize to `globalcaos/<slug>`.
+   */
+  const splitDepRef = (raw: string): { ref: string; constraint: string | undefined } => {
+    const at = raw.indexOf("@");
+    const refPart = at >= 0 ? raw.slice(0, at) : raw;
+    const constraint = at >= 0 ? raw.slice(at + 1).trim() || undefined : undefined;
+    const ref = refPart.includes("/") ? refPart : `globalcaos/${refPart}`;
+    return { ref, constraint };
+  };
+
+  /**
+   * FORK 2026-06-01 (U11): transitive dependency resolver for recipe.install.
+   * After a kit is written, parse its kit.md for the two composition kinds a
+   * recipe declares its deps with — frontmatter `composes: [slug, ...]` (merged
+   * sub-recipes) and a leading `uses: <ref>` directive in any step body (runtime
+   * sub-kit) — and install each one, recursively. Cycle-guarded by the `seen` set
+   * (a ref already installed this call is never re-fetched), so a → b → a
+   * terminates. Bare slugs normalize to `globalcaos/<slug>` (matching the runner's
+   * parseUsesDirective contract). Each dep resolves with its OWN declared
+   * constraint (a trailing `@<constraint>` on the composes/uses ref) or `latest` —
+   * the root's `p.ref` constraint is NEVER inherited by a transitive dep. Returns
+   * the flat set of dependency refs written.
+   */
+  const installDeps = async (
+    rootRef: string,
+    installOne: (ref: string, constraint: string | undefined) => Promise<string[] | void>,
+    seen: Set<string>,
+  ): Promise<string[]> => {
+    const installed: string[] = [];
+    const [owner, slug] = rootRef.split("/");
+    let kitMd: string;
+    try {
+      const target = deps.store.resolveSandboxPath(owner, slug, "kit.md");
+      kitMd = await fs.readFile(target, "utf-8");
+    } catch {
+      return installed; // nothing written / unreadable → no deps to resolve
+    }
+
+    // Each dep carries its OWN declared version constraint (from `@<constraint>`),
+    // not the root install's constraint.
+    const deps2: Array<{ ref: string; constraint: string | undefined }> = [];
+    // 1) frontmatter composes: [...]
+    const fm = /^---\n([\s\S]+?)\n---\n/.exec(kitMd);
+    if (fm) {
+      try {
+        const parsed = parseYaml(fm[1]) as Record<string, unknown> | null;
+        if (parsed && Array.isArray(parsed.composes)) {
+          for (const c of parsed.composes) {
+            if (typeof c === "string" && c.trim()) {
+              deps2.push(splitDepRef(c.trim()));
+            }
+          }
+        }
+      } catch {
+        // malformed frontmatter — skip composes, still try uses below
+      }
+    }
+    // 2) `uses: <ref>` directives in step bodies (reuse the runner's parser).
+    const body = fm ? kitMd.slice(fm[0].length) : kitMd;
+    for (const part of body.split(/(?=^#{1,6}\s+\d+\.\s+)/m)) {
+      const stepBody = part.replace(/^#{1,6}\s+\d+\.\s+.*$/m, "").trim();
+      const usesRef = parseUsesDirective(stepBody);
+      if (usesRef) deps2.push({ ref: usesRef, constraint: undefined });
+    }
+
+    for (const dep of deps2) {
+      if (seen.has(dep.ref)) continue; // cycle / already-installed guard
+      seen.add(dep.ref);
+      await installOne(dep.ref, dep.constraint);
+      installed.push(dep.ref);
+      // Recurse into the dep's OWN deps.
+      const sub = await installDeps(dep.ref, installOne, seen);
+      installed.push(...sub);
+    }
+    return installed;
   };
 
   return {
     "prefrontal.recipe.search": async (raw: unknown) => {
       const p = check<PrefrontalKitSearchParams>(vSearch, raw, "prefrontal.recipe.search");
-      const j: any = await fetchJson(
-        `/api/kits/search?q=${encodeURIComponent(p.query)}${p.limit ? `&limit=${p.limit}` : ""}`,
-      );
-      // Journey API returns a flat array; guard against wrapped {results:[...]} shape too
-      const arr: any[] = Array.isArray(j) ? j : (j.results ?? []);
-      // Dedupe by kitRef — keep the entry with the highest releaseTag (semver string compare)
-      const seen = new Map<string, any>();
-      for (const r of arr) {
-        const k = r.kitRef;
-        if (!k) continue;
-        const cur = seen.get(k);
-        if (!cur || (r.releaseTag ?? "") > (cur.releaseTag ?? "")) seen.set(k, r);
+      try {
+        const j: any = await fetchJson(
+          `/api/kits/search?q=${encodeURIComponent(p.query)}${p.limit ? `&limit=${p.limit}` : ""}`,
+        );
+        // Journey API returns a flat array; guard against wrapped {results:[...]} shape too
+        const arr: any[] = Array.isArray(j) ? j : (j.results ?? []);
+        // Dedupe by kitRef — keep the entry with the highest releaseTag (semver string compare)
+        const seen = new Map<string, any>();
+        for (const r of arr) {
+          const k = r.kitRef;
+          if (!k) continue;
+          const cur = seen.get(k);
+          if (!cur || (r.releaseTag ?? "") > (cur.releaseTag ?? "")) seen.set(k, r);
+        }
+        return { results: [...seen.values()], source: "journey" as const };
+      } catch (err) {
+        // FORK 2026-06-01 (U11): Journey unreachable → degrade to the LOCAL catalog
+        // (same Risk-7 graceful-degradation posture as the marketplace) instead of
+        // hard-failing the search. The local matcher scores the query against the
+        // own-kits catalog (+ bridged imports) so a network outage still surfaces
+        // the recipes Jarvis already has. Never throws on the fallback path.
+        const index = await loadKitIndex(deps.ownKitsDir, [bridgedSkillsDir]);
+        // FORK 2026-06 (U1) + 2026-06-01 (U12): same fitness+rating signals as the
+        // turn-start seed so the local fallback ranks proven/popular recipes higher.
+        const { matches } = matchKitsDetailed(p.query, index, {
+          max: p.limit ?? 10,
+          ...buildMatchSignals(),
+        });
+        return {
+          results: matches.map((m) => ({
+            kitRef: `globalcaos/${m.entry.slug}`,
+            slug: m.entry.slug,
+            title: m.entry.title,
+            summary: m.entry.summary,
+            score: m.score,
+            source: "local" as const,
+          })),
+          source: "local" as const,
+          fallbackReason: err instanceof Error ? err.message : String(err),
+        };
       }
-      return { results: [...seen.values()] };
     },
 
     "prefrontal.recipe.get": async (raw: unknown) => {
       const p = check<PrefrontalKitGetParams>(vGet, raw, "prefrontal.recipe.get");
+      // FORK 2026-06-01 (U12): when a marketplace is wired AND ref is a version
+      // constraint (range/latest/exact), resolve it to a concrete published version
+      // first so the fetch pins a real release. resolveVersion never throws (Risk 7
+      // degrades to cache/null); a null resolution falls through to the raw ref so
+      // a non-version ref (e.g. a git sha) still works.
+      const ref = await resolveRef(p.kitRef, p.ref);
       const j: any = await fetchJson(
-        `/api/kits/${p.kitRef}${p.ref ? `?ref=${encodeURIComponent(p.ref)}` : ""}`,
+        `/api/kits/${p.kitRef}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`,
       );
       return { kit: j };
     },
 
     "prefrontal.recipe.install": async (raw: unknown) => {
       const p = check<PrefrontalKitInstallParams>(vInstall, raw, "prefrontal.recipe.install");
-      const ref = p.ref ?? "latest";
-      const install: any = await fetchJson(
-        `/api/kits/${p.kitRef}/install?target=openclaw&ref=${encodeURIComponent(ref)}`,
-      );
 
-      const risk: Array<{ source: string; level: string; alertCount?: number }> =
-        install.risk ?? [];
-      const blocking = risk.find((r) => r.level === "Critical" || r.level === "High Risk");
-      if (blocking && !p.allowRisky) {
-        throw new Error(
-          `prefrontal.kit.install refused: kit ${p.kitRef} reports ${blocking.level} (${blocking.source}, alerts=${blocking.alertCount ?? "?"}). Re-run with allowRisky:true to override.`,
-        );
+      // FORK 2026-06-01 (U11): CC SKILL.md import path. When `skillMd` is provided,
+      // transpile it to a recipe/1.0 and write it into the bridged-skills dir
+      // instead of fetching from Journey. Malformed skills throw before any write.
+      if (typeof p.skillMd === "string" && p.skillMd.trim()) {
+        const { slug, path: writtenPath } = await bridgeSkill(p.skillMd);
+        return {
+          ok: true,
+          bridged: true,
+          slug,
+          installedPath: writtenPath,
+          preflightResults: [],
+          nextSteps: [],
+        } as const;
       }
 
-      const [owner, slug] = p.kitRef.split("/");
-      await deps.store.writeKitFiles({ owner, slug, files: install.files ?? [] });
+      // ── Journey install path (with transitive dep resolution) ────────────────
+      // FORK 2026-06-01 (U12): resolve a version-constraint to a concrete release
+      // before fetching the install payload (marketplace-less → ref passes through).
+      const seen = new Set<string>([p.kitRef]);
 
+      // installOne: fetch + risk-gate + sandboxed write for a single ref. Shared by
+      // the root install and the transitive dep walk so the risk gate + sandbox
+      // write apply uniformly. `constraint` is the version constraint THIS ref
+      // resolves with — the root passes p.ref; each transitive dep passes its OWN
+      // declared constraint (or undefined → latest), so the root's pin never leaks
+      // onto a sub-recipe. Returns nothing; writes to disk.
+      let rootInstall: any = null;
+      const installOne = async (kitRef: string, constraint: string | undefined): Promise<void> => {
+        const ref = (await resolveRef(kitRef, constraint)) ?? "latest";
+        const install: any = await fetchJson(
+          `/api/kits/${kitRef}/install?target=openclaw&ref=${encodeURIComponent(ref)}`,
+        );
+        const risk: Array<{ source: string; level: string; alertCount?: number }> =
+          install.risk ?? [];
+        const blocking = risk.find((r) => r.level === "Critical" || r.level === "High Risk");
+        if (blocking && !p.allowRisky) {
+          throw new Error(
+            `prefrontal.kit.install refused: kit ${kitRef} reports ${blocking.level} (${blocking.source}, alerts=${blocking.alertCount ?? "?"}). Re-run with allowRisky:true to override.`,
+          );
+        }
+        const [owner, slug] = kitRef.split("/");
+        await deps.store.writeKitFiles({ owner, slug, files: install.files ?? [] });
+        if (kitRef === p.kitRef) rootInstall = install;
+      };
+
+      // Root install: ONLY the root kitRef honours the caller's p.ref constraint.
+      await installOne(p.kitRef, p.ref);
+      // Resolve + install transitive composes:/uses: dependencies (cycle-guarded);
+      // each dep resolves with its own declared constraint, not the root's p.ref.
+      const dependenciesInstalled = await installDeps(p.kitRef, installOne, seen);
+      invalidateKitIndexCache(); // newly written kits are matchable next turn
+
+      const install = rootInstall ?? {};
+      const [owner, slug] = p.kitRef.split("/");
       const preflightResults: Array<{ check: string; ok: boolean; output: string }> = [];
       for (const pf of install.preflightChecks ?? []) {
         preflightResults.push({
@@ -386,6 +673,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       return {
         ok: true,
         installedPath: `${deps.kitInstallSandbox}/${owner}/${slug}`,
+        dependenciesInstalled,
         preflightResults,
         nextSteps: install.nextSteps ?? [],
       } as const;
@@ -441,10 +729,55 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         throw new Error(
           "prefrontal.recipe.publish: missing apiKey (set integrations.journey.apiKey in openclaw.json)",
         );
-      const pathP = await import("node:path");
-      const kitMdPath = pathP.join(deps.ownKitsDir, p.slug, "kit.md");
+      const kitMdPath = path.join(deps.ownKitsDir, p.slug, "kit.md");
       const body = await fs.readFile(kitMdPath, "utf-8");
-      const res = await undiciFetch(`${deps.baseUrl}/api/kits/publish`, {
+
+      // FORK 2026-06-01 (U12): versioning + immutability + owner permission. The
+      // publish becomes the place recipe-as-artifact semantics are enforced:
+      //   1. OWNER check — refuse to publish a kit whose frontmatter `owner:`
+      //      differs from the publishing identity (currentOwner, default
+      //      "globalcaos"). Stops accidentally re-publishing someone else's recipe.
+      //   2. VERSION bump — read the frontmatter `version:` and bump it per `level`
+      //      (default patch). A missing/garbage version starts the chain at 1.0.0.
+      //   3. IMMUTABILITY — if a marketplace is wired and the BUMPED version is
+      //      already published (hasVersion), refuse: versions are immutable, a bad
+      //      recipe is yanked + re-bumped, never overwritten in place.
+      const owner = readFrontmatterField(body, "owner") ?? "globalcaos";
+      const me = deps.currentOwner ?? "globalcaos";
+      if (owner !== me) {
+        throw new Error(
+          `prefrontal.recipe.publish: owner permission denied — "${p.slug}" is owned by "${owner}", not "${me}".`,
+        );
+      }
+
+      const currentVersion = readFrontmatterField(body, "version");
+      const level: SemverBump = p.level ?? "patch";
+      let nextVersion: string;
+      if (currentVersion === undefined) {
+        // No version at all → this is the recipe's FIRST publish; start the chain
+        // at 1.0.0 (same as the garbage/unparseable path below).
+        nextVersion = "1.0.0";
+      } else {
+        try {
+          nextVersion = bumpVersion(currentVersion, level);
+        } catch {
+          // Unparseable existing version → start a clean chain at 1.0.0.
+          nextVersion = "1.0.0";
+        }
+      }
+
+      const kitRef = `${owner}/${p.slug}`;
+      if (deps.marketplace && (await deps.marketplace.hasVersion(kitRef, nextVersion))) {
+        throw new Error(
+          `prefrontal.recipe.publish: ${kitRef}@${nextVersion} is already published — versions are immutable (yank + re-bump instead of overwriting).`,
+        );
+      }
+
+      // Rewrite the frontmatter `version:` line to the bumped value (in-memory; the
+      // on-disk kit.md is the source of truth and stays at the author's edit).
+      const bumpedKitMd = setFrontmatterField(body, "version", nextVersion);
+
+      const j: any = await fetchJson(`/api/kits/publish`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -454,11 +787,18 @@ export function createKitRpcs(deps: KitRpcsDeps) {
           slug: p.slug,
           visibility: p.visibility,
           orgId: p.orgId,
-          kitMd: body,
+          version: nextVersion,
+          kitMd: bumpedKitMd,
         }),
       });
-      if (!res.ok) throw new Error(`Journey publish -> ${res.status}: ${await res.text()}`);
-      return await res.json();
+      // Pre-seed the marketplace cache so a later resolve sees the new version.
+      try {
+        deps.marketplace?.recordMarketplaceCache({
+          kitRef,
+          versions: [nextVersion],
+        });
+      } catch {}
+      return { ...(j && typeof j === "object" ? j : {}), version: nextVersion, kitRef };
     },
 
     "prefrontal.recipe.run": async (raw: unknown) => {
@@ -502,9 +842,29 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         kitInstallSandbox: deps.kitInstallSandbox,
         // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
         // interrupted in_progress plan only when resume:true is explicitly passed
-        // (no silent re-attach — Oscar's policy). Read defensively so this works
-        // even before `resume` is added to PrefrontalKitRunParamsSchema.
-        resume: (p as { resume?: boolean }).resume === true,
+        // (no silent re-attach — the architect's policy). `resume` is now part of
+        // PrefrontalKitRunParamsSchema, so the defensive cast is gone.
+        resume: p.resume === true,
+        // FORK 2026-05-30 (Upgrade 5): forward in-flight checkpoint heartbeats so a
+        // long-polling step is observably alive in the recipe trail. Same loopback
+        // callGateway + fire-and-forget pattern as onRecipeState above — a stalled
+        // heartbeat never blocks or fails the run. (Wire-seam 4.)
+        onCheckpoint: (ev) => {
+          void callGateway({
+            method: "fork.prefrontal.trailEvent",
+            params: {
+              kind: "checkpoint",
+              label: `${p.kitRef}:step-${ev.stepIndex}`,
+              message: `step ${ev.stepIndex + 1} still running (${Math.round(ev.elapsedMs / 1000)}s)`,
+              sessionKey: ev.sessionKey,
+              payload: {
+                recipeId: p.kitRef,
+                stepIndex: ev.stepIndex,
+                elapsedMs: ev.elapsedMs,
+              },
+            },
+          }).catch(() => {});
+        },
         // FORK 2026-05-31: forward live recipe-state to the RECIPES panel via the
         // setRecipe broadcast RPC (same loopback callGateway pattern as
         // surfaceKitOutcome below). Fire-and-forget — observability never blocks
@@ -522,6 +882,35 @@ export function createKitRpcs(deps: KitRpcsDeps) {
               parallelismCap: state.parallelismCap,
               inFlightLabels: state.inFlightLabels,
               sessionKey: state.sessionKey,
+            },
+          }).catch(() => {});
+        },
+        // FORK 2026-06 (Upgrade 1): recipe-ATTRIBUTION producer. kit-runner stamps a
+        // `recipe:<owner/slug>` TagStamp at run start AND at each task dispatch; we
+        // forward each one to the engram trail/ingestion seam (same loopback
+        // callGateway + fire-and-forget pattern as onRecipeState/onCheckpoint above).
+        // The tag rides into the run's episode events so recipe-fitness.attributeRecipe()
+        // can attribute the episode's outcome to this recipe at consolidation — the
+        // missing producer that left empirical fitness inert. Never blocks/fails the run.
+        onTag: (ev) => {
+          void callGateway({
+            method: "fork.prefrontal.trailEvent",
+            params: {
+              kind: "recipe-tag",
+              label: ev.tag,
+              message:
+                ev.phase === "start"
+                  ? `recipe attribution ${ev.tag}`
+                  : `recipe attribution ${ev.tag} (step ${(ev.stepIndex ?? 0) + 1})`,
+              sessionKey: ev.sessionKey,
+              payload: {
+                recipeTag: ev.tag,
+                phase: ev.phase,
+                ...(typeof ev.stepIndex === "number" ? { stepIndex: ev.stepIndex } : {}),
+                // The canonical attribution tag the cerebellum reads off episode
+                // events (recipe-fitness.attributeRecipe matches `recipe:` prefix).
+                tags: [ev.tag],
+              },
             },
           }).catch(() => {});
         },
@@ -667,8 +1056,15 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     // candidates + a confidence so the caller can decide use-vs-author.
     "prefrontal.recipe.match": async (raw: unknown) => {
       const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.recipe.match");
-      const index = await loadKitIndex(deps.ownKitsDir);
-      const { matches, confidence } = matchKitsDetailed(p.prompt, index, { max: p.limit ?? 5 });
+      // FORK 2026-06-01 (U11): include bridged CC-skill imports in the match catalog.
+      const index = await loadKitIndex(deps.ownKitsDir, [bridgedSkillsDir]);
+      // FORK 2026-06 (U1) + 2026-06-01 (U12): fold empirical-fitness + marketplace-
+      // rating into the score so recipe.match returns the same proven/popular-aware
+      // ranking the turn-start seed uses (single scoring policy across both seams).
+      const { matches, confidence } = matchKitsDetailed(p.prompt, index, {
+        max: p.limit ?? 5,
+        ...buildMatchSignals(),
+      });
       return {
         confidence,
         catalogSize: index.length,

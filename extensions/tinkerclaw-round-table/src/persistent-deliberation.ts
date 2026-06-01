@@ -51,6 +51,37 @@ export interface DeliberationMemory {
   lastUpdated: string;
 }
 
+// -- 7F: Multi-turn speaker memory --
+
+/**
+ * 7F: one resumed turn of a debate keyed by `memoryId`. Captures the model
+ * responses, the synthesis, and the ratification of a single debate so a later
+ * `synapse_debate` call with the same `memoryId` can resume from the last synthesis
+ * instead of re-running all five phases from zero.
+ */
+export interface SpeakerTurn {
+  roundNum: number;
+  modelResponses: Record<string, string>;
+  synthesis: string;
+  ratification: Record<string, "accept" | "reject" | "amend">;
+}
+
+/**
+ * 7F: the accumulated multi-turn history for one debate thread. Keyed on an
+ * explicit `memoryId` (caller-provided or hashed) rather than the raw topic so
+ * unrelated debates with similar phrasing do not collide. `turns` is retained
+ * last-K to bound growth (mirrors the ENGRAM compaction cross-reference).
+ */
+export interface SpeakerMemory {
+  debateTopic: string;
+  memoryId: string;
+  turns: SpeakerTurn[];
+  lastUpdated: string;
+}
+
+/** 7F: cap retained turns so speaker memory cannot grow unbounded. */
+export const MAX_RETAINED_TURNS = 10;
+
 // -- JSONL Store (replaces EventStore dependency) --
 
 export interface JsonlStoreOptions {
@@ -61,7 +92,7 @@ export interface JsonlStoreOptions {
 }
 
 interface StoredEntry {
-  kind: "debate_trace" | "debate_synthesis";
+  kind: "debate_trace" | "debate_synthesis" | "speaker_memory";
   content: string;
   tags: string[];
   turnId: number;
@@ -111,6 +142,10 @@ export interface PersistentDeliberation {
   getDeliberationMemory(): DeliberationMemory;
   /** Update deliberation memory after a debate completes. */
   updateDeliberationMemory(result: DebateResult, architecture: ArchitectureType): void;
+  /** 7F: recall multi-turn speaker memory for a debate thread, or undefined. */
+  recallSpeakerMemory(memoryId: string): SpeakerMemory | undefined;
+  /** 7F: persist (last-K-truncated) multi-turn speaker memory for a thread. */
+  storeSpeakerMemory(memory: SpeakerMemory): void;
 }
 
 export function createPersistentDeliberation(options: JsonlStoreOptions): PersistentDeliberation {
@@ -268,6 +303,39 @@ export function createPersistentDeliberation(options: JsonlStoreOptions): Persis
     }
   }
 
+  // 7F: speaker memory is appended to the conclusions JSONL as a distinct kind so it
+  // shares the existing append/read plumbing. Each store appends the latest full
+  // snapshot (truncated to MAX_RETAINED_TURNS); recall returns the LAST snapshot for
+  // a given memoryId (newest wins — append-only supersede, no rewrite).
+  function storeSpeakerMemory(memory: SpeakerMemory): void {
+    const truncated: SpeakerMemory = {
+      ...memory,
+      turns: memory.turns.slice(-MAX_RETAINED_TURNS),
+      lastUpdated: new Date().toISOString(),
+    };
+    appendJsonl(conclusionsPath, {
+      kind: "speaker_memory",
+      content: JSON.stringify(truncated),
+      tags: ["synapse", "speaker-memory", memory.memoryId],
+      turnId: truncated.turns.length,
+    });
+  }
+
+  function recallSpeakerMemory(memoryId: string): SpeakerMemory | undefined {
+    const entries = readJsonl(conclusionsPath);
+    let latest: SpeakerMemory | undefined;
+    for (const entry of entries) {
+      if (entry.kind !== "speaker_memory" || !entry.tags?.includes(memoryId)) continue;
+      try {
+        const parsed = JSON.parse(entry.content) as SpeakerMemory;
+        if (parsed.memoryId === memoryId) latest = parsed;
+      } catch {
+        // skip malformed
+      }
+    }
+    return latest;
+  }
+
   return {
     storeDebateTraces,
     storeConclusion,
@@ -275,5 +343,7 @@ export function createPersistentDeliberation(options: JsonlStoreOptions): Persis
     recallAllConclusions,
     getDeliberationMemory,
     updateDeliberationMemory,
+    recallSpeakerMemory,
+    storeSpeakerMemory,
   };
 }

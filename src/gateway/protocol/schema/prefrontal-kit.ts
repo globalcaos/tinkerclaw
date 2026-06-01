@@ -38,6 +38,10 @@ export const PrefrontalKitInstallParamsSchema = Type.Object(
     ref: Type.Optional(Type.String()),
     runVerification: Type.Optional(Type.Boolean()),
     allowRisky: Type.Optional(Type.Boolean()),
+    // FORK 2026-06-01 (U11): CC SKILL.md import. When provided, the install RPC
+    // transpiles this Claude-Code SKILL.md into a recipe/1.0 (cc-skills-bridge)
+    // and writes it into the bridged-skills dir instead of fetching from Journey.
+    skillMd: Type.Optional(Type.String({ maxLength: 200_000 })),
   },
   { additionalProperties: false },
 );
@@ -47,6 +51,12 @@ export const PrefrontalKitPublishParamsSchema = Type.Object(
     slug: Type.String({ pattern: "^[a-z0-9-]+$", minLength: 1, maxLength: 80 }),
     visibility: Type.Union([Type.Literal("public"), Type.Literal("private")]),
     orgId: Type.Optional(Type.String()),
+    // FORK 2026-06-01 (U12): semver bump level for this publish. The current
+    // frontmatter `version:` is bumped by this level (default patch) and the
+    // bumped version is rejected if already published (immutability).
+    level: Type.Optional(
+      Type.Union([Type.Literal("major"), Type.Literal("minor"), Type.Literal("patch")]),
+    ),
   },
   { additionalProperties: false },
 );
@@ -66,6 +76,11 @@ export const PrefrontalKitRunParamsSchema = Type.Object(
     intent: Type.String({ minLength: 1, maxLength: 500 }),
     parameters: Type.Optional(Type.Record(Type.String(), Type.String(), { maxProperties: 50 })),
     dryRun: Type.Optional(Type.Boolean()),
+    // FORK 2026-05-30 (Upgrade 5): durable checkpointing. When true, an interrupted
+    // in_progress plan for this sessionKey+kitRef is RESUMED at its checkpoint step
+    // (done rows skipped) instead of force-restarting at step 0. Default policy
+    // (architect directive): no silent re-attach — a bare run always force-restarts.
+    resume: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

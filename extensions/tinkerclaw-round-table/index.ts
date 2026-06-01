@@ -27,13 +27,23 @@ import {
   selectModelsForDebateWithProviderDiversity,
   type ProviderProfile,
 } from "./src/cognitive-diversity.js";
-import { createPersistentDeliberation } from "./src/persistent-deliberation.js";
 import {
-  runDebate,
+  getOrchestrator,
+  raacOrchestrator,
+  setExternalOrchestratorLoader,
+  type DebateOrchestrator,
+} from "./src/orchestrator-api.js";
+import { createPersistentDeliberation } from "./src/persistent-deliberation.js";
+import type { SpeakerMemory, SpeakerTurn } from "./src/persistent-deliberation.js";
+import {
   DEFAULT_DEBATE_CONFIG,
   ROLE_AFFINITY,
+  resolveDebateBudget,
+  type BillingHeadroom,
+  type ContextMixin,
   type DebateParticipant,
   type DebateConfig,
+  type DebateResult,
   type RecoveryHooks,
 } from "./src/raac-protocol.js";
 import {
@@ -65,6 +75,15 @@ const SynapseDebateParams = Type.Object({
   depth: Type.Optional(
     Type.Union([Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep")], {
       description: "Debate depth: quick (1-2 rounds), standard (3-4), deep (5-6).",
+    }),
+  ),
+  // 7F: resume a prior debate thread by id. When present, the prior thread's last
+  // synthesis seeds round 1's propose (multi-turn refinement) and the new turn is
+  // appended to that thread's speaker memory.
+  resumeMemoryId: Type.Optional(
+    Type.String({
+      description:
+        "7F: resume a prior debate thread by id; seeds round 1 with the prior synthesis and accumulates the turn.",
     }),
   ),
 });
@@ -140,6 +159,13 @@ export default definePluginEntry({
     const speakerSelectionMode = (cfg.speakerSelectionMode as SpeakerSelectionMode) ?? "builtin";
     const roleModels = (cfg.roleModels as RoleModels) ?? {};
     const enforceProviderDiversity = (cfg.enforceProviderDiversity as boolean) ?? false;
+    // 7D: cost-aware budget gate. READY; binds once agent.getBillingState ships.
+    // That gateway RPC does NOT exist yet, so the gate currently always degrades to
+    // a no-op (unknown headroom → no clamping). The wiring below is in place so the
+    // clamp activates automatically the day the RPC lands; until then this is inert.
+    const respectBillingGate = (cfg.respectBillingGate as boolean) ?? true;
+    // 7G: which orchestrator drives the debate (default RAAC 5-phase).
+    const orchestratorId = (cfg.orchestratorId as string) ?? "raac";
 
     // 7A: an external AG2 speaker-selection hook may be exported by a sibling plugin.
     // The INTERFACE lives in this extension; the PROVIDER is resolved lazily so the
@@ -162,6 +188,27 @@ export default definePluginEntry({
       }
       return externalSpeakerHook;
     };
+
+    // 7G: external orchestrators may be exported by a sibling plugin. The INTERFACE +
+    // builtin orchestrators (raac + the debate-architectures) live in this extension
+    // and are FULLY ACTIVE. The EXTERNAL-choreography path is READY; binds once
+    // plugins.getOrchestrator ships — that gateway RPC does not exist yet, so the
+    // loader below always errors/returns null and getOrchestrator falls back to a
+    // builtin (raacOrchestrator). Same open-substrate pattern as the 7A speaker hook.
+    setExternalOrchestratorLoader(async (id: string): Promise<DebateOrchestrator | null> => {
+      try {
+        const res = (await callGatewayFromCli(
+          "plugins.getOrchestrator",
+          { timeout: "5000" },
+          { id },
+          { progress: false },
+        )) as { ok?: boolean; orchestrator?: DebateOrchestrator } | null;
+        return res?.ok && res.orchestrator ? res.orchestrator : null;
+      } catch {
+        // RPC absent or errored — fall back to raac (never hard-fail).
+        return null;
+      }
+    });
 
     // Write cross-extension state for discovery
     try {
@@ -186,6 +233,7 @@ export default definePluginEntry({
         async execute(_toolCallId: string, params: SynapseDebateInput) {
           const { topic } = params;
           const depth = params.depth ?? defaultDepth;
+          const resumeMemoryId = params.resumeMemoryId;
 
           const depthConfig = DEPTH_CONFIGS[depth] ?? DEPTH_CONFIGS.standard;
           const config: DebateConfig = {
@@ -193,6 +241,61 @@ export default definePluginEntry({
             ...depthConfig,
             ...(maxRoundsOverride != null ? { maxRounds: maxRoundsOverride } : {}),
           };
+
+          // 7D: clamp the per-debate budget to real billing headroom. READY; binds
+          // once agent.getBillingState ships — that RPC does not exist yet, so the
+          // query below always errors/returns null, headroom stays undefined, and
+          // resolveDebateBudget is a no-op (behaviour identical to no gate). The
+          // call site is pre-wired so the clamp activates the day the RPC lands.
+          if (respectBillingGate) {
+            let headroom: BillingHeadroom | undefined;
+            try {
+              const billing = (await callGatewayFromCli(
+                "agent.getBillingState",
+                { timeout: "5000" },
+                {},
+                { progress: false },
+              )) as {
+                ok?: boolean;
+                remainingUsd?: number;
+                source?: BillingHeadroom["source"];
+              } | null;
+              if (billing?.ok && typeof billing.remainingUsd === "number") {
+                headroom = {
+                  remainingUsd: billing.remainingUsd,
+                  source: billing.source ?? "metered",
+                };
+              }
+            } catch {
+              // RPC absent/errored — headroom stays undefined => no clamping.
+              headroom = undefined;
+            }
+            const clamped = await resolveDebateBudget(config.maxBudgetPerDebate, headroom);
+            if (clamped < config.maxBudgetPerDebate) {
+              api.logger.warn(
+                `[round-table] budget clamped by billing gate: ${config.maxBudgetPerDebate} -> ${clamped} USD ` +
+                  `(headroom=${headroom ? JSON.stringify(headroom) : "unknown"})`,
+              );
+            }
+            config.maxBudgetPerDebate = clamped;
+          }
+
+          // 7F: resume a prior debate thread. The last stored synthesis seeds round 1's
+          // propose via contextMixin (prior reasoning carried across tool calls, used as
+          // context only — never replayed as live state).
+          let priorMemory: SpeakerMemory | undefined;
+          let contextMixin: ContextMixin | undefined;
+          if (resumeMemoryId) {
+            try {
+              priorMemory = deliberation.recallSpeakerMemory(resumeMemoryId);
+            } catch (err) {
+              api.logger.warn(`[round-table] recallSpeakerMemory failed: ${err}`);
+            }
+            const lastSynthesis = priorMemory?.turns[priorMemory.turns.length - 1]?.synthesis;
+            if (lastSynthesis && lastSynthesis.trim().length > 0) {
+              contextMixin = { priorSynthesis: lastSynthesis };
+            }
+          }
 
           // Select and assign participants.
           // 7C: when enforceProviderDiversity is on, the selection guarantees <=1
@@ -393,14 +496,60 @@ export default definePluginEntry({
             },
           };
 
-          // Run the debate (with dropout recovery wired in)
-          const result = await runDebate(topic, participants, config, recovery);
+          // 7G: resolve the orchestrator (default RAAC); a non-RAAC builtin or an
+          // external sibling-plugin choreography can drive the SAME callModel fabric.
+          // Falls back to raacOrchestrator on an unknown id.
+          const orchestrator: DebateOrchestrator =
+            (await getOrchestrator(orchestratorId)) ?? raacOrchestrator;
+          if (orchestrator.id !== orchestratorId) {
+            api.logger.warn(
+              `[round-table] orchestrator '${orchestratorId}' unresolved; falling back to '${orchestrator.id}'`,
+            );
+          }
+
+          // Run the debate via the resolved orchestrator (7E dropout recovery + 7F
+          // multi-turn context threaded through).
+          const result = await orchestrator.runDebate(
+            topic,
+            participants,
+            config,
+            recovery,
+            contextMixin,
+          );
+          // 7G: stamp which choreography produced the conclusion so the persistence
+          // layer (and the paper's analytics) can attribute each result.
+          const resultWithOrch: DebateResult & { orchestratorId: string } = {
+            ...result,
+            orchestratorId: orchestrator.id,
+          };
 
           // Persist traces
           try {
-            deliberation.updateDeliberationMemory(result, "full-synapse");
+            deliberation.updateDeliberationMemory(resultWithOrch, "full-synapse");
           } catch (err) {
             api.logger.warn(`[round-table] trace persistence failed: ${err}`);
+          }
+
+          // 7F: append this debate as a new turn to the resumed (or new) speaker
+          // memory thread so a later resume picks up from this synthesis.
+          if (resumeMemoryId) {
+            try {
+              const lastResultRound = result.rounds[result.rounds.length - 1];
+              const newTurn: SpeakerTurn = {
+                roundNum: (priorMemory?.turns.length ?? 0) + 1,
+                modelResponses: lastResultRound?.proposals ?? {},
+                synthesis: result.finalSynthesis,
+                ratification: lastResultRound?.ratification ?? {},
+              };
+              deliberation.storeSpeakerMemory({
+                debateTopic: topic,
+                memoryId: resumeMemoryId,
+                turns: [...(priorMemory?.turns ?? []), newTurn],
+                lastUpdated: new Date().toISOString(),
+              });
+            } catch (err) {
+              api.logger.warn(`[round-table] storeSpeakerMemory failed: ${err}`);
+            }
           }
 
           // Compute confidence from convergence + ratification
@@ -428,6 +577,10 @@ export default definePluginEntry({
             consensus: result.finalSynthesis,
             confidence,
             dissent,
+            // 7G: surface which orchestrator produced the conclusion.
+            orchestratorId: resultWithOrch.orchestratorId,
+            // 7F: echo the resumed/created memory thread so the caller can chain refines.
+            ...(resumeMemoryId ? { resumeMemoryId } : {}),
             actionItems: [
               `Review debate traces (${result.rounds.length} rounds)`,
               ...(result.converged ? [] : ["Consider re-running with deeper analysis"]),

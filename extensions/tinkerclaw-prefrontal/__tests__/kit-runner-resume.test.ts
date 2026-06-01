@@ -319,3 +319,82 @@ describe("runKit — durable resume (live mode, mock store)", () => {
     expect(res.ok).toBe(true);
   });
 });
+
+// U1 (2026-06): recipe ATTRIBUTION via tag-stamping. The Cerebellum's recipe-
+// fitness reads a `recipe:<owner/slug>` tag off episode events; the producer of
+// that tag is Prefrontal's kit-runner (cross-subsystem contract). runKit emits the
+// tag through the opt-in onTag sink at kit start AND at each task dispatch, so the
+// caller (kit-rpcs) can forward it to whatever event sink stamps the metadata.
+describe("runKit — recipe attribution tags (U1, onTag sink)", () => {
+  let kitsDir: string;
+  beforeAll(async () => {
+    kitsDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-tags-"));
+    const md = [
+      "---",
+      'slug: "twostep"',
+      'title: "Two Step"',
+      'summary: "s"',
+      'tags: ["twostep"]',
+      'kitRef: "globalcaos/twostep"',
+      "parallelism:",
+      "  groups:",
+      "    - [0]",
+      "    - [1]",
+      "---",
+      "## Steps",
+      "### 1. One",
+      "do one",
+      "### 2. Two",
+      "do two",
+    ].join("\n");
+    await fs.mkdir(path.join(kitsDir, "twostep"), { recursive: true });
+    await fs.writeFile(path.join(kitsDir, "twostep", "kit.md"), md);
+  });
+  afterAll(async () => {
+    await fs.rm(kitsDir, { recursive: true, force: true });
+  });
+
+  it("stamps recipe:<owner/slug> at run start and at every dispatch", async () => {
+    const store = makeMockStore();
+    const tags: Array<{ tag: string; stepIndex?: number; phase: string }> = [];
+    const res = await runKit({
+      kitRef: "globalcaos/twostep",
+      sessionKey: "agent:main:main",
+      intent: "Two Step",
+      planStore: store as never,
+      ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
+      onTag: (ev) => tags.push(ev),
+    });
+    expect(res.ok).toBe(true);
+    // every emitted tag is the canonical recipe attribution tag for THIS kit
+    expect(tags.length).toBeGreaterThan(0);
+    for (const t of tags) {
+      expect(t.tag).toBe("recipe:globalcaos/twostep");
+    }
+    // exactly one "start" stamp + one per dispatched step (2 steps here)
+    const phases = tags.map((t) => t.phase);
+    expect(phases.filter((p) => p === "start").length).toBe(1);
+    const dispatchSteps = tags
+      .filter((t) => t.phase === "dispatch")
+      .map((t) => t.stepIndex)
+      .toSorted((a, b) => (a ?? 0) - (b ?? 0));
+    expect(dispatchSteps).toEqual([0, 1]);
+  });
+
+  it("never throws into the run when the onTag sink throws (observability is best-effort)", async () => {
+    const store = makeMockStore();
+    const res = await runKit({
+      kitRef: "globalcaos/twostep",
+      sessionKey: "agent:main:main",
+      intent: "Two Step",
+      planStore: store as never,
+      ownKitsDir: kitsDir,
+      _spawnStep: noopSpawn,
+      onTag: () => {
+        throw new Error("sink boom");
+      },
+    });
+    expect(res.ok).toBe(true);
+  });
+});
