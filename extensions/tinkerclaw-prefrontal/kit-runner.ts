@@ -82,6 +82,35 @@ export interface KitRunOptions {
    * and the panel always fell back to the synthetic "Thinking → Acting" plan.
    */
   onRecipeState?: (state: RecipeStateUpdate) => void;
+  /**
+   * FORK 2026-06 (Upgrade 1): recipe-ATTRIBUTION tag sink.
+   *
+   * DEFAULT DECISION (attribution is Prefrontal's job): the Cerebellum's
+   * recipe-fitness (src/memory/engram/recipe-fitness.ts) attributes an episode to
+   * a recipe by reading a `recipe:<owner/slug>` tag off the episode's events, but
+   * it is NOT the producer of that tag — the contract is that the EXECUTOR stamps
+   * it. kit-runner is the executor, so it emits the canonical attribution tag here
+   * at run start AND at each task dispatch. The caller (kit-rpcs) forwards the tag
+   * to whatever event sink stamps the metadata; kit-runner stays decoupled from
+   * the engram event store (so the native-dep stack is never dragged into this
+   * bundled extension — see the onRecipeState rationale above and the J13 embed
+   * lane). Best-effort + fire-and-forget: every emit is wrapped so a broken sink
+   * can never throw into the dispatch loop.
+   */
+  onTag?: (ev: TagStamp) => void;
+}
+
+/**
+ * FORK 2026-06 (Upgrade 1): one recipe-attribution tag emit. `phase` is "start"
+ * (the single per-run stamp at runKit entry) or "dispatch" (one per task dispatch,
+ * carrying the stepIndex). `tag` is always `recipe:<owner/slug>` for the running
+ * kit — the exact string recipe-fitness.attributeRecipe() matches on.
+ */
+export interface TagStamp {
+  tag: string;
+  phase: "start" | "dispatch";
+  stepIndex?: number;
+  sessionKey: string;
 }
 
 /**
@@ -667,6 +696,20 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
     }
   };
 
+  // FORK 2026-06 (Upgrade 1): recipe-attribution tag stamp. kitRef is already the
+  // canonical `owner/slug`, so the tag is `recipe:<owner/slug>` — exactly what
+  // recipe-fitness.attributeRecipe() matches on. Best-effort: a broken sink can
+  // never throw into the dispatch loop (mirrors emitRecipeState).
+  const recipeTag = `recipe:${opts.kitRef}`;
+  const emitTag = (phase: "start" | "dispatch", stepIndex?: number): void => {
+    if (!opts.onTag) return;
+    try {
+      opts.onTag({ tag: recipeTag, phase, stepIndex, sessionKey: opts.sessionKey });
+    } catch {
+      // attribution observability must never break the run
+    }
+  };
+
   // ── Durable checkpointing (FORK 2026-05-30, Upgrade 5) ───────────────────────
   // Decide resume vs. fresh BEFORE seeding. Default policy (Oscar 2026-05-30):
   // never silently re-attach — auto-resume requires resume:true AND a matching
@@ -725,6 +768,9 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
     stepName: kit.steps[startIndex]?.title,
   });
 
+  // FORK 2026-06 (Upgrade 1): stamp the recipe-attribution tag ONCE at run start.
+  emitTag("start");
+
   // Execute each group sequentially; within a group, fan out in parallel
   for (const groupDispatches of dispatchGroups) {
     // Resume: skip any group whose every step is already settled `done`.
@@ -765,6 +811,11 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       if (resuming && isStepDone(existing!, dispatch.stepIndex)) {
         return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
       }
+
+      // FORK 2026-06 (Upgrade 1): stamp the recipe-attribution tag on THIS task
+      // dispatch (one per actually-dispatched step; skipped resume steps above do
+      // not stamp, so the tag count tracks real dispatches).
+      emitTag("dispatch", dispatch.stepIndex);
 
       // Persist a ≤500-char artifact digest for a successful step + advance the
       // carry-forward (Upgrade 5). The full note stays in step.note.

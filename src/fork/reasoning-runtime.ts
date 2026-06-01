@@ -14,6 +14,8 @@
  * are deliberately small.
  */
 
+import { createSessionManagerRuntimeRegistry } from "../agents/pi-extensions/session-manager-runtime-registry.js";
+import type { SerializedTree } from "../agents/reasoning-tree.js";
 import {
   runThoughtSearch,
   type GenerateFn,
@@ -216,3 +218,208 @@ export const forkReasoningHandlers: GatewayRequestHandlers = {
     }
   },
 };
+
+// ---------------------------------------------------------------------------
+// U10 — ToT/LATS per-session registry + escalation gating (pre-prompt seam)
+// ---------------------------------------------------------------------------
+//
+// The Wire phase (attempt.ts) calls `maybeRunThoughtSearch` immediately after
+// `injectRetrievalPack` so the search sees the retrieval pack as context. When
+// the reasoning mode is "none" (the DEFAULT — ToT is opt-in and expensive) or
+// the session is automated (cron/heartbeat/subagent), it is a pure pass-through.
+
+/** Tri-state reasoning mode read from `fork.cognitive.reasoning`. */
+export type ReasoningMode = "none" | "tree" | "lats";
+
+/**
+ * Result of a per-turn deliberation. `trace` is the serialized search tree (or
+ * null when no tree was built) so `onTurnComplete` can persist it as a
+ * `reasoning_tree_state` MemoryEvent (wired later).
+ */
+export interface ReasoningResult {
+  /** The winning leaf content to fold into the prompt under "## Deliberation". */
+  answer: string;
+  /** Serialized search tree for persistence, or null. */
+  trace: SerializedTree | null;
+}
+
+/**
+ * Per-session reasoning executor. Holds the configured budgets and runs a bounded
+ * thought search for one turn. Injected so the registry stays provider-agnostic
+ * and the pre-prompt hook is unit-testable without an LLM.
+ */
+export interface ReasoningRuntime {
+  /** Run a deliberation for `query` given the assembled `systemPromptText`. */
+  run(query: string, systemPromptText: string): Promise<ReasoningResult>;
+}
+
+const reasoningRegistry = createSessionManagerRuntimeRegistry<ReasoningRuntime>();
+
+/** Store a reasoning runtime for a given session manager instance. */
+export const setReasoningRuntime = reasoningRegistry.set;
+
+/** Retrieve the reasoning runtime for a given session manager instance, or null. */
+export const getReasoningRuntime = reasoningRegistry.get;
+
+/** Minimal shape of the runtime config snapshot we read for the reasoning mode. */
+type ConfigSnapshotReader = () =>
+  | { config?: { fork?: { cognitive?: Record<string, unknown> } } }
+  | null
+  | undefined;
+
+const defaultSnapshotReader: ConfigSnapshotReader = () => {
+  // Mirrors isInlineMode() in attempt-hooks.ts: read dynamically so we don't
+  // depend on the typed `fork.cognitive.reasoning` key existing yet (it is a
+  // config-shape addition owned by the Wire phase — see handoff note).
+  const { getRuntimeConfigSnapshot } = require("../config/config.js") as {
+    getRuntimeConfigSnapshot: () =>
+      | { config?: { fork?: { cognitive?: Record<string, unknown> } } }
+      | null
+      | undefined;
+  };
+  return getRuntimeConfigSnapshot();
+};
+
+/**
+ * Resolve the reasoning mode tri-state from `fork.cognitive.reasoning`.
+ *
+ * Defaults to `"none"` — ToT is opt-in and expensive, so it must NOT default
+ * on. An unknown/invalid value coerces back to `"none"` (fail safe), and a
+ * throwing/absent snapshot also yields `"none"`. `readSnapshot` is injectable
+ * for tests; production uses the live runtime config snapshot.
+ */
+export function getReasoningMode(
+  readSnapshot: ConfigSnapshotReader = defaultSnapshotReader,
+): ReasoningMode {
+  try {
+    const mode = readSnapshot()?.config?.fork?.cognitive?.reasoning;
+    return mode === "tree" || mode === "lats" ? mode : "none";
+  } catch {
+    return "none"; // safe fallback: reasoning off
+  }
+}
+
+/** A query shorter than this (after trim) is treated as not search-worthy. */
+const MIN_SEARCH_WORTHY_CHARS = 12;
+
+/**
+ * Escalation-gating predicate — should a thought search run for this turn?
+ *
+ * False when:
+ *  - mode is "none" (the default-off invariant),
+ *  - the session is automated (cron/heartbeat/subagent/isolated) — a search
+ *    before every cron tick is wasteful and risks recursive triggering, and
+ *  - the query is empty/trivial (a greeting or acknowledgement is not worth a
+ *    multi-spawn search).
+ *
+ * Pure + testable; the caller supplies `isAutomatedSession` (computed from the
+ * session key) so this module stays free of session-key parsing.
+ */
+export function shouldRunThoughtSearch(
+  query: string,
+  mode: ReasoningMode,
+  isAutomatedSession: boolean,
+): boolean {
+  if (mode === "none") return false;
+  if (isAutomatedSession) return false;
+  const trimmed = (query ?? "").trim();
+  if (trimmed.length < MIN_SEARCH_WORTHY_CHARS) return false;
+  return true;
+}
+
+export interface MaybeRunThoughtSearchArgs {
+  /** The SessionManager instance keying the per-session reasoning runtime. */
+  sessionManager: unknown;
+  /** The assembled system prompt (post retrieval-pack) to augment + return. */
+  systemPromptText: string;
+  /** The user query driving this turn. */
+  query: string;
+  /** Whether this is a cron/heartbeat/subagent/isolated session. */
+  isAutomatedSession: boolean;
+  /**
+   * The run id for this turn. When a deliberation produces a search tree it is
+   * stashed by this id so `onTurnComplete` (attempt-hooks) can persist it as a
+   * `reasoning_tree_state` MemoryEvent. Empty/undefined → trace not stashed.
+   */
+  runId?: string;
+  /** Injectable mode reader (defaults to the live config snapshot). */
+  readMode?: () => ReasoningMode;
+  /**
+   * Injectable trace sink (defaults to attempt-hooks `stashReasoningTrace`).
+   * Lets the producer-wiring be unit-tested without the attempt-hooks module.
+   */
+  stashTrace?: (runId: string, trace: SerializedTree | null) => void;
+}
+
+/**
+ * Pre-prompt hook: run a bounded thought search before the model call and fold
+ * the winning deliberation into the system prompt.
+ *
+ * No-op pass-through (returns `systemPromptText` unchanged) when:
+ *  - gating says no (`shouldRunThoughtSearch` false), or
+ *  - no reasoning runtime is registered for the session.
+ *
+ * Never throws — a failed search degrades to pass-through so a deliberation
+ * error can never break the turn.
+ */
+export async function maybeRunThoughtSearch(args: MaybeRunThoughtSearchArgs): Promise<string> {
+  const { sessionManager, systemPromptText, query, isAutomatedSession, runId } = args;
+  const readMode = args.readMode ?? (() => getReasoningMode());
+  let mode: ReasoningMode;
+  try {
+    mode = readMode();
+  } catch {
+    return systemPromptText;
+  }
+  if (!shouldRunThoughtSearch(query, mode, isAutomatedSession)) {
+    return systemPromptText;
+  }
+  const runtime = getReasoningRuntime(sessionManager);
+  if (!runtime) return systemPromptText;
+  try {
+    const result = await runtime.run(query, systemPromptText);
+    // Stash the search tree by runId so onTurnComplete (attempt-hooks) can
+    // persist it as a `reasoning_tree_state` MemoryEvent. Without this the
+    // consume path stays inert and the trace is silently discarded.
+    if (runId) {
+      try {
+        await stashReasoningTraceVia(args.stashTrace, runId, result.trace);
+      } catch (stashErr) {
+        // Persisting the trace is best-effort and must never break the turn.
+        log.warn(
+          `[reasoning] failed to stash reasoning trace; deliberation continues: ${
+            stashErr instanceof Error ? stashErr.message : String(stashErr)
+          }`,
+        );
+      }
+    }
+    const deliberation = (result.answer ?? "").trim();
+    if (!deliberation) return systemPromptText;
+    return `${systemPromptText}\n\n## Deliberation\n${deliberation}`;
+  } catch (err) {
+    log.warn(
+      `[reasoning] thought search failed; passing through: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return systemPromptText;
+  }
+}
+
+/**
+ * Resolve the trace sink: an injected sink (tests) or the real
+ * attempt-hooks `stashReasoningTrace` (production), loaded dynamically to keep
+ * the producer free of a static dependency on the consume seam.
+ */
+async function stashReasoningTraceVia(
+  injected: ((runId: string, trace: SerializedTree | null) => void) | undefined,
+  runId: string,
+  trace: SerializedTree | null,
+): Promise<void> {
+  if (injected) {
+    injected(runId, trace);
+    return;
+  }
+  const { stashReasoningTrace } = await import("./attempt-hooks.js");
+  stashReasoningTrace(runId, trace);
+}

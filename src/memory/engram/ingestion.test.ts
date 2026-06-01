@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createArtifactStore } from "./artifact-store.js";
 import { createEventStore, generateULID } from "./event-store.js";
 import { createIngestionPipeline, DEFAULT_ARTIFACT_THRESHOLD_BYTES } from "./ingestion.js";
+import type { MemoryReconciler, ReconciliationDecision } from "./reconciliation.js";
 
 let tmpDir: string;
 
@@ -295,6 +296,69 @@ describe("ingest(messages)", () => {
     const toolCallParsed = JSON.parse(all[1].content) as { tool: string };
     expect(toolCallParsed.tool).toBe("read_file");
     expect(all[2].kind).toBe("tool_result");
+  });
+});
+
+// ============================================================
+// Mem0 write-reconciliation hot path (Upgrade 8)
+// ============================================================
+describe("reconciler hot path", () => {
+  /** A reconciler whose hot-path decision is configurable per test. */
+  function makeReconciler(decision: ReconciliationDecision): MemoryReconciler {
+    return {
+      async decide() {
+        return decision;
+      },
+      decideSync() {
+        return decision;
+      },
+      async reconcileWindow(events) {
+        return events.map(() => ({ action: "ADD" }));
+      },
+    };
+  }
+
+  it("no reconciler (default) → every event is ADDed (byte-identical back-compat)", () => {
+    const p = createIngestionPipeline({ baseDir: tmpDir, sessionKey: "test-session" });
+    p.ingestUserMessage("a", 1);
+    p.ingestAssistantMessage("b", 1);
+    const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
+    expect(store.readAll()).toHaveLength(2);
+  });
+
+  it("reconciler returning NONE → event is skipped (not persisted)", () => {
+    const p = createIngestionPipeline({
+      baseDir: tmpDir,
+      sessionKey: "test-session",
+      reconciler: makeReconciler({ action: "NONE", reason: "low value" }),
+    });
+    const ev = p.ingestAssistantMessage("droppable", 1);
+    // Synthetic (un-stored) event returned, but nothing on disk.
+    expect(ev.id).toBe("");
+    const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
+    expect(store.readAll()).toHaveLength(0);
+  });
+
+  it("reconciler returning ADD → event is persisted", () => {
+    const p = createIngestionPipeline({
+      baseDir: tmpDir,
+      sessionKey: "test-session",
+      reconciler: makeReconciler({ action: "ADD" }),
+    });
+    p.ingestUserMessage("kept", 1);
+    const store = createEventStore({ baseDir: tmpDir, sessionKey: "test-session" });
+    expect(store.readAll()).toHaveLength(1);
+  });
+
+  it("reconciler importance override is applied to the persisted event", () => {
+    const p = createIngestionPipeline({
+      baseDir: tmpDir,
+      sessionKey: "test-session",
+      reconciler: makeReconciler({ action: "ADD", importance: 9 }),
+    });
+    // user_message default importance is 7; the override bumps it to 9.
+    const ev = p.ingestUserMessage("important", 1);
+    expect(ev.metadata.importance).toBe(9);
   });
 });
 

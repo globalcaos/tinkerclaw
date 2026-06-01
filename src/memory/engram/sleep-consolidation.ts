@@ -11,6 +11,7 @@
  * FORK-ISOLATED: unique to our fork (ENGRAM paper §5.3).
  */
 
+import type { Skill } from "../storage/types.js";
 import type { ArtifactStore } from "./artifact-store.js";
 import {
   type ConsolidationState,
@@ -20,6 +21,7 @@ import {
   detectEpisodes,
 } from "./episode-detection.js";
 import type { EventStore } from "./event-store.js";
+import { generateULID } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
 import {
   appendManifestEntries,
@@ -35,12 +37,21 @@ import {
   strategyOf,
   type FailureStateMap,
 } from "./failure-tracking.js";
+import { writeMemoryMd, type MemoryMdFact, type MemoryMdResult } from "./memory-md-writer.js";
 import type { RecipeArchive } from "./recipe-archive.js";
 import type { MutationProposal } from "./recipe-evolution.js";
 import { proposeMutations } from "./recipe-evolution.js";
 import { attributeRecipe, updateRecipeFitness, type RecipeFitness } from "./recipe-fitness.js";
 import type { ReconciliationLedger } from "./reconciliation-ledger.js";
 import type { MemoryReconciler, ReconciliationDecision } from "./reconciliation.js";
+import {
+  extractSkill,
+  initialSuccessMetrics,
+  isSkillWorthy,
+  type SkillBody,
+  type SkillExtractor,
+} from "./skill-extraction.js";
+import type { SkillLibrary } from "./skill-library.js";
 import {
   DEFAULT_FALLBACKS,
   decideSwitch,
@@ -72,13 +83,45 @@ export interface StrategySwitchDeps {
 }
 
 /**
+ * Opt-in dependency bundle for post-episode skill extraction (Upgrade 6, J5
+ * Voyager skill-library-as-code). Injected only when the caller wants it; absent
+ * → no behavior change. The strict {@link isSkillWorthy} gate is applied per
+ * episode before the (LLM-backed) extractor runs.
+ */
+export interface SkillExtractionDeps {
+  /** Never-delete versioned skill registry the distilled skill is put into. */
+  library: SkillLibrary;
+  /** LLM-backed (test-stubbed) synthesis callback producing a SkillBody. */
+  extractor: SkillExtractor;
+  /**
+   * Override the worthiness gate (default: the strict {@link isSkillWorthy}).
+   * Test/seam hook — `detectEpisodes` always emits `keyDecisions: []`, so the
+   * strict gate never fires on a freshly-detected episode; a richer detector
+   * (or a test) can supply a different predicate. When the override is present
+   * and returns true, extraction bypasses extractSkill's internal re-gate and
+   * stamps the body directly (the override is authoritative).
+   */
+  isWorthy?: (episode: Episode, episodeEvents: MemoryEvent[]) => boolean;
+}
+
+/**
  * Opt-in dependency bundle for Mem0 write-reconciliation (Upgrade 8).
  * Injected only when the caller wants it; absent → no behavior change.
  */
 export interface ReconciliationDeps {
   reconciler: MemoryReconciler;
   ledger: ReconciliationLedger;
+  /**
+   * Hard line bound for the suggest-only MEMORY.md serialization produced after
+   * the sweep. Default {@link DEFAULT_MEMORY_MD_MAX_LINES} (500), mirroring
+   * MEMORY.md's own bound. The writer NEVER touches disk — it only returns the
+   * bounded content + demotion suggestions on the result.
+   */
+  memoryMdMaxLines?: number;
 }
+
+/** Default MEMORY.md line bound (mirrors createBoundedReconciler's 500). */
+export const DEFAULT_MEMORY_MD_MAX_LINES = 500;
 
 export interface SleepConsolidationConfig {
   episodeDetection?: Partial<EpisodeDetectionConfig>;
@@ -90,6 +133,8 @@ export interface SleepConsolidationConfig {
   recipeEvolution?: RecipeEvolutionDeps;
   /** Opt-in failure-count → strategy-switch loop (Upgrade 4). */
   strategySwitch?: StrategySwitchDeps;
+  /** Opt-in post-episode skill extraction into the skill library (Upgrade 6). */
+  skillExtraction?: SkillExtractionDeps;
   /** Opt-in Mem0 write-reconciliation sweep (Upgrade 8). */
   reconciliation?: ReconciliationDeps;
 }
@@ -109,8 +154,57 @@ export interface ConsolidationResult {
   recipeMutationsAutoPromotable?: number;
   /** Count of gated strategy-switch proposals written (Upgrade 4). 0 when dep absent. */
   strategySwitchesProposed?: number;
+  /** Count of skills extracted into the skill library this run (Upgrade 6). 0 when dep absent. */
+  skillsExtracted?: number;
   /** Count of reconciliation UPDATE/DELETE ledger entries (Upgrade 8). 0 when dep absent. */
   reconciliationDecisions?: { updated: number; deleted: number };
+  /**
+   * The suggest-only MEMORY.md serialization produced after the reconciliation
+   * sweep (Upgrade 8). The writer NEVER touches disk; the caller (Wire phase,
+   * behind ENGRAM_RECONCILE) decides whether to persist it. Absent when no
+   * reconciliation dep is injected.
+   */
+  memoryMd?: MemoryMdResult;
+}
+
+/** A SkillBody is well-formed only with a name and at least one step. */
+function isWellFormedSkillBody(body: SkillBody): boolean {
+  return (
+    typeof body.name === "string" &&
+    body.name.length > 0 &&
+    Array.isArray(body.steps) &&
+    body.steps.length > 0
+  );
+}
+
+/**
+ * Stamp a SkillBody into a version-1 Skill (mirrors extractSkill's stamping).
+ * Used ONLY on the worthiness-override path, which intentionally bypasses
+ * extractSkill's internal isSkillWorthy re-gate (the override is authoritative).
+ * The default path still routes through extractSkill so production behavior is
+ * unchanged. Returns null for a malformed body (no empty skills enter the lib).
+ */
+function stampSkill(body: SkillBody, episode: Episode, atISO: string): Skill | null {
+  if (!isWellFormedSkillBody(body)) {
+    return null;
+  }
+  const skill: Skill = {
+    skillId: generateULID(),
+    version: 1,
+    name: body.name,
+    description: body.description ?? "",
+    prerequisites: body.prerequisites ?? [],
+    steps: body.steps,
+    testCases: body.testCases ?? [],
+    successMetrics: initialSuccessMetrics(),
+    sourceEpisodeIds: [episode.id],
+    created: atISO,
+    deprecated: false,
+  };
+  if (body.verifiedCode !== undefined) {
+    skill.verifiedCode = body.verifiedCode;
+  }
+  return skill;
 }
 
 /** Default episode summarizer — concatenates key content. */
@@ -171,20 +265,50 @@ export async function runSleepConsolidation(
   const eventsOf = (episode: Episode): MemoryEvent[] =>
     unprocessed.filter((e) => episode.sourceEventIds.includes(e.id));
 
-  // 3. Generate & store summaries
+  // Single timestamp for everything stamped this run (skills, manifest entries).
+  const nowISO = new Date().toISOString();
+
+  // 3. Generate & store summaries (+ opt-in per-episode skill extraction, U6).
   let summariesGenerated = 0;
+  let skillsExtracted = 0;
+  const episodeSummaries: string[] = [];
   for (const episode of episodes) {
     const episodeEvents = eventsOf(episode);
     const summary = await summarize(episode, episodeEvents);
 
     artifactStore.store(summary, "text");
+    episodeSummaries.push(summary);
     summariesGenerated++;
+
+    // 3a. Opt-in skill extraction (Upgrade 6). Skipped when no dep → no change.
+    if (config.skillExtraction) {
+      const { library, extractor, isWorthy } = config.skillExtraction;
+      if (isWorthy) {
+        // Override is authoritative — gate here, then stamp the body directly
+        // (bypassing extractSkill's internal isSkillWorthy re-gate, which the
+        // override exists to supersede).
+        if (isWorthy(episode, episodeEvents)) {
+          const body = await extractor(episode, episodeEvents);
+          const skill = body ? stampSkill(body, episode, nowISO) : null;
+          if (skill) {
+            await library.put(skill);
+            skillsExtracted++;
+          }
+        }
+      } else if (isSkillWorthy(episode, episodeEvents)) {
+        // Default strict path: extractSkill re-checks isSkillWorthy internally.
+        const skill = await extractSkill(episode, episodeEvents, extractor, nowISO);
+        if (skill) {
+          await library.put(skill);
+          skillsExtracted++;
+        }
+      }
+    }
   }
 
   // 3b. Opt-in offline procedural-evolution steps (Upgrades 1, 4).
   //     ALL of this is skipped when no dep is injected → byte-identical output.
   const manifestEntries: ManifestEntry[] = [];
-  const nowISO = new Date().toISOString();
   const manifestBaseDir = config.manifestBaseDir;
 
   let recipeMutationsProposed = 0;
@@ -270,8 +394,9 @@ export async function runSleepConsolidation(
   // 3c. Opt-in Mem0 write-reconciliation sweep (Upgrade 8).
   //     Logical UPDATE/DELETE only — the JSONL audit plane is NEVER mutated.
   let reconciliationDecisions: { updated: number; deleted: number } | undefined;
+  let memoryMd: MemoryMdResult | undefined;
   if (config.reconciliation) {
-    const { reconciler, ledger } = config.reconciliation;
+    const { reconciler, ledger, memoryMdMaxLines } = config.reconciliation;
     const ctx = {
       totalMemoryBytes: allEvents.reduce((s, e) => s + e.content.length, 0),
       eventCount: allEvents.length,
@@ -292,6 +417,22 @@ export async function runSleepConsolidation(
     }
     ledger.flush();
     reconciliationDecisions = { updated, deleted };
+
+    // Suggest-only MEMORY.md serialization (writeMemoryMd NEVER touches disk).
+    // The surviving fact set = events not logically tombstoned/superseded by the
+    // ledger. The Wire phase (behind ENGRAM_RECONCILE) decides whether to persist
+    // the returned content + act on its demotion suggestions.
+    const survivingFacts: MemoryMdFact[] = allEvents
+      .filter((e) => !ledger.isTombstoned(e.id) && !ledger.isSuperseded(e.id))
+      .map((e) => ({
+        key: e.id,
+        title: e.kind,
+        summary: e.content,
+        importance: e.metadata?.importance,
+      }));
+    memoryMd = writeMemoryMd(survivingFacts, episodeSummaries, {
+      maxLines: memoryMdMaxLines ?? DEFAULT_MEMORY_MD_MAX_LINES,
+    });
   }
 
   // 4. Update state
@@ -307,7 +448,9 @@ export async function runSleepConsolidation(
     durationMs: Date.now() - start,
     ...(config.recipeEvolution ? { recipeMutationsProposed, recipeMutationsAutoPromotable } : {}),
     ...(config.strategySwitch ? { strategySwitchesProposed } : {}),
+    ...(config.skillExtraction ? { skillsExtracted } : {}),
     ...(reconciliationDecisions ? { reconciliationDecisions } : {}),
+    ...(memoryMd ? { memoryMd } : {}),
   };
 }
 

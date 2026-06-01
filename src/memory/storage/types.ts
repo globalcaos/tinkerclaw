@@ -41,6 +41,62 @@ export type StoredChunk = {
   relatedChunks?: string[];
 };
 
+// Upgrade 6 (J5 Voyager skill-library-as-code): a named, reusable, versioned
+// PROCEDURE distilled from a successful episode. Granularity is one skill per
+// worthy episode (REM-clustering of many episodes into a higher-order skill is
+// deferred). A Skill is a STRUCTURED PROCEDURE (named steps + prerequisites +
+// successMetrics) with an OPTIONAL `verifiedCode` field — it is "skill-as-code"
+// only when the extractor synthesized a runnable snippet, otherwise it is a
+// steps[] procedure the Prefrontal kit-runner consumes like a recipe. Stored in
+// a never-delete library: supersession bumps `version` and `deprecated` marks an
+// obsolete entry while its body stays readable.
+export type SkillTestCase = {
+  input: Record<string, unknown>;
+  expect: string;
+};
+
+export type SkillSuccessMetrics = {
+  invocations: number;
+  successes: number;
+  /** Laplace-smoothed success rate: (successes + 1) / (invocations + 2). */
+  successRate: number;
+  /** ISO timestamp of the most recent recordOutcome, or null if never invoked. */
+  lastInvoked?: string | null;
+};
+
+export type Skill = {
+  skillId: string;
+  version: number;
+  name: string; // e.g. "merge-conflict-resolution"
+  description: string;
+  prerequisites: string[];
+  steps: string[]; // language-agnostic procedure
+  testCases: SkillTestCase[];
+  successMetrics: SkillSuccessMetrics;
+  sourceEpisodeIds: string[];
+  created: string; // ISOString
+  deprecated: boolean;
+  /**
+   * OPTIONAL true-Voyager "skill-as-code": a runnable snippet the extractor
+   * synthesized + verified for this skill. Absent for pure structured-procedure
+   * skills (the default). Its presence is what distinguishes a skill from a
+   * plain auto-generated recipe.
+   */
+  verifiedCode?: string;
+};
+
+/** Lightweight handle to a stored Skill (the search/rank return shape). */
+export type SkillRef = {
+  skillId: string;
+  version: number;
+  name: string;
+  description: string;
+  successRate: number;
+  deprecated: boolean;
+  /** Relevance score when returned from a search; absent for rank(). */
+  score?: number;
+};
+
 export type SearchResult = {
   id: string;
   path: string;

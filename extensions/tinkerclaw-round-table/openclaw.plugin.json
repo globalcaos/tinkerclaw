@@ -34,6 +34,16 @@
         "type": "boolean",
         "default": false,
         "description": "7C: when true, guarantee at most one participant per resolved provider (greedily drop the lowest-affinity duplicate). The selected set may shrink to the provider count."
+      },
+      "respectBillingGate": {
+        "type": "boolean",
+        "default": true,
+        "description": "7D: when true, clamp the per-debate USD budget to a fraction of the real billing headroom (agent.getBillingState). When the RPC is absent or headroom is unknown, behaviour is identical to today. Set false to use only the depth-based budget."
+      },
+      "orchestratorId": {
+        "type": "string",
+        "default": "raac",
+        "description": "7G: which orchestrator drives the debate. 'raac' = the 5-phase RAAC protocol (default); 'fan-out' | 'sequential' | 'moderated-tribunal' = builtin alternative choreographies; any other id is resolved via an external sibling-plugin orchestrator (falls back to raac if absent)."
       }
     }
   }

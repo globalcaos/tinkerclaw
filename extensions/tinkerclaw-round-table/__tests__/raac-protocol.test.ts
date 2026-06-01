@@ -334,3 +334,68 @@ describe("7E: runDebateRound integrates recovery", () => {
     expect("dropouts" in round).toBe(false);
   });
 });
+
+// -- 7F: Multi-turn speaker memory (contextMixin seeds round-1 propose) --
+
+describe("7F: runDebate seeds round-1 propose with contextMixin.priorSynthesis", () => {
+  it("hands the supplied prior synthesis to round 1's propose as the 3rd arg", async () => {
+    const proposeSpy = vi.fn().mockResolvedValue("a proposal");
+    const architect: DebateParticipant = {
+      ...createMockParticipant("claude-opus", "architect"),
+      propose: proposeSpy,
+    };
+    const synthesizer = createMockParticipant("claude-sonnet", "synthesizer");
+
+    const config: DebateConfig = {
+      ...DEFAULT_DEBATE_CONFIG,
+      maxRounds: 1,
+      convergenceThreshold: 0.5,
+    };
+    await runDebate("Refine the cache design", [architect, synthesizer], config, undefined, {
+      priorSynthesis: "PRIOR: use a write-through cache",
+    });
+
+    // First propose call (round 1) must receive the prior synthesis as priorSynthesis.
+    expect(proposeSpy).toHaveBeenCalled();
+    const firstCallArgs = proposeSpy.mock.calls[0];
+    expect(firstCallArgs[2]).toBe("PRIOR: use a write-through cache");
+  });
+
+  it("omitting contextMixin leaves round-1 propose with no priorSynthesis (byte-identical)", async () => {
+    const proposeSpy = vi.fn().mockResolvedValue("a proposal");
+    const architect: DebateParticipant = {
+      ...createMockParticipant("claude-opus", "architect"),
+      propose: proposeSpy,
+    };
+    const synthesizer = createMockParticipant("claude-sonnet", "synthesizer");
+    const config: DebateConfig = {
+      ...DEFAULT_DEBATE_CONFIG,
+      maxRounds: 1,
+      convergenceThreshold: 0.5,
+    };
+
+    await runDebate("Fresh debate", [architect, synthesizer], config);
+
+    expect(proposeSpy.mock.calls[0][2]).toBeUndefined();
+  });
+
+  it("an empty/whitespace priorSynthesis is treated as no seed", async () => {
+    const proposeSpy = vi.fn().mockResolvedValue("a proposal");
+    const architect: DebateParticipant = {
+      ...createMockParticipant("claude-opus", "architect"),
+      propose: proposeSpy,
+    };
+    const synthesizer = createMockParticipant("claude-sonnet", "synthesizer");
+    const config: DebateConfig = {
+      ...DEFAULT_DEBATE_CONFIG,
+      maxRounds: 1,
+      convergenceThreshold: 0.5,
+    };
+
+    await runDebate("Debate", [architect, synthesizer], config, undefined, {
+      priorSynthesis: "   ",
+    });
+
+    expect(proposeSpy.mock.calls[0][2]).toBeUndefined();
+  });
+});

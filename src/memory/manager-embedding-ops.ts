@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runGeminiEmbeddingBatches, type GeminiBatchRequest } from "./batch-gemini.js";
 import {
@@ -1029,6 +1030,32 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
           {
             mode: (process.env.ENGRAM_SUPERSEDE_MODE as SupersedeMode | undefined) ?? "supersede",
             log: (msg) => log.info(msg),
+            // U3 producer: when an interval is actually closed, broadcast a
+            // fork.prefrontal.trailEvent kind='recipe-supersede' (the UI's supersede
+            // icon already exists). Mirrors the prefrontal-state-rpc trail-event shape
+            // (phase="prefrontal-trail-event") so no UI change is needed. Best-effort —
+            // the supersede-writer swallows any throw from this hook.
+            onClosed: (closedIds, reason) => {
+              emitAgentEvent({
+                runId: "engram-supersede",
+                stream: "lifecycle",
+                data: {
+                  phase: "prefrontal-trail-event",
+                  kind: "recipe-supersede",
+                  message: `superseded ${closedIds.length} prior fact(s) at ${entry.path}`,
+                  icon: "🕰️",
+                  label: "supersede",
+                  payload: {
+                    candidateId: chunkId,
+                    supersededIds: closedIds,
+                    path: entry.path,
+                    source,
+                    reason,
+                  },
+                  ts: Date.now(),
+                },
+              });
+            },
           },
         );
       } catch (err) {

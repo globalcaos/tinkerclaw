@@ -1,7 +1,9 @@
 import { forkCuriosityHandlers } from "../fork/curiosity-rpc.js";
+import { forkMemoryHandlers } from "../fork/memory-rpc.js";
 import { forkOverseerHandlers } from "../fork/overseer-runtime.js";
 import { forkPrefrontalStateHandlers } from "../fork/prefrontal-state-rpc.js";
 import { forkReasoningHandlers } from "../fork/reasoning-runtime.js";
+import { forkSkillHandlers } from "../fork/skill-rpc.js";
 import { forkSubagentsHandlers } from "../fork/subagents-rpc.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "./control-plane-audit.js";
@@ -27,6 +29,7 @@ import { debugUiSnapshotHandlers } from "./server-methods/debug-ui-snapshot.js";
 import { deviceHandlers } from "./server-methods/devices.js";
 import { diagnosticsHandlers } from "./server-methods/diagnostics.js";
 import { doctorHandlers } from "./server-methods/doctor.js";
+import { forkStrategyHandlers } from "./server-methods/engram-strategy.js";
 import { execApprovalsHandlers } from "./server-methods/exec-approvals.js";
 import { filesResolveBareHandlers } from "./server-methods/files-resolve-bare.js";
 import { forensicHandlers } from "./server-methods/forensic.js";
@@ -146,6 +149,15 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   // FORK 2026-05-31: Tree-of-Thoughts — fork.reasoning.search runs a bounded deliberate
   // search on a hard problem (wires the previously-dead reasoning-tree/thought-search lib).
   ...forkReasoningHandlers,
+  // FORK (Sleep Consolidation, Upgrade 4): strategy-switch review surface —
+  // fork.strategy.switch.list / .apply / .review over the durable failure-state map.
+  ...forkStrategyHandlers,
+  // FORK (Sleep Consolidation, Upgrade 6): Voyager skill-library —
+  // fork.skill.search / .recordOutcome over the versioned never-delete Skill library.
+  ...forkSkillHandlers,
+  // FORK (Sleep Consolidation, Upgrade 3): bi-temporal recall —
+  // fork.memory.search threads temporalMode/asOfTime into manager-search (point-in-time recall).
+  ...forkMemoryHandlers,
   ...wizardHandlers,
   ...talkHandlers,
   ...toolsCatalogHandlers,

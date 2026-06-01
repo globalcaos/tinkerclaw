@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyMutationProposal,
   isApplyEnabled,
@@ -8,6 +8,15 @@ import {
   type ApplyDeps,
   type ApplyProposalInput,
 } from "../recipe-apply.js";
+
+// U1: applyMutationProposal must drop the matcher's in-memory index cache after a
+// successful persist so the rewritten recipe is matchable next turn. Mock the
+// kit-matcher module so we can assert the invalidation deterministically (the
+// real cache keys off dir mtime, whose resolution is too coarse to test against).
+const invalidateSpy = vi.fn();
+vi.mock("../kit-matcher.js", () => ({
+  invalidateKitIndexCache: () => invalidateSpy(),
+}));
 
 const JARVIS_KIT = `---
 schema: "kit/1.0"
@@ -193,5 +202,54 @@ describe("applyMutationProposal", () => {
     const res = await applyMutationProposal(INPUT, deps);
     expect(res.applied).toBe(true);
     expect(written.slug).toBe("demo-recipe");
+  });
+});
+
+// U1 (2026-06): after a self-apply rewrite is persisted, the matcher's in-memory
+// kit index must be dropped so the NEXT turn re-reads the rewritten recipe (else
+// the autonomous edit would only take effect after a process restart or an
+// unrelated dir-mtime change). recipe-apply owns this invalidation so it holds
+// regardless of which authorKit injection persisted the write.
+describe("applyMutationProposal — matcher cache invalidation", () => {
+  beforeEach(() => invalidateSpy.mockClear());
+  afterEach(() => invalidateSpy.mockClear());
+
+  it("a successful apply invalidates the matcher index cache exactly once", async () => {
+    const res = await applyMutationProposal(INPUT, makeDeps());
+    expect(res.applied).toBe(true);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a missing recipe never invalidates the cache (no write, no re-scan)", async () => {
+    const res = await applyMutationProposal(INPUT, makeDeps({ loadKitText: async () => null }));
+    expect(res.reason).toBe("recipe-missing");
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it("a curated-skip never invalidates the cache", async () => {
+    const res = await applyMutationProposal(
+      INPUT,
+      makeDeps({ loadKitText: async () => ({ path: "/k", text: CURATED_KIT }) }),
+    );
+    expect(res.reason).toBe("curated-skip");
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it("an author-rejected apply does NOT invalidate the cache (no spurious re-scan)", async () => {
+    const res = await applyMutationProposal(
+      INPUT,
+      makeDeps({ authorKit: async () => ({ ok: false, note: "rejected" }) }),
+    );
+    expect(res.applied).toBe(false);
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it("an invalid rewrite does NOT invalidate the cache", async () => {
+    const res = await applyMutationProposal(
+      INPUT,
+      makeDeps({ rewrite: async () => JSON.stringify({ slug: "demo-recipe", title: "x" }) }),
+    );
+    expect(res.reason).toBe("rewrite-invalid");
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 });
