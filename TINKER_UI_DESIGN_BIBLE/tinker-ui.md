@@ -2,8 +2,8 @@
 file: tinker-ui.md
 purpose: Tinker UI — layout, visual language, and the feature registry of UI behaviors
 audience: AI
-last_verified: 2026-05-11
-last_verified_commit: HEAD
+last_verified: 2026-06-01
+last_verified_commit: 18e618d241
 single_owner: yes — UI-visual + UI-feature facts live here. Migrated from bible.md §3, §4, §5.1-§5.65 on 2026-05-11.
 see_also: flows.md (F1 chat.send pipeline that feeds the UI), lifecycles.md (L5 chat.send run states the UI subscribes to), topology.md (Tinker UI Vite process)
 note: this is the original prose from the bible, relocated verbatim. Some sections cross-reference §X.Y numbers that now resolve here in this file rather than the old bible.md.
@@ -18,6 +18,8 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/tinker-ui.md")).read(); assert "BEGIN GENERATED-FORK-REGISTRY" in t and "END GENERATED-FORK-REGISTRY" in t, "registry markers missing — run scripts/gen-tinker-ui-registry.mjs --apply"'
   - name: gen-tinker-ui-registry.mjs is runnable end-to-end
     cmd: python3 -c 'import subprocess,os; r=subprocess.run(["node",os.path.expanduser("~/src/tinkerclaw/scripts/gen-tinker-ui-registry.mjs")],capture_output=True,text=True,timeout=25); assert r.returncode == 0, f"generator failed: {r.stderr[-300:]}"; assert "anchor" in r.stdout.lower() and "|" in r.stdout, "generator output unexpected shape"'
+  - name: §5.65 recipe decision-trail visual elements exist (provenance chip CSS + recipe-supersede trail icon)
+    cmd: python3 -c 'import os; css=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/styles/base.css")).read(); ts=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/panels/prefrontal-tree.ts")).read(); assert ".pf-decisions-recipe" in css and ".pf-subtask" in css, "decision-trail CSS classes missing"; assert "TRAIL_ICON_BY_KIND" in ts and "recipe-supersede" in ts and "pf-subtask" in ts, "trail-icon map or subtask render missing"'
 ---
 
 # Tinker UI — layout, visual language, feature registry
@@ -1103,7 +1105,15 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **What:** New sidebar tab (🧾 icon, sandstone #d4a574) showing all recipes organized by category with hierarchical child recipes, step flow arrows, summaries, and click-to-edit via Vite dev server `xdg-open` endpoint.
 - **Files:** `tinker-ui/src/app.ts` (renderRecipesTab), `tinker-ui/src/styles/base.css`, `tinker-ui/vite.config.ts` (openFilePlugin)
 
-### 5.65 Recipe Visual Indicators (2026-04-08)
+### 5.65 Recipe Visual Indicators — decision-trail provenance chip + subtask line (2026-04-08, decision-trail elements 2026-06-01)
+
+- **Status:** `DEPLOYED`
+- **Owner:** prefrontal-panel visual language for recipe provenance. Renders inside the Prefrontal right-panel decision trail (`tinker-ui/src/panels/prefrontal-tree.ts`). For WHEN these paint (the `treeIdle` gate; decision trail itself is NOT idle-gated, recipe header + action trail are), see panels.md; for the producer that feeds `recipeState` / `trail` (`prefrontal-recipe-state` + trail-event WS phases), see subagents-and-kits.md.
+- **`.pf-decisions-recipe`** — the always-visible recipe-provenance chip inside the decision-trail `summary` row. Names the matched recipe + confidence + live step (`🎯 <recipe> · conf <x> · step M/N · semantic`) so the collapsed trail carries real information instead of just "N decisions · <prose>". Gold (`var(--gold, #d8b25a)`), `font-weight:600`, `flex-shrink:0` (never compresses), `white-space:nowrap`, `font-variant-numeric:tabular-nums`. Built by `buildProvenanceChip()` walking recent `matched/merged/composed` decisions newest-first for the first structured `recipeId/confidence`, falling back to the live recipe header id. `recipe-apply/reject/supersede` are evolution events and deliberately do NOT relabel the chip.
+- **`.pf-decisions-latest`** — the "<icon> <label> · <message>" tail of the same summary row. Given `flex:1; min-width:0` (2026-06-01) so it ellipsises beside the `flex-shrink:0` provenance chip instead of pushing it out.
+- **`.pf-subtask`** — the per-subagent `↳ <task>` sub-line rendered above `.pf-vitals` (the vitals line is owned by §5.12's `.pf-*` registry). Carries `node.summary` (the subagent's task text). `10.5px`, `opacity:.82`, single-line ellipsis (`white-space:nowrap; text-overflow:ellipsis`), full text on hover via the `title` attribute. Only rendered for non-root nodes when `summary` is present and differs from the row label.
+- **Decision-trail icons (`TRAIL_ICON_BY_KIND` in prefrontal-tree.ts):** the autonomous recipe-evolution kinds added 2026-05-31 map to `♻` (`recipe-apply` — Jarvis rewrote one of its own recipes at consolidation), `⊘` (`recipe-reject` — declined a proposed rewrite), `⇄` (`recipe-supersede` — superseded a contradicting memory chunk). These make the unsupervised self-edit loop legible in the panel instead of RPC-only; they appear in both the collapsed-summary `.pf-decisions-latest` line and the expanded `.pf-decision-row` list.
+- **Files:** `tinker-ui/src/panels/prefrontal-tree.ts` (`renderDecisionTrail`, `buildProvenanceChip`, `TRAIL_ICON_BY_KIND`, `.pf-subtask` in `renderNodeRecursive`), `tinker-ui/src/styles/base.css` (`.pf-decisions-recipe`, `.pf-decisions-latest`, `.pf-subtask`).
 
 ### 5.66 **SYS_PLAN_RESUME** chip family (2026-05-13)
 

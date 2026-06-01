@@ -2,8 +2,8 @@
 file: subagents-and-kits.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-05-30
-last_verified_commit: HEAD
+last_verified: 2026-06-01
+last_verified_commit: 18e618d241
 single_owner: yes — subagent + kit orchestration + plan persistence facts live here
 see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream)
 verify:
@@ -13,6 +13,8 @@ verify:
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
   - name: recipe-state helper script is executable
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-recipe-state.mjs
+  - name: kit-runner emits recipe-state (onRecipeState sink) and kit-rpcs forwards it to fork.prefrontal.setRecipe (18e618d241 — closes the dead RECIPES panel)
+    cmd: python3 -c 'import os; r=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-runner.ts")).read(); assert "onRecipeState" in r and "RecipeStateUpdate" in r, "kit-runner.ts lost the onRecipeState observability sink — RECIPES header has no data source again"; p=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "fork.prefrontal.setRecipe" in p and "fork.prefrontal.trailEvent" in p, "kit-rpcs.ts no longer wires setRecipe/trailEvent loopback — recipe-state + autonomous-evolution trails are unobservable"'
   - name: kits library has ≥10 kit.md files with schema:"kit/1.0"
     cmd: bash -lc 'count=$(grep -l "^schema: \"kit/1.0\"" ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits/*/kit.md 2>/dev/null | wc -l); test "$count" -ge 10 || (echo "only $count kits found"; exit 1)'
   - name: every kit.md parses cleanly via yaml + carries slug/title/summary
@@ -305,6 +307,32 @@ node ~/src/tinkerclaw/scripts/openclaw-recipe-state.mjs --trail transition \
 
 Rule of thumb: every spawn gets a paired `--trail dispatch` BEFORE the spawn, and a paired `--trail complete` (or `--trail warn`) AFTER the child's result. Every kit-step change gets a `--recipe ... --step N` call.
 
+### runKit emits recipe-state in-process (FORK 18e618d241) — the dead-panel fix
+
+The CLI above is the OUT-OF-PROCESS path (Jarvis narrating a hand-driven kit). The IN-PROCESS path is `kit-runner.ts` `runKit`, and until 18e618d241 it was **silent** — it never emitted `prefrontal-recipe-state`. That was the root cause of the dull RECIPES panel: the rich recipe header (render owned by `panels.md`) had no data source, so the panel always fell back to the synthetic 2-step "Thinking → Acting" plan (`prefrontal-tree.ts` `humanizeRootStatus`, see `tinker-ui.md`).
+
+Now `runKit` emits at THREE points: (1) kit start, (2) each parallel-group transition, and (3) through `uses:` composition (a sub-kit inherits the same sink, so the latest emit wins in the UI — the deepest active recipe is what shows).
+
+Mechanism:
+
+- `KitRunOptions.onRecipeState?: (state: RecipeStateUpdate) => void` is an optional sink. `RecipeStateUpdate` mirrors the `fork.prefrontal.setRecipe` param shape (`recipeId`, optional `step`/`totalSteps`/`stepName`/`parallelismCap`/`inFlightLabels`/`sessionKey`) so the caller forwards it verbatim.
+- `kit-rpcs.ts` (`prefrontal.recipe.run`) wires the sink to `callGateway('fork.prefrontal.setRecipe', {...})` — the same loopback `callGateway` pattern `surfaceKitOutcome` already used. That RPC broadcasts the `prefrontal-recipe-state` lifecycle event.
+- **Best-effort, fire-and-forget:** kit-runner wraps every emit so observability can NEVER throw into the dispatch loop. A failed broadcast loses a header update, not a kit step.
+
+(The `fork.prefrontal.setRecipe` RPC + its param schema are owned by `probes.md`; the header RENDER is owned by `panels.md`.)
+
+### emitTrail now carries a structured payload (FORK 18e618d241)
+
+The in-extension `emitTrail` helper (`index.ts`, the `before_prompt_build` matching half — distinct from the CLI `--trail`) gained an optional 4th `payload` arg broadcast on the `prefrontal-trail-event` lifecycle event alongside the prose message. Payload fields: `recipeId`, `confidence` (`none`/`low`/`high`), `score`, `matches`, `catalogSize`, `composedFrom`, `semanticInvoked`, `recoveredBySemantic`. Added to the `matched` / `merged` / `searched` / `composed` emits so the UI can render confidence chips + composition sub-lines from `d.payload` instead of re-parsing prose. (Chip/sub-line styling owned by `tinker-ui.md`.)
+
+### Autonomous-evolution trail events (FORK 18e618d241)
+
+`kit-rpcs.ts` `prefrontal.recipe.applyProposal` (the J5 self-rewrite loop — previously RPC-only, invisible) now emits `recipe-apply` / `recipe-reject` trail events via `fork.prefrontal.trailEvent`. That RPC was extended to forward the structured `payload` too (same shape as above), so a recipe rewriting itself shows up in the decision trail. (`fork.prefrontal.trailEvent` + its payload are owned by `probes.md`.)
+
+### Per-subagent task surfaces as the tree-node summary
+
+In the `prefrontal-tree` broadcast, each node's `summary` is the subagent's task text: `prefrontal-monitor.ts` `runToNode` sets `summary = stored?.summary ?? run.task.slice(0, 200)` — a stored live summary (`updateNodeProgress`) wins when present, otherwise the first 200 chars of the dispatched task. This is what makes each spawned subagent legible in the call tree without a separate trail line.
+
 ## Split of concerns
 
 The split is structural and load-bearing:
@@ -379,12 +407,12 @@ TUI plan board for live step progress.
 
 ### Implementation files
 
-| File                                             | Role                                                                                                      |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `extensions/tinkerclaw-prefrontal/kit-runner.ts` | Core runner — loads kit, resolves groups, fans out via spawn helper, polls plan-store for step completion |
-| `extensions/tinkerclaw-prefrontal/kit-rpcs.ts`   | `prefrontal.kit.run` RPC wired here, delegates to kit-runner                                              |
-| `src/gateway/protocol/schema/prefrontal-kit.ts`  | `PrefrontalKitRunParamsSchema` added (kitRef, sessionKey, intent, parameters, dryRun)                     |
-| `scripts/openclaw-spawn-subagent.mjs`            | CLI helper invoked per-step for gateway subagent dispatch                                                 |
+| File                                             | Role                                                                                                                                                                                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extensions/tinkerclaw-prefrontal/kit-runner.ts` | Core runner — loads kit, resolves groups, fans out via spawn helper, polls plan-store for step completion; emits `prefrontal-recipe-state` via the optional `onRecipeState` sink (start / group-transition / `uses:` composition) |
+| `extensions/tinkerclaw-prefrontal/kit-rpcs.ts`   | `prefrontal.kit.run` RPC wired here, delegates to kit-runner; wires `onRecipeState` → `fork.prefrontal.setRecipe`, and `prefrontal.recipe.applyProposal` → `recipe-apply`/`recipe-reject` via `fork.prefrontal.trailEvent`        |
+| `src/gateway/protocol/schema/prefrontal-kit.ts`  | `PrefrontalKitRunParamsSchema` added (kitRef, sessionKey, intent, parameters, dryRun)                                                                                                                                             |
+| `scripts/openclaw-spawn-subagent.mjs`            | CLI helper invoked per-step for gateway subagent dispatch                                                                                                                                                                         |
 
 ### Parallelism decision rules (heuristics)
 
@@ -408,6 +436,7 @@ estimates.
 ## Don't regress
 
 - The `--trail` verbs are a small fixed set: `dispatch`, `complete`, `note`, `transition`, `warn`. Adding a new verb requires coordinating with the Prefrontal renderer.
+- `runKit` MUST emit `prefrontal-recipe-state` (via `onRecipeState`) at kit start + every group transition + `uses:` recursion. A silent runner is exactly the bug 18e618d241 fixed: the RECIPES header loses its data source and the panel rots back to the synthetic 2-step plan. Keep every emit best-effort-wrapped — observability never throws into the dispatch loop.
 - The kit catalog's `triggers` are documentation only; the matching is informal. Do not over-engineer it.
 - The split between Prefrontal panel and chat text is the single most important orchestration invariant. If it breaks, both panels become useless noise.
 - The `currentStep` invariant (at most one `in_progress` step per plan) is enforced by the plan-store. Never bypass it.

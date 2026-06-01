@@ -2,8 +2,8 @@
 file: panels.md
 purpose: Spatial layout + visibility contract for every Tinker UI panel. Defines which panels live where, which can coexist, and what happens when the user switches modes/tabs. The contract is enforceable — bugs like "Control Panel stays visible when I click Sessions" are caught by the verify blocks in this frontmatter.
 audience: AI
-last_verified: 2026-05-16
-last_verified_commit: HEAD
+last_verified: 2026-06-01
+last_verified_commit: 18e618d241
 single_owner: yes — panel-layout facts live here, not in tinker-ui.md. tinker-ui.md owns the visual language (chip styles, fonts, colors); this file owns the SPATIAL contract.
 see_also: tinker-ui.md (visual language, chip families, per-component design), flows.md (event flows that drive panel updates), topology.md (which process renders the UI)
 verify:
@@ -118,13 +118,19 @@ This rule was added to fix the bug "Control Panel wrongly still visible when I c
 
 FORK 2026-05-14: the prefrontal panel inside right-panels MUST always render content when right-panels is visible. There is no "panel is empty" mode. Three render levels, in priority order:
 
-1. **Explicit plan** — `currentPlan` (from `prefrontal-plan-state` WS event) with `status: in_progress`. Render the full checklist.
+1. **Explicit plan** — `currentPlan` (from `prefrontal-plan-state` WS event) with `status: in_progress`. Render the full checklist. The rich recipe HEADER bar (`renderRecipeHeader` — recipe name + `step M/N` + parallelism) is now actually populated at runtime: as of 18e618d241 the kit-runner emits `prefrontal-recipe-state` (producer mechanism owned by `subagents-and-kits.md`), which previously it never did — so the header had no data source and the panel always fell through to the synthetic 2-step plan (level 2). That was the root cause of the "dull RECIPES panel" — the header was dead/empty, not the renderer.
 2. **Implicit 2-step plan** — when no explicit plan but `tree.active === true` (an LLM run is alive). Render a synthetic 2-step plan: `▶ Thinking` while the run's phase is `thinking` / `reflecting`; `▶ Doing` once a tool call or text delta has fired. The two steps share the run's `runId` and `model`. Status transitions automatically: thinking ✓ when first tool/text fires; doing ✓ when the run reaches `state: final`.
 3. **Idle** — no plan AND no active run. Show `○ Idle — waiting for the next turn` plus the last completed turn's summary if available. This is the only "nothing's happening" state, and it explicitly says so rather than rendering blank.
 
 **Tree shape (FORK 2026-05-17).** `buildPrefrontalTree`'s fallback groups `scopedActiveRuns()` by owning session (subagents nest under their session). One session → that session's run is root with its subagents as children (this is always the shape under `"session"` scope — unchanged, no regression). Multiple top-level sessions (only reachable under `"all"` scope) → a synthetic `All sessions (N)` root whose children are one labelled node per session, so the user can see which session is doing what instead of one arbitrary session silently winning the single root slot.
 
 The implicit and idle states are derived from the same data the call-tree block already consumes — no new WS event needed. They use the same `.pf-plan` CSS family (with an additional `.pf-plan-synthetic` class for visual distinction).
+
+**Decision-trail provenance chip (FORK 2026-06-01, 18e618d241).** The recipe decision trail now carries an ALWAYS-VISIBLE provenance chip in its collapsed `<summary>`: `<recipe> · conf <x> · step M/N`, built from the latest matched/merged/composed trail-event payload plus the live recipe state. This raises the panel's information content (the summary was a generic "N decisions"). The chip lives in the decision trail, which already survives ~5 min post-completion — so the matched recipe stays visible briefly even when idle WITHOUT regressing the idle-blank rule: the recipe HEADER bar (level 1, `renderRecipeHeader`) is still hidden when idle by design; only the trail chip persists. Chip styling is owned by `tinker-ui.md`.
+
+**Per-subagent task sub-line (FORK 2026-06-01).** Each subagent row now renders a `↳ <task>` sub-line ("what this subagent is doing") above its vitals, sourced from the tree node summary.
+
+**New decision-trail event kinds (FORK 2026-06-01).** Three kinds now appear in the decision trail: `recipe-apply` / `recipe-reject` / `recipe-supersede` — provenance for the autonomous recipe-evolution loop. Their emission is owned by `subagents-and-kits.md`; this file only records that the trail RENDERS them.
 
 ```mermaid
 stateDiagram-v2
@@ -145,8 +151,9 @@ stateDiagram-v2
     and the extension clears active-main 4s after agent_end
     (< the UI's 6s ext-tree cache) — so the panel goes Idle
     in lockstep with chat.final instead of a frozen-clock
-    "thinking". The decision-trail collapsible + per-subagent
-    vitals render on top of whichever state is active.
+    "thinking". The decision-trail collapsible (now with an
+    always-visible provenance chip) + per-subagent vitals (now
+    with a ↳ task sub-line) render on top of whichever state is active.
   end note
 ```
 
