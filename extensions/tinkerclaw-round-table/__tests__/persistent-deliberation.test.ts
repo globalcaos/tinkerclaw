@@ -6,7 +6,11 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createPersistentDeliberation } from "../src/persistent-deliberation.js";
+import {
+  createPersistentDeliberation,
+  MAX_RETAINED_TURNS,
+  type SpeakerMemory,
+} from "../src/persistent-deliberation.js";
 
 // -- Temp dir helpers --
 
@@ -226,5 +230,86 @@ describe("Persistent Deliberation: deliberation memory", () => {
     expect(memory.architectureUsage["fan-out"]).toBe(1);
     expect(memory.architectureUsage["full-synapse"]).toBe(2);
     expect(memory.avgCostPerDebate).toBeCloseTo(0.6, 1);
+  });
+});
+
+// -- 7F: Multi-turn speaker memory --
+
+function makeTurn(roundNum: number, synthesis: string): SpeakerMemory["turns"][number] {
+  return {
+    roundNum,
+    modelResponses: { "claude-opus": `r${roundNum}` },
+    synthesis,
+    ratification: { "claude-opus": "accept" as const },
+  };
+}
+
+describe("7F: speaker memory round-trips via JSONL", () => {
+  it("storeSpeakerMemory then recallSpeakerMemory returns the stored turn", () => {
+    const pd = makePd();
+    const memory: SpeakerMemory = {
+      debateTopic: "Cache design",
+      memoryId: "mem-001",
+      turns: [makeTurn(1, "first synthesis")],
+      lastUpdated: new Date().toISOString(),
+    };
+    pd.storeSpeakerMemory(memory);
+
+    const recalled = pd.recallSpeakerMemory("mem-001");
+    expect(recalled).toBeDefined();
+    expect(recalled!.memoryId).toBe("mem-001");
+    expect(recalled!.turns).toHaveLength(1);
+    expect(recalled!.turns[0].synthesis).toBe("first synthesis");
+  });
+
+  it("recallSpeakerMemory returns undefined for an unknown id", () => {
+    const pd = makePd();
+    pd.storeSpeakerMemory({
+      debateTopic: "T",
+      memoryId: "mem-known",
+      turns: [makeTurn(1, "s")],
+      lastUpdated: new Date().toISOString(),
+    });
+    expect(pd.recallSpeakerMemory("mem-unknown")).toBeUndefined();
+  });
+
+  it("resume accumulates turns (newest snapshot wins)", () => {
+    const pd = makePd();
+    pd.storeSpeakerMemory({
+      debateTopic: "T",
+      memoryId: "mem-acc",
+      turns: [makeTurn(1, "s1")],
+      lastUpdated: new Date().toISOString(),
+    });
+    // Second debate with the same memoryId appends a 2-turn snapshot.
+    pd.storeSpeakerMemory({
+      debateTopic: "T",
+      memoryId: "mem-acc",
+      turns: [makeTurn(1, "s1"), makeTurn(2, "s2")],
+      lastUpdated: new Date().toISOString(),
+    });
+
+    const recalled = pd.recallSpeakerMemory("mem-acc");
+    expect(recalled!.turns).toHaveLength(2);
+    expect(recalled!.turns[1].synthesis).toBe("s2");
+  });
+
+  it("truncates retained turns to MAX_RETAINED_TURNS (keeps the newest)", () => {
+    const pd = makePd();
+    const manyTurns = Array.from({ length: MAX_RETAINED_TURNS + 5 }, (_, i) =>
+      makeTurn(i + 1, `s${i + 1}`),
+    );
+    pd.storeSpeakerMemory({
+      debateTopic: "T",
+      memoryId: "mem-big",
+      turns: manyTurns,
+      lastUpdated: new Date().toISOString(),
+    });
+    const recalled = pd.recallSpeakerMemory("mem-big");
+    expect(recalled!.turns).toHaveLength(MAX_RETAINED_TURNS);
+    // The last turn must be preserved (newest kept).
+    expect(recalled!.turns[recalled!.turns.length - 1].synthesis).toBe(
+      `s${MAX_RETAINED_TURNS + 5}`,
+    );
   });
 });

@@ -163,32 +163,24 @@ function anyTokenMatches(promptTokens: string[], kitTok: string): boolean {
   return promptTokens.some((pt) => tokenMatches(pt, kitTok));
 }
 
-let cache: { mtimeMs: number; index: KitIndexEntry[] } | null = null;
+let cache: { sig: string; index: KitIndexEntry[] } | null = null;
 
 /** Drop the in-memory index cache (call after authoring a kit on the fly). */
 export function invalidateKitIndexCache(): void {
   cache = null;
 }
 
-export async function loadKitIndex(ownKitsDir: string): Promise<KitIndexEntry[]> {
-  let dirStat: Awaited<ReturnType<typeof fs.stat>>;
-  try {
-    dirStat = await fs.stat(ownKitsDir);
-  } catch {
-    return [];
-  }
-  if (cache && cache.mtimeMs === dirStat.mtimeMs) {
-    return cache.index;
-  }
+/** Scan ONE `<dir>/<slug>/kit.md` tree into KitIndexEntry rows. Missing dir → []. */
+async function scanKitDir(dir: string): Promise<KitIndexEntry[]> {
   const index: KitIndexEntry[] = [];
   let slugs: string[];
   try {
-    slugs = await fs.readdir(ownKitsDir);
+    slugs = await fs.readdir(dir);
   } catch {
-    return [];
+    return index; // dir absent (e.g. no bridged imports yet) — not an error
   }
   for (const slug of slugs) {
-    const path = join(ownKitsDir, slug, "kit.md");
+    const path = join(dir, slug, "kit.md");
     let text: string;
     try {
       text = await fs.readFile(path, "utf8");
@@ -219,8 +211,111 @@ export async function loadKitIndex(ownKitsDir: string): Promise<KitIndexEntry[]>
       path,
     });
   }
-  cache = { mtimeMs: dirStat.mtimeMs, index };
   return index;
+}
+
+/**
+ * Load the matcher's catalog. Scans `ownKitsDir` plus any `extraDirs` (FORK
+ * 2026-06-01 / U11: the bridged-skills dir where imported CC SKILL.md recipes
+ * land), so imported recipes are matchable alongside the curated ones. A later
+ * dir's entry wins on a slug collision (so a bridged recipe never shadows a
+ * curated kit of the same slug — own-kits scan first). The cache key is the
+ * combined mtime signature of every scanned dir, so a write to ANY of them
+ * invalidates the cache (a missing dir contributes a stable "x" so its later
+ * creation also busts the cache).
+ */
+export async function loadKitIndex(
+  ownKitsDir: string,
+  extraDirs: string[] = [],
+): Promise<KitIndexEntry[]> {
+  const dirs = [ownKitsDir, ...extraDirs];
+  const sigParts: string[] = [];
+  for (const d of dirs) {
+    try {
+      const st = await fs.stat(d);
+      sigParts.push(`${d}:${st.mtimeMs}`);
+    } catch {
+      sigParts.push(`${d}:x`);
+    }
+  }
+  const sig = sigParts.join("|");
+  if (cache && cache.sig === sig) {
+    return cache.index;
+  }
+
+  // own-kits first so a bridged import cannot shadow a curated slug.
+  const bySlug = new Map<string, KitIndexEntry>();
+  for (const d of dirs) {
+    for (const entry of await scanKitDir(d)) {
+      if (!bySlug.has(entry.slug)) bySlug.set(entry.slug, entry);
+    }
+  }
+  const index = [...bySlug.values()];
+  cache = { sig, index };
+  return index;
+}
+
+/**
+ * FORK 2026-06 (Upgrade 1): a per-recipe fitness lookup. Returns the recipe's
+ * empirical Laplace-smoothed successRate (0..1) for a slug, or undefined when the
+ * recipe has no fitness record yet. Injected by the caller so the matcher stays
+ * decoupled from the engram store (no native-dep bundle pull — same pattern as the
+ * J13 EmbedFn). The matcher reads fitness through this seam only.
+ */
+export type FitnessLookup = (slug: string) => number | undefined;
+
+/**
+ * FORK 2026-06 (Upgrade 1): convert an empirical successRate into a NON-NEGATIVE
+ * score boost. Recipe selection prefers empirically-better recipes, but the
+ * matcher must never BURY a lexically-relevant recipe just because its fitness is
+ * low — demoting a poor recipe is recipe-evolution's job, not the selector's. So:
+ *   - undefined / unknown fitness            → 0 (no opinion, base preserved)
+ *   - successRate <= NEUTRAL (0.5)           → 0 (floor preserved, no demotion)
+ *   - successRate  > NEUTRAL                 → a small, bounded, monotone boost
+ * This guarantees `base + delta >= base` (base lexical weights are the floor) while
+ * a proven recipe still outranks an equally-relevant unproven one.
+ */
+export const FITNESS_NEUTRAL = 0.5;
+export const FITNESS_MAX_BOOST = 3;
+export function fitnessFeedbackDelta(successRate: number | undefined): number {
+  if (typeof successRate !== "number" || !Number.isFinite(successRate)) return 0;
+  if (successRate <= FITNESS_NEUTRAL) return 0; // floor — never demote a relevant recipe
+  // Map (0.5, 1.0] linearly onto (0, FITNESS_MAX_BOOST], rounded to an integer so
+  // the boost lives on the same scale as the lexical tag/title/summary weights.
+  const scaled = ((successRate - FITNESS_NEUTRAL) / (1 - FITNESS_NEUTRAL)) * FITNESS_MAX_BOOST;
+  return Math.min(FITNESS_MAX_BOOST, Math.round(scaled));
+}
+
+/**
+ * FORK 2026-06-01 (U12): a per-recipe MARKETPLACE-rating lookup. Returns the
+ * recipe's already-computed marketplace popularity bonus (recipe-marketplace.ts
+ * ratingBonus, in [0, 2]) for a slug, or undefined when the marketplace has no
+ * metadata. Injected by the caller so the matcher stays decoupled from the
+ * marketplace's network/cache layer (same seam pattern as FitnessLookup).
+ */
+export type RatingLookup = (slug: string) => number | undefined;
+
+/**
+ * FORK 2026-06-01 (U12): the matcher's CLAMPED rating contribution. Discovery
+ * popularity is the WEAKEST signal — it must never override genuine relevance or
+ * the empirical-fitness feedback — so a recipe's raw marketplace bonus (0..2) is
+ * re-clamped here into a tiny ±0.2 band that only breaks ties between otherwise
+ * equally-relevant recipes. A neutral/absent rating contributes 0.
+ *
+ * PRECEDENCE (composed in scoreKit, lowest-to-highest authority of the FLOOR):
+ *   base (lexical) → feedback (empirical fitness, integer 0..3, floor-preserving)
+ *   → rating (popularity, ±0.2, tie-breaker only).
+ * So a strong-fitness proven recipe still dominates a merely-popular one, and a
+ * lexical mismatch can never be rescued by popularity alone.
+ */
+export const RATING_CLAMP = 0.2;
+export function ratingScoreDelta(rating: number | undefined): number {
+  if (typeof rating !== "number" || !Number.isFinite(rating)) return 0;
+  // ratingBonus is in [0, MAX_RATING_BONUS=2]; map onto [-RATING_CLAMP,
+  // +RATING_CLAMP] centered on the 1.0 midpoint so a below-average recipe is
+  // gently demoted and an above-average one gently promoted, both within ±0.2.
+  const centered = (rating - 1) / 1; // [-1, +1]
+  return Math.max(-RATING_CLAMP, Math.min(RATING_CLAMP, centered * RATING_CLAMP));
 }
 
 /**
@@ -228,8 +323,23 @@ export async function loadKitIndex(ownKitsDir: string): Promise<KitIndexEntry[]>
  * surface), then title, then summary. Multi-word tags match as a phrase
  * substring; single-word tags + title/summary words match FUZZILY (stem /
  * prefix / edit-1) so paraphrases and inflections still score.
+ *
+ * FORK 2026-06 (Upgrade 1): an optional `feedback` lookup adds the recipe's
+ * empirical-fitness boost AFTER the lexical base is computed (post-base-score),
+ * with the lexical base as a FLOOR — see fitnessFeedbackDelta. Omitted → pure
+ * lexical scoring (the historical behaviour, byte-identical).
+ *
+ * FORK 2026-06-01 (U12): an optional `rating` lookup adds a CLAMPED (±0.2)
+ * marketplace-popularity tie-breaker LAST, so precedence is base → feedback →
+ * rating (see ratingScoreDelta). Omitted → no rating perturbation.
  */
-export function scoreKit(prompt: string, promptTokens: Set<string>, kit: KitIndexEntry): number {
+export function scoreKit(
+  prompt: string,
+  promptTokens: Set<string>,
+  kit: KitIndexEntry,
+  feedback?: FitnessLookup,
+  rating?: RatingLookup,
+): number {
   let score = 0;
   const lowPrompt = prompt.toLowerCase();
   const tokenList = [...promptTokens];
@@ -250,6 +360,11 @@ export function scoreKit(prompt: string, promptTokens: Set<string>, kit: KitInde
   for (const tok of tokenize(kit.summary)) {
     if (anyTokenMatches(tokenList, tok)) score += 1;
   }
+  // PRECEDENCE base → feedback → rating:
+  // 1) Post-base-score empirical-fitness boost (base is the floor; delta is >= 0).
+  if (feedback) score += fitnessFeedbackDelta(feedback(kit.slug));
+  // 2) Clamped marketplace-rating tie-breaker LAST (±0.2 — weakest signal).
+  if (rating) score += ratingScoreDelta(rating(kit.slug));
   return score;
 }
 
@@ -259,23 +374,30 @@ const DEFAULT_MAX_KITS = 3;
 export function matchKits(
   prompt: string,
   index: KitIndexEntry[],
-  opts?: { threshold?: number; max?: number },
+  opts?: { threshold?: number; max?: number; feedback?: FitnessLookup; rating?: RatingLookup },
 ): KitMatch[] {
   return matchKitsDetailed(prompt, index, opts).matches;
 }
 
 /** Like matchKits but also classifies confidence — used by the turn hook to
- * decide seed-silently vs surface-alternatives vs prompt-authoring. */
+ * decide seed-silently vs surface-alternatives vs prompt-authoring.
+ * FORK 2026-06 (Upgrade 1): an optional `feedback` lookup boosts proven recipes
+ * (post-base-score, base as floor — see scoreKit). FORK 2026-06-01 (U12): an
+ * optional `rating` lookup adds a clamped (±0.2) popularity tie-breaker LAST
+ * (precedence base → feedback → rating). Both omitted → pure lexical. */
 export function matchKitsDetailed(
   prompt: string,
   index: KitIndexEntry[],
-  opts?: { threshold?: number; max?: number },
+  opts?: { threshold?: number; max?: number; feedback?: FitnessLookup; rating?: RatingLookup },
 ): MatchResult {
   const promptTokens = new Set(tokenize(prompt));
   const threshold = opts?.threshold ?? DEFAULT_THRESHOLD;
   const max = opts?.max ?? DEFAULT_MAX_KITS;
   const scored = index
-    .map((entry) => ({ entry, score: scoreKit(prompt, promptTokens, entry) }))
+    .map((entry) => ({
+      entry,
+      score: scoreKit(prompt, promptTokens, entry, opts?.feedback, opts?.rating),
+    }))
     .filter((m) => m.score >= threshold)
     .sort((a, b) => b.score - a.score);
   const matches = scored.slice(0, max);
@@ -356,6 +478,10 @@ export interface SeedPlanDeps {
   sessionKey: string;
   runId: string;
   ownKitsDir: string;
+  /** FORK 2026-06-01 (U11): additional catalog dirs scanned alongside ownKitsDir
+   * (e.g. the bridged-skills dir) so imported CC SKILL.md recipes are matchable at
+   * turn start. Omitted → own-kits only (historical behaviour). */
+  extraKitDirs?: string[];
   planStore: {
     get: (sessionKey: string) => Promise<unknown | null>;
     set: (params: {
@@ -369,6 +495,22 @@ export interface SeedPlanDeps {
   log?: { info?: (m: string) => void; warn?: (m: string) => void };
   /** J13 semantic fallback: injected embed seam. Omit/undefined → lexical-only (default). */
   embed?: EmbedFn;
+  /**
+   * FORK 2026-06 (U1): per-recipe empirical-fitness lookup. When supplied, the
+   * turn-start lexical match folds in each candidate's Laplace-smoothed
+   * successRate boost (post-base-score, base as floor — see scoreKit). Omitted →
+   * pure lexical scoring (historical behaviour). Built once per turn by the caller
+   * (index.ts) via makeFitnessLookup so the matcher stays decoupled from the engram
+   * store.
+   */
+  feedback?: FitnessLookup;
+  /**
+   * FORK 2026-06-01 (U12): per-recipe marketplace-rating lookup. When supplied, a
+   * clamped (±0.2) popularity tie-breaker is added LAST (precedence base → feedback
+   * → rating — see scoreKit). Omitted → no rating perturbation. Built once per turn
+   * by the caller via makeRatingLookup over the warmed marketplace cache.
+   */
+  rating?: RatingLookup;
 }
 
 export interface SeedPlanOutcome {
@@ -430,13 +572,19 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
     return empty({ skipped: "plan-in-progress" });
   }
 
-  const index = await loadKitIndex(deps.ownKitsDir);
+  const index = await loadKitIndex(deps.ownKitsDir, deps.extraKitDirs ?? []);
   if (index.length === 0) {
     deps.log?.warn?.(`[kit-matcher] no kits found in ${deps.ownKitsDir}`);
     return empty({ skipped: "empty-catalog" });
   }
 
-  const lexical = matchKitsDetailed(deps.prompt, index);
+  // FORK 2026-06 (U1) + 2026-06-01 (U12): thread the injected fitness + rating
+  // lookups into the lexical match so the turn-start seed prefers empirically-better
+  // and (as a tie-break) more-popular recipes. Both omitted → pure lexical.
+  const lexical = matchKitsDetailed(deps.prompt, index, {
+    feedback: deps.feedback,
+    rating: deps.rating,
+  });
   let matches = lexical.matches;
   let confidence = lexical.confidence;
   let semanticInvoked = false;

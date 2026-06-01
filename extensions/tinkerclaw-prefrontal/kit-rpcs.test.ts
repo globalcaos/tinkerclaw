@@ -2,9 +2,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MockAgent, setGlobalDispatcher, getGlobalDispatcher, type Dispatcher } from "undici";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { createRecipeArchive } from "../../src/memory/engram/recipe-archive.js";
+import { createInitialRecipeFitness, laplace } from "../../src/memory/engram/recipe-fitness.js";
+import * as kitMatcher from "./kit-matcher.js";
 import { createKitRpcs, inferCategory, parseKitMd } from "./kit-rpcs.js";
+import * as kitRunner from "./kit-runner.js";
 import { KitStore } from "./kit-store.js";
+import { createMarketplace, type MarketplaceMeta } from "./recipe-marketplace.js";
+
+// callGateway is the loopback seam the recipe.run onTag forwards through. Mock it
+// so the producer test asserts the forward WITHOUT a live gateway.
+const callGatewaySpy = vi.fn().mockResolvedValue({ ok: true });
+vi.mock("../../src/gateway/call.js", () => ({
+  callGateway: (...args: unknown[]) => callGatewaySpy(...args),
+}));
 
 describe("kit-rpcs", () => {
   let mock: MockAgent;
@@ -182,6 +194,121 @@ describe("kit-rpcs", () => {
     expect(fs.existsSync(path.join(root, "foo/bar/kit.md"))).toBe(true);
   });
 
+  it("prefrontal.recipe.install applies p.ref ONLY to the root; transitive composes dep resolves with latest", async () => {
+    // Root kit declares a transitive dep via `composes:`. The root install must
+    // honour the caller's version constraint (ref=^2.0.0); the transitive dep must
+    // NOT inherit it — it resolves with `latest` (its own declared constraint
+    // absent). Before the fix, p.ref leaked onto the dep install URL.
+    const depInstallHits: string[] = [];
+    mock
+      .get("https://www.journeykits.ai")
+      .intercept({
+        path: `/api/kits/globalcaos/root/install?target=openclaw&ref=${encodeURIComponent("^2.0.0")}`,
+        method: "GET",
+      })
+      .reply(200, {
+        suggestedRootDir: "globalcaos/root/",
+        files: [
+          {
+            path: "kit.md",
+            content:
+              "---\nschema: kit/1.0\nslug: root\ncomposes:\n  - globalcaos/leaf\n---\n# root body\n",
+            writeMode: "overwrite",
+          },
+        ],
+        preflightChecks: [],
+        nextSteps: [],
+        risk: [{ source: "snyk", level: "Safe" }],
+      });
+    mock
+      .get("https://www.journeykits.ai")
+      .intercept({
+        path: "/api/kits/globalcaos/leaf/install?target=openclaw&ref=latest",
+        method: "GET",
+      })
+      .reply(200, () => {
+        depInstallHits.push("latest");
+        return {
+          suggestedRootDir: "globalcaos/leaf/",
+          files: [
+            { path: "kit.md", content: "---\nslug: leaf\n---\n# leaf\n", writeMode: "overwrite" },
+          ],
+          preflightChecks: [],
+          nextSteps: [],
+          risk: [{ source: "snyk", level: "Safe" }],
+        };
+      });
+
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.recipe.install"]({
+      kitRef: "globalcaos/root",
+      ref: "^2.0.0",
+    });
+    expect(res.ok).toBe(true);
+    // The transitive dep was fetched with ref=latest (the intercept above only
+    // matches that exact path), proving p.ref did NOT leak onto the dep.
+    expect(depInstallHits).toEqual(["latest"]);
+    expect(res.dependenciesInstalled).toContain("globalcaos/leaf");
+  });
+
+  it("prefrontal.recipe.install transitive dep honours its OWN declared constraint (@ in composes)", async () => {
+    // A composes dep carrying `@~1.4.0` resolves with that constraint, NOT the root's.
+    mock
+      .get("https://www.journeykits.ai")
+      .intercept({
+        path: "/api/kits/globalcaos/root/install?target=openclaw&ref=latest",
+        method: "GET",
+      })
+      .reply(200, {
+        suggestedRootDir: "globalcaos/root/",
+        files: [
+          {
+            path: "kit.md",
+            content:
+              "---\nschema: kit/1.0\nslug: root\ncomposes:\n  - globalcaos/leaf@~1.4.0\n---\n# root\n",
+            writeMode: "overwrite",
+          },
+        ],
+        preflightChecks: [],
+        nextSteps: [],
+        risk: [{ source: "snyk", level: "Safe" }],
+      });
+    mock
+      .get("https://www.journeykits.ai")
+      .intercept({
+        path: `/api/kits/globalcaos/leaf/install?target=openclaw&ref=${encodeURIComponent("~1.4.0")}`,
+        method: "GET",
+      })
+      .reply(200, {
+        suggestedRootDir: "globalcaos/leaf/",
+        files: [
+          { path: "kit.md", content: "---\nslug: leaf\n---\n# leaf\n", writeMode: "overwrite" },
+        ],
+        preflightChecks: [],
+        nextSteps: [],
+        risk: [{ source: "snyk", level: "Safe" }],
+      });
+
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: null,
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    // The dep intercept only matches ref=~1.4.0; the install resolves cleanly only
+    // if the dep's own declared constraint is used (the producer fires correctly).
+    const res = await rpcs["prefrontal.recipe.install"]({ kitRef: "globalcaos/root" });
+    expect(res.ok).toBe(true);
+    expect(res.dependenciesInstalled).toContain("globalcaos/leaf");
+  });
+
   it("prefrontal.recipe.list returns inventory under sandbox", async () => {
     await store.writeKitFiles({
       owner: "globalcaos",
@@ -234,6 +361,39 @@ describe("kit-rpcs", () => {
     await expect(
       rpcs["prefrontal.recipe.publish"]({ slug: "feature", visibility: "public" }),
     ).rejects.toThrow(/apiKey|missing.*key/i);
+  });
+
+  it("prefrontal.recipe.publish: a brand-new recipe with NO version frontmatter publishes 1.0.0", async () => {
+    // The first publish of a recipe that has no `version:` line must mint 1.0.0
+    // (NOT bump a phantom 0.0.0 -> 0.0.1). Assert the version the producer POSTs.
+    fs.mkdirSync(path.join(ownKitsDir, "fresh"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ownKitsDir, "fresh", "kit.md"),
+      "---\nschema: kit/1.0\nslug: fresh\nowner: globalcaos\n---\n# body\n",
+      "utf-8",
+    );
+
+    let postedBody: any;
+    mock
+      .get("https://www.journeykits.ai")
+      .intercept({ path: "/api/kits/publish", method: "POST" })
+      .reply(200, (opts) => {
+        postedBody = JSON.parse(opts.body as string);
+        return { ok: true, kitRef: "globalcaos/fresh" };
+      });
+
+    const rpcs = createKitRpcs({
+      store,
+      baseUrl: "https://www.journeykits.ai",
+      apiKey: "test-key",
+      kitInstallSandbox: store.rootDirPublic(),
+      ownKitsDir,
+    });
+    const res = await rpcs["prefrontal.recipe.publish"]({ slug: "fresh", visibility: "public" });
+    expect(res.version).toBe("1.0.0");
+    expect(postedBody.version).toBe("1.0.0");
+    // The frontmatter shipped in the POST body carries the minted version too.
+    expect(postedBody.kitMd).toContain('version: "1.0.0"');
   });
 
   it("prefrontal.recipe.publish reads source kit body and POSTs to Journey", async () => {
@@ -422,5 +582,161 @@ describe("kit-rpcs", () => {
     const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "feature");
     expect(kit?.category).toBe("coding");
+  });
+
+  // ─── U1 + U12 PRODUCER WIRING: recipe.match folds in fitness + rating ─────────
+  // The matcher exposes feedback?/rating? seams; before this wiring NO caller
+  // supplied them. These tests fail if recipe.match calls matchKitsDetailed without
+  // a non-empty feedback + rating (the unwired-producer regression).
+
+  function meta(
+    kitRef: string,
+    versions: string[],
+    over?: Partial<MarketplaceMeta>,
+  ): MarketplaceMeta {
+    return { kitRef, versions, rating: over?.rating, downloads: over?.downloads };
+  }
+
+  it("prefrontal.recipe.match passes a NON-EMPTY feedback + rating into matchKitsDetailed", async () => {
+    // A curated kit in the catalog.
+    fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ownKitsDir, "debug", "kit.md"),
+      '---\nschema: "kit/1.0"\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n',
+      "utf-8",
+    );
+
+    // An on-disk fitness record so the FitnessLookup resolves a real successRate.
+    const engramBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-engram-"));
+    const archive = createRecipeArchive({ baseDir: engramBaseDir });
+    const fit = createInitialRecipeFitness("globalcaos/debug", 1);
+    fit.successRate = laplace(9, 9);
+    archive.putVariant("globalcaos/debug", 1, "body", fit);
+
+    // A marketplace with a warmed cache so the RatingLookup resolves a real bonus.
+    const marketplace = createMarketplace({ fetchImpl: vi.fn() });
+    marketplace.recordMarketplaceCache(
+      meta("globalcaos/debug", ["1.0.0"], { rating: 5, downloads: 500 }),
+    );
+
+    const spy = vi.spyOn(kitMatcher, "matchKitsDetailed");
+    try {
+      const rpcs = createKitRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        kitInstallSandbox: store.rootDirPublic(),
+        ownKitsDir,
+        marketplace,
+        engramBaseDir,
+      });
+      await rpcs["prefrontal.recipe.match"]({ prompt: "debug the crash error" });
+
+      expect(spy).toHaveBeenCalled();
+      const opts = spy.mock.calls[0]?.[2] as
+        | {
+            feedback?: (s: string) => number | undefined;
+            rating?: (s: string) => number | undefined;
+          }
+        | undefined;
+      expect(typeof opts?.feedback).toBe("function");
+      expect(typeof opts?.rating).toBe("function");
+      // The injected lookups actually RESOLVE real values for the catalog slug —
+      // i.e. the producers are wired to live data, not empty stubs.
+      expect(opts?.feedback?.("debug")).toBeCloseTo(laplace(9, 9), 10);
+      expect(opts?.rating?.("debug")).toBeGreaterThan(0);
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(engramBaseDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefrontal.recipe.search local fallback also passes feedback + rating", async () => {
+    fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ownKitsDir, "debug", "kit.md"),
+      '---\nschema: "kit/1.0"\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n',
+      "utf-8",
+    );
+    const engramBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-engram-"));
+    const marketplace = createMarketplace({ fetchImpl: vi.fn() });
+
+    const spy = vi.spyOn(kitMatcher, "matchKitsDetailed");
+    try {
+      const rpcs = createKitRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        kitInstallSandbox: store.rootDirPublic(),
+        ownKitsDir,
+        marketplace,
+        engramBaseDir,
+        // Force the LOCAL fallback path by failing the Journey fetch.
+        fetchJsonImpl: async () => {
+          throw new Error("journey down");
+        },
+      });
+      await rpcs["prefrontal.recipe.search"]({ query: "debug crash" });
+      expect(spy).toHaveBeenCalled();
+      const opts = spy.mock.calls[0]?.[2] as { feedback?: unknown; rating?: unknown } | undefined;
+      expect(typeof opts?.feedback).toBe("function");
+      expect(typeof opts?.rating).toBe("function");
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(engramBaseDir, { recursive: true, force: true });
+    }
+  });
+
+  // ─── U1 PRODUCER WIRING: recipe.run passes onTag into runKit ──────────────────
+  // kit-runner emits recipe:<owner/slug> TagStamps via opts.onTag, but recipe.run
+  // never supplied it → the attribution producer was inert. This asserts the seam.
+
+  it("prefrontal.recipe.run passes a DEFINED onTag into runKit that forwards to the trail seam", async () => {
+    let capturedOnTag: ((ev: kitRunner.TagStamp) => void) | undefined;
+    const runKitSpy = vi
+      .spyOn(kitRunner, "runKit")
+      .mockImplementation(async (opts: kitRunner.KitRunOptions) => {
+        capturedOnTag = opts.onTag;
+        return { ok: true, planId: "test-plan", results: [] };
+      });
+    callGatewaySpy.mockClear();
+    try {
+      const rpcs = createKitRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        kitInstallSandbox: store.rootDirPublic(),
+        ownKitsDir,
+        planStore: {} as never,
+      });
+      await rpcs["prefrontal.recipe.run"]({
+        kitRef: "globalcaos/debug",
+        sessionKey: "agent:main:main",
+        intent: "debug it",
+      });
+
+      // The producer seam is wired: runKit received a callable onTag.
+      expect(runKitSpy).toHaveBeenCalled();
+      expect(typeof capturedOnTag).toBe("function");
+
+      // And invoking it forwards the recipe-attribution tag to the trail/ingestion
+      // seam (so recipe-fitness.attributeRecipe sees `recipe:<owner/slug>`).
+      capturedOnTag!({
+        tag: "recipe:globalcaos/debug",
+        phase: "start",
+        sessionKey: "agent:main:main",
+      });
+      const tagCall = callGatewaySpy.mock.calls.find(
+        (c) => (c[0] as { method?: string })?.method === "fork.prefrontal.trailEvent",
+      );
+      expect(tagCall).toBeTruthy();
+      const params = (tagCall![0] as { params?: Record<string, unknown> }).params!;
+      expect(params.kind).toBe("recipe-tag");
+      const payload = params.payload as { recipeTag?: string; tags?: string[] };
+      expect(payload.recipeTag).toBe("recipe:globalcaos/debug");
+      expect(payload.tags).toContain("recipe:globalcaos/debug");
+    } finally {
+      runKitSpy.mockRestore();
+    }
   });
 });

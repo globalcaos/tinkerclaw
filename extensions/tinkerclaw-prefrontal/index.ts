@@ -57,11 +57,13 @@ function getSessionStoreLoader(): ((cfg: any) => any) | null {
   return _sessionStoreLoader;
 }
 import { callGateway } from "../../src/gateway/call.js";
+import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
 import {
   loadAntiGoldplatingPrompt,
   shouldInjectAntiGoldplating,
   DEFAULT_ANTI_GOLDPLATING_CONFIG,
 } from "./anti-goldplating.js";
+import { BRIDGED_SKILLS_DIRNAME } from "./cc-skills-bridge.js";
 import { ChatEmitter } from "./chat-emitter.js";
 import { DEFAULT_CORF_CONFIG } from "./corf-trigger.js";
 import { createDenialTracker } from "./denial-tracking.js";
@@ -87,6 +89,12 @@ import { createPrefrontalMonitor } from "./prefrontal-monitor.js";
 import type { SubagentRunInfo } from "./prefrontal-monitor.js";
 import { readRecoveryState, clearRecoveryState } from "./prefrontal-recovery.js";
 import { DEFAULT_PREFRONTAL_CONFIG } from "./prefrontal-types.js";
+import {
+  createMarketplace,
+  makeRatingLookup,
+  type MarketplaceFetch,
+  type MarketplaceMeta,
+} from "./recipe-marketplace.js";
 import { type EmbedFn } from "./semantic-matcher.js";
 import { TopologyStore } from "./topology.js";
 
@@ -757,6 +765,16 @@ export default function register(api: OpenClawPluginApi) {
   // extensions/tinkerclaw-prefrontal/, the bundle at dist/ root — different `..`
   // counts). resolveOwnKitsDir walks up to the first existing kits dir.
   const ownKitsDir = resolveOwnKitsDir(dirname(fileURLToPath(import.meta.url)));
+  // FORK 2026-06-01 (U11): where bridged CC SKILL.md imports land. Scanned by the
+  // turn-start matcher (extraKitDirs) and the recipe.match/search RPCs so imported
+  // recipes are matchable alongside curated kits. Single source of truth for the
+  // dir name lives in cc-skills-bridge.ts.
+  const bridgedSkillsDir = join(kitInstallSandbox, BRIDGED_SKILLS_DIRNAME);
+  // FORK 2026-06 (U1): engram base dir for the on-disk recipe-fitness store
+  // (recipe-archive/). makeFitnessLookup(engramBaseDir) reads each candidate's
+  // empirical successRate so the turn-start match prefers proven recipes. Same path
+  // the cerebellum's sleep-consolidation writes fitness to (~/.openclaw/engram).
+  const engramBaseDir = join(os.homedir(), ".openclaw", "engram");
 
   // ── Plan store + RPCs (FORK 2026-05-13) ──
   const planRootDir = join(os.homedir(), ".openclaw", "workspace", "state", "prefrontal", "plans");
@@ -879,14 +897,29 @@ export default function register(api: OpenClawPluginApi) {
             }
           };
         }
+        // FORK 2026-06 (U1) + 2026-06-01 (U12): build the empirical-fitness +
+        // marketplace-rating lookups ONCE per turn and thread them into the match so
+        // the seeded plan prefers proven (and, as a tie-break, popular) recipes.
+        // Both are sync + per-turn-memoized (scoreKit is sync). The rating lookup
+        // reads ONLY the marketplace's warmed cache (no per-turn fetch), so a cold
+        // cache contributes no nudge — never blocks the turn.
+        const fitnessLookup = makeFitnessLookup(engramBaseDir);
+        const ratingLookup = makeRatingLookup(marketplace);
         const outcome = await seedPlanFromPrompt({
           prompt,
           sessionKey,
           runId: ctx?.runId ?? "",
           ownKitsDir,
+          // FORK 2026-06-01 (U11): include bridged CC-skill imports in the turn-
+          // start match catalog so imported recipes seed plans like curated ones.
+          extraKitDirs: [bridgedSkillsDir],
           planStore,
           log,
           embed: embedFn,
+          // FORK 2026-06 (U1): empirical-fitness boost for proven recipes.
+          feedback: fitnessLookup,
+          // FORK 2026-06-01 (U12): clamped marketplace-popularity tie-breaker.
+          rating: ratingLookup,
         });
 
         if (outcome.catalogSize > 0) {
@@ -993,20 +1026,62 @@ export default function register(api: OpenClawPluginApi) {
   const kitStore = new KitStore({ rootDir: kitInstallSandbox });
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const journeyCfg = (config as any)?.integrations?.journey ?? {};
+  const journeyBaseUrl =
+    typeof journeyCfg.baseUrl === "string" && journeyCfg.baseUrl.length > 0
+      ? journeyCfg.baseUrl
+      : "https://www.journeykits.ai";
+  const journeyApiKey =
+    typeof journeyCfg.apiKey === "string" && journeyCfg.apiKey.length > 0
+      ? journeyCfg.apiKey
+      : null;
+
+  // FORK 2026-06-01 (U12): the recipe marketplace facade. Its ONE network seam is
+  // an undici-backed fetch of a kitRef's published-version metadata from Journey.
+  // The fetch MUST throw on failure so the marketplace degrades to its cache
+  // (Risk 7); it normalizes the (uncertain) Journey shape into MarketplaceMeta,
+  // reading `versions`/`rating`/`downloads`/`yanked` defensively and falling back
+  // to a single-element `[releaseTag]` when only a release tag is exposed.
+  const marketplaceFetch: MarketplaceFetch = async (kitRef) => {
+    const { fetch: undiciFetch } = await import("undici");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (journeyApiKey) headers.Authorization = `Bearer ${journeyApiKey}`;
+    const res = await undiciFetch(`${journeyBaseUrl}/api/kits/${kitRef}`, { headers });
+    if (!res.ok) throw new Error(`marketplace meta ${kitRef} -> ${res.status} ${res.statusText}`);
+    const j = (await res.json()) as Record<string, unknown>;
+    const versions = Array.isArray(j.versions)
+      ? (j.versions as unknown[]).filter((v): v is string => typeof v === "string")
+      : typeof j.releaseTag === "string"
+        ? [j.releaseTag]
+        : [];
+    if (versions.length === 0) return null; // fetched OK but nothing published
+    const meta: MarketplaceMeta = {
+      kitRef,
+      versions,
+      rating: typeof j.rating === "number" ? j.rating : undefined,
+      downloads: typeof j.downloads === "number" ? j.downloads : undefined,
+      yanked: Array.isArray(j.yanked)
+        ? (j.yanked as unknown[]).filter((v): v is string => typeof v === "string")
+        : undefined,
+    };
+    return meta;
+  };
+  const marketplace = createMarketplace({ fetchImpl: marketplaceFetch, log });
+
   const kitRpcs = createKitRpcs({
     store: kitStore,
-    baseUrl:
-      typeof journeyCfg.baseUrl === "string" && journeyCfg.baseUrl.length > 0
-        ? journeyCfg.baseUrl
-        : "https://www.journeykits.ai",
-    apiKey:
-      typeof journeyCfg.apiKey === "string" && journeyCfg.apiKey.length > 0
-        ? journeyCfg.apiKey
-        : null,
+    baseUrl: journeyBaseUrl,
+    apiKey: journeyApiKey,
     kitInstallSandbox,
     ownKitsDir,
     // FORK 2026-05-14: pass the plan store so prefrontal.kit.run can seed/update plan rows
     planStore,
+    // FORK 2026-06-01 (U12): marketplace versioning/immutability + owner identity.
+    marketplace,
+    currentOwner: "globalcaos",
+    // FORK 2026-06 (U1): on-disk recipe-fitness store so recipe.match + the
+    // recipe.search local fallback rank proven recipes higher (same lookup the
+    // turn-start seed uses above).
+    engramBaseDir,
   });
   for (const [name, handler] of Object.entries(kitRpcs)) {
     const wrapped = async ({

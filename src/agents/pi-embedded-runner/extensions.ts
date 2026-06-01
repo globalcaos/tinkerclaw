@@ -12,6 +12,7 @@ import { createEmbeddingWorker } from "../../memory/engram/embedding-worker.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import { globalFtsSearch } from "../../memory/engram/global-fts-bridge.js";
 import { createIngestionPipeline } from "../../memory/engram/ingestion.js";
+import { createLinkIndex } from "../../memory/engram/link-index.js";
 // FORK 2026-04-28 chunk-13: upstream removed embedded-extension-factory.
 // listEmbeddedExtensionFactories() has been replaced by an in-tree iterator
 // over the new plugin runtime (see chunk-13 lessons). Stubbed inline here
@@ -30,6 +31,7 @@ import { makeToolPrunablePredicate } from "../pi-extensions/context-pruning/tool
 import { createCortexRuntime, setCortexRuntime } from "../pi-extensions/cortex-runtime.js";
 import { setIngestionRuntime } from "../pi-extensions/ingestion-runtime.js";
 import { createLimbicRuntime, setLimbicRuntime } from "../pi-extensions/limbic-runtime.js";
+import { createLinkBuilder, setLinkBuilderRuntime } from "../pi-extensions/link-builder-runtime.js";
 import {
   createObservationExtractor,
   setObservationRuntime,
@@ -78,7 +80,7 @@ function buildContextPruningFactory(params: {
   if (raw?.mode !== "cache-ttl") {
     return undefined;
   }
-  if (!isCacheTtlEligibleProvider(params.provider, params.modelId)) {
+  if (!isCacheTtlEligibleProvider(params.provider, params.modelId, params.model?.api)) {
     return undefined;
   }
 
@@ -149,6 +151,9 @@ export function buildEmbeddedExtensionFactories(params: {
     let engramBaseDir: string | undefined;
     let sessionKey: string | undefined;
     let eventStore: ReturnType<typeof createEventStore> | undefined;
+    // U9: link builder is shared between the ENGRAM retrieval wiring (sync) and
+    // the ollama-upgraded retrieval rewire (async .then below), so hoist it.
+    let linkBuilder: ReturnType<typeof createLinkBuilder> | undefined;
 
     if (needsSharedStore) {
       engramBaseDir = join(process.env.HOME ?? "~", ".openclaw", "engram");
@@ -163,7 +168,18 @@ export function buildEmbeddedExtensionFactories(params: {
       const pipeline = createIngestionPipeline({ baseDir: engramBaseDir, sessionKey });
       setIngestionRuntime(params.sessionManager, pipeline);
 
-      setRetrievalRuntime(params.sessionManager, { eventStore, searchIndex: globalFtsSearch });
+      // U9: Zettelkasten link builder, registered at the SAME session/ingestion
+      // setup site (same baseDir/sessionKey). attempt-hooks onTurnComplete reads
+      // it via getLinkBuilderRuntime to extractAndIndex mentions, and retrieval
+      // reads it for 1-hop backlink expansion.
+      linkBuilder = createLinkBuilder(createLinkIndex({ baseDir: engramBaseDir, sessionKey }));
+      setLinkBuilderRuntime(params.sessionManager, linkBuilder);
+
+      setRetrievalRuntime(params.sessionManager, {
+        eventStore,
+        searchIndex: globalFtsSearch,
+        linkBuilder,
+      });
 
       const ptrHandler = createPointerCompactionHandler(eventStore);
       setPointerCompactionRuntime(params.sessionManager, ptrHandler);
@@ -228,6 +244,7 @@ export function buildEmbeddedExtensionFactories(params: {
                 searchIndex: globalFtsSearch,
                 embeddingCache: embCache,
                 embedFn,
+                linkBuilder,
               });
               const worker = createEmbeddingWorker({
                 embedFn,

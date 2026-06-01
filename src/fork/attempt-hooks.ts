@@ -22,12 +22,14 @@ import {
 } from "../agents/pi-embedded-runner/text-tool-calls.js";
 import { createCortexRuntime, getCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
 import { getIngestionRuntime } from "../agents/pi-extensions/ingestion-runtime.js";
+import { getLinkBuilderRuntime } from "../agents/pi-extensions/link-builder-runtime.js";
 import {
   applyMidContextReinject,
   evaluateTurnSyncScore,
 } from "../agents/pi-extensions/mid-context-reinject.js";
 import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
 import { getRetrievalRuntime } from "../agents/pi-extensions/retrieval-runtime.js";
+import type { SerializedTree } from "../agents/reasoning-tree.js";
 import { captureForensicDump } from "../forensic/dump-writer.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { estimateTokens } from "../memory/engram/event-store.js";
@@ -35,6 +37,7 @@ import type { MemoryEvent } from "../memory/engram/event-types.js";
 import type { ContextCache, CompactionBudgets } from "../memory/engram/pointer-compaction.js";
 import { pointerCompact, estimateCacheTokens } from "../memory/engram/pointer-compaction.js";
 import { renderMarkers } from "../memory/engram/time-range-marker.js";
+import { appendGap, detectUncertaintySpans, extractTopic, makeGap } from "./curiosity-store.js";
 
 // ---------------------------------------------------------------------------
 // Cognitive feature-flag helper
@@ -327,6 +330,108 @@ const pendingToolExecs = new Map<
     isError?: boolean;
   }>
 >();
+
+// ---------------------------------------------------------------------------
+// U10 — per-run reasoning-trace stash
+// ---------------------------------------------------------------------------
+//
+// The pre-prompt thought search (maybeRunThoughtSearch, wired into attempt.ts)
+// produces a SerializedTree, but the augmentation hook only returns the prompt
+// string. To persist the trace in onTurnComplete we stash it by runId between
+// the two seams — the same per-run-map pattern as pendingToolExecs above.
+//
+// HANDOFF: reasoning-runtime.ts owns maybeRunThoughtSearch and currently
+// swallows the trace (it returns only the augmented prompt and takes no runId).
+// Until that producer calls stashReasoningTrace(runId, trace), the consume path
+// below is inert (no trace → no reasoning_tree_state event). Wiring the stash
+// into the producer is a reasoning-runtime change, out of this seam's ownership.
+const pendingReasoningTraces = new Map<string, SerializedTree>();
+
+/** Stash a serialized reasoning tree for `runId` so onTurnComplete can persist it. */
+export function stashReasoningTrace(runId: string, trace: SerializedTree | null): void {
+  if (!runId || !trace) {
+    return;
+  }
+  pendingReasoningTraces.set(runId, trace);
+}
+
+/** Take (and clear) the stashed reasoning tree for `runId`, or undefined if none. */
+export function consumeReasoningTrace(runId: string): SerializedTree | undefined {
+  const trace = pendingReasoningTraces.get(runId);
+  pendingReasoningTraces.delete(runId);
+  return trace;
+}
+
+/**
+ * Extract the plain text of the last `user` message from a messages snapshot.
+ * Handles both string content and the `{type:"text",text}` block array form.
+ * Returns "" when there is no user message or no text content.
+ */
+export function extractLastUserText(messagesSnapshot: unknown[]): string {
+  const lastUser = [...messagesSnapshot]
+    .toReversed()
+    .find((m) => (m as { role?: string }).role === "user") as
+    | { role?: string; content?: unknown }
+    | undefined;
+  if (!lastUser?.content) {
+    return "";
+  }
+  if (typeof lastUser.content === "string") {
+    return lastUser.content;
+  }
+  if (Array.isArray(lastUser.content)) {
+    return (lastUser.content as Array<{ type?: string; text?: string }>)
+      .filter((c) => c.type === "text" && typeof c.text === "string")
+      .map((c) => c.text as string)
+      .join("\n");
+  }
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// U2 (2a) — LCM uncertainty heuristic → curiosity gap
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan a completed turn's assistant texts for hedging / uncertainty (the
+ * heuristic LCM path — no entropy model). On a hit, derive a topic from the
+ * user's last message and append ONE deduped `lcm-entropy` Gap to the curiosity
+ * buffer. Fire-and-forget safe: pure on the no-hit path, never throws.
+ *
+ * Returns the appended Gap id (for tests/observability) or null when no hedge
+ * was detected.
+ */
+export function onCuriosityScan(
+  assistantTexts: string[],
+  ctx: { sessionKey?: string; runId?: string; lastUserMessage?: string; baseDir?: string },
+): string | null {
+  try {
+    const finalText = (assistantTexts ?? []).join("\n");
+    const spans = detectUncertaintySpans(finalText);
+    if (spans.length === 0) {
+      return null;
+    }
+    const topic = extractTopic(spans, ctx.lastUserMessage);
+    const gap = makeGap({
+      topic,
+      source: "lcm-entropy",
+      sessionKey: ctx.sessionKey,
+      runId: ctx.runId,
+      // A hedge in the model's own voice is a genuine, learnable gap the user
+      // cared about (they just asked) — bias importance + user-relevance up,
+      // learnability mid (we don't yet know how recoverable it is).
+      importance: 0.7,
+      userRelevance: 0.7,
+      learnability: 0.5,
+      adjacency: 0.5,
+    });
+    appendGap(gap, ctx.baseDir);
+    return gap.id;
+  } catch {
+    // Curiosity scan must never break a turn.
+    return null;
+  }
+}
 
 /**
  * Detect and execute text-based tool calls from local providers that don't
@@ -817,9 +922,100 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   if (isInlineMode("engram")) {
     const ingestionRuntime = getIngestionRuntime(sessionManager);
     if (ingestionRuntime) {
-      ingestionRuntime.ingest(params.messagesSnapshot as never).catch((err) => {
-        log.warn(`ENGRAM ingestion failed: ${String(err)}`);
-      });
+      const countBefore = (() => {
+        try {
+          return ingestionRuntime.eventStore.count();
+        } catch {
+          return null;
+        }
+      })();
+      ingestionRuntime
+        .ingest(params.messagesSnapshot as never)
+        .then(() => {
+          // U8: reconciliation summary line, gated behind ENGRAM_RECONCILE.
+          // The reconciler runs INSIDE ingestion.ts (decideSync ADD/NONE on the
+          // hot path); here we just surface how many events actually landed vs.
+          // were skipped by the reconciler, so the autonomy run leaves a trail.
+          if (process.env.ENGRAM_RECONCILE === "true" && countBefore != null) {
+            try {
+              const countAfter = ingestionRuntime.eventStore.count();
+              const added = countAfter - countBefore;
+              log.info(
+                `[engram-reconcile] turn=${turnNumber} events added=${added} (store=${countAfter})`,
+              );
+            } catch {
+              /* count read failed — non-fatal */
+            }
+          }
+
+          // U9: A-MEM Zettelkasten auto-linking. After the turn's events are
+          // ingested, fire-and-forget extract + index mentions from the latest
+          // assistant + user text so backlinks are available for retrieval.
+          // Skipped silently when no link builder is registered for the session.
+          try {
+            const linkBuilder = getLinkBuilderRuntime(sessionManager);
+            if (linkBuilder) {
+              const linkContent = [extractLastUserText(messagesSnapshot), assistantTexts.join("\n")]
+                .filter((t) => t && t.trim())
+                .join("\n");
+              if (linkContent.trim()) {
+                // The ingestion cursor doesn't surface per-event ids here, so
+                // key the link records to this run (stable, queryable source id).
+                const eventId = `turn:${params.runId}:${turnNumber}`;
+                Promise.resolve()
+                  .then(() => linkBuilder.extractAndIndex(eventId, linkContent))
+                  .catch((err) => log.warn(`[link-builder] index failed: ${String(err)}`));
+              }
+            }
+          } catch (err) {
+            log.warn(`[link-builder] dispatch failed: ${String(err)}`);
+          }
+        })
+        .catch((err) => {
+          log.warn(`ENGRAM ingestion failed: ${String(err)}`);
+        });
+    }
+  }
+
+  // U2 (2a): LCM uncertainty heuristic — scan the completed reply for hedging
+  // and append a curiosity gap on detection. Fire-and-forget, never throws.
+  if (isInlineMode("engram")) {
+    const gapId = onCuriosityScan(assistantTexts, {
+      sessionKey: params.sessionKey,
+      runId: params.runId,
+      lastUserMessage: extractLastUserText(messagesSnapshot),
+    });
+    if (gapId) {
+      log.debug(`[curiosity] lcm-entropy gap recorded (${gapId}) at turn=${turnNumber}`);
+    }
+  }
+
+  // U10: persist the pre-prompt reasoning trace (if a thought search ran this
+  // turn) as a reasoning_tree_state MemoryEvent. Fire-and-forget; inert when no
+  // trace was stashed (the default — ToT is opt-in). NOT a fractal trigger.
+  if (params.sessionKey) {
+    try {
+      const trace = consumeReasoningTrace(params.runId);
+      if (trace) {
+        const ingestionRuntime = getIngestionRuntime(sessionManager);
+        if (ingestionRuntime) {
+          const content = JSON.stringify(trace);
+          ingestionRuntime.eventStore.append({
+            turnId: turnNumber,
+            sessionKey: params.sessionKey,
+            kind: "reasoning_tree_state",
+            content,
+            tokens: estimateTokens(content),
+            // Meta trace, below agent_message (5) — useful but not hot-path.
+            metadata: { importance: 4 },
+          });
+          log.debug(
+            `[reasoning] persisted reasoning_tree_state (nodes=${trace.nodes.length}) at turn=${turnNumber}`,
+          );
+        }
+      }
+    } catch (err) {
+      log.warn(`[reasoning] trace persist failed: ${String(err)}`);
     }
   }
 

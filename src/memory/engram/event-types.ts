@@ -16,7 +16,10 @@ export type EventKind =
   | "humor_attempt"
   | "humor_association"
   | "debate_synthesis"
-  | "debate_trace";
+  | "debate_trace"
+  // U10 Tree-of-Thoughts: a serialized reasoning tree persisted after a turn
+  // that ran a pre-prompt thought search. Not on the conversation hot path.
+  | "reasoning_tree_state";
 
 export interface EventMetadata {
   taskId?: string;

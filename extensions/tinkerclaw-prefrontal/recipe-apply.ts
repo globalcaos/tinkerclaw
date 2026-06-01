@@ -26,6 +26,7 @@
  */
 
 import { validateKitSpec, type KitSpec } from "./kit-author.js";
+import { invalidateKitIndexCache } from "./kit-matcher.js";
 
 /** The mutation directive this loop applies (the autoPromotable subset of MutationProposal). */
 export interface ApplyProposalInput {
@@ -198,6 +199,13 @@ export async function applyMutationProposal(
     );
     return { recipeId, applied: false, reason: "author-rejected", archivePath };
   }
+  // FORK 2026-06 (Upgrade 1): the recipe file on disk just changed, so drop the
+  // matcher's in-memory kit index — otherwise the autonomous rewrite would only
+  // take effect after a process restart (or an unrelated dir-mtime bump). Done
+  // here (not only in the injected authorKit) so it holds for ANY authorKit
+  // implementation, and ONLY on a successful apply so a no-op never triggers a
+  // spurious catalog re-scan.
+  invalidateKitIndexCache();
   deps.log?.info?.(
     `[recipe-apply] ${recipeId}: APPLIED op=${input.op} (snapshot ${archivePath}); ${res.note ?? ""}`,
   );

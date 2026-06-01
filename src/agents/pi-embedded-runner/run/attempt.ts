@@ -2749,6 +2749,16 @@ export async function runEmbeddedAttempt(
               if (runtimeSystemPrompt) {
                 applySystemPromptOverrideToSession(activeSession, runtimeSystemPrompt);
               }
+              // Turn-local snapshot of the base prompt the `finally` must restore.
+              // Captured here, BEFORE the U10 deliberation augments systemPromptText,
+              // so the deliberation never leaks into the next turn's base prompt. The
+              // mid-context reinject hook below intentionally persists, so we re-snapshot
+              // after it runs (see preDeliberationSystemPromptText reassignment).
+              let preDeliberationSystemPromptText = systemPromptText;
+              // True once a TURN-LOCAL system-prompt override (runtime context and/or
+              // U10 deliberation) has been installed on the session, so the `finally`
+              // knows it must restore the pre-deliberation base.
+              let appliedTurnLocalOverride = Boolean(runtimeSystemPrompt);
               try {
                 await queueRuntimeContextForNextTurn({
                   session: activeSession,
@@ -2766,6 +2776,68 @@ export async function runEmbeddedAttempt(
                     systemPromptText = reinjectResult.systemPromptText;
                   }
                 }
+                // Persona re-injection is meant to persist past this turn, so the
+                // restore baseline tracks it; the U10 deliberation below must NOT.
+                preDeliberationSystemPromptText = systemPromptText;
+
+                // FORK U10: pre-prompt Tree-of-Thoughts deliberation. Runs AFTER
+                // the retrieval-pack/reinject augmentation so the search sees the
+                // assembled context, and folds a "## Deliberation" block into the
+                // system prompt. Pure pass-through when the reasoning mode is
+                // "none" (the default — ToT is opt-in/expensive), when no runtime
+                // is registered, or for automated sessions. Never throws. NOT a
+                // fractal trigger — that fires separately post-turn.
+                //
+                // The deliberation is TURN-LOCAL: it is applied to the session for
+                // this prompt only and must never leak into the base that the
+                // `finally` restores — so we keep it in `turnSystemPromptText` and
+                // do NOT mutate the outer `systemPromptText`.
+                if (systemPromptText != null) {
+                  const isAutomatedReasoningSession =
+                    !params.sessionKey ||
+                    isSubagentSessionKey(params.sessionKey) ||
+                    isAcpSessionKey(params.sessionKey) ||
+                    isProbeSession ||
+                    params.sessionKey.includes("cron:") ||
+                    params.sessionKey.includes("heartbeat") ||
+                    params.sessionKey.includes("isolated:");
+                  const turnSystemPromptText = await abortable(
+                    (await import("../../../fork/reasoning-runtime.js")).maybeRunThoughtSearch({
+                      sessionManager: activeSession,
+                      systemPromptText,
+                      query: promptSubmission.prompt,
+                      isAutomatedSession: isAutomatedReasoningSession,
+                      runId: params.runId,
+                    }),
+                  );
+                  if (turnSystemPromptText !== systemPromptText) {
+                    // Install the deliberation-augmented prompt for THIS turn so
+                    // the "## Deliberation" block actually reaches the model. When
+                    // a runtimeContext override is in play the session currently
+                    // holds `runtimeSystemPrompt` (built from the PRE-deliberation
+                    // base), so we must re-derive that prompt from the augmented
+                    // base — otherwise this turn runs WITHOUT the deliberation.
+                    // Crucially we do NOT reassign the outer `systemPromptText`:
+                    // the `finally` restores `preDeliberationSystemPromptText` so
+                    // the deliberation cannot leak into the next turn's base.
+                    if (runtimeSystemPrompt) {
+                      // runtimeContext is truthy here (runtimeSystemPrompt was built
+                      // from it), so this compose always yields a string; the ??
+                      // fallback only satisfies the `string | undefined` return type.
+                      const turnRuntimeSystemPrompt =
+                        composeSystemPromptWithHookContext({
+                          baseSystemPrompt: turnSystemPromptText,
+                          appendSystemContext: buildRuntimeContextSystemContext(
+                            runtimeContext as string,
+                          ),
+                        }) ?? turnSystemPromptText;
+                      applySystemPromptOverrideToSession(activeSession, turnRuntimeSystemPrompt);
+                    } else {
+                      applySystemPromptOverrideToSession(activeSession, turnSystemPromptText);
+                    }
+                    appliedTurnLocalOverride = true;
+                  }
+                }
 
                 // Only pass images option if there are actually images to pass
                 // This avoids potential issues with models that don't expect the images parameter
@@ -2777,8 +2849,15 @@ export async function runEmbeddedAttempt(
                   await abortable(activeSession.prompt(promptSubmission.prompt));
                 }
               } finally {
-                if (runtimeSystemPrompt) {
-                  applySystemPromptOverrideToSession(activeSession, systemPromptText);
+                // Restore the TRUE pre-deliberation base so the turn-local
+                // deliberation (and runtime-context augmentation) never leak into
+                // the next turn's base prompt. Restores the snapshot taken before
+                // augmenting — NOT the mutated `systemPromptText`.
+                if (appliedTurnLocalOverride) {
+                  applySystemPromptOverrideToSession(
+                    activeSession,
+                    preDeliberationSystemPromptText,
+                  );
                 }
               }
             }

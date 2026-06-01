@@ -148,7 +148,17 @@ export function applySupersede(
   db: DatabaseSync,
   decision: WriteDecision,
   candidate: { id: string; validityStart: number },
-  opts?: { log?: (msg: string) => void },
+  opts?: {
+    log?: (msg: string) => void;
+    /**
+     * Producer hook fired ONCE, after the apply, only when ≥1 prior interval was actually
+     * closed. Carries the closed chunk ids + the supersede reason. The caller wires this to
+     * emit a fork.prefrontal.trailEvent kind='recipe-supersede' so the UI's supersede icon
+     * renders. Kept as injected DI (not a direct event-bus call) so this module stays in the
+     * pure memory layer and unit-testable with a spy. Never throws into the write path.
+     */
+    onClosed?: (closedIds: string[], reason: string) => void;
+  },
 ): SupersedeApplyResult {
   const result: SupersedeApplyResult = { closed: [], skipped: [] };
   if (decision.action !== "supersede") {
@@ -170,6 +180,13 @@ export function applySupersede(
       `[supersede-writer] candidate=${candidate.id} closed ${result.closed.length} prior interval(s): ` +
         result.closed.join(", "),
     );
+    try {
+      opts?.onClosed?.(result.closed, decision.reason);
+    } catch (err) {
+      // The intervals are already closed; the producer emit is best-effort and must
+      // never break the write path. Full object to devtools.
+      console.error("[supersede-writer] onClosed hook threw (non-fatal)", err);
+    }
   }
   return result;
 }
@@ -196,10 +213,18 @@ export function supersedeContradictions(
     hash: string;
     validityStart: number;
   },
-  opts?: { mode?: SupersedeMode; log?: (msg: string) => void },
+  opts?: {
+    mode?: SupersedeMode;
+    log?: (msg: string) => void;
+    /** Producer hook (see applySupersede.onClosed) — fires only when an interval is closed. */
+    onClosed?: (closedIds: string[], reason: string) => void;
+  },
 ): { decision: WriteDecision; applied: SupersedeApplyResult } {
   const mode = opts?.mode ?? "supersede";
   const decision = decideSupersede(db, candidate, mode);
-  const applied = applySupersede(db, decision, candidate, { log: opts?.log });
+  const applied = applySupersede(db, decision, candidate, {
+    log: opts?.log,
+    onClosed: opts?.onClosed,
+  });
   return { decision, applied };
 }
