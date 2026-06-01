@@ -2,8 +2,8 @@
 file: bug-log.md
 purpose: Historical bug-fix log — root causes, fixes, lessons. Reads like a forensic timeline.
 audience: AI
-last_verified: 2026-05-11
-last_verified_commit: HEAD
+last_verified: 2026-06-01
+last_verified_commit: 18e618d241
 single_owner: yes — past-bug forensics live here. Migrated from bible.md §7 on 2026-05-11.
 see_also: failures.md (current failure-mode map by category — what to look for going forward), flows.md (pipelines whose disruption produced many of these bugs)
 note: this is the original prose from bible.md §7, relocated verbatim. New bug fixes are appended here, not added to bible.md.
@@ -56,6 +56,15 @@ fix, pick from this list — extend it only if no tag fits.
 - `ui-state-clear` repeats 7 times — clearing state on file-watch events without preserving error chips is a known anti-pattern.
 - `event-ordering` repeats 7 times — async race conditions around stream lifecycle / button-state / session-resume.
 - `auth-token` repeats 5 times — OAuth machinery is the largest single class of fragility.
+
+### FIXED [event-ordering+config-dead-code]: RECIPES panel showed only Thinking→Acting — kit-runner never emitted recipe-state (2026-06-01)
+
+- **Symptom:** The RECIPES panel was dull — it only ever rendered the synthetic 2-step "Thinking → Acting" plan, never the rich recipe header (named recipe, groups, composition). A prior handoff had assumed the data already flowed and "just needs surfacing" in the UI.
+- **Root cause:** the rich recipe header (`renderRecipeHeader`) reads `currentRecipe`, which is populated only by `prefrontal-recipe-state` lifecycle events. Those events are emitted only when something calls `fork.prefrontal.setRecipe`. The kit-runner (`runKit` in `extensions/tinkerclaw-prefrontal/kit-runner.ts`) NEVER called it → `currentRecipe` stayed empty → `renderRecipeHeader` had no data source → the panel fell back to the synthetic 2-step plan. The handoff's premise ("data already flows, just surface it") was FALSE for the header — verifying the PRODUCER side caught it. Classic event-ordering (a lifecycle event the consumer depends on was never emitted) compounded with config-dead-code (the rich-header render path looked live but had no upstream data source).
+- **Fix (commit `18e618d241`):** wired an `onRecipeState` sink into `runKit` that emits at recipe start / each group / composition → `setRecipe`, so `prefrontal-recipe-state` now actually fires. Added a decision-trail provenance chip + structured trail payload, recipe-apply/reject events, and a per-subagent task entry.
+- **Secondary (semantic lane was DOUBLY inert):** recipe semantic matching never ran because three independent breakages stacked: (1) `/v1/embeddings` returned 404 (the route was gated off), (2) the `mxbai-embed-large` model was never pulled, and (3) the ollama models dir lived on an NTFS drive the `ollama` service user couldn't write to. Fix: an internal `fork.prefrontal.embed` RPC (bypasses the gated HTTP route) + the ollama models-dir made group-writable via fstab `gid=998`.
+- **Files:** `extensions/tinkerclaw-prefrontal/kit-runner.ts` (`runKit` `onRecipeState` sink).
+- **Lesson:** verify the PRODUCER actually emits before trusting a "data is hidden, just surface it" premise. A consumer-side render path that looks live is worthless if nothing upstream ever feeds it. See `subagents-and-kits.md` for the recipe/kit RPC contract.
 
 ### FIXED [config-dead-code+ui-state-clear]: Today card DnD trigger on invisible grip — clicks silently ate as drag-no-ops (2026-05-23)
 
