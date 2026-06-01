@@ -2,8 +2,8 @@
 file: flows.md
 purpose: Sequence diagrams (Mermaid) for the top pipelines an AI must understand before editing
 audience: AI
-last_verified: 2026-05-13
-last_verified_commit: HEAD
+last_verified: 2026-06-01
+last_verified_commit: 18e618d241
 single_owner: yes — sequence-of-calls facts live here, not in bible.md
 see_also: lifecycles.md (state transitions per entity), failures.md (failure-mode propagation), topology.md (which components exist)
 verify:
@@ -15,6 +15,8 @@ verify:
     cmd: python3 -c 'import subprocess,json,time; sk=f"test:plan:{int(time.time()*1000)}"; subprocess.run(["openclaw","gateway","call","prefrontal.plan.set","--params",json.dumps({"sessionKey":sk,"intent":"verify","runId":"v1","steps":[{"title":"a"},{"title":"b"}]})],check=True,timeout=15); r=subprocess.run(["openclaw","gateway","call","prefrontal.plan.get","--params",json.dumps({"sessionKey":sk})],capture_output=True,text=True,timeout=15); assert "verify" in r.stdout, r.stdout[-500:]; subprocess.run(["openclaw","gateway","call","prefrontal.plan.close","--params",json.dumps({"sessionKey":sk,"status":"aborted"})],check=True,timeout=15)'
   - name: F-KIT-INSTALL — kit RPCs alive (search responds)
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","prefrontal.kit.search","--params",json.dumps({"query":"feature"})],capture_output=True,text=True,timeout=20); assert "results" in r.stdout, r.stdout[-500:]'
+  - name: F-RECIPE-STATE — runKit wires the onRecipeState producer (the dull-panel fix)
+    cmd: python3 -c 'import os; src=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "onRecipeState:" in src and "fork.prefrontal.setRecipe" in src, "recipe-state producer wiring missing"'
 ---
 
 # Flows — top pipelines
@@ -380,6 +382,48 @@ sequenceDiagram
 - `nextSteps` is passed through verbatim from the Journey API response for the caller to display.
 
 **See also:** lifecycles.md L-KIT-INSTALL; subagents-and-kits.md §Kits.
+
+---
+
+## F-RECIPE-STATE. Recipe run → live recipe-state → RECIPES panel header
+
+**Trigger:** caller invokes `prefrontal.recipe.run { kitRef, sessionKey, intent }` (the RECIPES-panel-backed kit execution path).
+**Entry:** `extensions/tinkerclaw-prefrontal/kit-rpcs.ts:"prefrontal.recipe.run"` → `kit-runner.ts:runKit`
+**Exit:** Tinker UI RECIPES panel paints the rich recipe header (recipeId + step M/N + parallelism cap + in-flight labels) from live data instead of the synthetic fallback plan.
+
+**PRIOR GAP (fixed 18e618d241, FORK 2026-05-31):** the panel was dull because `runKit` NEVER emitted recipe-state — the rich header (`renderRecipeHeader`, panels.md) had no data source, so the panel always fell back to the synthetic 2-step "Thinking → Acting" plan. The fix wires the **producer** half: `runKit` now calls `onRecipeState` at kit start, on each parallel-group transition, and on completion.
+
+```mermaid
+sequenceDiagram
+  participant CALLER as caller (Jarvis / TUI)
+  participant KR as kit-rpcs.ts (prefrontal.recipe.run)
+  participant RUN as runKit (kit-runner.ts)
+  participant SR as fork.prefrontal.setRecipe (prefrontal-state-rpc.ts)
+  participant EV as emitAgentEvent (lifecycle)
+  participant TUI as Tinker UI (app.ts)
+  participant PNL as RECIPES panel (prefrontal-tree.ts)
+
+  CALLER->>KR: prefrontal.recipe.run {kitRef, sessionKey, intent}
+  KR->>RUN: runKit({..., onRecipeState})
+  Note over KR,RUN: onRecipeState wired to fork.prefrontal.setRecipe<br/>via loopback callGateway — fire-and-forget,<br/>wrapped so observability never throws into the run
+  RUN->>KR: onRecipeState({recipeId, step, totalSteps, stepName, parallelismCap, inFlightLabels})
+  Note over RUN: emit at kit start, each parallel-group<br/>transition, and on completion
+  KR->>SR: callGateway fork.prefrontal.setRecipe {…RecipeStateUpdate}
+  SR->>EV: emitAgentEvent(stream=lifecycle, phase="prefrontal-recipe-state")
+  EV->>TUI: ws {stream:"lifecycle", data:{phase:"prefrontal-recipe-state", …}}
+  TUI->>TUI: app.ts:2864 handler stores currentRecipe
+  TUI->>PNL: renderPrefrontalPanel(currentRecipe)
+  PNL->>PNL: renderRecipeHeader(recipe) — recipeId + step M/N + parallelism
+```
+
+**Invariants:**
+
+- The recipe-state emit is **best-effort, fire-and-forget**: `kit-rpcs.ts` wraps the `callGateway` in `.catch(() => {})` and `runKit` wraps every `onRecipeState` call so observability NEVER throws into the execution loop. A dead/closed UI must not stall a run.
+- `onRecipeState` is the PRODUCER seam (the half that was missing). The `RecipeStateUpdate` payload mirrors the `fork.prefrontal.setRecipe` param shape so `kit-rpcs.ts` forwards it verbatim; progress fields are optional (the start emit may omit step detail).
+- The lifecycle phase token is `prefrontal-recipe-state` (single owner of the emit: `src/fork/prefrontal-state-rpc.ts`; the UI gate keys on `p.data.phase === "prefrontal-recipe-state"`).
+- The header data is **last-write-wins** in the UI: `currentRecipe` holds only the latest event, not a history.
+
+**See also:** subagents-and-kits.md §Kits (the parallel-group/runKit execution mechanism that GENERATES the transitions); panels.md (`renderRecipeHeader` render + RECIPES-panel fallback semantics); lifecycles.md L-STEP (per-step status barrier).
 
 ---
 
