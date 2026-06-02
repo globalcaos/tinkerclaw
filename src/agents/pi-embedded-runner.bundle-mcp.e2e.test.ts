@@ -174,14 +174,14 @@ vi.mock("@mariozechner/pi-ai", async () => {
   };
 });
 
-let runEmbeddedPiAgent: typeof import("./pi-embedded-runner/run.js").runEmbeddedPiAgent;
+let runEmbeddedPiAgent: typeof import("./embedded-agent-runner/run.js").runEmbeddedPiAgent;
 let e2eWorkspace: EmbeddedPiRunnerTestWorkspace | undefined;
 let agentDir: string;
 let workspaceDir: string;
 
 beforeAll(async () => {
   vi.useRealTimers();
-  ({ runEmbeddedPiAgent } = await import("./pi-embedded-runner/run.js"));
+  ({ runEmbeddedPiAgent } = await import("./embedded-agent-runner/run.js"));
   e2eWorkspace = await createEmbeddedPiRunnerTestWorkspace("openclaw-bundle-mcp-pi-");
   ({ agentDir, workspaceDir } = e2eWorkspace);
 }, 180_000);

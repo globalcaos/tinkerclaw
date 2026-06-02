@@ -1,5 +1,5 @@
-import type { RunEmbeddedPiAgentParams } from "./pi-embedded-runner/run/params.js";
-import type { EmbeddedPiRunResult } from "./pi-embedded-runner/types.js";
+import type { RunEmbeddedPiAgentParams } from "./embedded-agent-runner/run/params.js";
+import type { EmbeddedPiRunResult } from "./embedded-agent-runner/types.js";
 
 export type RunEmbeddedPiAgentFn = (
   params: RunEmbeddedPiAgentParams,

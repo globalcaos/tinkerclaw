@@ -17,7 +17,7 @@ vi.mock("@mariozechner/pi-ai", () => ({
   complete: hoisted.completeMock,
 }));
 
-vi.mock("./pi-embedded-runner/model.js", () => ({
+vi.mock("./embedded-agent-runner/model.js", () => ({
   resolveModel: hoisted.resolveModelMock,
   resolveModelAsync: hoisted.resolveModelAsyncMock,
 }));

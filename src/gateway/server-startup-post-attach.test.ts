@@ -163,7 +163,7 @@ vi.mock("../agents/model-selection.js", () => ({
   resolveConfiguredModelRef: hoisted.resolveConfiguredModelRef,
 }));
 
-vi.mock("../agents/pi-embedded-runner/runtime.js", () => ({
+vi.mock("../agents/embedded-agent-runner/runtime.js", () => ({
   resolveEmbeddedAgentRuntime: hoisted.resolveEmbeddedAgentRuntime,
 }));
 

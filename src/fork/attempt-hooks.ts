@@ -13,13 +13,13 @@ import { join } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { insertAnatomyEvent, updateAnatomyResponse } from "../agents/context-anatomy-db.js";
 import { buildContextAnatomy } from "../agents/context-anatomy.js";
-import { normalizeProviderId } from "../agents/model-selection.js";
 import {
   extractRawAssistantText,
   extractTextToolCalls,
   executeTextToolCalls,
   formatTextToolResults,
-} from "../agents/pi-embedded-runner/text-tool-calls.js";
+} from "../agents/embedded-agent-runner/text-tool-calls.js";
+import { normalizeProviderId } from "../agents/model-selection.js";
 import { createCortexRuntime, getCortexRuntime } from "../agents/pi-extensions/cortex-runtime.js";
 import { getIngestionRuntime } from "../agents/pi-extensions/ingestion-runtime.js";
 import { getLinkBuilderRuntime } from "../agents/pi-extensions/link-builder-runtime.js";

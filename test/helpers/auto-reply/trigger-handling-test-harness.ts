@@ -64,7 +64,7 @@ const installPiEmbeddedMock = () =>
 
 installPiEmbeddedMock();
 
-vi.doMock("../../../src/agents/pi-embedded-runner/runs.js", () => ({
+vi.doMock("../../../src/agents/embedded-agent-runner/runs.js", () => ({
   abortEmbeddedPiRun: (...args: unknown[]) => piEmbeddedMocks.abortEmbeddedPiRun(...args),
 }));
 

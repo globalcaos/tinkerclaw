@@ -4,6 +4,7 @@ import { formatErrorMessage } from "../infra/errors.js";
 import { prepareProviderRuntimeAuth } from "../plugins/provider-runtime.runtime.js";
 import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_PROVIDER } from "./defaults.js";
+import { resolveModel, resolveModelAsync } from "./embedded-agent-runner/model.js";
 import {
   applyLocalNoAuthHeaderOverride,
   getApiKeyForModel,
@@ -15,7 +16,6 @@ import {
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
 } from "./model-selection.js";
-import { resolveModel, resolveModelAsync } from "./pi-embedded-runner/model.js";
 import { prepareModelForSimpleCompletion } from "./simple-completion-transport.js";
 
 type SimpleCompletionAuthStorage = {

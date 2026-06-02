@@ -2,7 +2,7 @@
 // Keep heavyweight tool construction out of this module so harness imports can
 // register quickly inside gateway startup and Docker e2e runs.
 
-import type { EmbeddedRunAttemptResult } from "../agents/pi-embedded-runner/run/types.js";
+import type { EmbeddedRunAttemptResult } from "../agents/embedded-agent-runner/run/types.js";
 import { formatToolDetail, resolveToolDisplay } from "../agents/tool-display.js";
 import { redactToolDetail } from "../logging/redact.js";
 import { truncateUtf16Safe } from "../utils.js";
@@ -24,10 +24,10 @@ export type {
 export type {
   EmbeddedRunAttemptParams,
   EmbeddedRunAttemptResult,
-} from "../agents/pi-embedded-runner/run/types.js";
+} from "../agents/embedded-agent-runner/run/types.js";
 export type { ContextEngine as HarnessContextEngine } from "../context-engine/types.js";
-export type { CompactEmbeddedPiSessionParams } from "../agents/pi-embedded-runner/compact.js";
-export type { EmbeddedPiCompactResult } from "../agents/pi-embedded-runner/types.js";
+export type { CompactEmbeddedPiSessionParams } from "../agents/embedded-agent-runner/compact.js";
+export type { EmbeddedPiCompactResult } from "../agents/embedded-agent-runner/types.js";
 export type { AnyAgentTool } from "../agents/tools/common.js";
 export type { MessagingToolSend } from "../agents/pi-embedded-messaging.types.js";
 export type { AgentApprovalEventData, AgentEventPayload } from "../infra/agent-events.js";
@@ -60,10 +60,10 @@ export { VERSION as OPENCLAW_VERSION } from "../version.js";
 export { formatErrorMessage } from "../infra/errors.js";
 export { formatApprovalDisplayPath } from "../infra/approval-display-paths.js";
 export { emitAgentEvent, onAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
-export { log as embeddedAgentLog } from "../agents/pi-embedded-runner/logger.js";
+export { log as embeddedAgentLog } from "../agents/embedded-agent-runner/logger.js";
 export { buildAgentRuntimePlan } from "../agents/runtime-plan/build.js";
-export { classifyEmbeddedPiRunResultForModelFallback } from "../agents/pi-embedded-runner/result-fallback-classifier.js";
-export { resolveEmbeddedAgentRuntime } from "../agents/pi-embedded-runner/runtime.js";
+export { classifyEmbeddedPiRunResultForModelFallback } from "../agents/embedded-agent-runner/result-fallback-classifier.js";
+export { resolveEmbeddedAgentRuntime } from "../agents/embedded-agent-runner/runtime.js";
 export { resolveUserPath } from "../utils.js";
 export { callGatewayTool } from "../agents/tools/gateway.js";
 export type { NodeListNode } from "../agents/tools/nodes-utils.js";
@@ -83,20 +83,20 @@ export { resolveOpenClawAgentDir } from "../agents/agent-paths.js";
 export { resolveSessionAgentIds } from "../agents/agent-scope.js";
 export { resolveModelAuthMode } from "../agents/model-auth.js";
 export { supportsModelTools } from "../agents/model-tool-support.js";
-export { resolveAttemptSpawnWorkspaceDir } from "../agents/pi-embedded-runner/run/attempt.thread-helpers.js";
-export { buildEmbeddedAttemptToolRunContext } from "../agents/pi-embedded-runner/run/attempt.tool-run-context.js";
+export { resolveAttemptSpawnWorkspaceDir } from "../agents/embedded-agent-runner/run/attempt.thread-helpers.js";
+export { buildEmbeddedAttemptToolRunContext } from "../agents/embedded-agent-runner/run/attempt.tool-run-context.js";
 export {
   abortEmbeddedPiRun as abortAgentHarnessRun,
   clearActiveEmbeddedRun,
   queueEmbeddedPiMessage as queueAgentHarnessMessage,
   setActiveEmbeddedRun,
-} from "../agents/pi-embedded-runner/runs.js";
+} from "../agents/embedded-agent-runner/runs.js";
 export { disposeRegisteredAgentHarnesses } from "../agents/harness/registry.js";
 export {
   logAgentRuntimeToolDiagnostics,
   normalizeAgentRuntimeTools,
 } from "../agents/runtime-plan/tools.js";
-export { normalizeProviderToolSchemas } from "../agents/pi-embedded-runner/tool-schema-runtime.js";
+export { normalizeProviderToolSchemas } from "../agents/embedded-agent-runner/tool-schema-runtime.js";
 export { resolveSandboxContext } from "../agents/sandbox.js";
 export { isSubagentSessionKey } from "../routing/session-key.js";
 export { acquireSessionWriteLock } from "../agents/session-write-lock.js";

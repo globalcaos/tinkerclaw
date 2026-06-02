@@ -5,10 +5,10 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveOpenClawAgentDir } from "./agent-paths.js";
+import { sanitizeSessionHistory } from "./embedded-agent-runner/replay-history.js";
 import { isLiveProfileKeyModeEnabled, isLiveTestEnabled } from "./live-test-helpers.js";
 import { getApiKeyForModel, requireApiKey } from "./model-auth.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
-import { sanitizeSessionHistory } from "./pi-embedded-runner/replay-history.js";
 import { discoverAuthStorage, discoverModels } from "./pi-model-discovery.js";
 import { transformTransportMessages } from "./transport-message-transform.js";
 

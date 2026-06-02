@@ -7,7 +7,7 @@ import {
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
   waitForEmbeddedPiRunEnd,
-} from "../../agents/pi-embedded-runner/runs.js";
+} from "../../agents/embedded-agent-runner/runs.js";
 import { compactEmbeddedPiSession } from "../../agents/pi-embedded.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue/cleanup.js";
 import { normalizeReasoningLevel, normalizeThinkLevel } from "../../auto-reply/thinking.js";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { resolveEmbeddedFullAccessState } from "./embedded-agent-runner/sandbox-info.js";
 import { buildEmbeddedSandboxInfo } from "./pi-embedded-runner.js";
-import { resolveEmbeddedFullAccessState } from "./pi-embedded-runner/sandbox-info.js";
 import type { SandboxContext } from "./sandbox.js";
 
 function createSandboxContext(overrides?: Partial<SandboxContext>): SandboxContext {

@@ -124,7 +124,7 @@ export function installEmbeddedRunnerFastRunE2eMocks(
       }),
     ),
   }));
-  vi.doMock("../pi-embedded-runner/run/attempt.js", () => ({
+  vi.doMock("../embedded-agent-runner/run/attempt.js", () => ({
     runEmbeddedAttempt: (params: unknown) => options.runEmbeddedAttempt(params),
   }));
   vi.doMock("../../plugins/provider-runtime.js", () => ({

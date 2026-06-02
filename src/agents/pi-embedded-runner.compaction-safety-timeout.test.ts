@@ -3,7 +3,7 @@ import {
   compactWithSafetyTimeout,
   EMBEDDED_COMPACTION_TIMEOUT_MS,
   resolveCompactionTimeoutMs,
-} from "./pi-embedded-runner/compaction-safety-timeout.js";
+} from "./embedded-agent-runner/compaction-safety-timeout.js";
 
 describe("compactWithSafetyTimeout", () => {
   beforeEach(() => {

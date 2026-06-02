@@ -1,5 +1,5 @@
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
-import { log } from "./pi-embedded-runner/logger.js";
+import { log } from "./embedded-agent-runner/logger.js";
 
 export type OpenAITextVerbosity = "low" | "medium" | "high";
 

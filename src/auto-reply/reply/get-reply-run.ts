@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
+import { resolveEmbeddedFullAccessState } from "../../agents/embedded-agent-runner/sandbox-info.js";
+import type { EmbeddedFullAccessBlockedReason } from "../../agents/embedded-agent-runner/types.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
-import { resolveEmbeddedFullAccessState } from "../../agents/pi-embedded-runner/sandbox-info.js";
-import type { EmbeddedFullAccessBlockedReason } from "../../agents/pi-embedded-runner/types.js";
 import { resolveIngressWorkspaceOverrideForSpawnedRun } from "../../agents/spawned-context.js";
 import type { SilentReplyPromptMode } from "../../agents/system-prompt.types.js";
 import { normalizeChatType } from "../../channels/chat-type.js";

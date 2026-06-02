@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { getDmHistoryLimitFromSessionKey } from "./pi-embedded-runner/history.js";
+import { getDmHistoryLimitFromSessionKey } from "./embedded-agent-runner/history.js";
 
 describe("getDmHistoryLimitFromSessionKey", () => {
   it("keeps backward compatibility for dm/direct session kinds", () => {

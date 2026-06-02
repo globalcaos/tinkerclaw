@@ -1,6 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Context, Model } from "@mariozechner/pi-ai";
-import { applyExtraParamsToAgent } from "./pi-embedded-runner/extra-params.js";
+import { applyExtraParamsToAgent } from "./embedded-agent-runner/extra-params.js";
 
 export function runExtraParamsPayloadCase(params: {
   provider: string;

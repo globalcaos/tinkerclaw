@@ -48,7 +48,7 @@ function insertAfterAnchor(src, anchorRegex, insertion, label) {
 // 1. attempt.ts — add fork hooks import + replace persona block
 // ---------------------------------------------------------------------------
 function patchAttempt() {
-  const file = "src/agents/pi-embedded-runner/run/attempt.ts";
+  const file = "src/agents/embedded-agent-runner/run/attempt.ts";
   let src = readFile(file);
 
   const FORK_IMPORT =
@@ -372,7 +372,7 @@ function patchDevDeps() {
 // 10. run.ts — per-profile fallback error events
 // ---------------------------------------------------------------------------
 function patchRun() {
-  const file = "src/agents/pi-embedded-runner/run.ts";
+  const file = "src/agents/embedded-agent-runner/run.ts";
   let src = readFile(file);
 
   // Add emitAgentEvent import
@@ -457,7 +457,7 @@ $2`,
 // 11. failover-matches.ts — billing patterns for Anthropic spending cap
 // ---------------------------------------------------------------------------
 function patchFailoverMatches() {
-  const file = "src/agents/pi-embedded-helpers/failover-matches.ts";
+  const file = "src/agents/embedded-agent-helpers/failover-matches.ts";
   let src = readFile(file);
 
   if (src.includes("regain access")) {
@@ -479,7 +479,7 @@ function patchFailoverMatches() {
 // 12. errors.ts — early billing check for Anthropic spending cap
 // ---------------------------------------------------------------------------
 function patchErrors() {
-  const file = "src/agents/pi-embedded-helpers/errors.ts";
+  const file = "src/agents/embedded-agent-helpers/errors.ts";
   let src = readFile(file);
 
   if (src.includes("regain access")) {
@@ -902,7 +902,7 @@ try {
   console.warn(`  ⚠️  failover-matches.ts oauth pattern: ${err.message}`);
 }
 function patchOAuthRejectionPattern() {
-  const file = "src/agents/pi-embedded-helpers/failover-matches.ts";
+  const file = "src/agents/embedded-agent-helpers/failover-matches.ts";
   let src = readFile(file);
 
   if (src.includes("not supported|disabled|rejected")) {
@@ -1451,7 +1451,7 @@ function patchHeartbeatScope() {
 // silent failure.
 // ---------------------------------------------------------------------------
 function patchSurfaceErrorThrow() {
-  const file = "src/agents/pi-embedded-runner/run/assistant-failover.ts";
+  const file = "src/agents/embedded-agent-runner/run/assistant-failover.ts";
   let src = readFile(file);
 
   if (src.includes("FORK: surface_error used to fall through to continue_normal")) {
@@ -1903,13 +1903,13 @@ function patchHeartbeatRunnerTasksAndTranscript() {
 }
 
 // ---------------------------------------------------------------------------
-// pi-embedded-runner/extensions.ts — engram/hybrid-retrieval runtime imports
+// embedded-agent-runner/extensions.ts — engram/hybrid-retrieval runtime imports
 // (createEventStore, createIngestionPipeline, globalFtsSearch,
 // createOllamaEmbeddingProvider, createEmbeddingCache, createEmbeddingWorker)
 // + resolveCompactionMode must return `"engram"` for the fork cognitive path.
 // ---------------------------------------------------------------------------
 function patchExtensionsEngramImports() {
-  const file = "src/agents/pi-embedded-runner/extensions.ts";
+  const file = "src/agents/embedded-agent-runner/extensions.ts";
   const src = readFile(file);
   const required = [
     "createEventStore",
@@ -1960,7 +1960,7 @@ function patchToolPolicyDedupeLocals() {
 // fallback-error lifecycle events in advanceAuthProfile().
 // ---------------------------------------------------------------------------
 function patchAuthControllerEmitAgentEvent() {
-  const file = "src/agents/pi-embedded-runner/run/auth-controller.ts";
+  const file = "src/agents/embedded-agent-runner/run/auth-controller.ts";
   let src = readFile(file);
   if (/from "\.\.\/\.\.\/\.\.\/infra\/agent-events\.js"/.test(src)) {
     console.log(`  ✅ ${file} — emitAgentEvent already imported`);
@@ -2049,7 +2049,7 @@ function patchCommandsCoreImports() {
 // runs.ts — restore sessionIdsByKey on the embeddedRunState singleton.
 // ---------------------------------------------------------------------------
 function patchRunsSessionIdsByKey() {
-  const file = "src/agents/pi-embedded-runner/runs.ts";
+  const file = "src/agents/embedded-agent-runner/runs.ts";
   let src = readFile(file);
 
   if (/sessionIdsByKey: new Map<string, string>\(\)/.test(src)) {
@@ -2122,7 +2122,7 @@ function patchHeartbeatResolveLane() {
   }
   src = src.replace(
     anchor,
-    `$1\n// FORK: route heartbeat runs into the same embedded lane as interactive runs.\nimport { resolveEmbeddedSessionLane } from "../agents/pi-embedded-runner/lanes.js";`,
+    `$1\n// FORK: route heartbeat runs into the same embedded lane as interactive runs.\nimport { resolveEmbeddedSessionLane } from "../agents/embedded-agent-runner/lanes.js";`,
   );
   writeFile(file, src);
 }
@@ -2176,7 +2176,7 @@ function patchModelFallbackBillingGateImport() {
 // run/types.ts — restore ContextAnatomyEvent import for EmbeddedRunAttemptState.
 // ---------------------------------------------------------------------------
 function patchRunTypesContextAnatomyImport() {
-  const file = "src/agents/pi-embedded-runner/run/types.ts";
+  const file = "src/agents/embedded-agent-runner/run/types.ts";
   let src = readFile(file);
   if (/from "\.\.\/\.\.\/context-anatomy\.js"/.test(src)) {
     console.log(`  ✅ ${file} — ContextAnatomyEvent import already wired`);
@@ -2222,7 +2222,7 @@ function patchBundledProviderPluginIdAliases() {
 // toReasonClassification (upstream return type disallows bare string).
 // ---------------------------------------------------------------------------
 function patchRegainAccessBillingWrap() {
-  const file = "src/agents/pi-embedded-helpers/errors.ts";
+  const file = "src/agents/embedded-agent-helpers/errors.ts";
   let src = readFile(file);
   if (!/regain access/.test(src)) {
     console.warn(`  ⚠️  ${file} — regain access branch missing`);
@@ -2251,7 +2251,7 @@ function patchRegainAccessBillingWrap() {
 // compaction-tokens-after telemetry code path keeps compiling until the new
 // telemetry surface lands.
 function patchAttemptCompactionTokensStub() {
-  const file = "src/agents/pi-embedded-runner/run/attempt.ts";
+  const file = "src/agents/embedded-agent-runner/run/attempt.ts";
   const src = readFile(file);
   if (!src.includes("getLastCompactionTokensAfter,")) {
     console.log(`  ✅ ${file} — getLastCompactionTokensAfter destructure already absent`);
@@ -2382,11 +2382,11 @@ function patchEngineStorageDetectExports() {
   console.log(`  ✏️  Patched: ${file} (detectGranularity/detectTopicCluster re-export)`);
 }
 
-// pi-embedded-runner/extensions.ts: upstream removed the embedded-extension-factory
+// embedded-agent-runner/extensions.ts: upstream removed the embedded-extension-factory
 // module. Stub listEmbeddedExtensionFactories inline until apply-fork-wiring grows
 // a patch for the new lookup path.
 function patchExtensionsListFactoriesStub() {
-  const file = "src/agents/pi-embedded-runner/extensions.ts";
+  const file = "src/agents/embedded-agent-runner/extensions.ts";
   const src = readFile(file);
   const importLine =
     'import { listEmbeddedExtensionFactories } from "../../plugins/embedded-extension-factory.js";';

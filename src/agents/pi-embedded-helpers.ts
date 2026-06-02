@@ -8,7 +8,7 @@ export {
   resolveBootstrapPromptTruncationWarningMode,
   resolveBootstrapTotalMaxChars,
   stripThoughtSignatures,
-} from "./pi-embedded-helpers/bootstrap.js";
+} from "./embedded-agent-helpers/bootstrap.js";
 export {
   BILLING_ERROR_USER_MESSAGE,
   classifyProviderRuntimeFailureKind,
@@ -44,33 +44,33 @@ export {
   isTimeoutErrorMessage,
   parseImageDimensionError,
   parseImageSizeError,
-} from "./pi-embedded-helpers/errors.js";
-export type { ProviderRuntimeFailureKind } from "./pi-embedded-helpers/errors.js";
-export { sanitizeUserFacingText } from "./pi-embedded-helpers/sanitize-user-facing-text.js";
-export { isGoogleModelApi, sanitizeGoogleTurnOrdering } from "./pi-embedded-helpers/google.js";
+} from "./embedded-agent-helpers/errors.js";
+export type { ProviderRuntimeFailureKind } from "./embedded-agent-helpers/errors.js";
+export { sanitizeUserFacingText } from "./embedded-agent-helpers/sanitize-user-facing-text.js";
+export { isGoogleModelApi, sanitizeGoogleTurnOrdering } from "./embedded-agent-helpers/google.js";
 
 export {
   downgradeOpenAIFunctionCallReasoningPairs,
   downgradeOpenAIReasoningBlocks,
-} from "./pi-embedded-helpers/openai.js";
+} from "./embedded-agent-helpers/openai.js";
 export {
   isEmptyAssistantMessageContent,
   sanitizeSessionMessagesImages,
-} from "./pi-embedded-helpers/images.js";
+} from "./embedded-agent-helpers/images.js";
 export {
   isMessagingToolDuplicate,
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
-} from "./pi-embedded-helpers/messaging-dedupe.js";
+} from "./embedded-agent-helpers/messaging-dedupe.js";
 
-export { pickFallbackThinkingLevel } from "./pi-embedded-helpers/thinking.js";
+export { pickFallbackThinkingLevel } from "./embedded-agent-helpers/thinking.js";
 
 export {
   mergeConsecutiveUserTurns,
   validateAnthropicTurns,
   validateGeminiTurns,
-} from "./pi-embedded-helpers/turns.js";
-export type { EmbeddedContextFile, FailoverReason } from "./pi-embedded-helpers/types.js";
+} from "./embedded-agent-helpers/turns.js";
+export type { EmbeddedContextFile, FailoverReason } from "./embedded-agent-helpers/types.js";
 
 export type { ToolCallIdMode } from "./tool-call-id.js";
 export { isValidCloudCodeAssistToolId, sanitizeToolCallId } from "./tool-call-id.js";

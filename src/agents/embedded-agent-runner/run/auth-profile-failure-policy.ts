@@ -1,5 +1,5 @@
 import type { AuthProfileFailureReason } from "../../auth-profiles/types.js";
-import type { FailoverReason } from "../../pi-embedded-helpers/types.js";
+import type { FailoverReason } from "../../embedded-agent-helpers/types.js";
 import type { AuthProfileFailurePolicy } from "./auth-profile-failure-policy.types.js";
 
 export function resolveAuthProfileFailureReason(params: {

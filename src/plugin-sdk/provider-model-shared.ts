@@ -76,7 +76,7 @@ export {
 export {
   createMoonshotThinkingWrapper,
   resolveMoonshotThinkingType,
-} from "../agents/pi-embedded-runner/moonshot-thinking-stream-wrappers.js";
+} from "../agents/embedded-agent-runner/moonshot-thinking-stream-wrappers.js";
 export {
   cloneFirstTemplateModel,
   matchesExactOrPrefix,

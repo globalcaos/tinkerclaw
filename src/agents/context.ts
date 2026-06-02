@@ -346,7 +346,7 @@ function resolveConfiguredProviderContextTokens(
     return undefined;
   }
 
-  // Mirror the lookup order in pi-embedded-runner/model.ts: exact key first,
+  // Mirror the lookup order in embedded-agent-runner/model.ts: exact key first,
   // then normalized fallback. This prevents alias collisions from picking the
   // wrong configured cap based on Object.entries iteration order.
   function readProviderContextTokens(providerConfig: ProviderConfigEntry | undefined) {

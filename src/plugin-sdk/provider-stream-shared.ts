@@ -1,6 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { streamSimple } from "@mariozechner/pi-ai";
-import { streamWithPayloadPatch } from "../agents/pi-embedded-runner/stream-payload-utils.js";
+import { streamWithPayloadPatch } from "../agents/embedded-agent-runner/stream-payload-utils.js";
 import { visitObjectContentBlocks } from "../shared/message-content-blocks.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import type { ProviderWrapStreamFnContext } from "./plugin-entry.js";
@@ -622,17 +622,17 @@ export {
   buildCopilotDynamicHeaders,
   hasCopilotVisionInput,
 } from "../agents/copilot-dynamic-headers.js";
-export { applyAnthropicEphemeralCacheControlMarkers } from "../agents/pi-embedded-runner/anthropic-cache-control-payload.js";
+export { applyAnthropicEphemeralCacheControlMarkers } from "../agents/embedded-agent-runner/anthropic-cache-control-payload.js";
 export {
   createBedrockNoCacheWrapper,
   isAnthropicBedrockModel,
-} from "../agents/pi-embedded-runner/bedrock-stream-wrappers.js";
+} from "../agents/embedded-agent-runner/bedrock-stream-wrappers.js";
 export {
   createMoonshotThinkingWrapper,
   resolveMoonshotThinkingType,
-} from "../agents/pi-embedded-runner/moonshot-thinking-stream-wrappers.js";
+} from "../agents/embedded-agent-runner/moonshot-thinking-stream-wrappers.js";
 export { streamWithPayloadPatch };
 export {
   createToolStreamWrapper,
   createZaiToolStreamWrapper,
-} from "../agents/pi-embedded-runner/zai-stream-wrappers.js";
+} from "../agents/embedded-agent-runner/zai-stream-wrappers.js";

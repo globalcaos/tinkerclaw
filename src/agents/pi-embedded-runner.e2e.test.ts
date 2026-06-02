@@ -104,9 +104,9 @@ const installRunEmbeddedMocks = () => {
         resolveStoredSessionKeyForSessionIdMock(opts),
     };
   });
-  vi.doMock("./pi-embedded-runner/logger.js", async () => {
-    const actual = await vi.importActual<typeof import("./pi-embedded-runner/logger.js")>(
-      "./pi-embedded-runner/logger.js",
+  vi.doMock("./embedded-agent-runner/logger.js", async () => {
+    const actual = await vi.importActual<typeof import("./embedded-agent-runner/logger.js")>(
+      "./embedded-agent-runner/logger.js",
     );
     return {
       ...actual,
@@ -122,9 +122,9 @@ const installRunEmbeddedMocks = () => {
     retireSessionMcpRuntime: ({ sessionId }: { sessionId?: string | null }) =>
       sessionId ? disposeSessionMcpRuntimeMock(sessionId) : Promise.resolve(false),
   }));
-  vi.doMock("./pi-embedded-runner/model.js", async () => {
-    const actual = await vi.importActual<typeof import("./pi-embedded-runner/model.js")>(
-      "./pi-embedded-runner/model.js",
+  vi.doMock("./embedded-agent-runner/model.js", async () => {
+    const actual = await vi.importActual<typeof import("./embedded-agent-runner/model.js")>(
+      "./embedded-agent-runner/model.js",
     );
     return {
       ...actual,
@@ -132,7 +132,7 @@ const installRunEmbeddedMocks = () => {
         resolveModelAsyncMock(...args),
     };
   });
-  vi.doMock("./pi-embedded-runner/run/auth-controller.js", () => ({
+  vi.doMock("./embedded-agent-runner/run/auth-controller.js", () => ({
     createEmbeddedRunAuthController: () => ({
       advanceAuthProfile: vi.fn(async () => false),
       initializeAuthProfile: vi.fn(async () => undefined),
@@ -152,7 +152,7 @@ const installRunEmbeddedMocks = () => {
   });
 };
 
-let runEmbeddedPiAgent: typeof import("./pi-embedded-runner/run.js").runEmbeddedPiAgent;
+let runEmbeddedPiAgent: typeof import("./embedded-agent-runner/run.js").runEmbeddedPiAgent;
 let SessionManager: typeof import("@mariozechner/pi-coding-agent").SessionManager;
 let e2eWorkspace: EmbeddedPiRunnerTestWorkspace | undefined;
 let agentDir: string;
@@ -164,7 +164,7 @@ beforeAll(async () => {
   vi.useRealTimers();
   vi.resetModules();
   installRunEmbeddedMocks();
-  ({ runEmbeddedPiAgent } = await import("./pi-embedded-runner/run.js"));
+  ({ runEmbeddedPiAgent } = await import("./embedded-agent-runner/run.js"));
   ({ SessionManager } = await import("@mariozechner/pi-coding-agent"));
   e2eWorkspace = await createEmbeddedPiRunnerTestWorkspace("openclaw-embedded-agent-");
   ({ agentDir, workspaceDir } = e2eWorkspace);
