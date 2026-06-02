@@ -2,8 +2,8 @@
 file: flows.md
 purpose: Sequence diagrams (Mermaid) for the top pipelines an AI must understand before editing
 audience: AI
-last_verified: 2026-06-01
-last_verified_commit: 18e618d241
+last_verified: 2026-06-02
+last_verified_commit: 06f8647fdc
 single_owner: yes — sequence-of-calls facts live here, not in bible.md
 see_also: lifecycles.md (state transitions per entity), failures.md (failure-mode propagation), topology.md (which components exist)
 verify:
@@ -17,6 +17,10 @@ verify:
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","prefrontal.kit.search","--params",json.dumps({"query":"feature"})],capture_output=True,text=True,timeout=20); assert "results" in r.stdout, r.stdout[-500:]'
   - name: F-RECIPE-STATE — runKit wires the onRecipeState producer (the dull-panel fix)
     cmd: python3 -c 'import os; src=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "onRecipeState:" in src and "fork.prefrontal.setRecipe" in src, "recipe-state producer wiring missing"'
+  - name: F-RECIPE-EVOLVE — consolidation self-apply loop wired to the prefrontal apply RPC (U1)
+    cmd: python3 -c 'import os; con=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/sleep-consolidation.ts")).read(); assert "proposeMutations" in con and "prefrontal.recipe.applyProposal" in con and "RECIPE_AUTOAPPLY_ENABLED" in con, "consolidation evolution loop wiring missing"; app=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts")).read(); assert "invalidateKitIndexCache()" in app and "isJarvisAuthored" in app, "recipe-apply rails/cache-invalidate missing"'
+  - name: F-TOT-DELIBERATE — pre-prompt ToT deliberation is turn-local + trace persists (U10)
+    cmd: python3 -c 'import os; att=open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "maybeRunThoughtSearch" in att and "preDeliberationSystemPromptText" in att, "attempt.ts deliberation wiring missing"; rr=open(os.path.expanduser("~/src/tinkerclaw/src/fork/reasoning-runtime.ts")).read(); assert "## Deliberation" in rr and "stashReasoningTrace" in rr, "reasoning-runtime producer missing"; hk=open(os.path.expanduser("~/src/tinkerclaw/src/fork/attempt-hooks.ts")).read(); assert "reasoning_tree_state" in hk and "consumeReasoningTrace" in hk, "trace persist-on-turn-complete missing"'
 ---
 
 # Flows — top pipelines
@@ -424,6 +428,135 @@ sequenceDiagram
 - The header data is **last-write-wins** in the UI: `currentRecipe` holds only the latest event, not a history.
 
 **See also:** subagents-and-kits.md §Kits (the parallel-group/runKit execution mechanism that GENERATES the transitions); panels.md (`renderRecipeHeader` render + RECIPES-panel fallback semantics); lifecycles.md L-STEP (per-step status barrier).
+
+---
+
+## F-RECIPE-EVOLVE. Episode complete → consolidation fitness → mutation self-apply → matcher re-reads (U1, J5+J13)
+
+**Trigger:** the `engram-consolidate` cron fires `consolidate()` over the day's closed episodes; at least one episode carries a `recipe:<owner/slug>` attribution tag.
+**Entry (producer of tags):** `extensions/tinkerclaw-prefrontal/kit-runner.ts:runKit` stamps `recipe:<owner/slug>` via the `onTag` sink (wired by `prefrontal.recipe.run`) at run start + each task dispatch.
+**Entry (loop):** `src/memory/engram/sleep-consolidation.ts:consolidate()` §3b (opt-in, only when `config.recipeEvolution` is injected).
+**Exit:** for each `autoPromotable` proposal the on-disk recipe file is rewritten, the matcher's in-memory kit index is dropped, and the next turn's matcher re-scans the catalog with the new body + updated fitness boost.
+
+```mermaid
+sequenceDiagram
+  participant RUN as runKit (kit-runner.ts)
+  participant ING as ingestion (recipe:<owner/slug> events)
+  participant CRON as engram-consolidate cron
+  participant CON as consolidate() §3b (sleep-consolidation.ts)
+  participant FIT as recipe-fitness.ts (updateRecipeFitness)
+  participant ARC as recipe-archive.ts (putVariant — never delete)
+  participant EVO as recipe-evolution.ts (proposeMutations)
+  participant GW as callGateway (loopback)
+  participant APP as prefrontal.recipe.applyProposal (kit-rpcs.ts)
+  participant RA as applyMutationProposal (recipe-apply.ts)
+  participant KS as KitStore (recipe .md on disk)
+  participant CACHE as kit-matcher.ts (invalidateKitIndexCache)
+  participant MAT as matcher next turn (matchKitsDetailed)
+
+  RUN->>ING: onTag → recipe:<owner/slug> stamped on episode events
+  Note over ING: attribution survives in the event log<br/>(recipe-fitness.attributeRecipe matches this exact tag)
+  CRON->>CON: consolidate({recipeEvolution})
+  loop for each attributed episode
+    CON->>FIT: updateRecipeFitness(prior, episode, events) — Laplace-smoothed successRate
+    CON->>ARC: putVariant(rid, version, body, fitness)
+    CON->>EVO: proposeMutations(fitness, archive.history(rid), cfg)
+    EVO-->>CON: MutationProposal[] (autoPromotable flag = isAutoPromotable)
+  end
+  Note over CON: every proposal → manifest entry (audit trail)<br/>regardless of the gate below
+  alt RECIPE_AUTOAPPLY_ENABLED === "true" (live)
+    loop for each autoPromotable proposal
+      CON->>GW: callGateway prefrontal.recipe.applyProposal {recipeId, op, intent, rationale}
+      Note over CON,GW: fire-and-forget + try/caught —<br/>consolidation never blocks/fails on apply
+      GW->>APP: prefrontal.recipe.applyProposal
+      APP->>RA: applyMutationProposal(input, deps)
+      RA->>RA: Rail 2 isJarvisAuthored? (curated → skip)
+      RA->>KS: Rail 3 snapshot(recipeId) → .recipe-archive/ (rollback net)
+      RA->>RA: LLM rewrite → extractKitSpec → Rail 4 validateKitSpec
+      RA->>KS: authorKit(spec) (authorship-guarded write, slug preserved)
+      RA->>CACHE: invalidateKitIndexCache() — ONLY on successful apply
+    end
+  else gate off (tests/clones)
+    Note over CON: proposals stay in the manifest for human review — no write
+  end
+  MAT->>KS: next turn re-scans catalog (index was dropped)
+  MAT->>FIT: makeFitnessLookup(baseDir) → successRate boost folded into score
+```
+
+**Invariants:**
+
+- **Attribution is explicit, never inferred.** `recipe-fitness.attributeRecipe` matches ONLY the literal `recipe:<owner/slug>` tag stamped by `kit-runner.ts` `onTag`. No tag → no fitness update → no false attribution (`sleep-consolidation.ts:322` `continue`).
+- **The archive never deletes.** `recipe-archive.putVariant` appends a versioned variant per consolidation pass; rollback is always possible. The apply path additionally snapshots the live body into `.recipe-archive/` (Rail 3) before any rewrite.
+- **`autoPromotable` is the only auto-apply gate inside the loop**, AND the whole self-apply block is gated by `RECIPE_AUTOAPPLY_ENABLED === "true"` (strict equality — OFF in tests/clones; live in prod, see memory `Jarvis full-autonomy flags`). Every proposal lands in the manifest regardless, so the audit trail exists even when the apply is gated off.
+- **`invalidateKitIndexCache()` fires only on a successful `authorKit`** (`recipe-apply.ts:208`) — a no-op/skip/reject never triggers a spurious catalog re-scan. Without this, an autonomous rewrite would only take effect after a process restart (or an unrelated dir-mtime bump).
+- **Selection feedback closes the loop:** the matcher reads `makeFitnessLookup(engramBaseDir)` as the `feedback` arg into `matchKitsDetailed` (`kit-rpcs.ts:420`), so the just-updated `successRate` boosts the recipe's score on the next match. Precedence: base score → U1 fitness feedback → U12 rating tie-break (see config-shape.md scoreKit composition).
+- **The rewrite is authorship-guarded** (Rail 2): `applyMutationProposal` refuses any recipe that is not `isJarvisAuthored` — hand-curated kits are never auto-mutated.
+
+**State machines:** see lifecycles.md L-RECIPE / L-RECIPE-VARIANT (fitness/version transitions, archive lifecycle) — those are the single owner of the per-recipe state facts; this diagram owns only the call sequence.
+
+**See also:** config-shape.md (`RECIPE_AUTOAPPLY_ENABLED` flag + scoreKit precedence + the 5 apply rails); subagents-and-kits.md §Kits (`runKit`/`onTag` producer mechanics); failures.md (apply-failure → keep-original fallbacks).
+
+---
+
+## F-TOT-DELIBERATE. Pre-prompt Tree-of-Thoughts deliberation → turn-local prompt → trace persist (U10, J3↔J13)
+
+**Trigger:** an interactive turn is about to call `activeSession.prompt(...)` AND `fork.cognitive.reasoning` config is `"tree"` or `"lats"` (default `"none"` → pure pass-through).
+**Entry:** `src/agents/pi-embedded-runner/run/attempt.ts:~2783` (the pre-prompt deliberation block) → `src/fork/reasoning-runtime.ts:maybeRunThoughtSearch`.
+**Exit:** the model runs THIS turn with a `## Deliberation` block folded into the system prompt; the search tree is persisted as a `reasoning_tree_state` MemoryEvent on turn complete; the base prompt is restored so nothing leaks into the next turn.
+
+```mermaid
+sequenceDiagram
+  participant ATT as attempt.ts (turn body)
+  participant RET as retrieval/reinject augmentation
+  participant RR as maybeRunThoughtSearch (reasoning-runtime.ts)
+  participant CFG as getReasoningMode (fork.cognitive.reasoning)
+  participant GATE as shouldRunThoughtSearch
+  participant RT as ReasoningRuntime.run (per-session registry)
+  participant STASH as stashReasoningTrace (attempt-hooks.ts, by runId)
+  participant SESS as activeSession (applySystemPromptOverride)
+  participant MODEL as model (session.prompt)
+  participant HOOK as onTurnComplete (attempt-hooks.ts)
+  participant ES as eventStore.append
+
+  Note over ATT,RET: retrieval-pack + reinject augment systemPromptText FIRST
+  ATT->>ATT: preDeliberationSystemPromptText = systemPromptText (snapshot BEFORE deliberation)
+  ATT->>RR: maybeRunThoughtSearch({sessionManager, systemPromptText, query, isAutomatedSession, runId})
+  RR->>CFG: getReasoningMode() → none | tree | lats
+  RR->>GATE: shouldRunThoughtSearch(query, mode, isAutomatedSession)
+  alt mode==="none" OR automated session OR trivial query OR no runtime
+    RR-->>ATT: returns systemPromptText UNCHANGED (pure pass-through)
+  else mode is tree/lats and search-worthy
+    RR->>RT: runtime.run(query, systemPromptText)
+    RT-->>RR: {answer, trace}
+    RR->>STASH: stashReasoningTrace(runId, trace) — best-effort, never breaks the turn
+    RR-->>ATT: systemPromptText + "\n\n## Deliberation\n<answer>"
+    ATT->>SESS: applySystemPromptOverrideToSession(turn-local augmented prompt)
+    Note over ATT,SESS: TURN-LOCAL only. If a runtimeContext override is in play,<br/>re-derive runtimeSystemPrompt from the AUGMENTED base<br/>(bugfix — else this turn runs WITHOUT the deliberation).<br/>appliedTurnLocalOverride = true
+  end
+  ATT->>MODEL: activeSession.prompt(prompt[, images])
+  MODEL-->>ATT: assistant turn
+  ATT->>SESS: finally: if appliedTurnLocalOverride → restore preDeliberationSystemPromptText
+  Note over ATT,SESS: restores the SNAPSHOT, not the mutated systemPromptText<br/>→ deliberation cannot leak into the next turn's base
+  HOOK->>HOOK: onTurnComplete: consumeReasoningTrace(runId)
+  alt trace was stashed this turn
+    HOOK->>ES: eventStore.append({kind:"reasoning_tree_state", content:JSON(trace), importance:4})
+  else no trace (default — ToT off)
+    Note over HOOK: inert — no event written
+  end
+```
+
+**Invariants:**
+
+- **Default-off.** `getReasoningMode` returns `"none"` unless `fork.cognitive.reasoning ∈ {tree, lats}`; `maybeRunThoughtSearch` is then a pure identity on the system prompt. ToT is opt-in/expensive.
+- **Deliberation runs AFTER retrieval/reinject augmentation** so the search sees the fully assembled context, then folds `## Deliberation` onto that augmented base.
+- **Skips automated sessions.** `isAutomatedReasoningSession` is true for subagent/ACP/probe/`cron:`/`heartbeat`/`isolated:` keys and missing keys — a search before every cron tick is wasteful and risks recursive triggering.
+- **TURN-LOCAL, leak-proof (BUGFIX, FORK U10).** `preDeliberationSystemPromptText` snapshots the TRUE base BEFORE the deliberation augments it; the `finally` restores that snapshot (gated on `appliedTurnLocalOverride`), NOT the mutated `systemPromptText`. The prior bug: when a `runtimeContext` override was present the session held `runtimeSystemPrompt` built from the pre-deliberation base, so either the deliberation never reached the model OR it leaked into the next turn — fixed by re-deriving `runtimeSystemPrompt` from the augmented base for the turn and restoring the captured pre-deliberation base in `finally`.
+- **Trace persistence is producer→consumer by `runId`.** `maybeRunThoughtSearch` is the producer (`stashReasoningTrace(runId, trace)`); `onTurnComplete` is the consumer (`consumeReasoningTrace(runId)` → `reasoning_tree_state` MemoryEvent, `importance:4`). Both legs are best-effort try/caught — a stash/persist failure never breaks the turn. No trace stashed (the default) → consume path is inert, no event written.
+- **NOT a fractal trigger.** The fractal/round-table escalation fires separately post-turn; the ToT deliberation is strictly pre-prompt and single-session.
+
+**State machines:** see lifecycles.md L-REASONING (none→tree→lats tri-state + the per-turn apply/restore states) — the single owner of the reasoning-mode state facts; this diagram owns only the call sequence.
+
+**See also:** config-shape.md (`fork.cognitive.reasoning` key + the `fork.reasoning.search` RPC that runs a model — do NOT add it to a verify block); memory-layout.md (`reasoning_tree_state` EventKind + importance ranking); failures.md (deliberation failure → pass-through).
 
 ---
 
