@@ -559,7 +559,7 @@ these rough bands:
 
 - Tiny lanes, seconds to under 1 minute:
   `agents-delete-shared-workspace` ~3s, `plugin-update` ~7s,
-  `config-reload` ~14s, `pi-bundle-mcp-tools` ~15s, `onboard` ~18s,
+  `config-reload` ~14s, `agent-bundle-mcp-tools` ~15s, `onboard` ~18s,
   `session-runtime-context` ~20s, `gateway-network` ~34s, `qr` ~44s.
 - Medium deterministic lanes, ~1-5 minutes:
   `npm-onboard-channel-agent` ~96s, `openai-image-auth` ~99s,

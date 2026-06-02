@@ -14,7 +14,6 @@ import {
   hasInterSessionUserProvenance,
   normalizeInputProvenance,
 } from "../../sessions/input-provenance.js";
-import { resolveImageSanitizationLimits } from "../image-sanitization.js";
 import {
   downgradeOpenAIFunctionCallReasoningPairs,
   downgradeOpenAIReasoningBlocks,
@@ -24,7 +23,8 @@ import {
   sanitizeSessionMessagesImages,
   validateAnthropicTurns,
   validateGeminiTurns,
-} from "../pi-embedded-helpers.js";
+} from "../embedded-agent-helpers.js";
+import { resolveImageSanitizationLimits } from "../image-sanitization.js";
 import { cleanToolSchemaForGemini } from "../pi-tools.schema.js";
 import {
   sanitizeToolCallInputs,

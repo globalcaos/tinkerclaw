@@ -16,7 +16,7 @@ verify:
   - name: tinker-ui has no stale-run watchdog (FORK 2026-05-14 — deleted; trust lifecycle:end instead)
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "STALE_RUN_WATCHDOG_MS" not in t, "STALE_RUN_WATCHDOG_MS reappeared in app.ts — the UI-side stale-run watchdog was deleted on 2026-05-14 and must stay deleted; the cure for a stuck thinking indicator is to harden lifecycle:end emission in attempt.ts, not to add a UI-side timer that lies"; assert re.search(r"activeRuns\.delete\(\s*runId\s*\)[^}]*stalePruned", t) is None, "a force-clear of activeRuns from a timer reappeared — the watchdog pattern is back"; assert "bumpActiveRunActivity" in t, "bumpActiveRunActivity is still useful for keeping lastEventAt fresh (drives lastEventAge in the prefrontal panel); do not delete"'
   - name: lifecycle:end / lifecycle:error are emitted by handleAgentEnd (FORK 2026-05-14 — the UI trusts these to clear the thinking indicator since the watchdog was deleted)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-subscribe.handlers.lifecycle.ts")).read(); assert "handleAgentEnd" in t and "phase: \"end\"" in t and "phase: \"error\"" in t and "emitAgentEvent" in t, "handleAgentEnd no longer emits a lifecycle:end (or :error) event via emitAgentEvent — the UI trusts these emissions to clear the thinking indicator. Restore the emission or expect stuck thinking indicators that can only be cleared by browser refresh."'
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-subscribe.handlers.lifecycle.ts")).read(); assert "handleAgentEnd" in t and "phase: \"end\"" in t and "phase: \"error\"" in t and "emitAgentEvent" in t, "handleAgentEnd no longer emits a lifecycle:end (or :error) event via emitAgentEvent — the UI trusts these emissions to clear the thinking indicator. Restore the emission or expect stuck thinking indicators that can only be cleared by browser refresh."'
   - name: shutdown-frame handler enrolls activeRuns into unconfirmedRuns (FORK 2026-05-24 — graceful-restart prune wouldn't fire otherwise)
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); block = re.search(r"f\.event === \"shutdown\".*?f\.payload\?\.restartExpectedMs.*?\}", t, re.S); assert block, "the shutdown-frame handler in app.ts is missing or has been refactored — re-locate and verify it still adds runIds to unconfirmedRuns"; assert "unconfirmedRuns.add(runId)" in block.group(0), "the shutdown-frame handler no longer enrolls activeRuns into unconfirmedRuns. Without this, an in-tab graceful restart leaves stale activeRuns entries forever (no lifecycle:end will ever come from the dead gateway process), the prefrontal panel shows the indicator + clock frozen at the pre-restart state, and only a page reload clears the ghost. See bug-log.md FIXED 2026-05-24 ghost-run."'
 ---
@@ -116,7 +116,7 @@ The right model: the UI is a **reflection** of the server's authoritative lifecy
 
 The previous watchdog was compensating for a presumed unreliability in lifecycle:end emission. But the cure for "lifecycle:end was missed" is to **fix the server-side emission**, not to add a UI-side timer that lies in the opposite direction. A UI timer that disagrees with the server's truth is a code smell: it either over-fires (clears the indicator while the run is alive — the 2026-05-14 incident; runId `43202545`, 473 s tool turn, killed mid-flight because the user retyped after the indicator vanished) or under-fires (never catches a genuinely dead run because the silence threshold is too long).
 
-The lifecycle audit lives in `src/agents/pi-embedded-subscribe.handlers.lifecycle.ts`:
+The lifecycle audit lives in `src/agents/embedded-agent-subscribe.handlers.lifecycle.ts`:
 
 - `handleAgentStart` emits `stream: "lifecycle"` `phase: "start"`.
 - `handleAgentEnd` emits `phase: "end"` on clean termination, `phase: "error"` on error termination. The bible verify in this file's frontmatter asserts both `phase` values + the `emitAgentEvent` call are present.
@@ -224,7 +224,7 @@ Trusts `~/.claude/.credentials.json`. Env scrub strips `ANTHROPIC_API_KEY`, `ANT
 
 ### Files
 
-`extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/pi-embedded-subscribe.types.ts`, `src/agents/embedded-agent-runner/run/attempt.ts` (forward model/provider/profile).
+`extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/embedded-agent-subscribe.types.ts`, `src/agents/embedded-agent-runner/run/attempt.ts` (forward model/provider/profile).
 
 ### Workspace skills exposed to Jarvis via `--plugin-dir` (FORK 2026-05-04)
 

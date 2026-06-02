@@ -9,7 +9,7 @@ import {
   setDetachedTaskDeliveryStatusByRunId,
 } from "../tasks/detached-task-runtime.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.shared.js";
-import { retireSessionMcpRuntimeForSessionKey } from "./pi-bundle-mcp-tools.js";
+import { retireSessionMcpRuntimeForSessionKey } from "./agent-bundle-mcp-tools.js";
 import type { SubagentAnnounceDeliveryResult } from "./subagent-announce-dispatch.js";
 import { type SubagentRunOutcome, withSubagentOutcomeTiming } from "./subagent-announce-output.js";
 import {

@@ -84,8 +84,8 @@ function createToolHandlerCtx() {
 }
 
 let toToolDefinitions: typeof import("./pi-tool-definition-adapter.js").toToolDefinitions;
-let handleToolExecutionStart: typeof import("./pi-embedded-subscribe.handlers.tools.js").handleToolExecutionStart;
-let handleToolExecutionEnd: typeof import("./pi-embedded-subscribe.handlers.tools.js").handleToolExecutionEnd;
+let handleToolExecutionStart: typeof import("./embedded-agent-subscribe.handlers.tools.js").handleToolExecutionStart;
+let handleToolExecutionEnd: typeof import("./embedded-agent-subscribe.handlers.tools.js").handleToolExecutionEnd;
 
 async function loadFreshAfterToolCallModulesForTest() {
   vi.doMock("../plugins/hook-runner-global.js", () => ({
@@ -110,7 +110,7 @@ async function loadFreshAfterToolCallModulesForTest() {
   }));
   ({ toToolDefinitions } = await import("./pi-tool-definition-adapter.js"));
   ({ handleToolExecutionStart, handleToolExecutionEnd } =
-    await import("./pi-embedded-subscribe.handlers.tools.js"));
+    await import("./embedded-agent-subscribe.handlers.tools.js"));
 }
 
 describe("after_tool_call fires exactly once in embedded runs", () => {

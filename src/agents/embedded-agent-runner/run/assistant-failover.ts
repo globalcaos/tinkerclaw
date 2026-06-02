@@ -2,13 +2,13 @@ import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { sanitizeForLog } from "../../../terminal/ansi.js";
 import type { AuthProfileFailureReason } from "../../auth-profiles.js";
-import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
 import {
   formatAssistantErrorText,
   formatBillingErrorMessage,
   isTimeoutErrorMessage,
   type FailoverReason,
-} from "../../pi-embedded-helpers.js";
+} from "../../embedded-agent-helpers.js";
+import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
 import {
   mergeRetryFailoverReason,
   resolveRunFailoverDecision,

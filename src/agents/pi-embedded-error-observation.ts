@@ -8,7 +8,7 @@ import {
   getApiErrorPayloadFingerprint,
   parseApiErrorInfo,
   type ProviderRuntimeFailureKind,
-} from "./pi-embedded-helpers.js";
+} from "./embedded-agent-helpers.js";
 import { stableStringify } from "./stable-stringify.js";
 
 export { sanitizeForConsole } from "./console-sanitize.js";

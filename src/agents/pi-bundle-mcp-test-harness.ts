@@ -16,7 +16,7 @@ const SDK_SERVER_SSE_PATH = require.resolve("@modelcontextprotocol/sdk/server/ss
 const tempDirs: string[] = [];
 
 export async function cleanupBundleMcpHarness(): Promise<void> {
-  const { __testing } = await import("./pi-bundle-mcp-tools.js");
+  const { __testing } = await import("./agent-bundle-mcp-tools.js");
   await __testing.resetSessionMcpRuntimeManager();
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 }

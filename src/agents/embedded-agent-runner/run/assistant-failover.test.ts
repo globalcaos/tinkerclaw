@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { formatBillingErrorMessage } from "../../embedded-agent-helpers.js";
 import { FailoverError } from "../../failover-error.js";
-import { formatBillingErrorMessage } from "../../pi-embedded-helpers.js";
 import { handleAssistantFailover } from "./assistant-failover.js";
 
 type Params = Parameters<typeof handleAssistantFailover>[0];

@@ -358,7 +358,7 @@ export async function loadCompactHooksHarness(): Promise<{
     resolveBootstrapContextForRun: vi.fn(async () => ({ contextFiles: [] })),
   }));
 
-  vi.doMock("../pi-bundle-mcp-tools.js", () => ({
+  vi.doMock("../agent-bundle-mcp-tools.js", () => ({
     retireSessionMcpRuntime: vi.fn(async () => true),
     createBundleMcpToolRuntime: vi.fn(async () => ({
       tools: [],
@@ -366,7 +366,7 @@ export async function loadCompactHooksHarness(): Promise<{
     })),
   }));
 
-  vi.doMock("../pi-bundle-lsp-runtime.js", () => ({
+  vi.doMock("../agent-bundle-lsp-runtime.js", () => ({
     createBundleLspToolRuntime: vi.fn(async () => ({
       tools: [],
       sessions: [],
@@ -549,7 +549,7 @@ export async function loadCompactHooksHarness(): Promise<{
     };
   });
 
-  vi.doMock("../pi-embedded-helpers.js", () => ({
+  vi.doMock("../embedded-agent-helpers.js", () => ({
     ensureSessionHeader: vi.fn(async () => {}),
     pickFallbackThinkingLevel: vi.fn((params: { message?: string; attempted?: Set<string> }) =>
       params.message?.includes("Reasoning is mandatory") && !params.attempted?.has("minimal")
