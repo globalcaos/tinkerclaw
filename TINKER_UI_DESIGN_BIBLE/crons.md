@@ -112,10 +112,13 @@ The `daily-fork-sync` cron implements upstream-merge automation. It is DISABLED 
 ### What it did when enabled
 
 1. `git fetch upstream main`
-2. `git merge upstream/main` with conflict auto-resolution rules:
+2. A synthetic-base 3-way merge with conflict auto-resolution rules:
    - **TIER1 files** — paths the fork patches directly. On conflict, prefer fork.
    - **TIER2 files** — paths the fork modifies trivially. On conflict, prefer 3-way merge.
    - **TIER3 files** — upstream-only. Always prefer upstream.
+
+   > **Pinned synthetic ancestor (S3, 2026-06-02).** A plain `git merge upstream/main` is a worst case here: the fork and `upstream/main` are **disjoint** (`git merge-base HEAD upstream/main` is EMPTY), so every differing file becomes an add/add conflict — the conflict multiplier. The TIER2 "prefer 3-way merge" rule now resolves against the **`upstream-base`** tag (pinned at the upstream content-anchor the fork carries; S3 = `7b07a0ab8fd`) as the explicit synthetic common ancestor, via `scripts/merge-drivers/upstream-3way.sh`. After each successful sync the cron **advances** `upstream-base` to the merged upstream commit (`git tag -f upstream-base <sha>`) and records the new SHA in its receipt. Full convention: `branch-policy.md` §4.
+
 3. Apply fork patch functions for files the fork augments (not replaces).
 4. `pnpm build`.
 5. If build passes → commit + push to `tinkerclaw/develop`.
