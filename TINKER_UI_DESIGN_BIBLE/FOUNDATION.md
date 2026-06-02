@@ -127,7 +127,13 @@ High-altitude; the owning optic carries the detail.
 
 ## Merge / adoption gate (the reflection layer hooks here)
 
-- Adopt an upstream feature **iff** it advances the mission (more performant / smarter / more useful to Oscar) under capability-first; otherwise discard or watch.
+- **Convergence-first is the default bias (ratified 2026-06-02).** Every auto-merge minimizes FUTURE merge friction by making our fork look like upstream — doing the hard convergence work now beats carrying perpetual divergence debt. Resolve each upstream delta into exactly one bucket:
+  - **ADOPT-LIVE** — adopt any upstream improvement that advances the mission (the capability-first test). Default bias; bite the hard work now.
+  - **ABSORB-FOR-CONVERGENCE** — absorb harmless code with little/no capability delta _anyway_, to shrink the conflict surface. "Not strictly better" is no longer grounds to discard.
+  - **KEEP-DORMANT (overlay, never delete)** — for upstream subsystems we don't use, keep them present-but-disabled and layer our variant alongside. Deletion is itself a high-friction divergence that re-conflicts every merge; never delete, and never re-claim an upstream package name for a forked variant.
+  - **DIVERGE (keep ours)** — only where ours is genuinely higher-value AND that advantage is worth the PERPETUAL per-merge cost; each retained divergence is documented with its justification and the friction it accepts.
+- **Re-introducing an avoidable structural divergence** (a fresh tree rename, a same-name package collision, a new in-place edit where an upstream hook exists) is itself a gate FAILURE. The merge actively shrinks divergence debt, not merely avoids regressing.
+- **Hard constraints override convergence:** the two-repo / PII split (§8) is never unified, and genuine fit-to-Oscar product differences stay — but even there, prefer overlay-not-delete so the merge stays cheap.
 - A merge is **done** only when **no foundational criterion above has regressed** — proven by behavioral diff + the optics' `verify[]` invariants, not by "it built" or "tests passed."
 - Adopted upstream features follow the same discipline we use for our own: update the relevant J-series paper / optic first (the intent), then plan, then implement, then verify.
 
