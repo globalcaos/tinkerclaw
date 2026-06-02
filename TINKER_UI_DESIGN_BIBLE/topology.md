@@ -2,10 +2,10 @@
 file: topology.md
 purpose: What runs where, what talks to what, what's bundled vs separate
 audience: AI
-last_verified: 2026-05-11
-last_verified_commit: HEAD
-single_owner: yes — process map, plugin inventory, channel inventory, workspace symlinks live here
-see_also: flows.md (how they talk), config-shape.md (what configures them)
+last_verified: 2026-06-02
+last_verified_commit: 06f8647fdc
+single_owner: yes — process map, plugin inventory, channel inventory, workspace symlinks, fork RPC-bundle registration live here
+see_also: flows.md (how they talk), config-shape.md (what configures them), probes.md (how to call the RPCs)
 verify:
   - name: gateway listening on 18789
     cmd: ss -ltn 2>/dev/null | grep -q ':18789' || netstat -ltn 2>/dev/null | grep -q ':18789'
@@ -22,6 +22,14 @@ verify:
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
   - name: every fork-owned plugin dir uses the tinkerclaw- prefix
     cmd: bash -lc 'cd ~/src/tinkerclaw && violators=$(for d in extensions/*/; do d=${d%/}; if grep -q "FORK\|fork-owned\|@tinkerclaw" "$d/openclaw.plugin.json" "$d/index.ts" "$d/README.md" 2>/dev/null && [[ "$(basename $d)" != tinkerclaw-* ]]; then echo "$d"; fi; done); test -z "$violators" || (echo "fork plugins missing tinkerclaw- prefix: $violators"; exit 1)'
+  - name: U4 fork.strategy.switch.list RPC registered + answers (no params)
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.strategy.switch.list"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
+  - name: U6 fork.skill.search RPC registered + answers (query required)
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.skill.search","--params","{\"query\":\"x\",\"k\":1}"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
+  - name: U3 fork.memory.search RPC registered + answers (query required, temporalMode)
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.memory.search","--params","{\"query\":\"x\",\"temporalMode\":\"current\"}"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
+  - name: U7/U9/U10 new component files present on disk
+    cmd: python3 -c 'import glob,os; b=os.path.expanduser("~/src/tinkerclaw"); reqd=["extensions/tinkerclaw-round-table/src/orchestrator-api.ts","extensions/tinkerclaw-prefrontal/cc-skills-bridge.ts","src/agents/pi-extensions/link-builder-runtime.ts","src/fork/reasoning-runtime.ts"]; miss=[p for p in reqd if not os.path.isfile(os.path.join(b,p))]; assert not miss, "missing: "+str(miss)'
 ---
 
 # Topology — components, ports, plugins, channels, symlinks
@@ -62,6 +70,40 @@ Plus core (non-tinkerclaw-prefixed): `auth-reload`, `browser`, `budget-panel`, `
 Note: `hippocampus` → `tinkerclaw-hippocampus` and `tinker` → `tinkerclaw-tinker` as of 2026-05-13 cleanup.
 
 **Open issue:** the `@sinclair/typebox` missing-module pattern is a recurring native-deps issue. See bible §11.x for the rule about `pnpm.onlyBuiltDependencies` getting wiped on upstream merges.
+
+## Fork RPC bundles (gateway server-methods)
+
+All fork RPCs are spread into `coreGatewayHandlers` in `src/gateway/server-methods.ts` (one `...handlersObject` per bundle, same pattern as upstream). Each bundle is a `GatewayRequestHandlers` map whose string keys ARE the wire method names. This optic owns the registration map; `probes.md` owns how to call each one; `config-shape.md` owns the config keys that gate them.
+
+The OSS-harness upgrade wave (develop `06f8647fdc` on top of `70ad58e45d`) added/extended these fork bundles. The full upgrade roadmap is `docs/notes/2026-05-30-papers-coverage-and-oss-roadmap.md` Part 3 in the jarvis-icu repo.
+
+| Bundle export                 | Import path (`src/…`)                       | Wire methods                                                                             | Upgrade      | Status                                                        |
+| ----------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------- |
+| `forkSubagentsHandlers`       | `fork/subagents-rpc.js`                     | `fork.subagents.spawn`                                                                   | —            | DEPLOYED                                                      |
+| `forkPrefrontalStateHandlers` | `fork/prefrontal-state-rpc.js`              | prefrontal recipe-state + trail events                                                   | —            | DEPLOYED                                                      |
+| `forkCuriosityHandlers`       | `fork/curiosity-rpc.js`                     | `fork.curiosity.logGap`, `fork.curiosity.topGaps`, `fork.curiosity.resolveGap`           | U2 (J8)      | DEPLOYED                                                      |
+| `forkOverseerHandlers`        | `fork/overseer-runtime.js`                  | overseer activate/deactivate/status                                                      | —            | DEPLOYED                                                      |
+| `forkReasoningHandlers`       | `fork/reasoning-runtime.js`                 | `fork.reasoning.search`                                                                  | U10 (J3↔J13) | DEPLOYED (RPC registered; runs a model — NOT in verify suite) |
+| `forkStrategyHandlers`        | `gateway/server-methods/engram-strategy.js` | `fork.strategy.switch.list`, `fork.strategy.switch.apply`, `fork.strategy.switch.review` | U4 (J5)      | DEPLOYED + VERIFIED-LIVE                                      |
+| `forkSkillHandlers`           | `fork/skill-rpc.js`                         | `fork.skill.search`, `fork.skill.recordOutcome`                                          | U6 (J5+J2)   | DEPLOYED + VERIFIED-LIVE                                      |
+| `forkMemoryHandlers`          | `fork/memory-rpc.js`                        | `fork.memory.search` (+ `fork.engram.consolidate.run`)                                   | U3 (J2+J14)  | DEPLOYED + VERIFIED-LIVE                                      |
+
+**Param contracts (verify-relevant gotcha).** `fork.strategy.switch.list` takes NO params → returns `{ok:true,decisions:[]}` on an empty failure-state map. But `fork.skill.search` and `fork.memory.search` REQUIRE a `query` param — calling them with no params returns `GatewayClientRequestError: '…': 'query' required` (rc=1), NOT `{ok:true}`. So the verify blocks pass `--params '{"query":"x",…}'`. `fork.memory.search` additionally threads `temporalMode` (`current` | `as-of`) / `asOfTime` into manager-search for point-in-time recall (the U3 bi-temporal read path; the supersede WRITE path is owned by `lifecycles.md`/ENGRAM). The CLI prints a config-warnings banner to stderr (stale `whatsapp`/`telegram` plugin entries) before the JSON on stdout — assert a substring of stdout, never parse the whole stream.
+
+**Dead-code trap (U7 7D/7G).** `extensions/tinkerclaw-round-table/src/orchestrator-api.ts` calls two gateway RPCs that DO NOT EXIST yet: `agent.getBillingState` (7D budget clamp) and `plugins.getOrchestrator` (7G external orchestrator load). Both degrade gracefully — billing clamp becomes a no-op and `getOrchestrator(id)` falls back to the built-in `raacOrchestrator`. These bind only once those host RPCs land. Registered as a dead-code trap; full registry in `config-shape.md`.
+
+## New components (06f8647fdc — OSS-harness upgrade wave)
+
+These are new source modules/registries that are NOT plugins (no `openclaw.plugin.json`) — they are libraries/runtimes wired into existing plugins or the embedded-runner. Listed here for the component map; behavior/intent lives in the cited optic.
+
+| Component                 | Path                                     | Role                                                                                                                                                                                                                                                                 | see also                                                                       |
+| ------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `orchestrator-api.ts`     | `extensions/tinkerclaw-round-table/src/` | U7: `DebateOrchestrator` iface + built-in `raacOrchestrator` + `getOrchestrator(id)` + `setExternalOrchestratorLoader`. Round-table speaker-select ext.                                                                                                              | flows.md (debate flow), config-shape.md (`orchestratorId`)                     |
+| `cc-skills-bridge.ts`     | `extensions/tinkerclaw-prefrontal/`      | U11: external recipe acquisition — `SKILL.md → KitSpec` (`validateKitSpec` + `buildKitMd`); local fallback for `recipe.search` when Journey unreachable.                                                                                                             | subagents-and-recipes.md                                                       |
+| `link-builder-runtime.ts` | `src/agents/pi-extensions/`              | U9 (A-MEM): per-session [[wikilink]]/backlink registry. `setLinkBuilderRuntime(sessionManager, builder)` registered at the session-setup site `src/agents/pi-embedded-runner/extensions.ts:176`, beside `setIngestionRuntime` (169).                                 | memory-layout.md (link-index JSONL)                                            |
+| `reasoning-runtime.ts`    | `src/fork/`                              | U10 (ToT/LATS): per-session reasoning registry — `setReasoningRuntime`/`getReasoningRuntime`, tri-state `getReasoningMode` (`none`\|`tree`\|`lats`), `runReasoningSearch`, plus the `forkReasoningHandlers` RPC bundle and `maybeRunThoughtSearch` pre-prompt entry. | tool-loop.md (pre-prompt search), config-shape.md (`fork.cognitive.reasoning`) |
+
+Per-session registries (U9 link-builder, U10 reasoning) follow the existing `setIngestionRuntime` pattern: a module-level `Map<sessionManager, runtime>` set at embedded-runner session setup, read fire-and-forget from `onTurnComplete`. They are NOT gateway RPCs themselves (except `reasoning-runtime` which ALSO exports the `forkReasoningHandlers` RPC bundle above).
 
 ## Channel inventory
 
