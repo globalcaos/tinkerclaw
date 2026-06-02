@@ -11,7 +11,7 @@ const waitForAsyncCallbacks = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-describe("subscribeEmbeddedPiSession block reply rejections", () => {
+describe("subscribeEmbeddedAgentSession block reply rejections", () => {
   const unhandledRejections: unknown[] = [];
   const onUnhandledRejection = (reason: unknown) => {
     unhandledRejections.push(reason);

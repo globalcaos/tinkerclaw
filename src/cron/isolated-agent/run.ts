@@ -1,6 +1,6 @@
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js";
 import { hasAnyAuthProfileStoreSource } from "../../agents/auth-profiles/source-check.js";
-import type { MessagingToolSend } from "../../agents/pi-embedded-messaging.types.js";
+import type { MessagingToolSend } from "../../agents/embedded-agent-messaging.types.js";
 import type { SkillSnapshot } from "../../agents/skills.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";

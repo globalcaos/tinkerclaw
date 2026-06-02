@@ -21,7 +21,7 @@ function getSharedMocks<T>(key: string, create: () => T): T {
   return store[symbol];
 }
 
-const piEmbeddedMocks = getSharedMocks("openclaw.trigger-handling.pi-embedded-mocks", () => ({
+const piEmbeddedMocks = getSharedMocks("openclaw.trigger-handling.embedded-agent-mocks", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   compactEmbeddedPiSession: vi.fn(),
   runEmbeddedPiAgent: vi.fn(),
@@ -48,7 +48,7 @@ export function getQueueEmbeddedPiMessageMock(): AnyMock {
 }
 
 const installPiEmbeddedMock = () =>
-  vi.doMock("../../../src/agents/pi-embedded.js", () => ({
+  vi.doMock("../../../src/agents/embedded-agent.js", () => ({
     abortEmbeddedPiRun: (...args: unknown[]) => piEmbeddedMocks.abortEmbeddedPiRun(...args),
     compactEmbeddedPiSession: (...args: unknown[]) =>
       piEmbeddedMocks.compactEmbeddedPiSession(...args),

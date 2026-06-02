@@ -15,6 +15,7 @@ import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./embedded-agent-helpers.js";
+import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
 import {
   createEmbeddedRunReplayState,
   mergeEmbeddedRunReplayState,
@@ -32,20 +33,19 @@ import type {
 } from "./embedded-agent-subscribe.handlers.types.js";
 import { isPromiseLike } from "./embedded-agent-subscribe.promise.js";
 import { filterToolResultMediaUrls } from "./embedded-agent-subscribe.tools.js";
-import type { SubscribeEmbeddedPiSessionParams } from "./embedded-agent-subscribe.types.js";
-import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
+import type { SubscribeEmbeddedAgentSessionParams } from "./embedded-agent-subscribe.types.js";
 import {
   formatReasoningMessage,
   stripDowngradedToolCallText,
   THINKING_TAG_SCAN_RE,
-} from "./pi-embedded-utils.js";
+} from "./embedded-agent-utils.js";
 import { hasNonzeroUsage, normalizeUsage, type UsageLike } from "./usage.js";
 
 const FINAL_TAG_SCAN_RE = /<\s*(\/?)\s*final\s*>/gi;
 const log = createSubsystemLogger("agent/embedded");
 
 function collectPendingMediaFromInternalEvents(
-  events: SubscribeEmbeddedPiSessionParams["internalEvents"],
+  events: SubscribeEmbeddedAgentSessionParams["internalEvents"],
 ): string[] {
   if (!events?.length) {
     return [];
@@ -70,11 +70,11 @@ function collectPendingMediaFromInternalEvents(
 
 export type {
   BlockReplyChunking,
-  SubscribeEmbeddedPiSessionParams,
+  SubscribeEmbeddedAgentSessionParams,
   ToolResultFormat,
 } from "./embedded-agent-subscribe.types.js";
 
-export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionParams) {
+export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSessionParams) {
   const reasoningMode = params.reasoningMode ?? "off";
   const toolResultFormat = params.toolResultFormat ?? "markdown";
   const useMarkdown = toolResultFormat === "markdown";
@@ -167,7 +167,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const shouldAllowSilentTurnText = (text: string | undefined) =>
     Boolean(text && isSilentReplyText(text, SILENT_REPLY_TOKEN));
   const emitBlockReplySafely = (
-    payload: Parameters<NonNullable<SubscribeEmbeddedPiSessionParams["onBlockReply"]>>[0],
+    payload: Parameters<NonNullable<SubscribeEmbeddedAgentSessionParams["onBlockReply"]>>[0],
     options?: { assistantMessageIndex?: number },
   ) => {
     if (!params.onBlockReply) {

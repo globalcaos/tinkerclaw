@@ -12,11 +12,11 @@ import {
   type EmbeddedPiRunnerTestWorkspace,
   immediateEnqueue,
   makeEmbeddedRunnerAttempt,
-} from "./test-helpers/pi-embedded-runner-e2e-fixtures.js";
+} from "./test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import {
   installEmbeddedRunnerBaseE2eMocks,
   installEmbeddedRunnerFastRunE2eMocks,
-} from "./test-helpers/pi-embedded-runner-e2e-mocks.js";
+} from "./test-helpers/embedded-agent-runner-e2e-mocks.js";
 
 const runEmbeddedAttemptMock = vi.fn();
 const disposeSessionMcpRuntimeMock = vi.fn<(sessionId: string) => Promise<void>>(async () => {

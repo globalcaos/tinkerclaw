@@ -101,7 +101,7 @@ export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean
     diag.debug(`queue message failed: sessionId=${sessionId} reason=compacting`);
     return false;
   }
-  logMessageQueued({ sessionId, source: "pi-embedded-runner" });
+  logMessageQueued({ sessionId, source: "embedded-agent-runner" });
   // FORK: Buffer the message — flush after debounce window so rapid
   // follow-up messages are combined into a single steer injection.
   const existing = steerBuffers.get(sessionId);

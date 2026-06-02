@@ -1,12 +1,12 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runExtraParamsPayloadCase } from "./embedded-agent-runner-extraparams.test-support.js";
 import { __testing as extraParamsTesting } from "./embedded-agent-runner/extra-params.js";
 import {
   createOpenRouterSystemCacheWrapper,
   createOpenRouterWrapper,
   isProxyReasoningUnsupported,
 } from "./embedded-agent-runner/proxy-stream-wrappers.js";
-import { runExtraParamsPayloadCase } from "./pi-embedded-runner-extraparams.test-support.js";
 
 beforeEach(() => {
   extraParamsTesting.setProviderRuntimeDepsForTest({

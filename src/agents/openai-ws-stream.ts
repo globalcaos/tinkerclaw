@@ -11,7 +11,7 @@ import * as piAi from "@mariozechner/pi-ai";
  * OpenAI WebSocket StreamFn Integration
  *
  * Wraps `OpenAIWebSocketManager` in a `StreamFn` that can be plugged into the
- * pi-embedded-runner agent in place of the default `streamSimple` HTTP function.
+ * embedded-agent-runner agent in place of the default `streamSimple` HTTP function.
  *
  * Key behaviours:
  *  - Per-session `OpenAIWebSocketManager` (keyed by sessionId)

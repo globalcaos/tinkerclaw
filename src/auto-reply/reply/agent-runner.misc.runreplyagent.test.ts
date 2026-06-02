@@ -64,7 +64,7 @@ vi.mock("../../agents/model-auth.js", () => ({
   resolveModelAuthMode: () => "api-key",
 }));
 
-vi.mock("../../agents/pi-embedded.js", () => {
+vi.mock("../../agents/embedded-agent.js", () => {
   return {
     compactEmbeddedPiSession: (params: unknown) =>
       compactState.compactEmbeddedPiSessionMock(params),

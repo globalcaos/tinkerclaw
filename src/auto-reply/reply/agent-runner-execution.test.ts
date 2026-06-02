@@ -39,7 +39,7 @@ function makeTestModel(id: string, contextTokens: number): ModelDefinitionConfig
   };
 }
 
-vi.mock("../../agents/pi-embedded.js", () => ({
+vi.mock("../../agents/embedded-agent.js", () => ({
   runEmbeddedPiAgent: (params: unknown) => state.runEmbeddedPiAgentMock(params),
 }));
 

@@ -1,6 +1,6 @@
 import { vi } from "vitest";
+import { runEmbeddedPiAgent } from "../agents/embedded-agent.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
-import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { runSubagentAnnounceFlow } from "../agents/subagent-announce.js";
 import type {
   ChannelOutboundAdapter,

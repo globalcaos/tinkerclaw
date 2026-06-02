@@ -80,7 +80,7 @@ export async function runDirectiveBehaviorPreparedReply(params: unknown) {
 
 export const runPreparedReplyMock: Mock = vi.fn(runDirectiveBehaviorPreparedReply);
 
-vi.mock("../agents/pi-embedded.js", () => ({
+vi.mock("../agents/embedded-agent.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   compactEmbeddedPiSession: (...args: unknown[]) => compactEmbeddedPiSessionMock(...args),
   runEmbeddedPiAgent: (...args: unknown[]) => runEmbeddedPiAgentMock(...args),
@@ -90,7 +90,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
 
-vi.mock("../agents/pi-embedded.runtime.js", () => ({
+vi.mock("../agents/embedded-agent.runtime.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   compactEmbeddedPiSession: (...args: unknown[]) => compactEmbeddedPiSessionMock(...args),
   runEmbeddedPiAgent: (...args: unknown[]) => runEmbeddedPiAgentMock(...args),

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { extractAssistantText } from "../agents/pi-embedded-utils.js";
+import { extractAssistantText } from "../agents/embedded-agent-utils.js";
 import {
   completeWithPreparedSimpleCompletionModel,
   prepareSimpleCompletionModelForAgent,
@@ -32,7 +32,7 @@ export type CrestodianAssistantPlanner = (params: {
 }) => Promise<CrestodianAssistantPlan | null>;
 
 type RunCliAgentFn = typeof import("../agents/cli-runner.js").runCliAgent;
-type RunEmbeddedPiAgentFn = typeof import("../agents/pi-embedded.js").runEmbeddedPiAgent;
+type RunEmbeddedPiAgentFn = typeof import("../agents/embedded-agent.js").runEmbeddedPiAgent;
 type ReadConfigFileSnapshotFn = typeof readConfigFileSnapshot;
 type PrepareSimpleCompletionModelForAgentFn = typeof prepareSimpleCompletionModelForAgent;
 type CompleteWithPreparedSimpleCompletionModelFn = typeof completeWithPreparedSimpleCompletionModel;
@@ -255,7 +255,7 @@ async function loadRunCliAgent(): Promise<RunCliAgentFn> {
 }
 
 async function loadRunEmbeddedPiAgent(): Promise<RunEmbeddedPiAgentFn> {
-  return (await import("../agents/pi-embedded.js")).runEmbeddedPiAgent;
+  return (await import("../agents/embedded-agent.js")).runEmbeddedPiAgent;
 }
 
 function extractPlannerResultText(result: {

@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   piEmbeddedModuleImported: false,
 }));
 
-vi.mock("./pi-embedded.js", () => {
+vi.mock("./embedded-agent.js", () => {
   state.piEmbeddedModuleImported = true;
   return {};
 });
@@ -355,7 +355,7 @@ describe("live model switch", () => {
     });
   });
 
-  it("does not import the broad pi-embedded barrel on module load", async () => {
+  it("does not import the broad embedded-agent barrel on module load", async () => {
     await loadModule();
 
     expect(state.piEmbeddedModuleImported).toBe(false);

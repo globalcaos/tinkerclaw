@@ -5,7 +5,7 @@ export type {
   McpToolCatalog,
   SessionMcpRuntime,
   SessionMcpRuntimeManager,
-} from "./pi-bundle-mcp-types.js";
+} from "./agent-bundle-mcp-types.js";
 export {
   __testing,
   createSessionMcpRuntime,

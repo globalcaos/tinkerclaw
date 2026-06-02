@@ -5,7 +5,7 @@ import {
   findLifecycleErrorAgentEvent,
 } from "./embedded-agent-subscribe.e2e-harness.js";
 
-describe("subscribeEmbeddedPiSession lifecycle billing errors", () => {
+describe("subscribeEmbeddedAgentSession lifecycle billing errors", () => {
   function createAgentEventHarness(options?: { runId?: string; sessionKey?: string }) {
     const onAgentEvent = vi.fn();
     const { emit } = createSubscribedSessionHarness({

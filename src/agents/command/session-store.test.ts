@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionStore } from "../../config/sessions.js";
-import type { EmbeddedPiRunResult } from "../pi-embedded.js";
+import type { EmbeddedPiRunResult } from "../embedded-agent.js";
 import { clearCliSessionInStore, updateSessionStoreAfterAgentRun } from "./session-store.js";
 import { resolveSession } from "./session.js";
 

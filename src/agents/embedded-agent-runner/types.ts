@@ -1,6 +1,6 @@
 import type { CliSessionBinding, SessionSystemPromptReport } from "../../config/sessions/types.js";
 import type { DiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
-import type { MessagingToolSend } from "../pi-embedded-messaging.types.js";
+import type { MessagingToolSend } from "../embedded-agent-messaging.types.js";
 
 export type EmbeddedPiAgentMeta = {
   sessionId: string;

@@ -419,7 +419,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const ethicalRulesBody = buildEthicalRulesBlock();
     const orchestrationDispositionBody = buildOrchestrationDispositionBlock();
     // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
-    // OpenClaw's pi-embedded-runner appends its full tool catalog + OpenClaw
+    // OpenClaw's embedded-agent-runner appends its full tool catalog + OpenClaw
     // CLI quick-reference + heartbeat section + Runtime metadata to the
     // system prompt (see `src/agents/system-prompt.ts:buildAgentSystemPrompt`
     // — started sending that content on 2026-04-18 via commit 378684e4f5,

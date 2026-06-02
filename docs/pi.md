@@ -41,7 +41,7 @@ OpenClaw uses the pi SDK to embed an AI coding agent into its messaging gateway 
 
 ```
 src/agents/
-├── pi-embedded-runner.ts          # Re-exports from embedded-agent-runner/
+├── embedded-agent-runner.ts          # Re-exports from embedded-agent-runner/
 ├── embedded-agent-runner/
 │   ├── run.ts                     # Main entry: runEmbeddedPiAgent()
 │   ├── run/
@@ -69,15 +69,15 @@ src/agents/
 │   ├── types.ts                   # EmbeddedPiAgentMeta, EmbeddedPiRunResult
 │   └── utils.ts                   # ThinkLevel mapping, error description
 ├── embedded-agent-subscribe.ts       # Session event subscription/dispatch
-├── embedded-agent-subscribe.types.ts # SubscribeEmbeddedPiSessionParams
+├── embedded-agent-subscribe.types.ts # SubscribeEmbeddedAgentSessionParams
 ├── embedded-agent-subscribe.handlers.ts # Event handler factory
 ├── embedded-agent-subscribe.handlers.lifecycle.ts
 ├── embedded-agent-subscribe.handlers.types.ts
 ├── embedded-agent-block-chunker.ts   # Streaming block reply chunking
-├── pi-embedded-messaging.ts       # Messaging tool sent tracking
+├── embedded-agent-messaging.ts       # Messaging tool sent tracking
 ├── embedded-agent-helpers.ts         # Error classification, turn validation
 ├── embedded-agent-helpers/           # Helper modules
-├── pi-embedded-utils.ts           # Formatting utilities
+├── embedded-agent-utils.ts           # Formatting utilities
 ├── pi-tools.ts                    # createOpenClawCodingTools()
 ├── pi-tools.abort.ts              # AbortSignal wrapping for tools
 ├── pi-tools.policy.ts             # Tool allowlist/denylist policy
@@ -142,7 +142,7 @@ directories instead of under `src/agents/tools`, for example:
 The main entry point is `runEmbeddedPiAgent()` in `embedded-agent-runner/run.ts`:
 
 ```typescript
-import { runEmbeddedPiAgent } from "./agents/pi-embedded-runner.js";
+import { runEmbeddedPiAgent } from "./agents/embedded-agent-runner.js";
 
 const result = await runEmbeddedPiAgent({
   sessionId: "user-123",
@@ -200,10 +200,10 @@ applySystemPromptOverrideToSession(session, systemPromptOverride);
 
 ### 3. Event Subscription
 
-`subscribeEmbeddedPiSession()` subscribes to pi's `AgentSession` events:
+`subscribeEmbeddedAgentSession()` subscribes to pi's `AgentSession` events:
 
 ```typescript
-const subscription = subscribeEmbeddedPiSession({
+const subscription = subscribeEmbeddedAgentSession({
   session: activeSession,
   runId: params.runId,
   verboseLevel: params.verboseLevel,
@@ -542,7 +542,7 @@ Areas for potential rework:
 1. **Tool signature alignment**: Currently adapting between pi-agent-core and pi-coding-agent signatures
 2. **Session manager wrapping**: `guardSessionManager` adds safety but increases complexity
 3. **Extension loading**: Could use pi's `ResourceLoader` more directly
-4. **Streaming handler complexity**: `subscribeEmbeddedPiSession` has grown large
+4. **Streaming handler complexity**: `subscribeEmbeddedAgentSession` has grown large
 5. **Provider quirks**: Many provider-specific codepaths that pi could potentially handle
 
 ## Tests
@@ -551,9 +551,9 @@ Pi integration coverage spans these suites:
 
 - `src/agents/pi-*.test.ts`
 - `src/agents/pi-auth-json.test.ts`
-- `src/agents/pi-embedded-*.test.ts`
+- `src/agents/embedded-agent-*.test.ts`
 - `src/agents/embedded-agent-helpers*.test.ts`
-- `src/agents/pi-embedded-runner*.test.ts`
+- `src/agents/embedded-agent-runner*.test.ts`
 - `src/agents/embedded-agent-runner/**/*.test.ts`
 - `src/agents/embedded-agent-subscribe*.test.ts`
 - `src/agents/pi-tools*.test.ts`
@@ -563,7 +563,7 @@ Pi integration coverage spans these suites:
 
 Live/opt-in:
 
-- `src/agents/pi-embedded-runner-extraparams.live.test.ts` (enable `OPENCLAW_LIVE_TEST=1`)
+- `src/agents/embedded-agent-runner-extraparams.live.test.ts` (enable `OPENCLAW_LIVE_TEST=1`)
 
 For current run commands, see [Pi Development Workflow](/pi-dev).
 

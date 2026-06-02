@@ -4,8 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { runEmbeddedPiAgent, type EmbeddedPiRunResult } from "../embedded-agent.js";
 import { FailoverError } from "../failover-error.js";
-import { runEmbeddedPiAgent, type EmbeddedPiRunResult } from "../pi-embedded.js";
 import { persistCliTurnTranscript, runAgentAttempt } from "./attempt-execution.js";
 
 const runCliAgentMock = vi.hoisted(() => vi.fn());
@@ -28,7 +28,7 @@ vi.mock("../provider-auth-aliases.js", () => ({
     provider.trim().toLowerCase() === "codex-cli" ? "openai-codex" : provider.trim().toLowerCase(),
 }));
 
-vi.mock("../pi-embedded.js", () => ({
+vi.mock("../embedded-agent.js", () => ({
   runEmbeddedPiAgent: runEmbeddedPiAgentMock,
 }));
 

@@ -1,12 +1,12 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { expect } from "vitest";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-type SubscribeEmbeddedPiSession = typeof subscribeEmbeddedPiSession;
-type SubscribeEmbeddedPiSessionParams = Parameters<SubscribeEmbeddedPiSession>[0];
-type PiSession = Parameters<SubscribeEmbeddedPiSession>[0]["session"];
-type OnBlockReply = NonNullable<SubscribeEmbeddedPiSessionParams["onBlockReply"]>;
-type BlockReplyChunking = NonNullable<SubscribeEmbeddedPiSessionParams["blockReplyChunking"]>;
+type SubscribeEmbeddedAgentSession = typeof subscribeEmbeddedAgentSession;
+type SubscribeEmbeddedAgentSessionParams = Parameters<SubscribeEmbeddedAgentSession>[0];
+type PiSession = Parameters<SubscribeEmbeddedAgentSession>[0]["session"];
+type OnBlockReply = NonNullable<SubscribeEmbeddedAgentSessionParams["onBlockReply"]>;
+type BlockReplyChunking = NonNullable<SubscribeEmbeddedAgentSessionParams["blockReplyChunking"]>;
 
 export const THINKING_TAG_CASES = [
   { tag: "think", open: "<think>", close: "</think>" },
@@ -32,18 +32,18 @@ export function createStubSessionHarness(): {
 }
 
 export function createSubscribedSessionHarness(
-  params: Omit<Parameters<SubscribeEmbeddedPiSession>[0], "session"> & {
+  params: Omit<Parameters<SubscribeEmbeddedAgentSession>[0], "session"> & {
     sessionExtras?: Partial<PiSession>;
   },
 ): {
   emit: (evt: unknown) => void;
   session: PiSession;
-  subscription: ReturnType<SubscribeEmbeddedPiSession>;
+  subscription: ReturnType<SubscribeEmbeddedAgentSession>;
 } {
   const { sessionExtras, ...subscribeParams } = params;
   const { session, emit } = createStubSessionHarness();
   const mergedSession = Object.assign(session, sessionExtras ?? {});
-  const subscription = subscribeEmbeddedPiSession({
+  const subscription = subscribeEmbeddedAgentSession({
     ...subscribeParams,
     session: mergedSession,
   });
@@ -57,7 +57,7 @@ export function createParagraphChunkedBlockReplyHarness(params: {
 }): {
   emit: (evt: unknown) => void;
   onBlockReply: OnBlockReply;
-  subscription: ReturnType<SubscribeEmbeddedPiSession>;
+  subscription: ReturnType<SubscribeEmbeddedAgentSession>;
 } {
   const onBlockReply: OnBlockReply = params.onBlockReply ?? (() => {});
   const { emit, subscription } = createSubscribedSessionHarness({
@@ -79,7 +79,7 @@ export function createTextEndBlockReplyHarness(params?: {
 }): {
   emit: (evt: unknown) => void;
   onBlockReply: OnBlockReply;
-  subscription: ReturnType<SubscribeEmbeddedPiSession>;
+  subscription: ReturnType<SubscribeEmbeddedAgentSession>;
 } {
   const onBlockReply: OnBlockReply = params?.onBlockReply ?? (() => {});
   const { emit, subscription } = createSubscribedSessionHarness({

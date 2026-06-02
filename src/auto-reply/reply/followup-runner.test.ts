@@ -255,7 +255,7 @@ async function loadFreshFollowupRunnerModuleForTest() {
     })),
     resolveSessionLockMaxHoldFromTimeout: vi.fn(() => 1),
   }));
-  vi.doMock("../../agents/pi-embedded.js", () => ({
+  vi.doMock("../../agents/embedded-agent.js", () => ({
     abortEmbeddedPiRun: vi.fn(async () => false),
     compactEmbeddedPiSession: (params: unknown) => compactEmbeddedPiSessionMock(params),
     isEmbeddedPiRunActive: vi.fn(() => false),

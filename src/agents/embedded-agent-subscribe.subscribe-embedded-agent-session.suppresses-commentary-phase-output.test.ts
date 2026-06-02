@@ -6,7 +6,7 @@ type AssistantMessageWithPhase = AssistantMessage & {
   phase?: "commentary" | "final_answer";
 };
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("suppresses commentary-phase assistant messages before tool use", () => {
     const onBlockReply = vi.fn();
     const onPartialReply = vi.fn();

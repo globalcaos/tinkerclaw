@@ -21,7 +21,7 @@ Run the Pi-focused test set directly with Vitest:
 ```bash
 pnpm test \
   "src/agents/pi-*.test.ts" \
-  "src/agents/pi-embedded-*.test.ts" \
+  "src/agents/embedded-agent-*.test.ts" \
   "src/agents/pi-tools*.test.ts" \
   "src/agents/pi-settings.test.ts" \
   "src/agents/pi-tool-definition-adapter*.test.ts" \
@@ -31,13 +31,13 @@ pnpm test \
 To include the live provider exercise:
 
 ```bash
-OPENCLAW_LIVE_TEST=1 pnpm test src/agents/pi-embedded-runner-extraparams.live.test.ts
+OPENCLAW_LIVE_TEST=1 pnpm test src/agents/embedded-agent-runner-extraparams.live.test.ts
 ```
 
 This covers the main Pi unit suites:
 
 - `src/agents/pi-*.test.ts`
-- `src/agents/pi-embedded-*.test.ts`
+- `src/agents/embedded-agent-*.test.ts`
 - `src/agents/pi-tools*.test.ts`
 - `src/agents/pi-settings.test.ts`
 - `src/agents/pi-tool-definition-adapter.test.ts`

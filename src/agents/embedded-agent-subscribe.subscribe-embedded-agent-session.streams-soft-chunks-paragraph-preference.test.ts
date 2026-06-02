@@ -4,7 +4,7 @@ import {
   emitAssistantTextDeltaAndEnd,
 } from "./embedded-agent-subscribe.e2e-harness.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("streams soft chunks with paragraph preference", () => {
     const onBlockReply = vi.fn();
     const { emit, subscription } = createParagraphChunkedBlockReplyHarness({

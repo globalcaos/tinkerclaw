@@ -9,7 +9,7 @@ import {
   createEmbeddedPiRunnerTestWorkspace,
   type EmbeddedPiRunnerTestWorkspace,
   immediateEnqueue,
-} from "./test-helpers/pi-embedded-runner-e2e-fixtures.js";
+} from "./test-helpers/embedded-agent-runner-e2e-fixtures.js";
 
 const E2E_TIMEOUT_MS = 40_000;
 

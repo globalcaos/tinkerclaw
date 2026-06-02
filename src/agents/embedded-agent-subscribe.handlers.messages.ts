@@ -20,6 +20,7 @@ import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./embedded-agent-helpers.js";
+import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
 import type {
   EmbeddedPiSubscribeContext,
   EmbeddedPiSubscribeState,
@@ -27,7 +28,6 @@ import type {
 import { isPromiseLike } from "./embedded-agent-subscribe.promise.js";
 import { appendRawStream } from "./embedded-agent-subscribe.raw-stream.js";
 import { warnIfAssistantEmittedToolText } from "./embedded-agent-subscribe.tool-text-diagnostics.js";
-import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
 import {
   extractAssistantText,
   extractAssistantThinking,
@@ -36,7 +36,7 @@ import {
   extractThinkingFromTaggedText,
   formatReasoningMessage,
   promoteThinkingTagsToBlocks,
-} from "./pi-embedded-utils.js";
+} from "./embedded-agent-utils.js";
 
 function shouldSuppressAssistantVisibleOutput(message: AgentMessage | undefined): boolean {
   return resolveAssistantMessagePhase(message) === "commentary";

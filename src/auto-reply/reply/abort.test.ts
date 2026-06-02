@@ -22,7 +22,7 @@ import { enqueueFollowupRun, getFollowupQueueDepth, type FollowupRun } from "./q
 import { __testing as queueCleanupTesting } from "./queue/cleanup.js";
 import { buildTestCtx } from "./test-ctx.js";
 
-vi.mock("../../agents/pi-embedded.js", () => ({
+vi.mock("../../agents/embedded-agent.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(true),
   resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));

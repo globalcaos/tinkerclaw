@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSystemPromptOverride } from "./pi-embedded-runner.js";
+import { createSystemPromptOverride } from "./embedded-agent-runner.js";
 
 describe("createSystemPromptOverride", () => {
   it("returns the override prompt trimmed", () => {

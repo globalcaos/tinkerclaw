@@ -11,7 +11,7 @@ import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type * as ManifestRegistryModule from "../plugins/manifest-registry.js";
 import { runAgentAttempt } from "./command/attempt-execution.js";
-import type { EmbeddedPiRunResult } from "./pi-embedded.js";
+import type { EmbeddedPiRunResult } from "./embedded-agent.js";
 import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
 
 type LoadPluginManifestRegistry = typeof ManifestRegistryModule.loadPluginManifestRegistry;
@@ -64,7 +64,7 @@ vi.mock("./model-selection.js", () => ({
   normalizeProviderId: (provider: string) => provider.trim().toLowerCase(),
 }));
 
-vi.mock("./pi-embedded.js", () => ({
+vi.mock("./embedded-agent.js", () => ({
   runEmbeddedPiAgent: runEmbeddedPiAgentMock,
 }));
 

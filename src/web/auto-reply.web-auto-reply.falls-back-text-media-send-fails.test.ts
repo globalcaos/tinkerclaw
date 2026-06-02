@@ -8,7 +8,7 @@ import * as ssrf from "../infra/net/ssrf.js";
 
 const TEST_NET_IP = "203.0.113.10";
 
-vi.mock("../agents/pi-embedded.js", () => ({
+vi.mock("../agents/embedded-agent.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),

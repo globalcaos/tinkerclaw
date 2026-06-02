@@ -11,7 +11,7 @@ const replyRunAbortMock = vi.hoisted(() => vi.fn());
 const resolveSessionIdMock = vi.hoisted(() => vi.fn(() => undefined));
 const stopSubagentsForRequesterMock = vi.hoisted(() => vi.fn(() => ({ stopped: 0 })));
 
-vi.mock("../../agents/pi-embedded.js", () => ({
+vi.mock("../../agents/embedded-agent.js", () => ({
   abortEmbeddedPiRun: abortEmbeddedPiRunMock,
 }));
 

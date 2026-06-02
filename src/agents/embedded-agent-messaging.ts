@@ -1,4 +1,4 @@
-export type { MessagingToolSend } from "./pi-embedded-messaging.types.js";
+export type { MessagingToolSend } from "./embedded-agent-messaging.types.js";
 
 import { getChannelPlugin, normalizeChannelId } from "../channels/plugins/index.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";

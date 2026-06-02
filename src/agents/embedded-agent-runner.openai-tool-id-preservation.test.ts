@@ -8,7 +8,7 @@ import {
   makeInMemorySessionManager,
   makeModelSnapshotEntry,
   type SanitizeSessionHistoryHarness,
-} from "./pi-embedded-runner.sanitize-session-history.test-harness.js";
+} from "./embedded-agent-runner.sanitize-session-history.test-harness.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 
 vi.mock("./embedded-agent-helpers.js", async () => await createSanitizeSessionHistoryHelpersMock());

@@ -5,13 +5,13 @@ import {
   emitAssistantTextDelta,
   emitAssistantTextEnd,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("keeps assistantTexts to the final answer when block replies are disabled", () => {
     const { session, emit } = createStubSessionHarness();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       reasoningMode: "on",
@@ -33,7 +33,7 @@ describe("subscribeEmbeddedPiSession", () => {
 
     const onPartialReply = vi.fn();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       reasoningMode: "on",

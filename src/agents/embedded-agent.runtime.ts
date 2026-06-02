@@ -6,4 +6,4 @@ export {
   runEmbeddedPiAgent,
   resolveEmbeddedSessionLane,
   waitForEmbeddedPiRunEnd,
-} from "./pi-embedded.js";
+} from "./embedded-agent.js";

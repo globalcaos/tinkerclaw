@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { splitSdkTools } from "./embedded-agent-runner.js";
 import {
   collectRegisteredToolNames,
   toSessionToolAllowlist,
 } from "./embedded-agent-runner/tool-name-allowlist.js";
-import { splitSdkTools } from "./pi-embedded-runner.js";
 import { createStubTool } from "./test-helpers/pi-tool-stubs.js";
 
 describe("splitSdkTools", () => {

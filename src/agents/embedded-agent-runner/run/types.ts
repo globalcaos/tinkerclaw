@@ -7,7 +7,7 @@ import type { ContextEngine, ContextEnginePromptCacheInfo } from "../../../conte
 import type { DiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
 import type { PluginHookBeforeAgentStartResult } from "../../../plugins/hook-before-agent-start.types.js";
 import type { ContextAnatomyEvent } from "../../context-anatomy.js";
-import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
+import type { MessagingToolSend } from "../../embedded-agent-messaging.types.js";
 import type { AgentRuntimePlan } from "../../runtime-plan/types.js";
 import type { ToolErrorSummary } from "../../tool-error-summary.js";
 import type { NormalizedUsage } from "../../usage.js";

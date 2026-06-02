@@ -3,14 +3,14 @@ import {
   createStubSessionHarness,
   emitAssistantTextDelta,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-describe("subscribeEmbeddedPiSession thinking tag code span awareness", () => {
+describe("subscribeEmbeddedAgentSession thinking tag code span awareness", () => {
   function createPartialReplyHarness() {
     const { session, emit } = createStubSessionHarness();
     const onPartialReply = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       onPartialReply,

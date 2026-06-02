@@ -3,7 +3,7 @@ export {
   compactEmbeddedPiSession,
   isEmbeddedPiRunActive,
   waitForEmbeddedPiRunEnd,
-} from "../../agents/pi-embedded.js";
+} from "../../agents/embedded-agent.js";
 export {
   resolveFreshSessionTotalTokens,
   resolveSessionFilePath,

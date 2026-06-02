@@ -10,10 +10,10 @@ import {
   extractAgentEventPayloads,
   findLifecycleErrorAgentEvent,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 import { makeZeroUsageSnapshot } from "./usage.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   async function flushBlockReplyCallbacks(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
@@ -23,7 +23,7 @@ describe("subscribeEmbeddedPiSession", () => {
     const { session, emit } = createStubSessionHarness();
     const onAgentEvent = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: options?.runId ?? "run",
       onAgentEvent,
@@ -35,7 +35,7 @@ describe("subscribeEmbeddedPiSession", () => {
 
   function createToolErrorHarness(runId: string) {
     const { session, emit } = createStubSessionHarness();
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId,
       sessionKey: "test-session",
@@ -45,10 +45,10 @@ describe("subscribeEmbeddedPiSession", () => {
   }
 
   function createSubscribedHarness(
-    options: Omit<Parameters<typeof subscribeEmbeddedPiSession>[0], "session">,
+    options: Omit<Parameters<typeof subscribeEmbeddedAgentSession>[0], "session">,
   ) {
     const { session, emit } = createStubSessionHarness();
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       ...options,
     });
@@ -647,7 +647,7 @@ describe("subscribeEmbeddedPiSession", () => {
 
     const onAgentEvent = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       onAgentEvent,
@@ -815,7 +815,7 @@ describe("subscribeEmbeddedPiSession", () => {
     const { session, emit } = createStubSessionHarness();
     const onAgentEvent = vi.fn();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run-replay-invalid-compaction",
       onAgentEvent,
@@ -855,7 +855,7 @@ describe("subscribeEmbeddedPiSession", () => {
     const { session, emit } = createStubSessionHarness();
     const onAgentEvent = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run-cron-side-effect-compaction",
       onAgentEvent,

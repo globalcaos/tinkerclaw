@@ -47,7 +47,7 @@ vi.mock("../config/sessions.js", () => ({
   recordSessionMetaFromInbound: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("./pi-embedded.js", () => embeddedRunMock);
+vi.mock("./embedded-agent.js", () => embeddedRunMock);
 
 vi.mock("../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/config.js")>();

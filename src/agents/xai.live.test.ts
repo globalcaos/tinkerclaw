@@ -1,12 +1,12 @@
 import { completeSimple, getModel, streamSimple } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
+import { applyExtraParamsToAgent } from "./embedded-agent-runner.js";
 import {
   createSingleUserPromptMessage,
   extractNonEmptyAssistantText,
   isLiveTestEnabled,
 } from "./live-test-helpers.js";
-import { applyExtraParamsToAgent } from "./pi-embedded-runner.js";
 import { createWebSearchTool } from "./tools/web-search.js";
 
 const XAI_KEY = process.env.XAI_API_KEY ?? "";

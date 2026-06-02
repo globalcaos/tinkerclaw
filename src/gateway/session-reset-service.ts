@@ -8,7 +8,7 @@ import { readAcpSessionEntry, upsertAcpSessionMeta } from "../acp/runtime/sessio
 import { retireSessionMcpRuntime } from "../agents/agent-bundle-mcp-tools.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { clearBootstrapSnapshot } from "../agents/bootstrap-cache.js";
-import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../agents/pi-embedded.js";
+import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../agents/embedded-agent.js";
 import { stopSubagentsForRequester } from "../auto-reply/reply/abort.js";
 import {
   buildSessionEndHookPayload,
